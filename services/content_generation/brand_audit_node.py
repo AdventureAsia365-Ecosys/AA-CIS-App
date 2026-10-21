@@ -44,8 +44,11 @@ NAME_SUPERLATIVES = ['the best of', 'ultimate', 'must-see', 'and fun', 'expendit
 ITIN_MEAL_INVENTED = re.compile(
     r'(?:'
     r'\bmeals?\s*(?:included|provided)?\s*[:\-]'                 # "Meals:" / "Meal included -"
-    r'|\((?:\s*[BLD](?:\s*(?:[,/&|\u00b7]|and)\s*[BLD]){0,2}\s*)\)'   # "(B, L, D)" meal codes
+    # "(B, L, D)" meal codes; AA-803 review round 5: with a placeholder for a meal not given ("(B/-/D)", "(B/x/D)")
+    r'|\(\s*(?:[\-\u2013\u2014x\u00d7]\s*[,/|]\s*){0,2}[BLD](?:\s*(?:[,/&|\u00b7\-]|and)\s*'
+    r'(?:[\-\u2013\u2014x\u00d7]\s*[,/|]\s*)?[BLD]){0,2}(?:\s*[,/|]\s*[\-\u2013\u2014x\u00d7])?\s*\)'
     r'|\b(?:breakfasts?|brunch(?:es)?|lunch(?:es|eons?)?|dinners?|suppers?|meals?|picnics?|feasts?|barbecues?'
+    r'|(?:breakfast|lunch|dinner|supper)[\s-]?times?'      # review round 5: "at lunchtime, momos are served"
     r'|bbqs?|banquets?)'
     r'(?:\s+(?!(?:not|no|never|optional|cannot|recommend\w*|suggest\w*|options?|tips?|ideas?|advice)\b)'
     r'[\w\'\u2019-]+){0,4}?'

@@ -69,6 +69,19 @@ backward "Day N" marker (body line, restarted extension, alternative day) leaves
 legend is a claim, a bracket annotation does not cut a code list, only a title line sets the day, and a meal
 noun beside a meal word is still claimed; an untimed "a meal" claims lunch and dinner unless it restates a meal
 the sentence names.
+
+Review round 5 (fail-closed): source side, "however" / "while" and an abbreviation's period ("approx.", "Mt.") do not
+cut a meal from its cue; "Lunch: N/A", "Lunch: -", "Meals: B, L (own expense), D", "neither ... nor", "for your
+account" and "tự túc" / "libre" negate; "all meals" / "meals daily" in a day's text count only when the clause says
+they are included or provided; a board or count term is only the meals it lists ("half board (breakfast and lunch)",
+"2 meals daily (breakfast and dinner)", "2 meals daily" alone is none); "on the 2nd evening" / "night 2" is another
+day. Day blocks: a run of the same "Day N" whose first line is a body sentence, whose headers carry a version or
+season label, or that has two different titled headers is not one day, on a one-day tour too. Output side:
+"every / each meal" is all three, "at lunchtime" lunch, a picnic / packed meal the meal of its time of day, a meal
+word used as a time marker ("After breakfast, ... a meal is served") hides no untimed meal, "Meals including lunch"
+and "where you can see" are a bare "meals" (all three), a placeholder does not cut a code list ("B/-/D"), bare and
+military hours ("at 7", "0630 hrs", "19h") are times, and a sentence about more than its day ("every morning of the
+tour", "for the rest of the trek", "two days later") is sourced only by INCLUSIONS that cover every day.
 """
 from __future__ import annotations
 
@@ -87,13 +100,16 @@ _MEAL_WORD = r"(?:breakfasts?|brunch(?:es)?|lunch(?:es|eons?)?|dinners?|suppers?
 _ANY_MEAL_WORD_RE = re.compile(r"\b" + _MEAL_WORD + r"\b", re.IGNORECASE)
 _CODE_MEAL = {"B": "breakfast", "L": "lunch", "D": "dinner"}
 # A code list: 1-3 of B/L/D joined by , / & + - | · • "and" or spaces ("B, L, D", "B D", "BLD", "B/L",
-# "B, L and D", "B | L | D"). Case-sensitive.
-_CODE_LIST = r"[BLD](?:\s*(?:[,/&+|\-·•]|and)?\s*[BLD]){0,2}"
+# "B, L and D", "B | L | D"). Case-sensitive. Review round 5: a placeholder for a meal not given ("B/-/D", "B/x/D",
+# "-/L/D", "B/L/-") does not end the list.
+_CODE_PH = r"[\-\u2013\u2014x\u00d7]"
+_CODE_LIST = (r"(?:" + _CODE_PH + r"\s*[,/|]\s*){0,2}[BLD](?:\s*(?:[,/&+|\-·•]|and)?\s*(?:" + _CODE_PH
+              + r"\s*[,/|]\s*)?[BLD]){0,2}(?:\s*[,/|]\s*" + _CODE_PH + r"(?![A-Za-z]))?")
 # Codes count only in a meal context, never as a bare capital letter in prose.
 _CODE_RES = (
     re.compile(r"(?i:\bmeals?)(?:\s+(?i:included|provided))?\s*[:\-\u2013]?\s*(" + _CODE_LIST + r")(?![A-Za-z])"),
     re.compile(r"[(\[]\s*(" + _CODE_LIST + r")\s*[)\]]"),
-    re.compile(r"(?<![A-Za-z])([BLD](?:\s*[/\-]\s*[BLD]){1,2})(?![A-Za-z])"),
+    re.compile(r"(?<![A-Za-z])([BLD](?:\s*[/\-]\s*(?:" + _CODE_PH + r"\s*/\s*)?[BLD]){1,2})(?![A-Za-z])"),
 )
 # A structured per-day meal list: a "Meals" label followed by codes or meal words (a bracketed code list
 # "(L, D)" is rewritten to "meals: L, D" by _normalise first).
@@ -175,7 +191,14 @@ _EXPLICIT_CUE_RE = re.compile(
     # dinner", "Consider dinner at the night market") and the guest's own food ("bring your own packed lunch").
     r"|\b(?:might|may|could)\s+(?:also\s+)?(?:like|wish|want|choose|prefer|care|fancy|opt|consider|try|decide)\b"
     r"|\bconsider\w*|\bperhaps\b|\bmaybe\b|\bwhy\s+not\b|\bfeel\s+free\b"
-    r"|\b(?:your|their|one['’]s)\s+own\s+(?:\w+\s+){0,2}?(?:packed|picnic|food|snacks?|" + _MEAL_WORD + r"|meals?)\b",
+    r"|\b(?:your|their|one['’]s)\s+own\s+(?:\w+\s+){0,2}?(?:packed|picnic|food|snacks?|" + _MEAL_WORD + r"|meals?)\b"
+    # review round 5: "Neither lunch nor dinner is included", "for your account", and the non-English cues an English
+    # source carries ("Lunch (tự túc)" = self-paid, "Lunch: libre" = on your own, "non inclus", "no incluido").
+    r"|\bneither\b|\bnor\b|\bfor\s+(?:your|the\s+guests?['’]?s?|guests?['’]?|clients?['’]?s?|travell?ers?['’]?s?|"
+    r"participants?['’]?s?|own)\s+account\b"
+    r"|\btự\s+(?:túc|lo|trả|chi\s+trả|phục\s+vụ)|\bkhông\s+bao\s+gồm|\blibre\b|\bnon\s+inclus\w*|\bpas\s+inclus\w*"
+    r"|\bà\s+(?:votre|la)\s+charge\b|\bno\s+incluid[oa]s?\b|\bpor\s+su\s+cuenta\b|\bnicht\s+inbegriffen\b"
+    r"|\bauf\s+eigene\s+kosten\b",
     re.IGNORECASE)
 # PRE: the traveller picks or finds the meal ("opt for a traditional dinner", "free to find a local dinner",
 # "tips on great places to grab a local dinner", "Choose your lunch at various shops"). Only BEFORE the meal,
@@ -224,7 +247,12 @@ _SRC_OTHER_DAY_RE = re.compile(
     r"|\bthe\s+(?:day|night|evening)\s+(?:before|after)\b"
     r"|\bon\s+(?:the|your|our)\s+" + _ORD + r"\s+(?:day|evening|night|morning|afternoon)\b"
     r"|\b" + _ORD + r"\s+(?:day|evening|night|morning)\s+of\s+(?:the|your|our)\s+" + _TRIP + r"\b"
-    r"|\b(?:at|towards?|by)\s+the\s+end\s+of\s+(?:the|your|our)\s+" + _TRIP + r"\b",
+    r"|\b(?:at|towards?|by)\s+the\s+end\s+of\s+(?:the|your|our)\s+" + _TRIP + r"\b"
+    # review round 5: numeric ordinals and numbered nights ("Dinner on the 2nd evening", "Your 2nd-night dinner",
+    # "on night 2"), and a word ordinal joined to its night ("your second-night dinner").
+    r"|\b\d{1,2}(?:st|nd|rd|th)[\s\-]+(?:day|evening|night|morning|afternoon)s?\b"
+    r"|\b(?:evening|night|morning)\s*#?\s*\d{1,2}\b(?!\s*(?:hours?|hrs?|km|m\b))"
+    r"|\b(?:second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|last|final)-(?:day|evening|night|morning)\b",
     re.IGNORECASE)
 # One of two meals ("lunch or dinner with the family", "breakfast or brunch"): neither is sourced.
 _MEAL_ALT_RE = re.compile(r"\b" + _MEAL_WORD + r"\s*,?\s+(?:or|either)\s+(?:a\s+|an\s+|the\s+)?" + _MEAL_WORD + r"\b",
@@ -252,7 +280,15 @@ _OUT_EXCL_RE = re.compile(
 # Clause boundaries for negation scope. Commas do NOT split: "Breakfast, lunch and dinner are not included"
 # negates all three (fail-closed when a comma list mixes included and excluded meals). "|" and bullets do not
 # split either: "Meals included: Breakfast | Lunch | Dinner" is one list. Brackets are handled by _normalise.
-_CLAUSE_SPLIT_RE = re.compile(r"[.;!?\n]+|\b(?:but|however|whereas|while)\b", re.IGNORECASE)
+# Review round 5: "however" and "while" do not split ("Lunch, however, is at your own expense", "Lunch while in the
+# Old Quarter is at your own expense" keep the meal with its cue), and neither does a "but" that opens the cue itself
+# ("Lunch, but at your own expense", "lunch, but it is not included").
+_CLAUSE_SPLIT_RE = re.compile(
+    r"[.;!?\n]+|\b(?:but|whereas)\b(?!\s+(?:at|not|on|payable|own|optional|extra|for|with|paid|excl\w*|self\w*|is|are|"
+    r"it|this|that|which|they|these|those|guests?|you|only)\b)", re.IGNORECASE)
+# Output side, the split stays as it was: a cue after "while" / "however" / "but" is about the other clause ("All meals
+# are served on board while drinks are at your own expense" claims all three).
+_OUT_CLAUSE_SPLIT_RE = re.compile(r"[.;!?\n]+|\b(?:but|however|whereas|while)\b", re.IGNORECASE)
 # A comma segment that is only meal words: an item of a list whose predicate comes later ("Lunch, dinner and
 # drinks ... are not included").
 _BARE_ITEM_RE = re.compile(r"\s*(?:(?:and|or|&|the|a|all|your)\s+)*" + _MEAL_WORD
@@ -353,6 +389,26 @@ _OTHER_DAY_RE = re.compile(
     r"\btomorrow\b|\b(?:next|following)\s+(?:day|morning|evening|night|afternoon)\b|\bthe\s+day\s+after\b"
     r"|\bthe\s+(?:day|night|evening)\s+before\b|\byesterday\b|\bprevious\s+(?:day|evening|night)\b",
     re.IGNORECASE)
+# Output side, review round 5: a sentence whose scope is more than its own day (the whole tour, the days to come, a
+# later day): "every morning of the tour", "daily throughout the trip", "each day of the trek", "on every remaining
+# day", "each of the following days", "over the next four days", "for the rest of the trek", "on both days of the
+# cruise", "two days later", "later in the trip", "from today".
+_MULTI_DAY_RE = re.compile(
+    r"\b(?:every|each)\s+(?:(?:single|other|remaining|subsequent)\s+)?(?:day|morning|evening|night|afternoon)s?\b"
+    # "daily" as an adverb or on a meal ("served daily", "daily breakfast"), not "daily monastic life"
+    r"|\b(?:every|each)\s+of\s+the\b|\bdaily\b(?=\s*(?:$|[.,;:!?)\u2013\u2014]|(?:at|in|on|from|throughout|during|"
+    r"for|and|with|by|basis)\b|" + _MEAL_WORD + r"\b|meals?\b))"
+    r"|\bnightly\b|\bper\s+day\b|\b(?:meals?|times|once|twice)\s+a\s+day\b"
+    r"|\bthroughout\s+(?:the\s+)?(?:\w+\s+)?" + _TRIP + r"\b"
+    r"|\b(?:following|remaining|subsequent|coming)\s+(?:\w+\s+)?(?:days|mornings|evenings|nights)\b"
+    r"|\bremaining\s+day\b|\bnext\s+(?:\w+\s+)?(?:days|mornings|evenings|nights)\b"
+    r"|\bover\s+the\s+(?:next|coming|following)\b|\bfor\s+the\s+(?:next|duration|length)\b"
+    r"|\b(?:rest|remainder)\s+of\s+(?:the|your|our)\s+(?!(?:day|afternoon|evening|morning|night)\b)"
+    r"|\b(?:both|all)\s+(?:\w+\s+)?(?:days|mornings|evenings|nights)\b|\b(?:days?|nights?|weeks?)\s+later\b"
+    r"|\blater\s+(?:in|on|during)\s+the\b|\bfrom\s+(?:today|now|this\s+(?:day|point|morning|evening))\b"
+    r"|\b(?:day\s*\d+|today|now|then)\s+onwards?\b|\bfrom\s+(?:\w+\s+){0,3}?onwards?\b|\b(?:thereafter|henceforth)\b"
+    r"|\b(?:on|for)\s+(?:the\s+)?(?:other|later|remaining)\s+days\b",
+    re.IGNORECASE)
 _NUM_WORD_DAY = "|".join(sorted(_NUM_WORDS + ("twenty-one", "twenty-two", "twenty-three", "twenty-four",
                                                "twenty-five", "twenty-six", "twenty-seven", "twenty-eight",
                                                "twenty-nine", "thirty", "first", "second", "third", "fourth",
@@ -384,12 +440,19 @@ _TIME_OF_DAY = (
 # "Meals: B, L") or it refers to the day's list ("Meals included: as listed for the day").
 _BARE_MEALS_RE = re.compile(r"\bmeals\b", re.IGNORECASE)
 _MEALS_SPECIFIED_RE = re.compile(
-    r"\s*(?:(?:are\s+|is\s+)?(?:included|provided|served)\s*)?(?:[(\[:\-\u2013\u2014]|,?\s*(?:including|incl\.?|"
-    r"namely|such\s+as|i\.e\.?|of|with))\s*(?:the\s+|a\s+|an\s+)?(?:" + _MEAL_WORD + r"\b|evening\b|picnic\b"
+    # review round 5: only an exhaustive list says which ("meals (breakfast and dinner)", "Meals: B, L", "meals, namely
+    # lunch"); "Meals including lunch", "meals such as lunch", "meals with lunch" name one of several.
+    r"\s*(?:(?:are\s+|is\s+)?(?:included|provided|served)\s*)?(?:[(\[:\-\u2013\u2014]|,?\s*(?:"
+    r"namely|i\.e\.?|of))\s*(?:the\s+|a\s+|an\s+)?(?:" + _MEAL_WORD + r"\b|evening\b|picnic\b"
     r"|packed\b|[BLD](?![A-Za-z])|none\b|nil\b|no\b|not\b)", re.IGNORECASE)
+# Review round 5: a reference to the day's list in so many words ("as listed", "see the list below", "listed for the
+# day"); "where you can see the karsts" and "listed among the bay's best" are not.
 _MEALS_REFERENCE_RE = re.compile(
     r"\b(?:as|where|when)\s+(?:listed|noted|indicated|shown|specified|stated|mentioned|per|above|below)\b"
-    r"|\blisted\b|\bsee\b", re.IGNORECASE)
+    r"|\blisted\s+(?:below|above|for\s+(?:the|each|this)\s+day|in\s+the\s+(?:itinerary|programme|program|"
+    r"schedule|table|list|inclusions))\b"
+    r"|\bsee\s+(?:the\s+)?(?:(?:daily|day['’]s|meal|meals|list|above|below|itinerary|programme|program|schedule|"
+    r"table|details?|inclusions)\b)", re.IGNORECASE)
 _NOT_BARE_MEALS_RE = re.compile(r"\b(?:picnic|packed|evening|all|three|3|daily|board)\s+meals\b"
                                 r"|\bmeals\s+daily\b", re.IGNORECASE)
 
@@ -407,6 +470,70 @@ def _word_meals(text: str) -> set[str]:
     return {m for m, rx in _WORD_RES.items() if rx.search(text)}
 
 
+# Source side, review round 5 (all applied by ``_source_prepass`` before brackets are read):
+# an abbreviation's period does not end a clause ("approx. 1 hour), at own expense", "near Mt. Fuji (own expense)");
+_ABBREV_RE = re.compile(
+    r"\b(approx|appr|ca|est|mt|mts|st|ste|ft|nos|nr|vs|etc|incl|excl|hrs?|mins?|kms?|dr|mr|mrs|ms|jr|sr|ave|rd|opp|"
+    r"pp|pax|avg|tel|e\.g|i\.e)\.", re.IGNORECASE)
+_AMPM_DOTS_RE = re.compile(r"\b([ap])\.\s?m\.", re.IGNORECASE)
+# ... a per-meal field with a placeholder value says the meal is not given ("Lunch: N/A", "Dinner: -", "Lunch: none");
+_PLACEHOLDER_RE = re.compile(
+    r"\b(" + _MEAL_WORD + r")\s*[:=]\s*(?:n/?a|none|nil|no|not\s+included|tb[ac]|[\-–—x×✗✘]+)"
+    r"(?=\s*(?:$|[|,;/.\n]|(?:breakfast|lunch|dinner|supper)\b))", re.IGNORECASE | re.MULTILINE)
+# ... a code inside a code list with its own negating bracket ("Meals: B, L (own expense), D") is that meal negated,
+# and the rest of the list stays whole;
+_CODE_BRACKET_RE = re.compile(r"(\s*(?:[,/&+|]|\band)\s*)?(?<![A-Za-z])([BLD])\s*[(\[]([^()\[\]]*)[)\]]"
+                              r"(\s*(?:[,/&+|]|\band)\s*(?=[BLD](?![A-Za-z])))?")
+# ... a board or meal-count term followed by its own list of meals is those meals ("half board (breakfast and lunch)",
+# "2 meals daily (breakfast and dinner)", "Daily meals: breakfast and dinner"; "breakfast and one other meal" is
+# breakfast only), and a count under three with no list names no meal ("2 meals daily").
+_BOARD_TERM = (r"(?:(?:half|full)[\s-]+board|(?:(?:\d|one|two|three)\s+)?(?:daily\s+)?meals?\s+(?:daily|a\s+day|per\s+"
+               r"day)|(?:\d|one|two|three)\s+(?:daily\s+)?meals?|daily\s+meals?)")
+_BOARD_LIST_RE = re.compile(r"\b" + _BOARD_TERM + r"\s*(?:[(\[]([^()\[\];\n]*)[)\]]?|[:\-–]\s*([^;\n|.]*))",
+                            re.IGNORECASE)
+_BOARD_LIST_WORDS_RE = re.compile(
+    r"\b(?:and|or|&|plus|one|other|another|meals?|daily|each\s+day|per\s+day|a\s+day|included|provided|only)\b|[,/+&]",
+    re.IGNORECASE)
+_SMALL_COUNT_RE = re.compile(r"\b(?:[12]|one|two)\s+(?:daily\s+)?meals?\b(?:\s+(?:daily|a\s+day|per\s+day))?",
+                             re.IGNORECASE)
+
+
+def _source_prepass(text: str) -> str:
+    """Source side, review round 5: abbreviations, per-meal placeholders, negated codes inside a code list and board
+    terms with their own list (see the regexes above). Fail-closed: a term it cannot read names no meal."""
+    t = _AMPM_DOTS_RE.sub(lambda m: m.group(1) + "m", text)
+    t = _ABBREV_RE.sub(lambda m: m.group(1).replace(".", ""), t)
+    t = _PLACEHOLDER_RE.sub(lambda m: f" ; {m.group(1)} not included ; ", t)
+
+    def code(m: re.Match) -> str:
+        inner = m.group(3)
+        if (_word_meals(inner) or re.fullmatch(r"\s*" + _CODE_LIST + r"\s*", inner)
+                or not _BRACKET_NEG_RE.search(inner) or not (m.group(1) or m.group(4))):
+            return m.group(0)
+        tail.append(f"{_CODE_MEAL[m.group(2)]} not included")
+        return m.group(1) if m.group(1) and m.group(4) else " "
+
+    tail: list[str] = []
+    t = _CODE_BRACKET_RE.sub(code, t)
+    if tail:
+        t += " ; " + " ; ".join(tail) + " ; "
+
+    def board(m: re.Match) -> str:
+        inner = m.group(1) if m.group(1) is not None else m.group(2) or ""
+        named = _word_meals(inner)
+        # only a plain list of meals ("breakfast and lunch", "breakfast and one other meal daily included"); anything
+        # else ("dinner not included", "except lunch on day 3", "lunch boxes on trek days") is left as it was
+        residue = _BOARD_LIST_WORDS_RE.sub(" ", _ANY_MEAL_WORD_RE.sub(" ", inner))
+        if (not named and not re.search(r"\b(?:other|another)\s+meal", inner, re.IGNORECASE)) or re.search(
+                r"[A-Za-z]", residue):
+            return m.group(0)
+        named -= {k for a in _MEAL_ALT_RE.finditer(inner) for k in _word_meals(a.group(0))}
+        return " " + (" and ".join(k for k in MEALS if k in named) + " daily" if named else "") + " "
+
+    t = _BOARD_LIST_RE.sub(board, t)
+    return _SMALL_COUNT_RE.sub(" some meals ", t)
+
+
 def _normalise(text: str, bracket_rx: re.Pattern = _BRACKET_NEG_RE, out: bool = False) -> str:
     """One pass before clauses are read: "no extra charge" is positive, a code legend and "meals as per the
     itinerary" are removed, a bracketed code list "(L, D)" becomes its own "meals: L, D" clause, a bracket
@@ -419,6 +546,8 @@ def _normalise(text: str, bracket_rx: re.Pattern = _BRACKET_NEG_RE, out: bool = 
     keeps its code list whole). On the output side a code legend is a claim ("Meals: Breakfast (B), Lunch (L)"),
     so it is kept (review round 4)."""
     t = _FREE_RE.sub(" included ", text or "")
+    if not out:
+        t = _source_prepass(t)
     if not out and len(_LEGEND_PAIR_RE.findall(t)) >= 2:
         t = _LEGEND_PAIR_RE.sub(" ", t)
     t = _BRACKET_CODES_RE.sub(lambda m: f" ; meals: {m.group(1)} ; ", t)
@@ -446,7 +575,8 @@ def _normalise(text: str, bracket_rx: re.Pattern = _BRACKET_NEG_RE, out: bool = 
 
 
 def _clauses(text: str, bracket_rx: re.Pattern = _BRACKET_NEG_RE, out: bool = False) -> list[str]:
-    return [c for c in _CLAUSE_SPLIT_RE.split(_normalise(text, bracket_rx, out)) if c and c.strip()]
+    split = _OUT_CLAUSE_SPLIT_RE if out else _CLAUSE_SPLIT_RE
+    return [c for c in split.split(_normalise(text, bracket_rx, out)) if c and c.strip()]
 
 
 def _explicit_spans(clause: str, meal: str) -> list[tuple[int, int]]:
@@ -593,12 +723,23 @@ def _generic_meals(text: str) -> set[str]:
     return out
 
 
-def _meals_named(text: str) -> set[str]:
-    """Meals a piece of (normalised) text names: words, codes in a meal context, full/half board, all meals."""
+# Source day text, review round 5: "all meals" / "meals daily" / "three meals" names the day's meals only when the
+# clause says they are included or provided, or it is a board term or a "Meals:" label ("All meals included"); "the
+# Community Kitchen, serving thousands of free vegetarian meals daily to visitors" describes a place.
+_GENERIC_PROVIDED_RE = re.compile(
+    r"\b(?:full|half)[\s-]+board\b|\b(?:included|includes?|inclusive|provided|supplied)\b"
+    r"|\bmeals?\s*(?:included|provided)?\s*[:\-\u2013]", re.IGNORECASE)
+
+
+def _meals_named(text: str, source: bool = False) -> set[str]:
+    """Meals a piece of (normalised) text names: words, codes in a meal context, full/half board, all meals
+    (on the ``source`` side only when the clause says they are provided)."""
     found = _word_meals(text)
     for rx in _CODE_RES:
         for m in rx.finditer(text):
             found |= {_CODE_MEAL[ch] for ch in m.group(1) if ch in _CODE_MEAL}
+    if source and not _GENERIC_PROVIDED_RE.search(text):
+        return found
     return found | _generic_meals(text)
 
 
@@ -612,7 +753,7 @@ def _mentions(text: str) -> tuple[set[str], set[str], set[str]]:
         if _GENERIC_NEG_RE.search(clause):
             hard |= ALL
             continue
-        for meal in _meals_named(clause):
+        for meal in _meals_named(clause, source=True):
             kind = _negation(clause, meal)
             (pos if kind is None else hard if kind == "hard" else weak).add(meal)
     return pos, hard, weak
@@ -630,7 +771,8 @@ def provided_meals(text: str) -> set[str]:
     for clause in _clauses(text):
         if _GENERIC_NEG_RE.search(clause):
             continue
-        out |= {m for m in _meals_named(clause) if _stated_as_provided(clause, m) and not _negated(clause, m)}
+        out |= {m for m in _meals_named(clause, source=True) if _stated_as_provided(clause, m)
+                and not _negated(clause, m)}
     return out
 
 
@@ -643,7 +785,7 @@ def structured_meals(text: str) -> Optional[set[str]]:
     out: set[str] = set()
     for clause in clauses:
         if _STRUCTURED_RE.search(clause) and not _GENERIC_NEG_RE.search(clause):
-            out |= {m for m in _meals_named(clause) if not _negated(clause, m)}
+            out |= {m for m in _meals_named(clause, source=True) if not _negated(clause, m)}
     return out
 
 
@@ -849,7 +991,7 @@ def _bare_meals_claim(sentence: str) -> bool:
     ("meals (breakfast and dinner) are provided", "Meals: B, L"), it refers to the day's list ("as listed"),
     it is negated or excluded ("No meals", "meals at your own expense"), or it is "picnic / evening / all meals"
     (read as named meals elsewhere)."""
-    for clause in _CLAUSE_SPLIT_RE.split(_AS_PER_ITINERARY_RE.sub(" ", sentence or "")):
+    for clause in _OUT_CLAUSE_SPLIT_RE.split(_AS_PER_ITINERARY_RE.sub(" ", sentence or "")):
         if not clause or _GENERIC_NEG_RE.search(clause) or _MEALS_REFERENCE_RE.search(clause):
             continue
         skip = [m.span() for m in _NOT_BARE_MEALS_RE.finditer(clause)]
@@ -864,6 +1006,31 @@ def _bare_meals_claim(sentence: str) -> bool:
     return False
 
 
+_TIME_MARKER_MEAL_RE = re.compile(
+    r"\b(?:after|before|following|until|till|since|post|pre)[\s\-]+(?:(?:a|an|the|your|our|their|early|late|"
+    r"leisurely|hearty|quick|light)\s+){0,2}" + _MEAL_WORD + r"\b", re.IGNORECASE)
+_OUT_EVERY_MEAL_RE = re.compile(r"\b(?:every|each)\s+(?:single\s+)?meal\b|\ball\s+(?:of\s+)?(?:the|your|our)\s+meals\b",
+                                re.IGNORECASE)
+_OUT_MEALTIME_RE = re.compile(r"\b(breakfast|lunch|dinner|supper)[\s\-]?times?\b", re.IGNORECASE)
+_MEALTIME_MEAL = {"breakfast": "breakfast", "lunch": "lunch", "dinner": "dinner", "supper": "dinner"}
+_PICNIC_MEAL_RE = re.compile(r"\b(?:picnic|packed)\s+meals?\b", re.IGNORECASE)
+
+
+def _out_meals_named(clause: str) -> set[str]:
+    """Output side: ``_meals_named``, except that a "picnic meal" / "packed meal" is the meal its time of day says
+    (review round 5: "In the evening, a picnic meal is served around a campfire" is dinner, "a packed meal for the
+    pre-dawn departure" breakfast), lunch only when no time of day is next to it."""
+    found = _meals_named(clause)
+    picnics = [m.span() for m in _PICNIC_MEAL_RE.finditer(clause)]
+    if not picnics:
+        return found
+    if all(any(a <= s and e <= b for a, b in picnics) for s, e in _explicit_spans(clause, "lunch")):
+        found.discard("lunch")              # lunch came only from the picnic / packed meal
+    for a, b in picnics:
+        found |= _noun_time(clause, a, b) or {"lunch"}
+    return found
+
+
 def claimed_meals(sentence: str) -> tuple[set[str], bool]:
     """(meals the output sentence claims as provided, generic_claim). A meal is dropped only on an explicit
     exclusion next to it ("Breakfast is included; lunch is at your own expense" claims breakfast only); any
@@ -871,15 +1038,22 @@ def claimed_meals(sentence: str) -> tuple[set[str], bool]:
     ``generic_claim`` is True when the sentence states meal logistics without naming a meal ("Meals
     included:")."""
     claimed: set[str] = set()
-    sentence_meal = bool(_ANY_MEAL_WORD_RE.search(sentence or ""))
+    # Review round 5: a meal word used as a time marker ("After breakfast, drive to Mai Chau, where a meal is served")
+    # is not the meal an untimed "a meal" restates.
+    sentence_meal = bool(_ANY_MEAL_WORD_RE.search(_TIME_MARKER_MEAL_RE.sub(" ", sentence or "")))
     for clause in _clauses(sentence, _OUT_EXCL_RE, out=True):
         if _GENERIC_NEG_RE.search(clause):
             # "No meals are included except breakfast": a meal named next to a generic "no meals" is claimed, and so
             # is a meal noun ("apart from a picnic provided for the walk", review round 4).
             claimed |= {m for m in MEALS if _explicit_spans(clause, m)} | _noun_meals(clause, sentence_meal)
             continue
-        claimed |= {m for m in _meals_named(clause) if not _out_excluded(clause, m)}
+        claimed |= {m for m in _out_meals_named(clause) if not _out_excluded(clause, m)}
         claimed |= _noun_meals(clause, sentence_meal)
+        # Review round 5: "every meal" / "each meal" is all three; "at lunchtime" / "at dinnertime" is that meal.
+        for rx, meals in ((_OUT_EVERY_MEAL_RE, ALL), (_OUT_MEALTIME_RE, None)):
+            for m in rx.finditer(clause):
+                if not _near_seg(clause, [m.span()], _OUT_EXCL_RE, OUT_WINDOW):
+                    claimed |= meals or {_MEALTIME_MEAL[m.group(1).lower()]}
     if _bare_meals_claim(sentence):
         claimed |= ALL
     generic = (not claimed and bool(_GENERIC_MEAL_RE.search(sentence)) and not _OUT_EXCL_RE.search(sentence)
@@ -916,7 +1090,28 @@ def _clock_times(text: str) -> set[str]:
     out |= {_hhmm(_hour(m.group(1)), m.group(2), m.group(3) is None or m.group(3).lower() != "morning")
             for m in _SPOKEN_TIME_RE.finditer(text)}
     out |= {re.sub(r"[\s'’]+", "", m.group(0).lower()) for m in _WORD_TIME_RE.finditer(text)}
+    # Review round 5: military "0630 hrs" and "19h" / "at 19" are 24-hour times; a bare hour after a preposition ("at
+    # 7", "at seven", "from 6") is a time too, kept as its own "~07" form (it matches only the same bare hour: the
+    # source's "at 7" is not "7 pm").
+    seen = [m.span() for rx in (_AMPM_RE, _H24_RE, _SPOKEN_TIME_RE, _WORD_TIME_RE) for m in rx.finditer(text)]
+    out |= {f"{m.group(1)}:{m.group(2)}" for m in _MILITARY_RE.finditer(text)}
+    for m in _BARE_HOUR_RE.finditer(text):
+        if any(a < m.end() and m.start() < b for a, b in seen):
+            continue
+        hour = _hour(m.group(1) or m.group(4))
+        if hour > 23:
+            continue
+        out.add(_hhmm(hour, m.group(2), None) if m.group(2) or m.group(3) or hour > 12 else f"~{hour:02d}")
     return out
+
+
+_MILITARY_RE = re.compile(r"(?<![\d:.,])([01]\d|2[0-3])([0-5]\d)\s*(?:hrs?|hours|h)\b", re.IGNORECASE)
+_TIME_PREP = r"\b(?:at|from|by|around|about|until|till|before|approx|approximately|circa)\s+"
+_BARE_HOUR_RE = re.compile(
+    _TIME_PREP + r"(?:(\d{1,2})(?:h?([0-5]\d)|(h\b|hrs?\b))?(?![\d,.:]\d)"
+    r"(?=\s*(?:$|[.,;:!?)\]\u2013\u2014]|(?:and|at|in|on|before|after|sharp|to|for|until|till|when|with)\b))"
+    r"|(" + _NUM_WORD_RE + r")(?=\s*(?:$|[.,;!?)\]]|(?:at|sharp|before|after)\b)))",
+    re.IGNORECASE)
 
 
 def _times_unsupported(sentence: str, scope: str) -> bool:
@@ -982,6 +1177,11 @@ def meal_claim_sourced(sentence: str, *, day_text: Optional[str], inclusions: st
     if _OTHER_DAY_RE.search(sentence) or (day is not None and _day_refs(sentence) - {day}):
         return False, "other_day_reference"    # "breakfast is provided again tomorrow": not this day's meal
     claimed, generic = claimed_meals(sentence)
+    if _MULTI_DAY_RE.search(sentence):
+        # Review round 5: "Breakfast is included every morning of the tour", "For the rest of the trek, lunch is
+        # served", "Two days later, dinner ...": the claim is about other days too, so only INCLUSIONS that cover
+        # every day can source it, never the one day the sentence is written under.
+        day_text, day = None, None
     cover = day_coverage(day_text, inclusions, exclusions, n_days, day)
     if not claimed:
         if generic and cover:
@@ -1079,6 +1279,41 @@ _MONTH_RE = re.compile(r"\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|
 
 
 _ALT_DAY_RE = re.compile(r"\b(?:alternative\w*|option(?:al)?|extension|extra|instead|or)\b", re.IGNORECASE)
+# Review round 5: on a header line, a version or season label marks another version of the day too.
+_VARIANT_RE = re.compile(
+    r"\b(?:alternative\w*|options?|extension|instead|plan|route|version|variant|"
+    r"season\w*|summer|winter|spring|autumn|monsoon|rainy|dry|wet|peak|"
+    r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|"
+    r"nov(?:ember)?|dec(?:ember)?)\b", re.IGNORECASE)
+# The day marker's separator: "Day 3:", "Day 3 -", "Day 3 (", "Day 3 |", "Day 3." (what makes the line a header).
+_MARKER_SEP_RE = re.compile(r"^[\s►▶•*#>\-–—·|]*days?\s*#?\s*\w+\b(?:\s*[-–—]\s*\d{1,3}\b)?[*\s]*([:\-–—|.(\[/])",
+                            re.IGNORECASE)
+
+
+def _squash(line: str) -> str:
+    return re.sub(r"\W+", "", (line or "").lower())
+
+
+def _header_like(line: str) -> bool:
+    """Review round 5: a "Day N" line that reads as a header: a separator after the number ("Day 3: Hue", "Day 3 -
+    Hue", "Day 3 (B, L)"), the number alone ("Day 1"), or a short title with no closing period ("Day One Notes",
+    "DAY 3 HALONG BAY"). "Day 3 begins with tai chi on the sundeck at dawn, so dinner tonight is served early." is a
+    sentence of the day before."""
+    from services.content_generation.day_parse import marker_match
+
+    stripped = (line or "").strip()
+    if _MARKER_SEP_RE.match(stripped):
+        return True
+    m = marker_match(stripped)
+    rest = stripped[m.end():] if m else stripped
+    return not rest or (len(rest.split()) <= 6 and not re.search(r"[.!?]\s*$", rest) and "," not in rest)
+
+
+def _titled_header(line: str) -> bool:
+    """A "Day N" header with a separator and a title after it ("Day 3: Thimphu - Punakha by the valley road")."""
+    stripped = (line or "").strip()
+    m = _MARKER_SEP_RE.match(stripped)
+    return bool(m) and bool(re.search(r"[A-Za-z]{3}", stripped[m.end():]))
 
 
 def _marker_runs(src_itin: str, blocks: dict[int, set[int]]) -> tuple[Optional[set[int]], dict[int, str]]:
@@ -1105,8 +1340,20 @@ def _marker_runs(src_itin: str, blocks: dict[int, set[int]]) -> tuple[Optional[s
     merged: dict[int, str] = {}
     for i, n in enumerate(firsts):
         if i and n == firsts[i - 1]:
-            if _ALT_DAY_RE.search(lines[markers[i][2]]):
+            j = i - 1
+            while j and firsts[j - 1] == n:
+                j -= 1                      # the first block of the run
+            first_line, line = lines[markers[j][2]], lines[markers[i][2]]
+            # Review round 5: another version of the day, labelled on either header ("Day 3 (Plan A)" / "Day 3 (Plan
+            # B)", "(summer)" / "(winter)", "Day 1 (winter schedule)"), or a second titled header ("Day 3: Thimphu -
+            # Punakha via Dochu La" then "Day 3: Thimphu - Punakha by the valley road"), is not the same day.
+            if (_ALT_DAY_RE.search(line) or any(_header_like(x) and _VARIANT_RE.search(x) for x in (line, first_line))
+                    or (_titled_header(line) and _squash(line) != _squash(first_line))):
                 bad.add(n)
+            # ... and a run whose first line is a body sentence ("Day 3 begins with tai chi at dawn, so dinner tonight
+            # is served early") is a preview inside the day before: neither day can be trusted.
+            if not _header_like(first_line):
+                bad |= {n} | ({firsts[j - 1]} if j else set())
             merged[n] = ""
         elif i and n < max(firsts[:i]) or n in firsts[:i]:
             bad |= {n, firsts[i - 1]}
@@ -1176,8 +1423,13 @@ def unit_meal_sourced(unit: dict, tour: dict, days: tuple[dict[int, str], bool],
     if (len(day_text_map) == 1 and all(last <= 1 for _f, last, _i in source_day_markers(src_itin))
             and out_max <= 1):
         # A one-day source (a day tour: no "Day N" marker past Day 1) and a one-day output: its whole text is
-        # that day, whatever the output calls it.
-        day_text: Optional[str] = next(iter(day_text_map.values()))
+        # that day, whatever the output calls it. Review round 5: unless it is written as several "Day 1" blocks that
+        # are not one day (an alternative or seasonal version, "Day 1 (alternative in the rainy season)"): the
+        # splitter keeps only the last block, so the same guard as on a multi-day tour applies.
+        untrusted, merged = _marker_runs(src_itin, _grouped_blocks(src_itin))
+        key = next(iter(day_text_map))
+        day_text: Optional[str] = (None if untrusted is None or untrusted
+                                   else merged.get(key) or day_text_map[key])
     elif used_fallback or day is None:
         day_text = None           # never guess which source day a sentence belongs to
     else:
