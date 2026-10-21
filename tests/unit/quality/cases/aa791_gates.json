@@ -1,0 +1,562 @@
+[
+ {
+  "id": "aa791-f6-1",
+  "class_id": "other.cta",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F6_cta_present",
+  "expected": "fire",
+  "note": "CTA is None",
+  "input": {
+   "aa791_case": "f6-1"
+  }
+ },
+ {
+  "id": "aa791-f6-2",
+  "class_id": "other.cta",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F6_cta_present",
+  "expected": "fire",
+  "note": "CTA is an empty string",
+  "input": {
+   "aa791_case": "f6-2"
+  }
+ },
+ {
+  "id": "aa791-f6-3",
+  "class_id": "other.cta",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F6_cta_present",
+  "expected": "fire",
+  "note": "CTA is whitespace only",
+  "input": {
+   "aa791_case": "f6-3"
+  }
+ },
+ {
+  "id": "aa791-f0-1",
+  "class_id": "struct.truncated",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F0_complete",
+  "expected": "fire",
+  "note": "ends mid-word",
+  "input": {
+   "aa791_case": "f0-1"
+  }
+ },
+ {
+  "id": "aa791-f0-2",
+  "class_id": "struct.truncated",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F0_complete",
+  "expected": "fire",
+  "note": "ends on a comma",
+  "input": {
+   "aa791_case": "f0-2"
+  }
+ },
+ {
+  "id": "aa791-f0-3",
+  "class_id": "struct.truncated",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F0_complete",
+  "expected": "fire",
+  "note": "ends with a stray backslash",
+  "input": {
+   "aa791_case": "f0-3"
+  }
+ },
+ {
+  "id": "aa791-f4-1",
+  "class_id": "other.length",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F4_extreme_length",
+  "expected": "fire",
+  "note": "facebook under 20 chars",
+  "input": {
+   "aa791_case": "f4-1"
+  }
+ },
+ {
+  "id": "aa791-f4-2",
+  "class_id": "other.length",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F4_extreme_length",
+  "expected": "fire",
+  "note": "facebook over 6,000 chars",
+  "input": {
+   "aa791_case": "f4-2"
+  }
+ },
+ {
+  "id": "aa791-f4-3",
+  "class_id": "other.length",
+  "severity": "block",
+  "writer": "T9_blog",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F4_extreme_length",
+  "expected": "fire",
+  "note": "blog under 4,700 chars",
+  "input": {
+   "aa791_case": "f4-3"
+  }
+ },
+ {
+  "id": "aa791-f11-1",
+  "class_id": "other.brand_name",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F11_brand_name",
+  "expected": "fire",
+  "note": "'At <other brand>, we'",
+  "input": {
+   "aa791_case": "f11-1"
+  }
+ },
+ {
+  "id": "aa791-f11-2",
+  "class_id": "other.brand_name",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F11_brand_name",
+  "expected": "fire",
+  "note": "'Here at <other brand>, our'",
+  "input": {
+   "aa791_case": "f11-2"
+  }
+ },
+ {
+  "id": "aa791-f11-3",
+  "class_id": "other.brand_name",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F11_brand_name",
+  "expected": "fire",
+  "note": "names the platform (Adventure Asia)",
+  "input": {
+   "aa791_case": "f11-3"
+  }
+ },
+ {
+  "id": "aa791-f10-1",
+  "class_id": "other.cannibalization",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F10_cannibalization_cross_tenant",
+  "expected": "fire",
+  "note": "0.93 similar, tenant has no brand rules",
+  "input": {
+   "aa791_case": "f10-1"
+  }
+ },
+ {
+  "id": "aa791-f10-2",
+  "class_id": "other.cannibalization",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F10_cannibalization_cross_tenant",
+  "expected": "fire",
+  "note": "0.97 similar",
+  "input": {
+   "aa791_case": "f10-2"
+  }
+ },
+ {
+  "id": "aa791-f10-3",
+  "class_id": "other.cannibalization",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F10_cannibalization_cross_tenant",
+  "expected": "fire",
+  "note": "0.99 similar (near-verbatim)",
+  "input": {
+   "aa791_case": "f10-3"
+  }
+ },
+ {
+  "id": "aa791-f2b-1",
+  "class_id": "other.brand_forbidden",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F2_brand_forbidden",
+  "expected": "fire",
+  "note": "forbidden single word",
+  "input": {
+   "aa791_case": "f2b-1"
+  }
+ },
+ {
+  "id": "aa791-f2b-2",
+  "class_id": "other.brand_forbidden",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F2_brand_forbidden",
+  "expected": "fire",
+  "note": "forbidden word, different case",
+  "input": {
+   "aa791_case": "f2b-2"
+  }
+ },
+ {
+  "id": "aa791-f2b-3",
+  "class_id": "other.brand_forbidden",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F2_brand_forbidden",
+  "expected": "fire",
+  "note": "forbidden multi-word phrase",
+  "input": {
+   "aa791_case": "f2b-3"
+  }
+ },
+ {
+  "id": "aa791-f2-1",
+  "class_id": "other.banned_pattern",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F2_banned_patterns",
+  "expected": "fire",
+  "note": "'unforgettable'",
+  "input": {
+   "aa791_case": "f2-1"
+  }
+ },
+ {
+  "id": "aa791-f2-2",
+  "class_id": "other.banned_pattern",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F2_banned_patterns",
+  "expected": "fire",
+  "note": "'hidden gem'",
+  "input": {
+   "aa791_case": "f2-2"
+  }
+ },
+ {
+  "id": "aa791-f2-3",
+  "class_id": "other.banned_pattern",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F2_banned_patterns",
+  "expected": "fire",
+  "note": "'embark on'",
+  "input": {
+   "aa791_case": "f2-3"
+  }
+ },
+ {
+  "id": "aa791-f13l-1",
+  "class_id": "struct.leaked_instruction",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F13_leak",
+  "expected": "fire",
+  "note": "'This guide covers' (unsafe to auto-delete)",
+  "input": {
+   "aa791_case": "f13l-1"
+  }
+ },
+ {
+  "id": "aa791-f13l-2",
+  "class_id": "struct.leaked_instruction",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F13_leak",
+  "expected": "fire",
+  "note": "source-notes wording ('content seed')",
+  "input": {
+   "aa791_case": "f13l-2"
+  }
+ },
+ {
+  "id": "aa791-f13l-3",
+  "class_id": "struct.leaked_instruction",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F13_leak",
+  "expected": "fire",
+  "note": "the SCOPE's day span",
+  "input": {
+   "aa791_case": "f13l-3"
+  }
+ },
+ {
+  "id": "aa791-f14-1",
+  "class_id": "other.first_line",
+  "severity": "block",
+  "writer": "T9_linkedin",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F14_first_line",
+  "expected": "fire",
+  "note": "first line 150+ chars",
+  "input": {
+   "aa791_case": "f14-1"
+  }
+ },
+ {
+  "id": "aa791-f14-2",
+  "class_id": "other.first_line",
+  "severity": "block",
+  "writer": "T9_linkedin",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F14_first_line",
+  "expected": "fire",
+  "note": "first line ~200 chars, one long sentence",
+  "input": {
+   "aa791_case": "f14-2"
+  }
+ },
+ {
+  "id": "aa791-f14-3",
+  "class_id": "other.first_line",
+  "severity": "block",
+  "writer": "T9_linkedin",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F14_first_line",
+  "expected": "fire",
+  "note": "long first line after leading blank lines (lesson S234 r3 #3)",
+  "input": {
+   "aa791_case": "f14-3"
+  }
+ },
+ {
+  "id": "aa791-f16-1",
+  "class_id": "other.faq_contract",
+  "severity": "block",
+  "writer": "T9_blog",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F16_faq",
+  "expected": "fire",
+  "note": "no FAQ section",
+  "input": {
+   "aa791_case": "f16-1"
+  }
+ },
+ {
+  "id": "aa791-f16-2",
+  "class_id": "other.faq_contract",
+  "severity": "block",
+  "writer": "T9_blog",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F16_faq",
+  "expected": "fire",
+  "note": "1 FAQ pair",
+  "input": {
+   "aa791_case": "f16-2"
+  }
+ },
+ {
+  "id": "aa791-f16-3",
+  "class_id": "other.faq_contract",
+  "severity": "block",
+  "writer": "T9_blog",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F16_faq",
+  "expected": "fire",
+  "note": "2 FAQ pairs",
+  "input": {
+   "aa791_case": "f16-3"
+  }
+ },
+ {
+  "id": "aa791-f6-ok",
+  "class_id": "other.cta",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F6_cta_present",
+  "expected": "no_fire",
+  "note": "clean twin",
+  "input": {
+   "aa791_case": "f6-ok"
+  }
+ },
+ {
+  "id": "aa791-f0-ok",
+  "class_id": "struct.truncated",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F0_complete",
+  "expected": "no_fire",
+  "note": "clean twin",
+  "input": {
+   "aa791_case": "f0-ok"
+  }
+ },
+ {
+  "id": "aa791-f4-ok",
+  "class_id": "other.length",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F4_extreme_length",
+  "expected": "no_fire",
+  "note": "clean twin",
+  "input": {
+   "aa791_case": "f4-ok"
+  }
+ },
+ {
+  "id": "aa791-f11-ok",
+  "class_id": "other.brand_name",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F11_brand_name",
+  "expected": "no_fire",
+  "note": "clean twin: the tenant's own name, and a place in 'At <place>, we'",
+  "input": {
+   "aa791_case": "f11-ok"
+  }
+ },
+ {
+  "id": "aa791-f10-ok",
+  "class_id": "other.cannibalization",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F10_cannibalization_cross_tenant",
+  "expected": "no_fire",
+  "note": "clean twin (no match over 0.92)",
+  "input": {
+   "aa791_case": "f10-ok"
+  }
+ },
+ {
+  "id": "aa791-f2b-ok",
+  "class_id": "other.brand_forbidden",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F2_brand_forbidden",
+  "expected": "no_fire",
+  "note": "clean twin: the forbidden word is in the source itself",
+  "input": {
+   "aa791_case": "f2b-ok"
+  }
+ },
+ {
+  "id": "aa791-f2-ok",
+  "class_id": "other.banned_pattern",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F2_banned_patterns",
+  "expected": "no_fire",
+  "note": "clean twin: the cliché is quoted from the source",
+  "input": {
+   "aa791_case": "f2-ok"
+  }
+ },
+ {
+  "id": "aa791-f13l-ok",
+  "class_id": "struct.leaked_instruction",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F13_leak",
+  "expected": "no_fire",
+  "note": "clean twin",
+  "input": {
+   "aa791_case": "f13l-ok"
+  }
+ },
+ {
+  "id": "aa791-f14-ok",
+  "class_id": "other.first_line",
+  "severity": "block",
+  "writer": "T9_linkedin",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F14_first_line",
+  "expected": "no_fire",
+  "note": "clean twin (short hook)",
+  "input": {
+   "aa791_case": "f14-ok"
+  }
+ },
+ {
+  "id": "aa791-f16-ok",
+  "class_id": "other.faq_contract",
+  "severity": "block",
+  "writer": "T9_blog",
+  "artefact": "output",
+  "chain": "gates",
+  "detector": "F16_faq",
+  "expected": "no_fire",
+  "note": "clean twin (3 FAQ pairs)",
+  "input": {
+   "aa791_case": "f16-ok"
+  }
+ }
+]

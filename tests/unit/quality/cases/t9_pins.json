@@ -1,0 +1,29 @@
+[
+ {
+  "id": "t9-clean-approved",
+  "class_id": "other.cta",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "t9",
+  "detector": "F6_cta_present",
+  "expected": "no_fire",
+  "note": "Regression pin (green on main): a clean synthetic Facebook draft is approved on attempt 1 with exactly one CTA line.",
+  "expect": {"status": "approved", "count_equals": {"cta": {"text": "Ask Druk Valley Journeys to plan this trip", "n": 1}}},
+  "input": {"base": "t9-fb-taktsang"}
+ },
+ {
+  "id": "t9-final-integrity-dup-cta",
+  "class_id": "other.cta",
+  "severity": "block",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "t9",
+  "detector": "F13_repeat",
+  "expected": "no_fire",
+  "note": "Regression pin (S234 r3 #12): the writer repeats the CTA; the CTA restore + final text-integrity pass leave one CTA line, so no duplicate ships and the piece is not held for it.",
+  "expect": {"status": "approved", "count_equals": {"cta": {"text": "Ask Druk Valley Journeys to plan this trip", "n": 1}}},
+  "input": {"base": "t9-fb-taktsang",
+            "draft": "Ask Druk Valley Journeys to plan this trip. Taktsang Monastery clings to a cliff above the Paro valley, and the hike up is on day two of the trip. Lunch is at the cafeteria viewpoint before the walk back to the valley floor. Ask Druk Valley Journeys to plan this trip."}
+ }
+]
