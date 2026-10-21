@@ -298,6 +298,9 @@ def _apply_schema(conn):
         # db_migrator -> cis_owner switch; as this superuser its cis_owner steps lack 245's grants).
         # test_aa847_migration_253 applies it that way, checks rows before / after and restores the replay state.
         and not f.startswith('253')
+        # AA-847: 256 (catalog views expose line places) needs 253; test_aa847_migration_256 applies both the
+        # DB Migrate way inside one transaction and rolls back.
+        and not f.startswith('256')
     ])
 
     for mf in migration_files:

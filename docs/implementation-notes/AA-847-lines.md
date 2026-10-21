@@ -100,6 +100,23 @@ Branches (stacked; the orchestrator merges in this order):
   spelling variant without OSM names) is left to the Problem 2 engine's model check (it runs on every pair it caps at
   `llm`); duplicating that step here would create a second judge.
 
+### Branch 3 `feat/aa-847-lines-views` (Migration B = CIS 256, on 2 + `feat/aa-847-places-l4` merged in)
+- **256, not 255+n shared with the probe**: the probe's "255+" view follow-ups are not written; whichever lands later
+  restates 256's bodies of `v_tour_place`, `v_tour_component`, `v_destination`, `_live_stop` and keeps the order.
+- **Bbox columns: COALESCE inside the view, NOT NULL in the table**: `place_shape.min_lat …` are NOT NULL (pending rows
+  carry the point), so COALESCE only covers destinations with no shape row (points). EXPLAIN as tripplanner shows the
+  tile bbox filter pushed into the destinations ⋈ place_shape join below the barrier, and NO photo LATERAL planned for
+  a read that selects no photo column (the S238 worry did not materialise: an unused one-row LATERAL is removed).
+- **`v_destination_shape` granted to tripplanner only** (Booking does not draw maps); `REVOKE ALL FROM PUBLIC`.
+  Rows for every usable line destination, also pending (shape NULL): the status tells the reader what to draw.
+- **`length_km` / `segment_km` cast to double precision in the views** (numeric in the tables): JSON numbers for
+  TripPlanner without Decimal handling.
+- **The 256 test applies 253 + 256 inside ONE transaction and rolls back** (as the superuser with `SET LOCAL ROLE
+  cis_owner` = DB Migrate's live-owner switch): appended columns cannot be dropped by CREATE OR REPLACE, so a
+  committed apply could not be restored for the later modules.
+- **The view reads of `v_tour_place` stay per `tour_id`** (TripPlanner's shape): a `source_id` filter is not pushable
+  through the row_number window (partition `tour_id, day_number`), unchanged since 253.
+
 ## Changed
 - `api/migrations/255_geo_place_shape.sql` (new) + `tests/integration/test_aa847_migration_255.py` (new).
 - `services/places/geomatch.py`: word lists, `LINE_CLASS_WORDS` / `line_class`, `linked_feature`.
@@ -129,6 +146,11 @@ Branches (stacked; the orchestrator merges in this order):
   Tests: `test_aa847_shape.py`, `test_aa847_shape_sources.py`, `test_aa847_shape_run.py`, `test_aa847_line_pairs.py`
   (unit, recorded-format fixtures `tests/unit/fixtures/aa847_shapes/`, no network), integration
   `test_aa847_place_shape.py` (255 CHECKs, store SQL, swap_graph → tour_segment, routes); `test_aa737` background set.
+
+- Branch 3: `api/migrations/256_catalog_line_places.sql` (new), `tests/integration/test_aa847_migration_256.py` (new),
+  conftest replay skips 256, CONTEXT.md (catalog line places). Root (`feat/aa-847-places-l4`): contracts
+  `catalog.tour.v1.2.json`, `catalog.graph.v1.2.json` + README registry, ADR 0007 amendment (precision line; lines
+  drawn; line duplicates merged automatically), two lessons, the ODbL note for Ms. Thư.
 
 ## Tradeoffs
 - `linked_feature` labelled set: 52 link + 31 keep phrases (83). Measured: **0 false links, 0 wrong features, 0 missed
@@ -168,4 +190,7 @@ Branches (stacked; the orchestrator merges in this order):
   geom_mid by LENGTH within 1 km; dedupe r1.4 says 60 % of geom_lo VERTICES → auto. Proposal: dedupe's step 2 calls
   `shape.same_line_place` for the auto-merge verdict and keeps its 30 % band for the model check; run both on
   `tests/unit/fixtures/aa847_line_pairs.json` before choosing.
+- Branch 3 order: 253 applied → 255 applied → 256 (Infra copy `feat/aa-847-cis-256-copy`) → the bot schema-reference
+  PR merged → then TripPlanner 6d may read the new columns. 256's closing check refuses when a row count of
+  `v_tour_place` / `v_tour_component` / `v_destination` changes or a bbox is NULL.
 
