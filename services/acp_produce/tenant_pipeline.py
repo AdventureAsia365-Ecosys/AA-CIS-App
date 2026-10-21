@@ -492,9 +492,13 @@ async def run_t3_qa_gate(
                         tenant_id=tenant_id)
         jev_errors: list[dict] = []
         grounding, cleared = await t3_jev_clear(grounding, tour_dict, tenant_id, jev_errors)   # AA-699 T3-1
+        # Counted, never held: T3's Jev only CLEARS numeric hits, so an outage keeps every hit (fail-closed) and
+        # the draft is repaired / escalated on them as before. A "hard" entry here would claim a hold nothing
+        # applies (review of PR 3). The severity Jev's mode implied is kept in the detail.
         for e in degraded.jev_entries(jev_errors, detail=T3_JEV_STAGE):
             t3_degraded = degraded.add(t3_degraded, e["name"], detector="t3_jev_clear", count=e["count"],
-                                       severity=e["severity"], detail=e["detail"])
+                                       severity="count",
+                                       detail=f"{e['detail']} (mode severity {e['severity']}; hits kept)")
         if cleared:
             jev_cleared += len(cleared)
             logger.info("t3_jev_cleared", attempt=attempt, cleared=len(cleared), kept=len(grounding),

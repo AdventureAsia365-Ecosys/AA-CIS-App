@@ -55,6 +55,31 @@ def test_cut_signature_catches_the_s2_shape():
     assert res.invariants() == ["no_truncation"]
 
 
+def test_cut_signature_catches_a_modifier_left_without_its_noun():
+    assert rc.cut_signature("Walk the old town with expert guides and a driver.", "Walk the old town with expert.")
+    assert rc.cut_signature("Start with a two-day trek to the lakes.", "Start with a two-day.")
+    # a number compound never ends a phrase, even before a phrase opener
+    assert rc.cut_signature("End with a 20-kilometre and quiet walk.", "End with a 20-kilometre.")
+
+
+@pytest.mark.parametrize("before, after", [
+    # the A1/T3 fact editor's "drop the unsupported detail": a trailing clause goes, the sentence stays whole
+    ("We visit Paro Dzong and hike for 3 hours to the monastery.", "We visit Paro Dzong."),
+    # an LLM meta trim before a phrase opener (AA-794 accepted it)
+    ("Four days in western Bhutan from Paro to Punakha with local guides and quiet lodges.",
+     "Four days in western Bhutan from Paro to Punakha with local guides."),
+    # a dropped trailing adverbial: the kept text does not end like a cut
+    ("Lunch is at the viewpoint above the valley every day.", "Lunch is at the viewpoint above the valley."),
+    # a predicative modifier before a clause opener
+    ("Our guides are local and know every trail.", "Our guides are local."),
+])
+def test_a_dropped_trailing_clause_is_not_a_cut(before, after):
+    assert rc.cut_signature(before, after) is None
+    assert rc.check({"summary": "This tour covers Bhutan. " + before},
+                    {"summary": "This tour covers Bhutan. " + after}).ok
+    assert rc.span_problems(before, after) == []
+
+
 def test_sentence_boundary_salvage_is_not_a_cut():
     before = "Four days in western Bhutan from Paro to Punakha. The pace suits first visits."
     after = "Four days in western Bhutan from Paro to Punakha."

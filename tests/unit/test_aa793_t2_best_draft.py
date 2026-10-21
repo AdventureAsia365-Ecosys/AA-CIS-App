@@ -440,7 +440,9 @@ async def test_job_result_records_the_chosen_draft_and_every_score():
               "best_draft_restored": True}
     qa = {"passed": True, "result": chosen, "attempts": 1, "structural_issues": [], "grounding_issues": [],
           "chosen_attempt": 1, "chosen_via": "sentence_repair", "sentence_repairs": 1,
-          "background_cleared": 0, "drafts": [{"attempt": 0, "score": 7.0}, {"attempt": 1, "score": 7.0}]}
+          "background_cleared": 0, "drafts": [{"attempt": 0, "score": 7.0}, {"attempt": 1, "score": 7.0}],
+          # AA-925: T3's degraded entries reach job.result
+          "degraded": [{"name": "jev_unavailable", "severity": "count", "detector": "t3_jev_clear", "count": 2}]}
     with patch("api.routers.v1_pipeline._rewrite_tour", AsyncMock(return_value=_res(GROUNDING_BAD, 7.0))), \
             patch("services.acp_produce.tenant_pipeline.run_t3_qa_gate", AsyncMock(return_value=qa)), \
             patch("services.seo_intelligence.s1_prefetch.tenant_market_seo", AsyncMock(return_value=("US", None))):
@@ -448,4 +450,5 @@ async def test_job_result_records_the_chosen_draft_and_every_score():
                                           "t-1", "v-1", "p-1")
     assert diag["t3"] == {"chosen_attempt": 1, "chosen_via": "sentence_repair", "drafts": qa["drafts"],
                           "sentence_repairs": 1, "background_cleared": 0,
-                          "graph_draft_scores": [{"attempt": 0, "score": 7.0}], "best_draft_restored": True}
+                          "graph_draft_scores": [{"attempt": 0, "score": 7.0}], "best_draft_restored": True,
+                          "degraded": qa["degraded"]}

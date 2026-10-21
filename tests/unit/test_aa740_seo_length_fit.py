@@ -127,3 +127,22 @@ def test_short_one_day_meta_gets_one_day_wording():
          "stopping at a family-run tea stall.")
     out = fit_seo_meta_final(m, {"duration": "1 day", "country": "Sri Lanka"})
     assert _ok(out) and "a one-day trip" in out and "1 days" not in out
+
+
+@pytest.mark.parametrize("duration, days", [("8 Nights", 9), ("2 weeks", 14)])
+def test_revalidate_fit_tail_with_a_derived_day_count_is_not_reverted(duration, days):
+    # AA-925 review: the fact tail states tour_days() of a nights-only / weeks duration ("8 nights" -> "over 9
+    # days"), a number the source never writes. The repair contract reads it as a derived source fact, so the
+    # fit is kept and META_TOO_SHORT does not keep blocking Master.
+    from services.content_generation import graph
+
+    short = ("Walk the tea hills, old temples and quiet villages of the island with a private guide, staying in "
+             "small lodges en route.")
+    assert len(short) < SEO_META_MIN
+    tour = {"duration": duration, "country": "Sri Lanka", "name": "Island Walk", "summary": "Tea hills."}
+    fitted = fit_seo_meta_final(short, {"duration": duration, "country": "Sri Lanka", "name": "Island Walk"})
+    assert f"{days}" in fitted and _ok(fitted)
+    state = {"tour": tour, "generated": {"seo_meta": fitted}}
+    out = graph._contract_after_edit(state, {"seo_meta": short}, detector="revalidate_fit")
+    assert out["generated"]["seo_meta"] == fitted
+    assert not out.get("degraded")

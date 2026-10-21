@@ -55,6 +55,24 @@
                 "content": {"seo_meta": "Four days in western Bhutan from the Paro valley to Punakha Dzong where two rivers meet, crossing Dochula Pass and ending with a 20-kilometre."}}]
  },
  {
+  "id": "a1-contract-grounding-clause-drop-kept",
+  "class_id": "struct.truncated",
+  "severity": "block",
+  "writer": "A1",
+  "artefact": "output",
+  "chain": "a1",
+  "detector": "repair_contract",
+  "expected": "no_fire",
+  "red_on_base": false,
+  "twin_of": "a1-contract-meta-cut-and-period",
+  "note": "Negative twin of the cut signature: the A1 fact editor drops an unsupported trailing clause ('and hikes for 5 hours to the Tiger's Nest' - the source gives no hiking time), as REPAIR_SYSTEM tells it to. The kept sentence is a word-prefix of the original closed with a period, but the first dropped word opens a clause and the kept text does not end like an S2 cut, so the repair is kept, the number violation is gone and the output is publishable.",
+  "expect": {"publishable": true, "observed_exclude": ["UNSUPPORTED_NUMBER"],
+             "field_equals": {"summary": "This tour covers the western valleys of Bhutan. It opens in Paro with its dzong and museum and crosses Dochula Pass to the river confluence at Punakha. It also climbs to Taktsang Monastery on its cliff."}},
+  "input": {"base": "a1-bhutan-4d",
+            "writer_patch": {"summary": "This tour covers the western valleys of Bhutan. It opens in Paro with its dzong and museum and crosses Dochula Pass to the river confluence at Punakha. It also climbs to Taktsang Monastery on its cliff and hikes for 5 hours to the Tiger's Nest."}},
+  "llm_stub": [{"stage": "s1_flag_fix", "content": {"1": "It also climbs to Taktsang Monastery on its cliff."}}]
+ },
+ {
   "id": "a1-fitter-long-meta-goes-to-llm",
   "class_id": "struct.truncated",
   "severity": "block",

@@ -1674,8 +1674,10 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     (`shared.job.result.degraded`), so A3 / ingestion / S1 prefetch outages are counted without their code.
   - **Repair contract** (`services/quality/repair_contract.py`): a repair may not fail a gate that passed,
     add a figure (or, for the grounding / T3 fact editors, a name) the text and source lack, cut a sentence
-    short (incl. the cut signature "…a 20-kilometre." that `meta_complete_sentence` accepts), touch an
-    unflagged field, or break a tag / bold / bracket pair. A violating field or sentence keeps its pre-repair
+    short (incl. the cut signature "…a 20-kilometre." that `meta_complete_sentence` accepts — a modifier left
+    without its noun; dropping a whole trailing clause before "and / with / to …" is the fact editor's job and
+    is kept), touch an unflagged field, or break a tag / bold / bracket pair. The fit's fact tail may state the
+    day count `tour_days()` derives ("8 nights" → 9 days). A violating field or sentence keeps its pre-repair
     text (soft `degraded: repair_contract`). Spliced at flag_fix (replaces the AA-641 per-field revert, same
     behaviour), the A1 grounding repair, revalidate's strip + fit, the T3 sentence repair + meta regenerate and
     T9 `splice_checked`. The T9 AA-528/AA-780 regression guard of full rewrites stays in

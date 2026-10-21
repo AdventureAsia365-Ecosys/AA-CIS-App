@@ -13,7 +13,27 @@
   (highlights without a period are not). The **cut signature** catches what `meta_complete_sentence` accepts
   on purpose (AA-794): the repaired text minus its final period is a strict word-prefix of the text before,
   cut where the original sentence did not end ("…a 20-kilometre." from "…a 20-kilometre walk…"). A
-  sentence-boundary salvage is not a signature.
+  sentence-boundary salvage is not a signature. **Review fix:** the first version flagged ANY word-prefix cut
+  closed with a period, which reverted the grounding fact editor's legitimate clause drop ("We visit Paro
+  Dzong." from "…Paro Dzong and hike for 3 hours…", what `REPAIR_SYSTEM` asks for) and an LLM meta trim before
+  "and". Now a signature also needs the S2 ending (`seo_meta_utils.meta_cut_signature`, imported lazily: a
+  number compound, a hyphenated / plain modifier, a weak ending) AND a first dropped word that does not open
+  a phrase (`_PHRASE_OPENERS`; a number compound is flagged even then). Negative unit tests + Q0 twin
+  `a1-contract-grounding-clause-drop-kept` (red on the first PR 3 commit, green now).
+- **revalidate_fit source includes the derived day count** (review fix): `_contract_after_edit` adds
+  `"<tour_days(duration)> days"` to the contract source, so the fact tail "over 9 days" of an "8 Nights" tour
+  (or 14 of "2 weeks") is a derived source fact, not `adds 9` — before, the fit was reverted and
+  META_TOO_SHORT kept blocking Master.
+- **T3 Jev outage = `count`** (review fix): T3's Jev only clears numeric hits, an outage keeps every hit and
+  nothing holds the output, so the entry is counted (`severity="count"`, the mode's severity in the detail).
+  `_t3_outcome["degraded"]` now reaches `job.result.t3.degraded` (`t2_rewrite_job` diag) — before it was only
+  in the `quality_degraded` log event.
+- **Log event**: flag_fix's revert logs `flag_fix_repair_contract_revert` with `invariants=[…]` (was the AA-641
+  `flag_fix_introduced_forbidden`, misleading for a figure / cut / bracket revert). No metric filter or alarm
+  reads the old name (checked Infra + docs). `_revert_introduced_forbidden` stays only as the AA-641 test pin.
+- **Q0 harness files need `q0-relabel`** (review fix): `q0_red_on_base.py` also fails without the label when
+  `tests/unit/quality/chain.py` or `test_q0_corpus.py` differ from the base (`HARNESS_FILES`) — they decide
+  what a label means. PR 3 changes `chain.py` (the `jev: "none"` stub), so PR 3 itself needs the label.
 - **Names are checked only where a repair should only remove**: the A1 grounding fact editor and the T3
   sentence repair. flag_fix rewrites whole fields for brand reasons and the writer policy allows background
   about a named place, so flag_fix / the itinerary nudge / the meta regenerate check numbers only
@@ -86,6 +106,11 @@
   `test_aa729_golden_set` (+ degraded / INVALID / stage tests), `quality/test_chain_order` (the post-validate
   repair now lives in `_grounding_recheck`; the A1 / T9 holds are the last step).
 
+- Review-fix tests: `test_repair_contract` (S2 shapes still caught; 4 clause-drop negatives through
+  `cut_signature`, `check` and `span_problems`), `test_aa740_seo_length_fit` (derived day count kept),
+  `test_aa794_seo_meta_cut_country` (T3 Jev outage counted), `test_aa793_t2_best_draft` (`t3.degraded` in
+  job.result), `test_red_on_base_script` (harness change needs the label).
+
 ## Tradeoffs
 
 - **Reverses AA-770** for one case: an F9 outage now holds (admin label). Review load goes up during an
@@ -101,8 +126,19 @@
   both).
 - Not spliced (see Decisions): T9 truth cuts and FAQ regeneration — their own gates already re-run.
 
+- **Phrase-opener exemption can miss** a cut that happens to stop before "and/with/…" while the kept text
+  ends on a modifier ("…with expert and …" → "…with expert."): accepted — such a source sentence is rare and
+  the alternative reverted every valid clause drop. A number compound is flagged regardless.
+
 ## Should know
 
+- **PR 3 body must state** (review): partial coverage of scope item 1 — invariant 1 in flag_fix runs only the
+  forbidden-word scan (length / sentence / MISSING_FIELD and other validate gates are not re-run per field;
+  revalidate re-runs them on the whole output), and the T9 truth cuts + `_enforce_faq_contract` are outside
+  the contract; the fitter revert criterion (Tradeoffs) and that removing the AA-740 clause cut sends every
+  one-sentence over-long meta to an LLM call (A1 flag_fix / T3 meta regenerate) — check it in the AA-729
+  after-run; that `test_s218_hard_code_repair` now accepts a `review:` repair path (DEGRADED_DETECTOR only);
+  and the exact D-item of the D1–D11 approval that allows the T9 F9 outage hold (reverses AA-770).
 - PR 3 is stacked on PR 2 (`feat/aa-925-day-oracle`), which is stacked on PR 1. After PR 2's squash merge:
   `git rebase --onto origin/main <PR2 tip> feat/aa-925-repair-contract`.
 - Red on base: the 7 new positive cases (`a1-degraded-*-hold` ×3, `a1-contract-flagfix-adds-figure`,

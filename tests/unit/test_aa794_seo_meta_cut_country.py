@@ -161,6 +161,29 @@ async def test_t3_meta_regenerate_that_adds_a_figure_is_refused():
     assert [d["name"] for d in out["degraded"]] == ["repair_contract"]
 
 
+@pytest.mark.asyncio
+async def test_t3_jev_outage_is_counted_not_hard():
+    # AA-925 review: T3's Jev only clears numeric hits, so an outage keeps every hit (fail-closed) and nothing
+    # holds the output — the entry is "count", not "hard". It reaches the outcome (job.result diag t3).
+    from services.acp_produce import tenant_pipeline as tp
+    hit = {"field": "summary", "sentence": "Walk 12 km.", "novel_numbers": ["12"]}
+
+    async def jev_down(grounding, tour_dict, tenant_id, errors=None):
+        errors.extend({"mode": "enforce"} for _ in grounding)
+        return grounding, []
+
+    result = {"generated": {"summary": "Walk 12 km.", "seo_meta": _REGEN_META}}
+    with patch("api.routers.v1_pipeline._rewrite_tour", AsyncMock()), \
+            patch.object(tp, "_t3_structural_issues", return_value=[]), \
+            patch.object(tp, "_t3_grounding_check", return_value=[hit]), \
+            patch.object(tp, "t3_jev_clear", side_effect=jev_down):
+        out = await tp.run_t3_qa_gate({"name": "Sri Lanka Coast", "country": "Sri Lanka",
+                                       "duration": "10 Days"}, ["no numbers"], result, {}, tenant_id="t1",
+                                      max_repairs=0)
+    assert out["passed"] is False and out["grounding_issues"] == [hit]
+    assert [(d["name"], d["severity"]) for d in out["degraded"]] == [("jev_unavailable", "count")]
+
+
 def test_graph_fit_passes_the_tour_name():
     from services.content_generation.graph import _apply_seo_meta_fit
     gen = {"seo_meta": "A 12-day family cycling journey from Luang Prabang to Hanoi, covering the Nam Ou gorge, "

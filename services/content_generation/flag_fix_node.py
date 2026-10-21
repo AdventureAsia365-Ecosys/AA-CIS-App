@@ -453,9 +453,16 @@ def _contract_revert(before: dict, after: dict, keys, forbidden, tour: dict) -> 
     return reverted
 
 
+def _invariants(reverted: dict) -> list[str]:
+    """The invariant names of a ``_contract_revert`` result (AA-925: the log event says which rule reverted the
+    field — the AA-641 ``flag_fix_introduced_forbidden`` event only ever meant a forbidden word)."""
+    return sorted({why.split(":", 1)[0] for whys in reverted.values() for why in whys})
+
+
 def _revert_introduced_forbidden(before: dict, after: dict, keys, forbidden) -> dict:
     """AA-641: restore, per field, the pre-repair value of any field whose repair ADDED a forbidden
-    word it did not have before. Mutates `after`; returns {field: [words added]}. A field that
+    word it did not have before. AA-925: production uses ``_contract_revert`` (same rule as invariant 1);
+    this stays as the reference the AA-641 tests pin. Mutates `after`; returns {field: [words added]}. A field that
     already contained the word keeps its repair (the repair did not make it worse)."""
     reverted = {}
     for k in keys:
@@ -527,8 +534,8 @@ def flag_fix_node(state: dict) -> dict:
                 )
                 if itin_reverted:
                     contract_reverts.update(itin_reverted)
-                    logger.warning("flag_fix_introduced_forbidden", fields=itin_reverted,
-                                   tour=current_content.get("name"))
+                    logger.warning("flag_fix_repair_contract_revert", fields=itin_reverted,
+                                   invariants=_invariants(itin_reverted), tour=current_content.get("name"))
                 else:
                     current_content["itineraries"] = new_itinerary
                     applied_fields.add("itineraries")
@@ -656,7 +663,8 @@ Keep all other fields unchanged."""
         # bracket broken → the field keeps its pre-repair value). seo_meta is checked after its band guard below.
         reverted = _contract_revert(current_content, new_generated, set(fix_keys) - {"seo_meta"}, forbidden, tour)
         if reverted:
-            logger.warning("flag_fix_introduced_forbidden", fields=reverted, tour=current_content.get("name"))
+            logger.warning("flag_fix_repair_contract_revert", fields=reverted, invariants=_invariants(reverted),
+                           tour=current_content.get("name"))
 
         # AA-205: deterministic post-repair band guard for seo_meta (no pad, no escalate).
         # LLM repair can overshoot under SEO_META_MIN (e.g. 132). AA-215 revalidate re-runs

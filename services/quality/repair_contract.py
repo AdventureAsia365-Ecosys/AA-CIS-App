@@ -14,9 +14,10 @@ replaced sentence (T9 sentence repair):
                           source gives.
 3. ``no_truncation``    — the field still ends as a complete sentence when it did before: terminal punctuation,
                           no "…", no trailing connector, and no **cut signature** (the repaired text minus its
-                          final period is a strict word-prefix of the text before, cut mid-sentence —
-                          "…a 20-kilometre." from "…a 20-kilometre walk.", which ``meta_complete_sentence``
-                          accepts on purpose, AA-794).
+                          final period is a strict word-prefix of the text before, cut mid-phrase where a
+                          modifier lost its noun — "…a 20-kilometre." from "…a 20-kilometre walk.", which
+                          ``meta_complete_sentence`` accepts on purpose, AA-794). Dropping a whole trailing
+                          clause ("…Paro Dzong." from "…Paro Dzong and hike for 3 hours…") is not a cut.
 4. ``scope_kept``       — only the flagged fields (A1 / T3) change.
 5. ``tags_balanced``    — ``[R:…]``/``[F:…]`` tags, ``**`` and brackets stay balanced when they were.
 
@@ -105,9 +106,25 @@ def ends_complete(text: str) -> bool:
     return not (words and words[-1].lower() in _CONNECTORS)
 
 
+# A cut right before one of these drops a whole trailing phrase or clause ("…Paro Dzong and hike for 3 hours…"
+# → "…Paro Dzong."): the A1/T3 fact editor is told to "drop the unsupported detail", and AA-794 accepted a meta
+# trimmed before a phrase opener. Not a truncation.
+_PHRASE_OPENERS = frozenset({
+    "and", "or", "but", "with", "while", "to", "for", "in", "on", "at", "from", "via", "including", "where",
+    "which", "who", "that", "then", "before", "after", "as", "by", "along", "through", "across", "into", "over",
+    "past", "plus", "so", "when", "until", "between", "around", "near", "under", "above", "beyond", "during",
+})
+
+
 def cut_signature(before: str, after: str) -> Optional[str]:
-    """Why ``after`` looks like ``before`` cut mid-sentence and closed with a period, or None. A cut at a
-    sentence boundary (``_salvage_to_band``) is not a signature: the word before the cut ended a sentence."""
+    """Why ``after`` looks like ``before`` cut mid-phrase and closed with a period (the S2 shape), or None.
+
+    All of: ``after`` minus its final period is a strict word-prefix of ``before``; the original sentence did
+    not end at the cut (a sentence-boundary salvage, ``_salvage_to_band``, is fine); the kept text ends the
+    way an S2 cut does (``seo_meta_utils.meta_cut_signature``: a number compound, a hyphenated or plain
+    modifier that needs its noun, or a weak ending); and — except after a number compound, which never ends
+    a phrase — the first dropped word does not open a new phrase or clause (a clause drop is the edit the
+    fact editor is asked to make)."""
     b, a = _words(before), _words(after)
     if not a or not b or len(a) >= len(b):
         return None
@@ -117,9 +134,16 @@ def cut_signature(before: str, after: str) -> Optional[str]:
     a_core = a[:-1] + [last[:-1]]
     if a_core != b[: len(a_core)]:
         return None
-    if re.search(r"[.!?][\"'’”)\]]*$", b[len(a_core) - 1]):
-        return None     # the original sentence ended there: a sentence-boundary salvage
-    return f"cut after '{a_core[-1]}' (dropped '{' '.join(b[len(a_core):len(a_core) + 3])}…')"
+    if re.search(r"[.!?,;:][\"'’”)\]]*$", b[len(a_core) - 1]):
+        return None     # the original sentence (or clause) ended there: a boundary salvage or a clause drop
+    from services.content_generation.seo_meta_utils import meta_cut_signature  # lazy: keeps load-time pure
+    shape = meta_cut_signature(" ".join(a_core) + ".")
+    if not shape:
+        return None
+    first_dropped = re.sub(r"^[^\w]+|[^\w]+$", "", b[len(a_core)]).lower()
+    if first_dropped in _PHRASE_OPENERS and not shape.startswith("number compound"):
+        return None
+    return f"cut after '{a_core[-1]}' ({shape}; dropped '{' '.join(b[len(a_core):len(a_core) + 3])}…')"
 
 
 def balanced(text: str) -> bool:

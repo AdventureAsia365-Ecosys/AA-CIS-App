@@ -24,7 +24,7 @@ from .t2_repair import (
     increment_retry_t2, restore_best_node, revise_block, targeted_repair_enabled, track_best_node,
 )
 from .seo_meta_utils import (SEO_META_MIN, SEO_META_MAX, meta_complete_sentence, SEO_META_FORBIDDEN,
-                             fit_seo_meta_final, fit_seo_title, meta_cut_signature)
+                             fit_seo_meta_final, fit_seo_title, meta_cut_signature, tour_days)
 from services.quality import day_oracle, degraded, repair_contract
 from .forbidden_words import (VALIDATE_FORBIDDEN, all_forbidden as all_forbidden_words, copy_text, has_word,
                               state_forbidden)
@@ -1122,8 +1122,14 @@ def _contract_after_edit(state: ContentState, before: dict, *, detector: str) ->
     after = state.get("generated")
     if not isinstance(after, dict):
         return state
-    kept, res = repair_contract.enforce_fields(before, after, source=grounding_source_text(state.get("tour") or {}),
-                                               names=False)
+    tour = state.get("tour") or {}
+    source = grounding_source_text(tour)
+    # The fit's fact tail states the day count tour_days() derives ("8 nights" -> "over 9 days", "2 weeks" ->
+    # 14): a derived fact of the source, not a new specific (review of PR 3).
+    days = tour_days(tour.get("duration"))
+    if days:
+        source += f"\n{days} days"
+    kept, res = repair_contract.enforce_fields(before, after, source=source, names=False)
     if res.ok:
         return state
     after.clear()
