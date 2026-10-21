@@ -61,8 +61,9 @@ def test_point_distance_rule_never_merges_a_line():
     a = v.Place("m1", "Mekong River", "Laos", 19.89, 102.13, "geoapify", "line")
     b = v.Place("m2", "Mekong", "Laos", 19.89, 102.13, "llm", "line")
     c = v.Place("m3", "Mekong River", "Laos", 19.89, 102.13, "geoapify", "point")
-    assert v.is_same_place(a, b) == (False, None)
-    assert v.is_same_place(a, c) == (False, None)
+    # AA-847 Problem 2: the report's rule is dedupe.decide — lines without a drawn shape are at most the model's call
+    assert v.is_same_place(a, b)[0] is False
+    assert v.is_same_place(a, c)[0] is False
     assert v.clusters([a, b, c]) == []
 
 

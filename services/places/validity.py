@@ -3,8 +3,9 @@
 A pre-flip gate for TripPlanner's PLACES_SOURCE=cis (ADR 0007 decision 10) and a standing check after every
 tour_graph_build (its counts land in geo.graph_build.stats['validity'], so /admin/places shows a trend). Every item
 carries a REASON code from a fixed taxonomy (below) so the counts are comparable run to run; the same-place rule (V2)
-is pinned by a labelled keep / merge pair set in tests/unit/test_aa847_validity.py, with false merges measured
-(lesson S245 / AA-779: a wrong merge is the costly error).
+is services/places/dedupe.decide (the one decision the place_dedupe job, the in-tour dedupe and this report share),
+pinned by the labelled pair sets in tests/unit/test_aa847_dedupe.py and tests/unit/test_aa847_validity.py, with false
+merges measured (lesson S245 / AA-779: a wrong merge is the costly error).
 
 Checks (per live tour; the v_tour liveness rule on the base tables, read as cis_app with the AA master tenant named
 explicitly — cis_app's RLS policies are USING (true)):
@@ -18,9 +19,10 @@ explicitly — cis_app's RLS policies are USING (true)):
      extra_days              more itinerary days than duration_days
   V2 same place repeated within one tour:
      same_destination_names  one destination under ≥ 2 component spellings (name_norm)
-     near_duplicate          two destinations of the same country with the same distinctive name (tokens after
-                             generic words, or the same letters run together: "Kuangsi" = "Kuang Si"), ≤ 2 km apart,
-                             ≤ 5 km when either point is the model's (llm) or an area
+     near_duplicate          two destinations the same-place rules merge (services/places/dedupe.py, auto_merge) that
+                             are not merged yet — the place_dedupe job clears them (AA-847 Problem 2)
+     possible_duplicate      two destinations the rules leave to the two-model check (dedupe llm band) and that are
+                             not merged: informational, nobody acts on it (owner decision S246: no manual merges)
   V3 not a pin — a linear or area feature stored as a point (geomatch.feature_kind, name + Geoapify result_type):
      linear_feature          trail / river / road / loop … NOT stored as a line (geo_precision point / area): drawn
                              as a pin or a circle today. Owner decision S246: lines are drawn as lines, so the fix
@@ -34,14 +36,13 @@ explicitly — cis_app's RLS policies are USING (true)):
 """
 from __future__ import annotations
 
-import math
 import re
 import unicodedata
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
 from services.places import days as days_mod
-from services.places import geomatch
+from services.places import dedupe, geomatch
 
 MASTER_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 
@@ -49,7 +50,7 @@ V1, V2, V3, V4 = "duration", "same_place", "not_a_pin", "day_text"
 CHECKS = (V1, V2, V3, V4)
 REASONS = {
     V1: ("ranged_heading", "missing_day_numbers", "duration_text_vs_days", "extra_days"),
-    V2: ("same_destination_names", "near_duplicate"),
+    V2: ("same_destination_names", "near_duplicate", "possible_duplicate"),
     V3: ("linear_feature", "area_feature", "linear_without_shape"),
     V4: ("no_day_text", "day_text_not_naming"),
 }
@@ -65,61 +66,6 @@ REASONS = {
 GATE_REASONS = ("near_duplicate", "linear_feature", "area_feature", "linear_without_shape")
 # geo.place_shape statuses TripPlanner draws as a line (approximate: dashed, labelled "approximate route")
 DRAWN_SHAPE_STATUSES = ("ok", "manual", "approximate")
-
-NEAR_KM = 2.0
-NEAR_KM_LOOSE = 5.0
-# Words that name a kind of place in the languages of the catalog, not one place (Lao wat / tat / that / phou / nam /
-# ban, Vietnamese chua / den / ho / nui / song …): two different temples 1 km apart share "wat", not a name.
-# The local words are split from the English ones: a local kind word is often run together with the name in one
-# spelling and not in the other ("Phousi" = "Phou Si"), so the run-together comparison keeps the local words.
-LOCAL_KIND_WORDS = frozenset({
-    "wat", "vat", "ban", "tat", "that", "phou", "phu", "nam", "huay", "xe", "chua", "den", "thap", "cau", "nui", "ho",
-    "song", "doi", "khao", "ko", "koh", "phra", "tham", "pha", "muang", "mueang"})
-ENGLISH_KIND_WORDS = frozenset({
-    "mt", "mount", "hill", "hills", "old", "town", "national", "central", "great", "grand", "big", "small", "upper",
-    "lower", "north", "south", "east", "west", "night", "market", "museum", "palace", "royal", "garden", "gardens",
-    "square", "bridge"})
-SAME_PLACE_GENERIC = LOCAL_KIND_WORDS | ENGLISH_KIND_WORDS
-
-# Kind of place a name says it is (English and local words; geomatch.tokens drops some of these — falls, cave, lake,
-# river, temple … — so the kinds are read from the raw words). Two names that say different kinds are two places even
-# with the same distinctive name: "Long Bien Bridge" / "Long Bien Market", "Hoan Kiem Lake" / "Hoan Kiem Night
-# Market", "Ben Thanh Market" / "Ben Thanh Night Market", "Mount Phousi" / "Phousi Market" (review S246). Synonyms
-# share a kind ("Tat Kuang Si" = "Kuang Si Falls", "Mount Phousi" = "Phou Si Hill"). A kind only ever keeps two names
-# apart, so a missing synonym costs a missed merge, never a wrong one. Local words that also start proper names (ho:
-# Ho Chi Minh, ban: Ban Gioc, phu: Phu Quoc, khao: Khao Sok) are left out: they would only cause missed merges.
-_KIND_OF_WORD = {
-    **dict.fromkeys(("falls", "fall", "waterfall", "waterfalls", "cascade", "cascades", "tat", "thac"), "waterfall"),
-    **dict.fromkeys(("cave", "caves", "grotto", "tham"), "cave"),
-    **dict.fromkeys(("mount", "mt", "mountain", "mountains", "hill", "hills", "peak", "phou", "nui", "doi"),
-                    "mountain"),
-    **dict.fromkeys(("lake", "pond", "lagoon", "reservoir"), "lake"),
-    **dict.fromkeys(("river", "stream", "nam", "song", "xe", "huay"), "river"),
-    **dict.fromkeys(("island", "islands", "isle", "ko", "koh"), "island"),
-    **dict.fromkeys(("village",), "village"),
-    **dict.fromkeys(("valley",), "valley"),
-    **dict.fromkeys(("pass",), "pass"),
-    **dict.fromkeys(("beach",), "beach"),
-    **dict.fromkeys(("park",), "park"),
-    **dict.fromkeys(("town", "city", "muang", "mueang"), "town"),
-    **dict.fromkeys(("market", "markets", "cho"), "market"),
-    **dict.fromkeys(("bridge", "cau"), "bridge"),
-    **dict.fromkeys(("museum",), "museum"),
-    **dict.fromkeys(("palace",), "palace"),
-    **dict.fromkeys(("garden", "gardens"), "garden"),
-    **dict.fromkeys(("square",), "square"),
-    **dict.fromkeys(("temple", "temples", "wat", "vat", "chua", "den", "pagoda", "monastery", "shrine"), "temple"),
-    **dict.fromkeys(("stupa", "that", "thap"), "stupa"),
-    **dict.fromkeys(("street", "road", "trail"), "street"),
-    **dict.fromkeys(("wall", "gate", "fort", "citadel"), "fort"),
-    **dict.fromkeys(("statue", "monument", "memorial", "mausoleum", "tomb"), "monument"),
-}
-# Kinds whose bare name usually IS the feature ("Hoan Kiem" = Hoan Kiem Lake, "Kuang Si" = the falls): one side
-# naming such a kind and the other none can be one place. Every other kind is a built place inside a town or
-# district of the same name ("Luang Prabang Night Market" is not "Luang Prabang", "Long Bien Bridge" is not the Long
-# Bien district): a bare name never merges with it.
-BARE_NAME_KINDS = frozenset({"waterfall", "cave", "mountain", "lake", "river", "island", "village", "valley", "pass",
-                             "beach", "park", "town"})
 
 _DURATION_RE = re.compile(r"(\d+)\s*-?\s*days?")
 _CANONICAL_RE = re.compile(r"(?:^|\n)Day\s+(\d+)\s+—")
@@ -171,57 +117,8 @@ def _strip(s: str) -> str:
     return s.replace("đ", "d").replace("Đ", "D")
 
 
-def distinctive_tokens(name: Optional[str]) -> list[str]:
-    """geomatch tokens (feature words such as falls / cave / lake dropped) minus SAME_PLACE_GENERIC, in order."""
-    return [t for t in geomatch.tokens(name or "") if t not in SAME_PLACE_GENERIC]
-
-
-def place_kinds(name: Optional[str]) -> frozenset[str]:
-    """The kinds of place a name says it is (see _KIND_OF_WORD). "night market", "old town" / "old quarter" /
-    "ancient town" and "national park" are kinds of their own: a night market is not the day market next to it, an
-    old town is not the town."""
-    words = re.findall(r"[a-z0-9]+", _strip((name or "").lower()))
-    out = {_KIND_OF_WORD[w] for w in words if w in _KIND_OF_WORD}
-    pairs = set(zip(words, words[1:]))
-    if ("night", "market") in pairs or ("night", "markets") in pairs:
-        out.discard("market")
-        out.add("night_market")
-    if pairs & {("old", "town"), ("old", "quarter"), ("ancient", "town"), ("old", "city")}:
-        out.discard("town")
-        out.add("old_town")
-    if ("national", "park") in pairs:
-        out.discard("park")
-        out.add("national_park")
-    return frozenset(out)
-
-
-def same_kind(a: Optional[str], b: Optional[str]) -> bool:
-    """The two names can be one place by kind: both name the same kinds, or one names none and the other only kinds
-    whose bare name is the feature (BARE_NAME_KINDS)."""
-    ka, kb = place_kinds(a), place_kinds(b)
-    if ka and kb:
-        return ka == kb
-    return (ka or kb) <= BARE_NAME_KINDS
-
-
-def same_name(a: Optional[str], b: Optional[str]) -> bool:
-    """The same distinctive name of the same kind: equal token sets, or the same letters run together ("Kuangsi" /
-    "Kuang Si"; "Mount Phousi" / "Phou Si Hill", compared with the local kind words kept), and no different kinds
-    ("Long Bien Bridge" is not "Long Bien Market"). A name with no distinctive token never matches."""
-    ta, tb = distinctive_tokens(a), distinctive_tokens(b)
-    if not ta or not tb or not same_kind(a, b):
-        return False
-    if set(ta) == set(tb) or "".join(ta) == "".join(tb):
-        return True
-    ra, rb = (["".join(t for t in geomatch.tokens(x or "") if t not in ENGLISH_KIND_WORDS)] for x in (a, b))
-    return ra[0] == rb[0] and len(ra[0]) >= 4
-
-
 def km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dp, dl = p2 - p1, math.radians(lng2 - lng1)
-    h = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
-    return 2 * 6371.0 * math.asin(min(1.0, math.sqrt(h)))
+    return dedupe.km(lat1, lng1, lat2, lng2)
 
 
 @dataclass(frozen=True)
@@ -237,59 +134,62 @@ class Place:
     result_type: Optional[str] = None
     components: int = 0           # live components on it (keeper choice)
     shape_status: Optional[str] = None   # geo.place_shape.status of a line destination (None: no row)
+    place_id: Optional[str] = None       # geocoder_place_id
+    geocoder_name: Optional[str] = None  # geocoder_meta ->> 'name'
+    geo_status: Optional[str] = None
+
+
+def to_row(p: Place) -> dedupe.Row:
+    """The dedupe row of a report place (no shape geometry here: two lines are never auto-merged by the report)."""
+    return dedupe.Row(p.destination_id, p.name, p.country or "", float(p.lat), float(p.lng),
+                      located_by=p.located_by, geo_status=p.geo_status, precision=p.precision,
+                      result_type=p.result_type, geocoder_name=p.geocoder_name, place_id=p.place_id,
+                      components=p.components)
+
+
+def pair_decision(a: Place, b: Place) -> dedupe.Decision:
+    """AA-847 Problem 2: the one same-place decision (services/places/dedupe.decide), rules band."""
+    return dedupe.decide(to_row(a), to_row(b))
 
 
 def is_same_place(a: Place, b: Place) -> tuple[bool, Optional[float]]:
-    """(same, km): same country, same distinctive name, within NEAR_KM (NEAR_KM_LOOSE when either is llm / area).
-    AA-847: never for a line destination — a point distance means nothing for a river ("Mekong" and "Mekong River"
-    can be geocoded 100 km apart and be one place); lines are matched on their shapes (services/places/line_dedupe)."""
+    """(same, km): the rules alone say one place (dedupe auto_merge). The pairs the rules send to the two-model check
+    are possible_duplicate, never near_duplicate."""
     if a.destination_id == b.destination_id:
         return True, 0.0
-    if "line" in (a.precision, b.precision):
-        return False, None
-    if (a.country or "").strip().lower() != (b.country or "").strip().lower():
-        return False, None
-    if not same_name(a.name, b.name):
-        return False, None
-    d = km(a.lat, a.lng, b.lat, b.lng)
-    loose = any(p.located_by == "llm" or p.precision == "area" for p in (a, b))
-    return d <= (NEAR_KM_LOOSE if loose else NEAR_KM), round(d, 2)
+    dec = pair_decision(a, b)
+    return dec.decision == dedupe.AUTO, dec.km
 
 
 def keeper_of(places: Iterable[Place]) -> Place:
-    """One keeper per cluster: a geocoder-confirmed point first, then the most live components, then the id."""
-    return sorted(places, key=lambda p: (p.located_by != "geoapify", -p.components, p.destination_id))[0]
+    """The cluster keeper by the dedupe order (manual, Geoapify POI, settlement, card, components, age, id)."""
+    places = list(places)
+    by_id = {p.destination_id: p for p in places}
+    return by_id[dedupe.keeper_of([to_row(p) for p in places]).id]
 
 
 def clusters(places: list[Place]) -> list[list[Place]]:
-    """Groups of ≥ 2 distinct destinations that are the same place (pairwise rule, single link inside one tour or
-    one country; the group is cut where a member is not the same place as the keeper — no chaining across)."""
+    """Groups of ≥ 2 distinct destinations the rules merge ([keeper, member, …]): dedupe.plan_country, rules band —
+    the same keeper, no chaining and the group-level clash rule (lesson S239) as the place_dedupe job."""
     by_id = {p.destination_id: p for p in places}
-    parent = {i: i for i in by_id}
-
-    def find(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    ids = sorted(by_id)
-    for i, a in enumerate(ids):
-        for b in ids[i + 1:]:
-            if is_same_place(by_id[a], by_id[b])[0]:
-                parent[find(a)] = find(b)
+    plan = dedupe.plan_country([to_row(p) for p in places], rules_only=True)
     groups: dict[str, list[Place]] = {}
-    for i in ids:
-        groups.setdefault(find(i), []).append(by_id[i])
+    for m in plan.merges:
+        groups.setdefault(m["keeper_id"], [by_id[m["keeper_id"]]]).append(by_id[m["merged_id"]])
+    return [groups[k] for k in sorted(groups)]
+
+
+def possible_pairs(places: list[Place]) -> list[tuple[Place, Place, dedupe.Decision]]:
+    """Pairs the rules leave to the two-model check (dedupe llm band): informational possible_duplicate."""
     out = []
-    for g in groups.values():
-        if len(g) < 2:
-            continue
-        k = keeper_of(g)
-        members = [k] + [p for p in g if p is not k and is_same_place(k, p)[0]]   # group-level rule (lesson S239)
-        if len(members) >= 2:
-            out.append(members)
+    ps = sorted(places, key=lambda p: p.destination_id)
+    for i, a in enumerate(ps):
+        for b in ps[i + 1:]:
+            dec = pair_decision(a, b)
+            if dec.decision == dedupe.LLM:
+                out.append((a, b, dec))
     return out
+
 
 
 def v3_reason(p: Place) -> Optional[str]:
@@ -389,13 +289,22 @@ def evaluate(tours: list[dict], components: list[dict]) -> list[Item]:
                 places.setdefault(d, Place(d, c.get("destination_name") or c["name"], c.get("country"),
                                            float(c["lat"]), float(c["lng"]), c.get("located_by"), c.get("precision"),
                                            c.get("review_reason"), c.get("result_type"), comp_count.get(d, 0),
-                                           c.get("shape_status")))
+                                           c.get("shape_status"), c.get("place_id"), c.get("geocoder_name"),
+                                           c.get("geo_status")))
+        grouped: set = set()
         for group in clusters(list(places.values())):
             k = group[0]
             dist = max(is_same_place(k, p)[1] or 0.0 for p in group[1:])
             items.append(Item(V2, "near_duplicate", names=[p.name for p in group],
                               destination_ids=[p.destination_id for p in group], keeper_id=k.destination_id,
                               km=dist, **base))
+            grouped.update(p.destination_id for p in group)
+        for a, b, dec in possible_pairs(list(places.values())):
+            if a.destination_id in grouped and b.destination_id in grouped:
+                continue
+            items.append(Item(V2, "possible_duplicate", names=[a.name, b.name],
+                              destination_ids=[a.destination_id, b.destination_id], km=dec.km, detail=dec.reason,
+                              **base))
         # V3: per destination, once per tour. A linear feature is flagged while it is not stored as a line (a pin or
         # a circle at a trail's centroid); a line while its shape is not drawable; an area feature while it is stored
         # as a point.
@@ -480,7 +389,8 @@ LIVE_TOURS_SQL = """
 COMPONENTS_SQL = """
     SELECT gp.source_id, gp.day_index, gp.name, gp.name_norm, gp.destination_id::text AS destination_id,
            d.name AS destination_name, d.country, d.lat, d.lng, d.located_by, d.geo_precision AS precision,
-           d.review_reason, d.geocoder_meta ->> 'result_type' AS result_type, ps.status AS shape_status
+           d.review_reason, d.geocoder_meta ->> 'result_type' AS result_type, ps.status AS shape_status,
+           d.geocoder_place_id AS place_id, d.geocoder_meta ->> 'name' AS geocoder_name, d.geo_status
       FROM geo.tour_place gp
       JOIN shared.destinations d ON d.id = gp.destination_id
                                 AND d.geo_status <> 'suspect' AND d.duplicate_of IS NULL

@@ -92,6 +92,83 @@ LINE_CLASS_WORDS = {
     "trail": frozenset({"trail", "path", "circuit", "loop", "route", "lane"}),
 }
 
+# AA-847 (dedupe) — the KIND of place an English word names, the one class map behind the duplicate-place decision
+# (services/places/dedupe.py) and the validity report. Words of one class are synonyms ("falls" = "waterfall",
+# "pagoda" = "temple"); a kind only ever keeps two names apart or sends the pair to the model, so a missing synonym
+# costs a missed merge, never a wrong one. Every word of FEATURE_WORDS / LINEAR_FEATURE_WORDS / AREA_FEATURE_WORDS /
+# POINT_ON_FEATURE_WORDS that names a kind has a class here (tests/unit/test_aa847_dedupe.py checks it, so the
+# lexicons cannot drift); the local words (wat, tat, tham, ho, cho …) are dedupe's own table.
+_KIND_CLASSES = {
+    "waterfall": ("falls", "fall", "waterfall", "waterfalls", "cascade", "cascades"),
+    "cave": ("cave", "caves", "grotto"),
+    "mountain": ("mount", "mt", "mountain", "mountains", "hill", "hills", "peak", "volcano", "crater"),
+    "glacier": ("glacier",),
+    "rock": ("rock", "rocks"),
+    "lake": ("lake", "pond", "lagoon", "reservoir", "tso"),
+    "river": ("river", "stream", "creek", "waterway"),
+    "island": ("island", "islands", "isle"),
+    "village": ("village",),
+    "valley": ("valley",),
+    "pass": ("pass",),
+    "beach": ("beach",),
+    "bay": ("bay",),
+    "reef": ("reef", "reefs"),
+    "estuary": ("estuary",),
+    "spring": ("spring", "springs"),
+    "park": ("park",),
+    "gorge": ("gorge", "canyon"),
+    "delta": ("delta",),
+    "plateau": ("plateau", "highlands"),
+    "coast": ("coast", "coastline"),
+    "archipelago": ("archipelago",),
+    "market": ("market", "markets", "bazaar"),
+    "bridge": ("bridge",),
+    "museum": ("museum",),
+    "palace": ("palace",),
+    "garden": ("garden", "gardens"),
+    "square": ("square",),
+    "tunnel": ("tunnel", "tunnels"),
+    "dam": ("dam",),
+    "tower": ("tower",),
+    "ruins": ("ruins",),
+    "rapids": ("rapids",),
+    "port": ("pier", "jetty", "port", "harbour", "harbor"),
+    "station": ("station",),
+    "temple": ("temple", "temples", "pagoda", "monastery", "gompa", "shrine", "sanctuary"),
+    "church": ("church", "mosque", "cathedral"),
+    "stupa": ("stupa", "chedi", "zedi"),
+    "fort": ("wall", "gate", "fort", "fortress", "citadel", "dzong"),
+    "monument": ("statue", "monument", "memorial", "mausoleum", "tomb", "cemetery"),
+    "viewpoint": ("viewpoint", "lookout"),
+    "lodging": ("hotel", "lodge", "resort", "homestay", "guesthouse", "camp"),
+    "farm": ("farm", "dairy"),
+    "facility": ("center", "centre", "headquarters", "hq", "visitor", "school", "restaurant", "cafe"),
+    "town": ("town",),
+    # linear kinds (their geometry class is LINEAR; the class is the subtype a merge must share)
+    "road": ("road", "highway", "street", "avenue", "boulevard", "lane", "expressway", "route", "loop"),
+    "trail": ("trail", "path", "trek", "circuit"),
+    "rail": ("railway", "railroad"),
+    "canal": ("canal",),
+    # an AREA kind since the lines lane (S246 review): a range is not a line a traveller follows
+    "range": ("range",),
+}
+KIND_OF_WORD: dict[str, str] = {w: k for k, ws in _KIND_CLASSES.items() for w in ws}
+# Two-word kinds, read before single words (both words consumed): a night market is not the day market next to it, an
+# old town is not the town, a national park is not a park.
+PHRASE_KINDS: dict[tuple[str, str], str] = {
+    ("night", "market"): "night_market", ("night", "markets"): "night_market", ("night", "bazaar"): "night_market",
+    ("floating", "market"): "floating_market",
+    ("old", "town"): "old_town", ("old", "quarter"): "old_town", ("ancient", "town"): "old_town",
+    ("old", "city"): "old_town",
+    ("national", "park"): "national_park", ("marine", "park"): "national_park",
+    ("nature", "reserve"): "reserve", ("wildlife", "sanctuary"): "reserve", ("protected", "area"): "reserve",
+    ("biosphere", "reserve"): "reserve",
+    ("imperial", "city"): "fort", ("forbidden", "city"): "fort", ("city", "palace"): "palace",
+    ("hot", "spring"): "spring", ("hot", "springs"): "spring",
+}
+# Subtype of a linear place by kind class: a merge of two linear places needs the same subtype (road ≠ trail ≠ river).
+LINEAR_SUBTYPES = frozenset({"river", "road", "trail", "rail", "canal"})
+
 
 def feature_kind(name: Optional[str], result_type: Optional[str] = None) -> Optional[str]:
     """'linear' | 'area' | None (a point). Name words first; the geocoder's result_type only confirms a street."""

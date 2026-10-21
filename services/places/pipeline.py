@@ -141,10 +141,10 @@ async def extract_tour_places(pool, tour: dict, deps: ExtractDeps, *, force: boo
     name_rows = list({r[:3]: r for r in new_rows}.values())
     comp_dest = {cid: card_dest.get(cid) or dest_by_key.get(k) for cid, k in comp_keys.items()}
     night_dest = {d: dest_by_key.get(k) if k else None for d, k in anchor_keys.items()}
-    # AA-847 in-tour dedupe: two destinations of this tour that are one place (validity V2, e.g. "Kuang Si Falls"
-    # and "Tat Kuang Si" 300 m apart) → every component and night of this tour uses the cluster's keeper. Component
-    # ids are unchanged (they come from the itinerary spelling); the other tours and the destinations are untouched
-    # (a catalog-wide merge is the admin fix on /admin/places, with an audit row and undo).
+    # AA-847 in-tour dedupe: two destinations of this tour that the same-place rules merge (dedupe.decide auto_merge,
+    # e.g. "Kuang Si Falls" and "Tat Kuang Si" 300 m apart) → every component and night of this tour uses the
+    # cluster's keeper. Component ids are unchanged (they come from the itinerary spelling); the other tours and the
+    # destinations are untouched (the catalog-wide merge is the place_dedupe job, logged in geo.place_merge).
     async with pool.acquire() as conn:
         remap = await _in_tour_keepers(conn, set(comp_dest.values()) | set(night_dest.values()), comps, comp_dest)
     if remap:
@@ -226,8 +226,9 @@ async def _validity_counts(conn) -> dict:
 
 
 async def _in_tour_keepers(conn, dest_ids: set, comps: list, comp_dest: dict) -> dict[str, str]:
-    """{non-keeper destination id: keeper id} among one tour's linked destinations (validity.clusters)."""
-    from services.places import validity
+    """{non-keeper destination id: keeper id} among one tour's linked destinations: the same-place decision of the
+    place_dedupe job (services/places/dedupe.in_tour_remap), rules band only — the model band waits for place_dedupe."""
+    from services.places import dedupe
     briefs = await store.destination_briefs(conn, {d for d in dest_ids if d})
     if len(briefs) < 2:
         return {}
@@ -236,17 +237,20 @@ async def _in_tour_keepers(conn, dest_ids: set, comps: list, comp_dest: dict) ->
         d = comp_dest.get(c.component_id)
         if d:
             n_comp[str(d)] = n_comp.get(str(d), 0) + 1
-    places = [validity.Place(i, b["name"], b["country"], float(b["lat"]), float(b["lng"]), b["located_by"],
-                             b["geo_precision"], b["review_reason"], b["result_type"], n_comp.get(i, 0))
-              for i, b in briefs.items() if b.get("lat") is not None and b.get("lng") is not None]
-    remap, pairs = {}, []
-    for group in validity.clusters(places):
-        for p in group[1:]:
-            remap[p.destination_id] = group[0].destination_id
-            pairs.append(f"{p.name} -> {group[0].name}")
-    if pairs:
+    rows = [dedupe.Row(i, b["name"], b["country"], float(b["lat"]), float(b["lng"]), name_norm=b.get("name_norm"),
+                       locality_norm=b.get("locality_norm") or "", located_by=b["located_by"],
+                       geo_status=b.get("geo_status"), precision=b["geo_precision"], result_type=b["result_type"],
+                       geocoder_name=b.get("geocoder_name"), place_id=b.get("geocoder_place_id"),
+                       components=n_comp.get(i, 0),
+                       created_at=b["created_at"].isoformat() if b.get("created_at") else "")
+            for i, b in briefs.items() if b.get("lat") is not None and b.get("lng") is not None]
+    remap = dedupe.in_tour_remap(rows)
+    if remap:
         # no audit row (the tour's own rows are rebuilt each run); the pairs are logged so a wrong merge is traceable
-        logger.info("place_in_tour_duplicates_merged", pairs=pairs[:20], n=len(pairs))
+        names = {r.id: r.name for r in rows}
+        pairs = [f"{names[m]} -> {names[k]}" for m, k in sorted(remap.items())]
+        logger.info("place_in_tour_duplicates_merged", pairs=pairs[:20], n=len(pairs),
+                    rule_version=dedupe.RULE_VERSION)
     return remap
 
 

@@ -1,54 +1,87 @@
-# AA-847 — Problem 2: automatic duplicate-place merge (design, S246)
+# AA-847 — Problem 2: automatic duplicate-place merge (S246)
 
-Design only, no code in this repo yet. Full design, prototype and labelled pair set: root
-`docs/audits/2026-10-21-S246-aa847/dedupe/` (`README.md`, `dedupe_proto.py`, `pairs.json`, `eval-r1.2*.txt`).
-Kept in its own notes file so parallel AA-847 lanes do not edit the same file (lesson S242).
+Design: root `docs/audits/2026-10-21-S246-aa847/dedupe/` (`README.md`, `dedupe_proto.py`, `pairs.json`) and the
+revised plan of the skeptic pass (S246, 12 changes: id evidence no longer bypasses the caps, migration 256, line
+overlap, undo by relink, group-level clash rule, keeper order, no new embedding table, two-model agreement, full
+recompute, allow-list table, breaker outside the approved diff, TripPlanner redirect). Kept in its own notes file so
+parallel AA-847 lanes do not edit the same file (lesson S242). Stacked on `feat/aa-847-place-shape` (migration 255,
+`geo_precision 'line'`, `geo.place_shape`).
 
 ## Decisions
-- **Owner decision S246 (2):** duplicates are merged automatically; the admin fix (`validity_fix` duplicate_place)
-  stays as an override, not the normal path.
-- **One decision function** `services/places/dedupe.decide(a, b)` → `auto_merge` / `llm` / `keep`, used by the new
-  `place_dedupe` job, by the in-tour dedupe in `place_extract` (rules band only) and by validity V2. Order: hard keeps
-  (country, number / qualifier differs, kind matrix incl. town vs landmark, kind radius) → id evidence (same
-  `geocoder_place_id`, same place card) → score name × kind × distance (+ Geoapify evidence, + embedding) with
-  thresholds 0.80 / 0.30; ambiguous name or kind relations are capped at the LLM band.
-- **Kind words are no longer dropped from the name:** a name made only of kind / weak words ("Royal Palace") keeps
-  them as its identity; kinds are hard (English) or soft (local words that also start proper names).
-- **"Town vs landmark never merge" needs the settlement status**, not only the name: overnight stop
-  (`geo.tour_day.overnight_destination_id`), Geoapify `result_type='city'`, or a town word = hard settlement; `suburb` /
-  `district` = soft (goes to the LLM, because "Ben Thanh" may be geocoded to the ward while the tours mean the market).
-- **Middle band → one cached model call**, stage `a3_place_dedupe`, role **`validate`** (not `judge`: judges must be
-  non-Anthropic, ADR 0006 §5 / ADR 0008; this check is scored by nobody), haiku primary, `gpt-6-luna` fallback, through
-  `LLMClient.generate` (one `llm_call_log` row per call). Merge only on `same` with confidence ≥ 0.8; `unsure` keeps
-  the places (no human queue). Cache `geo.place_pair_verdict` keyed by an input hash; undo / admin pins are sticky.
-- **Reversible:** `geo.place_merge` log (every factor, every repointed row, chain flattening), undo by merge id with
-  drift check (409) and a `different` pin; hard-rule re-check of old merges each run; circuit breaker per country.
-- **TripPlanner old ids:** new `catalog.v_destination_redirect` (merged id → keeper) instead of writing TripPlanner rows.
+- **Owner decisions S246:** (1) lines are drawn, so two lines are merged on their geometry; (2) duplicates are merged
+  automatically; the admin duplicate fix stays as an override, not the normal path.
+- **One decision function** `services/places/dedupe.decide(a, b, ctx)` → `auto_merge` / `llm` / `keep` (rule
+  `r1.4`), used by the `place_dedupe` job, by the in-tour dedupe of `place_extract` (`in_tour_remap`, rules band only)
+  and by the validity report (`validity.is_same_place` / `clusters` delegate to it; V2 `near_duplicate` = an
+  auto_merge pair not merged yet, new informational `possible_duplicate` = an llm pair).
+- **Id evidence is an input, not a verdict (§0.1).** A shared `geocoder_place_id` auto-merges only when both
+  results are POI / natural (`amenity`, `building`, `unknown` — Geoapify returns peaks and lakes as `unknown`), the
+  names are exact / fuzzy and no cap applies; otherwise a shared POI object sends the pair to the model (the model is
+  told). A shared admin-area id (city / suburb / district …) is no evidence at all. The same place card follows the
+  same rule.
+- **"Precision mismatch" cap = geometry class mismatch** (point / area / line from the stored line or
+  `geomatch.feature_kind`), not the `geo_precision` column: `area` there also means "the model's own point", and
+  capping every confirmed point vs model point would cap the core in-tour case (Kuang Si Falls / Tat Kuang Si).
+- **Lines (§0.3):** two lines with drawn shapes (`ok` / `manual`) are decided on `geom_lo`: the same OSM object
+  with a related name, or ≥ 60 % of the shorter line's vertices within 1 km of the other with an exact / fuzzy
+  name → auto; ≥ 30 % → llm; else a SOFT keep (two stretches of one river that only touch can both merge into the
+  river). A line without a drawn shape (pending, approximate) and a point vs a line go through the point rules with a
+  50 km radius and are capped at llm (`shape_not_drawn`, `geometry_mismatch`, `linear_point_radius`). Two lines of
+  different subtypes (river / road / trail / rail / canal) are a hard keep. `range` is an area since the lines lane.
+- **Keeper order (§0.6):** manual > an existing keeper (never swapped out) > a line with an ok shape, the longest
+  first (the whole river, not a stretch), then any line > a Geoapify point that is not an admin area > a Geoapify
+  settlement > a card > most live components > oldest > id. Length is my addition: among several drawn lines of one
+  river the whole feature must be the keeper.
+- **Group-level rule (§0.5, lesson S239):** a member merges only on its own edge with the keeper; no pair in the
+  merged set may be a hard-rule keep or a `different` verdict / pin — including the rows already merged into the
+  keeper or into a member (else a clash could be bypassed over two runs). The cluster is cut to its largest
+  consistent subset (exact up to 12 members, greedy beyond) and the cut members are reported as conflicts. A soft
+  keep (low score) does not block: the plan's "(hard rule, LLM verdict or pin)".
+- **Embedding (§0.7):** no new table and no paid call — the job reads the max cosine between the two destinations'
+  `geo.tour_place.embedding` rows; it only promotes a soft keep (≤ 1 km, compatible kinds, cosine ≥ 0.8) to llm.
+- **LLM band (§0.8):** primary `a3_place_dedupe` (GPT-6 Luna, Bedrock acc3) asked A/B and B/A, then
+  `a3_place_dedupe_check` (Claude Haiku 4.5, acc3); merge only when all three answer `same` with confidence ≥ 0.8.
+  The final verdict is `different` when any answer said different (it blocks clusters), else `unsure`. Calls stop at
+  the first non-agreeing answer.
 
 ## Changed
-- Nothing in this repo yet. Planned: `services/places/dedupe.py` (new), `validity.is_same_place` and
-  `pipeline._in_tour_keepers` delegate to it, `validity_fix` duplicate_place writes `geo.place_merge`, new job kind
-  `place_dedupe`, migration ≥ 255 (two geo tables + `geo.destination_vector` + stage row + spend budget row + redirect
-  view), `/admin/places` Merges tab, `tests/unit/test_aa847_dedupe.py` (the 105-pair set; the 22 pairs of
-  `test_aa847_validity.py` are a subset and keep their expected results).
-- Versus the brief: the LLM stage is `validate`, not `judge` (vendor rule); the decision mode is a CIS runtime setting
-  (`off | dry_run | apply`, default `dry_run`), not a new environment variable.
+- `services/places/dedupe.py` r1.4 (new), `tests/unit/test_aa847_dedupe.py` (89 tests),
+  `tests/unit/fixtures/aa847_dedupe_pairs.json` (134 pairs: + 4 revised-plan adversarial keeps, + 10 homonym keeps).
+- `services/places/geomatch.py`: one kind-class map (`KIND_OF_WORD`, `PHRASE_KINDS`, `LINEAR_SUBTYPES`) shared by
+  dedupe; `rapids` class; `range` no longer a linear subtype.
+- `services/places/validity.py`: the old same-place lexicon (`same_name`, `place_kinds`, `NEAR_KM` …) is gone; V2
+  delegates to dedupe; `Place` carries `place_id`, `geocoder_name`, `geo_status`; reason `possible_duplicate` (not a
+  gate reason). `pipeline._in_tour_keepers` → `dedupe.in_tour_remap`; `store.destination_briefs` returns the extra
+  columns. `tests/unit/test_aa847_lines.py::test_point_distance_rule_never_merges_a_line` checks `[0]` only (the km is
+  now returned).
+- Versus the plan: the rules-recall gate of §6.1 (≥ 0.75) is not met — see Tradeoffs; the CI floor pins the measured
+  0.68.
 
 ## Tradeoffs
-- Rules alone: precision 1.000, recall 0.764 (42/55), 0 false merges also with metadata stripped (0.709 / 0.636
-  recall). Recall ≥ 0.9 only with the LLM band (0.982 if the model answers the 13 band pairs right). Pushing more pairs
-  into the rules (e.g. bare name within 100 m of a built place) would raise recall on this set but would merge "Long
-  Bien" (district) into the bridge — the ambiguity is real, so the model reads the day text.
-- A kind only keeps names apart or sends them to the model: a missing synonym costs a model call or a missed merge,
-  never a wrong merge.
-- Linear features use a 50 km point radius until Problem 1 stores a line; then line-to-line ≤ 1 km.
+- **Offline evaluation, rules r1.4, 134 pairs (61 merge / 73 keep), $0:**
+
+  | Run | Auto precision | Rules recall | False merges | LLM band merge / keep | Recall if the check is right |
+  |---|---|---|---|---|---|
+  | Full metadata | 1.000 | 0.689 (42/61) | 0 | 17 / 6 | 0.967 |
+  | No ids, no stops, no cards | 1.000 | 0.689 | 0 | 14 / 5 | 0.918 |
+  | All points the model's | 1.000 | 0.623 | 0 | 18 / 15 | 0.918 |
+  | Every Geoapify row on one city id | 1.000 | 0.066 | 0 | 52 / 15 | 0.918 |
+  | No shapes | 1.000 | 0.623 | 0 | 19 / 5 | 0.934 |
+
+  Rules recall is 0.689, below the plan's 0.75: the plan's own §0.1 moves the three cross-language pairs that r1.2
+  merged on a shared Geoapify id (Van Mieu / Temple of Literature, Wat Arun / Temple of Dawn, Tiger's Nest / Paro
+  Taktsang) to the model, and the caps it lists (soft settlement, heritage museum, bare far, geometry) hold the rest.
+  I did not loosen a rule to reach the number (lesson 125). Recall if the two-model check answers the band right:
+  0.967. Missed by everything offline: Temple of Literature / Van Mieu - Quoc Tu Giam (needs the embedding promotion,
+  not evaluated offline) and Nam Ou / Nam Ou River without shapes (116 km, never merged on points — by design).
+- The six keep pairs in the band (Long Bien / Long Bien Bridge ×2, Hoan Kiem / Hoan Kiem Lake on the suburb id, Lao Cai
+  / Lao Chai 2.7 km, Dhammayangyi / Dhammayazika model point, Cu Chi / Cu Chi Tunnels model point) are what the
+  two-model check must answer `different` / `unsure`: the paid measurement run (§6.2) measures exactly this.
+- One pair (Hoan Kiem / Hoan Kiem Lake on one suburb id) is gated in the full-metadata run only: without the suburb
+  result it is the s246 merge pair "bare name of a lake" — the label needs the metadata.
 
 ## Should know
-- **The pair set is author-labelled; 79 of 105 pairs are constructed** (real places, approximate coordinates), and
-  three rule fixes followed the first run (r1 → r1.2). Before `apply` is switched on: the paid measurement run (≈ $0.11,
-  Haiku + Luna, 75 calls each) and a blind sample of ≥ 60 Dev pairs from a `dry_run` on Laos + Vietnam, labelled by an
-  agent panel without seeing the decision.
-- The strongest signal is `geocoder_place_id`: with ids stripped, the cross-language pairs (Van Mieu, Wat Arun,
-  Tiger's Nest) are missed. Never clear it on re-locate; the embedding candidate rule covers rows without it.
-- `place_geocode` stays the only writer of coordinates; `place_dedupe` writes `duplicate_of` and the repoints; both
-  take one advisory lock. ADR 0007 needs the amendment proposed in the design §8.4.
+- **The pair set is still author-labelled** (79 constructed pairs from r1.2, + 24 review / skeptic / homonym pairs I
+  or the review built). Before `apply`: the paid measurement run and a blind ≥ 60-pair sample of a Laos + Vietnam dry
+  run (plan §6.2 / §6.3).
+- `geocoder_place_id` is the strongest signal — never clear it on re-locate.

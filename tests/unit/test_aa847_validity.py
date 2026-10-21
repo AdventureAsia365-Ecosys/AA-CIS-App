@@ -102,13 +102,29 @@ def test_keeper_prefers_a_confirmed_point_then_components():
 
 
 def test_clusters_do_not_chain_through_a_third_place():
-    """A ~ B and B ~ C but A !~ C: the group keeps only members that are the same place as the keeper."""
+    """A ~ B and B ~ C but A !~ C: the group keeps only members that are the same place as the keeper (AA-847
+    Problem 2: the rule is dedupe.plan_country — near_duplicate = what the rules alone merge)."""
     a = P("a", "Kuang Si Falls", "Laos", 19.7490, 101.9935, "geoapify", "point", components=5)
-    b = P("b", "Kuang Si", "Laos", 19.7490, 102.0120, "llm", "area")         # ~2 km from a (loose: llm)
-    c = P("c", "Kuang Si", "Laos", 19.7490, 102.0560, "llm", "area")         # ~4.5 km from b, ~6.5 km from a
+    b = P("b", "Kuang Si", "Laos", 19.7490, 101.9960, "llm", "area")         # ~0.3 km from a
+    c = P("c", "Kuang Si", "Laos", 19.7490, 102.0120, "llm", "area")         # ~1.7 km from b, ~1.9 km from a
+    assert v.is_same_place(b, c)[0] and not v.is_same_place(a, c)[0]
     groups = v.clusters([a, b, c])
     assert groups and groups[0][0].destination_id == "a"
     assert "c" not in [p.destination_id for p in groups[0]]
+
+
+def test_a_pair_left_to_the_model_is_a_possible_duplicate_not_a_gate_item():
+    """Ben Thanh Market / Ben Thanh (bare name vs a built place) is the two-model check's call: informational."""
+    tours = [{"source_id": "s1", "tour_id": "t1", "title": "Saigon", "country": "Vietnam", "duration_raw": "1 day",
+              "itinerary": "Day 1 — Saigon\nShop at Ben Thanh Market, then Ben Thanh at night."}]
+    comps = [_comp("s1", 1, "Ben Thanh Market", "d1", "Ben Thanh Market", 10.7725, 106.6980),
+             {**_comp("s1", 1, "Ben Thanh", "d2", "Ben Thanh", 10.7726, 106.6981, "llm", "area"),
+              "country": "Vietnam"}]
+    comps[0]["country"] = "Vietnam"
+    items = v.evaluate(tours, comps)
+    assert [i.reason for i in items] == ["possible_duplicate"]
+    assert v.summarize(tours, items)["catalog"]["gate"]["pass"] is True
+    assert "possible_duplicate" not in v.GATE_REASONS
 
 
 # ── V1 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────

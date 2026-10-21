@@ -736,7 +736,8 @@ async def destination_briefs(conn, ids: Iterable[str]) -> dict[str, dict]:
         return {}
     rows = await conn.fetch(
         """SELECT id::text AS id, name, country, lat, lng, located_by, geo_precision, review_reason,
-                  geocoder_meta ->> 'result_type' AS result_type
+                  geocoder_meta ->> 'result_type' AS result_type, geocoder_meta ->> 'name' AS geocoder_name,
+                  geocoder_place_id, geo_status, name_norm, locality_norm, created_at
              FROM shared.destinations
             WHERE id = ANY($1::uuid[]) AND geo_status <> 'suspect' AND duplicate_of IS NULL""", ids)
     return {r["id"]: dict(r) for r in rows}
