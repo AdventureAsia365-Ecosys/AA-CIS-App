@@ -617,7 +617,7 @@ Keep all other fields unchanged."""
         for k, v in fixed_fields.items():
             if k in fix_keys:
                 new_generated[k] = v
-        reverted = _revert_introduced_forbidden(current_content, new_generated, fix_keys, forbidden)
+        reverted = {}  # AA-925 Done-when 1 DEMO (never merge): the AA-641 per-field revert is removed
         if reverted:
             logger.warning("flag_fix_introduced_forbidden", fields=reverted, tour=current_content.get("name"))
 
