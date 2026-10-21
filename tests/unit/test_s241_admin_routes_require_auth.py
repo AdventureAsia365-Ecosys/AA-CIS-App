@@ -82,8 +82,6 @@ ALLOWED_PUBLIC: dict[tuple[str, str], str] = {
     ("POST", "/auth/verify-admin"):
         "verifies the staff token in the request body (admin middleware): a WORKFORCE access token (C2 verifier, "
         "cis-* group, active directory row; AA-816 C3) or a legacy HS256 JWT (LEGACY_ADMIN_LOGIN_ENABLED)",
-    ("POST", "/auth/booking-token"): "AA-Booking token exchange; authenticates by body credentials",
-    ("GET", "/auth/.well-known/jwks.json"): "public signing keys",
     ("GET", "/v1/trip/{tour_id}"): "AA-482: public trip page data",
     ("GET", "/content/photos/{photo_id}"): "AA-708: public image redirect (TripPlanner, published pages)",
     ("GET", "/v1/angle-gate/goals"): "AA-449: static list of content goals",

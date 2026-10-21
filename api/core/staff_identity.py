@@ -39,7 +39,8 @@ Errors are :class:`StaffAuthError` with the HTTP status to answer: 401 bad token
 successful sign-in into an error.
 
 ``LEGACY_ADMIN_LOGIN_ENABLED`` (default true, :func:`legacy_login_enabled`) gates only the HS256 path of
-``/auth/verify-admin`` (decision D3); ``/auth/admin-login`` and ``/auth/booking-token`` stay for Booking.
+``/auth/verify-admin`` (decision D3); ``/auth/admin-login`` is still served (AA-816 S2 gates or removes it; the
+Booking bridge that used it and ``/auth/booking-token`` are gone, AA-911).
 Only an explicit ``0``/``false``/``no``/``off`` switches it off, so a typo or empty value keeps the rollback
 path open.
 """

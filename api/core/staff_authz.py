@@ -101,9 +101,6 @@ ROLE_PERMS: dict[str, frozenset[str]] = {
 READ_ONLY_ROLES: frozenset[str] = frozenset({"viewer"})
 READ_METHODS: frozenset[str] = frozenset({"GET", "HEAD", "OPTIONS"})
 
-# AA-878 — CIS roles that get no AA-Booking access: POST /auth/booking-token answers 403 for them.
-NO_BOOKING_ROLES: frozenset[str] = frozenset({"viewer"})
-
 # staff.write is not a role capability: it needs the owner flag (shared.admin_users.is_owner, migration 247,
 # S241 Q2) AND a verified Cognito session (AA-816 C6): the caller's identity must come from the staff bearer
 # middleware (api/middleware/staff_bearer.py), never from x-admin-role, which any secret holder can forge.

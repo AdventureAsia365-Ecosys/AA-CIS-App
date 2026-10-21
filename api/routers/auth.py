@@ -295,13 +295,6 @@ class VerifyAdminResponse(BaseModel):
     auth: str = "legacy"
 
 
-class BookingTokenResponse(BaseModel):
-    """AA-680 — POST /auth/booking-token: an RS256 JWT (aud=booking) for AA-Booking."""
-    access_token: str
-    token_type: str
-    expires_in: int
-
-
 # A real bcrypt hash (cost 12, like the legacy staff password hashes) of a random value that was thrown
 # away: comparing against it costs the same time as a real compare and never matches. Used when there is
 # no hash to compare with — unknown username, or a Cognito-only staff row whose password_hash is NULL

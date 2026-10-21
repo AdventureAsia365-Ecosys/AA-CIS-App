@@ -4,11 +4,12 @@
 //   - LEGACY_ADMIN_LOGIN_ENABLED (default on): whether the username/password form is shown at all;
 //   - whether Cognito sign-in works on THIS host: only allowlisted hosts (production, localhost in
 //     development) have registered callback URLs, and the client secret must be configured. On a
-//     Vercel preview the company-email button is shown disabled with a note.
+//     Vercel preview the company-email button is shown disabled with a note. AA-911: the fixed Preview host
+//     aa-cis-preview.lumiguides.it.com has company sign-in and never shows the password form.
 // The page never redirects to Cognito by itself (ADR 0006 §7): after a logout, an automatic redirect
 // would sign the user straight back in through the managed-login session cookie.
 import { headers } from "next/headers";
-import { cognitoSignInAvailable, workforceSignInHost } from "@/lib/cognito";
+import { cognitoSignInAvailable, isPreviewSignInHost, workforceSignInHost } from "@/lib/cognito";
 import { legacyAdminLoginEnabled } from "@/lib/staffSession";
 import LoginForm from "./LoginForm";
 
@@ -32,7 +33,7 @@ export default async function LoginPage({
   const errorKey = typeof params.error === "string" ? params.error : "";
   return (
     <LoginForm
-      legacyEnabled={legacyAdminLoginEnabled()}
+      legacyEnabled={legacyAdminLoginEnabled() && !isPreviewSignInHost(host)}
       cognitoAvailable={cognitoSignInAvailable(host, "cis-admin")}
       signInHost={workforceSignInHost()}
       initialError={ERRORS[errorKey] ?? ""}

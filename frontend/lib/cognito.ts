@@ -5,10 +5,13 @@
 // middleware never does (it only redirects to /api/auth/refresh, see proxy.ts).
 //
 // Security rules this file enforces:
-//   - The redirect URI is always taken from a FIXED allowlist (production host, plus localhost in
-//     development for cis-admin only), never built from the Host header. The request host is only
-//     COMPARED with the allowlist; an unlisted host (a Vercel preview) gets no Cognito sign-in at all,
-//     because preview hosts are not registered callback URLs (identity_variables.tf).
+//   - The redirect URI is always taken from a FIXED allowlist, never built from the Host header. cis-admin:
+//     a Vercel production build accepts the production host, a Vercel preview build only the fixed Preview
+//     host aa-cis-preview.lumiguides.it.com (AA-911, root ADR 0006a A11; CI aliases it to the preview under
+//     test on opt-in), `next dev` also localhost. Break-glass: production only. The request host is only
+//     COMPARED with the allowlist; any other host (a per-deployment *.vercel.app preview URL) gets no
+//     Cognito sign-in at all, because those hosts are not registered callback URLs (identity_variables.tf).
+//   - The fixed Preview host never offers the legacy password form or POST /api/auth/login (AA-911).
 //   - state, nonce and the PKCE verifier live in one short-lived httpOnly cookie scoped to the
 //     callback path; the callback checks state against it and nonce against the ID token.
 //   - Token exchange, refresh and revoke authenticate with HTTP Basic (client id + secret).
@@ -48,7 +51,22 @@ export const WORKFORCE_ISSUER =
   process.env.COGNITO_WORKFORCE_ISSUER ?? "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_bCcFvbSOS";
 
 const PROD_ORIGIN = "https://aa-cis.lumiguides.it.com";
+// AA-911: the one fixed Preview host of aa-cis-frontend (cis-admin callback; aliased to the preview under test).
+export const PREVIEW_ORIGIN = "https://aa-cis-preview.lumiguides.it.com";
 const DEV_ORIGIN = "http://localhost:3000";
+
+/** cis-admin origins for THIS build: a preview build never runs the production callback and vice versa. */
+function cisAdminOrigins(): string[] {
+  const vercelEnv = (process.env.VERCEL_ENV ?? "").trim();
+  if (vercelEnv === "production") return [PROD_ORIGIN];
+  if (vercelEnv === "preview") return [PREVIEW_ORIGIN];
+  return process.env.NODE_ENV === "development" ? [PROD_ORIGIN, PREVIEW_ORIGIN, DEV_ORIGIN] : [PROD_ORIGIN];
+}
+
+/** True when the request is served on the fixed Preview sign-in host (no legacy password login there). */
+export function isPreviewSignInHost(host: string | null | undefined): boolean {
+  return !!host && host.trim().toLowerCase() === new URL(PREVIEW_ORIGIN).host;
+}
 
 export type StaffClientKind = "cis-admin" | "breakglass";
 
@@ -73,7 +91,7 @@ const CLIENTS: Record<StaffClientKind, StaffClient> = {
     secret: () => process.env.COGNITO_CIS_ADMIN_CLIENT_SECRET ?? "",
     callbackPath: "/api/auth/callback/cognito",
     refreshTtlS: 12 * 60 * 60,
-    origins: () => (process.env.NODE_ENV === "development" ? [PROD_ORIGIN, DEV_ORIGIN] : [PROD_ORIGIN]),
+    origins: cisAdminOrigins,
   },
   breakglass: {
     kind: "breakglass",

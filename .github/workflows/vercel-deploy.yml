@@ -10,6 +10,20 @@ name: Vercel Deploy
 #   pull_request            → preview of the PR head commit (+ one PR comment, + UI smoke on it)
 #   push to main            → production
 #   workflow_dispatch       → preview or production (production only from main)
+#   workflow_dispatch with alias_only_url → no deployment; only re-points the fixed Preview host
+#
+# AA-911 (root ADR 0006a A11) — staff sign-in on previews: aa-cis-preview.lumiguides.it.com is the ONE
+# Preview host registered as a cis-admin Cognito callback. Job `preview-alias` points it at a preview
+# deployment (`vercel alias set`: no deployment, not counted against the Hobby cap) only when:
+#   - the PR carries the label `preview-signin` when its preview deploys (opt-in, so parallel agent PRs
+#     do not keep moving it and unmerged code only sees staff tokens when someone asked for it). Adding
+#     the label triggers one run (`labeled`) = one more deployment; prefer the dispatch below when a
+#     fresh preview already exists, or
+#   - the workflow is dispatched FROM main with alias_only_url=<https://aa-cis-frontend-….vercel.app>
+#     (main only: an old branch would run its own old copy of this workflow with the repo secrets).
+# Before aliasing, the Vercel REST API must confirm the deployment belongs to this project, is not a
+# production deployment and is READY. UI smoke keeps using the per-deployment URL. Runbook: root
+# docs/ops/runbooks/preview-staff-sign-in.md.
 #
 # The deploy runs from the REPO ROOT: the project's Root Directory setting is `frontend`, so Vercel
 # builds `frontend/` remotely with the project's own env vars (no `vercel pull` / prebuilt here).
@@ -22,7 +36,9 @@ name: Vercel Deploy
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    # `labeled` (AA-911): adding the label preview-signin deploys and aliases at once. Any other label is
+    # skipped by the deploy job `if:` (a skipped job is no deployment).
+    types: [opened, synchronize, reopened, labeled]
     paths:
       - "frontend/**"
       - ".github/workflows/vercel-deploy.yml"
@@ -39,13 +55,20 @@ on:
         type: choice
         options: [preview, production]
         default: preview
+      alias_only_url:
+        description: "AA-911: skip the deploy; point aa-cis-preview.lumiguides.it.com at this existing preview (https://aa-cis-frontend-….vercel.app). Main only."
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
 
 concurrency:
   # One group per ref AND target, so a manual preview on main can never cancel a production deploy.
-  group: vercel-deploy-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'preview' || (github.event_name == 'push' && 'production' || inputs.target) }}
+  # A run for any label other than preview-signin deploys nothing, so it gets a throw-away group and can never
+  # cancel an in-flight preview deploy of the same PR; an alias-only dispatch gets its own group too.
+  group: ${{ (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'preview-signin') && format('vercel-deploy-noop-{0}', github.run_id) || format('vercel-deploy-{0}-{1}', github.ref, github.event_name == 'pull_request' && 'preview' || (github.event_name == 'push' && 'production' || (inputs.alias_only_url != '' && 'alias' || inputs.target))) }}
   # A newer push cancels an in-flight PREVIEW only; a production deploy is never cancelled mid-way
   # (a newer main push waits for it instead).
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.target == 'preview') }}
@@ -55,6 +78,8 @@ env:
   VERCEL_PROJECT_ID: prj_glZmOvskbPdMg20mbI9ywEI9S5tr # aa-cis-frontend
   VERCEL_CLI: vercel@60.0.1
   VERCEL_TELEMETRY_DISABLED: "1"
+  # AA-911: the fixed Preview host (a Vercel domain of aa-cis-frontend, a cis-admin Cognito callback).
+  PREVIEW_SIGNIN_HOST: aa-cis-preview.lumiguides.it.com
 
 jobs:
   deploy:
@@ -66,10 +91,14 @@ jobs:
     # of red. A human push onto a Dependabot branch runs as that human and still deploys a preview.
     # Only pull_request runs are skipped: a push to main or a dispatch always deploys, so a production
     # deploy that cannot run (even one Dependabot triggered by merging its own PR) still fails red.
+    # An alias-only dispatch (AA-911) deploys nothing: only job `preview-alias` runs. A `labeled` event deploys
+    # only for the label preview-signin.
     if: >-
-      github.event_name != 'pull_request' ||
-      (github.actor != 'dependabot[bot]' &&
-       github.event.pull_request.head.repo.full_name == github.repository)
+      (github.event_name != 'workflow_dispatch' || inputs.alias_only_url == '') &&
+      (github.event_name != 'pull_request' ||
+       (github.actor != 'dependabot[bot]' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        (github.event.action != 'labeled' || github.event.label.name == 'preview-signin')))
     permissions:
       contents: read
       pull-requests: write
@@ -223,6 +252,106 @@ jobs:
           else
             gh api -X POST "repos/$REPO/issues/$PR/comments" -f body="$BODY" >/dev/null
             echo "Created a new comment"
+          fi
+
+  # ── AA-911: point the fixed Preview sign-in host at a preview deployment (opt-in) ──
+  preview-alias:
+    name: Point aa-cis-preview at the preview
+    needs: deploy
+    # PR path: the PR deploy succeeded and the PR carried the label `preview-signin` at event time.
+    # Dispatch path: alias_only_url was given (deploy job skipped). Never on push (production).
+    if: >-
+      always() &&
+      ((github.event_name == 'pull_request' &&
+        needs.deploy.result == 'success' &&
+        needs.deploy.outputs.target == 'preview' &&
+        needs.deploy.outputs.url != '' &&
+        contains(github.event.pull_request.labels.*.name, 'preview-signin')) ||
+       (github.event_name == 'workflow_dispatch' && inputs.alias_only_url != ''))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    # One alias change at a time across all PRs and dispatches.
+    concurrency:
+      group: vercel-alias-aa-cis-preview
+      cancel-in-progress: false
+    steps:
+      - name: Check the deployment (this project, not production, READY), then alias it
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          PR_URL: ${{ needs.deploy.outputs.url }}
+          DISPATCH_URL: ${{ inputs.alias_only_url }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            # Lesson S241: a dispatch on an old branch runs that branch's copy of this workflow with the
+            # repo secrets, so the alias-only path is accepted only from main.
+            if [ "$REF" != "refs/heads/main" ]; then
+              echo "::error::alias_only_url is accepted only on refs/heads/main (this run is on $REF)."
+              exit 1
+            fi
+            URL="$DISPATCH_URL"
+          else
+            URL="$PR_URL"
+          fi
+          URL="${URL%/}"
+          # Only this project's per-deployment preview URLs; never a custom domain or another project.
+          if ! [[ "$URL" =~ ^https://aa-cis-frontend-[a-z0-9-]+\.vercel\.app$ ]]; then
+            echo "::error::Not an aa-cis-frontend deployment URL: $URL"
+            exit 1
+          fi
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "::error::VERCEL_TOKEN is not set."
+            exit 1
+          fi
+          HOST="${URL#https://}"
+          curl -fsS --max-time 30 -H "Authorization: Bearer $VERCEL_TOKEN" \
+            "https://api.vercel.com/v13/deployments/$HOST?teamId=$VERCEL_ORG_ID" > "$RUNNER_TEMP/deployment.json"
+          PROJECT=$(jq -r '.projectId // ""' "$RUNNER_TEMP/deployment.json")
+          TARGET=$(jq -r '.target // "preview"' "$RUNNER_TEMP/deployment.json")
+          STATE=$(jq -r '.readyState // ""' "$RUNNER_TEMP/deployment.json")
+          echo "Deployment $HOST: project=$PROJECT target=$TARGET readyState=$STATE"
+          if [ "$PROJECT" != "$VERCEL_PROJECT_ID" ]; then
+            echo "::error::Deployment belongs to another project."
+            exit 1
+          fi
+          if [ "$TARGET" = "production" ]; then
+            echo "::error::Refusing to alias a production deployment to $PREVIEW_SIGNIN_HOST."
+            exit 1
+          fi
+          if [ "$STATE" != "READY" ]; then
+            echo "::error::Deployment is not READY ($STATE)."
+            exit 1
+          fi
+          npx --yes "$VERCEL_CLI" alias set "$URL" "$PREVIEW_SIGNIN_HOST" --token "$VERCEL_TOKEN" --scope "$VERCEL_ORG_ID"
+          {
+            echo "### Preview sign-in host"
+            echo ""
+            echo "- https://$PREVIEW_SIGNIN_HOST → $URL"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # One marker comment, edited in place (same pattern as the preview comment above).
+      - name: Say on the PR which commit the Preview host serves
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ needs.deploy.outputs.sha }}
+        run: |
+          MARKER="<!-- preview-signin-alias -->"
+          # shellcheck disable=SC2016  # the backticks are literal Markdown
+          BODY=$(printf '%s\nStaff sign-in: https://%s now points at this PR, commit `%s` (label preview-signin).\n' \
+                   "$MARKER" "$PREVIEW_SIGNIN_HOST" "$SHA")
+          EXISTING=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+                       --jq ".[] | select(.body | contains(\"$MARKER\")) | .id" 2>/dev/null | head -n1 || true)
+          if [ -n "$EXISTING" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$EXISTING" -f body="$BODY" >/dev/null
+          else
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -f body="$BODY" >/dev/null
           fi
 
   # AA-732 UI smoke on the fresh PREVIEW. It used to run on Vercel's `deployment_status` event, which

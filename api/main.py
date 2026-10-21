@@ -18,9 +18,8 @@ from api.routers.auth import (
     TenantLoginRequest, TenantLoginResponse,
     _verify_password, _create_admin_jwt,
     AdminLoginRequest, AdminLoginResponse, VerifyAdminResponse,
-    STAFF_ROLES, BookingTokenResponse,
+    STAFF_ROLES,
 )
-from api.core import booking_jwt  # AA-680
 from api.routers.v1_tours import router as v1_tours_router
 from api.routers.v1_tours import quota_router as v1_quota_router
 from api.routers.v1_marketplace import router as v1_marketplace_router
@@ -67,7 +66,6 @@ from api.middleware.staff_bearer import StaffBearerMiddleware  # AA-816 C3
 from api.middleware.staff_audit import StaffAuditMiddleware  # AA-884
 from api.core import readiness  # AA-884 — /health git_sha, /health/ready
 from api.core import staff_identity  # AA-816 C3
-from api.core.staff_authz import NO_BOOKING_ROLES  # AA-878
 from api.core.sentry import init_sentry
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 
@@ -409,7 +407,7 @@ async def verify_admin(request: Request, db: asyncpg.Pool = Depends(get_pool)):
       (cognito_iss, cognito_sub) or bound once by email on the first sign-in, 401 when unknown or inactive,
       role = highest `cis-*` group (a difference with the DB role is logged as drift), last_login_at set
       (best effort).
-    - Any other `iss` (EXTERNAL portal, Booking RS256): 401, never a staff session.
+    - Any other `iss` (EXTERNAL portal, any foreign issuer): 401, never a staff session.
     - Legacy HS256 token (no `iss`): unchanged, gated by LEGACY_ADMIN_LOGIN_ENABLED (default true). Re-reads
       shared.admin_users (cached 60 s): 401 when the account is gone or inactive, and the role returned is the
       DB role, not the JWT claim, so the BFF forwards the current role (x-admin-role) and staff_policy
@@ -419,7 +417,7 @@ async def verify_admin(request: Request, db: asyncpg.Pool = Depends(get_pool)):
     token = body.get("token", "")
     kind = staff_identity.token_kind(token)
     if kind == staff_identity.AUTH_OTHER:
-        # A JWT from another issuer (EXTERNAL portal, CIS-minted Booking RS256): never a CIS staff session.
+        # A JWT from another issuer (EXTERNAL portal, anything else): never a CIS staff session.
         logger.warning("verify_admin_refused", auth=staff_identity.AUTH_OTHER, status=401, reason="foreign_issuer")
         raise HTTPException(status_code=401, detail="Invalid staff token")
     if kind == staff_identity.AUTH_COGNITO:
@@ -458,25 +456,15 @@ async def verify_admin(request: Request, db: asyncpg.Pool = Depends(get_pool)):
         auth=staff_identity.AUTH_LEGACY,
     )
 
-# ── AA-680 — CIS as staff identity provider for AA-Booking (root ADR 0004, O1) ──────────────
-# POST /auth/booking-token swaps a valid CIS staff session (cis_admin_token cookie or a Bearer
-# header holding the same HS256 staff JWT) for a 15-minute RS256 JWT with aud=booking. The JWKS that
-# Booking verifies it with is public. Key material: api/core/booking_jwt.py (Secrets Manager).
-
-_BOOKING_JWKS_CACHE_CONTROL = "public, max-age=600"
-
-
-def _staff_session_token(request: Request) -> str:
-    auth = request.headers.get("Authorization", "")
-    if auth[:7].lower() == "bearer " and auth[7:].strip():
-        return auth[7:].strip()
-    return request.cookies.get("cis_admin_token", "")
+# AA-911 (root ADR 0006a A11): the AA-680 CIS -> Booking bridge (POST /auth/booking-token and the public
+# GET /auth/.well-known/jwks.json, api/core/booking_jwt.py) is retired. Booking signs staff in with Cognito
+# WORKFORCE only; both paths now answer 404.
 
 
 async def _load_active_staff(db: asyncpg.Pool, admin_id: str):
-    """The staff row behind a session, or None when it is gone or deactivated. Re-read on every
-    Booking token so a deactivated user or a changed role stops at the next mint (<= 15 min),
-    not at the 24 h CIS session expiry."""
+    """The staff row behind a legacy session, or None when it is gone or deactivated (read by
+    /auth/verify-admin through _current_staff, so a deactivated user or a changed role stops within the
+    cache TTL, not at the 24 h session expiry)."""
     try:
         uid = uuid.UUID(admin_id)
     except (ValueError, TypeError, AttributeError):
@@ -488,49 +476,6 @@ async def _load_active_staff(db: asyncpg.Pool, admin_id: str):
             uid,
         )
     return row
-
-
-@app.post("/auth/booking-token", response_model=BookingTokenResponse, tags=["auth"])
-async def booking_token(request: Request, db: asyncpg.Pool = Depends(get_pool)):
-    token = _staff_session_token(request)
-    if not token:
-        raise HTTPException(status_code=401, detail="Staff session required")
-    payload = verify_jwt(token)
-    if payload.get("role") not in STAFF_ROLES:
-        raise HTTPException(status_code=401, detail="Not a staff session")
-    row = await _load_active_staff(db, payload.get("sub"))
-    if not row or row["role"] not in STAFF_ROLES:
-        # Visible trail for repeated mint attempts by a deactivated, demoted or unknown user.
-        logger.warning("booking_token_refused", admin_id=str(payload.get("sub")),
-                       session_role=payload.get("role"),
-                       reason="inactive_or_unknown" if not row else "role_not_staff")
-        raise HTTPException(status_code=401, detail="Staff user is inactive or unknown")
-    if row["role"] in NO_BOOKING_ROLES:
-        # AA-878: a read-only CIS role has no Booking access; Booking has no mapping for it, so never mint one.
-        logger.warning("booking_token_refused", admin_id=row["id"], cis_role=row["role"], reason="role_no_booking")
-        raise HTTPException(status_code=403, detail="This staff role has no access to Booking")
-    try:
-        # Off the event loop: a cache refresh is a blocking Secrets Manager call.
-        keys = await booking_jwt.get_signing_keys_async()
-    except booking_jwt.SigningKeyUnavailable:
-        raise HTTPException(status_code=503, detail="Booking token signing key is not configured")
-    jti = str(uuid.uuid4())
-    access_token, expires_in = booking_jwt.mint_booking_token(
-        admin_id=row["id"], username=row["username"], role=row["role"], jti=jti, keys=keys,
-    )
-    # jti + kid let a token Booking sees be traced back to this mint.
-    logger.info("booking_token_issued", admin_id=row["id"], cis_role=row["role"], jti=jti,
-                kid=keys.kid)
-    return BookingTokenResponse(access_token=access_token, token_type="Bearer", expires_in=expires_in)
-
-
-@app.get("/auth/.well-known/jwks.json", tags=["auth"])
-async def booking_jwks():
-    try:
-        body = booking_jwt.jwks(await booking_jwt.get_signing_keys_async())
-    except booking_jwt.SigningKeyUnavailable:
-        raise HTTPException(status_code=503, detail="Booking token signing key is not configured")
-    return JSONResponse(body, headers={"Cache-Control": _BOOKING_JWKS_CACHE_CONTROL})
 
 
 @app.get("/health")

@@ -382,7 +382,7 @@ async def test_legacy_login_on_a_cognito_only_row_is_401(app_on_db):
 
 @pytest.mark.asyncio
 async def test_staff_lookup_returns_a_cognito_only_row(app_on_db):
-    """The verify-admin / booking-token lookup reads id, username, role only: a NULL hash does not matter."""
+    """The verify-admin lookup reads id, username, role only: a NULL hash does not matter."""
     from api.main import _load_active_staff
     _client, pool, ids = app_on_db
     uid = uuid.uuid4()

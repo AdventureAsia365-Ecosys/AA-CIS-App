@@ -35,13 +35,14 @@
 // login/page.tsx with document.cookie), which also overwrites a tenant session's httpOnly cis_role.
 import { NextRequest, NextResponse } from "next/server";
 import { STAFF_REFRESH_COOKIE, STAFF_REFRESH_COOKIE_PATH, legacyAdminLoginEnabled } from "@/lib/staffSession";
-import { setDisplayCookies } from "@/lib/cognito";
+import { isPreviewSignInHost, setDisplayCookies } from "@/lib/cognito";
 
 const API_URL = process.env.API_URL ?? "https://api-cis.lumiguides.it.com";
 const LEGACY_SESSION_S = 60 * 60 * 24; // 24h — matches backend JWT_EXPIRY_H
 
 export async function POST(req: NextRequest) {
-  if (!legacyAdminLoginEnabled()) {
+  // AA-911: no password login on the fixed Preview host (company sign-in only there).
+  if (!legacyAdminLoginEnabled() || isPreviewSignInHost(req.headers.get("host") ?? req.nextUrl.host)) {
     return NextResponse.json({ detail: "Not found" }, { status: 404 });
   }
   const { username, password } = await req.json().catch(() => ({}));
