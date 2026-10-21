@@ -77,6 +77,19 @@
 - `DAY_DEPARTURE_MIDTRIP` and `DAY_COUNT_VS_DURATION` are expected to stay shadow (wording / optional
   extension days); the precision read decides.
 
+## Should know — CI-only unit failure in `test_aa660_decide` (not caused by this diff)
+
+- `test_cached_verdict_is_reused_with_todays_floors_and_no_call` failed on this PR and on `main` (run of
+  66c8764): `executemany` awaited once. The Jev cache-hit rollup also flushes by time
+  (`_HITS_FLUSH_S` = 60 s), and its clock `_hits_flushed_at` is set when `decide.py` is imported, at
+  collection. `reset_decision_memo()` (the autouse test reset) cleared the counts but not the clock. In CI
+  with coverage the test runs about 63–68 s after the session starts, so its first cache hit flushed. Locally
+  and on the last green `main` run it ran 36–47 s in, so it passed. The Q0 corpus tests (they sort first)
+  pushed CI over the line.
+- Fix: the test-only reset also restarts the clock; guard tests cover the time-based flush and the reset.
+  Production flush behaviour is unchanged (a hit pending past 60 s goes out on the next ledger write, by
+  design).
+
 ## Should know — the oracle run (Done-when 2)
 
 - Before merge the image has none of these modules. Archive the PR's detector files with the scripts and
