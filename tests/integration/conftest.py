@@ -294,6 +294,10 @@ def _apply_schema(conn):
         # AA-860 (X1 S22): 246 is a probe that only passes logged in as db_migrator under DB Migrate's switch to
         # cis_owner (after 245); this superuser replay would refuse it. test_aa860_migration_246 applies it that way.
         and not f.startswith('246')
+        # AA-847: 253 changes the catalog views through the X1 S22 catalog recipe (needs 245's owners and the
+        # db_migrator -> cis_owner switch; as this superuser its cis_owner steps lack 245's grants).
+        # test_aa847_migration_253 applies it that way, checks rows before / after and restores the replay state.
+        and not f.startswith('253')
     ])
 
     for mf in migration_files:
