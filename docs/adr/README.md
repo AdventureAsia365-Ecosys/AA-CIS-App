@@ -20,6 +20,7 @@ Older decisions recorded as `ADR-2026-NNN` predate this folder and live in the t
 | [0007](0007-jev-verdicts-may-act.md) | Jev verdicts may act, only when enforced, confident and calibrated | Accepted (S203) | — |
 | [0008](0008-validate-stages-any-vendor.md) | Validate stages may use any vendor | Accepted (10/10/2026, S224) | AA-748 |
 | [0009](0009-f17-owns-offered-moments-promises-gate-dropped.md) | F17 owns offered moments; the promises_an_option gate is dropped (amends origin ADR 0023/0026) | Accepted (20/10/2026, S245) | AA-787 |
+| [0010](0010-governed-writing-memory.md) | Governed writing memory: release-gated rules and pinned examples, no fine-tuning; supersedes the AA-132 lessons loop | Accepted (20/10/2026, S245) | AA-915 |
 
 Template and format: the ecosystem ADR template (AA-Ecosys `docs/templates/adr.md`) and
 [`.agents/skills/domain-modeling/ADR-FORMAT.md`](../../.agents/skills/domain-modeling/ADR-FORMAT.md).

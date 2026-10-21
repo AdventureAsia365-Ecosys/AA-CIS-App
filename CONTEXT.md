@@ -7,7 +7,7 @@ status: active
 owner: nghiep
 audience: [engineer, agent]
 applies_to: [aa-cis-api, aa-cis-worker, aa-cis-frontend, aa-cis-portal]
-last_reviewed: 2026-10-19
+last_reviewed: 2026-10-21
 review_every_days: 90
 related: [ARCH-01, ARCH-05, ARCH-08, docs/adr/README.md]
 ---
@@ -1523,6 +1523,48 @@ from a count (Score, questions landed), or block or send content back for repair
 published. It never deletes data and never unpublishes published content.
 _Avoid_: block (alone), delete, filter.
 
+### Writing memory (platform + tenant)
+
+What the writers (A1/S1, T2, T9 blog, T9 social) learn from, under release control. Model weights
+never change. See ADR 0010. Tables are planned for WM-03 onward; none exist yet.
+
+**Writing Signal**:
+One recorded piece of evidence about a writer's output: an admin sentence edit (before / after,
+gate, problem), a tenant edit, or an approve / reject / regenerate, with its reason. Captured
+silently; the tenant portal asks no feedback question (D7). Tenant signals live only in deletable
+tables.
+_Avoid_: lesson, feedback (alone), training data.
+
+**Writing Rule**:
+One learned constraint for a writer, of one type: `lexicon` (ban or replace a word or phrase),
+`writer_instruction` (a line in the writer prompt), `repair_hint` (guidance for the repair pass)
+or `preference_summary` (a tenant's ≤ 5-sentence voice summary). A rule may only cut, ban,
+rephrase or format; it never adds content, and fact gates (F1, F17, F9_cta_fact, Jev) outrank it.
+_Avoid_: lesson (the frozen AA-132 rows), output rule (the retired N8 table), guideline.
+
+**Pinned Exemplar**:
+One fixed, entity-masked example output (`[PLACE]`, `[N]`…) pinned in a Release and labelled
+"voice only, reuse no fact". T2 and T9 get two per Release; S1 gets none. No nearest-neighbour
+retrieval.
+_Avoid_: few-shot (implies retrieval or unpinned examples), sample, golden item (an AA-729 eval item).
+
+**Release**:
+A versioned bundle of Writing Rules and Pinned Exemplars for one writer and Scope. It passes the
+gates R0 ($0 replay of stored text), R1 (re-score old outputs), R2 (golden-set run) and shadow, then
+becomes `active` only by one human click, never automatically. Planned statuses (WM issues):
+`draft` → `evaluated` → `approved` → `active` → `retired`, plus `reverify` when the golden set, a
+model route or the gate taxonomy changes. Release 0 (empty memory) must give a byte-identical
+prompt. Rollback moves the active pointer back; no deploy. Outputs carry the Release's version
+stamp.
+_Avoid_: fine-tune, model update, deploy (a Release is data, not code).
+
+**Scope (writing memory)**:
+`platform` (applies to every tenant's writer; never holds tenant text; needs evidence from ≥ 3
+distinct tenants when the evidence is tenant content, plus Nghiệp's approval) or `tenant` (one
+tenant's rules and exemplars, used only for that tenant, never for training). `tenant_id IS NULL`
+iff `scope = 'platform'`, as in Facts Entry.
+_Avoid_: global / local, shared (ambiguous with the `shared` schema).
+
 ## Pipeline stages
 
 ### A-series (Admin, master content — computed once, shared by every tenant)
@@ -1782,6 +1824,15 @@ this is the table that resolves Open Question 1 below.
 | 7 | Slate (Subject) | **Tenant** | Per tenant | **No.** `acp_shared.subject.tenant_id UUID NOT NULL` (migration 133:19). The similarly-named but unrelated `acp_contract.route_pick` (the Route-pick snapshot, renamed from `acp_contract.subject` at migration 132 — "a different, unrelated concept," migration 133:8) is also `tenant_id UUID NOT NULL` (migration 131:74, pre-rename) — both fully isolated. |
 | 8 | Goal / Angle / Write / Gate / Review / Publish | **Tenant** | Per tenant, per request/Piece | **Mostly no, one deliberate exception.** `acp_shared.angle_gate_request.tenant_id` (migration 113:36), `content_piece.tenant_id` (migration 115:36), `publish_log.tenant_id` (migration 116:27) all `NOT NULL`. Exception: the T10 cannibalization Gate (F10) deliberately reads EVERY other tenant's approved Pieces — `find_similar_pieces(cross_tenant=True, ...)`, `_CROSS_TENANT_QUERY` has no `tenant_id` filter at all (`services/acp_shared/piece_similarity.py:46-56, 67-95`), consumed by `gate_cannibalization()` at the 0.92 cosine-similarity threshold. This is a cross-tenant **read/compare**, not a cache — the embedding itself is never shared: `compute_embedding()` (`services/acp_shared/content_embedding.py`) makes one fresh Bedrock call per Piece, every time, for every tenant, with no caching layer at all. |
 | 9 | Facts Entry | **Both** (one table, two scopes) | Platform scope: once, by admin. Tenant scope: per tenant | **Yes for `scope='platform'` rows, by design.** `acp_shared.facts` (migration 145:33-46), `scope` column (`'platform'`\|`'tenant'`), `tenant_id IS NULL iff scope='platform'` (CHECK, migration 145:44-46). RLS (migration 229, AA-817, for the tenant pool role `aa_app_user`; the owner/main pool is exempt): `facts_platform_read` FOR SELECT `USING (scope = 'platform')` — platform rows are readable by every tenant — and `tenant_isolation` FOR ALL `USING`/`WITH CHECK (scope = 'tenant' AND tenant_id = NULLIF(app.tenant_id, '')::uuid)` — a tenant reads and writes only its own rows and can never write, delete or re-scope a platform fact (145's FOR ALL policy allowed that). |
+| 10 | Writing memory (Writing Rules, Pinned Exemplars, Releases; ADR 0010) | **Both** (one model, two scopes) | Platform scope: per monthly Release, approved by Nghiệp. Tenant scope: per tenant Release, one human click | **Tenant scope: no** — every `cis_app` read filters `tenant_id = $1` explicitly and the tables carry the `tenant_isolation` RLS policy (FORCE RLS), following the `acp_shared.facts` pattern; a CI test proves tenant A's rules never resolve for tenant B. **Platform scope: yes, by design** — a platform rule may be drawn from ≥ 3 distinct tenants' evidence (D9) and then applies to every tenant's writer, but platform rows never hold tenant text. Tables are CIS-owned in `shared`, planned for WM-03 onward (none exist yet). |
+
+**Frozen predecessor (AA-915).** The AA-132 lessons loop (`shared.pipeline_lessons`) is frozen
+behind `PIPELINE_LESSONS_ENABLED` (env, default off, no per-tenant override): with the flag off
+nothing reads or writes the table, and the S1 system prompt carries no lessons block. The only
+reader is `services/content_generation/pipeline_lessons.py`; a unit test keeps every other file
+from querying the table. ADR 0010 supersedes it and WM-34 drops the table. Do not "fix" its stage
+mismatch (`audit` written, `S1_rewrite`/`S1_editor` read): that would revive an ungated,
+tenant-blind loop.
 
 ### Cross-tenant mechanisms — full inventory (AA-540's specific ask)
 
@@ -1794,6 +1845,14 @@ everything from the Slate onward is per tenant.** The shared parts:
 3. **Search Demand + its research-freshness log** (row 4) — a shared cache keyed on
    `(keyword, market)` / `(place, market)`, now also holding SERP domains (AA-631).
 4. **Facts Entry, `scope='platform'` rows only** (row 9) — shared by explicit design, RLS-enforced.
+5. **Writing memory, platform scope (ADR 0010)** (row 10) — platform Writing Rules may be drawn
+   from ≥ 3 tenants' evidence and apply to every tenant's writer; they never hold tenant text, and
+   each needs Nghiệp's approval. Tenant-scope rows are isolated.
+
+One **latent** cross-tenant path, frozen: `shared.pipeline_lessons` (AA-132) has no `tenant_id`
+and was written from the shared S1/T2 flag_fix node, so a working loop would have let one tenant's
+T2 failures steer the global S1 prompt. Frozen behind `PIPELINE_LESSONS_ENABLED` (default off) by
+AA-915; retired by WM-34.
 
 Plus one **cross-tenant read (not a cache)**: the F10 cannibalization Gate (row 8) compares a new
 Piece's embedding against every other tenant's approved content to block near-duplicates.
@@ -1824,6 +1883,8 @@ Per-tenant tables added 15-25/09 that sit next to the shared data:
 - `docs/adr/0003-segment-score-route-hub-will-become-platform-wide.md` — the decision (AA-542)
   that Segment/Score/Route/Hub per-tenant was tech debt; carried out by AA-545.
 - `docs/adr/0004-live-writing-progress-via-redis-poll.md` — live writing progress (AA-637).
+- `docs/adr/0010-governed-writing-memory.md` — governed writing memory: release-gated rules and
+  pinned examples, no fine-tuning; supersedes the AA-132 lessons loop (AA-915).
 - `docs/implementation-notes/AA-526.md`, `AA-527.md`, `AA-529.md`, `AA-540.md` — build records
   for the A3 atomize move, the admin atom-curation page, Facts Entry, and this table
   respectively.

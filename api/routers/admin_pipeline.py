@@ -25,6 +25,7 @@ from api.routers._billing import usage_row_to_dict
 from api.routers.admin import verify_admin_secret
 from api.routers.auth import verify_tenant_jwt
 from api.routers.v1_pipeline import _rewrite_tour
+from services.content_generation.pipeline_lessons import load_s1_lessons_block
 from shared.aws_client.bronze import bronze_bucket
 from shared.validators.prompt_sanitize import (
     sanitize_text, sanitize_list, MAX_LONG_FIELD_LEN, MAX_SHORT_FIELD_LEN, MAX_SYSTEM_PROMPT_LEN,
@@ -558,28 +559,10 @@ async def _execute_run_tour(
         except Exception as _br_err:
             logger.warning("brand_rules_fetch_failed", error=str(_br_err))
 
-        lessons_text = ""
-        try:
-            lesson_rows = await conn.fetch("""
-                SELECT what_to_do, field, pattern
-                FROM shared.pipeline_lessons
-                WHERE stage IN ('S1_rewrite', 'S1_editor')
-                  AND is_active = true
-                ORDER BY id
-            """)
-            if lesson_rows:
-                lessons_lines = []
-                for lr in lesson_rows:
-                    field_prefix = f"[{lr['field']}] " if lr['field'] else ""
-                    lessons_lines.append(f"- {field_prefix}{lr['what_to_do']}")
-                lessons_text = (
-                    "\n\n## LESSONS FROM PREVIOUS BATCHES\n"
-                    "Apply these rules strictly — they come from real batch failures:\n"
-                    + "\n".join(lessons_lines)
-                )
-        except Exception as _le:
-            logger.warning("lessons_load_failed", error=str(_le))
-
+        # AA-915: the AA-132 lessons append, frozen behind PIPELINE_LESSONS_ENABLED (default off).
+        # One shared helper for this path, the batch path (s1_batch) and the AA-729 sampler; with the
+        # flag off it sends no SQL and returns "".
+        lessons_text = await load_s1_lessons_block(conn)
         if lessons_text:
             brand_rules["system_prompt"] = (brand_rules.get("system_prompt") or "") + lessons_text
 

@@ -1,5 +1,7 @@
 """AA-134: Targeted flag-fix node — rewrites only brand-flagged fields.
 AA-132: write_lessons_log — persists audit lessons to shared.pipeline_lessons.
+AA-915: that write-back is frozen behind PIPELINE_LESSONS_ENABLED (default off, see
+services/content_generation/pipeline_lessons.py); superseded by app ADR 0010, retired in WM-34.
 """
 
 import asyncio
@@ -7,6 +9,7 @@ import json
 import structlog
 import asyncpg
 from services.content_generation.stages import stage_for
+from services.content_generation.pipeline_lessons import pipeline_lessons_enabled
 from json_repair import repair_json
 
 from shared.secrets import get_database_url
@@ -500,6 +503,7 @@ def flag_fix_node(state: dict) -> dict:
                     "fix_pass_fields":  [],
                 }
             logger.info("flag_fix_done", fixed_keys=sorted(applied_fields), cost=extra_cost)
+            # AA-132 lessons write-back — a no-op while the loop is frozen (AA-915, guard inside).
             lessons = state.get("lessons_extracted", [])
             if lessons:
                 _write_lessons_safe(lessons, state)
@@ -652,7 +656,8 @@ Keep all other fields unchanged."""
 
         logger.info("flag_fix_done", fixed_keys=list(fix_keys), cost=resp.cost_usd)
 
-        # AA-132: write lessons back to shared.pipeline_lessons
+        # AA-132: write lessons back to shared.pipeline_lessons — a no-op while the loop is frozen
+        # (AA-915, PIPELINE_LESSONS_ENABLED default off; the guard is inside _write_lessons_safe).
         lessons = state.get("lessons_extracted", [])
         if lessons:
             _write_lessons_safe(lessons, state)
@@ -677,7 +682,17 @@ Keep all other fields unchanged."""
 
 
 def _write_lessons_safe(lessons: list, state: dict) -> None:
-    """Fire-and-forget lessons write-back — swallows all errors."""
+    """Fire-and-forget lessons write-back — swallows all errors.
+
+    AA-915: returns at once while PIPELINE_LESSONS_ENABLED is off (the default), so neither call site
+    above touches shared.pipeline_lessons. The name is kept on purpose: the AA-729 harness
+    (scripts/aa729/evalpatch.py) and two unit tests patch it by name.
+    Do not "repair" the run_until_complete below: this node runs in an executor thread with no event
+    loop, so the call has most likely always failed into `lessons_writeback_failed` — reviving it
+    would revive the ungated loop ADR 0010 replaces."""
+    if not pipeline_lessons_enabled():
+        logger.info("lessons_writeback_frozen", n=len(lessons))
+        return
     try:
         batch = state.get("tour", {}).get("batch_name", "")
         country = state.get("tour", {}).get("country", "")
@@ -706,6 +721,9 @@ async def write_lessons_log(
     """
     if not lessons:
         return 0
+    # AA-915: second line of defence — no connection, no dedup SELECT, no INSERT while frozen.
+    if not pipeline_lessons_enabled():
+        return 0
 
     from collections import Counter
 
@@ -732,6 +750,8 @@ async def write_lessons_log(
     inserted = 0
     try:
         for lesson in unique_lessons:
+            # Left as written (AA-915): the S1 readers ask for S1_rewrite / S1_editor, so these rows
+            # were never read. Do not align the stages — that would revive the ungated loop.
             stage = "audit"
             field = lesson.get("field", "")
             pattern = lesson.get("pattern", "")

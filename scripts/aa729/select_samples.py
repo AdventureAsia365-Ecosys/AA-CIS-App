@@ -49,6 +49,7 @@ from scripts.aa729.common import (  # noqa: E402
     first_label,
     make_label, percentile, pick_stratified, save_output, scrub, tour_type,
 )
+from services.content_generation.pipeline_lessons import load_s1_lessons_block  # noqa: E402
 
 
 def _j(v: Any, default: Any = None) -> Any:
@@ -121,12 +122,6 @@ _S1_JEV_OUTCOME_SQL = """
     WHERE dl.outcome IS NOT NULL AND j.kind = 's1_rewrite'
 """
 
-_LESSONS_SQL = """
-    SELECT what_to_do, field FROM shared.pipeline_lessons
-    WHERE stage IN ('S1_rewrite', 'S1_editor') AND is_active = true
-    ORDER BY id
-"""
-
 _SEO_SQL = """
     SELECT keyword_search, keyword_ideas, top_keywords, people_also_ask, related_keywords
     FROM silver_aa_internal.seo_context
@@ -168,7 +163,8 @@ def seo_from_row(row) -> dict:
 
 
 async def _s1_brand_rules(conn, brand_name: Optional[str], lessons_text: str) -> dict:
-    """The Master brand rules exactly as _execute_run_tour builds them (+ the active S1 lessons)."""
+    """The Master brand rules exactly as _execute_run_tour builds them (+ the frozen AA-132 S1 lessons,
+    which load_s1_lessons_block returns only when PIPELINE_LESSONS_ENABLED is on — AA-915)."""
     from api.routers.admin_pipeline import _resolve_brand_rule
 
     br = await _resolve_brand_rule(conn, MASTER_TENANT_ID, None, brand_name)
@@ -184,17 +180,6 @@ async def _s1_brand_rules(conn, brand_name: Optional[str], lessons_text: str) ->
     if lessons_text:
         rules["system_prompt"] = (rules.get("system_prompt") or "") + lessons_text
     return rules
-
-
-def _lessons_text(rows) -> str:
-    if not rows:
-        return ""
-    lines = []
-    for r in rows:
-        prefix = f"[{r['field']}] " if r["field"] else ""
-        lines.append(f"- {prefix}{r['what_to_do']}")
-    return ("\n\n## LESSONS FROM PREVIOUS BATCHES\n"
-            "Apply these rules strictly — they come from real batch failures:\n" + "\n".join(lines))
 
 
 def _outcome_truth(outcome: Any) -> Optional[bool]:
@@ -642,7 +627,7 @@ async def build(seed: int, version: str, audit: dict) -> dict:
     shared: dict = {}
     try:
         async with pool.acquire() as conn:
-            lessons_text = _lessons_text(await conn.fetch(_LESSONS_SQL))
+            lessons_text = await load_s1_lessons_block(conn)  # AA-915: "" while the loop is frozen
             actions: dict[str, dict[str, int]] = {}
             for x in await conn.fetch(_AUDIT_SQL):
                 actions.setdefault(x["resource_id"], {})[x["action"]] = int(x["n"])
