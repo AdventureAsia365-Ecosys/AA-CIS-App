@@ -15,8 +15,8 @@ called: :data:`COGNITO_OPERATIONS` is enforced by :class:`CognitoDirectory`, so 
 
 Operations
 ----------
-- create: ``@adventure.asia`` only (one temporary exception: :data:`E2E_TEST_STAFF_EMAIL`, reviewer only, no
-  Booking grant — AA-816 E2E, migration 250); username derived from the address's local part (unique); ``password_hash``
+- create: ``@adventure.asia`` only (no exception: the temporary E2E test address of migration 250 was removed by
+  migration 252, root ADR 0006a A10); username derived from the address's local part (unique); ``password_hash``
   NULL (Cognito-only member); optional Booking grant. Cognito: ``AdminCreateUser`` with ``MessageAction=SUPPRESS``
   (always: without it Cognito mails a temporary password and the person could set a permanent password through
   managed login, bypassing email-code-only sign-in) and ``email`` + ``email_verified=true``. Then
@@ -97,13 +97,6 @@ _USERNAME_SUFFIX_TRIES = 50
 CIS_ROLES: tuple[str, ...] = ("admin", "reviewer", "content")
 BOOKING_ROLES: tuple[str, ...] = ("admin", "sales", "contracting", "content_creator")  # staff_app_grant_role_chk
 APP_BOOKING = "booking"
-
-# TEMPORARY (AA-816, S243 decision "option B"; root ADR 0006a): the ONE non-company address the directory accepts,
-# the SES inbound test mailbox the Cognito email-code E2E test reads its sign-in code from. Exact match only, CIS
-# role reviewer only, no Booking grant (require_e2e_test_scope); the DB CHECK (migration 250) and the WORKFORCE
-# pre token trigger (AA-CIS-Infra) hold the same rule. Removed when the E2E work is finished (AA-816).
-E2E_TEST_STAFF_EMAIL = "e2e@e2e-mail.lumiguides.it.com"
-E2E_TEST_STAFF_ROLE = "reviewer"
 
 # The break-glass account (ADR 0006 decision 11; S242 plan D1). Never written from the UI.
 BREAKGLASS_USERNAMES = frozenset({"admin"})
@@ -194,18 +187,10 @@ def normalise_email(email: Any) -> str:
     return (email or "").strip().lower() if isinstance(email, str) or email is None else ""
 
 
-def is_e2e_test_email(email: Any) -> bool:
-    """True only for :data:`E2E_TEST_STAFF_EMAIL` (after trimming and lower-casing)."""
-    return normalise_email(email) == E2E_TEST_STAFF_EMAIL
-
-
 def require_staff_email(email: Any) -> str:
     """The lower-cased ``@adventure.asia`` address, or 400. Mirrors the DB CHECK admin_users_email_chk and the
-    WORKFORCE pre sign-up trigger (which refuses other domains too). The one exception is the exact address
-    :data:`E2E_TEST_STAFF_EMAIL` (temporary, AA-816); its role is checked by :func:`require_e2e_test_scope`."""
+    WORKFORCE pre sign-up trigger (which refuses other domains too). There is no exception (root ADR 0006a A10)."""
     value = normalise_email(email)
-    if value == E2E_TEST_STAFF_EMAIL:
-        return value
     local, sep, domain = value.rpartition("@")
     if not sep or not local or domain != STAFF_EMAIL_DOMAIN:
         raise StaffDirectoryError(400, f"Only @{STAFF_EMAIL_DOMAIN} addresses can be staff accounts",
@@ -238,17 +223,6 @@ def require_booking_role(role: Any) -> Optional[str]:
     if role not in BOOKING_ROLES:
         raise StaffDirectoryError(400, f"Booking role must be one of {', '.join(BOOKING_ROLES)}", "booking_role")
     return role
-
-
-def require_e2e_test_scope(email: Any, role: Optional[str], booking_role: Optional[str]) -> None:
-    """The E2E test address may only be a CIS ``reviewer`` with no Booking grant (400 ``e2e_test_scope``). No-op
-    for every other address. ``role`` / ``booking_role`` are the values the row would end up with."""
-    if not is_e2e_test_email(email):
-        return
-    if role != E2E_TEST_STAFF_ROLE or booking_role is not None:
-        raise StaffDirectoryError(
-            400, f"The E2E test account may only have the CIS role {E2E_TEST_STAFF_ROLE} and no Booking role",
-            "e2e_test_scope")
 
 
 def username_base(email: str) -> str:
@@ -532,7 +506,6 @@ async def create_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, e
     display_name = require_display_name(display_name)
     role = require_cis_role(role)
     booking_role = require_booking_role(booking_role)
-    require_e2e_test_scope(email, role, booking_role)
     if email in BREAKGLASS_EMAILS:
         raise StaffDirectoryError(403, "The break-glass address cannot be a directory account", "breakglass")
 
@@ -638,8 +611,6 @@ async def change_roles(pool: Any, cognito: CognitoDirectory, *, actor_id: str, s
             staff_id = target["id"]
             old_role = target["role"]
             old_booking = await conn.fetchval(SQL_GRANT, staff_id, APP_BOOKING)
-            require_e2e_test_scope(target["email"], new_role if new_role is not None else old_role,
-                                   new_booking if booking_role is not _UNSET else old_booking)
             changes: dict[str, Any] = {}
             if new_role is not None and new_role != old_role:
                 if new_role != "admin":
@@ -792,7 +763,6 @@ async def sync_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, sta
     if not target["is_active"]:
         steps: list[Step] = _disable_steps(cognito, email)
     else:
-        require_e2e_test_scope(email, target["role"], booking)   # never sync a drifted E2E row into more groups
         wanted = [cis_group(target["role"])] + ([booking_group(booking)] if booking else [])
         steps = [("create_user", lambda: cognito.create_user(email)),
                  ("enable_user", lambda: cognito.enable(email))]

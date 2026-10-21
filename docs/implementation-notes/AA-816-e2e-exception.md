@@ -1,5 +1,11 @@
 # AA-816 — temporary E2E test-mailbox exception in the staff directory (S243)
 
+> **Removed (root ADR 0006a A10).** Migration 252 put `admin_users_email_chk` back to the 247 rule, the
+> `staff_directory` constants and `require_e2e_test_scope` are gone, and the WORKFORCE trigger exception was
+> reverted in AA-CIS-Infra. The E2E user is now the ordinary reviewer `e2e-cognito@adventure.asia`, forwarded by
+> the adventure.asia mail host to the SES mailbox. See `AA-816-a10-removal.md`. This page is kept as history;
+> migration 250 itself is never edited (an applied migration is history; its Infra copy is byte-identical).
+
 Decision (Nghiệp, 19/10/2026, option B): the Cognito email-code E2E test signs in as a staff user whose address is
 the SES test mailbox itself, `e2e@e2e-mail.lumiguides.it.com`, instead of a company address forwarded to it
 (option A needed a forwarder in the adventure.asia mail host panel). The exception lives until the E2E work is

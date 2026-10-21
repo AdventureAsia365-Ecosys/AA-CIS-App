@@ -53,7 +53,29 @@ The Infra side (trigger revert, the byte-identical copy of 252, the delete scrip
   - The `e2e-cognito.yml` header and prerequisites (comments only; still a CI file, so it gets a quick
     independent look before merge).
   - The unit test half, as above.
-- PR-A2: see the A2 section below (added on that branch).
+- PR-A2 (`fix/aa-816-remove-e2e-exception`, stacked on A1):
+  - `api/services/staff_directory.py`: `E2E_TEST_STAFF_EMAIL`, `E2E_TEST_STAFF_ROLE`, `is_e2e_test_email`,
+    `require_e2e_test_scope` and their three call sites (create, roles, sync) are gone, and so is the early
+    return in `require_staff_email`. Module and function docstrings say there is no exception.
+  - `api/migrations/252_admin_users_e2e_exception_removed.sql`: one BEGIN … COMMIT, `lock_timeout 5s`, no role
+    switch. Guard 0 (table + 247 column exist, runner is a member of the table owner), guard A (RAISE with counts
+    only while a row has the old address in any case, or any row breaks the 247 rule), then
+    `DROP CONSTRAINT IF EXISTS … ADD CONSTRAINT admin_users_email_chk` with the 247 definition, a COMMENT naming
+    247 and 252, guard 1 (validated, names `adventure[.]asia`, names neither `lumiguides` nor `reviewer`), and the
+    registry row. No `-- migrate:` directive. Rollback = the 250 definition in a new migration.
+  - Tests: `tests/integration/test_aa816_migration_252.py` replaces `test_aa816_migration_250.py` (re-applies
+    250, inserts the old row, proves 252 RAISEs with counts only and changes nothing, deletes the row, applies
+    252 twice; every variant of the old address refused; company addresses keep every role and flag; comment
+    set; guard 0 refuses a non-owner; teardown leaves the 247 rule). `tests/unit/test_aa816_e2e_exception_removed.py`
+    replaces `test_aa816_e2e_test_mail_exception.py` (names gone, no production module names the old address,
+    400 `email_domain`, create refused before any write or Cognito call, a stored old row can still be disabled,
+    the helper names a company address, the 252 text).
+  - Docs: `CONTEXT.md` (Cognito E2E paragraph and Staff roles), and a "removed / updated" note on top of
+    `AA-816-e2e-exception.md` and `AA-816-e2e.md`. Migration 250 is not edited (lesson 92).
+
+- **Not changed:** `enable_staff` and `sync_staff` still do not re-validate a stored e-mail (only create
+  validates). After 252 no row can hold an off-domain address, so a re-check there would be dead code. Until the
+  old row is deleted, it must not be re-enabled or synced (H3).
 
 ## Tradeoffs
 
@@ -66,6 +88,13 @@ The Infra side (trigger revert, the byte-identical copy of 252, the delete scrip
   are only valid for a reviewer with no Booking access.
 - **TLS.** The SES receipt rule requires TLS. If the DreamHost/MailChannels relay does not use TLS, the
   fallback is Infra PR-I0 (`tls_policy = "Optional"`). It weakens the guard, so it needs Nghiệp's OK.
+
+- **The A10 code guards are gone.** The E2E account is an ordinary reviewer whose codes sit in a CI-readable
+  mailbox. Mitigations: the ADR policy line (never give this account another role; remove the forwarder at once
+  if `lumiguides.it.com` is lost) and the E2E step 4a detective check. A preventive production-code guard would
+  bring the special case back, so it is Nghiệp's call.
+- **No RDS snapshot for the row delete.** It is one test row; the `staff.deleted` audit details (username, role,
+  created_at) written by the Infra delete script are the restore record.
 
 ## Should know
 
@@ -85,7 +114,34 @@ The Infra side (trigger revert, the byte-identical copy of 252, the delete scrip
   7. Infra I1b (byte-identical copy of 252) merge, DB Migrate check + apply
      `cis/252_admin_users_e2e_exception_removed.sql`, merge the `bot/db-schema-reference` PR.
   8. E2E again.
+- **Stacking.** A2 is cut from the A1 tip `e2650efe` (not `85d3fd8c`: A1 got a second commit). After A1 is
+  squash-merged: `git rebase --onto origin/main e2650efe`, and take the base SHA again after every rebase.
+- **Migration number.** 252 was free on 21/10/2026 (`git ls-tree origin/main api/migrations` ends at 251; the
+  schema reference shows CIS 251). Re-check before the PR: AA-844 / 876 / 911 / 925 / 926 / 927 run in parallel.
+- **252 RAISEs while the old row exists** (intended). Apply only after the Infra run-script delete. Any later edit
+  of 252 needs a new byte-identical Infra copy at once (lesson 92).
+- **Done-when (A10 part) for the Linear issue; AA-816 itself stays In Progress for S2 with AA-911):**
+  - The forwarder is live: an S3 object from `no-reply@lumiguides.it.com` to `e2e-cognito@adventure.asia` (H1),
+    and the H2 invite object.
+  - `admin_users_email_chk` on Dev is the 247 rule again (CIS 252 applied; the schema reference shows it).
+  - No `shared.admin_users` row and no WORKFORCE user has `e2e@e2e-mail.lumiguides.it.com`: run-script output +
+    the `staff.deleted` audit id, and an empty Cognito list-users result.
+  - CIS main has no `E2E_TEST_STAFF_EMAIL` / `require_e2e_test_scope`; the deployed api/worker SHA includes A2.
+  - The directory refuses the address with 400 `email_domain`: unit test + the live DB CHECK (a live API call
+    needs Nghiệp's owner Bearer; the machine secret gets 403 from staff_policy and the Staff page validates on
+    the client).
+  - The WORKFORCE triggers have no exception: Infra I1a merged, Terraform Apply done, new Lambda versions behind
+    `live`, unit tests deny the address.
+  - `e2e-cognito.yml` green on main as `e2e-cognito@adventure.asia` (run id): role reviewer (step 4a), Booking
+    refuses with `no_booking_role`.
+  - ADR 0006a A10 has its closing line; backlog row 12 is closed.
 - **Local runs (A1):**
   - `npx playwright test --project=cognito tests/e2e/cognito/mailbox-parse.spec.ts`: 7 passed.
   - `pytest tests/unit/test_aa816_e2e_test_mail_exception.py`: 32 passed.
   - `tsc --noEmit --strict` on the three touched .ts files: clean.
+- **Local runs (A2):**
+  - `pytest tests/unit/test_aa816_e2e_exception_removed.py tests/unit/test_aa816_staff_directory_writes.py
+    tests/unit/test_aa816_staff_reconcile.py`: 111 passed.
+  - `pytest tests/integration/test_aa816_migration_252.py` (local Postgres, non-superuser test user): 18 passed,
+    1 skipped (guard 0 non-owner case needs CREATEROLE; CI's superuser runs it and the NOSUPERUSER runner path).
+  - flake8 on the touched Python files: clean.

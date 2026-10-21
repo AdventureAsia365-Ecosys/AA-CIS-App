@@ -524,8 +524,9 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   GitHub environment `e2e`, OIDC role from secret `E2E_MAIL_ROLE_ARN` (Infra `aa-cis-dev-e2e-mail-reader`,
   read-only: List + Get on `s3://aa-cis-dev-e2e-mail-<acc2>/inbound/`, no delete; 1-day expiry). Playwright
   project `cognito` (`tests/e2e/cognito/`, always the production host — the only registered callback): staff
-  user "E2E Cognito" (`e2e@e2e-mail.lumiguides.it.com` — the SES test mailbox itself, reviewer, Booking none; a
-  TEMPORARY exception to the `@adventure.asia` rule, see Staff roles) signs in by email code (`tests/e2e/helpers/mailbox.ts` reads the code from S3), lands under `/admin`,
+  user "E2E Cognito" (`e2e-cognito@adventure.asia` — an ordinary reviewer, Booking none; the adventure.asia mail
+  host forwards its mail to the SES test mailbox `e2e@e2e-mail.lumiguides.it.com`; no exception to the staff rule
+  since migration 252, root ADR 0006a A10; the spec fails if the account is ever more than a reviewer) signs in by email code (`tests/e2e/helpers/mailbox.ts` reads the code from S3), lands under `/admin`,
   then (AA-680 staff-half evidence) opens the Booking staff admin `https://booking.lumiguides.it.com` and signs in
   with company email on the shared managed-login session — Booking must refuse it (`/login?reason=no_booking_role`,
   no `bk_*` session cookie, `/` still bounces to `/login`; screenshots `04b`–`04d`) — goes back to CIS, signs out,
@@ -634,10 +635,8 @@ waves (`/admin/waves`, AA-727).
 One staff identity model. Every staff user is a row in `shared.admin_users` (role enum
 `shared.admin_role`: `admin`, `reviewer`, `content` — migration 218 — and the read-only `viewer` — migration
 249, AA-878; identity columns from migration 247:
-`email` lower-case `@adventure.asia` only — one TEMPORARY exception until the Cognito E2E work is done (AA-816,
-S243 option B, root ADR 0006a): the exact address `e2e@e2e-mail.lumiguides.it.com` as a reviewer, not an owner,
-no password, no Booking grant (migration 250 CHECK + `staff_directory.E2E_TEST_STAFF_EMAIL` /
-`require_e2e_test_scope` + the WORKFORCE triggers) —, `display_name`, `cognito_iss` + `cognito_sub`, `last_login_at`
+`email` lower-case `@adventure.asia` only, no exception (the temporary 250 E2E test-mailbox exception was removed
+by migration 252 and the WORKFORCE trigger revert, root ADR 0006a A10), `display_name`, `cognito_iss` + `cognito_sub`, `last_login_at`
 ("last seen"), `is_owner`; `password_hash` nullable, NULL fails closed). A staff member's role in another app
 lives in `shared.staff_app_grant (admin_user_id, app, role)` (`app` = `booking`, roles `admin` / `sales` /
 `contracting` / `content_creator`). Root ADR 0006 + amendment 0006a are the design; tenants are separate
