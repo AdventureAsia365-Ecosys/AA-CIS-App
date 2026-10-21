@@ -478,11 +478,17 @@ async def test_backfill_plan_and_estimate_make_no_call(pool, cur):
 @pytest.mark.asyncio
 async def test_geocoder_requests_today_counts_the_utc_day(pool, cur):
     from services.places import store
+    # AA-847: the guard sums geo.geocode_call.credits (CIS 255); this module re-created geo from 226 alone
+    with open(os.path.join(os.path.dirname(MIGRATION), "255_geo_place_shape.sql")) as f:
+        cur.execute(f.read())
     cur.execute("DELETE FROM geo.geocode_call WHERE provider = 'zz712geo'")
     cur.execute("INSERT INTO geo.geocode_call (provider, requests, called_at) VALUES "
                 "('zz712geo', 7, now()), ('zz712geo', 5, now()), ('zz712geo', 100, now() - interval '2 days')")
+    # a Place Details call with full geometry: 1 request, 2 credits (written by 255-aware code)
+    cur.execute("INSERT INTO geo.geocode_call (provider, requests, credits, endpoint, called_at) VALUES "
+                "('zz712geo', 1, 2, 'place_details', now())")
     async with pool.acquire() as conn:
-        assert await store.geocoder_requests_today(conn, "zz712geo") == 12
+        assert await store.geocoder_requests_today(conn, "zz712geo") == 14
         assert await store.geocoder_requests_today(conn, "nobody") == 0
     cur.execute("DELETE FROM geo.geocode_call WHERE provider = 'zz712geo'")
 

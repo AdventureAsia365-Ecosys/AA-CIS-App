@@ -1,15 +1,21 @@
 """AA-847 — admin fixes for the content-validity findings (POST /admin/places/validity/fix). Dry run by default.
 
   not_a_pin        area features stored as points (V3 area_feature) → geo_precision 'area' (drawn as an area)
-  linear_feature   linear features (V3 linear_feature) → geo_precision 'area', review_reason 'linear_feature',
-                   geo_status 'suspect': no catalog view draws them (proposed answer to Nghiệp's display decision,
-                   LINEAR_FEATURES_HIDDEN); the name stays in the tour's day text
+  linear_feature   linear features stored as a pin / circle (V3 linear_feature) → geo_precision 'line' and a pending
+                   geo.place_shape row (owner decision S246: lines are DRAWN, never hidden; the job place_shape
+                   fetches the geometry). A row the first validity branch hid (suspect + review_reason
+                   'linear_feature') is un-hidden. Undo restores the precision and deletes the shape row it created
+                   while that row is still pending.
   duplicate_place  near duplicates (V2 near_duplicate), merged catalog-wide per country: one keeper per cluster
                    (geoapify point, then most live components, then id); the others get duplicate_of = keeper and
                    every CIS row pointing at them is repointed to the keeper: geo.tour_place, geo.tour_day
                    (overnight), geo.place_name (so the store lookup answers the keeper, not a new geocode),
                    acp_shared.place_card, shared.place_photo. Booking and TripPlanner rows are reported, never
                    written (other owners' schemas; cis_app may not read them, then the report says so).
+                   AA-847 lines: geo.place_shape follows the merge (shape_merge): the keeper keeps its shape when it
+                   has a drawable one; else the duplicate's shape moves to the keeper; the row that goes is saved
+                   whole in the audit row so undo puts it back. geo.tour_segment is rebuilt by the graph build the
+                   fix enqueues.
 
 Never touches an admin-fixed row (geo_status or located_by 'manual'). Apply writes one acp_shared.audit_log row
 (action places.validity_fix.<check>) whose details hold every prior value and every repointed row, written last in
@@ -32,7 +38,8 @@ CHECKS = ("not_a_pin", "linear_feature", "duplicate_place")
 ACTION_PREFIX = "places.validity_fix."
 UNDO_ACTION = "places.validity_fix.undo"
 RESOURCE_TYPE = "places_validity"
-LINEAR_FEATURES_HIDDEN = True
+# the review reason the first validity branch wrote on hidden linear features (never deployed; S246: lines are drawn)
+HIDDEN_LINEAR_REASON = "linear_feature"
 
 CROSS_APP_TABLES = ("booking.hotels", "booking.services", "booking.suppliers", "tripplanner.itinerary_components")
 # (table, key columns, destination column) of the CIS rows a merge repoints
@@ -61,6 +68,59 @@ async def _destinations(conn, ids) -> dict[str, dict]:
                   duplicate_of::text AS duplicate_of
              FROM shared.destinations WHERE id = ANY($1::uuid[])""", sorted(set(ids)))
     return {r["id"]: dict(r) for r in rows}
+
+
+async def _shapes(conn, ids) -> dict[str, dict]:
+    """geo.place_shape rows of these destinations: {id: {"status", "row" (the whole row as JSON, for undo)}}."""
+    ids = sorted({str(i) for i in ids if i})
+    if not ids:
+        return {}
+    rows = await conn.fetch(
+        """SELECT destination_id::text AS id, status, to_jsonb(ps) AS row
+             FROM geo.place_shape ps WHERE destination_id = ANY($1::uuid[])""", ids)
+    return {r["id"]: {"status": r["status"],
+                      "row": r["row"] if isinstance(r["row"], dict) else json.loads(r["row"])} for r in rows}
+
+
+def shape_merge(keeper_shape: Optional[dict], dup_shape: Optional[dict]) -> dict:
+    """What a merge does to geo.place_shape (one row per destination): {} (the duplicate has none) | {"moved": True}
+    (the keeper has none: the duplicate's row becomes the keeper's) | {"deleted_dup": row} (the keeper's is drawable,
+    or neither is: the duplicate's goes) | {"deleted_keeper": row, "moved": True} (only the duplicate's is drawable).
+    Deleted rows are kept whole for undo."""
+    if dup_shape is None:
+        return {}
+    if keeper_shape is None:
+        return {"moved": True}
+    drawn = validity.DRAWN_SHAPE_STATUSES
+    if keeper_shape["status"] in drawn or dup_shape["status"] not in drawn:
+        return {"deleted_dup": dup_shape["row"]}
+    return {"deleted_keeper": keeper_shape["row"], "moved": True}
+
+
+_SHAPE_RESTORE_SQL = """
+    INSERT INTO geo.place_shape SELECT * FROM jsonb_populate_record(NULL::geo.place_shape, $1::jsonb)
+    ON CONFLICT (destination_id) DO NOTHING
+"""
+
+
+async def _apply_shape_merge(conn, keeper: str, dup: str, sm: dict, *, reverse: bool) -> None:
+    if not sm:
+        return
+    if not reverse:
+        if sm.get("deleted_keeper"):
+            await conn.execute("DELETE FROM geo.place_shape WHERE destination_id = $1::uuid", keeper)
+        if sm.get("moved"):
+            await conn.execute("UPDATE geo.place_shape SET destination_id = $1::uuid, updated_at = now() "
+                               "WHERE destination_id = $2::uuid", keeper, dup)
+        if sm.get("deleted_dup"):
+            await conn.execute("DELETE FROM geo.place_shape WHERE destination_id = $1::uuid", dup)
+        return
+    if sm.get("moved"):
+        await conn.execute("UPDATE geo.place_shape SET destination_id = $1::uuid, updated_at = now() "
+                           "WHERE destination_id = $2::uuid", dup, keeper)
+    for k in ("deleted_keeper", "deleted_dup"):
+        if sm.get(k):
+            await conn.execute(_SHAPE_RESTORE_SQL, json.dumps(sm[k]))
 
 
 def _selected(items: list, check: str, source_id: Optional[str]) -> list:
@@ -138,6 +198,7 @@ async def plan(conn, check: str, *, country: Optional[str] = None, source_id: Op
     dests = await _destinations(conn, ids)
     changes, skipped = [], []
     if check in ("not_a_pin", "linear_feature"):
+        shapes = await _shapes(conn, ids) if check == "linear_feature" else {}
         for d in ids:
             row = dests.get(d)
             if row is None:
@@ -147,14 +208,19 @@ async def plan(conn, check: str, *, country: Optional[str] = None, source_id: Op
                 continue
             before = {"geo_precision": row["geo_precision"], "geo_status": row["geo_status"],
                       "review_reason": row["review_reason"]}
-            after = dict(before, geo_precision="area")
-            if check == "linear_feature":
-                after["review_reason"] = "linear_feature"
-                if LINEAR_FEATURES_HIDDEN:
-                    after["geo_status"] = "suspect"
+            if check == "not_a_pin":
+                after = dict(before, geo_precision="area")
+            else:   # S246: a line, drawn from geo.place_shape; un-hide a row the first validity branch hid
+                hidden = row["geo_status"] == "suspect" and row["review_reason"] == HIDDEN_LINEAR_REASON
+                after = dict(before, geo_precision="line", geo_status="ok" if hidden else row["geo_status"],
+                             review_reason=None if row["review_reason"] == HIDDEN_LINEAR_REASON
+                             else row["review_reason"])
             if after != before:
-                changes.append({"destination_id": d, "name": row["name"], "country": row["country"],
-                                "before": before, "after": after})
+                ch = {"destination_id": d, "name": row["name"], "country": row["country"],
+                      "before": before, "after": after}
+                if check == "linear_feature":
+                    ch["shape_created"] = d not in shapes
+                changes.append(ch)
         return {"check": check, "country": country, "source_id": source_id, "findings": len(items),
                 "changes": changes, "skipped": skipped, "fingerprint": fingerprint(changes)}
     # duplicate_place
@@ -162,8 +228,10 @@ async def plan(conn, check: str, *, country: Optional[str] = None, source_id: Op
     for c in comps:
         comp_count[str(c["destination_id"])] = comp_count.get(str(c["destination_id"]), 0) + 1
     usable = {i: r for i, r in dests.items() if r["duplicate_of"] is None and r["geo_status"] != "suspect"}
+    shapes = await _shapes(conn, list(usable))
     for group in merge_groups(items, comp_count, usable):
         keeper, others = group[0], group[1:]
+        keeper_shape = shapes.get(keeper)     # simulated as the group's merges are planned in order
         for d in others:
             row = usable[d]
             if _manual(row):
@@ -175,10 +243,13 @@ async def plan(conn, check: str, *, country: Optional[str] = None, source_id: Op
                     f"SELECT {', '.join(f'{k}::text AS {k}' for k in keys)} FROM {table} WHERE {col} = $1::uuid",
                     d)
                 moved[table] = [[r[k] for k in keys] for r in rows]
+            sm = shape_merge(keeper_shape, shapes.get(d))
+            if sm.get("moved"):
+                keeper_shape = shapes.get(d)
             changes.append({"destination_id": d, "name": row["name"], "country": row["country"],
                             "keeper_id": keeper, "keeper_name": usable[keeper]["name"],
                             "before": {"duplicate_of": None}, "after": {"duplicate_of": keeper},
-                            "repointed": moved})
+                            "repointed": moved, "shape": sm})
     merged = [c["destination_id"] for c in changes]
     return {"check": check, "country": country, "source_id": source_id, "findings": len(items),
             "changes": changes, "skipped": skipped, "fingerprint": fingerprint(changes),
@@ -190,7 +261,9 @@ def _where(keys: tuple, start: int) -> str:
 
 
 async def _apply_changes(conn, check: str, changes: list, *, reverse: bool = False) -> None:
-    for ch in changes:
+    # undo walks the changes backwards: a later merge into the same keeper may have moved / deleted a shape row
+    # an earlier one placed there
+    for ch in (reversed(changes) if reverse else changes):
         target = ch["before"] if reverse else ch["after"]
         if check == "duplicate_place":
             keeper, dup = ch["keeper_id"], ch["destination_id"]
@@ -200,13 +273,20 @@ async def _apply_changes(conn, check: str, changes: list, *, reverse: bool = Fal
                     await conn.execute(
                         f"UPDATE {table} SET {col} = $1::uuid WHERE {col} = $2::uuid AND {_where(keys, 3)}",
                         dst, src, *key)
+            await _apply_shape_merge(conn, keeper, dup, ch.get("shape") or {}, reverse=reverse)
             await conn.execute("UPDATE shared.destinations SET duplicate_of = $2::uuid WHERE id = $1::uuid",
                                dup, target["duplicate_of"])
         else:
+            if reverse and ch.get("shape_created"):   # only the row this fix created, and only while still queued
+                await conn.execute("DELETE FROM geo.place_shape WHERE destination_id = $1::uuid "
+                                   "AND status = 'pending'", ch["destination_id"])
             await conn.execute(
                 """UPDATE shared.destinations SET geo_precision = $2, geo_status = $3, review_reason = $4
                     WHERE id = $1::uuid""",
                 ch["destination_id"], target["geo_precision"], target["geo_status"], target["review_reason"])
+            if not reverse and check == "linear_feature":
+                from services.places.store import ensure_pending_shape
+                await ensure_pending_shape(conn, ch["destination_id"])
 
 
 async def apply(conn, fix: dict, *, actor: str) -> dict:

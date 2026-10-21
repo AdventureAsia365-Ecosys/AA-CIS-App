@@ -2,7 +2,10 @@
 (AA-673, @ 6523816); rows are keyed by source_id (the catalog tour identity) instead of tour_id.
 
   stop      a (source, day) and where the traveller is: the overnight destination, else the
-            destination with the most places that day (ties by name)
+            destination with the most places that day (ties by name). AA-847: a LINE destination (river,
+            road, trail: geo_precision 'line') is never a stop — a river day with no overnight takes its other
+            place, and "a night on the Mekong" (an overnight on a line) falls back to the day's main point place;
+            the line itself is drawn as the day's stretch (geo.tour_segment)
   node      a destination with at least one stop
   edge      A -> B when a tour goes from stop A to a different stop B next (days without a stop are
             skipped over); weighted by the number of tours taking that step
@@ -42,11 +45,19 @@ class Graph:
     stats: dict = field(default_factory=dict)
 
 
+LINE = "line"
+
+
+def is_line(dests: dict, destination_id) -> bool:
+    return (dests.get(destination_id) or {}).get("precision") == LINE
+
+
 def main_component_destinations(places: Iterable[dict], dests: dict) -> dict[tuple, object]:
-    """(source_id, day) -> the destination with the most places that day, ties by name."""
+    """(source_id, day) -> the non-line destination with the most places that day, ties by name."""
     count: dict[tuple, dict] = defaultdict(lambda: defaultdict(int))
     for p in places:
-        if p.get("destination_id") is not None and p["destination_id"] in dests:
+        if p.get("destination_id") is not None and p["destination_id"] in dests \
+                and not is_line(dests, p["destination_id"]):
             count[(p["source_id"], p["day_index"])][p["destination_id"]] += 1
     return {k: sorted(v.items(), key=lambda kv: (-kv[1], dests[kv[0]]["name"]))[0][0] for k, v in count.items()}
 
@@ -55,7 +66,9 @@ def stop_rows(days: Iterable[dict], places: list[dict], dests: dict) -> list[dic
     """Rows for choose_stops from geo.tour_day + geo.tour_place rows of live sources."""
     main = main_component_destinations(places, dests)
     return [{"source_id": d["source_id"], "day_index": d["day_index"],
-             "overnight_destination_id": d.get("overnight_destination_id"),
+             # a night "on the Mekong" (overnight on a line): not a stop, the day's main point place is
+             "overnight_destination_id": (None if is_line(dests, d.get("overnight_destination_id"))
+                                          else d.get("overnight_destination_id")),
              "component_destination_id": main.get((d["source_id"], d["day_index"]))}
             for d in sorted(days, key=lambda r: (r["source_id"], r["day_index"]))]
 
@@ -185,7 +198,7 @@ def _per_country(g: Graph, dests: dict) -> dict:
 
 def build_graph(rows: Iterable[dict], dests: dict, places: list[dict],
                 junction_km: float = DEFAULT_JUNCTION_KM) -> Graph:
-    stops = [s for s in choose_stops(rows) if s.destination_id in dests]
+    stops = [s for s in choose_stops(rows) if s.destination_id in dests and not is_line(dests, s.destination_id)]
     g = Graph(stops=stops)
     g.nodes = build_nodes(stops, dests, places)
     g.edges = build_edges(stops, dests)

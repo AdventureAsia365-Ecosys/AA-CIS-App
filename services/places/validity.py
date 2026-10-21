@@ -22,8 +22,12 @@ explicitly — cis_app's RLS policies are USING (true)):
                              generic words, or the same letters run together: "Kuangsi" = "Kuang Si"), ≤ 2 km apart,
                              ≤ 5 km when either point is the model's (llm) or an area
   V3 not a pin — a linear or area feature stored as a point (geomatch.feature_kind, name + Geoapify result_type):
-     linear_feature          trail / river / road / range / loop … (proposed: hidden from the map, name kept in text)
-     area_feature            national park / delta / plateau / coast / gorge … (drawn as an area)
+     linear_feature          trail / river / road / loop … NOT stored as a line (geo_precision point / area): drawn
+                             as a pin or a circle today. Owner decision S246: lines are drawn as lines, so the fix
+                             stores it 'line' and queues its shape
+     area_feature            national park / delta / plateau / coast / gorge / range … (drawn as an area)
+     linear_without_shape    a line destination whose geo.place_shape is not drawable yet (pending / not_found /
+                             failed, or no row): TripPlanner can only draw the provisional "approximate route"
   V4 the component's own tour-day text does not name it (AA-819, the narration day bug):
      no_day_text             the component's day has no canonical day block
      day_text_not_naming     the day block does not name the component
@@ -46,17 +50,21 @@ CHECKS = (V1, V2, V3, V4)
 REASONS = {
     V1: ("ranged_heading", "missing_day_numbers", "duration_text_vs_days", "extra_days"),
     V2: ("same_destination_names", "near_duplicate"),
-    V3: ("linear_feature", "area_feature"),
+    V3: ("linear_feature", "area_feature", "linear_without_shape"),
     V4: ("no_day_text", "day_text_not_naming"),
 }
 
 # The pre-flip gate (Done-when 3: no duplicate pin, no trail pin on the map): only the findings a map viewer sees and
 # the validity fix clears. near_duplicate (two pins of one place) clears with the duplicate fix; linear_feature with
-# the hide fix (the place becomes suspect and leaves the report); area_feature with the area fix (stored as an area).
+# the line fix (stored 'line', shape queued); area_feature with the area fix (stored as an area); linear_without_shape
+# when the place_shape job (or the admin's GeoJSON) draws the line — an anchored "approximate" shape counts as drawn
+# (open question to Nghiệp, proposed yes; approximate shapes are listed separately on /admin/places Lines).
 # Informational, never blocking: same_destination_names (one destination, several spellings — one pin; it is what a
 # near_duplicate turns into once the in-tour dedupe or the fix points the spellings at the keeper, e.g. Kuang Si),
 # V1 duration and V4 day text (content defects with their own fixes, not a map defect).
-GATE_REASONS = ("near_duplicate", "linear_feature", "area_feature")
+GATE_REASONS = ("near_duplicate", "linear_feature", "area_feature", "linear_without_shape")
+# geo.place_shape statuses TripPlanner draws as a line (approximate: dashed, labelled "approximate route")
+DRAWN_SHAPE_STATUSES = ("ok", "manual", "approximate")
 
 NEAR_KM = 2.0
 NEAR_KM_LOOSE = 5.0
@@ -228,12 +236,17 @@ class Place:
     review_reason: Optional[str] = None
     result_type: Optional[str] = None
     components: int = 0           # live components on it (keeper choice)
+    shape_status: Optional[str] = None   # geo.place_shape.status of a line destination (None: no row)
 
 
 def is_same_place(a: Place, b: Place) -> tuple[bool, Optional[float]]:
-    """(same, km): same country, same distinctive name, within NEAR_KM (NEAR_KM_LOOSE when either is llm / area)."""
+    """(same, km): same country, same distinctive name, within NEAR_KM (NEAR_KM_LOOSE when either is llm / area).
+    AA-847: never for a line destination — a point distance means nothing for a river ("Mekong" and "Mekong River"
+    can be geocoded 100 km apart and be one place); lines are matched on their shapes (services/places/line_dedupe)."""
     if a.destination_id == b.destination_id:
         return True, 0.0
+    if "line" in (a.precision, b.precision):
+        return False, None
     if (a.country or "").strip().lower() != (b.country or "").strip().lower():
         return False, None
     if not same_name(a.name, b.name):
@@ -277,6 +290,18 @@ def clusters(places: list[Place]) -> list[list[Place]]:
         if len(members) >= 2:
             out.append(members)
     return out
+
+
+def v3_reason(p: Place) -> Optional[str]:
+    """linear_feature / linear_without_shape / area_feature / None for one destination (see the module docstring)."""
+    if p.precision == "line":
+        return None if p.shape_status in DRAWN_SHAPE_STATUSES else "linear_without_shape"
+    kind = geomatch.feature_kind(p.name, p.result_type)
+    if kind == geomatch.LINEAR:
+        return "linear_feature"
+    if kind == geomatch.AREA and p.precision != "area":
+        return "area_feature"
+    return None
 
 
 # ── V4 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -332,7 +357,7 @@ class Item:
 def evaluate(tours: list[dict], components: list[dict]) -> list[Item]:
     """tours: {source_id, tour_id, title, country, duration_raw, itinerary}; components: {source_id, day_index, name,
     name_norm, destination_id, destination_name, country, lat, lng, located_by, precision, review_reason,
-    result_type}. Returns every finding, deterministic order."""
+    result_type, shape_status}. Returns every finding, deterministic order."""
     by_source: dict[str, list[dict]] = {}
     for c in components:
         by_source.setdefault(c["source_id"], []).append(c)
@@ -363,23 +388,27 @@ def evaluate(tours: list[dict], components: list[dict]) -> list[Item]:
                 d = str(c["destination_id"])
                 places.setdefault(d, Place(d, c.get("destination_name") or c["name"], c.get("country"),
                                            float(c["lat"]), float(c["lng"]), c.get("located_by"), c.get("precision"),
-                                           c.get("review_reason"), c.get("result_type"), comp_count.get(d, 0)))
+                                           c.get("review_reason"), c.get("result_type"), comp_count.get(d, 0),
+                                           c.get("shape_status")))
         for group in clusters(list(places.values())):
             k = group[0]
             dist = max(is_same_place(k, p)[1] or 0.0 for p in group[1:])
             items.append(Item(V2, "near_duplicate", names=[p.name for p in group],
                               destination_ids=[p.destination_id for p in group], keeper_id=k.destination_id,
                               km=dist, **base))
-        # V3: per destination, once per tour. A linear feature is flagged at any precision (a circle at a trail's
-        # centroid still reads as a pin); an area feature only while it is stored as a point.
+        # V3: per destination, once per tour. A linear feature is flagged while it is not stored as a line (a pin or
+        # a circle at a trail's centroid); a line while its shape is not drawable; an area feature while it is stored
+        # as a point.
         for d, p in sorted(places.items()):
-            kind = geomatch.feature_kind(p.name, p.result_type)
-            if kind is None or (kind == geomatch.AREA and p.precision == "area") or (t["source_id"], d) in seen_pin:
+            if (t["source_id"], d) in seen_pin:
+                continue
+            reason = v3_reason(p)
+            if reason is None:
                 continue
             seen_pin.add((t["source_id"], d))
-            items.append(Item(V3, "linear_feature" if kind == geomatch.LINEAR else "area_feature", names=[p.name],
-                              destination_ids=[d], detail=f"precision {p.precision}, result_type {p.result_type}",
-                              **base))
+            detail = (f"shape {p.shape_status or 'missing'}" if reason == "linear_without_shape"
+                      else f"precision {p.precision}, result_type {p.result_type}")
+            items.append(Item(V3, reason, names=[p.name], destination_ids=[d], detail=detail, **base))
         # V4: the component's own day text names it
         blocks = day_blocks(t.get("itinerary"))
         for c in sorted(comps, key=lambda x: (x["day_index"], x["name"])):
@@ -451,10 +480,11 @@ LIVE_TOURS_SQL = """
 COMPONENTS_SQL = """
     SELECT gp.source_id, gp.day_index, gp.name, gp.name_norm, gp.destination_id::text AS destination_id,
            d.name AS destination_name, d.country, d.lat, d.lng, d.located_by, d.geo_precision AS precision,
-           d.review_reason, d.geocoder_meta ->> 'result_type' AS result_type
+           d.review_reason, d.geocoder_meta ->> 'result_type' AS result_type, ps.status AS shape_status
       FROM geo.tour_place gp
       JOIN shared.destinations d ON d.id = gp.destination_id
                                 AND d.geo_status <> 'suspect' AND d.duplicate_of IS NULL
+      LEFT JOIN geo.place_shape ps ON ps.destination_id = d.id
      WHERE gp.source_id = ANY($1::text[])
 """
 

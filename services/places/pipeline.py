@@ -111,7 +111,8 @@ async def extract_tour_places(pool, tour: dict, deps: ExtractDeps, *, force: boo
         c.country = canonical(c.country)
         c.country_norm = country_norm(c.country)
     counts.update(components=c_counts["components"], skipped=c_counts["skipped"],
-                  generic_without_locality=c_counts["generic_without_locality"])
+                  generic_without_locality=c_counts["generic_without_locality"],
+                  linked_to_feature=c_counts.get("linked_to_feature", 0))
 
     # ── link ── card destination → resolved name → reusable destination → pending
     comp_keys = {c.component_id: (c.name_norm, c.country_norm, c.locality_norm) for c in comps
@@ -264,7 +265,7 @@ async def geocode_pending(pool, generate, geocoder, *, limit: int, job_id: Optio
     async with pool.acquire() as conn:
         due = await store.due_names(conn, limit)
     out = {"names": len(due), "resolved": 0, "inserted": 0, "updated": 0, "kept": 0, "failed": 0,
-           "unknown": 0, "deferred": 0, "review": 0, "by": {}, "geocoder": geocoder.name}
+           "unknown": 0, "deferred": 0, "review": 0, "shapes_pending": 0, "by": {}, "geocoder": geocoder.name}
     if not due:
         return out
     keys = [(r["name_norm"], r["country_norm"], r["locality_norm"]) for r in due]
@@ -315,6 +316,10 @@ async def geocode_pending(pool, generate, geocoder, *, limit: int, job_id: Optio
                         dest_id, action = await store.upsert_destination(conn, it.key, it.name, o.point,
                                                                          locality=it.locality)
                         await store.mark_name(conn, it.key, destination_id=dest_id)
+                        # AA-847: a line gets its pending geo.place_shape row (job place_shape draws it); the
+                        # point is never moved for shape reasons — this job stays the only coordinate writer
+                        if o.point.precision == "line" and await store.ensure_pending_shape(conn, dest_id):
+                            out["shapes_pending"] += 1
                     out[action] += 1
                     out["resolved"] += 1
                     out["by"][o.point.located_by] = out["by"].get(o.point.located_by, 0) + 1

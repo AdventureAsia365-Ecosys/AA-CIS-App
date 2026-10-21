@@ -475,11 +475,20 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   name in two countries = two places). Other apps will read it only through `catalog.*` views
   (migration 228, next slice); TripPlanner's own extraction is frozen.
 - **Place kinds and the content-validity gate (AA-847).** `geomatch.feature_kind` names a place that is not a
-  pin: a **linear** feature (trail, river, road, range, loop …) is stored `geo_precision='area'`,
-  `review_reason='linear_feature'`, `geo_status='suspect'` — no catalog view draws it, its name stays in the day
-  text (proposed display rule, Nghiệp's decision); an **area** feature (national park, delta, plateau, coast,
-  gorge) is `area` even when Geoapify confirms a point. A name that names a point on the feature ("River Kwai
-  Bridge", "Kuang Si Falls") stays a point. `place_extract` maps a tour's in-tour duplicates (same distinctive name,
+  pin: a **linear** feature (trail, river, road, loop, stream, path, circuit, expressway …) is stored
+  `geo_precision='line'`, `geo_status='ok'` and DRAWN as a line (owner decision S246: never a pin, a circle or
+  hidden): `place_geocode` inserts its pending `geo.place_shape` row and never moves its point for shape reasons (it
+  stays the only coordinate writer); an **area** feature (national park, delta, plateau, coast, gorge, mountain
+  range) is `area` even when Geoapify confirms a point. A name that names a point on the feature ("River Kwai
+  Bridge", "Kuang Si Falls", "Peradeniya Railway Station") stays a point. A descriptive atom place around a feature
+  ("sandbank on the Nam Ou River", "Annapurna Circuit Trek") links its component to the feature's destination
+  (`geomatch.linked_feature`, labelled set in `tests/unit/test_aa847_linked_feature.py`). A line destination is never
+  a graph stop or node, never in the outlier rule and never in the point-distance same-place rule.
+- **Line geometry (AA-847, CIS 255).** `geo.place_shape` (one row per line destination: status pending / ok /
+  approximate / not_found / failed / manual, GeoJSON at ≤ 2,000 / 300 / 60 vertices clipped to the country, non-null
+  bbox, `osm_type`/`osm_id`) is written only by the job kind `place_shape` (and the admin's manual GeoJSON);
+  `geo.tour_segment` (the stretch a tour-day follows, versioned with `geo.graph_build`) only by `tour_graph_build`.
+  The Geoapify daily credit guard sums `geo.geocode_call.credits` of every endpoint (search + Place Details). `place_extract` maps a tour's in-tour duplicates (same distinctive name,
   same kind of place, same country, ≤ 2 km, ≤ 5 km when either point is the model's) to one keeper; names of
   different kinds stay two places ("Long Bien Bridge" / "Long Bien Market", "Ben Thanh Market" / "Ben Thanh Night
   Market"), and a bare name never merges with a built place named after it ("Luang Prabang" / "Luang Prabang Night
@@ -489,7 +498,9 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   validity tabs; `GET /admin/places/validity|coverage`, `POST /admin/places/validity/fix` dry run by default, apply
   refused with 409 when the plan changed since the dry run's `fingerprint`, audit row with the prior values,
   `undo=<audit id>`). The **flip gate** (`validity.GATE_REASONS`, `summary.gate`) counts only map defects the fixes
-  clear: `near_duplicate`, `linear_feature`, `area_feature`; `same_destination_names` (one pin, several spellings),
+  clear: `near_duplicate`, `linear_feature` (a linear name not stored as a line), `area_feature`,
+  `linear_without_shape` (a line whose shape is not ok / manual / approximate); `same_destination_names` (one pin,
+  several spellings),
   V1 and V4 are informational. A duplicate merge sets `duplicate_of` and repoints the CIS rows
   (`geo.tour_place`, `geo.tour_day`, `geo.place_name`, `acp_shared.place_card`, `shared.place_photo`); Booking and
   TripPlanner rows are reported, never written; `store.known_destinations` / `upsert_destination` answer a merged

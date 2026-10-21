@@ -197,7 +197,7 @@ def test_report_flags_each_defect_once_with_reason_codes():
 
 def test_after_the_fixes_the_kuang_si_tour_passes_the_gate():
     """The duplicate fix points Tat Kuang Si at the keeper (one pin, several spellings: same_destination_names stays,
-    informational) and the hide fix makes the trail suspect (it leaves the report): the tour passes the gate."""
+    informational); a trail is stored as a line with its shape (tests/unit/test_aa847_lines.py): the tour passes."""
     tours = [{"source_id": "s1", "tour_id": "t1", "title": "Laos Kuang Si", "country": "Laos", "duration_raw": "1 day",
               "itinerary": "Day 1 — Luang Prabang\nSwim at Kuang Si Falls and Tat Kuang Si."}]
     comps = [_comp("s1", 1, "Kuang Si Falls", "d1", "Kuang Si Falls", 19.749, 101.9935),

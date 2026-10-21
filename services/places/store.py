@@ -285,7 +285,7 @@ _DEST_INSERT_SQL = """
     INSERT INTO shared.destinations (name, country, lat, lng, located_by, located_at, geo_status, confidence,
                                      geocoder_place_id, geo_checked_at, name_norm, locality_norm,
                                      geo_precision, geocoder_provider, geocoded_at, geocoder_meta, review_reason)
-    VALUES ($1, $2, $3, $4, $5, now(), CASE WHEN $14 THEN 'suspect' ELSE 'ok' END, $6, $7, now(), $8, $9,
+    VALUES ($1, $2, $3, $4, $5, now(), 'ok', $6, $7, now(), $8, $9,
             $10, $11, CASE WHEN $11::text IS NULL THEN NULL ELSE now() END, $12::jsonb, $13)
     ON CONFLICT (name_norm, lower(btrim(country)), locality_norm)
         WHERE duplicate_of IS NULL AND name_norm IS NOT NULL DO NOTHING
@@ -294,20 +294,23 @@ _DEST_INSERT_SQL = """
 
 
 def _geo_args(located) -> tuple:
-    """(geo_precision, geocoder_provider, geocoder_meta json, review_reason, hidden) of a Located point. hidden
-    (AA-847, a linear feature): stored geo_status 'suspect', so no catalog view draws it."""
+    """(geo_precision, geocoder_provider, geocoder_meta json, review_reason) of a Located point. AA-847 (S246): a
+    linear feature is precision 'line' and geo_status 'ok' — drawn from geo.place_shape, never hidden."""
     meta = getattr(located, "meta", None)
     return (located.precision, (meta or {}).get("provider"),
             json.dumps(meta, ensure_ascii=False, default=str) if meta else None,
-            getattr(located, "review_reason", None), bool(getattr(located, "hidden", False)))
+            getattr(located, "review_reason", None))
 
 
 async def _write_point(conn, dest_id: str, located, force: bool) -> None:
     await conn.execute(
         """UPDATE shared.destinations SET lat = $2, lng = $3, located_by = $4, located_at = now(),
                   confidence = $5, geocoder_place_id = $6, geo_checked_at = now(),
-                  geo_status = CASE WHEN $12 THEN 'suspect'
-                                    WHEN geo_status = 'suspect' AND $7 THEN 'ok' ELSE geo_status END,
+                  geo_status = CASE WHEN geo_status = 'suspect' AND $7 THEN 'ok'
+                                    -- AA-847: a row the first validity branch hid as a linear feature
+                                    WHEN geo_status = 'suspect' AND review_reason = 'linear_feature'
+                                         AND $8 = 'line' THEN 'ok'
+                                    ELSE geo_status END,
                   geo_precision = $8, geocoder_provider = $9,
                   geocoded_at = CASE WHEN $9::text IS NULL THEN geocoded_at ELSE now() END,
                   geocoder_meta = COALESCE($10::jsonb, geocoder_meta), review_reason = $11
@@ -388,6 +391,22 @@ async def upsert_destination(conn, key: tuple, name: str, located, *, locality: 
     return old["id"], "kept"
 
 
+_PENDING_SHAPE_SQL = """
+    INSERT INTO geo.place_shape (destination_id, kind, status, min_lat, min_lng, max_lat, max_lng)
+    SELECT d.id, 'line', 'pending', d.lat, d.lng, d.lat, d.lng
+      FROM shared.destinations d
+     WHERE d.id = $1::uuid AND d.geo_precision = 'line' AND d.duplicate_of IS NULL
+    ON CONFLICT (destination_id) DO NOTHING
+    RETURNING destination_id
+"""
+
+
+async def ensure_pending_shape(conn, destination_id: str) -> bool:
+    """AA-847: a line destination without a geo.place_shape row gets a pending one (bbox = its point until the shape
+    lands). The job kind place_shape is the only other writer. True when a row was created."""
+    return await conn.fetchval(_PENDING_SHAPE_SQL, destination_id) is not None
+
+
 async def mark_name(conn, key: tuple, *, destination_id: Optional[str] = None, error: Optional[str] = None,
                     max_tries: int = 3, retry_days: int = 1) -> str:
     """Resolved (destination_id given), or one more failed try: pending again in `retry_days`,
@@ -437,11 +456,13 @@ async def relink(conn) -> dict:
 
 
 async def night_stops(conn, destination_ids: Optional[list[str]] = None) -> list[dict]:
-    """Nights with a located destination, per source (for the outlier rule)."""
+    """Nights with a located destination, per source (for the outlier rule). AA-847: a line destination ("a night on
+    the Mekong") is not a stop: its point is one spot on a long feature, so it would be flagged as a false outlier."""
     rows = await conn.fetch(
         """SELECT td.source_id, td.day_index, td.overnight_destination_id::text AS destination_id,
                   d.lat, d.lng, td.is_transit_day
              FROM geo.tour_day td JOIN shared.destinations d ON d.id = td.overnight_destination_id
+                                                         AND d.geo_precision IS DISTINCT FROM 'line'
             WHERE $1::uuid[] IS NULL OR td.source_id IN (
                   SELECT source_id FROM geo.tour_day WHERE overnight_destination_id = ANY($1::uuid[]))
             ORDER BY td.source_id, td.day_index""",
@@ -492,19 +513,23 @@ async def apply_suspects(conn) -> list[str]:
 
 
 async def geocoder_requests_today(conn, provider: str) -> int:
-    """Requests this provider was sent today (UTC day — Geoapify's daily credit window) by finished
-    runs: the start value of the daily credit guard."""
+    """CREDITS this provider was charged today (UTC day — Geoapify's daily credit window) by finished runs of every
+    endpoint (geocode search and, AA-847, Place Details): the start value of the daily credit guard. Rows written by
+    code older than migration 255 carry no `credits` and count one credit per request."""
     return int(await conn.fetchval(
-        """SELECT coalesce(sum(requests), 0) FROM geo.geocode_call
+        """SELECT coalesce(sum(coalesce(credits, requests)), 0) FROM geo.geocode_call
             WHERE provider = $1 AND called_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'""",
         provider) or 0)
 
 
-async def log_geocode_calls(conn, provider: str, requests: int, cost_usd: float, job_id: Optional[str]) -> None:
+async def log_geocode_calls(conn, provider: str, requests: int, cost_usd: float, job_id: Optional[str], *,
+                            credits: Optional[int] = None, endpoint: str = "search") -> None:
+    """One row per run and endpoint. `credits` defaults to `requests` (a geocode search is 1 credit)."""
     if requests:
         await conn.execute(
-            "INSERT INTO geo.geocode_call (provider, requests, cost_usd, job_id) VALUES ($1, $2, $3, $4::uuid)",
-            provider, requests, round(cost_usd, 6), job_id)
+            "INSERT INTO geo.geocode_call (provider, requests, cost_usd, job_id, credits, endpoint) "
+            "VALUES ($1, $2, $3, $4::uuid, $5, $6)",
+            provider, requests, round(cost_usd, 6), job_id, requests if credits is None else credits, endpoint)
 
 
 async def destination_briefs(conn, ids: Iterable[str]) -> dict[str, dict]:
@@ -536,7 +561,7 @@ async def graph_inputs(conn, source_ids: list[str]) -> tuple[list[dict], list[di
     dests = {}
     if ids:
         dests = {r["id"]: dict(r) for r in await conn.fetch(
-            """SELECT id, name, country, lat, lng FROM shared.destinations
+            """SELECT id, name, country, lat, lng, geo_precision AS precision FROM shared.destinations
                 WHERE id = ANY($1::uuid[]) AND geo_status <> 'suspect' AND duplicate_of IS NULL""", list(ids))}
     return days, places, dests
 

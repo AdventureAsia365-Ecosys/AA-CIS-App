@@ -11,7 +11,8 @@ component, an overnight, a geo.place_name key, a place card and a photo, so ever
   * duplicate_place: the dry run writes nothing; apply sets duplicate_of, repoints every CIS row, writes one audit
     row with the prior values, enqueues a graph build; the store lookup of the merged key answers the keeper (no
     new geocode, no new row); undo restores every row and cannot run twice;
-  * not_a_pin / linear_feature: precision area; a linear feature is also hidden (suspect + linear_feature);
+  * not_a_pin: precision area; linear_feature (owner decision S246): precision 'line', geo_status ok, a pending
+    geo.place_shape row (then linear_without_shape until the shape is drawable); undo deletes the pending row;
   * coverage lists the country; the fix route refuses an unknown check;
   * apply with the dry run's fingerprint is refused (409, nothing written) when the plan changed in between.
 """
@@ -37,6 +38,7 @@ from services.places import store, validity, validity_fix  # noqa: E402
 from services.places.locate import Located  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+MIGRATION_255 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations", "255_geo_place_shape.sql")
 SECRET = "aa847-integration-secret"
 MASTER = validity.MASTER_TENANT_ID
 
@@ -58,6 +60,18 @@ async def _component(conn, source_id, tour_id, day, name, country, dest):
            VALUES ($1::uuid, $2, $3::uuid, $4, $5, geo.name_norm($5), $6, lower($6), $7::uuid, 'cultural_heritage',
                    'moderate', 'full_day', 'text', 'h')""", comp, source_id, tour_id, day, name, country, dest)
     return comp
+
+
+@pytest.fixture(scope="module", autouse=True)
+def migration_255():
+    """test_aa712_migration_226 (sorted before this file) drops schema geo and re-applies 226 only: re-apply 255
+    (idempotent) so geo.place_shape and the 'line' precision exist here."""
+    import psycopg2
+    c = psycopg2.connect(host=DB_HOST, port=DB_PORT, dbname=DB_NAME, user=DB_USER, password=DB_PASS)
+    c.autocommit = True
+    with open(MIGRATION_255) as f:
+        c.cursor().execute(f.read())
+    c.close()
 
 
 @pytest_asyncio.fixture
@@ -122,6 +136,7 @@ async def env(monkeypatch):
     async with pool.acquire() as c:
         await c.execute("SELECT set_config('app.tenant_id', $1, false)", MASTER)
         ids = list(d.values())
+        await c.execute("DELETE FROM geo.place_shape WHERE destination_id = ANY($1::uuid[])", ids)
         await c.execute("DELETE FROM shared.place_photo WHERE id = $1::uuid", photo)
         await c.execute("DELETE FROM acp_shared.place_card WHERE card_id = $1::uuid", card)
         await c.execute("DELETE FROM geo.place_name WHERE destination_id = ANY($1::uuid[]) OR display_name LIKE $2",
@@ -270,17 +285,35 @@ async def test_area_and_linear_fixes_and_undo(env):
     assert [c["destination_id"] for c in area["changes"]] == [env.d["plateau"]]
     linear = await _fix(env, check="linear_feature", country=env.country, source_id=env.group, dry_run=False)
     assert [c["destination_id"] for c in linear["changes"]] == [env.d["trail"]]
+    assert linear["changes"][0]["shape_created"] is True
     async with env.pool.acquire() as c:
         assert await _dest_row(c, env.d["plateau"]) == {"geo_precision": "area", "geo_status": "ok",
                                                         "review_reason": None}
-        assert await _dest_row(c, env.d["trail"]) == {"geo_precision": "area", "geo_status": "suspect",
-                                                      "review_reason": "linear_feature"}
+        # S246: drawn as a line, never hidden; its shape is queued for the place_shape job
+        assert await _dest_row(c, env.d["trail"]) == {"geo_precision": "line", "geo_status": "ok",
+                                                      "review_reason": None}
+        shape = await c.fetchrow("SELECT status, kind, min_lat, max_lng FROM geo.place_shape "
+                                 "WHERE destination_id = $1::uuid", env.d["trail"])
+        assert dict(shape) == {"status": "pending", "kind": "line", "min_lat": 16.46, "max_lng": 107.20}
+        _, items = await validity.report(c, env.country)
+        assert [i.reason for i in _mine(env, items) if i.check == "not_a_pin"] == ["linear_without_shape"]
+        # once the shape is drawable the tour leaves the not-a-pin report (and the gate)
+        await c.execute(
+            """UPDATE geo.place_shape SET status = 'ok', source = 'overpass', length_km = 1.5,
+                      geom = '{"type": "LineString", "coordinates": [[107.2, 16.46], [107.21, 16.47]]}',
+                      geom_mid = '{"type": "LineString", "coordinates": [[107.2, 16.46], [107.21, 16.47]]}',
+                      geom_lo = '{"type": "LineString", "coordinates": [[107.2, 16.46], [107.21, 16.47]]}'
+                WHERE destination_id = $1::uuid""", env.d["trail"])
         _, items = await validity.report(c, env.country)
         assert not [i for i in _mine(env, items) if i.check == "not_a_pin"]
+        await c.execute("UPDATE geo.place_shape SET status = 'pending', source = NULL, length_km = NULL, geom = NULL, "
+                        "geom_mid = NULL, geom_lo = NULL WHERE destination_id = $1::uuid", env.d["trail"])
     await _fix(env, undo=linear["audit_id"], dry_run=False)
     async with env.pool.acquire() as c:
         assert await _dest_row(c, env.d["trail"]) == {"geo_precision": "point", "geo_status": "ok",
                                                       "review_reason": None}
+        assert await c.fetchval("SELECT count(*) FROM geo.place_shape WHERE destination_id = $1::uuid",
+                                env.d["trail"]) == 0
 
 
 async def test_apply_refuses_when_the_data_changed_since_the_dry_run(env):
