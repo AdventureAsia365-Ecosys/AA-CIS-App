@@ -1,0 +1,30 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "feature_type": "details",
+    "name": "Ho Chi Minh Trail",
+    "country_code": "la",
+    "datasource": {
+     "sourcename": "openstreetmap",
+     "raw": {
+      "name": "Ho Chi Minh Trail",
+      "historic": "yes",
+      "osm_type": "n",
+      "osm_id": 77
+     }
+    },
+    "place_id": "51hcmnode"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     106.4,
+     16.6
+    ]
+   }
+  }
+ ]
+}

@@ -12,6 +12,8 @@
   leg       every span [day_from, day_to] (day_to > day_from) of one tour whose first and last days
             have a stop — the unit an advisor can sell
   junction  two destinations within `junction_km` (default 150), both directions
+  segment   AA-847: for each (source, day, line destination) the stretch of the line the day follows
+            (services/places/shape.day_segment between the previous and this day's stop) — geo.tour_segment
 
 No model call, no cost. Persisted as one versioned build (services/places/store.py swap_graph).
 """
@@ -43,6 +45,7 @@ class Graph:
     legs: list[dict] = field(default_factory=list)
     junctions: list[dict] = field(default_factory=list)
     stats: dict = field(default_factory=dict)
+    segments: list[dict] = field(default_factory=list)    # AA-847: geo.tour_segment rows (line_segments)
 
 
 LINE = "line"
@@ -211,3 +214,47 @@ def build_graph(rows: Iterable[dict], dests: dict, places: list[dict],
                "cross_border_pairs": sum(1 for j in g.junctions if j["cross_border"]) // 2,
                "per_country": _per_country(g, dests)}
     return g
+
+
+def line_segments(stops: Iterable[Stop], places: Iterable[dict], days: Iterable[dict], dests: dict,
+                  shapes: dict) -> list[dict]:
+    """AA-847 — geo.tour_segment rows: one per (source, day, line destination) a day uses (a place of the day or its
+    overnight "on the Mekong"). The anchors are the previous stop of the tour (the nearest earlier day with one) and
+    this day's stop; `shapes` = {str(destination_id): {"status", "geom"}} (store.line_shapes). A line with no drawable
+    shape still gets a row (basis 'feature', no segment, the two stops as from / to) so a reader can draw the
+    provisional dashed line between them (D1)."""
+    from services.places import shape as shape_mod
+
+    drawable = {"ok", "approximate", "manual"}
+    by_source: dict = defaultdict(dict)
+    for s in stops:
+        by_source[s.source_id][s.day_index] = s.destination_id
+    uses: set = set()
+    for p in places:
+        d = p.get("destination_id")
+        if d is not None and is_line(dests, d):
+            uses.add((p["source_id"], p["day_index"], d))
+    for d in days:
+        o = d.get("overnight_destination_id")
+        if o is not None and is_line(dests, o):
+            uses.add((d["source_id"], d["day_index"], o))
+
+    def anchor(dest_id):
+        if dest_id is None or dest_id not in dests:
+            return None
+        r = dests[dest_id]
+        return (str(dest_id), r["lat"], r["lng"])
+
+    out = []
+    for source_id, day, dest_id in sorted(uses, key=lambda u: (u[0], u[1], str(u[2]))):
+        src = by_source.get(source_id, {})
+        earlier = [k for k in src if k < day]
+        prev = anchor(src[max(earlier)]) if earlier else None
+        this = anchor(src.get(day))
+        sh = shapes.get(str(dest_id)) or {}
+        parts = shape_mod.parts_from_geojson(sh.get("geom")) if sh.get("status") in drawable else []
+        seg = shape_mod.day_segment(parts, prev, this)
+        out.append({"source_id": source_id, "day_index": day, "destination_id": str(dest_id), "basis": seg.basis,
+                    "segment": seg.segment, "segment_km": seg.segment_km,
+                    "from_destination_id": seg.from_destination_id, "to_destination_id": seg.to_destination_id})
+    return out

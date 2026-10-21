@@ -1,0 +1,188 @@
+{
+ "version": 0.6,
+ "generator": "Overpass API (recorded shape, AA-847 fixture)",
+ "osm3s": {
+  "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+ },
+ "elements": [
+  {
+   "type": "relation",
+   "id": 2091005,
+   "members": [
+    {
+     "type": "way",
+     "ref": 11,
+     "role": "main_stream",
+     "geometry": [
+      {
+       "lat": 20.27,
+       "lon": 100.41
+      },
+      {
+       "lat": 20.15,
+       "lon": 100.55
+      },
+      {
+       "lat": 20.05,
+       "lon": 100.75
+      },
+      {
+       "lat": 19.95,
+       "lon": 100.95
+      },
+      {
+       "lat": 19.89,
+       "lon": 101.13
+      }
+     ]
+    },
+    {
+     "type": "way",
+     "ref": 12,
+     "role": "main_stream",
+     "geometry": [
+      {
+       "lat": 19.89,
+       "lon": 101.13
+      },
+      {
+       "lat": 19.85,
+       "lon": 101.4
+      },
+      {
+       "lat": 19.95,
+       "lon": 101.7
+      },
+      {
+       "lat": 20.0,
+       "lon": 101.95
+      },
+      {
+       "lat": 19.89,
+       "lon": 102.13
+      }
+     ]
+    }
+   ],
+   "tags": {
+    "type": "waterway",
+    "waterway": "river",
+    "name": "ແມ່ນ້ຳຂອງ",
+    "name:en": "Mekong",
+    "name:th": "แม่น้ำโขง",
+    "name:vi": "Sông Mê Kông",
+    "wikidata": "Q41179"
+   }
+  },
+  {
+   "type": "way",
+   "id": 11,
+   "geometry": [
+    {
+     "lat": 20.27,
+     "lon": 100.41
+    },
+    {
+     "lat": 20.15,
+     "lon": 100.55
+    },
+    {
+     "lat": 20.05,
+     "lon": 100.75
+    },
+    {
+     "lat": 19.95,
+     "lon": 100.95
+    },
+    {
+     "lat": 19.89,
+     "lon": 101.13
+    }
+   ],
+   "tags": {
+    "waterway": "river",
+    "name": "ແມ່ນ້ຳຂອງ",
+    "name:en": "Mekong"
+   }
+  },
+  {
+   "type": "way",
+   "id": 12,
+   "geometry": [
+    {
+     "lat": 19.89,
+     "lon": 101.13
+    },
+    {
+     "lat": 19.85,
+     "lon": 101.4
+    },
+    {
+     "lat": 19.95,
+     "lon": 101.7
+    },
+    {
+     "lat": 20.0,
+     "lon": 101.95
+    },
+    {
+     "lat": 19.89,
+     "lon": 102.13
+    }
+   ],
+   "tags": {
+    "waterway": "river",
+    "name": "ແມ່ນ້ຳຂອງ",
+    "name:en": "Mekong"
+   }
+  },
+  {
+   "type": "way",
+   "id": 31,
+   "geometry": [
+    {
+     "lat": 19.88,
+     "lon": 102.14
+    },
+    {
+     "lat": 19.8,
+     "lon": 102.25
+    },
+    {
+     "lat": 19.7,
+     "lon": 102.4
+    },
+    {
+     "lat": 19.62,
+     "lon": 102.55
+    }
+   ],
+   "tags": {
+    "waterway": "river",
+    "name": "ນ້ຳຄານ",
+    "name:en": "Nam Khan"
+   }
+  },
+  {
+   "type": "relation",
+   "id": 2091005,
+   "members": [
+    {
+     "type": "way",
+     "ref": 11,
+     "role": "main_stream"
+    },
+    {
+     "type": "way",
+     "ref": 12,
+     "role": "main_stream"
+    }
+   ],
+   "tags": {
+    "type": "waterway",
+    "waterway": "river",
+    "name:en": "Mekong"
+   }
+  }
+ ]
+}

@@ -6,6 +6,8 @@
   place_geocode     platform, debounced: ONE queued job absorbs every enqueue; its start slides to
                     now + debounce, capped at created_at + MAX_WAIT_S (the recompute pattern, AA-743).
   tour_graph_build  platform, debounced the same way.
+  place_shape       AA-847, platform, debounced the same way: geometry of line places (rivers, roads, trails),
+                    enqueued by place_geocode when it stored a new line, and by the admin shapes backfill.
 
 Every trigger is best-effort: callers wrap these in try/except — a place job must never fail a
 publish, an atomize or an admin action.
@@ -36,6 +38,7 @@ def auto_enabled() -> bool:
 EXTRACT_KIND = "place_extract"
 GEOCODE_KIND = "place_geocode"
 GRAPH_KIND = "tour_graph_build"
+SHAPE_KIND = "place_shape"
 DEBOUNCE_S = 180      # = recompute WAVE_DEBOUNCE_S
 MAX_WAIT_S = 1200     # = recompute MAX_WAIT_S
 

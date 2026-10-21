@@ -370,6 +370,12 @@ async def build_tour_graph(pool, *, junction_km: float = graph_mod.DEFAULT_JUNCT
         # pure CPU (pairwise junctions over every node): off the worker's event loop (S201)
         g = await asyncio.to_thread(graph_mod.build_graph, graph_mod.stop_rows(days, places, dests), dests,
                                     places, junction_km)
+        # AA-847: the stretch of each line a tour-day follows (geo.tour_segment, versioned with this build)
+        line_ids = [d for d in dests if graph_mod.is_line(dests, d)]
+        shapes = await store.line_shapes(conn, line_ids)
+        g.segments = await asyncio.to_thread(graph_mod.line_segments, g.stops, places, days, dests, shapes)
+        g.stats["segments"] = {b: sum(1 for s in g.segments if s["basis"] == b)
+                               for b in ("day_anchors", "anchor_window", "feature")}
         g.stats["validity"] = await _validity_counts(conn)
         build_id = await store.swap_graph(conn, g, {"junction_km": junction_km, "live_sources": len(source_ids)},
                                           job_id)

@@ -273,6 +273,10 @@ POLICY: dict[tuple[str, str], str] = {
     ("POST", "/admin/places/backfill"): OPS_WRITE,
     # admin_places — AA-847 content-validity fixes (precision / hide / merge destinations; audit + undo)
     ("POST", "/admin/places/validity/fix"): OPS_WRITE,
+    # admin_places — AA-847 line geometry: shapes backfill (Geoapify Place Details credits) and manual GeoJSON
+    ("POST", "/admin/places/shapes/backfill"): OPS_WRITE,
+    ("PUT", "/admin/places/{destination_id}/shape"): OPS_WRITE,
+    ("DELETE", "/admin/places/{destination_id}/shape"): OPS_WRITE,
     # ── admin_segment_research — DFS demand research (paid run; preview is a free dry run)
     ("POST", "/admin/segment-research/preview"): OPS_READ,
     ("POST", "/admin/segment-research/run"): OPS_WRITE,

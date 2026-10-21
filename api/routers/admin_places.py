@@ -16,6 +16,16 @@ AA-847 (content-validity gate, ADR 0007 decision 10, design §5):
   POST /admin/places/validity/fix {check, country?, source_id?, dry_run = true, undo?, fingerprint?}
        services/places/validity_fix.py; apply writes an audit row with the prior values, undo restores them.
 
+AA-847 lines (owner decision S246, D1: rivers, roads and trails are drawn as lines):
+  GET    /admin/places/lines?country=&status=     line places and their geometry state ("Lines" tab); approximate
+                                                  routes counted per country apart
+  POST   /admin/places/shapes/backfill            {country?, statuses?, destination_ids?, limit ≤ 50, dry_run = true}
+                                                  dry run: names + Geoapify credit estimate; real: rows due now + one
+                                                  place_shape job. 409 when PLACE_SHAPES_ENABLED is off or the credits
+                                                  would pass today's limit
+  PUT    /admin/places/{destination_id}/shape     {geojson, note?} manual geometry (exception path), clipped to the
+                                                  country; DELETE drops it and hands the row back to the job
+
 Every response that shows coordinates carries the Geoapify / OpenStreetMap attribution (ADR 0007).
 """
 from __future__ import annotations
@@ -221,3 +231,163 @@ async def validity_fix(body: ValidityFixRequest, request: Request, x_admin_secre
         logger.info("places_validity_fix", check=out.get("check"), applied=out.get("applied", out.get("restored")),
                     undo=body.undo, actor=actor)
     return out
+
+
+# ── AA-847 (owner decision S246, D1): line places drawn as lines — "Lines" tab, shapes backfill, manual GeoJSON ──────
+
+LINE_STATUSES = ("missing", "pending", "ok", "approximate", "not_found", "failed", "manual")
+
+
+def _line_row(r: dict) -> dict:
+    out = dict(r)
+    for k in ("next_retry_at", "fetched_at"):
+        out[k] = r[k].isoformat() if r.get(k) else None
+    out["length_km"] = float(r["length_km"]) if r.get("length_km") is not None else None
+    out["status"] = r.get("status") or "missing"
+    out.pop("no_shape_row", None)
+    return out
+
+
+@router.get("/lines", summary="AA-847 — line places (rivers, roads, trails) and the state of their geometry")
+async def lines(request: Request, country: Optional[str] = None, status: Optional[str] = None,
+                x_admin_secret: str = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    if status is not None and status not in LINE_STATUSES:
+        raise HTTPException(status_code=422, detail=f"status must be one of {LINE_STATUSES}")
+    from services.jobs.place_shape_job import ENABLED_ENV, enabled
+    from services.places import store
+    async with request.app.state.pool.acquire() as conn:
+        rows = [_line_row(r) for r in await store.lines_report(conn, country or None,
+                                                               None if status in (None, "missing") else status)]
+    if status == "missing":
+        rows = [r for r in rows if r["status"] == "missing"]
+    by_country: dict = {}
+    for r in rows:
+        c = by_country.setdefault(r["country"], {s: 0 for s in LINE_STATUSES})
+        c[r["status"]] += 1
+    drawn = sum(1 for r in rows if r["status"] in ("ok", "manual", "approximate"))
+    return {"country": country, "status": status, "enabled": enabled(), "enabled_env": ENABLED_ENV,
+            "totals": {s: sum(c[s] for c in by_country.values()) for s in LINE_STATUSES},
+            "drawn": drawn, "lines": len(rows),
+            # approximate routes are reported apart (owner question S246: do they satisfy D1?)
+            "approximate_by_country": {k: v["approximate"] for k, v in by_country.items() if v["approximate"]},
+            "by_country": by_country, "items": rows[:500], "attribution": ATTRIBUTION}
+
+
+class ShapeBackfillRequest(BaseModel):
+    country: Optional[str] = None
+    statuses: list[str] = Field(default_factory=lambda: ["missing", "pending", "failed", "not_found"])
+    destination_ids: Optional[list[str]] = None
+    limit: int = Field(20, ge=1, le=50)
+    dry_run: bool = True
+
+
+@router.post("/shapes/backfill", summary="AA-847 — fetch the geometry of ≤ 50 line places (dry run by default)")
+async def shapes_backfill(body: ShapeBackfillRequest, request: Request, x_admin_secret: str = Header(None),
+                          x_admin_user_id: Optional[str] = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    from services.jobs.place_shape_job import ENABLED_ENV, enabled
+    from services.places import geocoder as geocoder_mod
+    from services.places import shape_sources, store
+    from services.places.enqueue import SHAPE_KIND, enqueue_debounced
+    bad = [s for s in body.statuses if s not in LINE_STATUSES or s == "manual"]
+    if bad:
+        raise HTTPException(status_code=422, detail=f"statuses: {bad} not allowed (manual shapes are never refetched)")
+    ids = None
+    if body.destination_ids:
+        try:
+            ids = [str(uuid.UUID(i)) for i in body.destination_ids]
+        except ValueError:
+            raise HTTPException(status_code=422, detail="destination_ids must be uuids")
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        rows = [_line_row(r) for r in await store.lines_report(conn, body.country or None, None)]
+        used = await store.geocoder_requests_today(conn, "geoapify")
+    rows = [r for r in rows if r["status"] in body.statuses and (ids is None or r["destination_id"] in ids)]
+    rows = rows[:body.limit]
+    provider = geocoder_mod.provider_name()
+    calls = provider == "geoapify"
+    with_place_id = sum(1 for r in rows if r.get("geocoder_place_id"))
+    est_credits = (shape_sources.DETAILS_CREDITS + shape_sources.FULL_GEOMETRY_CREDITS) * with_place_id if calls else 0
+    limit = int(geocoder_mod._env_float("GEOAPIFY_DAILY_CREDIT_LIMIT", geocoder_mod.DEFAULT_DAILY_CREDITS))
+    out = {"dry_run": body.dry_run, "country": body.country, "provider": provider, "enabled": enabled(),
+           "estimate": {"names": len(rows), "geoapify_details_names": with_place_id if calls else 0,
+                        "geoapify_credits_max": est_credits,
+                        "overpass_queries_max": len(rows) if calls else 0,
+                        "credits_used_today": used, "daily_credit_limit": limit,
+                        "credits_note": "Place Details credits per call are assumed (1 details + 1 full_geometry); "
+                                        "the trial reads the real use from the Geoapify dashboard"},
+           "items": [{k: r[k] for k in ("destination_id", "name", "country", "status", "tour_days")} for r in rows]}
+    refuse = []
+    if not enabled():
+        refuse.append(f"{ENABLED_ENV} is off")
+    if used + est_credits > limit:
+        refuse.append("expected credits above today's remaining Geoapify credits")
+    out["would_refuse"] = refuse
+    if body.dry_run:
+        return out
+    if refuse:
+        raise HTTPException(status_code=409, detail={"error": "; ".join(refuse), "estimate": out["estimate"]})
+    if not rows:
+        return {**out, "forced": 0, "job": None}
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            forced = await store.force_shapes_due(conn, [r["destination_id"] for r in rows])
+    job, _ = await enqueue_debounced(pool, SHAPE_KIND, reason=f"backfill:admin:{x_admin_user_id or 'unknown'}",
+                                     created_by=f"backfill:admin:{x_admin_user_id or 'unknown'}", debounce_s=0)
+    logger.info("places_shapes_backfill", names=len(rows), forced=forced, credits_max=est_credits)
+    return {**out, "forced": forced, "job": job}
+
+
+class ManualShapeRequest(BaseModel):
+    geojson: dict
+    note: Optional[str] = None
+
+
+@router.put("/{destination_id}/shape", summary="AA-847 — set a line place's geometry by hand (an exception path)")
+async def put_manual_shape(destination_id: str, body: ManualShapeRequest, request: Request,
+                           x_admin_secret: str = Header(None), x_admin_user_id: Optional[str] = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    from services.places import guards, shape, store
+    try:
+        destination_id = str(uuid.UUID(destination_id))
+    except ValueError:
+        raise HTTPException(status_code=422, detail="destination_id must be a uuid")
+    parts = shape.parts_from_geojson(body.geojson)
+    if not parts:
+        raise HTTPException(status_code=422, detail="geojson must be a LineString / MultiLineString with ≥ 2 points")
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        dest = await conn.fetchrow(
+            """SELECT id::text AS id, name, country, geo_precision FROM shared.destinations
+                WHERE id = $1::uuid AND duplicate_of IS NULL""", destination_id)
+        if dest is None:
+            raise HTTPException(status_code=404, detail="destination not found")
+        if dest["geo_precision"] != "line":
+            raise HTTPException(status_code=409, detail="destination is not a line (geo_precision)")
+        clipped = shape.clip_to_country(parts, guards.iso2(dest["country"]))
+        if not clipped:
+            raise HTTPException(status_code=422, detail=f"the line is not inside {dest['country']}")
+        length = shape.length_km(clipped)
+        meta = {"by": f"admin:{x_admin_user_id or 'unknown'}", "note": (body.note or "")[:300]}
+        async with conn.transaction():
+            await store.write_manual_shape(conn, destination_id, shape.levels(clipped), shape.bbox(clipped), length,
+                                           meta)
+    logger.info("places_manual_shape", destination_id=destination_id, length_km=round(length, 1))
+    return {"destination_id": destination_id, "status": "manual", "length_km": round(length, 1),
+            "vertices": shape.vertex_count(clipped), "attribution": ATTRIBUTION}
+
+
+@router.delete("/{destination_id}/shape", summary="AA-847 — drop a manual geometry; the job fetches it again")
+async def delete_manual_shape(destination_id: str, request: Request, x_admin_secret: str = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    from services.places import store
+    try:
+        destination_id = str(uuid.UUID(destination_id))
+    except ValueError:
+        raise HTTPException(status_code=422, detail="destination_id must be a uuid")
+    async with request.app.state.pool.acquire() as conn:
+        changed = await store.clear_manual_shape(conn, destination_id)
+    if not changed:
+        raise HTTPException(status_code=404, detail="no manual shape for this destination")
+    return {"destination_id": destination_id, "status": "pending"}

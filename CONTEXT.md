@@ -280,7 +280,7 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   - Job kinds live in `services/jobs/` (`segment_research`, `t2_rewrite`, `t9_write`, `a3_atomize`,
     `s1_seo_prefetch`, `photo_sync`, `s1_rewrite`, `s1_batch_ingest`, `revalidate`, `recompute`,
     `place_cards_build`, `t7_slate`, `t8_angles`, and the place pipeline `place_extract`,
-    `place_geocode`, `tour_graph_build` — AA-712, the five `retention_*` kinds — AA-825,
+    `place_geocode`, `tour_graph_build` — AA-712, `place_shape` — AA-847, the five `retention_*` kinds — AA-825,
     `ops_alert_email` — AA-828). Every claim merges `progress.attempt_started_at` (AA-751, F18):
     `started_at` keeps the first attempt's start, so per-attempt age reads the progress key.
   - **Background kinds (AA-712)**: `@job_kind(..., background=True)` kinds never take the worker's
@@ -488,7 +488,20 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   approximate / not_found / failed / manual, GeoJSON at ≤ 2,000 / 300 / 60 vertices clipped to the country, non-null
   bbox, `osm_type`/`osm_id`) is written only by the job kind `place_shape` (and the admin's manual GeoJSON);
   `geo.tour_segment` (the stretch a tour-day follows, versioned with `geo.graph_build`) only by `tour_graph_build`.
-  The Geoapify daily credit guard sums `geo.geocode_call.credits` of every endpoint (search + Place Details). `place_extract` maps a tour's in-tour duplicates (same distinctive name,
+  The Geoapify daily credit guard sums `geo.geocode_call.credits` of every endpoint (search + Place Details).
+  `place_shape` (debounced, cap 1, background; off unless `PLACE_SHAPES_ENABLED`; `GEOCODER_PROVIDER=model_only` = no
+  call) takes the geometry from Geoapify Place Details by the stored place id, then Overpass (free, ≤ 1 request / 2 s)
+  when that is missing or only one OSM way; `services/places/shape.py` accepts a candidate on name (name / name:en /
+  int_name / name:*), kind (waterway / road / route), the country POLYGON (Natural Earth admin-0,
+  `services/places/geodata/`; not `guards.BBOX`), distance to the tour-day anchors and a kind-aware length, and
+  prefers a relation or merged same-name ways over one way. No OSM feature → the anchored approximate route of a
+  tour-day (status `approximate`, drawn dashed "approximate route"); no anchors either → `not_found`, retried and
+  listed on `/admin/places` (Lines tab; `POST /admin/places/shapes/backfill` dry run first, ≤ 50 names;
+  `PUT|DELETE /admin/places/{id}/shape` manual GeoJSON). `place_geocode` and `place_shape` share one advisory lock
+  (`services/places/geolock.py`): one Geoapify client at a time. `tour_graph_build` cuts each day's stretch
+  (`shape.day_segment`: between the previous and this day's stop, or ±15 km around one, or none = the whole
+  feature). Two lines are the same place only on the same country + kind + name and the same OSM id or ≥ 70 % overlap
+  (`shape.same_line_place`; labelled pairs `tests/unit/fixtures/aa847_line_pairs.json`). `place_extract` maps a tour's in-tour duplicates (same distinctive name,
   same kind of place, same country, ≤ 2 km, ≤ 5 km when either point is the model's) to one keeper; names of
   different kinds stay two places ("Long Bien Bridge" / "Long Bien Market", "Ben Thanh Market" / "Ben Thanh Night
   Market"), and a bare name never merges with a built place named after it ("Luang Prabang" / "Luang Prabang Night

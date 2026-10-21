@@ -7,6 +7,10 @@
     "capability": "spend.write",
     "module": "api.routers.admin_decisions"
   },
+  "DELETE /admin/places/{destination_id}/shape": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_places"
+  },
   "DELETE /admin/platform/alert-recipients/{recipient_id}": {
     "capability": "alerts.write",
     "module": "api.routers.admin_alert_recipients"
@@ -296,6 +300,10 @@
     "module": "api.routers.admin_photos"
   },
   "GET /admin/places/coverage": {
+    "capability": null,
+    "module": "api.routers.admin_places"
+  },
+  "GET /admin/places/lines": {
     "capability": null,
     "module": "api.routers.admin_places"
   },
@@ -707,6 +715,10 @@
     "capability": "ops.write",
     "module": "api.routers.admin_places"
   },
+  "POST /admin/places/shapes/backfill": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_places"
+  },
   "POST /admin/places/validity/fix": {
     "capability": "ops.write",
     "module": "api.routers.admin_places"
@@ -890,6 +902,10 @@
   "PUT /admin/notifications/{notif_id}/read": {
     "capability": "content.read",
     "module": "api.routers.admin"
+  },
+  "PUT /admin/places/{destination_id}/shape": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_places"
   },
   "PUT /admin/tenants/{tenant_id}/brand-identity": {
     "capability": "tenant.write",

@@ -8,6 +8,8 @@
 //     its day text does not name. Each finding carries a reason code. Admins fix the not-a-pin and duplicate
 //     findings (POST /admin/places/validity/fix): dry run first, then apply; every apply writes an audit row
 //     and can be undone.
+//   Lines — AA-847 (owner decision S246): rivers, roads and trails drawn as lines; the state of each line's geometry,
+//     the shapes backfill (dry run first) and the manual GeoJSON exception path (LinesTab.tsx).
 // Geocoded points come from Geoapify over OpenStreetMap data: the attribution footer is required (ADR 0007).
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -15,6 +17,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { RefreshCw, MapPin, AlertTriangle, CheckCircle2, Route } from "lucide-react";
 import { A, mono, Card, SLabel, Badge, Btn, LoadingScreen, StatCard, TabBar } from "../_components/adminUi";
 import { DataTable, PageHeader, formatDateTime } from "../../_kit";
+import LinesTab from "./LinesTab";
 
 type CoverageRow = {
   country: string; live: number; built: number; partial: number; in_graph: number; stop_every_day: number;
@@ -44,7 +47,8 @@ type FixResult = {
 
 const PAGE_SIZE = 50;
 const linkBtn = { border: 0, background: "none", color: A.accentDeep, cursor: "pointer", padding: 0, fontSize: 12 };
-const TABS = [{ key: "coverage", label: "Coverage" }, { key: "validity", label: "Content validity" }];
+const TABS = [{ key: "coverage", label: "Coverage" }, { key: "validity", label: "Content validity" },
+              { key: "lines", label: "Lines" }];
 const CHECK_LABEL: Record<string, string> = {
   duration: "Duration mismatch", same_place: "Same place twice", not_a_pin: "Not a pin", day_text: "Day text",
 };
@@ -302,6 +306,8 @@ export default function PlacesPage() {
           )}
         </>
       )}
+
+      {tab === "lines" && <LinesTab countries={countries} onError={setError} />}
 
       <AttributionFooter a={validity?.attribution ?? DEFAULT_ATTRIBUTION} />
     </main>

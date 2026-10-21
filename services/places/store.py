@@ -407,6 +407,203 @@ async def ensure_pending_shape(conn, destination_id: str) -> bool:
     return await conn.fetchval(_PENDING_SHAPE_SQL, destination_id) is not None
 
 
+# ── AA-847: line geometry (geo.place_shape, job place_shape) ──────────────────────────────────────────────────
+
+SHAPE_MAX_TRIES = 4
+SHAPE_DUE_STATUSES = ("pending", "failed", "not_found", "approximate")
+_DUE_SHAPES_SQL = """
+    SELECT s.destination_id::text AS destination_id, s.status, s.source, s.tries, d.name, d.country, d.lat, d.lng,
+           d.geocoder_place_id, d.geocoder_provider
+      FROM geo.place_shape s
+      JOIN shared.destinations d ON d.id = s.destination_id
+     WHERE s.status = ANY($1::text[]) AND s.next_retry_at <= now() AND s.tries < $2
+       AND d.geo_precision = 'line' AND d.duplicate_of IS NULL AND d.geo_status <> 'suspect'
+     ORDER BY (s.status = 'pending') DESC, s.next_retry_at, s.destination_id
+     LIMIT $3
+"""
+
+
+async def due_shapes(conn, limit: int, statuses: Iterable[str] = SHAPE_DUE_STATUSES) -> list[dict]:
+    """Line destinations whose geometry is due: pending first, then failed / not_found retries and approximate
+    routes due for another OSM look (an approximate route is upgraded when a feature is found later)."""
+    return [dict(r) for r in await conn.fetch(_DUE_SHAPES_SQL, list(statuses), SHAPE_MAX_TRIES, limit)]
+
+
+async def shapes_due_count(conn) -> int:
+    return int(await conn.fetchval(
+        """SELECT count(*) FROM geo.place_shape s JOIN shared.destinations d ON d.id = s.destination_id
+            WHERE s.status = ANY($1::text[]) AND s.next_retry_at <= now() AND s.tries < $2
+              AND d.geo_precision = 'line' AND d.duplicate_of IS NULL AND d.geo_status <> 'suspect'""",
+        list(SHAPE_DUE_STATUSES), SHAPE_MAX_TRIES) or 0)
+
+
+async def shape_uses(conn, destination_ids: list[str]) -> dict:
+    """{destination_id: {"uses": [(source_id, day_index)], "stops": {(source_id, day): (dest_id, lat, lng)},
+    "points": {(source_id, day): [(dest_id, lat, lng)]}}} — where each line destination is used (a day's place or
+    its overnight) and the anchors around it: the stops of the CURRENT graph build (else the non-line overnights of
+    geo.tour_day) and the day's other located point places."""
+    if not destination_ids:
+        return {}
+    uses = await conn.fetch(
+        """SELECT destination_id::text AS destination_id, source_id, day_index FROM geo.tour_place
+            WHERE destination_id = ANY($1::uuid[])
+           UNION
+           SELECT overnight_destination_id::text, source_id, day_index FROM geo.tour_day
+            WHERE overnight_destination_id = ANY($1::uuid[])""", destination_ids)
+    sources = sorted({r["source_id"] for r in uses})
+    stops = await conn.fetch(
+        """SELECT s.source_id, s.day_index, s.destination_id::text AS destination_id, d.lat, d.lng
+             FROM geo.tour_stop s
+             JOIN geo.graph_build b ON b.build_id = s.build_id AND b.is_current
+             JOIN shared.destinations d ON d.id = s.destination_id
+            WHERE s.source_id = ANY($1::text[])""", sources)
+    if not stops:
+        stops = await conn.fetch(
+            """SELECT td.source_id, td.day_index, d.id::text AS destination_id, d.lat, d.lng
+                 FROM geo.tour_day td JOIN shared.destinations d ON d.id = td.overnight_destination_id
+                WHERE td.source_id = ANY($1::text[]) AND d.geo_precision IS DISTINCT FROM 'line'
+                  AND d.geo_status <> 'suspect' AND d.duplicate_of IS NULL""", sources)
+    points = await conn.fetch(
+        """SELECT tp.source_id, tp.day_index, d.id::text AS destination_id, d.lat, d.lng
+             FROM geo.tour_place tp JOIN shared.destinations d ON d.id = tp.destination_id
+            WHERE tp.source_id = ANY($1::text[]) AND d.geo_precision IS DISTINCT FROM 'line'
+              AND d.geo_status <> 'suspect' AND d.duplicate_of IS NULL""", sources)
+    stop_map = {(r["source_id"], r["day_index"]): (r["destination_id"], r["lat"], r["lng"]) for r in stops}
+    point_map: dict = {}
+    for r in points:
+        point_map.setdefault((r["source_id"], r["day_index"]), []).append((r["destination_id"], r["lat"], r["lng"]))
+    out: dict = {d: {"uses": [], "stops": stop_map, "points": point_map} for d in destination_ids}
+    for r in uses:
+        if r["destination_id"] in out:
+            out[r["destination_id"]]["uses"].append((r["source_id"], r["day_index"]))
+    for d in out.values():
+        d["uses"].sort()
+    return out
+
+
+_SHAPE_DRAWN_SQL = """
+    UPDATE geo.place_shape SET status = $2, source = $3, geom = $4::jsonb, geom_mid = $5::jsonb, geom_lo = $6::jsonb,
+           min_lat = $7, min_lng = $8, max_lat = $9, max_lng = $10, length_km = $11, osm_type = $12, osm_id = $13,
+           tries = tries + 1, next_retry_at = now() + make_interval(days => $14), last_error = NULL,
+           fetched_at = now(), meta = $15::jsonb, kind = 'line', updated_at = now()
+     WHERE destination_id = $1::uuid AND status <> 'manual'
+"""
+_SHAPE_MISS_SQL = """
+    UPDATE geo.place_shape SET status = $2, tries = tries + 1,
+           next_retry_at = now() + make_interval(days => $3), last_error = $4,
+           meta = meta || $5::jsonb, updated_at = now()
+     WHERE destination_id = $1::uuid AND status IN ('pending', 'failed', 'not_found')
+"""
+_SHAPE_APPROX_RECHECKED_SQL = """
+    UPDATE geo.place_shape SET tries = tries + 1, next_retry_at = now() + make_interval(days => $2),
+           meta = meta || $3::jsonb, updated_at = now()
+     WHERE destination_id = $1::uuid AND status = 'approximate'
+"""
+
+
+async def write_shape(conn, destination_id: str, *, status: str, source: str, levels: tuple, bbox: tuple,
+                      length_km: float, osm_type: Optional[str], osm_id: Optional[int], meta: dict,
+                      retry_days: int) -> bool:
+    """A drawn shape (ok / approximate). Never overwrites an admin's manual shape. True when a row changed."""
+    geom, mid, lo = (json.dumps(g) for g in levels)
+    res = await conn.execute(_SHAPE_DRAWN_SQL, destination_id, status, source, geom, mid, lo, bbox[0], bbox[1],
+                             bbox[2], bbox[3], round(length_km, 1), osm_type, osm_id, retry_days,
+                             json.dumps(meta, default=str))
+    return res.endswith(" 1")
+
+
+async def write_shape_miss(conn, destination_id: str, *, status: str, error: Optional[str], meta: dict,
+                           retry_days: int) -> bool:
+    """not_found / failed: one more try, retried after `retry_days`. An approximate route that found no feature on a
+    re-check stays approximate (only its retry moves)."""
+    res = await conn.execute(_SHAPE_MISS_SQL, destination_id, status, retry_days, (error or "")[:500] or None,
+                             json.dumps(meta, default=str))
+    if res.endswith(" 1"):
+        return True
+    res = await conn.execute(_SHAPE_APPROX_RECHECKED_SQL, destination_id, retry_days, json.dumps(meta, default=str))
+    return res.endswith(" 1")
+
+
+async def line_shapes(conn, destination_ids: Iterable[str]) -> dict:
+    """{destination_id: {"status", "geom"}} for the graph build's stretch cutting (drawable rows carry geom)."""
+    ids = list({str(i) for i in destination_ids if i})
+    if not ids:
+        return {}
+    rows = await conn.fetch(
+        """SELECT destination_id::text AS destination_id, status, geom FROM geo.place_shape
+            WHERE destination_id = ANY($1::uuid[])""", ids)
+    return {r["destination_id"]: {"status": r["status"],
+                                  "geom": json.loads(r["geom"]) if isinstance(r["geom"], str) else r["geom"]}
+            for r in rows}
+
+
+_LINES_SQL = """
+    SELECT d.id::text AS destination_id, d.name, d.country, d.lat, d.lng, d.geocoder_place_id,
+           s.status, s.source, s.length_km, s.osm_type, s.osm_id, s.tries, s.next_retry_at, s.last_error,
+           s.fetched_at, (s.destination_id IS NULL) AS no_shape_row,
+           (SELECT count(DISTINCT (tp.source_id, tp.day_index)) FROM geo.tour_place tp
+             WHERE tp.destination_id = d.id) AS tour_days
+      FROM shared.destinations d
+      LEFT JOIN geo.place_shape s ON s.destination_id = d.id
+     WHERE d.geo_precision = 'line' AND d.duplicate_of IS NULL AND d.geo_status <> 'suspect'
+       AND ($1::text IS NULL OR lower(btrim(d.country)) = lower(btrim($1)))
+       AND ($2::text IS NULL OR coalesce(s.status, 'missing') = $2)
+     ORDER BY d.country, coalesce(s.status, 'missing'), d.name
+"""
+
+
+async def lines_report(conn, country: Optional[str] = None, status: Optional[str] = None) -> list[dict]:
+    """/admin/places "Lines": every line destination with its shape state (status 'missing' = no place_shape row)."""
+    return [dict(r) for r in await conn.fetch(_LINES_SQL, country, status)]
+
+
+async def force_shapes_due(conn, destination_ids: list[str]) -> int:
+    """Admin shapes backfill: make these rows due now (not an admin's manual shape; a missing row is created)."""
+    created = 0
+    for did in destination_ids:
+        if await ensure_pending_shape(conn, did):
+            created += 1
+    res = await conn.execute(
+        """UPDATE geo.place_shape SET next_retry_at = now(), tries = 0, updated_at = now()
+            WHERE destination_id = ANY($1::uuid[]) AND status <> 'manual'""", destination_ids)
+    return int(res.split()[-1]) if res.startswith("UPDATE") else created
+
+
+_MANUAL_SHAPE_SQL = """
+    INSERT INTO geo.place_shape (destination_id, kind, status, source, geom, geom_mid, geom_lo, min_lat, min_lng,
+                                 max_lat, max_lng, length_km, tries, next_retry_at, fetched_at, meta)
+    VALUES ($1::uuid, 'line', 'manual', 'manual', $2::jsonb, $3::jsonb, $4::jsonb, $5, $6, $7, $8, $9, 0,
+            now() + interval '100 years', now(), $10::jsonb)
+    ON CONFLICT (destination_id) DO UPDATE SET status = 'manual', source = 'manual', geom = EXCLUDED.geom,
+        geom_mid = EXCLUDED.geom_mid, geom_lo = EXCLUDED.geom_lo, min_lat = EXCLUDED.min_lat,
+        min_lng = EXCLUDED.min_lng, max_lat = EXCLUDED.max_lat, max_lng = EXCLUDED.max_lng,
+        length_km = EXCLUDED.length_km, osm_type = NULL, osm_id = NULL, last_error = NULL,
+        next_retry_at = EXCLUDED.next_retry_at, fetched_at = now(),
+        meta = geo.place_shape.meta || EXCLUDED.meta, updated_at = now()
+    RETURNING destination_id::text
+"""
+
+
+async def write_manual_shape(conn, destination_id: str, levels: tuple, bbox: tuple, length_km: float,
+                             meta: dict) -> bool:
+    """The admin's GeoJSON (a true exception: the job and the anchored route cover the normal path)."""
+    geom, mid, lo = (json.dumps(g) for g in levels)
+    return await conn.fetchval(_MANUAL_SHAPE_SQL, destination_id, geom, mid, lo, bbox[0], bbox[1], bbox[2], bbox[3],
+                               round(length_km, 1), json.dumps(meta, default=str)) is not None
+
+
+async def clear_manual_shape(conn, destination_id: str) -> bool:
+    """Back to the job: the manual geometry is dropped and the row is pending again (bbox = the point)."""
+    res = await conn.execute(
+        """UPDATE geo.place_shape s SET status = 'pending', source = NULL, geom = NULL, geom_mid = NULL,
+                  geom_lo = NULL, length_km = NULL, min_lat = d.lat, min_lng = d.lng, max_lat = d.lat,
+                  max_lng = d.lng, tries = 0, next_retry_at = now(), updated_at = now()
+             FROM shared.destinations d
+            WHERE s.destination_id = $1::uuid AND d.id = s.destination_id AND s.status = 'manual'""",
+        destination_id)
+    return res.endswith(" 1")
+
+
 async def mark_name(conn, key: tuple, *, destination_id: Optional[str] = None, error: Optional[str] = None,
                     max_tries: int = 3, retry_days: int = 1) -> str:
     """Resolved (destination_id given), or one more failed try: pending again in `retry_days`,
@@ -605,6 +802,15 @@ async def swap_graph(conn, g, params: dict, job_id: Optional[str]) -> str:
                 [(build_id, leg["source_id"], leg["day_from"], leg["day_to"], leg["days"],
                   leg["start_destination_id"], leg["end_destination_id"], leg["destination_ids"],
                   leg["countries"], leg["activities"]) for leg in g.legs])
+        segments = getattr(g, "segments", None) or []
+        if segments:   # AA-847 (255): the stretch of a line each tour-day follows, versioned with the build
+            await conn.executemany(
+                "INSERT INTO geo.tour_segment (build_id, source_id, day_index, destination_id, segment, basis, "
+                "from_destination_id, to_destination_id, segment_km) "
+                "VALUES ($1::uuid, $2, $3, $4::uuid, $5::jsonb, $6, $7::uuid, $8::uuid, $9)",
+                [(build_id, s["source_id"], s["day_index"], s["destination_id"],
+                  json.dumps(s["segment"]) if s["segment"] is not None else None, s["basis"],
+                  s["from_destination_id"], s["to_destination_id"], s["segment_km"]) for s in segments])
         if g.junctions:
             await conn.executemany(
                 "INSERT INTO geo.tour_junction (build_id, destination_a, destination_b, km, cross_border) "
