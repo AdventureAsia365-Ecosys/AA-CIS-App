@@ -494,7 +494,7 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   "Powered by Geoapify" (link) + "© OpenStreetMap contributors"** — also kept per row in
   `geocoder_meta.attribution` (Geoapify storage terms). Hard country/bbox guard, transit-aware outlier
   rule → `suspect`; admin-fixed (`manual`) rows are never overwritten; `tour_graph_build` (debounced, versioned swap, current + 2
-  kept). Stages `a3_place_days` (Sonnet, Luna 20% shadow), `a3_place_locate`, `a3_place_embed`
+  kept). Stages `a3_place_days` and `a3_place_locate` (Haiku 4.5, Sonnet fallback, migration 260), `a3_place_embed`
   (Cohere 1536-d). `shared.destinations` is unique on `(name_norm, country, locality_norm)` (same
   name in two countries = two places). Other apps will read it only through `catalog.*` views
   (migration 228, next slice); TripPlanner's own extraction is frozen.
