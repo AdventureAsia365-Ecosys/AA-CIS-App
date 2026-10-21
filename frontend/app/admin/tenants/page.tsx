@@ -26,6 +26,7 @@ import { Tenant360Cost } from "./_components/Tenant360Cost";
 import { Tenant360Quality } from "./_components/Tenant360Quality";
 import { Tenant360Markets } from "./_components/Tenant360Markets";
 import { fmtDailyPublishLimit } from "./_components/tenant360";
+import { SCORE_BANDS } from "@/lib/quality-registry.generated";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -300,7 +301,7 @@ interface TenantDetails {
 }
 
 const SCORE_COLOR = (s: number | null) =>
-  s == null ? A.muted2 : s >= 9 ? A.green : s >= 7 ? A.gold : A.red;
+  s == null ? A.muted2 : s >= SCORE_BANDS.top ? A.green : s >= SCORE_BANDS.pass ? A.gold : A.red;
 
 const STATUS_STYLE: Record<string, { bg: string; col: string }> = {
   approved:     { bg: A.greenSoft, col: "var(--aa-green-strong)" },
