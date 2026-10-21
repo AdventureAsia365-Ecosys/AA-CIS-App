@@ -44,7 +44,7 @@ DEV_CIS_ADMIN_CLIENT_ID = "3oqkumijh04cp81k3nlnub6qtv"
 DEV_BREAKGLASS_CLIENT_ID = "2g3f3ncfuqdiuu1o5b70o4h0lq"
 # AA-911 D-1: the Preview-only cis-admin-preview client (AA-CIS-Infra identity.tf). Empty until the Infra apply creates
 # it; then the id is filled in here.
-DEV_CIS_ADMIN_PREVIEW_CLIENT_ID = ""
+DEV_CIS_ADMIN_PREVIEW_CLIENT_ID = "3d6u7r00ljf4m80gjil20fp2kg"
 DEV_WORKFORCE_POOL_ID = "us-west-1_bCcFvbSOS"
 
 ENV_WORKFORCE_ISSUER = "COGNITO_WORKFORCE_ISSUER"

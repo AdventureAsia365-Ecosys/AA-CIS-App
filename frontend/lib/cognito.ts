@@ -73,7 +73,7 @@ function cisAdminOrigins(): string[] {
 
 // AA-911 D-1: the `cis-admin-preview` client (AA-CIS-Infra identity.tf). Empty until the Infra apply creates it,
 // then filled in here; while empty a preview build offers no Cognito sign-in (never the production client).
-const DEFAULT_CIS_ADMIN_PREVIEW_CLIENT_ID = "";
+const DEFAULT_CIS_ADMIN_PREVIEW_CLIENT_ID = "3d6u7r00ljf4m80gjil20fp2kg";
 const CIS_ADMIN_CLIENT_ID = PREVIEW_BUILD
   ? (process.env.COGNITO_CIS_ADMIN_PREVIEW_CLIENT_ID ?? "").trim() || DEFAULT_CIS_ADMIN_PREVIEW_CLIENT_ID
   : process.env.COGNITO_CIS_ADMIN_CLIENT_ID ?? "3oqkumijh04cp81k3nlnub6qtv";
