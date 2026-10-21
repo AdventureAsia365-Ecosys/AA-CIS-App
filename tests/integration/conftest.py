@@ -304,6 +304,9 @@ def _apply_schema(conn):
         # AA-847: 257 creates catalog.v_destination_redirect through the X1 S22 catalog recipe (needs 245's owners);
         # test_aa847_migration_257 applies it the DB Migrate way and drops what it created at teardown.
         and not f.startswith('257')
+        # AA-847: 258 (raw_tours.source_key under catalog._live_tour) needs 253 / 256 / 257 and the catalog recipe;
+        # test_aa847_migration_258 applies 253 + 256 + 257 + 258 the DB Migrate way in one transaction, rolled back.
+        and not f.startswith('258')
     ])
 
     for mf in migration_files:
