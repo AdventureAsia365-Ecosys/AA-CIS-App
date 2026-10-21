@@ -2,6 +2,8 @@
 
 - The 402 sweep (`_JEV_402_SWEEP_SQL`) counts every error text decide() writes for a credit outage:
   'credit_exhausted', 'credit_exhausted (breaker open)' and the raw "402 Payment Required" text, and nothing else.
+  Only `n_open` raises the bell: real 402s (not breaker-open skips) after the latest top-up and the latest
+  successful canary ($1). S246 review B1: a top-up the day before must not re-alert at the next 06:15 sweep.
 - check_low_credit: estimate = top-ups − typesafe spend since the first top-up; below $3 writes one bell and queues
   one ops_alert_email job; a second check is throttled; a test check is marked and never throttles a real one.
 
@@ -62,22 +64,54 @@ async def conn():
         await c.close()
 
 
-async def _decision_error(c, error):
+async def _decision_error(c, error, hours_ago=0.0):
     await c.execute(
-        """INSERT INTO shared.decision_log (stage, question_key, subject_key, mode, zone, error)
-           VALUES ('a3_research', 'aa845_q', $1, 'enforce', 'error', $2)""",
-        f"aa845:{uuid.uuid4().hex[:8]}", error)
+        """INSERT INTO shared.decision_log (stage, question_key, subject_key, mode, zone, error, created_at)
+           VALUES ('a3_research', 'aa845_q', $1, 'enforce', 'error', $2, now() - make_interval(secs => $3))""",
+        f"aa845:{uuid.uuid4().hex[:8]}", error, hours_ago * 3600.0)
+
+
+# Inside the rolled-back transaction only: the sweep counts every recent error row in the shared test DB.
+_CLEAR_RECENT_ERRORS = ("DELETE FROM shared.decision_log "
+                        "WHERE zone = 'error' AND created_at >= now() - interval '25 hours'")
+
+
+async def _sweep(c, canary_ok_at=None):
+    return await c.fetchrow(admin_llm_ops._JEV_402_SWEEP_SQL, canary_ok_at)
 
 
 @pytest.mark.asyncio
 async def test_402_sweep_counts_every_credit_outage_text(conn):
-    before = (await conn.fetchrow(admin_llm_ops._JEV_402_SWEEP_SQL))["n"]
+    await conn.execute(_CLEAR_RECENT_ERRORS)
     for text in ("credit_exhausted", "credit_exhausted (breaker open)",
                  "Client error '402 Payment Required' for url 'https://example/decide'",
                  "ReadTimeout", "no answer returned"):
-        await _decision_error(conn, text)
-    after = (await conn.fetchrow(admin_llm_ops._JEV_402_SWEEP_SQL))["n"]
-    assert after - before == 3
+        await _decision_error(conn, text, hours_ago=1)
+    row = await _sweep(conn)
+    assert row["n"] == 3                     # no top-up, no canary: the two real 402s are open
+    assert row["n_open"] == 2
+
+
+@pytest.mark.asyncio
+async def test_402_sweep_rows_before_a_topup_or_canary_are_not_open(conn):
+    """B1: 402 at D 14:00 (16 h ago), breaker-open skips until 14:15, top-up recorded at 14:05. The next morning's
+    sweep still counts the rows but raises nothing; a new real 402 after the top-up is open again."""
+    await conn.execute(_CLEAR_RECENT_ERRORS)
+    await _decision_error(conn, "credit_exhausted", hours_ago=16)
+    await _decision_error(conn, "credit_exhausted (breaker open)", hours_ago=15.8)   # after the top-up
+    await conn.execute("INSERT INTO shared.jev_credit_topup (topped_up_on, amount_usd, created_by, created_at) "
+                       "VALUES (current_date, 10, 'test', now() - interval '15.9 hours')")
+    row = await _sweep(conn)
+    assert row["n"] == 2 and row["n_open"] == 0
+
+    await _decision_error(conn, "credit_exhausted", hours_ago=2)      # credit ran out again after the top-up
+    assert (await _sweep(conn))["n_open"] == 1
+    # ... but a successful canary after it (this run's) proves the credit is back.
+    canary_ok = await conn.fetchval("SELECT now() - interval '1 hour'")
+    assert (await _sweep(conn, canary_ok))["n_open"] == 0
+    # A canary older than the newest 402 does not hide it.
+    old_canary = await conn.fetchval("SELECT now() - interval '3 hours'")
+    assert (await _sweep(conn, old_canary))["n_open"] == 1
 
 
 async def _seed_credit(c, *, spent):
@@ -119,9 +153,17 @@ async def test_low_credit_bell_email_throttle_and_test_marker(conn, monkeypatch)
         "ops_alert_email:jev_credit_low:real", "ops_alert_email:jev_credit_low:test"]
     assert await conn.fetchval("SELECT count(*) FROM shared.job WHERE kind = 'ops_alert_email'") == baseline + 2
 
-    # A test bell never throttles a real one: mark the real bell read, keep the unread test bell.
-    await conn.execute("UPDATE shared.notifications SET is_read = TRUE "
-                       "WHERE event_type = $1 AND payload->>'test' = 'false'", jc.JEV_CREDIT_LOW_EVENT)
+    roles = await conn.fetch("SELECT payload->>'test' AS test, target_roles FROM shared.notifications "
+                             "WHERE event_type = $1 ORDER BY id", jc.JEV_CREDIT_LOW_EVENT)
+    assert [(r["test"], list(r["target_roles"])) for r in roles] == [
+        ("false", ["admin", "content"]), ("true", ["admin"])]
+
+    # The throttle ignores the shared read flag (S246 review): a read real bell still blocks the next one.
+    await conn.execute("UPDATE shared.notifications SET is_read = TRUE WHERE event_type = $1", jc.JEV_CREDIT_LOW_EVENT)
+    assert (await jc.check_low_credit(pool, source="itest"))["alerted"] is False
+    # A test bell never throttles a real one: without the real bell, only the test bell is left.
+    await conn.execute("DELETE FROM shared.notifications WHERE event_type = $1 AND payload->>'test' = 'false'",
+                       jc.JEV_CREDIT_LOW_EVENT)
     assert await conn.fetchval(jc.LOW_ALERT_RECENT_SQL, jc.JEV_CREDIT_LOW_EVENT) is None
 
 

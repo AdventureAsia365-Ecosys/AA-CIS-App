@@ -102,7 +102,9 @@ function TestAlertsButton() {
       method: "POST", body: { threshold_usd: 1000, test_exhausted_alert: true }, admin: true,
     }),
     onSuccess: (r) => {
-      const mail = r.email_job_id ? "e-mails queued" : "e-mail already sent today or not configured";
+      // email_job_id is the low-credit test e-mail only; the exhausted test e-mail is queued by the same path.
+      const mail = r.email_job_id ? "low-credit e-mail queued"
+        : "low-credit e-mail already sent today or not configured";
       toast.success(`Test alerts sent (bell: low ${r.alerted ? "yes" : "no"}, exhausted ${
         r.exhausted_test_alerted ? "yes" : "no"}; ${mail})`);
       qc.invalidateQueries({ queryKey: ["jev-credit"] });
@@ -116,7 +118,7 @@ function TestAlertsButton() {
         Send test alerts
       </Button>
       <span style={{ fontSize: 11, color: A.muted2 }}>
-        Sends a [TEST] low-credit and a [TEST] exhausted alert (bell + e-mail to the alert recipients).
+        Sends a [TEST] low-credit and a [TEST] exhausted alert (admin bell + e-mail to the alert recipients).
       </span>
     </div>
   );

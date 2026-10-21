@@ -415,8 +415,11 @@ _JEV_ALERT_RECENT_SQL = """
 _JEV_ALERT_INSERT_SQL = """
     INSERT INTO shared.notifications
         (tenant_id, actor_type, event_type, entity_type, entity_id, payload, target_roles)
-    VALUES ($1::uuid, 'system', $2, 'jev_account', 'typesafe', $3::jsonb, ARRAY['admin','content'])
+    VALUES ($1::uuid, 'system', $2, 'jev_account', 'typesafe', $3::jsonb, $4::text[])
 """
+# AA-845: a test bell (test=True) goes to admins only; a real one to admin + content, as before.
+_JEV_ALERT_ROLES = ["admin", "content"]
+_JEV_TEST_ALERT_ROLES = ["admin"]
 _JEV_ALERT_MESSAGE = (
     "Jev (TypeSafe) returned 402 billing_error — API credits are exhausted. The decision layer is "
     "failing open (stages run on their existing rules without Jev). Top up the TypeSafe account "
@@ -454,7 +457,7 @@ async def maybe_alert_jev_credit(conn, *, source: str, test: bool = False) -> bo
             payload = json.dumps({"message": message, "error_type": "billing_error",
                                   "source": source, "test": test})
             await conn.execute(_JEV_ALERT_INSERT_SQL, PLATFORM_TENANT_ID, JEV_CREDIT_EXHAUSTED_EVENT,
-                               payload)
+                               payload, _JEV_TEST_ALERT_ROLES if test else _JEV_ALERT_ROLES)
         logger.warning("jev_credit_exhausted_alert", source=source, test=test)
     except Exception as exc:
         logger.warning("jev_credit_alert_insert_failed", error=str(exc)[:200])

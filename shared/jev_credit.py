@@ -15,13 +15,13 @@ the spend budget e-mails).
 - Who calls it: the api's ops sampler every JEV_CREDIT_CHECK_EVERY_S (api/core/ops_metrics_sampler.py), so the
   warning lands during a wave, not at the next daily probe; and POST /admin/decisions/jev-credit/check (admin,
   also the live verification path).
-- Throttle (no paging on a repeat): one unread low bell per 24 h; the e-mail is queued only when a new bell is
-  written, and its job idempotency key allows one per UTC day. The estimate only falls between top-ups, so
+- Throttle (no paging on a repeat): one real low bell per 24 h, read or not; the e-mail is queued only when a
+  new bell is written, and its job idempotency key allows one per UTC day. The estimate only falls between top-ups, so
   there is no flapping; a new top-up lifts it above the threshold and the next check stays quiet.
 - No top-up recorded → no estimate → no alert (the Settings card shows "—").
-- A test call (an explicit threshold_usd) writes a bell marked `"test": true` and a "[TEST]" e-mail; test bells
-  never count for the real throttle, and the test e-mail has its own idempotency key, so a verification run
-  cannot suppress a real alert.
+- A test call (an explicit threshold_usd) writes a bell marked `"test": true` (admins only) and a "[TEST]"
+  e-mail; test bells never count for the real throttle, and the test e-mail has its own idempotency key, so a
+  verification run cannot suppress a real alert.
 - Threshold: a code constant. There is no platform settings row to hold it (shared.spend_budget is per-run /
   per-day spend, not a balance floor), and no new env var (underscore env vars are set by hand only). Making it
   editable in Settings needs a migration; see docs/implementation-notes/AA-845.md.
@@ -58,18 +58,25 @@ JEV_SPEND_SQL = """
     FROM shared.llm_call_log
     WHERE provider = 'typesafe' AND $1::date IS NOT NULL AND created_at >= $1::date
 """
-# A real (non-test) unread low bell in the last 24 h blocks a new one.
+# A real (non-test) low bell in the last 24 h, read or not, blocks a new one. Not `is_read = FALSE` like the
+# AA-720/AA-627 bells: is_read is one flag for every staff user, so after anyone opened the bell (or "mark all
+# read") the 30-min sampler check would write a new low bell every 30 min while the estimate stays low (S246
+# review). The estimate does not recover on its own, so one bell a day is the signal; a top-up ends it.
 LOW_ALERT_RECENT_SQL = """
     SELECT 1 FROM shared.notifications
-     WHERE event_type = $1 AND is_read = FALSE AND created_at >= now() - interval '24 hours'
+     WHERE event_type = $1 AND created_at >= now() - interval '24 hours'
        AND coalesce(payload->>'test', 'false') <> 'true'
      LIMIT 1
 """
+# $4 = target_roles: admin + content for a real bell (as AA-720), admin only for a test bell (a content user,
+# e.g. Ms. Thư, never sees a [TEST] bell).
 LOW_ALERT_INSERT_SQL = """
     INSERT INTO shared.notifications
         (tenant_id, actor_type, event_type, entity_type, entity_id, payload, target_roles)
-    VALUES ($1::uuid, 'system', $2, 'jev_account', 'typesafe', $3::jsonb, ARRAY['admin','content'])
+    VALUES ($1::uuid, 'system', $2, 'jev_account', 'typesafe', $3::jsonb, $4::text[])
 """
+REAL_ALERT_ROLES = ["admin", "content"]
+TEST_ALERT_ROLES = ["admin"]
 LAST_LOW_ALERT_SQL = """
     SELECT max(created_at) AS last_at FROM shared.notifications
      WHERE event_type = $1 AND coalesce(payload->>'test', 'false') <> 'true'
@@ -128,7 +135,8 @@ async def _maybe_insert_low_bell(conn, estimated_left: float, threshold_usd: flo
         await conn.execute("SELECT pg_advisory_xact_lock($1)", _LOW_ALERT_LOCK_KEY)
         if not test and await conn.fetchval(LOW_ALERT_RECENT_SQL, JEV_CREDIT_LOW_EVENT):
             return False
-        await conn.execute(LOW_ALERT_INSERT_SQL, PLATFORM_TENANT_ID, JEV_CREDIT_LOW_EVENT, payload)
+        await conn.execute(LOW_ALERT_INSERT_SQL, PLATFORM_TENANT_ID, JEV_CREDIT_LOW_EVENT, payload,
+                           TEST_ALERT_ROLES if test else REAL_ALERT_ROLES)
     return True
 
 

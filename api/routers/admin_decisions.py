@@ -560,9 +560,11 @@ _TOPUPS_SQL = """
 # Jev spend since the earliest top-up date (one query for the card and the AA-845 low-credit check).
 _JEV_SPEND_SQL = jev_credit_mod.JEV_SPEND_SQL
 
-# The most recent exhausted alert (AA-720), shown next to the estimate so an admin sees the signal.
+# The most recent exhausted alert (AA-720), shown next to the estimate so an admin sees the signal. AA-845: a
+# test bell ("Send test alerts") is not an alert, as in jev_credit.LAST_LOW_ALERT_SQL.
 _LAST_EXHAUSTED_SQL = """
-    SELECT max(created_at) AS last_at FROM shared.notifications WHERE event_type = $1
+    SELECT max(created_at) AS last_at FROM shared.notifications
+     WHERE event_type = $1 AND coalesce(payload->>'test', 'false') <> 'true'
 """
 
 

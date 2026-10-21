@@ -262,9 +262,11 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   **Jev credit (AA-845):** the same job sends `jev_credit_exhausted` (queued when the AA-720 402 bell
   `platform.jev_credit.exhausted` is written) and `jev_credit_low` (`shared/jev_credit.py`: estimated TypeSafe
   credit = Settings › Jev Credit top-ups − logged typesafe spend, below $3 → bell `platform.jev_credit.low`; checked
-  every 30 min by the api ops sampler and on `POST /admin/decisions/jev-credit/check`). One unread bell per 24 h,
-  e-mail only with a new bell, at most one per template per UTC day; an explicit `threshold_usd` /
-  `test_exhausted_alert` on the check route sends marked test alerts that never throttle a real one.
+  every 30 min by the api ops sampler and on `POST /admin/decisions/jev-credit/check`). Throttle: one exhausted
+  bell per 24 h while unread (AA-720), one low bell per 24 h read or not; e-mail only with a new bell, at most one
+  per template per UTC day. The daily 402 sweep alerts only on real 402s after the latest recorded top-up and the
+  latest successful canary. An explicit `threshold_usd` / `test_exhausted_alert` on the check route sends marked
+  test alerts (admin bell only) that never throttle a real one and never show as the card's "last alert".
 - **Durable job runner (AA-650, ADR 0001 decision 3)**: long work is a row in `shared.job`
   (migration 174), not an in-process asyncio task, so a deploy/restart re-queues it instead of
   losing it.

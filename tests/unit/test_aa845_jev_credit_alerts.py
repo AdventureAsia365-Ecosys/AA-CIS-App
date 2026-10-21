@@ -9,7 +9,9 @@ Covers:
     render_jev_credit for both templates and the test marker; the job renders both templates.
   - POST /admin/decisions/jev-credit/check and the new GET fields; the staff route policy.
   - api/core/ops_metrics_sampler: the Jev check runs from the loop (first tick, then every N s) and never raises.
-  - the 402 sweep SQL also matches what decide() writes ('credit_exhausted', '... (breaker open)').
+  - the 402 sweep SQL also matches what decide() writes ('credit_exhausted', '... (breaker open)'), and only the
+    real 402s after the latest top-up and the latest successful canary raise the bell (S246 review B1).
+  - the low bell's throttle ignores the shared read flag; test bells go to admins only and are not "last alert".
 Mock-only: no DB, no SES, no TypeSafe call."""
 import asyncio
 import json
@@ -22,7 +24,7 @@ from pydantic import ValidationError
 from structlog.testing import capture_logs
 
 from api.core import ops_metrics_sampler as sampler
-from api.core.staff_authz import OPS_WRITE, POLICY
+from api.core.staff_authz import POLICY, SPEND_WRITE
 from api.routers import admin_decisions as routes
 from api.routers import admin_llm_ops
 from services.jobs import ops_alert_email_job
@@ -84,7 +86,7 @@ class _Conn:
         if "INSERT INTO shared.notifications" in sql:
             if self.fail_insert:
                 raise RuntimeError("insert failed")
-            self.bells.append({"event": args[1], "payload": json.loads(args[2])})
+            self.bells.append({"event": args[1], "payload": json.loads(args[2]), "roles": args[3]})
             return "INSERT 0 1"
         return "OK"
 
@@ -110,6 +112,7 @@ async def test_below_threshold_writes_one_bell_and_queues_the_email():
     assert out["alerted"] is True and out["email_job_id"] == "job-1" and out["test"] is False
     assert [b["event"] for b in conn.bells] == [jc.JEV_CREDIT_LOW_EVENT]
     assert conn.bells[0]["payload"]["test"] is False and conn.bells[0]["payload"]["estimated_left_usd"] == 2.0
+    assert conn.bells[0]["roles"] == ["admin", "content"]
     assert conn.locks == [jc._LOW_ALERT_LOCK_KEY]
     kw = eq.await_args.kwargs
     assert kw["template"] == ops_alerts.TEMPLATE_JEV_CREDIT_LOW and kw["test"] is False
@@ -142,6 +145,7 @@ async def test_explicit_threshold_is_a_marked_test_that_skips_the_throttle():
         out = await jc.check_low_credit(conn, source="admin:u1", threshold_usd=1000.0)
     assert out["test"] is True and out["threshold_usd"] == 1000.0 and out["alerted"] is True
     assert conn.bells[0]["payload"]["test"] is True and conn.bells[0]["payload"]["message"].startswith("[TEST]")
+    assert conn.bells[0]["roles"] == ["admin"]              # a content user never sees a [TEST] bell
     assert eq.await_args.kwargs["test"] is True
 
 
@@ -167,7 +171,7 @@ async def test_new_exhausted_bell_queues_one_email():
     with patch.object(ops_alerts, "enqueue_jev_credit_email", AsyncMock(return_value="job-x")) as eq:
         assert await d.maybe_alert_jev_credit(conn, source="decide") is True
     assert [b["event"] for b in conn.bells] == [d.JEV_CREDIT_EXHAUSTED_EVENT]
-    assert conn.bells[0]["payload"]["test"] is False
+    assert conn.bells[0]["payload"]["test"] is False and conn.bells[0]["roles"] == ["admin", "content"]
     kw = eq.await_args.kwargs
     assert kw["template"] == ops_alerts.TEMPLATE_JEV_CREDIT_EXHAUSTED and kw["test"] is False
     assert kw["details"]["source"] == "decide"
@@ -188,6 +192,7 @@ async def test_test_exhausted_alert_skips_the_throttle_and_is_marked():
     with patch.object(ops_alerts, "enqueue_jev_credit_email", AsyncMock(return_value="job-t")) as eq:
         assert await d.maybe_alert_jev_credit(conn, source="admin:u1", test=True) is True
     assert conn.bells[0]["payload"]["test"] is True and conn.bells[0]["payload"]["message"].startswith("[TEST]")
+    assert conn.bells[0]["roles"] == ["admin"]
     assert eq.await_args.kwargs["test"] is True
 
 
@@ -260,8 +265,10 @@ def _req(pool):
     return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(pool=pool)))
 
 
-def test_check_route_policy_is_ops_write():
-    assert POLICY[("POST", "/admin/decisions/jev-credit/check")] == OPS_WRITE
+def test_check_route_policy_is_spend_write():
+    # S246 review: the response carries money (top-ups, estimate) like GET jev-credit (spend.read), and the route
+    # belongs to the Jev credit ledger (spend.write), so spend.write, not ops.write.
+    assert POLICY[("POST", "/admin/decisions/jev-credit/check")] == SPEND_WRITE
 
 
 def test_check_route_body_bounds():
@@ -300,7 +307,8 @@ def test_get_reports_the_low_threshold_state(monkeypatch):
 
         async def fetchrow(self, sql, *args):
             if "max(created_at) AS last_at" in sql:
-                return {"last_at": _NOW if "payload->>'test'" in sql else None}
+                assert "coalesce(payload->>'test', 'false') <> 'true'" in sql   # a test bell is not an alert
+                return {"last_at": _NOW if args[0] == jc.JEV_CREDIT_LOW_EVENT else None}
             return await super().fetchrow(sql, *args)
 
     out = asyncio.run(routes.jev_credit(_req(_P(spent=18.5)), x_admin_secret="x"))
@@ -351,10 +359,66 @@ async def test_loop_runs_the_jev_check_on_the_first_tick_then_on_its_own_interva
 
 def test_402_sweep_matches_the_decide_error_texts():
     """S246 lesson: the sweep matched only '%402%' while decide() writes 'credit_exhausted', so it counted 0 of
-    5,683 rows on 10/10. The real-Postgres check is tests/integration/test_aa845_jev_402_sweep_sql.py."""
+    5,683 rows on 10/10. The real-Postgres check is tests/integration/test_aa845_jev_credit_sql.py."""
     import inspect
 
     sql = admin_llm_ops._JEV_402_SWEEP_SQL
     assert "error LIKE 'credit_exhausted%'" in sql and "error LIKE '%402%'" in sql
     src = inspect.getsource(d._decide)
     assert 'error="credit_exhausted"' in src and 'error="credit_exhausted (breaker open)"' in src
+
+
+def test_low_bell_throttle_ignores_the_read_flag():
+    """S246 review: is_read is one flag for every staff user, so an `is_read = FALSE` throttle let the 30-min check
+    write a new low bell every 30 min after anyone opened the bell."""
+    assert "is_read" not in jc.LOW_ALERT_RECENT_SQL
+    assert "interval '24 hours'" in jc.LOW_ALERT_RECENT_SQL
+
+
+def test_402_sweep_cuts_at_the_latest_topup_and_canary():
+    sql = admin_llm_ops._JEV_402_SWEEP_SQL
+    assert "max(created_at) FROM shared.jev_credit_topup" in sql and "$1::timestamptz" in sql
+    assert "NOT LIKE '%(breaker open)%'" in sql and "AS n_open" in sql
+
+
+class _SweepConn(_Conn):
+    def __init__(self, *, n, n_open):
+        super().__init__()
+        self.n, self.n_open, self.sweep_args = n, n_open, None
+
+    async def fetchrow(self, sql, *args):
+        if "FROM shared.decision_log" in sql:
+            self.sweep_args = args
+            return {"n": self.n, "n_open": self.n_open, "last_seen": _NOW}
+        return await super().fetchrow(sql, *args)
+
+
+@pytest.mark.asyncio
+async def test_sweep_alerts_only_on_open_402s(monkeypatch):
+    """B1: rows from before a top-up (or before this run's successful canary) are reported, never alerted."""
+    monkeypatch.setattr(admin_llm_ops, "verify_admin_secret", lambda _s: None)
+    monkeypatch.setattr(admin_llm_ops, "_last_canary_ok_at", _NOW)
+    for n, n_open, alerts in ((40, 0, 0), (40, 2, 1)):
+        conn = _SweepConn(n=n, n_open=n_open)
+        with patch.object(d, "maybe_alert_jev_credit", AsyncMock(return_value=True)) as al:
+            out = await admin_llm_ops.sweep_jev_402(_req(conn), x_admin_secret="x")
+        assert conn.sweep_args == (_NOW,)
+        assert out["errors_24h"] == n and out["open_402s"] == n_open
+        assert al.await_count == alerts and out["alerted"] is bool(alerts)
+
+
+@pytest.mark.asyncio
+async def test_successful_canary_sets_the_sweep_cut(monkeypatch):
+    monkeypatch.setattr(admin_llm_ops, "verify_admin_secret", lambda _s: None)
+    monkeypatch.setattr(admin_llm_ops, "_last_canary_ok_at", None)
+    with patch.object(d, "_call_jev", AsyncMock(side_effect=d.JevBillingError("402"))), \
+         patch.object(d, "_trip_jev_breaker"), patch.object(d, "jev_breaker_open", return_value=True), \
+         patch.object(d, "maybe_alert_jev_credit", AsyncMock(return_value=True)):
+        out = await admin_llm_ops.check_jev_canary(_req(_Conn()), x_admin_secret="x")
+    assert out["billing_error"] is True and admin_llm_ops._last_canary_ok_at is None
+    with patch.object(d, "_call_jev", AsyncMock(return_value={})), patch.object(d, "reset_jev_breaker"), \
+         patch.object(d, "jev_breaker_open", return_value=False):
+        out = await admin_llm_ops.check_jev_canary(_req(_Conn()), x_admin_secret="x")
+    assert out["credit_ok"] is True
+    assert admin_llm_ops._last_canary_ok_at is not None
+    assert admin_llm_ops._last_canary_ok_at.isoformat() == out["checked_at"]
