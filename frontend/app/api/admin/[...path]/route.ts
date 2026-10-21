@@ -26,6 +26,7 @@
 // Quality sentence cut / rewrite) need the admin role, and the verified role
 // is forwarded as x-admin-role for the backend's own check.
 import { NextRequest, NextResponse } from "next/server";
+import { refuseCrossSiteWrite } from "@/lib/crossSiteGuard";
 import { requireAdmin, secretNotConfigured, staffCredentialHeaders } from "@/lib/auth-server";
 import { API_RULES, canReadAdminPath, canWriteAdminPath } from "@/lib/rbac";
 import { proxyPath } from "@/lib/bffPath";
@@ -38,6 +39,9 @@ async function handler(
   req: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
 ) {
+  // AA-911 — refuse a cross-site write before any cookie or body is read (lib/sameOrigin.ts).
+  const refused = refuseCrossSiteWrite(req);
+  if (refused) return refused;
   const auth = await requireAdmin(req, API_RULES.admin);
   if (!auth.ok) return auth.response;
 

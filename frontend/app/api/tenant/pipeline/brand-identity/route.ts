@@ -4,6 +4,7 @@
 // an admin route, gated with requireAdmin() like the other X-Admin-Secret
 // proxies, not requireTenant().
 import { NextRequest, NextResponse } from "next/server";
+import { refuseCrossSiteWrite } from "@/lib/crossSiteGuard";
 import { requireAdmin, secretNotConfigured, staffCredentialHeaders } from "@/lib/auth-server";
 import { API_RULES } from "@/lib/rbac";
 
@@ -45,6 +46,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  // AA-911 — refuse a cross-site write before any cookie or body is read (lib/sameOrigin.ts).
+  const refused = refuseCrossSiteWrite(req);
+  if (refused) return refused;
   const auth = await requireAdmin(req, API_RULES.brandIdentity);
   if (!auth.ok) return auth.response;
 

@@ -117,9 +117,14 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
       `portal/app/_kit/Drawer.tsx`, `portal/app/_kit/Toast.tsx`, `portal/app/_kit/api.ts`,
       `portal/app/_kit/useMediaQuery.ts`, `portal/app/_kit/Providers.tsx`, `portal/app/_kit/DataTable.tsx`,
       `portal/app/_kit/csv.ts`, `portal/app/_kit/savedViews.ts`, `portal/app/_brand/tokens.ts`,
-      `portal/lib/bffPath.ts`, `portal/lib/proxyResponse.ts` (each copied from the same path under
-      `frontend/`). `portal/app/_kit/index.ts` (barrel of just these), `portal/app/globals.css` and
+      `portal/lib/bffPath.ts`, `portal/lib/proxyResponse.ts`, `portal/lib/sameOrigin.ts`,
+      `portal/lib/crossSiteGuard.ts` (each copied from the same path under `frontend/`). `portal/app/_kit/index.ts` (barrel of just these), `portal/app/globals.css` and
       `portal/lib/auth-server.ts` are portal-owned.
+    - **Cross-site writes (AA-911, admin and portal):** every BFF write route (any method but GET/HEAD/OPTIONS)
+      first calls `lib/crossSiteGuard.ts` `refuseCrossSiteWrite()` and answers 403 when `Origin` (or, without it,
+      `Sec-Fetch-Site`) is not this origin. `it.com` is a public suffix, so every `*.lumiguides.it.com` host,
+      including the fixed Preview hosts that serve unmerged PR code, is the same site and its requests carry the
+      Lax session cookies. `tests/unit/test_aa911_bff_cross_site.py` keeps every write route on the guard.
     - Not moved yet: the public white-label page `/trip/[tourId]` stays on the admin app (stored `trip_url`s
       point at the admin host); no Sentry on the portal yet.
   - Shared brand tokens (adventure.asia: Fahkwang/Poppins, gold `#DB9628`, pill buttons, logo)
