@@ -12,6 +12,10 @@
 //     COMPARED with the allowlist; any other host (a per-deployment *.vercel.app preview URL) gets no
 //     Cognito sign-in at all, because those hosts are not registered callback URLs (identity_variables.tf).
 //   - The fixed Preview host never offers the legacy password form or POST /api/auth/login (AA-911).
+//   - AA-911 decision D-1 (root ADR 0006a A11): the "cis-admin" sign-in of a Vercel PREVIEW build uses the
+//     Preview-only `cis-admin-preview` app client (its only callback is the Preview host) and its own secret env
+//     var; it never reads the production client secret. The CIS API caps every token of that client at the
+//     viewer role (api/core/staff_identity.py), so preview code from an unmerged PR never gets a real role.
 //   - state, nonce and the PKCE verifier live in one short-lived httpOnly cookie scoped to the
 //     callback path; the callback checks state against it and nonce against the ID token.
 //   - Token exchange, refresh and revoke authenticate with HTTP Basic (client id + secret).
@@ -55,13 +59,32 @@ const PROD_ORIGIN = "https://aa-cis.lumiguides.it.com";
 export const PREVIEW_ORIGIN = "https://aa-cis-preview.lumiguides.it.com";
 const DEV_ORIGIN = "http://localhost:3000";
 
+/** A Vercel preview build (VERCEL_ENV is fixed per deployment): its cis-admin sign-in is the preview client. */
+const PREVIEW_BUILD = (process.env.VERCEL_ENV ?? "").trim() === "preview";
+
 /** cis-admin origins for THIS build: a preview build never runs the production callback and vice versa. */
 function cisAdminOrigins(): string[] {
   const vercelEnv = (process.env.VERCEL_ENV ?? "").trim();
   if (vercelEnv === "production") return [PROD_ORIGIN];
   if (vercelEnv === "preview") return [PREVIEW_ORIGIN];
-  return process.env.NODE_ENV === "development" ? [PROD_ORIGIN, PREVIEW_ORIGIN, DEV_ORIGIN] : [PROD_ORIGIN];
+  // Outside Vercel the production client is used, and its callbacks never include the Preview host.
+  return process.env.NODE_ENV === "development" ? [PROD_ORIGIN, DEV_ORIGIN] : [PROD_ORIGIN];
 }
+
+// AA-911 D-1: the `cis-admin-preview` client (AA-CIS-Infra identity.tf). Empty until the Infra apply creates it,
+// then filled in here; while empty a preview build offers no Cognito sign-in (never the production client).
+const DEFAULT_CIS_ADMIN_PREVIEW_CLIENT_ID = "";
+const CIS_ADMIN_CLIENT_ID = PREVIEW_BUILD
+  ? (process.env.COGNITO_CIS_ADMIN_PREVIEW_CLIENT_ID ?? "").trim() || DEFAULT_CIS_ADMIN_PREVIEW_CLIENT_ID
+  : process.env.COGNITO_CIS_ADMIN_CLIENT_ID ?? "3oqkumijh04cp81k3nlnub6qtv";
+const cisAdminSecret = (): string => {
+  if (CIS_ADMIN_CLIENT_ID === "") return "";
+  return (
+    (PREVIEW_BUILD
+      ? process.env.COGNITO_CIS_ADMIN_PREVIEW_CLIENT_SECRET
+      : process.env.COGNITO_CIS_ADMIN_CLIENT_SECRET) ?? ""
+  );
+};
 
 /** True when the request is served on the fixed Preview sign-in host (no legacy password login there). */
 export function isPreviewSignInHost(host: string | null | undefined): boolean {
@@ -87,8 +110,8 @@ const CLIENTS: Record<StaffClientKind, StaffClient> = {
   "cis-admin": {
     kind: "cis-admin",
     tag: "ca",
-    clientId: process.env.COGNITO_CIS_ADMIN_CLIENT_ID ?? "3oqkumijh04cp81k3nlnub6qtv",
-    secret: () => process.env.COGNITO_CIS_ADMIN_CLIENT_SECRET ?? "",
+    clientId: CIS_ADMIN_CLIENT_ID,
+    secret: cisAdminSecret,
     callbackPath: "/api/auth/callback/cognito",
     refreshTtlS: 12 * 60 * 60,
     origins: cisAdminOrigins,
@@ -113,6 +136,7 @@ function clientByTag(tag: string): StaffClient | null {
 }
 
 function clientById(clientId: unknown): StaffClient | null {
+  if (typeof clientId !== "string" || clientId === "") return null; // an unset preview client id matches nothing
   return Object.values(CLIENTS).find((c) => c.clientId === clientId) ?? null;
 }
 

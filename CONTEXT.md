@@ -814,14 +814,20 @@ legacy viewer smoke; the fixed Preview host `aa-cis-preview.lumiguides.it.com` (
 form (`/login` hides it, BFF `/api/auth/login` answers 404 there).
 
 **Preview staff sign-in (AA-911, root ADR 0006a A11).** `aa-cis-preview.lumiguides.it.com` is a Vercel domain of
-`aa-cis-frontend` and a registered `cis-admin` callback / sign-out URL (break-glass stays production-only). A
-Vercel production build allowlists only the production host, a preview build only this host (`VERCEL_ENV`,
-`frontend/lib/cognito.ts`), so the redirect URI is still never built from the Host header. The Vercel Deploy
+`aa-cis-frontend` and the only callback / sign-out URL of the Preview-only WORKFORCE client `cis-admin-preview`
+(AA-911 decision D-1; the production `cis-admin` client does not list it; break-glass stays production-only). A
+Vercel production build signs in with `cis-admin` on the production host only, a preview build with
+`cis-admin-preview` on this host only (`VERCEL_ENV`, `frontend/lib/cognito.ts`; its own secret env var
+`COGNITO_CIS_ADMIN_PREVIEW_CLIENT_SECRET`, client id a code constant filled in after the Infra apply), so the
+redirect URI is still never built from the Host header. The Vercel Deploy
 workflow points the host at a preview only on opt-in: the PR label `preview-signin`, or a dispatch from `main`
 with `alias_only_url` (checked over the Vercel API: this project, not production, READY). A Cognito session on
-that host gets the user's **real** role (a verified Bearer, not the C9 viewer-capped Preview credential, which
-stays for legacy preview sessions). Needs the Preview target of the cis-admin client secret in Vercel; the alias
-must point at a build made after it was set. Preview builds send `X-Robots-Tag: noindex, nofollow`. Every BFF
+that host is always the **viewer**: `api/core/staff_identity.resolve_staff` maps every `cis-admin-preview` token to
+role `viewer` with `is_owner` false whatever its `cis-*` groups (`api/core/identity_config.is_preview_client`,
+env override `COGNITO_CIS_ADMIN_PREVIEW_CLIENT_ID`), so the bearer middleware forwards `viewer`, `staff_authz`
+refuses every write and `/auth/verify-admin` returns `viewer`. While the preview client id is empty, a preview
+token is 401 (fail closed). Needs `COGNITO_CIS_ADMIN_PREVIEW_CLIENT_SECRET` on the Preview target in Vercel (never a
+Preview target of the production secret); the alias must point at a build made after it was set. Preview builds send `X-Robots-Tag: noindex, nofollow`. Every BFF
 route that attaches `X-Admin-Secret` calls `requireAdmin()` first (audited 21/10/2026). UI smoke keeps the
 per-deployment URL. Runbook: root `docs/ops/runbooks/preview-staff-sign-in.md`. For an HS256 session
 `/auth/verify-admin` re-reads `shared.admin_users` (cached 60 s), so a deactivation or demotion lands within
