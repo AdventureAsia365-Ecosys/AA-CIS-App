@@ -35,6 +35,26 @@ from .registry import JobContext, NonRetryable, kinds, run_terminal_hook
 logger = structlog.get_logger()
 
 
+def _degraded_collect():
+    """AA-925 — the per-job degraded collector (services/quality/degraded.collect); a null context when the
+    module cannot load, so the worker never depends on it."""
+    try:
+        from services.quality import degraded
+        return degraded.collect()
+    except Exception:  # pragma: no cover
+        from contextlib import nullcontext
+        return nullcontext({})
+
+
+def _degraded_result(result, box):
+    """The job result with `degraded` counts added (dict / None results; anything else unchanged)."""
+    try:
+        from services.quality import degraded
+        return degraded.merge_job_result(result, box)
+    except Exception:  # pragma: no cover
+        return result
+
+
 def ecs_task_revision() -> Optional[int]:
     """AA-711 — this task's ECS task-definition revision, from the task metadata endpoint v4
     (`JOB_WORKER_TASK_REVISION` overrides it, for tests/local). None outside ECS."""
@@ -184,7 +204,10 @@ class Worker:
         # The task copies the context at creation, so every LLM call the handler makes (threads
         # included) logs this job's id — its cost shows on the Jobs page (call_log.bind_job) —
         # and, for a tenant job, the tenant (AA-741 G1, call_log.bind_tenant).
-        with call_log.bind_job(job.id), call_log.bind_tenant(job_tenant_id(job.payload)):
+        # AA-925 — and every Jev outage (zone=error) the handler meets is counted into this job's collector
+        # (services/quality/degraded.py), written to shared.job.result.degraded below.
+        with call_log.bind_job(job.id), call_log.bind_tenant(job_tenant_id(job.payload)), \
+                _degraded_collect() as degraded_box:
             handler_task = asyncio.create_task(kind.handler(ctx))
         cancelled_by_admin = False
         try:
@@ -207,8 +230,8 @@ class Worker:
                     await run_terminal_hook(self.pool, job.id)
                     log.info("job_cancelled")
                     return
-            result = handler_task.result()
-            await queue.complete(self.pool, job.id, self.worker_id, result or ctx.result,
+            result = _degraded_result(handler_task.result() or ctx.result, degraded_box)
+            await queue.complete(self.pool, job.id, self.worker_id, result,
                                  round(ctx.cost_usd, 6))
             # AA-687: ctx.cost_usd is only what the handler reported (non-LLM, e.g. DataForSEO);
             # the LLM part is summed from llm_call_log, the same as the Jobs page shows.

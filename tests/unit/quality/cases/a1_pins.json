@@ -1,0 +1,60 @@
+[
+ {
+  "id": "a1-clean-baseline",
+  "class_id": "other.missing_field",
+  "severity": "hard",
+  "writer": "A1",
+  "artefact": "output",
+  "chain": "a1",
+  "detector": "MISSING_FIELD",
+  "expected": "no_fire",
+  "note": "Regression pin (green on main): the clean synthetic Bhutan tour publishes with no model call.",
+  "expect": {"publishable": true, "observed_exclude": ["FORBIDDEN_WORD", "SEO_META_TOO_LONG", "META_TOO_SHORT"]},
+  "input": {"base": "a1-bhutan-4d"}
+ },
+ {
+  "id": "a1-flagfix-reintroduces-forbidden",
+  "class_id": "other.forbidden_word",
+  "severity": "hard",
+  "writer": "A1",
+  "artefact": "output",
+  "chain": "a1",
+  "detector": "FORBIDDEN_WORD",
+  "expected": "no_fire",
+  "note": "Regression pin, Done-when 1 demo (AA-641): flag_fix's LLM repair of the summary adds 'discount', a word the forbidden strip cannot clean (one-sentence paragraph, no substitute). The repair must be reverted per field, so the tour stays publishable without the word. Removing the revert in flag_fix_node turns this case red.",
+  "expect": {"publishable": true, "field_not_contains": {"summary": ["discount"]}},
+  "input": {"base": "a1-bhutan-4d",
+            "brand_audit": {"status": "flagged", "codes": ["GENERIC_AI_WORDING"], "fields": ["aa_summary"],
+                            "issues": ["summary reads generic"]}},
+  "llm_stub": [{"stage": "s1_flag_fix",
+                "content": {"summary": "A discount journey through the western valleys of Bhutan, from Paro and Taktsang Monastery to the dzong at Punakha."}}]
+ },
+ {
+  "id": "a1-seo-keywords-not-scanned",
+  "class_id": "other.forbidden_word",
+  "severity": "hard",
+  "writer": "A1",
+  "artefact": "output",
+  "chain": "a1",
+  "detector": "FORBIDDEN_WORD",
+  "expected": "no_fire",
+  "note": "Regression pin (AA-738): a DFS keyword the writer did not author ('cheap ...') sits in seo_keywords_used; validate scans the copy only, so it never blocks Master.",
+  "expect": {"publishable": true},
+  "input": {"base": "a1-bhutan-4d", "seo": {"top_keywords": [{"keyword": "cheap bhutan tour"}, {"keyword": "western bhutan valleys"}]}}
+ },
+ {
+  "id": "a1-meta-too-long-salvaged-at-sentence",
+  "class_id": "struct.truncated",
+  "severity": "block",
+  "writer": "A1",
+  "artefact": "output",
+  "chain": "a1",
+  "detector": "SEO_META_TOO_LONG",
+  "expected": "no_fire",
+  "note": "Regression pin (AA-641/AA-740): an over-long two-sentence meta whose first sentence is in band is cut at the sentence boundary, never mid-clause.",
+  "expect": {"publishable": true,
+             "field_equals": {"seo_meta": "Four days in western Bhutan, from the Paro valley and Taktsang Monastery to the dzongs of Thimphu and Punakha, with local guides and quiet lodges."}},
+  "input": {"base": "a1-bhutan-4d",
+            "writer_patch": {"seo_meta": "Four days in western Bhutan, from the Paro valley and Taktsang Monastery to the dzongs of Thimphu and Punakha, with local guides and quiet lodges. The pace suits first visits."}}
+ }
+]

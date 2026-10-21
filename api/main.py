@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 from fastapi.openapi.docs import (get_redoc_html, get_swagger_ui_html,
                                    get_swagger_ui_oauth2_redirect_html)
 from contextlib import asynccontextmanager
@@ -66,6 +67,7 @@ from api.middleware.staff_bearer import StaffBearerMiddleware  # AA-816 C3
 from api.middleware.staff_audit import StaffAuditMiddleware  # AA-884
 from api.core import readiness  # AA-884 — /health git_sha, /health/ready
 from api.core import staff_identity  # AA-816 C3
+from api.core import login_throttle  # AA-876
 from api.core.sentry import init_sentry
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 
@@ -159,19 +161,6 @@ app = FastAPI(
     docs_url=None, redoc_url=None, openapi_url=None,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "https://api-cis.lumiguides.it.com",
-        "https://aa-cis.lumiguides.it.com",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 
 def _is_publicly_deployed() -> bool:
     """AA-577 STEP0 — true only for the real, internet-reachable ECS deployment (the one bots
@@ -186,6 +175,32 @@ def _is_publicly_deployed() -> bool:
     Terraform change and can't be spoofed by an unauthenticated caller (it's never read from a
     request, only from this process's own environment)."""
     return bool(os.environ.get("AWS_EXECUTION_ENV"))
+
+
+# AA-876 — no CORS on a deployed task. No browser calls this API: every caller is a server (the admin, portal
+# and Booking BFFs, TripPlanner's server components and Lambdas), so a browser preflight from any origin gets no
+# Access-Control-Allow-Origin. Local dev keeps the two localhost front-ends.
+_LOCAL_CORS_ORIGINS = ["http://localhost:3000", "http://localhost:3001"]
+
+
+def cors_allow_origins(environ=None) -> list[str]:
+    """AA-876 — origins the CORS middleware allows: none on the real ECS deployment (same
+    AWS_EXECUTION_ENV signal as _is_publicly_deployed), the localhost front-ends elsewhere."""
+    env = os.environ if environ is None else environ
+    if env.get("AWS_EXECUTION_ENV"):
+        return []
+    return list(_LOCAL_CORS_ORIGINS)
+
+
+_cors_origins = cors_allow_origins()
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 
 def require_admin_secret_for_docs(x_admin_secret: str = Header(None)):
@@ -289,9 +304,13 @@ def get_pool() -> asyncpg.Pool:
 
 @app.post("/auth/tenant-login", response_model=TenantLoginResponse, tags=["auth"])
 async def tenant_login(
+    request: Request,
     body: TenantLoginRequest,
     db: asyncpg.Pool = Depends(get_pool),
 ):
+    # AA-876 — per-IP failure + attempt limits before any DB read (api/core/login_throttle.py). No per-key
+    # backoff: an API key has far too much entropy to guess, and a per-key wait would let anyone lock a tenant out.
+    await login_throttle.check(request, "tenant")
     if not body.api_key or len(body.api_key) < 10:
         raise HTTPException(status_code=400, detail="Invalid API key format")
     key_hash = _hash_api_key(body.api_key)
@@ -302,6 +321,7 @@ async def tenant_login(
             key_hash,
         )
     if not row:
+        await login_throttle.record_failure(request, "tenant")
         raise HTTPException(status_code=401, detail="Invalid API key")
     token = _create_jwt(row["tenant_id"], row["name"], row["plan_tier"])
 
@@ -337,6 +357,7 @@ async def verify_tenant(request: Request):
 
 @app.post("/auth/admin-login", response_model=AdminLoginResponse, tags=["auth"])
 async def admin_login(
+    request: Request,
     body: AdminLoginRequest,
     db: asyncpg.Pool = Depends(get_pool),
 ):
@@ -348,6 +369,8 @@ async def admin_login(
     """
     if not body.username or not body.password:
         raise HTTPException(status_code=400, detail="Username and password required")
+    # AA-876 — per-IP limits + per-(username, IP) backoff, before the DB read and bcrypt (api/core/login_throttle.py).
+    await login_throttle.check(request, "admin", body.username)
     async with db.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT id::text, username, password_hash, role::text, is_active "
@@ -358,9 +381,13 @@ async def admin_login(
     # whose password_hash is NULL (migration 247, AA-816), _verify_password compares against a dummy
     # hash and returns False, so both end in the same 401 as a wrong password (never a 500).
     stored_hash = row["password_hash"] if row else None
-    password_ok = _verify_password(body.password, stored_hash)
+    # AA-876 — bcrypt (cost 12, ~250 ms) in the threadpool, so a login burst no longer stalls the event loop
+    # for every other request on the task.
+    password_ok = await run_in_threadpool(_verify_password, body.password, stored_hash)
     if not row or not row["is_active"] or stored_hash is None or not password_ok:
+        await login_throttle.record_failure(request, "admin", body.username)
         raise HTTPException(status_code=401, detail="Invalid username or password")
+    await login_throttle.record_success(request, "admin", body.username)
     token = _create_admin_jwt(row["id"], row["username"], row["role"])
     return AdminLoginResponse(
         token=token,

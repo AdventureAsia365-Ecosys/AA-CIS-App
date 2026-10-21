@@ -8,11 +8,16 @@ Admin (`/admin/photos`, behind the admin BFF):
   - GET  /destinations?country=   — destination names for the manual assign picker.
   - GET  /tours?country=          — active tours for the manual assign picker.
   - POST /sync                    — enqueue a `photo_sync` job (admin secret).
+  - POST /sync/schedule           — AA-844, the daily schedule (ops-probe Lambda, machine caller):
+                                     one incremental photo_sync job per country, idempotent per day.
   - POST /{photo_id}/assign       — set tour / destination by hand, or reject (admin secret).
 
-Public (`/content/photos/{photo_id}?size=large|small`): 302 to a short-lived S3 URL. It is the
-`cover_image_url` the TripPlanner shows (API Gateway `/content/*` has no auth). CloudFront can
-replace it later without changing the stored URLs' meaning.
+Public (`/content/photos/{photo_id}?size=large|small|original`): the stable path the catalog views,
+the TripPlanner (`cover_image_url`, `og:image`) and the Booking admin use (API Gateway `/content/*`
+has no auth). AA-844: it answers a 302 to the photos CDN (`https://img.lumiguides.it.com/<slug>/<file>
+?v=<sha256[:12]>`, CloudFront in front of the bucket's photos/ prefix), cacheable for a day; with
+PHOTO_CDN_BASE=off it falls back to a 1-hour presigned S3 URL (cacheable 50 min). A rejected photo is
+404 here, but a CDN URL handed out before the reject keeps working (the object stays in S3).
 """
 from __future__ import annotations
 
@@ -104,6 +109,8 @@ async def summary(request: Request):
         job = await conn.fetchrow(
             """SELECT id, status, created_at, finished_at, result, error FROM shared.job
                 WHERE kind = 'photo_sync' ORDER BY created_at DESC LIMIT 1""")
+        from services.jobs.photo_sync_job import last_scheduled
+        scheduled = await last_scheduled(conn)
     # S207 redesign: every country with active tours is listed, with or without photos yet.
     by_country = {r["country"]: dict(r) for r in rows}
     empty = {"photos": 0, "with_tour": 0, "with_destination": 0, "unmatched": 0, "rejected": 0, "errors": 0,
@@ -128,7 +135,7 @@ async def summary(request: Request):
                     "created_at": job["created_at"].isoformat() if job["created_at"] else None,
                     "finished_at": job["finished_at"].isoformat() if job["finished_at"] else None,
                     "result": job["result"]}
-    return {"countries": countries, "totals": totals, "last_job": last_job}
+    return {"countries": countries, "totals": totals, "last_job": last_job, "last_scheduled": scheduled}
 
 
 @router.get("", summary="AA-708 — list synced photos")
@@ -250,6 +257,20 @@ async def sync(body: SyncRequest, request: Request, x_admin_secret: str = Header
     return {"job_id": job_id, "created": created, "folders": [f["country"] for f in folders]}
 
 
+@router.post("/sync/schedule", summary="AA-844 — daily: enqueue one photo_sync job per country (scheduler)")
+async def sync_schedule(request: Request, x_admin_secret: str = Header(None)):
+    """Driven once a day by the ops-probe Lambda (AA-CIS-Infra lambda_src/dfs_balance_check, schedule
+    photo_sync_daily, 21:00 UTC). Incremental: unchanged Drive files are not downloaded again."""
+    verify_admin_secret(x_admin_secret)
+    from datetime import datetime, timezone
+    from services.jobs import photo_sync_job
+    day = datetime.now(timezone.utc).date().isoformat()
+    out = await photo_sync_job.enqueue_scheduled(request.app.state.pool, day=day)
+    logger.info("admin_photo_sync_scheduled", day=day, enqueued=len(out["enqueued"]),
+                created=sum(1 for e in out["enqueued"] if e["created"]), skipped=out["skipped"])
+    return {"day": day, **out}
+
+
 class AssignRequest(BaseModel):
     tour_id: Optional[str] = None
     destination_id: Optional[str] = None
@@ -305,12 +326,18 @@ async def photo_image(photo_id: str, request: Request,
                       size: str = Query("large", pattern="^(large|small|original)$")):
     pid = _uuid(photo_id, "photo_id")
     row = await request.app.state.pool.fetchrow(
-        """SELECT s3_key_large, s3_key_small, s3_key_original FROM shared.place_photo
+        """SELECT s3_key_large, s3_key_small, s3_key_original, sha256 FROM shared.place_photo
             WHERE id = $1::uuid AND status <> 'rejected'""", pid)
     key = row and row[f"s3_key_{size}"]
     if not key:
         raise HTTPException(status_code=404, detail="photo not found")
-    from services.photos.sync import photo_bucket
+    from services.photos.sync import cdn_url, photo_bucket
+    target = cdn_url(key, row["sha256"])
+    if target:
+        # AA-844: the CDN URL does not expire, so the redirect is cached for a day (fewer API hops per
+        # image); the cost is that a reject takes up to a day to stop this redirect in browsers.
+        return RedirectResponse(target, status_code=302, headers={"Cache-Control": "public, max-age=86400"})
     url = await asyncio.to_thread(_client().generate_presigned_url, "get_object",
                                   Params={"Bucket": photo_bucket(), "Key": key}, ExpiresIn=3600)
+    # Below the 3600 s presign expiry, so a cached redirect never points at an expired URL.
     return RedirectResponse(url, status_code=302, headers={"Cache-Control": "public, max-age=3000"})

@@ -1160,12 +1160,14 @@ def _gate_brand_voice(
             _ledger["logged"] = True
         # Fail-closed on the BLOCKING (product-truth) side; brand-style passes (no signal to
         # flag on). AA-613 — same two-result shape as the success path below.
-        return [
-            # AA-770 (S233) — an outage is not a verdict: the piece ships, the admin sees the flag.
-            _result("F9_cta_fact", [f"judge unavailable: {e} — not checked"], repairable=False,
-                    blocking=False),
-            _result("F9_brand_style", [], repairable=False, blocking=False),
-        ]
+        # AA-770 (S233) — an outage is not a verdict: never a blocking gate (no rewrite on it).
+        # AA-925 — but it is a hard fail-open detector: the result carries the `degraded` marker, and
+        # service._degraded_final labels the piece held when the FINAL attempt has it (admin-only label;
+        # the tenant still receives the piece).
+        unavailable = _result("F9_cta_fact", [f"judge unavailable: {e} — not checked"], repairable=False,
+                              blocking=False)
+        unavailable["degraded"] = "f9_judge_unavailable"
+        return [unavailable, _result("F9_brand_style", [], repairable=False, blocking=False)]
 
     status = data.get("status", "manual_check")
     failure_codes = [c for c in (data.get("failure_codes") or []) if c in _BRAND_VOICE_FAILURE_CODES]

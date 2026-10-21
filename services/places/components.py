@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from services.places import days as days_mod
+from services.places import geomatch
 from services.places.names import component_id, country_norm, is_generic, locality_key, name_norm
 
 ACTIVITIES = ("trekking", "cultural_heritage", "wildlife_nature", "water_activities", "culinary",
@@ -136,7 +137,7 @@ def build_components(source_id: str, tour_country: str, atoms: list[dict],
     overnight anchor, the locality fallback of a generic name."""
     day_towns = day_towns or {}
     merged: dict[tuple, Component] = {}
-    counters = {"atoms": len(atoms), "skipped": {}, "generic_without_locality": 0}
+    counters = {"atoms": len(atoms), "skipped": {}, "generic_without_locality": 0, "linked_to_feature": 0}
     for a in sorted(atoms, key=lambda x: (x.get("itinerary_day") or 0, str(x.get("atom_id")))):
         place = (a.get("place") or "").strip()
         day = a.get("itinerary_day")
@@ -152,7 +153,11 @@ def build_components(source_id: str, tour_country: str, atoms: list[dict],
         text = (a.get("text") or "").strip()[:TEXT_MAX] or place
         comp = merged.get(key)
         if comp is None:
-            link_name = (a.get("card_display_name") or "").strip() or place
+            # AA-847 (S246): a descriptive phrase around a linear feature ("sandbank on the Nam Ou River") links to
+            # that feature's destination; the component id keeps the itinerary spelling (no id-map impact)
+            feature = None if (a.get("card_display_name") or "").strip() else geomatch.linked_feature(place)
+            counters["linked_to_feature"] += 1 if feature else 0
+            link_name = (a.get("card_display_name") or "").strip() or feature or place
             link_country = a.get("card_country") or tour_country or ""
             locality = a.get("card_locality") or (day_towns.get(day) if is_generic(link_name) else None)
             loc_key = locality_key(link_name, locality)

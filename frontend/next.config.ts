@@ -3,14 +3,33 @@ import path from "path";
 import { withSentryConfig } from "@sentry/nextjs";
 import { PORTAL_BASE_URL } from "./lib/apps";
 
+// AA-876 — security headers on every admin response, same list as the portal (AA-885). The CSP is
+// deliberately minimal (no script-src / style-src yet: the pages use inline styles and Next inline
+// scripts); it only stops framing, <base> hijacking, foreign form posts and plugins. The public
+// white-label /trip/[tourId] pages are covered too: nothing embeds them in an iframe today; a partner
+// embed would need an explicit frame-ancestors allow-list for /trip/:path*.
+const SECURITY_HEADERS = [
+  { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" },
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  { key: "X-Frame-Options", value: "DENY" },
+  {
+    key: "Content-Security-Policy",
+    value: "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'",
+  },
+  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+];
+
 const nextConfig: NextConfig = {
   turbopack: {
     root: path.resolve(__dirname),
   },
-  // AA-911: Preview builds (served on aa-cis-preview.lumiguides.it.com when aliased) are never indexed.
+  poweredByHeader: false,
   async headers() {
-    if (process.env.VERCEL_ENV !== "preview") return [];
-    return [{ source: "/:path*", headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }] }];
+    // AA-911: Preview builds (served on aa-cis-preview.lumiguides.it.com when aliased) are never indexed.
+    const robots =
+      process.env.VERCEL_ENV === "preview" ? [{ key: "X-Robots-Tag", value: "noindex, nofollow" }] : [];
+    return [{ source: "/(.*)", headers: [...SECURITY_HEADERS, ...robots] }];
   },
   // AA-663 — admin IA consolidation. The legacy (internal) route group duplicated /admin/* and was
   // deleted; Brand Identity moved into Settings. Old URLs keep working. Redirects run before

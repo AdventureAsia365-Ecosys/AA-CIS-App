@@ -337,6 +337,29 @@ async def test_hits_flush_into_the_daily_rollup_once_due():
 
 
 @pytest.mark.asyncio
+async def test_hits_flush_once_the_interval_passes():
+    # the time-based flush is real behaviour: one pending hit goes out once _HITS_FLUSH_S has passed
+    import time
+    conn = _conn([_q(accept=0.95, reject=0.30)],
+                 cached=[{"question_key": "kw_belongs", "probability": 0.25, "choice": None, "probabilities": None}])
+    d._hits_flushed_at = time.monotonic() - d._HITS_FLUSH_S - 1
+    with patch.object(d, "_call_jev", new=AsyncMock()), \
+         patch.object(d, "record_call_with_pool", new=AsyncMock()):
+        await d._decide(d._SingleConn(conn), "a3_research", "kw:t", "x", ["kw_belongs"], None)
+    sqls = [c.args[0] for c in conn.executemany.await_args_list]
+    assert len(sqls) == 1 and "decision_cache_hits_daily" in sqls[0]
+    assert not d._hits
+
+
+def test_reset_restarts_the_flush_clock():
+    # AA-925: the clock starts at import; a reset that kept it let a slow CI run flush in the cache-hit test
+    import time
+    d._hits_flushed_at = time.monotonic() - d._HITS_FLUSH_S - 1
+    d.reset_decision_memo()
+    assert time.monotonic() - d._hits_flushed_at < d._HITS_FLUSH_S
+
+
+@pytest.mark.asyncio
 async def test_failed_flush_keeps_the_counts():
     conn = _conn([_q(accept=0.95, reject=0.30)],
                  cached=[{"question_key": "kw_belongs", "probability": 0.25, "choice": None, "probabilities": None}])

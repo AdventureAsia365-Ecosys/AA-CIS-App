@@ -1,0 +1,299 @@
+[
+ {
+  "id": "a1-day-subday-split",
+  "class_id": "struct.day_structure",
+  "severity": "block",
+  "writer": "A1",
+  "artefact": "output",
+  "chain": "a1",
+  "detector": "DAY_SUBDAY_SPLIT",
+  "expected": "fire",
+  "note": "AA-729 leak: a 3-hour excursion written as Day 1–4. Shadow in this PR: recorded in quality_shadow, verdict unchanged.",
+  "expect": {
+   "publishable": true
+  },
+  "input": {
+   "base": "a1-bhutan-4d",
+   "tour_patch": {
+    "duration": "3 hours",
+    "itineraries": "Ride the cable car from the valley floor up to the ridge, walk the ridge path to the viewpoint above the river, and come back down by the same cable car in the late afternoon."
+   },
+   "writer_patch": {
+    "itineraries": [
+     {
+      "day": 1,
+      "title": "Cable car to the ridge",
+      "body": "Ride the cable car from the valley floor up to the ridge and walk the ridge path to the viewpoint above the river before coming back down."
+     },
+     {
+      "day": 2,
+      "title": "Ridge walk",
+      "body": "Walk the ridge path to the viewpoint above the river."
+     },
+     {
+      "day": 3,
+      "title": "Viewpoint",
+      "body": "Time at the viewpoint above the river."
+     },
+     {
+      "day": 4,
+      "title": "Return by cable car",
+      "body": "Come back down by the same cable car in the late afternoon."
+     }
+    ]
+   }
+  }
+ },
+ {
+  "id": "a1-selector-subday-estimate",
+  "class_id": "struct.day_structure",
+  "severity": "block",
+  "writer": "A1",
+  "artefact": "selector",
+  "chain": "a1",
+  "detector": "DAY_SUBDAY_SPLIT",
+  "expected": "no_fire",
+  "note": "Selector (writer input): _estimate_day_count read '3 hours' as 3 days, so the source fallback split a one-day excursion in three and the per-day nudge rewrote a correct one-day itinerary (an unscripted model call here). One duration parser now reads it as one day.",
+  "expect": {
+   "publishable": true
+  },
+  "input": {
+   "base": "a1-bhutan-4d",
+   "tour_patch": {
+    "duration": "3 hours",
+    "itineraries": "Ride the cable car from the valley floor up to the ridge, walk the ridge path to the viewpoint above the river, and come back down by the same cable car in the late afternoon."
+   },
+   "writer_patch": {
+    "itineraries": [
+     {
+      "day": 1,
+      "title": "Cable car to the ridge",
+      "body": "Ride the cable car from the valley floor up to the ridge and walk the ridge path to the viewpoint above the river before coming back down."
+     }
+    ]
+   }
+  }
+ },
+ {
+  "id": "a1-day-duplicate",
+  "class_id": "struct.day_structure",
+  "severity": "block",
+  "writer": "A1",
+  "artefact": "output",
+  "chain": "a1",
+  "detector": "DAY_OUTPUT_DUPLICATE",
+  "expected": "fire",
+  "note": "A day written twice: the canonical parser keys days by number, so ITINERARY_DAY_COUNT_MISMATCH never saw it.",
+  "expect": {
+   "publishable": true,
+   "observed_exclude": [
+    "ITINERARY_DAY_COUNT_MISMATCH"
+   ]
+  },
+  "input": {
+   "base": "a1-bhutan-4d",
+   "writer_patch": {
+    "itineraries": [
+     {
+      "day": 1,
+      "title": "Arrival in Paro",
+      "body": "Arrive at Paro airport and drive to the hotel. In the afternoon visit Rinpung Dzong and the National Museum, then walk the old market street."
+     },
+     {
+      "day": 2,
+      "title": "Taktsang Monastery hike",
+      "body": "Hike to Taktsang Monastery, the Tiger's Nest, set on a cliff above the Paro valley. Lunch is at the cafeteria viewpoint before the walk back down."
+     },
+     {
+      "day": 3,
+      "title": "Dochula Pass and Punakha",
+      "body": "Drive over Dochula Pass to Punakha. Visit Punakha Dzong where two rivers meet and cross the suspension bridge before evening."
+     },
+     {
+      "day": 3,
+      "title": "Dochula Pass and Punakha",
+      "body": "Drive over Dochula Pass to Punakha. Visit Punakha Dzong where two rivers meet and cross the suspension bridge before evening."
+     },
+     {
+      "day": 4,
+      "title": "Paro and departure",
+      "body": "Drive back to Paro along the river road and transfer to the airport for the departure flight."
+     }
+    ]
+   }
+  }
+ },
+ {
+  "id": "a1-day-extra",
+  "class_id": "struct.day_structure",
+  "severity": "block",
+  "writer": "A1",
+  "artefact": "output",
+  "chain": "a1",
+  "detector": "DAY_OUTPUT_EXTRA",
+  "expected": "fire",
+  "note": "A fifth day the 4-day source does not have.",
+  "expect": {
+   "publishable": true
+  },
+  "input": {
+   "base": "a1-bhutan-4d",
+   "writer_patch": {
+    "itineraries": [
+     {
+      "day": 1,
+      "title": "Arrival in Paro",
+      "body": "Arrive at Paro airport and drive to the hotel. In the afternoon visit Rinpung Dzong and the National Museum, then walk the old market street."
+     },
+     {
+      "day": 2,
+      "title": "Taktsang Monastery hike",
+      "body": "Hike to Taktsang Monastery, the Tiger's Nest, set on a cliff above the Paro valley. Lunch is at the cafeteria viewpoint before the walk back down."
+     },
+     {
+      "day": 3,
+      "title": "Dochula Pass and Punakha",
+      "body": "Drive over Dochula Pass to Punakha. Visit Punakha Dzong where two rivers meet and cross the suspension bridge before evening."
+     },
+     {
+      "day": 4,
+      "title": "Paro and departure",
+      "body": "Drive back to Paro along the river road and transfer to the airport for the departure flight."
+     },
+     {
+      "day": 5,
+      "title": "A last morning in Paro",
+      "body": "A free morning in the Paro valley before the flight."
+     }
+    ]
+   }
+  }
+ },
+ {
+  "id": "a1-day-departure-midtrip",
+  "class_id": "struct.day_structure",
+  "severity": "block",
+  "writer": "A1",
+  "artefact": "output",
+  "chain": "a1",
+  "detector": "DAY_DEPARTURE_MIDTRIP",
+  "expected": "fire",
+  "note": "Day 2 of 4 titled as the departure.",
+  "expect": {
+   "publishable": true
+  },
+  "input": {
+   "base": "a1-bhutan-4d",
+   "writer_patch": {
+    "itineraries": [
+     {
+      "day": 1,
+      "title": "Arrival in Paro",
+      "body": "Arrive at Paro airport and drive to the hotel. In the afternoon visit Rinpung Dzong and the National Museum, then walk the old market street."
+     },
+     {
+      "day": 2,
+      "title": "Departure from Paro",
+      "body": "Hike to Taktsang Monastery, the Tiger's Nest, set on a cliff above the Paro valley. Lunch is at the cafeteria viewpoint before the walk back down."
+     },
+     {
+      "day": 3,
+      "title": "Dochula Pass and Punakha",
+      "body": "Drive over Dochula Pass to Punakha. Visit Punakha Dzong where two rivers meet and cross the suspension bridge before evening."
+     },
+     {
+      "day": 4,
+      "title": "Paro and departure",
+      "body": "Drive back to Paro along the river road and transfer to the airport for the departure flight."
+     }
+    ]
+   }
+  }
+ },
+ {
+  "id": "a1-day-count-vs-duration",
+  "class_id": "struct.day_structure",
+  "severity": "block",
+  "writer": "A1",
+  "artefact": "output",
+  "chain": "a1",
+  "detector": "DAY_COUNT_VS_DURATION",
+  "expected": "fire",
+  "note": "The output stops after 3 of the 4 days the duration and the source both state.",
+  "input": {
+   "base": "a1-bhutan-4d",
+   "writer_patch": {
+    "itineraries": [
+     {
+      "day": 1,
+      "title": "Arrival in Paro",
+      "body": "Arrive at Paro airport and drive to the hotel. In the afternoon visit Rinpung Dzong and the National Museum, then walk the old market street."
+     },
+     {
+      "day": 2,
+      "title": "Taktsang Monastery hike",
+      "body": "Hike to Taktsang Monastery, the Tiger's Nest, set on a cliff above the Paro valley. Lunch is at the cafeteria viewpoint before the walk back down."
+     },
+     {
+      "day": 3,
+      "title": "Dochula Pass and Punakha",
+      "body": "Drive over Dochula Pass to Punakha. Visit Punakha Dzong where two rivers meet and cross the suspension bridge before evening."
+     }
+    ]
+   }
+  }
+ },
+ {
+  "id": "a1-day-clean-14d",
+  "class_id": "struct.day_structure",
+  "severity": "block",
+  "writer": "A1",
+  "artefact": "output",
+  "chain": "a1",
+  "detector": "DAY_COUNT_VS_DURATION",
+  "expected": "no_fire",
+  "note": "Negative twin: a clean 14-day tour (14 markers, '14 Days / 13 Nights', departure on the last day) fires no day code.",
+  "expect": {
+   "publishable": true,
+   "observed_exclude": [
+    "DAY_SUBDAY_SPLIT",
+    "DAY_OUTPUT_DUPLICATE",
+    "DAY_OUTPUT_ORDER",
+    "DAY_OUTPUT_GAP",
+    "DAY_OUTPUT_EXTRA",
+    "DAY_DEPARTURE_MIDTRIP",
+    "SOURCE_DAY_CONTRADICTION",
+    "DAY_CHECK_SKIPPED",
+    "ITINERARY_DAY_COUNT_MISMATCH"
+   ]
+  },
+  "red_on_base": false,
+  "twin_of": "a1-day-count-vs-duration",
+  "input": {
+   "base": "a1-nepal-14d"
+  }
+ },
+ {
+  "id": "a1-source-day-contradiction",
+  "class_id": "source.contradiction",
+  "severity": "block",
+  "writer": "A1",
+  "artefact": "output",
+  "chain": "a1",
+  "detector": "SOURCE_DAY_CONTRADICTION",
+  "expected": "fire",
+  "note": "The source says 14 days but has 4 day markers: a source fault, not the writer's — the count check is not run.",
+  "expect": {
+   "publishable": true,
+   "observed_exclude": [
+    "DAY_COUNT_VS_DURATION"
+   ]
+  },
+  "input": {
+   "base": "a1-bhutan-4d",
+   "tour_patch": {
+    "duration": "14 Days"
+   }
+  }
+ }
+]

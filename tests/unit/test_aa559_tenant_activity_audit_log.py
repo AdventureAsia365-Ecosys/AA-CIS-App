@@ -45,6 +45,11 @@ class _TxnCM:
         return False
 
 
+def _no_redis_request():
+    """AA-876 — tenant_login takes the Request first (login throttle); no Redis means the throttle is skipped."""
+    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)), headers={}, client=None)
+
+
 def _pool_with_conn(conn, with_transaction=False):
     if with_transaction:
         conn.transaction = MagicMock(return_value=_TxnCM())
@@ -102,7 +107,7 @@ class TestTenantLoginAuditLog:
         with patch.object(main, "write_audit_log", new=AsyncMock()) as mock_audit, \
              patch.object(main, "_create_jwt", return_value="signed.jwt.token"):
             body = main.TenantLoginRequest(api_key="cis_" + "x" * 20)
-            result = await main.tenant_login(body, db=pool)
+            result = await main.tenant_login(_no_redis_request(), body, db=pool)
 
         assert result.token == "signed.jwt.token"
         mock_audit.assert_awaited_once()
@@ -121,7 +126,7 @@ class TestTenantLoginAuditLog:
         with patch.object(main, "write_audit_log", new=AsyncMock()) as mock_audit:
             body = main.TenantLoginRequest(api_key="cis_" + "x" * 20)
             with pytest.raises(HTTPException):
-                await main.tenant_login(body, db=pool)
+                await main.tenant_login(_no_redis_request(), body, db=pool)
         mock_audit.assert_not_awaited()
 
     async def test_audit_log_failure_does_not_break_login(self):
@@ -135,7 +140,7 @@ class TestTenantLoginAuditLog:
         with patch.object(main, "write_audit_log", new=AsyncMock(side_effect=RuntimeError("db down"))), \
              patch.object(main, "_create_jwt", return_value="signed.jwt.token"):
             body = main.TenantLoginRequest(api_key="cis_" + "x" * 20)
-            result = await main.tenant_login(body, db=pool)
+            result = await main.tenant_login(_no_redis_request(), body, db=pool)
         assert result.token == "signed.jwt.token"
 
 

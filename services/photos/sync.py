@@ -13,6 +13,7 @@ import os
 import re
 from datetime import datetime
 from typing import Awaitable, Callable, Optional
+from urllib.parse import quote
 
 import structlog
 
@@ -50,8 +51,37 @@ def photo_bucket() -> str:
     return os.environ.get("PHOTO_BUCKET") or bronze_bucket()
 
 
+# AA-844: the photos CDN (AA-CIS-Infra accounts/aa365/photos_cdn.tf) serves the bucket's photos/
+# prefix at its root (CloudFront origin_path /photos), so photos/<slug>/<file> is <base>/<slug>/<file>.
+PHOTO_KEY_PREFIX = "photos/"
+_CDN_OFF = ("", "off")
+
+
+def photo_cdn_base() -> Optional[str]:
+    """Base URL of the photos CDN, or None when it is switched off (PHOTO_CDN_BASE=off: the public
+    route falls back to a presigned S3 URL). A code default like public_base(), so no deployed
+    config is needed."""
+    base = os.environ.get("PHOTO_CDN_BASE", "https://img.lumiguides.it.com").strip()
+    return None if base.lower() in _CDN_OFF else base.rstrip("/")
+
+
+def cdn_url(key: Optional[str], sha256: Optional[str] = None) -> Optional[str]:
+    """CDN URL of one stored photo key, or None (CDN off, or a key outside photos/ the CDN can not
+    reach). ``?v=<sha256[:12]>`` of the source bytes busts the edge cache when a Drive edit
+    overwrites the same key (the CDN cache key is path + v)."""
+    base = photo_cdn_base()
+    if not base or not key or not key.startswith(PHOTO_KEY_PREFIX):
+        return None
+    url = f"{base}/{quote(key[len(PHOTO_KEY_PREFIX):], safe='/')}"
+    return f"{url}?v={sha256[:12]}" if sha256 else url
+
+
+def country_slug(country: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", country.lower()).strip("-")
+
+
 def s3_key(country: str, file_id: str, size: str, ext: str = "jpg") -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", country.lower()).strip("-")
+    slug = country_slug(country)
     if size == "original":
         return f"photos/{slug}/{file_id}-orig.{ext}"
     return f"photos/{slug}/{file_id}-{SIZES[size]}.webp"

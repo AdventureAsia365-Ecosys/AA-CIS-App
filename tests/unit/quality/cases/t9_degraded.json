@@ -1,0 +1,31 @@
+[
+ {
+  "id": "t9-f9-outage-held",
+  "class_id": "other.degraded_detector",
+  "severity": "hard",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "t9",
+  "detector": "degraded",
+  "expected": "fire",
+  "note": "AA-925 (reverses AA-770's 'an F9 outage is a warn, not a hold', D1-D11): the F9 judge is down on the final attempt, so product truth was never judged. The piece is labelled held (admin-only — the tenant still receives it) with a degraded flag; the outage is never a blocking ledger gate (no rewrite on it).",
+  "expect": {"status": "held", "held_reason_contains": "degraded: f9_judge_unavailable",
+             "observed_include": ["f9_judge_unavailable"]},
+  "input": {"base": "t9-fb-taktsang", "f9": "unavailable"}
+ },
+ {
+  "id": "t9-f9-up-not-held",
+  "class_id": "other.degraded_detector",
+  "severity": "hard",
+  "writer": "T9_facebook",
+  "artefact": "output",
+  "chain": "t9",
+  "detector": "degraded",
+  "expected": "no_fire",
+  "red_on_base": false,
+  "twin_of": "t9-f9-outage-held",
+  "note": "Negative twin: with the F9 judge up the same draft is approved and carries no degraded flag.",
+  "expect": {"status": "approved"},
+  "input": {"base": "t9-fb-taktsang"}
+ }
+]

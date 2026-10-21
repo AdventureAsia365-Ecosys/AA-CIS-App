@@ -1,0 +1,117 @@
+[
+ {
+  "id": "a1-degraded-jev-error-hold",
+  "class_id": "other.degraded_detector",
+  "severity": "hard",
+  "writer": "A1",
+  "artefact": "output",
+  "chain": "a1",
+  "detector": "DEGRADED_DETECTOR",
+  "expected": "fire",
+  "note": "AA-925 Done-when 3 (unit level): the Jev breaker is open (every a1_claim_supported verdict zone=error) on a tour with no novel number. Grounding found nothing, but it never really checked: the output is held (DEGRADED_DETECTOR, manual_check), never counted as a pass.",
+  "expect": {
+   "publishable": false,
+   "brand_audit_status": "manual_check",
+   "observed_include": [
+    "jev_unavailable"
+   ],
+   "observed_exclude": [
+    "UNSUPPORTED_NUMBER",
+    "UNSUPPORTED_CLAIM"
+   ]
+  },
+  "input": {
+   "base": "a1-bhutan-4d",
+   "jev": "error"
+  }
+ },
+ {
+  "id": "a1-degraded-jev-down-hold",
+  "class_id": "other.degraded_detector",
+  "severity": "hard",
+  "writer": "A1",
+  "artefact": "output",
+  "chain": "a1",
+  "detector": "DEGRADED_DETECTOR",
+  "expected": "fire",
+  "note": "AA-925: judge_units failed open (returned {} — the pool, the loop or the call crashed): every asked unit has no verdict. Held like a zone=error outage, because the real mode is unknown.",
+  "expect": {
+   "publishable": false,
+   "brand_audit_status": "manual_check",
+   "observed_include": [
+    "jev_unavailable"
+   ]
+  },
+  "input": {
+   "base": "a1-bhutan-4d",
+   "jev": "down"
+  }
+ },
+ {
+  "id": "a1-degraded-grounding-crash-hold",
+  "class_id": "other.degraded_detector",
+  "severity": "hard",
+  "writer": "A1",
+  "artefact": "output",
+  "chain": "a1",
+  "detector": "DEGRADED_DETECTOR",
+  "expected": "fire",
+  "note": "AA-925: grounding_node itself crashed (grounding_node_failed): the output was never grounded, so grounding_not_run holds it.",
+  "expect": {
+   "publishable": false,
+   "observed_include": [
+    "grounding_not_run"
+   ]
+  },
+  "input": {
+   "base": "a1-bhutan-4d",
+   "jev": "raise"
+  }
+ },
+ {
+  "id": "a1-degraded-jev-skipped-not-held",
+  "class_id": "other.degraded_detector",
+  "severity": "hard",
+  "writer": "A1",
+  "artefact": "output",
+  "chain": "a1",
+  "detector": "DEGRADED_DETECTOR",
+  "expected": "no_fire",
+  "red_on_base": false,
+  "twin_of": "a1-degraded-jev-error-hold",
+  "note": "Negative twin: zone=skipped (question mode off, tenant not on the allow-list) is a decision not to ask, not an outage — not degraded, publishable.",
+  "expect": {
+   "publishable": true,
+   "observed_exclude": [
+    "jev_unavailable"
+   ]
+  },
+  "input": {
+   "base": "a1-bhutan-4d",
+   "jev": "skipped"
+  }
+ },
+ {
+  "id": "a1-degraded-jev-shadow-error-counted",
+  "class_id": "other.degraded_detector",
+  "severity": "hard",
+  "writer": "A1",
+  "artefact": "output",
+  "chain": "a1",
+  "detector": "DEGRADED_DETECTOR",
+  "expected": "no_fire",
+  "red_on_base": false,
+  "twin_of": "a1-degraded-jev-error-hold",
+  "note": "Negative twin: an outage on a shadow-mode question loses no decision — counted in degraded (jev_unavailable, severity count), never a hold.",
+  "expect": {
+   "publishable": true,
+   "observed_include": [
+    "jev_unavailable"
+   ]
+  },
+  "input": {
+   "base": "a1-bhutan-4d",
+   "jev": "error-shadow"
+  }
+ }
+]

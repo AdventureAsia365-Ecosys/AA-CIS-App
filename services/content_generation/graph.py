@@ -18,12 +18,14 @@ from .batch_prompt import (
 from .brand_audit_node import brand_audit_node
 from .flag_fix_node import flag_fix_node
 from .grounding import grounding_node, regrounding, repair_and_recheck
+from .grounding import degraded_entries as grounding_degraded_entries, source_text as grounding_source_text
 from .judge_node import judge_node
 from .t2_repair import (
     increment_retry_t2, restore_best_node, revise_block, targeted_repair_enabled, track_best_node,
 )
 from .seo_meta_utils import (SEO_META_MIN, SEO_META_MAX, meta_complete_sentence, SEO_META_FORBIDDEN,
-                             fit_seo_meta_final, fit_seo_title)
+                             fit_seo_meta_final, fit_seo_title, meta_cut_signature, tour_days)
+from services.quality import day_oracle, degraded, repair_contract
 from .forbidden_words import (VALIDATE_FORBIDDEN, all_forbidden as all_forbidden_words, copy_text, has_word,
                               state_forbidden)
 from .forbidden_strip import SKIP_FIELDS as _FORBIDDEN_SCAN_SKIP, strip_forbidden
@@ -195,7 +197,10 @@ _HARD_BLOCK_CODES = frozenset({
     "META_TOO_SHORT", "SEO_META_TOO_LONG", "SEO_TITLE_TOO_LONG",
     "META_INCOMPLETE_SENTENCE", "BRAND_SEO_META_VIOLATION",
     "FORBIDDEN_WORD", "MISSING_FIELD",
-})
+    # AA-925: a hard fail-open detector (Jev, grounding) did not run on this output — set by ONE helper,
+    # degraded.apply_a1_hold, at the end of the graph. Not a rewrite-class code: a retry cannot fix an outage.
+    degraded.HOLD_CODE,
+}) | day_oracle.enforced_codes()  # AA-925: a day-oracle code in enforce mode blocks A1 Master (none yet)
 
 # S218 audit (lesson: "a hard code needs a repair path"): every code that blocks Master must name
 # the step that can clear it. AA-736 made the length codes hard with no deterministic fix and 15
@@ -204,12 +209,18 @@ _HARD_BLOCK_CODES = frozenset({
 # a model retry that may still fail (then review).
 HARD_CODE_REPAIR = {
     "META_TOO_SHORT":           "deterministic: seo_meta_utils.fit_seo_meta_final (fact clause)",
-    "SEO_META_TOO_LONG":        "deterministic: seo_meta_utils.fit_seo_meta_final (clause/word cut)",
+    # AA-925: no clause/word cut any more (it left "...a 20-kilometre."): a sentence-boundary salvage, else the
+    # flag_fix LLM seo_meta repair + its _rerepair_meta band guard; what is left goes to review.
+    "SEO_META_TOO_LONG":        "llm: flag_fix seo_meta repair + _rerepair_meta after sentence-boundary salvage",
     "META_INCOMPLETE_SENTENCE": "deterministic: seo_meta_utils.fit_seo_meta_final (close sentence)",
     "SEO_TITLE_TOO_LONG":       "deterministic: seo_meta_utils.fit_seo_title",
     "FORBIDDEN_WORD":           "deterministic: forbidden_strip.strip_forbidden",
     "BRAND_SEO_META_VIOLATION": "llm: flag_fix seo_meta repair, then one haiku->sonnet retry (AA-736)",
     "MISSING_FIELD":            "llm: one haiku->sonnet retry (AA-736)",
+    # AA-925: an enforced day-oracle code (struct.day_structure) — the writer rewrites the itinerary.
+    **{code: "llm: one haiku->sonnet rewrite (AA-736), else review" for code in day_oracle.enforced_codes()},
+    # AA-925: no model can clear an outage; the reviewer re-runs the tour once the detector is healthy.
+    degraded.HOLD_CODE:         "review: re-run the tour once the detector is healthy",
 }
 
 class ContentState(TypedDict):
@@ -312,6 +323,11 @@ class ContentState(TypedDict):
     draft_scores:           list
     previous_draft:         Optional[dict]
     best_draft_restored:    bool
+    # AA-925 (Quality System v1): validate_node's shadow findings (day oracle, S2 cut signature) — recorded
+    # in generated_content.metadata, no score or verdict change — and the fail-open paths that ran
+    # (services/quality/degraded.py). Declared so LangGraph keeps them (AA-209 gotcha).
+    quality_shadow:         list
+    degraded:               list
 
 # code → (dimension, deduction)
 _FAILURE_MAP: dict[str, tuple[str, float]] = {
@@ -337,6 +353,8 @@ _FAILURE_MAP: dict[str, tuple[str, float]] = {
     # (still confirmed to never alone drop quality_score below MIN_QUALITY — see AA-329
     # implementation notes — so it can't divert the run away from flag_fix_node).
     "ITINERARY_STILL_COMPRESSED":   ("structure", 1.5),
+    # AA-925: the day oracle's codes, deducted only when a code is enforced (A1); shadow costs nothing.
+    **{code: ("structure", 1.0) for code in day_oracle.DAY_ORACLE_MODES},
 }
 
 # AA-240: canonical validate-node forbidden list (single source; validate_node + review-queue
@@ -637,9 +655,10 @@ def _apply_seo_meta_fit(generated: dict, state: ContentState) -> bool:
 
     AA-740: since AA-736 the length codes block Master, but the salvage alone left a one-sentence
     meta > 155 or a meta < 140 unchanged (S218: 15 tours scoring >= 7 stuck in review). Now
-    fit_seo_meta_final also cuts at a clause/word boundary or appends a clause built from the tour's
-    own facts (days, country); seo_title gets fit_seo_title (AA-639). Returns True if anything
-    changed. What still misses the band is left for the hard code."""
+    fit_seo_meta_final also appends a clause built from the tour's own facts (days, country); seo_title
+    gets fit_seo_title (AA-639). AA-925: it no longer cuts a too-long meta mid-clause — flag_fix's LLM
+    meta repair does. Returns True if anything changed. What still misses the band is left for the hard
+    code."""
     if not isinstance(generated, dict):
         return False
     changed = False
@@ -941,6 +960,33 @@ def validate_node(state: ContentState) -> ContentState:
             fired.append("ITINERARY_STILL_COMPRESSED")
             score -= 1.5
 
+    # AA-925 (Q-2): the day oracle (struct.day_structure) on the written itinerary against the source, and the
+    # S2 cut signature on the meta (struct.truncated). Shadow findings go to quality_shadow only (no score, no
+    # verdict); an enforced day code blocks A1 Master — never a tenant rewrite, whose structure T3 checks
+    # through this same function and whose writer reads the master text (lesson AA-800).
+    shadow: list[dict] = []
+    _day_degraded: list[dict] = []
+    try:
+        _day_findings = day_oracle.check(_src_raw, tour.get('duration'), itinerary)
+    except Exception as exc:  # a detector bug must not break validate; it is counted as degraded
+        logger.warning("day_oracle_failed", error=str(exc)[:200])
+        _day_findings = []
+        _day_degraded.append({"name": degraded.DAY_CHECK_SKIPPED, "count": 1, "detail": f"day_oracle: {exc}"})
+    if any(_f["code"] == day_oracle.DAY_CHECK_SKIPPED for _f in _day_findings):
+        _day_degraded.append({"name": degraded.DAY_CHECK_SKIPPED, "count": 1,
+                              "detail": "no source day markers and no usable duration"})
+    for _f in _day_findings:
+        if _f["mode"] == "enforce" and not state.get("is_tenant_rewrite"):
+            issues.append(f"{_f['code']}: {_f['detail']}")
+            fired.append(_f["code"])
+            score -= _FAILURE_MAP[_f["code"]][1]
+        else:
+            shadow.append({**_f, "mode": "shadow"})
+    _cut = meta_cut_signature(meta) if meta else None
+    if _cut:
+        shadow.append({"code": "META_CUT_SIGNATURE", "class_id": "struct.truncated",
+                       "detector": "meta_cut_signature", "mode": "shadow", "detail": _cut})
+
     # DFS_INTENT_UNDERUSED: if SEO keywords exist, at least one should appear in title+meta
     # B1: handle both flat {"top_keywords": [...]} and nested {"keywords": {"top_keywords": [...]}}
     _seo    = state.get("seo", {})
@@ -982,7 +1028,8 @@ def validate_node(state: ContentState) -> ContentState:
 
     logger.info("validation_done", score=quality_score, issues=len(issues),
                 retry=state.get("retry_count", 0),
-                failure_codes=failure_codes, sub_scores=sub_scores)
+                failure_codes=failure_codes, sub_scores=sub_scores,
+                quality_shadow=sorted({f["code"] for f in shadow}))
 
     return {
         **state,
@@ -993,6 +1040,9 @@ def validate_node(state: ContentState) -> ContentState:
         "sub_scores":    sub_scores,
         "passed_count":  passed_count,
         "failed_count":  failed_count,
+        "quality_shadow": shadow,  # AA-925: recomputed on every validate (the latest content's findings)
+        # AA-925: the day check that could not run, for the latest content (replaced on every validate)
+        "degraded": degraded.replace_detector(state.get("degraded"), day_oracle.DETECTOR, _day_degraded),
     }
 
 def should_retry(state: ContentState) -> str:
@@ -1013,7 +1063,14 @@ def _apply_grounding_recheck(state: ContentState) -> ContentState:
     """AA-691: after flag_fix, re-check grounding on the final content (numbers are free, unchanged
     sentences hit the Jev Verdict cache). Anything still unsupported → manual_check (HITL), its codes
     back on failure_codes (validate_node rebuilt them without grounding). ADR 0007: never publish an
-    unsupported claim, never delete."""
+    unsupported claim, never delete.
+
+    AA-925: the last step of the A1 graph, so it is where the one degraded hold is applied
+    (degraded.apply_a1_hold: a hard fail-open detector → DEGRADED_DETECTOR + manual_check)."""
+    return degraded.apply_a1_hold(_grounding_recheck(state))
+
+
+def _grounding_recheck(state: ContentState) -> ContentState:
     if not state.get("grounding_ran"):
         return state
     violations = state.get("grounding_violations") or []
@@ -1021,6 +1078,12 @@ def _apply_grounding_recheck(state: ContentState) -> ContentState:
         res = regrounding(state)
         if res is not None:
             violations = res["violations"]
+            state = {**state, "degraded": degraded.replace_detector(
+                state.get("degraded"), "grounding", grounding_degraded_entries(res))}
+        else:   # regrounding_failed: the repaired content was never checked
+            state = {**state, "degraded": degraded.replace_detector(
+                state.get("degraded"), "grounding",
+                [{"name": degraded.GROUNDING_NOT_RUN, "count": 1, "detail": "regrounding_failed"}])}
         if violations:
             # flag_fix (e.g. the per-day itinerary nudge) can re-introduce a figure the grounding node
             # had removed — one more sentence repair before escalating to HITL (S204 smoke, Bhutan).
@@ -1028,9 +1091,16 @@ def _apply_grounding_recheck(state: ContentState) -> ContentState:
                                     model_tier=state.get("model_tier"),
                                     brand_forbidden_words=state.get("brand_forbidden_words"))
             violations = rr["violations"]
+            lst = state.get("degraded")
+            if rr.get("check") is not None:
+                lst = degraded.replace_detector(lst, "grounding", grounding_degraded_entries(rr["check"]))
+            if rr.get("contract") is not None and not rr["contract"].ok:
+                lst = degraded.add(lst, degraded.REPAIR_CONTRACT, detector="grounding_repair",
+                                   count=len(rr["contract"].fields()), detail=", ".join(rr["contract"].invariants()))
             state = {**state, "generated": rr["generated"], "cost_usd": state.get("cost_usd", 0) + rr["cost_usd"],
                      "grounding_repaired_fields": sorted(set(state.get("grounding_repaired_fields") or [])
-                                                         | set(rr["fields"]))}
+                                                         | set(rr["fields"])),
+                     "degraded": lst}
     if not violations:
         return {**state, "grounding_violations": []}
     codes = list(dict.fromkeys(v["code"] for v in violations))
@@ -1044,6 +1114,29 @@ def _apply_grounding_recheck(state: ContentState) -> ContentState:
     if state.get("revalidate_ran"):
         out["revalidate_passed"] = False
     return out
+
+
+def _contract_after_edit(state: ContentState, before: dict, *, detector: str) -> ContentState:
+    """AA-925: ``repair_contract.enforce_fields`` over ``state["generated"]`` against ``before`` (in place on the
+    dict, as the strip / fit edit it), plus a soft ``degraded: repair_contract`` entry on a revert."""
+    after = state.get("generated")
+    if not isinstance(after, dict):
+        return state
+    tour = state.get("tour") or {}
+    source = grounding_source_text(tour)
+    # The fit's fact tail states the day count tour_days() derives ("8 nights" -> "over 9 days", "2 weeks" ->
+    # 14): a derived fact of the source, not a new specific (review of PR 3).
+    days = tour_days(tour.get("duration"))
+    if days:
+        source += f"\n{days} days"
+    kept, res = repair_contract.enforce_fields(before, after, source=source, names=False)
+    if res.ok:
+        return state
+    after.clear()
+    after.update(kept)
+    logger.warning("repair_contract_revert", detector=detector, fields=res.fields(), invariants=res.invariants())
+    return {**state, "degraded": degraded.add(state.get("degraded"), degraded.REPAIR_CONTRACT, detector=detector,
+                                              count=len(res.fields()), detail=", ".join(res.invariants()))}
 
 
 def revalidate_node(state: ContentState) -> ContentState:
@@ -1061,9 +1154,14 @@ def revalidate_node(state: ContentState) -> ContentState:
     # AA-738: strip again after every LLM edit (grounding repair, flag_fix, the seo_meta re-repair
     # loop) — S218 Sri Lanka: 8 tours lost Master because flag_fix rewrote seo_meta back to
     # "Explore …" after the write-time strip. In place, before the re-validate below scores it.
+    _pre = dict(state.get("generated") or {})
     stripped = _apply_forbidden_strip(state.get("generated"), state)
     # AA-740: same position for the seo_meta/seo_title length fit (repairs can push them out again).
     fitted = _apply_seo_meta_fit(state.get("generated"), state)
+    if stripped or fitted:
+        # AA-925 repair contract on the two deterministic edits: no added figure, no sentence cut short, no
+        # broken bracket. A violating field keeps its pre-edit text (its code stays and validate sees it).
+        state = _contract_after_edit(state, _pre, detector="revalidate_fit")
 
     # A deterministic edit here must be re-validated even without a fix pass, or validate's old
     # codes (FORBIDDEN_WORD / SEO_META_TOO_LONG …) would keep blocking content that is now clean.

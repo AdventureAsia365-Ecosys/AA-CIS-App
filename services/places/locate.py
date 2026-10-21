@@ -11,7 +11,8 @@ Madhya Pradesh. The model knows these places. So:
      country; a candidate passing the acceptance rule (services/places/geomatch.py: name match, type,
      ≤ 25 km / 50 km of the model's point) is taken (located_by 'geoapify', precision 'point'),
      otherwise the model's point is kept ('llm', precision 'area'; a hard place kind — temple, pass,
-     lake, village… — is put on the /admin/places review list);
+     lake, village… — is put on the /admin/places review list). AA-847: a linear feature (river, road, trail) is
+     precision 'line' either way — drawn from geo.place_shape (job place_shape), never a pin;
   3. hard guards (guards.point_ok): AA country, inside its bounding box; a confirming result in
      another country than the model's is ignored.
 
@@ -38,6 +39,10 @@ MAX_TOKENS = 4000
 CONFIDENCE = {"geoapify": 0.9, "mapbox": 0.9, "manual": 1.0, "llm": 0.6}
 NATIVE_NAME_COUNTRIES = ("Taiwan", "South Korea")
 REVIEW_UNCONFIRMED_HARD = "unconfirmed_hard_type"
+# AA-847: the review reason the first validity branch wrote on HIDDEN linear features (geo_status 'suspect'). Owner
+# decision S246: lines are drawn, never hidden, so nothing writes it any more; store._write_point un-hides a row that
+# still carries it when the name is located again as a line.
+REVIEW_LINEAR_FEATURE = "linear_feature"
 DEFER_CREDIT_LIMIT = "credit_limit"
 DEFER_UNAVAILABLE = "geocoder_unavailable"
 
@@ -70,6 +75,7 @@ class Located:
     place_id: Optional[str] = None
     meta: Optional[dict] = field(default=None, compare=False, hash=False)   # geocoder audit (geocoder_meta)
     review_reason: Optional[str] = field(default=None, compare=False, hash=False)
+    kind: Optional[str] = field(default=None, compare=False, hash=False)   # geomatch.feature_kind (AA-847)
 
     @property
     def confidence(self) -> float:
@@ -78,7 +84,14 @@ class Located:
     @property
     def precision(self) -> str:
         """'point' for a geocoder-confirmed (or admin) point; 'area' for the model's own point — shown as
-        an area, never as a pinpoint."""
+        an area, never as a pinpoint. AA-847: an area feature (geomatch.feature_kind) is 'area' even when a geocoder
+        confirmed it; a LINEAR feature is 'line' (owner decision S246: drawn as a line from geo.place_shape, never a
+        pin, a circle or hidden) — Geoapify's point for "Ho Chi Minh Trail" is one spot on a 1,000 km trail, kept only
+        as the anchor the shape is searched around."""
+        if self.kind == geomatch.LINEAR:
+            return "line"
+        if self.kind == geomatch.AREA:
+            return "area"
         return "point" if self.located_by in CONFIRMED_BY or self.located_by == "manual" else "area"
 
     @property
@@ -223,11 +236,14 @@ def _located(item: Item, lat: float, lng: float, country: str, res) -> Located:
     point ('llm', area precision; hard place kinds go to the review list)."""
     if isinstance(res, Confirmed) and res.country == country \
             and guards.point_ok(res.lat, res.lng, res.country) is None:
-        return Located(res.lat, res.lng, res.country, res.located_by, res.place_id, meta=dict(res.meta))
+        kind = geomatch.feature_kind(item.name, (res.meta or {}).get("result_type"))
+        return Located(res.lat, res.lng, res.country, res.located_by, res.place_id, meta=dict(res.meta), kind=kind)
     meta = None
     if isinstance(res, Confirmed):     # accepted by the rule but in another country / outside its bbox
         meta = {**res.meta, "outcome": "rejected_country_guard"}
     elif isinstance(res, Unconfirmed):
         meta = dict(res.meta)
-    review = REVIEW_UNCONFIRMED_HARD if geomatch.is_hard(item.name) else None
-    return Located(lat, lng, country, "llm", meta=meta, review_reason=review)
+    kind = geomatch.feature_kind(item.name)
+    # a line's geometry is searched by name (place_shape: Overpass) around this point: no pin review for it
+    review = REVIEW_UNCONFIRMED_HARD if kind != geomatch.LINEAR and geomatch.is_hard(item.name) else None
+    return Located(lat, lng, country, "llm", meta=meta, review_reason=review, kind=kind)

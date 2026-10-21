@@ -14,7 +14,9 @@ from . import t7_slate_job  # noqa: F401  AA-764
 from . import place_cards_job  # noqa: F401  AA-772
 from . import place_extract_job  # noqa: F401  AA-712
 from . import place_geocode_job  # noqa: F401  AA-712
+from . import place_shape_job  # noqa: F401  AA-847
 from . import tour_graph_job  # noqa: F401  AA-712
+from . import place_dedupe_job  # noqa: F401  AA-847 (duplicate-place merge)
 from . import retention_job  # noqa: F401  AA-825
 from . import ops_alert_email_job  # noqa: F401  AA-828
 from . import staff_reconcile_job  # noqa: F401  AA-816 (C7)

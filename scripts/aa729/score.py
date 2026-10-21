@@ -22,6 +22,10 @@ sample only while logged spend + in-flight reservations + its estimate fit; the 
 cap, and that sample is reported as an error. A writer crash (exception, throttle, empty output) is an
 error row too, never a quality verdict.
 
+AA-925 — every verdict carries the sample's `degraded` counts and `degraded_hard` (a hard detector — Jev, the
+F9 judge, grounding — failed open). Such a sample is scored once more; still hard-degraded after that retry,
+its stratum is listed in `invalid_strata` and report.py refuses that stratum's before/after delta.
+
   cd /app && PYTHONPATH=/tmp/aa729 python3 -m scripts.aa729.score --fixture s3:scripts/out/aa729/fixture-1.1.0.json
       --mode regenerate --limit 3 [--concurrency 3] [--max-cost-usd 15] [--strata s1,t9_blog]
       [--sample-ids s1-001,t2-004] [--resume RUN_ID] [--estimate] [--allow-busy-queue] [--no-upload]
@@ -138,6 +142,7 @@ def graph_state(tour: dict, seo: dict, brand_rules: dict, *, is_tenant: bool, te
         "subtitle_focus": "standard", "seo_mode": "dataforseo",
         "brand_audit_status": "", "brand_audit_codes": [], "brand_audit_issues": [], "brand_audit_fields": [],
         "lessons_extracted": [], "fix_pass_applied": False, "fix_pass_fields": [],
+        "quality_shadow": [], "degraded": [],  # AA-925
     }
     return state
 
@@ -160,10 +165,30 @@ async def run_revalidation(state: dict) -> dict:
     return await asyncio.to_thread(_run)
 
 
+def degraded_block(entries: Any) -> dict:
+    """AA-925 — a sample's `degraded[]` (services/quality/degraded.py) for the verdict: the entries, their
+    counts and whether a hard detector failed open (that sample's stratum is INVALID unless a retry clears it)."""
+    entries = [e for e in (entries or []) if isinstance(e, dict)]
+    hard = sorted({e.get("name") for e in entries if e.get("severity") == "hard" and int(e.get("count") or 0) > 0})
+    counts: dict[str, int] = {}
+    for e in entries:
+        counts[e.get("name")] = counts.get(e.get("name"), 0) + int(e.get("count") or 0)
+    return {"degraded": counts, "degraded_hard": hard}
+
+
+def t9_degraded(ledger: Any, repair_log: Any = None) -> list[dict]:
+    """The final attempt's T9 degraded entries (the F9 outage marker on its ledger, the contract reverts)."""
+    from services.quality import degraded
+
+    contract = sum(int(e.get("contract_reverts") or 0) for e in (repair_log or []) if isinstance(e, dict))
+    return degraded.t9_entries([g for g in (ledger or []) if isinstance(g, dict)], contract)
+
+
 def s1_verdict(result: dict) -> dict:
     from api.routers.admin_pipeline import _is_publishable
 
-    return {"passed": bool(_is_publishable(result)), "quality_score": result.get("quality_score"),
+    return {**degraded_block(result.get("degraded")),
+            "passed": bool(_is_publishable(result)), "quality_score": result.get("quality_score"),
             "judge_score": result.get("judge_score"), "brand_audit_status": result.get("brand_audit_status"),
             "failure_codes": list(result.get("failure_codes") or []),
             "revalidate_passed": result.get("revalidate_passed"), "model_used": result.get("model_used"),
@@ -223,7 +248,8 @@ async def s1_score_only(sample: dict, fixture: dict) -> tuple[dict, Any]:
 
 def t2_verdict(result: dict, qa: Optional[dict]) -> dict:
     score = float(result.get("quality_score") or 0.0)
-    return {"passed": bool(score >= 7.0 and qa is not None and qa.get("passed")), "quality_score": score,
+    return {**degraded_block(list(result.get("degraded") or []) + list((qa or {}).get("degraded") or [])),
+            "passed": bool(score >= 7.0 and qa is not None and qa.get("passed")), "quality_score": score,
             "qa_passed": None if qa is None else bool(qa.get("passed")),
             "qa_attempts": None if qa is None else qa.get("attempts"),
             "structural_issues": (qa or {}).get("structural_issues", [])[:10],
@@ -286,7 +312,8 @@ async def t9_regenerate(sample: dict, pool) -> tuple[dict, Any]:
     if cap.get("status") == "failed":
         raise WriterFailed(f"t9 write: {(cap.get('held_reason') or 'failed')[:300]}")
     ledger = cap.get("gate_ledger") or []
-    verdict = {"passed": cap.get("status") == "approved", "status": cap.get("status"),
+    verdict = {**degraded_block(t9_degraded(ledger, cap.get("repair_log"))),
+               "passed": cap.get("status") == "approved", "status": cap.get("status"),
                "held_reason": (cap.get("held_reason") or "")[:300] or None, "attempts": cap.get("attempt_number"),
                "blocking_failures": _blocking_failures(ledger),
                "repairs": len(cap.get("repair_log") or [])}
@@ -334,7 +361,10 @@ async def t9_score_only(sample: dict) -> tuple[dict, Any]:
     outcome = await t9_gate_replay(sample["input"]["context"], sample["output"])
     ledger = outcome.get("gate_ledger") or []
     first = outcome.get("first_failure") or {}
-    return {"passed": bool(outcome.get("passed")), "first_failure": first.get("gate"),
+    # AA-925: the replay holds a piece whose F9 judge was down, as the writer now does (degraded hard)
+    deg = degraded_block(t9_degraded(ledger))
+    return {**deg, "passed": bool(outcome.get("passed")) and not deg["degraded_hard"],
+            "first_failure": first.get("gate"),
             "blocking_failures": _blocking_failures(ledger),
             "flags": [f.get("gate") for f in outcome.get("flags") or [] if isinstance(f, dict)]}, None
 
@@ -525,6 +555,14 @@ async def run(args) -> dict:
                     with call_log.bind_job(row["job_id"]), call_log.bind_tenant(_tenant_of(sample)):
                         verdict, new_output = await asyncio.wait_for(
                             score_one(sample, fixture, args.mode, pool), timeout=PER_SAMPLE_TIMEOUT_S)
+                        if verdict.get("degraded_hard") and not evalpatch.BUDGET.tripped:
+                            # AA-925: a hard detector failed open (a transient Jev / F9 outage). Retry the sample
+                            # ONCE before its stratum is marked INVALID — one blip must not void a $5 run.
+                            row["degraded_retry"] = {"first": verdict.get("degraded_hard")}
+                            print(f"{sample['sample_id']:10} degraded {verdict.get('degraded_hard')} — retrying once",
+                                  flush=True)
+                            verdict, new_output = await asyncio.wait_for(
+                                score_one(sample, fixture, args.mode, pool), timeout=PER_SAMPLE_TIMEOUT_S)
                 except asyncio.TimeoutError:
                     # the S1/T2 graph keeps running in its to_thread worker: keep this sample's reservation
                     # (guard.done below) — the in-call stop still bounds what that thread can spend.
@@ -578,6 +616,7 @@ async def run(args) -> dict:
     rows = list(results.values())
     strata = sorted({r["stratum"] for r in rows})
     result = snapshot(True)
+    result["invalid_strata"] = invalid_strata(rows)
     result.update({
         "metrics": {**{k: stratum_metrics([r for r in rows if r["stratum"] == k], args.mode) for k in strata},
                     "all": stratum_metrics(rows, args.mode)},
@@ -593,6 +632,17 @@ async def run(args) -> dict:
                                                  - result["totals"]["logged_llm_rows"], 0)
     save_output(result, f"{out_key}.json", upload=not args.no_upload)
     return result
+
+
+def invalid_strata(rows: list[dict]) -> dict[str, list[str]]:
+    """AA-925 (design §6.3): a stratum with a sample whose hard detector still failed open after its one retry
+    is INVALID — its numbers say nothing about quality. {stratum: [sample ids]}; report.py refuses deltas for
+    those strata only."""
+    out: dict[str, list[str]] = {}
+    for r in rows:
+        if (r.get("verdict") or {}).get("degraded_hard") and not r.get("error"):
+            out.setdefault(r["stratum"], []).append(r["sample_id"])
+    return {k: sorted(v) for k, v in sorted(out.items())}
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -621,6 +671,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 0
     result = asyncio.run(run(a))
     print(json.dumps({"run_id": result["run_id"], "stopped": result["stopped"], "totals": result["totals"],
+                      "invalid_strata": result.get("invalid_strata"),
                       "metrics_all": result["metrics"]["all"]}, indent=1, default=str), flush=True)
     return 0
 
