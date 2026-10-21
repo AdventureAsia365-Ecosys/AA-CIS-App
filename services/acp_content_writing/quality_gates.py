@@ -661,7 +661,7 @@ def _log_t10_billed_unusable(raw: dict, *, error: str) -> None:
                  "cost_usd": cost if cost is not None else calc_cost(model, in_tok, out_tok),
                  "stop_reason": raw.get("stop_reason"), "account": raw.get("account"),
                  "fallback_used": raw.get("fallback_used")}],
-        quality_signal_extra={"f9_gate": "F9_brand_voice", "prompt_version": F9_PROMPT_VERSION})
+        quality_signal_extra={"f9_gate": qr.F9_BRAND_VOICE, "prompt_version": F9_PROMPT_VERSION})
 
 
 # ---------------------------------------------------------------- F9-adjusted (brand/CTA/voice judge)
