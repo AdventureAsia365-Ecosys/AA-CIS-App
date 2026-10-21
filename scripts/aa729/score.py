@@ -138,6 +138,7 @@ def graph_state(tour: dict, seo: dict, brand_rules: dict, *, is_tenant: bool, te
         "subtitle_focus": "standard", "seo_mode": "dataforseo",
         "brand_audit_status": "", "brand_audit_codes": [], "brand_audit_issues": [], "brand_audit_fields": [],
         "lessons_extracted": [], "fix_pass_applied": False, "fix_pass_fields": [],
+        "quality_shadow": [], "degraded": [],  # AA-925
     }
     return state
 

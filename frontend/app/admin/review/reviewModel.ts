@@ -39,6 +39,14 @@ const PRODUCT_TRUTH_CODES = new Set([
   "ITINERARY_STILL_COMPRESSED",
   "FABRICATED",
   "NOVEL_NUMERIC_CLAIM",
+  // AA-925: the S1 day oracle (struct.day_structure) — only in failure_codes once a code is enforced (A1).
+  "DAY_SUBDAY_SPLIT",
+  "DAY_OUTPUT_DUPLICATE",
+  "DAY_OUTPUT_ORDER",
+  "DAY_OUTPUT_GAP",
+  "DAY_OUTPUT_EXTRA",
+  "DAY_DEPARTURE_MIDTRIP",
+  "DAY_COUNT_VS_DURATION",
 ]);
 const BRAND_STYLE_CODES = new Set([
   "FORBIDDEN_WORD",

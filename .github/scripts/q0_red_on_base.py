@@ -158,6 +158,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--base", required=True, help="base-branch tip SHA (HEAD^1 of the PR merge ref)")
     ap.add_argument("--root", default=".")
     a = ap.parse_args(argv)
+    sys.stdout.reconfigure(line_buffering=True)  # keep our lines in order with pytest's output in the CI log
     labels = set(json.loads(os.environ.get("PR_LABELS") or "[]") or [])
 
     head = head_corpus(a.root)

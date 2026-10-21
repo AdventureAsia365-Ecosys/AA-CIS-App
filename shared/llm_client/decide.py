@@ -358,10 +358,14 @@ def _take_due_hits(force: bool = False) -> list[tuple]:
 
 
 def reset_decision_memo() -> None:
-    """Tests: drop the memo and any pending hit counts."""
+    """Tests: drop the memo and any pending hit counts, and restart the flush clock. The clock starts
+    at import, so without the restart a test running more than _HITS_FLUSH_S after collection sees a
+    time-based rollup flush on its first cache hit (a CI-only failure in AA-925)."""
+    global _hits_flushed_at
     with _memo_lock:
         _memo.clear()
         _hits.clear()
+        _hits_flushed_at = time.monotonic()
 
 
 def cached_answer(q: Question, row: dict) -> Optional[dict]:
