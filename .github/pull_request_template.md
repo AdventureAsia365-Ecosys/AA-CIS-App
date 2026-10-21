@@ -24,6 +24,15 @@ Refs AA-
 - [ ] 0 USD: no new AWS resource, no new paid API or LLM call path
 - [ ] Adds spend: monthly estimate (AWS resource, LLM calls per run, third-party API):
 
+## Quality (Q-FIX) — only when the PR changes a writer, gate, repair, judge or input selector
+
+<!-- AA-925 / Quality System v1 §6.1. Delete this section otherwise. -->
+- Step 0: the real writer input of 3 failing samples was dumped before the fix (where: implementation note / audit link):
+- `class_id` (taxonomy class this fixes):
+- Q0 case ids added in `tests/unit/quality/cases/` (each must fail on the base tip: CI step "Q0 red on base"), or `no-new-case: <reason>`:
+- `q0-relabel` justification (only when an existing truth label changes or a case is removed; an independent review follows):
+- Q2 run id (only when a judge prompt, rubric, anchor or judge route changed):
+
 ## Docs checklist
 
 - [ ] `CONTEXT.md` updated (boundary, stack, ownership or a domain term changed), or N/A

@@ -1,0 +1,77 @@
+{
+ "a1-bhutan-4d": {
+  "tour": {
+   "tour_id": "q0-bhutan-4d",
+   "name": "Western Bhutan Valleys",
+   "country": "Bhutan",
+   "duration": "4 Days / 3 Nights",
+   "summary": "A short tour of the western valleys of Bhutan: Paro, Thimphu and Punakha, with the hike to Taktsang Monastery.",
+   "description": "",
+   "highlights": [
+    "Hike to Taktsang Monastery",
+    "Punakha Dzong",
+    "Dochula Pass"
+   ],
+   "itineraries": "Day 1: Arrive at Paro airport and drive to the hotel. In the afternoon visit Rinpung Dzong and the National Museum above the town, then walk through the old market street.\nDay 2: Hike to Taktsang Monastery, the Tiger's Nest, which clings to a cliff above the Paro valley. Lunch at the cafeteria viewpoint, then return to the valley floor.\nDay 3: Drive over Dochula Pass to Punakha. Visit Punakha Dzong at the meeting of two rivers and walk across the suspension bridge before the evening.\nDay 4: Drive back to Paro along the river road and transfer to the airport for the departure flight.",
+   "inclusions": "Hotels, guide, driver, entrance fees.",
+   "exclusions": "Flights, tips.",
+   "price": ""
+  },
+  "writer": {
+   "name": "Western Bhutan Valleys",
+   "subtitle": "Paro, Thimphu and Punakha in four unhurried days",
+   "summary": "This tour covers the western valleys of Bhutan. It opens in Paro with its dzong and museum, climbs to Taktsang Monastery on its cliff, and crosses Dochula Pass to the river confluence at Punakha.",
+   "highlights": [
+    "The hike to Taktsang Monastery above the Paro valley",
+    "Punakha Dzong where two rivers meet",
+    "The road over Dochula Pass"
+   ],
+   "itineraries": [
+    {
+     "day": 1,
+     "title": "Arrival in Paro",
+     "body": "Arrive at Paro airport and drive to the hotel. In the afternoon visit Rinpung Dzong and the National Museum, then walk the old market street."
+    },
+    {
+     "day": 2,
+     "title": "Taktsang Monastery hike",
+     "body": "Hike to Taktsang Monastery, the Tiger's Nest, set on a cliff above the Paro valley. Lunch is at the cafeteria viewpoint before the walk back down."
+    },
+    {
+     "day": 3,
+     "title": "Dochula Pass and Punakha",
+     "body": "Drive over Dochula Pass to Punakha. Visit Punakha Dzong where two rivers meet and cross the suspension bridge before evening."
+    },
+    {
+     "day": 4,
+     "title": "Paro and departure",
+     "body": "Drive back to Paro along the river road and transfer to the airport for the departure flight."
+    }
+   ],
+   "seo_title": "Western Bhutan Valleys: Paro, Thimphu and Punakha",
+   "seo_meta": "Four days in western Bhutan, from the Paro valley and Taktsang Monastery to the dzongs of Thimphu and Punakha, with local guides and quiet lodges."
+  },
+  "brand_audit": {
+   "status": "pass"
+  },
+  "jev": "none"
+ },
+ "t9-fb-taktsang": {
+  "seed": "Taktsang Monastery — the Tiger's Nest above the Paro valley\nLocation: Paro, Bhutan\nDay 2 of the trip\nSource itinerary: Hike to Taktsang Monastery, which clings to a cliff above the Paro valley. Lunch at the cafeteria viewpoint, then return to the valley floor.",
+  "cta": "Ask Druk Valley Journeys to plan this trip",
+  "channel": "facebook",
+  "destination": "Bhutan",
+  "trip_name": "Western Bhutan Valleys",
+  "brand_audience": {
+   "brand_name": "Druk Valley Journeys",
+   "brand_type": "Small-group travel brand",
+   "customer_segment": "Couples in their fifties who like gentle walks",
+   "voice": [
+    "Calm",
+    "Practical"
+   ]
+  },
+  "draft": "Taktsang Monastery clings to a cliff above the Paro valley, and the hike up is on day two of the trip. Lunch is at the cafeteria viewpoint before the walk back to the valley floor. Ask Druk Valley Journeys to plan this trip.",
+  "f9": "pass"
+ }
+}
