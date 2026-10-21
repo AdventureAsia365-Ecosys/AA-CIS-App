@@ -37,11 +37,21 @@ NAME_SUPERLATIVES = ['the best of', 'ultimate', 'must-see', 'and fun', 'expendit
 # to catch a FABRICATED meal-inclusion CLAIM the source never made (a meal presented as logistics:
 # "Meals: Breakfast, Dinner", "(B, L, D)", "breakfast included/provided/served"), not a narrative
 # reference to the time of day. Narrate freely; only a logistics-style meal claim is flagged.
+# AA-803: also plural and future forms ("Lunch and dinner are included", "dinner will be served"), a meal noun
+# a few words before its verb ("meals on board the junk are prepared by the onboard chef"), generic forms
+# ("All meals are included.", "Evening meal included.", "full board") and the feast / BBQ / picnic / brunch
+# nouns: with the Jev question off, a meal claim the regex does not see is never checked at all.
 ITIN_MEAL_INVENTED = re.compile(
     r'(?:'
     r'\bmeals?\s*(?:included|provided)?\s*[:\-]'                 # "Meals:" / "Meal included -"
-    r'|\((?:\s*[BLD](?:\s*[,/&]\s*[BLD]){0,2}\s*)\)'             # "(B, L, D)" meal codes
-    r'|\b(?:breakfast|lunch|dinner)\s+(?:is\s+)?(?:included|provided|served|arranged)\b'
+    r'|\((?:\s*[BLD](?:\s*(?:[,/&|\u00b7]|and)\s*[BLD]){0,2}\s*)\)'   # "(B, L, D)" meal codes
+    r'|\b(?:breakfasts?|brunch(?:es)?|lunch(?:es|eons?)?|dinners?|suppers?|meals?|picnics?|feasts?|barbecues?'
+    r'|bbqs?|banquets?)'
+    r'(?:\s+(?!(?:not|no|never|optional|cannot|recommend\w*|suggest\w*|options?|tips?|ideas?|advice)\b)'
+    r'[\w\'\u2019-]+){0,4}?'
+    r'\s+(?:(?:is|are|was|were|will\s+be|can\s+be|gets?)\s+)?'
+    r'(?:also\s+)?(?:included|provided|served|arranged|offered|supplied|prepared|hosted)\b'
+    r'|\b(?:full|half)[\s-]+board\b|\ball\s+meals\b'
     r')',
     re.IGNORECASE,
 )
@@ -87,7 +97,8 @@ def meal_time_claims_supported(itin_text: str, tour: dict, *, tenant_id: str | N
     if not claims:
         return False
     days = g._source_days(tour)
-    unsourced = [u for u in claims if not meal_claims.unit_meal_sourced(u, tour, days)[0]]
+    out_days = meal_claims.output_day_numbers(meal_claims.itinerary_sentences(itin_text))
+    unsourced = [u for u in claims if not meal_claims.unit_meal_sourced(u, tour, days, out_days)[0]]
     if not unsourced:
         return True             # every meal claim is in the source: no Jev call
     askable = {(u["sentence"], u["day"]) for u in g.sentence_units({"itineraries": itin_text})}

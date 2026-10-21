@@ -28,14 +28,20 @@ def _tour(days, inclusions="", exclusions="", duration=None):
             "itineraries": itin, "inclusions": inclusions, "exclusions": exclusions}
 
 
-def _gen(day_bodies):
-    itin = "\n\n".join(f"Day {n} — Stage {n}\n{body}" for n, body in day_bodies)
+def _gen(day_bodies, n_days=None):
+    """A written itinerary. With ``n_days``, every day 1..n_days the test leaves out gets a neutral body: a real
+    rewrite has one output day per source day, and the rule only matches days when the two line up."""
+    bodies = dict(day_bodies)
+    for n in range(1, (n_days or 0) + 1):
+        bodies.setdefault(n, "Walk through the old town.")
+    itin = "\n\n".join(f"Day {n} — Stage {n}\n{body}" for n, body in sorted(bodies.items()))
     return {"name": "A Walk", "itineraries": itin}
 
 
 def _codes(day_bodies, tour):
+    n_days = max(g._source_days(tour)[0])
     with patch.object(g, "judge_units", side_effect=_jev_off) as m:
-        codes = ba.pre_audit_checks(_gen(day_bodies), tour)
+        codes = ba.pre_audit_checks(_gen(day_bodies, n_days), tour)
     return codes, m
 
 
@@ -97,7 +103,6 @@ def test_one_day_source_is_its_own_day():
 
 @pytest.mark.parametrize("inclusions,sentence", [
     ("Stay with all meals, bonfire, professional guide", "Dinner is served in the camp."),
-    ("Full board on the trek", "Lunch is provided on the trail."),
     ("Half board accommodation", "Dinner is included at the lodge."),
     ("Hotel accommodation with daily breakfast", "Breakfast is served at the hotel."),
     ("Breakfast every morning, airport transfers", "Breakfast is included before the drive."),
@@ -395,7 +400,7 @@ def test_only_unsourced_sentences_are_sent_to_jev():
     tour = _tour(["Arrive.", "Breakfast at the hotel, then hike.", "Depart."])
     gen = [(2, "Breakfast is served at the hotel. Lunch is provided on the trail.")]
     with patch.object(g, "judge_units", return_value={}) as m:
-        codes = ba.pre_audit_checks(_gen(gen), tour)
+        codes = ba.pre_audit_checks(_gen(gen, 3), tour)
     assert CODE in codes
     units = m.call_args.args[0]
     assert [u["sentence"] for u in units] == ["Lunch is provided on the trail."]
@@ -405,7 +410,7 @@ def test_jev_accept_still_clears_what_the_rule_does_not_while_the_question_is_on
     tour = _tour(["Arrive.", "Hike the wall.", "Depart."])
     with patch.object(g, "judge_units",
                       return_value={0: Verdict("a1_claim_supported", "enforce", "accept", probability=0.95)}):
-        assert CODE not in ba.pre_audit_checks(_gen([(2, "Lunch is provided on the Wall.")]), tour)
+        assert CODE not in ba.pre_audit_checks(_gen([(2, "Lunch is provided on the Wall.")], 3), tour)
 
 
 def test_unsupported_number_stays_fail_closed_with_jev_off():
@@ -429,17 +434,19 @@ def test_a_short_unsourced_meal_sentence_keeps_the_code_without_asking_jev():
     tour = _tour(["Arrive.", "Boat trip to the islands.", "Depart."])
     accept = {0: Verdict("a1_claim_supported", "enforce", "accept", probability=0.99)}
     with patch.object(g, "judge_units", return_value=accept) as m:
-        codes = ba.pre_audit_checks(_gen([(2, "The boat visits four islands in the bay. Dinner included.")]), tour)
+        codes = ba.pre_audit_checks(_gen([(2, "The boat visits four islands in the bay. Dinner included.")], 3),
+                                    tour)
     assert CODE in codes
     m.assert_not_called()
 
 
 def test_a_meal_code_in_a_day_title_is_checked():
     tour = _tour(["Arrive.", "Hue citadel. Meals: B, L", "Depart."])
-    itin = "Day 2 — Hue Citadel (B, L)\nWalk the citadel walls and the royal tombs."
+    itin = "Day 1 — Arrival\nArrive.\n\nDay 2 — Hue Citadel (B, L)\nWalk the citadel walls and the royal tombs."
+    itin += "\n\nDay 3 — Departure\nDepart."
     with patch.object(g, "judge_units", side_effect=_jev_off):
         assert CODE not in ba.pre_audit_checks({"name": "A Walk", "itineraries": itin}, tour)
-    itin_d = "Day 2 — Hue Citadel (B, L, D)\nWalk the citadel walls and the royal tombs."
+    itin_d = itin.replace("(B, L)", "(B, L, D)")
     with patch.object(g, "judge_units", side_effect=_jev_off):
         assert CODE in ba.pre_audit_checks({"name": "A Walk", "itineraries": itin_d}, tour)
 
@@ -453,3 +460,263 @@ def test_itinerary_sentences_keep_titles_and_short_sentences():
     units = mc.itinerary_sentences("Day 1 — Arrival (D)\nArrive. Dinner included.\n\nDay 2 — Hue\nWalk.")
     assert [(u["day"], u["sentence"]) for u in units] == [
         (1, "Day 1 — Arrival (D)"), (1, "Arrive."), (1, "Dinner included."), (2, "Day 2 — Hue"), (2, "Walk.")]
+
+
+# ── 6. review round 3 (S246): false clears found by an adversarial probe, each fixed fail-closed ─────────────
+# Real source sentences (AA-925 export) where the probe found them; synthetic ones are marked as such.
+
+def _src_day(sentence, day_text, day, n_days, inclusions="", exclusions=""):
+    ok, _why = mc.meal_claim_sourced(sentence, day_text=day_text, inclusions=inclusions, exclusions=exclusions,
+                                     source_all=(day_text or "") + inclusions, n_days=n_days, day=day)
+    return ok
+
+
+def _itin(n_days, bodies):
+    """A full written itinerary: every day 1..n_days, the given bodies on their days."""
+    return _gen(list(bodies.items()), n_days)["itineraries"]
+
+
+def _fires(itin, tour):
+    with patch.object(g, "judge_units", side_effect=_jev_off):
+        return CODE in ba.pre_audit_checks({"name": "A Walk", "itineraries": itin}, tour)
+
+
+@pytest.mark.parametrize("day_text", [
+    "/ Meet day – [No Cycling] Meet at Nikko Kanaya Hotel ... (Overnight stay・No meal provided) *French dinner using "
+    "local fresh fish or meat at a classic style restaurant in the hotel can be arranged at extra cost.",
+    "Free day at leisure in Kathmandu (No meals).",                       # synthetic
+    "Free day at leisure in Kathmandu (Meals: None).",
+    "Free day at leisure in Kathmandu (meals not included).",
+])
+def test_a_bracketed_no_meals_blocks_a_daily_inclusion(day_text):
+    assert not _src_day("Breakfast is served at the hotel.", day_text, 1, 5,
+                        inclusions="Accommodation with breakfast daily")
+
+
+@pytest.mark.parametrize("inclusions,day_text,sentence,day", [
+    ("All Meals while on trek (Veg) from day 1st dinner to day 8th breakfast.", "Depart from Dehradun.",
+     "Dinner is served at the hotel in Dehradun.", 9),
+    ("All Meals while on trek (Veg) from day 1st dinner to day 8th breakfast.",
+     "Arrive in Dehradun, transfer to hotel.", "Lunch is served at the hotel on arrival in Dehradun.", 1),
+    ("All meals during the trek", "Arrive in Delhi.", "Dinner is served at the Delhi hotel.", 1),
+    ("Full board on safari days; breakfast only in Nairobi", "Arrive in Nairobi.", "Lunch is served at the hotel.", 1),
+    ("Full board on the trek", "Arrive in Kathmandu.", "Lunch is provided on the trail.", 1),
+])
+def test_a_scoped_full_board_covers_no_day_by_itself(inclusions, day_text, sentence, day):
+    assert not _src_day(sentence, day_text, day, 9, inclusions=inclusions)
+
+
+@pytest.mark.parametrize("inclusions", ["Stay with all meals, bonfire, professional guide",
+                                        "All meals throughout the tour", "Guide, transport, all meals",
+                                        "Accommodation on a full board basis"])
+def test_an_unscoped_full_board_still_covers_every_day(inclusions):
+    assert _src_day("Dinner is served at the camp.", "Free day.", 4, 9, inclusions=inclusions)
+
+
+@pytest.mark.parametrize("inclusions,day_text,sentence,day", [
+    ("Daily breakfast and lunch on Day 3", "Drive to Dehradun and on to Sankri.",
+     "Lunch is served at a roadside dhaba en route to Sankri.", 2),
+    ("Breakfast daily, dinner on Days 3-5", "Drive to Dehradun, overnight at hotel.",
+     "Dinner is served at the hotel in Dehradun.", 6),
+])
+def test_a_daily_cue_does_not_bleed_to_the_next_meal(inclusions, day_text, sentence, day):
+    assert not _src_day(sentence, day_text, day, 7, inclusions=inclusions)
+    assert _src_day("Breakfast is served at the hotel.", day_text, day, 7, inclusions=inclusions)
+
+
+@pytest.mark.parametrize("day_text,sentence", [
+    ("Enjoy a delicious lunch at a premium 5-star hotel or a charming rooftop café with a view of the Taj Mahal "
+     "(optional, depending on your package).", "Lunch is served at a 5-star hotel or a rooftop café."),
+    ("Enjoy a delicious multi-cuisine lunch at a luxury 5-star hotel in Agra or a popular rootop cafe, optional in "
+     "your tour package.", "Lunch is served at a luxury hotel in Agra."),
+])
+def test_a_long_sentence_with_a_trailing_optional_does_not_source_the_meal(day_text, sentence):
+    assert not _src_day(sentence, day_text, 1, 1)
+
+
+def test_a_weak_bracket_does_not_wipe_out_a_meals_list_before_it():
+    day = ("Meals included: breakfast | dinner Bullet train to Gyeongju, faster than you think (not by car) aboard a "
+           "high-speed train. Finish your day with a traditional dinner.")
+    assert _src_day("Meals included: breakfast, dinner", day, 4, 9)
+
+
+@pytest.mark.parametrize("day_text", [
+    "End the day with a scrumptious dinner at a popular local restaurant (at passenger’s expense).",
+    "Dinner at a local restaurant at your expense.",                      # synthetic from here
+    "Dinner at a local restaurant (at guest's expense).",
+    "Dinner at a local restaurant (own).",
+    "Visit the old palace. Dinner: Own.",
+    "Dinner at a local restaurant (approx. USD 10 pp).",
+    "Dinner at a lakeside restaurant (extra).",
+    "Dinner is self-arranged in town.",
+    "Dinner at the market, pay direct to the vendor.",
+])
+def test_a_guest_paid_meal_is_not_sourced(day_text):
+    assert not _src_day("Dinner is served at a local restaurant.", day_text, 2, 4)
+
+
+@pytest.mark.parametrize("day_text", [
+    "This evening, opt for a traditional dinner with entertainment in the desert.",
+    "Fly to Delhi for your final evening in India, and opt to join your group for a farewell dinner.",
+    "Tonight, you’re free to find a local dinner or a good spot to watch the sunset.",
+    "The rest of the afternoon is free for your own discoveries. Your leader will be happy to share some tips on "
+    "great places to grab a local dinner.",
+    "Choose your dinner at various shops along the street",
+])
+def test_an_opt_in_or_find_your_own_meal_is_not_sourced(day_text):
+    assert not _src_day("Dinner is served at a local restaurant.", day_text, 4, 15)
+
+
+def test_a_pick_cue_after_the_meal_keeps_it():
+    assert _src_day("Breakfast is served at the hotel.", "After breakfast, choose a hike or a rest by the pool.", 2, 4)
+
+
+@pytest.mark.parametrize("day_text", [
+    "We stop for lunch at the floating market if time permits.",          # synthetic
+    "Those who wish can join the guide for lunch at a village home.",
+    "Guests on the deluxe option have lunch at the palace hotel.",
+    "Those who opt for this tour will return to the lodge for lunch",     # real wording (breakfast in the source)
+    "Lunch at the floating market, if time permits.",
+])
+def test_a_conditional_or_partial_group_meal_is_not_sourced(day_text):
+    assert not _src_day("Lunch is served at a local restaurant.", day_text, 2, 4)
+
+
+def test_a_condition_about_the_next_activity_keeps_the_listed_meal():
+    day = ("Enjoy a home-cooked picnic lunch somewhere along the way, and if you have enough free time, visit a local "
+           "ceramics factory. Overnight in Kanchanaburi Meals: Breakfast / Lunch")
+    assert _src_day("A home-cooked picnic lunch is arranged along the route.", day, 7, 10)
+
+
+def test_an_inline_day_marker_makes_the_day_unmatched():
+    tour = {"name": "T", "duration": "4 Days", "inclusions": "", "exclusions": "",
+            "itineraries": "Day 1: Arrive in Kathmandu and transfer to the hotel.\nDay 2: Drive to Pokhara and walk "
+                           "the lakeside. Day 3: Boat on Phewa Lake, picnic lunch at the World Peace Pagoda.\n"
+                           "Day 4: Fly to Kathmandu and depart."}
+    assert _fires(_itin(4, {2: "Lunch is served by the lakeside in Pokhara."}), tour)
+
+
+@pytest.mark.parametrize("sentence", ["All meals are included.", "Evening meal included.",
+                                      "Camp accommodation and all meals are provided.",
+                                      "Lodge accommodation with full board meals.", "Meals are provided.",
+                                      "Lunch and dinner are included on board the junk.",
+                                      "Dinner will be served on board.", "Lunches are provided on board."])
+def test_generic_plural_and_future_meal_claims_are_checked(sentence):
+    assert ba.ITIN_MEAL_INVENTED.search(sentence)
+    tour = _tour(["Arrive. Meals: None", "Hike to the resort. Meals: B", "Depart. Meals: None"])
+    assert _fires(_itin(3, {2: sentence}), tour)
+
+
+@pytest.mark.parametrize("sentence", ["Lunch is not included.", "Dinner recommendations are provided by the guide.",
+                                      "After breakfast, drive to the lake."])
+def test_the_claim_regex_skips_negated_and_advice_sentences(sentence):
+    assert not ba.ITIN_MEAL_INVENTED.search(sentence)
+
+
+@pytest.mark.parametrize("claim", ["Drive to Mai Chau and walk the valley. Meals: B, L and D", "Meals: B | L | D",
+                                   "Meals: B · L · D"])
+def test_every_code_of_a_list_is_claimed(claim):
+    assert mc.claimed_meals(claim)[0] == {"breakfast", "lunch", "dinner"}
+    assert not _src_day(claim, "Drive to Mai Chau, lunch at a local house, walk the valley. Meals: B, L", 2, 3)
+
+
+@pytest.mark.parametrize("sentence,meal", [
+    ("Breakfast is served at the hotel, and dinner is served on board (drinks not included).", "dinner"),
+    ("Breakfast is served at the hotel and lunch at a pearl farm where jewellery is available for purchase.", "lunch"),
+    ("Breakfast is served at the hotel, and after an optional kayak, lunch is served on deck.", "lunch"),
+    ("Breakfast is included, and meals on board the junk are prepared by the onboard chef.", "lunch"),
+    ("Breakfast is served at the hotel, and a seafood feast awaits on board in the evening.", "dinner"),
+    ("Breakfast is included, and a beach BBQ is served on Titop Island in the evening.", "dinner"),
+    ("Breakfast is included; a picnic is served on the beach at midday.", "lunch"),
+    ("Breakfast is served at the hotel, followed by a brunch buffet on board.", "lunch"),
+])
+def test_a_second_meal_beside_a_sourced_breakfast_stays_claimed(sentence, meal):
+    assert meal in mc.claimed_meals(sentence)[0]
+    assert not _src_day(sentence, "Drive to Halong Bay and board the junk. Meals: B", 2, 3)
+
+
+def test_a_specified_generic_meals_claims_only_its_list():
+    assert mc.claimed_meals("Overnight accommodation and meals (breakfast and dinner) are provided.")[0] == {
+        "breakfast", "dinner"}
+
+
+@pytest.mark.parametrize("sentence", [
+    "Breakfast is served at the hotel, and breakfast is provided again as a boxed meal tomorrow before the transfer.",
+    "Breakfast is included today and tomorrow.",
+    "Breakfast is included, and a boxed breakfast is provided on Day 3.",
+])
+def test_a_meal_on_another_day_is_not_judged_on_this_day(sentence):
+    assert not _src_day(sentence, "Drive to Halong Bay and board the junk. Meals: B", 2, 3)
+
+
+def test_quoted_day_headers_do_not_fold_later_days_into_one():
+    itin = ("Day 1 / Arrive in Nasu.\nDay 2 / Stage 1 (Overnight stay・Breakfast provided)\n"
+            "Day 3 / Stage 2 (Overnight stay・Breakfast provided)\n"
+            "Day 4 / Stage 3 (Overnight stay・Breakfast provided)\n"
+            "\"Day 5 / Stage 4 (Overnight stay・Breakfast & Dinner provided)\"\n\"Day 6 / Tour Conclusion\"")
+    tour = {"name": "T", "duration": "6 DAYS", "inclusions": "", "exclusions": "", "itineraries": itin}
+    assert _fires(_itin(6, {4: "Dinner is served at the inn in Kaminoyama."}), tour)
+
+
+def test_an_extra_day_extension_is_not_the_day_it_follows():
+    days = [f"Stage {n}." for n in range(1, 9)] + [
+        "Breakfast at the hotel. Train to Ella for an overnight stay\nExtra Day 01 Breakfast at the hotel. Picnic "
+        "lunch will be provided. Dinner and overnight stay in a remote home stay"]
+    tour = _tour(days)
+    assert _fires(_itin(9, {9: "Dinner is served at the accommodation in Ella."}), tour)
+
+
+def _grouped_tour(*blocks):
+    return {"name": "T", "duration": "", "inclusions": "", "exclusions": "", "itineraries": "\n".join(blocks)}
+
+
+def test_grouped_headers_with_drifting_output_days_do_not_match():
+    tour = _grouped_tour("Day 1: Arrive in Colombo.", "DAY 2 & 3 - Ella: tea walks. Meals: breakfast only",
+                         "DAY 4 & 5 - Wellawaya: farm stay. On the 2nd night an outdoor BBQ dinner by the campfire.",
+                         "Day 6: Depart.")
+    # The writer made 7 days, so output Day 4 is an Ella day: source block 4 (Wellawaya) is not its day.
+    assert _fires(_itin(7, {4: "Dinner is served at the guesthouse in Ella."}), tour)
+
+
+def test_a_grouped_block_the_writer_split_matches_neither_of_its_days():
+    tour = _grouped_tour("Day 1: Arrive in Trincomalee.",
+                         "DAY 2 & 3 - Wilpattu NP Two Nights Explore Anuradhapura. On day two, a full day safari in "
+                         "Wilpattu with picnic meals.", "Day 4: Depart. Breakfast at the lodge.")
+    assert _fires(_itin(4, {2: "A picnic lunch is provided at Anuradhapura."}), tour)
+    # ... while the other days still match (output 1..4 = the source days with the block expanded).
+    assert not _fires(_itin(4, {4: "Breakfast is served at the lodge."}), tour)
+
+
+def test_a_grouped_block_the_writer_kept_as_one_day_still_matches():
+    tour = _grouped_tour("Day 1: Arrive.", "Day 2, 3 and 4 in Passikudah: a home cooked lunch by a Muslim family.",
+                         "Day 5: Depart.")
+    itin = "\n\n".join(f"Day {n} — Stage {n}\n{b}" for n, b in (
+        (1, "Arrive."), (2, "A home-cooked lunch is provided by a Muslim family."), (5, "Depart.")))
+    assert not _fires(itin, tour)
+
+
+def test_a_writer_that_split_a_day_shifts_the_rest():
+    days = ["Arrive.", "Stage 2. ( B )", "Stage 3. ( B )", "Sagada to Banaue. ( B )", "Banaue to Batad. ( B, D )",
+            "Stage 6. ( B )", "Depart. ( B )"]
+    tour = _tour(days)
+    # 8 output days for 7 source days: output Day 5 is the Sagada-Banaue drive, which has breakfast only.
+    assert _fires(_itin(8, {5: "Breakfast and dinner included."}), tour)
+    assert not _fires(_itin(7, {5: "Breakfast and dinner included."}), tour)
+
+
+def test_an_overnight_trip_is_two_days_for_inclusions():
+    tour = {"name": "T", "duration": "OVERNIGHT TRIP", "exclusions": "",
+            "inclusions": "Accommodation at Kajikasou People's Inn (1 night) with dinner and breakfast",
+            "itineraries": "Kirifuri-Kogen Highlands → Kajikasou People's Inn (Overnight stay here!) → Ashio Copper "
+                           "Mine → Tomihiro Art Museum"}
+    assert _fires(_itin(2, {2: "Dinner is served in Midori City before the trip ends."}), tour)
+    assert _fires(_itin(2, {1: "Breakfast is served before the drive up to Kirifuri-Kogen."}), tour)
+
+
+def test_a_tour_wide_meal_count_after_the_last_day_is_not_that_days_meal():
+    days = ["Arrive in Hanoi. (D)"] + [f"Stage {n}. (B)" for n in range(2, 8)] + [
+        "Transfer to Da Nang airport for your departure flight. (B)\n\nMeals included: 7 breakfasts, 3 lunches, "
+        "2 dinners"]
+    tour = _tour(days, inclusions="Accommodation in 3-4 star hotels / All transfers")
+    assert _fires(_itin(8, {8: "Lunch is served at a riverside restaurant before the transfer."}), tour)
+    assert not _fires(_itin(8, {8: "Breakfast is served before the transfer."}), tour)
