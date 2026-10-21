@@ -1,0 +1,120 @@
+# Quality System v1 — the single thresholds file (AA-926, design §5.3).
+# Every score cut-off the writers, judges, gates, admin views and the golden-set eval use. Code reads them
+# through services/quality/registry.py (`threshold(key)`); `python -m services.quality.lint` fails on a 7.0
+# literal anywhere else. Each consumer has its own key so a future calibration can split them (§5.3: "if
+# the data supports it, propose separate A1/T2/T7 lines"); today every pass line refs the one `pass_line`.
+#
+# Calibration fields (§5.3): calibration.run_id / precision / recall / n stay null until the first Q-CAL run;
+# calibrated: false allows a null run_id (CI checks only the format; the Dev eval checks the run
+# exists in shared.prompt_eval_runs).
+#
+# Out of scope: Jev floors (shared.decision_question.accept_floor / reject_ceiling) are calibrated per
+# question in the DB — a deliberate second threshold source. The ACP evaluator alarm in
+# scripts/setup_run_health_alarms.py is a different metric.
+version: qthr-v1
+
+thresholds:
+  pass_line:
+    value: 7.0
+    used_by: []
+    description: "The quality pass line every writer and judge gate shares (A1 retry, T2 status, T3, T7 cut)."
+    calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
+
+  # ------------------------------------------------------------------------------------ A1 (S1 graph)
+  a1.min_quality:
+    ref: pass_line
+    used_by: [services/content_generation/graph.py, api/routers/admin_settings.py]
+    description: "should_retry done/retry/hitl, revalidate and human-edit gate pass (graph.MIN_QUALITY)."
+    calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
+  a1.judge_pass:
+    ref: pass_line
+    used_by: [services/content_generation/judge_node.py, api/routers/admin_llm_ops.py]
+    description: "The brand-fit judge's pass line (judge_node._MIN_QUALITY; LLM-ops agreement view)."
+    calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
+  a1.publish_floor:
+    ref: pass_line
+    used_by: [api/routers/admin_pipeline.py]
+    description: "_is_publishable score floor and the run-log pass flag."
+    calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
+  a1.missing_field_cap:
+    value: 4.0
+    used_by: [services/content_generation/graph.py]
+    description: "A MISSING_FIELD caps the validate score below the pass line (AA-216)."
+    calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
+  judge.tie_band:
+    value: 0.5
+    used_by: [services/content_generation/judge_node.py]
+    description: "Jev a1_brand_fit tie-break band around the judge pass line (AA-692)."
+    calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
+  judge.mission_absent_cap:
+    value: 6.0
+    used_by: [services/content_generation/judge_node.py]
+    description: "T2 brand-fit cap when the tenant's mission is absent (just below the pass line)."
+    calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
+  brand_fit.repeat_band:
+    value: [6.0, 8.0]
+    used_by: [services/content_generation/brand_fit.py]
+    description: "Inclusive band where an unseeded judge score is re-scored twice and the median kept (AA-714)."
+    calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
+
+  # ----------------------------------------------------------------------------------- T2 / T3 / T7
+  t2.status_pass:
+    ref: pass_line
+    used_by: [services/jobs/t2_rewrite_job.py]
+    description: "T2 version status ai_generated vs needs_review."
+    calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
+  t3.pass_line:
+    ref: pass_line
+    used_by: [services/acp_produce/tenant_pipeline.py]
+    description: "A T2 draft below it gets the judge's feedback on a T3 revision."
+    calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
+  t7.brand_fit_cut:
+    ref: pass_line
+    used_by: [services/acp_shared/debate.py]
+    description: "T7 debate brand-fit cut (the Jev reject score is derived as cut - 0.5 in debate.py)."
+    calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
+
+  # --------------------------------------------------------------------------------------------- T10
+  t10.reuse_similarity:
+    value: 0.92
+    used_by: [services/acp_content_writing/service.py]
+    description: "Cross-tenant / within-tenant reuse similarity above which a match is reported."
+    calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
+
+  # --------------------------------------------------------------------------- admin views and eval
+  review.low_quality_floor:
+    ref: pass_line
+    used_by: [api/routers/admin_pipeline.py]
+    description: "Review Queue low_quality reason, failure summary and the score filter ok/low boundary."
+    calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
+  review.score_band_low:
+    value: 5
+    used_by: [api/routers/admin_pipeline.py, frontend/app/admin/review/page.tsx]
+    description: "Review Queue critical/low boundary (score filter and colour)."
+    calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
+  review.approve_floor:
+    ref: pass_line
+    used_by: [frontend/app/admin/review/page.tsx]
+    description: "Review page Approve button (mirrors _is_publishable); exported to the frontend as PASS_LINE."
+    calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
+  ui.score_band_top:
+    value: 9
+    used_by: [frontend/app/admin/_components/CompareModal.tsx, frontend/app/admin/_components/TourDetailPanelV2.tsx,
+              frontend/app/admin/master-content/page.tsx, frontend/app/admin/tenants/page.tsx]
+    description: "Score colour: green at or above it, amber/gold from the pass line, red below."
+    calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
+  report.score_histogram_edges:
+    value: [9, 8, 7]
+    used_by: [api/routers/admin_pipeline.py]
+    description: "Library metrics score histogram bucket edges (a report layout, deliberately not a ref of pass_line)."
+    calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
+  legacy_validation.pass:
+    ref: pass_line
+    used_by: [services/validation/handler.py]
+    description: "Legacy validation handler export vs regenerate/hitl."
+    calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
+  eval.golden_pass:
+    ref: pass_line
+    used_by: [scripts/aa729/score.py]
+    description: "Golden-set T2 verdict (AA-729): score at or above it and the T3 QA gate passed."
+    calibration: {run_id: null, precision: null, recall: null, n: null, calibrated: false}
