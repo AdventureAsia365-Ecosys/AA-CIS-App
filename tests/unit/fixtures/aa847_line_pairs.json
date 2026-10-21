@@ -1,0 +1,1525 @@
+{
+ "note": "AA-847 D2 labelled LINE pairs (author-labelled; geometry is synthetic along the real course, rounded). Used to measure the deterministic line rule shape.same_line_place: false merges must be 0. osm_names only where the OSM relation really carries both names (name:vi / name:en).",
+ "pairs": [
+  {
+   "label": "same",
+   "why": "Mekong / Mekong River, Laos, same OSM relation",
+   "a": {
+    "destination_id": "a1",
+    "name": "Mekong",
+    "country": "Laos",
+    "line_class": "water",
+    "osm_type": "relation",
+    "osm_id": 2091005,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       100.41,
+       20.27
+      ],
+      [
+       100.55,
+       20.15
+      ],
+      [
+       100.75,
+       20.05
+      ],
+      [
+       100.95,
+       19.95
+      ],
+      [
+       101.13,
+       19.89
+      ],
+      [
+       101.4,
+       19.85
+      ],
+      [
+       101.7,
+       19.95
+      ],
+      [
+       101.95,
+       20.0
+      ],
+      [
+       102.13,
+       19.89
+      ]
+     ]
+    }
+   },
+   "b": {
+    "destination_id": "a2",
+    "name": "Mekong River",
+    "country": "Laos",
+    "line_class": "water",
+    "osm_type": "relation",
+    "osm_id": 2091005,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       100.41,
+       20.27
+      ],
+      [
+       100.55,
+       20.15
+      ],
+      [
+       100.75,
+       20.05
+      ],
+      [
+       100.95,
+       19.95
+      ],
+      [
+       101.13,
+       19.89
+      ],
+      [
+       101.4,
+       19.85
+      ],
+      [
+       101.7,
+       19.95
+      ],
+      [
+       101.95,
+       20.0
+      ],
+      [
+       102.13,
+       19.89
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "label": "same",
+   "why": "Mekong River / Mekong River (Laos), overlapping pieces from different ways",
+   "a": {
+    "destination_id": "b1",
+    "name": "Mekong River",
+    "country": "Laos",
+    "line_class": "water",
+    "osm_type": "way",
+    "osm_id": 11,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       101.13,
+       19.89
+      ],
+      [
+       101.4,
+       19.85
+      ],
+      [
+       101.7,
+       19.95
+      ],
+      [
+       101.95,
+       20.0
+      ],
+      [
+       102.13,
+       19.89
+      ]
+     ]
+    }
+   },
+   "b": {
+    "destination_id": "b2",
+    "name": "Mekong River (Laos)",
+    "country": "Laos",
+    "line_class": "water",
+    "osm_type": "way",
+    "osm_id": 12,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       101.13,
+       19.89
+      ],
+      [
+       101.4,
+       19.852
+      ],
+      [
+       101.7,
+       19.948
+      ],
+      [
+       101.95,
+       20.002
+      ],
+      [
+       102.13,
+       19.891
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "label": "different",
+   "why": "Mekong River (Laos) / Mekong River (Thailand): other country (same relation is legitimate)",
+   "a": {
+    "destination_id": "c1",
+    "name": "Mekong River",
+    "country": "Laos",
+    "line_class": "water",
+    "osm_type": "relation",
+    "osm_id": 2091005,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       100.41,
+       20.27
+      ],
+      [
+       100.55,
+       20.15
+      ],
+      [
+       100.75,
+       20.05
+      ],
+      [
+       100.95,
+       19.95
+      ],
+      [
+       101.13,
+       19.89
+      ],
+      [
+       101.4,
+       19.85
+      ],
+      [
+       101.7,
+       19.95
+      ],
+      [
+       101.95,
+       20.0
+      ],
+      [
+       102.13,
+       19.89
+      ]
+     ]
+    }
+   },
+   "b": {
+    "destination_id": "c2",
+    "name": "Mekong River (Thailand)",
+    "country": "Thailand",
+    "line_class": "water",
+    "osm_type": "relation",
+    "osm_id": 2091005,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       100.08,
+       20.27
+      ],
+      [
+       100.25,
+       20.3
+      ],
+      [
+       100.41,
+       20.26
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "label": "same",
+   "why": "Nam Ou / Nam Ou River, overlap",
+   "a": {
+    "destination_id": "d1",
+    "name": "Nam Ou",
+    "country": "Laos",
+    "line_class": "water",
+    "osm_type": "relation",
+    "osm_id": 5512345,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       102.52,
+       21.08
+      ],
+      [
+       102.55,
+       20.9
+      ],
+      [
+       102.6,
+       20.7
+      ],
+      [
+       102.61,
+       20.57
+      ],
+      [
+       102.5,
+       20.35
+      ],
+      [
+       102.35,
+       20.15
+      ],
+      [
+       102.25,
+       20.05
+      ],
+      [
+       102.22,
+       19.99
+      ]
+     ]
+    }
+   },
+   "b": {
+    "destination_id": "d2",
+    "name": "Nam Ou River",
+    "country": "Laos",
+    "line_class": "water",
+    "osm_type": "way",
+    "osm_id": 77,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       102.61,
+       20.571
+      ],
+      [
+       102.5,
+       20.352
+      ],
+      [
+       102.35,
+       20.148
+      ],
+      [
+       102.25,
+       20.05
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "label": "different",
+   "why": "Nam Ou / Nam Khan: both 'nam' rivers near Luang Prabang",
+   "a": {
+    "destination_id": "e1",
+    "name": "Nam Ou River",
+    "country": "Laos",
+    "line_class": "water",
+    "osm_type": "relation",
+    "osm_id": 5512345,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       102.52,
+       21.08
+      ],
+      [
+       102.55,
+       20.9
+      ],
+      [
+       102.6,
+       20.7
+      ],
+      [
+       102.61,
+       20.57
+      ],
+      [
+       102.5,
+       20.35
+      ],
+      [
+       102.35,
+       20.15
+      ],
+      [
+       102.25,
+       20.05
+      ],
+      [
+       102.22,
+       19.99
+      ]
+     ]
+    }
+   },
+   "b": {
+    "destination_id": "e2",
+    "name": "Nam Khan River",
+    "country": "Laos",
+    "line_class": "water",
+    "osm_type": "relation",
+    "osm_id": 5512346,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       102.14,
+       19.88
+      ],
+      [
+       102.25,
+       19.8
+      ],
+      [
+       102.4,
+       19.7
+      ],
+      [
+       102.55,
+       19.62
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "label": "different",
+   "why": "Mekong River / Nam Khan (confluence touches)",
+   "a": {
+    "destination_id": "f1",
+    "name": "Mekong River",
+    "country": "Laos",
+    "line_class": "water",
+    "osm_type": "relation",
+    "osm_id": 2091005,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       100.41,
+       20.27
+      ],
+      [
+       100.55,
+       20.15
+      ],
+      [
+       100.75,
+       20.05
+      ],
+      [
+       100.95,
+       19.95
+      ],
+      [
+       101.13,
+       19.89
+      ],
+      [
+       101.4,
+       19.85
+      ],
+      [
+       101.7,
+       19.95
+      ],
+      [
+       101.95,
+       20.0
+      ],
+      [
+       102.13,
+       19.89
+      ]
+     ]
+    }
+   },
+   "b": {
+    "destination_id": "f2",
+    "name": "Nam Khan",
+    "country": "Laos",
+    "line_class": "water",
+    "osm_type": "relation",
+    "osm_id": 5512346,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       102.14,
+       19.88
+      ],
+      [
+       102.25,
+       19.8
+      ],
+      [
+       102.4,
+       19.7
+      ],
+      [
+       102.55,
+       19.62
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "label": "same",
+   "why": "Ho Chi Minh Trail / Ho Chi Minh Trail (Laos side), approximate routes overlap",
+   "a": {
+    "destination_id": "g1",
+    "name": "Ho Chi Minh Trail",
+    "country": "Laos",
+    "line_class": "trail",
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       106.0,
+       17.5
+      ],
+      [
+       106.2,
+       17.0
+      ],
+      [
+       106.4,
+       16.6
+      ],
+      [
+       106.6,
+       16.0
+      ],
+      [
+       106.9,
+       15.3
+      ]
+     ]
+    }
+   },
+   "b": {
+    "destination_id": "g2",
+    "name": "Ho Chi Minh Trail (Laos side)",
+    "country": "Laos",
+    "line_class": "trail",
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       106.21,
+       17.0
+      ],
+      [
+       106.41,
+       16.6
+      ],
+      [
+       106.61,
+       16.0
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "label": "different",
+   "why": "Ho Chi Minh Trail (Laos) / Ho Chi Minh Trail (Vietnam): other country",
+   "a": {
+    "destination_id": "h1",
+    "name": "Ho Chi Minh Trail",
+    "country": "Laos",
+    "line_class": "trail",
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       106.0,
+       17.5
+      ],
+      [
+       106.2,
+       17.0
+      ],
+      [
+       106.4,
+       16.6
+      ],
+      [
+       106.6,
+       16.0
+      ],
+      [
+       106.9,
+       15.3
+      ]
+     ]
+    }
+   },
+   "b": {
+    "destination_id": "h2",
+    "name": "Ho Chi Minh Trail",
+    "country": "Vietnam",
+    "line_class": "trail",
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       105.7,
+       20.8
+      ],
+      [
+       105.9,
+       19.5
+      ],
+      [
+       106.2,
+       18.3
+      ],
+      [
+       107.0,
+       16.3
+      ],
+      [
+       107.6,
+       15.1
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "label": "different",
+   "why": "Li River / Li River Road: river vs road along it",
+   "a": {
+    "destination_id": "i1",
+    "name": "Li River",
+    "country": "China",
+    "line_class": "water",
+    "osm_type": "relation",
+    "osm_id": 3001,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       110.29,
+       25.27
+      ],
+      [
+       110.35,
+       25.1
+      ],
+      [
+       110.42,
+       24.95
+      ],
+      [
+       110.47,
+       24.78
+      ]
+     ]
+    }
+   },
+   "b": {
+    "destination_id": "i2",
+    "name": "Li River Road",
+    "country": "China",
+    "line_class": "road",
+    "osm_type": "way",
+    "osm_id": 3002,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       110.3,
+       25.26
+      ],
+      [
+       110.37,
+       25.08
+      ],
+      [
+       110.45,
+       24.8
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "label": "same",
+   "why": "Li River / Li Jiang River, same relation",
+   "a": {
+    "destination_id": "j1",
+    "name": "Li River",
+    "country": "China",
+    "line_class": "water",
+    "osm_type": "relation",
+    "osm_id": 3001,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       110.29,
+       25.27
+      ],
+      [
+       110.35,
+       25.1
+      ],
+      [
+       110.42,
+       24.95
+      ],
+      [
+       110.47,
+       24.78
+      ]
+     ]
+    }
+   },
+   "b": {
+    "destination_id": "j2",
+    "name": "Li Jiang",
+    "country": "China",
+    "line_class": "water",
+    "osm_type": "relation",
+    "osm_id": 3001,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       110.29,
+       25.27
+      ],
+      [
+       110.35,
+       25.1
+      ],
+      [
+       110.42,
+       24.95
+      ],
+      [
+       110.47,
+       24.78
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "label": "different",
+   "why": "Kwai Noi / Kwai Yai: two rivers, one confluence",
+   "a": {
+    "destination_id": "k1",
+    "name": "Kwai Noi River",
+    "country": "Thailand",
+    "line_class": "water",
+    "osm_type": "relation",
+    "osm_id": 4001,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       98.53,
+       14.36
+      ],
+      [
+       98.8,
+       14.2
+      ],
+      [
+       99.1,
+       14.05
+      ],
+      [
+       99.5,
+       14.02
+      ]
+     ]
+    }
+   },
+   "b": {
+    "destination_id": "k2",
+    "name": "Kwai Yai River",
+    "country": "Thailand",
+    "line_class": "water",
+    "osm_type": "relation",
+    "osm_id": 4002,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       99.2,
+       14.7
+      ],
+      [
+       99.3,
+       14.5
+      ],
+      [
+       99.45,
+       14.2
+      ],
+      [
+       99.53,
+       14.03
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "label": "same",
+   "why": "Kwai Noi / Khwae Noi: spelling variant, same relation",
+   "a": {
+    "destination_id": "l1",
+    "name": "Kwai Noi River",
+    "country": "Thailand",
+    "line_class": "water",
+    "osm_type": "relation",
+    "osm_id": 4001,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       98.53,
+       14.36
+      ],
+      [
+       98.8,
+       14.2
+      ],
+      [
+       99.1,
+       14.05
+      ],
+      [
+       99.5,
+       14.02
+      ]
+     ]
+    }
+   },
+   "b": {
+    "destination_id": "l2",
+    "name": "Khwae Noi River",
+    "country": "Thailand",
+    "line_class": "water",
+    "osm_type": "relation",
+    "osm_id": 4001,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       98.53,
+       14.36
+      ],
+      [
+       98.8,
+       14.2
+      ],
+      [
+       99.1,
+       14.05
+      ],
+      [
+       99.5,
+       14.02
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "label": "same",
+   "why": "Ha Giang Loop / Ha Giang Loop Road: same approximate route",
+   "a": {
+    "destination_id": "m1",
+    "name": "Ha Giang Loop",
+    "country": "Vietnam",
+    "line_class": "trail",
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       104.98,
+       22.82
+      ],
+      [
+       105.03,
+       23.06
+      ],
+      [
+       105.32,
+       23.27
+      ],
+      [
+       105.4,
+       22.95
+      ],
+      [
+       104.98,
+       22.82
+      ]
+     ]
+    }
+   },
+   "b": {
+    "destination_id": "m2",
+    "name": "Ha Giang Loop Road",
+    "country": "Vietnam",
+    "line_class": "road",
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       104.981,
+       22.821
+      ],
+      [
+       105.031,
+       23.061
+      ],
+      [
+       105.321,
+       23.271
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "label": "same",
+   "why": "Ha Giang Loop / Ha Giang loop (case), overlap",
+   "a": {
+    "destination_id": "n1",
+    "name": "Ha Giang Loop",
+    "country": "Vietnam",
+    "line_class": "trail",
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       104.98,
+       22.82
+      ],
+      [
+       105.03,
+       23.06
+      ],
+      [
+       105.32,
+       23.27
+      ],
+      [
+       105.4,
+       22.95
+      ],
+      [
+       104.98,
+       22.82
+      ]
+     ]
+    }
+   },
+   "b": {
+    "destination_id": "n2",
+    "name": "Ha Giang loop",
+    "country": "Vietnam",
+    "line_class": "trail",
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       104.981,
+       22.821
+      ],
+      [
+       105.031,
+       23.061
+      ],
+      [
+       105.321,
+       23.271
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "label": "different",
+   "why": "Black River (north) / Black River (south): same name, 1,000 km apart",
+   "a": {
+    "destination_id": "o1",
+    "name": "Black River",
+    "country": "Vietnam",
+    "line_class": "water",
+    "osm_type": "relation",
+    "osm_id": 5001,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       103.1,
+       22.3
+      ],
+      [
+       103.5,
+       21.8
+      ],
+      [
+       104.0,
+       21.4
+      ],
+      [
+       104.8,
+       21.2
+      ]
+     ]
+    }
+   },
+   "b": {
+    "destination_id": "o2",
+    "name": "Black River",
+    "country": "Vietnam",
+    "line_class": "water",
+    "osm_type": "relation",
+    "osm_id": 5002,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       106.6,
+       11.1
+      ],
+      [
+       106.8,
+       10.95
+      ],
+      [
+       107.0,
+       10.8
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "label": "same",
+   "why": "Black River / Da River: local name, same relation",
+   "a": {
+    "destination_id": "p1",
+    "name": "Black River",
+    "country": "Vietnam",
+    "line_class": "water",
+    "osm_type": "relation",
+    "osm_id": 5001,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       103.1,
+       22.3
+      ],
+      [
+       103.5,
+       21.8
+      ],
+      [
+       104.0,
+       21.4
+      ],
+      [
+       104.8,
+       21.2
+      ]
+     ]
+    },
+    "osm_names": [
+     "Black River",
+     "Sông Đà",
+     "Da River"
+    ]
+   },
+   "b": {
+    "destination_id": "p2",
+    "name": "Da River",
+    "country": "Vietnam",
+    "line_class": "water",
+    "osm_type": "relation",
+    "osm_id": 5001,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       103.1,
+       22.3
+      ],
+      [
+       103.5,
+       21.8
+      ],
+      [
+       104.0,
+       21.4
+      ],
+      [
+       104.8,
+       21.2
+      ]
+     ]
+    },
+    "osm_names": [
+     "Black River",
+     "Sông Đà",
+     "Da River"
+    ]
+   }
+  },
+  {
+   "label": "different",
+   "why": "Annapurna Base Camp Trek / Annapurna Circuit: different trails",
+   "a": {
+    "destination_id": "q1",
+    "name": "Annapurna Base Camp Trail",
+    "country": "Nepal",
+    "line_class": "trail",
+    "osm_type": "relation",
+    "osm_id": 6001,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       83.8,
+       28.53
+      ],
+      [
+       83.9,
+       28.45
+      ],
+      [
+       83.95,
+       28.4
+      ],
+      [
+       83.88,
+       28.37
+      ]
+     ]
+    }
+   },
+   "b": {
+    "destination_id": "q2",
+    "name": "Annapurna Circuit",
+    "country": "Nepal",
+    "line_class": "trail",
+    "osm_type": "relation",
+    "osm_id": 6002,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       84.0,
+       28.6
+      ],
+      [
+       84.1,
+       28.7
+      ],
+      [
+       83.9,
+       28.8
+      ],
+      [
+       83.7,
+       28.7
+      ],
+      [
+       83.8,
+       28.53
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "label": "same",
+   "why": "Annapurna Circuit / Annapurna Circuit Trek",
+   "a": {
+    "destination_id": "r1",
+    "name": "Annapurna Circuit",
+    "country": "Nepal",
+    "line_class": "trail",
+    "osm_type": "relation",
+    "osm_id": 6002,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       84.0,
+       28.6
+      ],
+      [
+       84.1,
+       28.7
+      ],
+      [
+       83.9,
+       28.8
+      ],
+      [
+       83.7,
+       28.7
+      ],
+      [
+       83.8,
+       28.53
+      ]
+     ]
+    }
+   },
+   "b": {
+    "destination_id": "r2",
+    "name": "Annapurna Circuit Trek",
+    "country": "Nepal",
+    "line_class": "trail",
+    "osm_type": "relation",
+    "osm_id": 6002,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       84.0,
+       28.6
+      ],
+      [
+       84.1,
+       28.7
+      ],
+      [
+       83.9,
+       28.8
+      ],
+      [
+       83.7,
+       28.7
+      ],
+      [
+       83.8,
+       28.53
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "label": "same",
+   "why": "Cheonggyecheon / Cheonggyecheon Stream",
+   "a": {
+    "destination_id": "s1",
+    "name": "Cheonggyecheon",
+    "country": "South Korea",
+    "line_class": "water",
+    "osm_type": "way",
+    "osm_id": 7001,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       126.977,
+       37.569
+      ],
+      [
+       126.99,
+       37.569
+      ],
+      [
+       127.01,
+       37.57
+      ],
+      [
+       127.03,
+       37.571
+      ]
+     ]
+    }
+   },
+   "b": {
+    "destination_id": "s2",
+    "name": "Cheonggyecheon Stream",
+    "country": "South Korea",
+    "line_class": "water",
+    "osm_type": "way",
+    "osm_id": 7001,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       126.977,
+       37.569
+      ],
+      [
+       126.99,
+       37.569
+      ],
+      [
+       127.01,
+       37.57
+      ],
+      [
+       127.03,
+       37.571
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "label": "same",
+   "why": "Mekong River pending / Mekong: no geometry yet",
+   "a": {
+    "destination_id": "t1",
+    "name": "Mekong River",
+    "country": "Laos",
+    "line_class": "water"
+   },
+   "b": {
+    "destination_id": "t2",
+    "name": "Mekong",
+    "country": "Laos",
+    "line_class": "water"
+   }
+  },
+  {
+   "label": "different",
+   "why": "Mekong River / Mekong Road: river vs road, no geometry",
+   "a": {
+    "destination_id": "u1",
+    "name": "Mekong River",
+    "country": "Laos",
+    "line_class": "water"
+   },
+   "b": {
+    "destination_id": "u2",
+    "name": "Mekong Road",
+    "country": "Laos",
+    "line_class": "road"
+   }
+  },
+  {
+   "label": "different",
+   "why": "Nam Ou River / Nam Ou Bridge Road",
+   "a": {
+    "destination_id": "v1",
+    "name": "Nam Ou River",
+    "country": "Laos",
+    "line_class": "water",
+    "osm_type": "relation",
+    "osm_id": 5512345,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       102.52,
+       21.08
+      ],
+      [
+       102.55,
+       20.9
+      ],
+      [
+       102.6,
+       20.7
+      ],
+      [
+       102.61,
+       20.57
+      ],
+      [
+       102.5,
+       20.35
+      ],
+      [
+       102.35,
+       20.15
+      ],
+      [
+       102.25,
+       20.05
+      ],
+      [
+       102.22,
+       19.99
+      ]
+     ]
+    }
+   },
+   "b": {
+    "destination_id": "v2",
+    "name": "Nam Ou Bridge Road",
+    "country": "Laos",
+    "line_class": "road",
+    "osm_type": "way",
+    "osm_id": 8001,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       102.61,
+       20.571
+      ],
+      [
+       102.5,
+       20.352
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "label": "different",
+   "why": "Mekong River (Cambodia) / Tonle Sap River: meet at Phnom Penh",
+   "a": {
+    "destination_id": "w1",
+    "name": "Mekong River",
+    "country": "Cambodia",
+    "line_class": "water",
+    "osm_type": "relation",
+    "osm_id": 2091005,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       105.95,
+       12.0
+      ],
+      [
+       104.93,
+       11.57
+      ],
+      [
+       105.05,
+       11.2
+      ]
+     ]
+    }
+   },
+   "b": {
+    "destination_id": "w2",
+    "name": "Tonle Sap River",
+    "country": "Cambodia",
+    "line_class": "water",
+    "osm_type": "relation",
+    "osm_id": 9001,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       104.4,
+       12.3
+      ],
+      [
+       104.75,
+       11.9
+      ],
+      [
+       104.93,
+       11.57
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "label": "same",
+   "why": "Song Hong / Red River: Vietnamese and English names",
+   "a": {
+    "destination_id": "x1",
+    "name": "Red River",
+    "country": "Vietnam",
+    "line_class": "water",
+    "osm_type": "relation",
+    "osm_id": 9101,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       103.9,
+       22.5
+      ],
+      [
+       104.9,
+       21.6
+      ],
+      [
+       105.85,
+       21.03
+      ]
+     ]
+    },
+    "osm_names": [
+     "Sông Hồng",
+     "Red River",
+     "红河"
+    ]
+   },
+   "b": {
+    "destination_id": "x2",
+    "name": "Song Hong",
+    "country": "Vietnam",
+    "line_class": "water",
+    "osm_type": "relation",
+    "osm_id": 9101,
+    "geom_mid": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       103.9,
+       22.5
+      ],
+      [
+       104.9,
+       21.6
+      ],
+      [
+       105.85,
+       21.03
+      ]
+     ]
+    },
+    "osm_names": [
+     "Sông Hồng",
+     "Red River",
+     "红河"
+    ]
+   }
+  }
+ ]
+}

@@ -1,0 +1,184 @@
+{
+ "a1-bhutan-4d": {
+  "tour": {
+   "tour_id": "q0-bhutan-4d",
+   "name": "Western Bhutan Valleys",
+   "country": "Bhutan",
+   "duration": "4 Days / 3 Nights",
+   "summary": "A short tour of the western valleys of Bhutan: Paro, Thimphu and Punakha, with the hike to Taktsang Monastery.",
+   "description": "",
+   "highlights": [
+    "Hike to Taktsang Monastery",
+    "Punakha Dzong",
+    "Dochula Pass"
+   ],
+   "itineraries": "Day 1: Arrive at Paro airport and drive to the hotel. In the afternoon visit Rinpung Dzong and the National Museum above the town, then walk through the old market street.\nDay 2: Hike to Taktsang Monastery, the Tiger's Nest, which clings to a cliff above the Paro valley. Lunch at the cafeteria viewpoint, then return to the valley floor.\nDay 3: Drive over Dochula Pass to Punakha. Visit Punakha Dzong at the meeting of two rivers and walk across the suspension bridge before the evening.\nDay 4: Drive back to Paro along the river road and transfer to the airport for the departure flight.",
+   "inclusions": "Hotels, guide, driver, entrance fees.",
+   "exclusions": "Flights, tips.",
+   "price": ""
+  },
+  "writer": {
+   "name": "Western Bhutan Valleys",
+   "subtitle": "Paro, Thimphu and Punakha in four unhurried days",
+   "summary": "This tour covers the western valleys of Bhutan. It opens in Paro with its dzong and museum, climbs to Taktsang Monastery on its cliff, and crosses Dochula Pass to the river confluence at Punakha.",
+   "highlights": [
+    "The hike to Taktsang Monastery above the Paro valley",
+    "Punakha Dzong where two rivers meet",
+    "The road over Dochula Pass"
+   ],
+   "itineraries": [
+    {
+     "day": 1,
+     "title": "Arrival in Paro",
+     "body": "Arrive at Paro airport and drive to the hotel. In the afternoon visit Rinpung Dzong and the National Museum, then walk the old market street."
+    },
+    {
+     "day": 2,
+     "title": "Taktsang Monastery hike",
+     "body": "Hike to Taktsang Monastery, the Tiger's Nest, set on a cliff above the Paro valley. Lunch is at the cafeteria viewpoint before the walk back down."
+    },
+    {
+     "day": 3,
+     "title": "Dochula Pass and Punakha",
+     "body": "Drive over Dochula Pass to Punakha. Visit Punakha Dzong where two rivers meet and cross the suspension bridge before evening."
+    },
+    {
+     "day": 4,
+     "title": "Paro and departure",
+     "body": "Drive back to Paro along the river road and transfer to the airport for the departure flight."
+    }
+   ],
+   "seo_title": "Western Bhutan Valleys: Paro, Thimphu and Punakha",
+   "seo_meta": "Four days in western Bhutan, from the Paro valley and Taktsang Monastery to the dzongs of Thimphu and Punakha, with local guides and quiet lodges."
+  },
+  "brand_audit": {
+   "status": "pass"
+  },
+  "jev": "none"
+ },
+ "t9-fb-taktsang": {
+  "seed": "Taktsang Monastery — the Tiger's Nest above the Paro valley\nLocation: Paro, Bhutan\nDay 2 of the trip\nSource itinerary: Hike to Taktsang Monastery, which clings to a cliff above the Paro valley. Lunch at the cafeteria viewpoint, then return to the valley floor.",
+  "cta": "Ask Druk Valley Journeys to plan this trip",
+  "channel": "facebook",
+  "destination": "Bhutan",
+  "trip_name": "Western Bhutan Valleys",
+  "brand_audience": {
+   "brand_name": "Druk Valley Journeys",
+   "brand_type": "Small-group travel brand",
+   "customer_segment": "Couples in their fifties who like gentle walks",
+   "voice": [
+    "Calm",
+    "Practical"
+   ]
+  },
+  "draft": "Taktsang Monastery clings to a cliff above the Paro valley, and the hike up is on day two of the trip. Lunch is at the cafeteria viewpoint before the walk back to the valley floor. Ask Druk Valley Journeys to plan this trip.",
+  "f9": "pass"
+ },
+ "a1-nepal-14d": {
+  "tour": {
+   "tour_id": "q0-nepal-14d",
+   "name": "Nepal Heartland Journey",
+   "country": "Nepal",
+   "duration": "14 Days / 13 Nights",
+   "summary": "A two-week journey through the towns of the Kathmandu valley, the middle hills, Pokhara, Lumbini and Chitwan.",
+   "description": "",
+   "highlights": [
+    "Old quarters of the Kathmandu valley",
+    "Pokhara and Sarangkot",
+    "Lumbini"
+   ],
+   "itineraries": "Day 1: Travel to Kathmandu and walk through the old quarter with the guide. Visit the main square and the temple before dinner at the lodge.\nDay 2: Travel to Bhaktapur and walk through the old quarter with the guide. Visit the main square and the temple before dinner at the lodge.\nDay 3: Travel to Nagarkot and walk through the old quarter with the guide. Visit the main square and the temple before dinner at the lodge.\nDay 4: Travel to Dhulikhel and walk through the old quarter with the guide. Visit the main square and the temple before dinner at the lodge.\nDay 5: Travel to Bandipur and walk through the old quarter with the guide. Visit the main square and the temple before dinner at the lodge.\nDay 6: Travel to Pokhara and walk through the old quarter with the guide. Visit the main square and the temple before dinner at the lodge.\nDay 7: Travel to Sarangkot and walk through the old quarter with the guide. Visit the main square and the temple before dinner at the lodge.\nDay 8: Travel to Tansen and walk through the old quarter with the guide. Visit the main square and the temple before dinner at the lodge.\nDay 9: Travel to Lumbini and walk through the old quarter with the guide. Visit the main square and the temple before dinner at the lodge.\nDay 10: Travel to Chitwan and walk through the old quarter with the guide. Visit the main square and the temple before dinner at the lodge.\nDay 11: Travel to Gorkha and walk through the old quarter with the guide. Visit the main square and the temple before dinner at the lodge.\nDay 12: Travel to Patan and walk through the old quarter with the guide. Visit the main square and the temple before dinner at the lodge.\nDay 13: Travel to Kirtipur and walk through the old quarter with the guide. Visit the main square and the temple before dinner at the lodge.\nDay 14: Travel to Kathmandu and walk through the old quarter with the guide. Visit the main square and the temple before dinner at the lodge.",
+   "inclusions": "Lodges, guide, transport.",
+   "exclusions": "Flights, tips.",
+   "price": ""
+  },
+  "writer": {
+   "name": "Nepal Heartland Journey",
+   "subtitle": "The Kathmandu valley, the middle hills and the Terai",
+   "summary": "This journey covers the towns of the Kathmandu valley, the middle hills around Bandipur and Tansen, Pokhara, Lumbini and the forests of Chitwan.",
+   "highlights": [
+    "Old quarters of the Kathmandu valley",
+    "Pokhara and the Sarangkot ridge",
+    "Lumbini and Chitwan"
+   ],
+   "itineraries": [
+    {
+     "day": 1,
+     "title": "Kathmandu old quarter",
+     "body": "Travel to Kathmandu and walk through the old quarter with the guide. Visit the main square and the temple before dinner."
+    },
+    {
+     "day": 2,
+     "title": "Bhaktapur old quarter",
+     "body": "Travel to Bhaktapur and walk through the old quarter with the guide. Visit the main square and the temple before dinner."
+    },
+    {
+     "day": 3,
+     "title": "Nagarkot old quarter",
+     "body": "Travel to Nagarkot and walk through the old quarter with the guide. Visit the main square and the temple before dinner."
+    },
+    {
+     "day": 4,
+     "title": "Dhulikhel old quarter",
+     "body": "Travel to Dhulikhel and walk through the old quarter with the guide. Visit the main square and the temple before dinner."
+    },
+    {
+     "day": 5,
+     "title": "Bandipur old quarter",
+     "body": "Travel to Bandipur and walk through the old quarter with the guide. Visit the main square and the temple before dinner."
+    },
+    {
+     "day": 6,
+     "title": "Pokhara old quarter",
+     "body": "Travel to Pokhara and walk through the old quarter with the guide. Visit the main square and the temple before dinner."
+    },
+    {
+     "day": 7,
+     "title": "Sarangkot old quarter",
+     "body": "Travel to Sarangkot and walk through the old quarter with the guide. Visit the main square and the temple before dinner."
+    },
+    {
+     "day": 8,
+     "title": "Tansen old quarter",
+     "body": "Travel to Tansen and walk through the old quarter with the guide. Visit the main square and the temple before dinner."
+    },
+    {
+     "day": 9,
+     "title": "Lumbini old quarter",
+     "body": "Travel to Lumbini and walk through the old quarter with the guide. Visit the main square and the temple before dinner."
+    },
+    {
+     "day": 10,
+     "title": "Chitwan old quarter",
+     "body": "Travel to Chitwan and walk through the old quarter with the guide. Visit the main square and the temple before dinner."
+    },
+    {
+     "day": 11,
+     "title": "Gorkha old quarter",
+     "body": "Travel to Gorkha and walk through the old quarter with the guide. Visit the main square and the temple before dinner."
+    },
+    {
+     "day": 12,
+     "title": "Patan old quarter",
+     "body": "Travel to Patan and walk through the old quarter with the guide. Visit the main square and the temple before dinner."
+    },
+    {
+     "day": 13,
+     "title": "Kirtipur old quarter",
+     "body": "Travel to Kirtipur and walk through the old quarter with the guide. Visit the main square and the temple before dinner."
+    },
+    {
+     "day": 14,
+     "title": "Kathmandu and departure",
+     "body": "Travel to Kathmandu and walk through the old quarter with the guide. Visit the main square and the temple before dinner."
+    }
+   ],
+   "seo_title": "Nepal Heartland Journey: Kathmandu to Chitwan",
+   "seo_meta": "Two weeks across Nepal, from the old quarters of the Kathmandu valley to Pokhara, Lumbini and the Chitwan forests, with a guide and lodge stays."
+  },
+  "brand_audit": {
+   "status": "pass"
+  },
+  "jev": "none"
+ }
+}

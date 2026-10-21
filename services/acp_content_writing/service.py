@@ -72,6 +72,7 @@ from services.acp_shared.route_guard import request_route_segment_ids
 from services.acp_planning.tenant_pool import fetch_tenant_trips
 from services.acp_produce.brand import fetch_brand_rubric_text
 from services.acp_content_writing.gate_eval import ledger_snapshot  # AA-791
+from services.quality import degraded  # AA-925
 
 logger = structlog.get_logger()
 
@@ -879,6 +880,23 @@ def _final_integrity(content_text: str, hyg: hygiene.HygieneContext, gate_ledger
     if status == "approved":
         status, held_reason = "held", _held_reason_from(entry)
     return content_text, ledger, flags, status, held_reason
+
+
+def _degraded_final(gate_ledger: list[dict], flags: list[dict], repair_log: list[dict], status: str,
+                    held_reason: Optional[str], *, piece_id=None) -> tuple:
+    """AA-925 — the final attempt's `degraded[]` (services/quality/degraded.py): the F9 outage marker on its
+    ledger result and the job's repair-contract reverts. Adds the admin flag + a repair_log entry, logs one
+    `quality_degraded` event and holds an approved piece on a hard entry. Returns
+    (status, held_reason, flags, repair_log)."""
+    contract = sum(int(e.get("contract_reverts") or 0) for e in repair_log if isinstance(e, dict))
+    lst = degraded.t9_entries(gate_ledger, contract)
+    if not lst:
+        return status, held_reason, flags, repair_log
+    degraded.emit(lst, stage="t9", piece_id=str(piece_id) if piece_id else None)
+    flag = degraded.t9_flag(lst)
+    new_status, new_reason = degraded.apply_t9_hold(status, held_reason, lst)
+    entry = {"step": "degraded", "degraded": lst, "held": new_status != status}
+    return new_status, new_reason, list(flags) + [flag], list(repair_log) + [entry]
 
 
 def _waive_style_only(gate_ledger: list[dict], status: str) -> list[dict]:
@@ -1701,6 +1719,11 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     if reverted:
                         repair_log[-1]["integrity_reverts"] = len(reverted)
                         repair_log[-1]["integrity_problems"] = [p for it in reverted for p in it["integrity"]][:5]
+                    # AA-925 repair contract (truncation / balance) — reverted sentences, counted as degraded
+                    contract = [item for item in repair_items if item.get("guard") == "contract"]
+                    if contract:
+                        repair_log[-1]["contract_reverts"] = len(contract)
+                        repair_log[-1]["contract_problems"] = [p for it in contract for p in it["contract"]][:5]
                 elif attempt >= 3 and repair_items and (cut := sentence_repair.delete_flagged(
                         content_text, repair_items, ignore=brand_ignore, cta=cta, moments=hyg.moments)) is not None \
                         and (channel != "blog" or _blog_cut_refusal(content_text, cut) is None):
@@ -2012,6 +2035,13 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
         # pass cannot remove holds the piece (r3 #19 was approved with three visible duplicates).
         content_text, gate_ledger, flags, status, held_reason = _final_integrity(
             content_text, hyg, gate_ledger, flags, status, held_reason)
+        # AA-925 (Q-2, design §6.3) — the very last verdict step: a hard fail-open detector on the FINAL attempt
+        # (the F9 judge outage marker on its ledger) labels an approved piece held. Reverses AA-770's "an F9
+        # outage is a warn, not a hold"; `held` stays an admin-only label, the tenant still receives the piece.
+        # The marker is a non-blocking flag + a repair_log entry, never a blocking ledger gate (that would
+        # trigger a rewrite and confuse the AA-528 guard).
+        status, held_reason, flags, repair_log = _degraded_final(gate_ledger, flags, repair_log, status,
+                                                                 held_reason, piece_id=piece_id)
 
         # AA-570 — the common case: attempt 2 ran and its own gate-regression-guard branch above
         # never fired, so `discarded_attempt` is still None even though a real attempt WAS

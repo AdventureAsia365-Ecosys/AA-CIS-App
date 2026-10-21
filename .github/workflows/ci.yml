@@ -64,6 +64,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          # AA-925: the Q0 red-on-base step needs the PR merge commit's first parent (the base tip).
+          fetch-depth: 2
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -97,6 +100,22 @@ jobs:
             --cov-fail-under=30
           pytest tests/acp/ -v \
             --tb=short
+
+      # AA-925 (Q-2): every NEW Q0 case (tests/unit/quality/cases) must FAIL on the base-branch tip, and an
+      # existing truth label may change only with the `q0-relabel` PR label (labels are read from the event:
+      # after adding the label, push a commit so the run sees it). HEAD^1 of the pull_request merge ref is
+      # the base tip. See .github/scripts/q0_red_on_base.py.
+      - name: Q0 red on base
+        if: github.event_name == 'pull_request'
+        env:
+          ENVIRONMENT: test
+          AWS_REGION: us-west-1
+          AWS_DEFAULT_REGION: us-west-1
+          DATABASE_URL: postgresql://test:test@localhost:5432/test
+          OPENAI_API_KEY: sk-test-dummy
+          JWT_SECRET: test-jwt-secret-ci-only-not-real
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: python .github/scripts/q0_red_on_base.py --base "$(git rev-parse HEAD^1)"
 
   test-integration:
     name: Integration Tests

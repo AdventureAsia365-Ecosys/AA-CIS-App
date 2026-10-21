@@ -317,14 +317,40 @@ def check_grounding(generated: dict, tour: dict, *, use_jev: bool = True) -> dic
     units = sentence_units(generated or {})
     source_parts = source_number_parts(tour)
     numeric = {i: n for i, u in enumerate(units) if (n := find_novel_numeric_claims(u["sentence"], source_parts))}
+    jev_errors: list[dict] = []
+    no_source = False
     if use_jev and source_text(tour):
         sources = {i: unit_source(tour, u) for i, u in enumerate(units)}
         verdicts = judge_units(units, sources)
+        # AA-925 degraded: an asked unit with no verdict (judge_units failed open → {}) or a zone=error
+        # verdict (breaker open, outage, config error) is a Jev outage on that unit. zone=skipped (mode off,
+        # tenant not allow-listed) is not.
+        for i in sources:
+            v = verdicts.get(i)
+            if v is None or getattr(v, "zone", None) == "error":
+                jev_errors.append({"unit": i, "mode": getattr(v, "mode", None) if v is not None else None})
     else:
         verdicts = {}
+        no_source = bool(use_jev and units)
     out = classify(units, numeric, verdicts)
     out["units"] = len(units)
     out["jev_asked"] = len(verdicts)
+    out["jev_errors"] = jev_errors
+    out["no_source"] = no_source
+    return out
+
+
+def degraded_entries(res: Optional[dict]) -> list[dict]:
+    """AA-925 — the `degraded` entries (services/quality/degraded.py) of one check_grounding result: the Jev
+    outages per severity and `grounding_no_source`. Replaced, not summed, on each re-check (the latest
+    content's check is what holds)."""
+    from services.quality import degraded
+
+    if not res:
+        return []
+    out = degraded.jev_entries(res.get("jev_errors") or [], detail="a1_claim_supported")
+    if res.get("no_source"):
+        out.append({"name": degraded.GROUNDING_NO_SOURCE, "count": 1, "detail": "no source text"})
     return out
 
 
@@ -458,31 +484,57 @@ def repair_and_recheck(generated: dict, violations: list[dict], tour: dict, *, m
                    forbidden=all_forbidden(brand_forbidden_words))
     if not fixed["fields"]:
         return {"generated": generated, "violations": violations, "notes": None, "fields": [],
-                "cost_usd": fixed["cost_usd"]}
-    res = check_grounding(fixed["generated"], tour)
-    return {"generated": fixed["generated"], "violations": res["violations"], "notes": res["notes"],
-            "fields": fixed["fields"], "cost_usd": fixed["cost_usd"]}
+                "cost_usd": fixed["cost_usd"], "check": None, "contract": None}
+    # AA-925 repair contract: the sentence repair may only touch the fields it was asked to, add no number or
+    # name the source and the field lack, cut no sentence short and break no bracket. A violating field keeps
+    # its pre-repair text (its violation stays, so it goes to review as before).
+    from services.quality import repair_contract
+    flagged = {v["field"] for v in violations}
+    repaired, contract = repair_contract.enforce_fields(generated, fixed["generated"], allowed=flagged,
+                                                       source=source_text(tour))
+    if not contract.ok:
+        logger.warning("grounding_repair_contract_revert", fields=contract.fields(),
+                       invariants=contract.invariants())
+    kept = [f for f in fixed["fields"] if f not in contract.fields()]
+    if not kept:
+        return {"generated": generated, "violations": violations, "notes": None, "fields": [],
+                "cost_usd": fixed["cost_usd"], "check": None, "contract": contract}
+    res = check_grounding(repaired, tour)
+    return {"generated": repaired, "violations": res["violations"], "notes": res["notes"],
+            "fields": kept, "cost_usd": fixed["cost_usd"], "check": res, "contract": contract}
 
 
 def grounding_node(state: dict) -> dict:
     """S1 graph node between brand_audit and flag_fix (A1 only): check, repair the violating
     sentences once, re-check. What is still unsupported stays in `grounding_violations` (and its
     codes in failure_codes); revalidate sends it to manual_check."""
+    from services.quality import degraded
+
     if state.get("is_tenant_rewrite"):
-        return {**state, "grounding_ran": False}
+        return {**state, "grounding_ran": False}   # T3 checks a tenant rewrite: not a degraded path
     try:
         generated, tour = state.get("generated", {}), state.get("tour", {})
         first = check_grounding(generated, tour)
         found = first["violations"]
         cost, fields, violations, notes = 0.0, [], found, first["notes"]
+        last_check, contract = first, None
         if found:
             rr = repair_and_recheck(generated, found, tour, model_tier=state.get("model_tier"),
                                     brand_forbidden_words=state.get("brand_forbidden_words"))
             generated, violations, fields, cost = rr["generated"], rr["violations"], rr["fields"], rr["cost_usd"]
             notes = rr["notes"] if rr["notes"] is not None else notes
+            last_check, contract = rr.get("check") or first, rr.get("contract")
     except Exception as exc:                       # never break the rewrite
         logger.warning("grounding_node_failed", error=str(exc)[:200])
-        return {**state, "grounding_ran": False}
+        # AA-925: grounding is a hard detector — an output it never checked is held, not passed.
+        return {**state, "grounding_ran": False,
+                "degraded": degraded.replace_detector(
+                    state.get("degraded"), "grounding",
+                    [{"name": degraded.GROUNDING_NOT_RUN, "count": 1, "detail": f"grounding_node: {exc}"}])}
+    lst = degraded.replace_detector(state.get("degraded"), "grounding", degraded_entries(last_check))
+    if contract is not None and not contract.ok:
+        lst = degraded.add(lst, degraded.REPAIR_CONTRACT, detector="grounding_repair", count=len(contract.fields()),
+                           detail=", ".join(contract.invariants()))
     logger.info("grounding_done", units=first["units"], jev_asked=first["jev_asked"], found=len(found),
                 repaired_fields=fields, remaining=len(violations), notes=len(notes))
     return {
@@ -495,6 +547,7 @@ def grounding_node(state: dict) -> dict:
         "grounding_repaired_fields": fields,
         "grounding_violations": violations,
         "grounding_notes": notes,
+        "degraded": lst,
     }
 
 

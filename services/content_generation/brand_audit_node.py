@@ -414,8 +414,11 @@ Return JSON only per schema."""
         if not logged:
             # AA-927: a billed reply that broke the schema still gets its cost row (no `status` key).
             record_unusable_sync(resp, stage=stage_for(state, "s1_brand_audit"), role="judge", error=e)
+        from services.quality import degraded  # AA-925: counted (it already fails closed)
         return {
             **state,
+            "degraded": degraded.add(state.get("degraded"), degraded.BRAND_AUDIT_UNAVAILABLE,
+                                     detector="brand_audit", detail=str(e)[:200]),
             "brand_audit_status": "manual_check",
             "brand_audit_codes":  [BRAND_AUDIT_UNAVAILABLE],
             "brand_audit_issues": [f"Brand audit could not run ({str(e)[:200]}). Check by hand or Regenerate."],

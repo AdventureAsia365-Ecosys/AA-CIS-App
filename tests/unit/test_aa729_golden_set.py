@@ -626,7 +626,8 @@ def test_t9_score_only_builds_the_gate_inputs_the_service_uses(monkeypatch):
     monkeypatch.setattr(service, "run_quality_gates", fake_gates)
     verdict, out = asyncio.run(score.t9_score_only(_t9_sample()))
     assert out is None and verdict == {"passed": False, "first_failure": "F9_cta_fact",
-                                       "blocking_failures": ["F9_cta_fact"], "flags": ["F15_voice_warn"]}
+                                       "blocking_failures": ["F9_cta_fact"], "flags": ["F15_voice_warn"],
+                                       "degraded": {}, "degraded_hard": []}  # AA-925
     assert seen["channel"] == "blog" and seen["cannibalization_match"] is None and seen["sibling_texts"] == []
     assert "TRIP: " in seen["atom_text"] and "BRAND: Terra Family" in seen["atom_text"]
     assert seen["hygiene_ctx"] is not None and seen["trip_ctx"] is not None
@@ -902,3 +903,61 @@ def test_labels_pack_keeps_the_full_source():
             s["input"]["tour"] = {"itinerary": long_text}
     pack = labels.export_pack(fx)
     assert any(it["source"].endswith("Day 8 ends in Taipei.") for it in pack["items"])
+
+
+# ── AA-925: degraded samples, INVALID strata, the eval stage ─────────────────────────────────────
+
+
+def test_t9_score_only_holds_an_f9_outage_as_degraded():
+    from scripts.aa729 import score
+
+    ledger = [{"gate": "F9_cta_fact", "passed": False, "blocking": False, "degraded": "f9_judge_unavailable"}]
+    block = score.degraded_block(score.t9_degraded(ledger))
+    assert block == {"degraded": {"f9_judge_unavailable": 1}, "degraded_hard": ["f9_judge_unavailable"]}
+
+
+def test_invalid_strata_are_per_stratum_and_skip_error_rows():
+    from scripts.aa729 import score
+
+    rows = [{"stratum": "s1", "sample_id": "s1-1", "verdict": {"degraded_hard": ["jev_unavailable"]}},
+            {"stratum": "s1", "sample_id": "s1-2", "verdict": {"degraded_hard": []}},
+            {"stratum": "t9_blog", "sample_id": "b-1", "verdict": {"degraded_hard": []}},
+            {"stratum": "t2", "sample_id": "t2-1", "error": "TimeoutError", "verdict": {"degraded_hard": ["x"]}}]
+    assert score.invalid_strata(rows) == {"s1": ["s1-1"]}
+
+
+def test_report_refuses_deltas_for_invalid_strata_only():
+    from scripts.aa729 import report
+
+    def run(rid, s1_pass, invalid=None, flag_fix=0):
+        samples = [{"sample_id": "s1-1", "stratum": "s1", "verdict": {"passed": s1_pass},
+                    "calls_by_stage": {"s1_flag_fix": flag_fix}},
+                   {"sample_id": "b-1", "stratum": "t9_blog", "verdict": {"passed": True}, "calls_by_stage": {}}]
+        return {"schema": "aa729-score", "run_id": rid, "mode": "regenerate", "fixture_version": "1.1.0",
+                "samples": samples, "invalid_strata": invalid or {},
+                "metrics": {"s1": {"pass_rate": 1.0 if s1_pass else 0.0}, "t9_blog": {"pass_rate": 0.5},
+                            "all": {"pass_rate": 0.5}}}
+
+    lines = report.before_after(run("a", True, flag_fix=1), run("b", False, {"s1": ["s1-1"]}, flag_fix=3))
+    text = "\n".join(lines)
+    assert "INVALID strata" in text
+    s1_row = next(ln for ln in lines if ln.startswith("| s1 |"))
+    assert "INVALID" in s1_row
+    blog_row = next(ln for ln in lines if ln.startswith("| t9_blog |"))
+    assert "+0.0 pt" in blog_row
+    assert "Fitter revert criterion" in text
+
+
+def test_evalpatch_stage_is_parameterised_and_validated():
+    import uuid
+
+    from scripts.aa729 import evalpatch
+    from shared.llm_client import call_log, decide
+
+    run = str(uuid.uuid4())
+    sql = evalpatch.relabel_sql(call_log._INSERT_SQL, run, "adhoc_aa925")
+    assert "'adhoc_aa925'" in sql and "'adhoc_aa729'" not in sql
+    assert "'adhoc_aa925:' || $1::text" in evalpatch.relabel_decision_sql(decide._LOG_SQL, "adhoc_aa925")
+    assert "stage = 'adhoc_aa925'" in evalpatch.spend_sql("adhoc_aa925")
+    with pytest.raises(ValueError):
+        evalpatch.spend_sql("s1_generate'; --")

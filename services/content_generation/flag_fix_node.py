@@ -422,9 +422,47 @@ def _repair_still_compressed_days(state: dict, itinerary_text: str, nudge_budget
     return serialize_itinerary_days(days), extra_cost, True, nudges_used
 
 
+def _contract_revert(before: dict, after: dict, keys, forbidden, tour: dict) -> dict:
+    """AA-925: the repair contract (services/quality/repair_contract.py) over the repaired fields — it wraps and
+    replaces the AA-641 revert below, keeping its behaviour: invariant 1's gate runner is the forbidden-word
+    scan, so a field whose repair ADDED a forbidden word gets its pre-repair value back. It also reverts a field
+    whose repair added a figure the field and the source lack, cut its last sentence short ("...a
+    20-kilometre."), or broke a bracket / bold pair. Mutates `after`; returns {field: [why]}.
+
+    Names are not checked here (flag_fix rewrites whole fields for brand reasons; background about a named place
+    is allowed by the writer policy) — only the grounding fact editor and the T3 sentence repair check them."""
+    from services.content_generation.grounding import source_text
+    from services.quality import repair_contract
+
+    keys = [k for k in keys if k in after and k in before]
+    if not keys:
+        return {}
+
+    def gate_runner(_field: str, text: str) -> set:
+        return {f"FORBIDDEN_WORD:{w}" for w in forbidden_in(text, forbidden)}
+
+    b = {k: before[k] for k in keys}
+    a = {k: after[k] for k in keys}
+    _, res = repair_contract.enforce_fields(b, a, allowed=keys, source=source_text(tour or {}),
+                                            gate_runner=gate_runner, names=False)
+    reverted: dict = {}
+    for v in res.violations:
+        reverted.setdefault(v["field"], []).append(f"{v['invariant']}: {v['detail']}")
+    for k in reverted:
+        after[k] = before[k]
+    return reverted
+
+
+def _invariants(reverted: dict) -> list[str]:
+    """The invariant names of a ``_contract_revert`` result (AA-925: the log event says which rule reverted the
+    field — the AA-641 ``flag_fix_introduced_forbidden`` event only ever meant a forbidden word)."""
+    return sorted({why.split(":", 1)[0] for whys in reverted.values() for why in whys})
+
+
 def _revert_introduced_forbidden(before: dict, after: dict, keys, forbidden) -> dict:
     """AA-641: restore, per field, the pre-repair value of any field whose repair ADDED a forbidden
-    word it did not have before. Mutates `after`; returns {field: [words added]}. A field that
+    word it did not have before. AA-925: production uses ``_contract_revert`` (same rule as invariant 1);
+    this stays as the reference the AA-641 tests pin. Mutates `after`; returns {field: [words added]}. A field that
     already contained the word keeps its repair (the repair did not make it worse)."""
     reverted = {}
     for k in keys:
@@ -462,6 +500,7 @@ def flag_fix_node(state: dict) -> dict:
         current_content = dict(state.get("generated", {}))
         extra_cost = 0.0
         applied_fields: set = set()
+        contract_reverts: dict = {}   # AA-925: field -> why the repair contract reverted it
 
         # AA-747: apply the deterministic SEO fit (fit_seo_meta_final / fit_seo_title, AA-740) and
         # re-check each seo_meta/seo_title code on the fitted value BEFORE any LLM request. A length
@@ -487,14 +526,16 @@ def flag_fix_node(state: dict) -> dict:
             if itin_applied:
                 # AA-641: same forbidden-word guard as the generic pass below.
                 itin_after = {"itineraries": new_itinerary}
-                itin_reverted = _revert_introduced_forbidden(
+                itin_reverted = _contract_revert(
                     current_content, itin_after, {"itineraries"},
                     # AA-800: T2 uses the tenant's layered list (A1: all_forbidden, unchanged)
                     state_forbidden(state, {**current_content, **itin_after}),
+                    state.get("tour") or {},
                 )
                 if itin_reverted:
-                    logger.warning("flag_fix_introduced_forbidden", fields=itin_reverted,
-                                   tour=current_content.get("name"))
+                    contract_reverts.update(itin_reverted)
+                    logger.warning("flag_fix_repair_contract_revert", fields=itin_reverted,
+                                   invariants=_invariants(itin_reverted), tour=current_content.get("name"))
                 else:
                     current_content["itineraries"] = new_itinerary
                     applied_fields.add("itineraries")
@@ -519,6 +560,7 @@ def flag_fix_node(state: dict) -> dict:
                 "cost_usd":         state.get("cost_usd", 0) + extra_cost,
                 "fix_pass_applied": True,
                 "fix_pass_fields":  sorted(applied_fields),
+                "degraded":         _contract_degraded(state, contract_reverts),
             }
 
         issues_text = "\n".join(state.get("brand_audit_issues", []))
@@ -617,9 +659,12 @@ Keep all other fields unchanged."""
         for k, v in fixed_fields.items():
             if k in fix_keys:
                 new_generated[k] = v
-        reverted = _revert_introduced_forbidden(current_content, new_generated, fix_keys, forbidden)
+        # AA-641 → AA-925: the repair contract per field (forbidden word added, figure added, sentence cut short,
+        # bracket broken → the field keeps its pre-repair value). seo_meta is checked after its band guard below.
+        reverted = _contract_revert(current_content, new_generated, set(fix_keys) - {"seo_meta"}, forbidden, tour)
         if reverted:
-            logger.warning("flag_fix_introduced_forbidden", fields=reverted, tour=current_content.get("name"))
+            logger.warning("flag_fix_repair_contract_revert", fields=reverted, invariants=_invariants(reverted),
+                           tour=current_content.get("name"))
 
         # AA-205: deterministic post-repair band guard for seo_meta (no pad, no escalate).
         # LLM repair can overshoot under SEO_META_MIN (e.g. 132). AA-215 revalidate re-runs
@@ -660,6 +705,12 @@ Keep all other fields unchanged."""
                 logger.warning("meta_band_unrecoverable_flagging_not_blocking",
                                final_len=len(_guarded), tour=current_content.get("name"))
             new_generated["seo_meta"] = _guarded
+            meta_reverted = _contract_revert(current_content, new_generated, {"seo_meta"}, forbidden, tour)
+            if meta_reverted:
+                logger.warning("flag_fix_meta_contract_revert", why=meta_reverted["seo_meta"],
+                               tour=current_content.get("name"))
+                reverted = {**reverted, **meta_reverted}
+        contract_reverts.update(reverted)
 
         logger.info("flag_fix_done", fixed_keys=list(fix_keys), cost=resp.cost_usd)
 
@@ -676,6 +727,7 @@ Keep all other fields unchanged."""
             "cost_usd":        state.get("cost_usd", 0) + resp.cost_usd + extra_cost,
             "fix_pass_applied": True,
             "fix_pass_fields":  sorted(applied_fields),
+            "degraded":         _contract_degraded(state, contract_reverts),
             # AA-608: meta length no longer escalates to manual_check (see band guard above).
         }
 
@@ -689,6 +741,16 @@ Keep all other fields unchanged."""
             "fix_pass_applied": False,
             "fix_pass_fields":  [],
         }
+
+
+def _contract_degraded(state: dict, reverts: dict) -> list:
+    """The state's degraded list plus one soft ``repair_contract`` entry when the contract reverted a field."""
+    from services.quality import degraded
+    lst = list(state.get("degraded") or [])
+    if not reverts:
+        return lst
+    return degraded.add(lst, degraded.REPAIR_CONTRACT, detector="flag_fix", count=len(reverts),
+                        detail="; ".join(f"{k}: {', '.join(v)}" for k, v in sorted(reverts.items()))[:300])
 
 
 def _write_lessons_safe(lessons: list, state: dict) -> None:

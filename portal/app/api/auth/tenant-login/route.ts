@@ -45,6 +45,15 @@ export async function POST(req: NextRequest) {
     if (res.status === 401) {
       return NextResponse.json({ detail: "Invalid API key" }, { status: 401 });
     }
+    // AA-876 — the API's login throttle (or the API Gateway login throttle) answers 429. Pass it on as a 429
+    // with a readable message instead of the 502 below; Retry-After is forwarded when the API sent one.
+    if (res.status === 429) {
+      const retryAfter = res.headers.get("retry-after");
+      return NextResponse.json(
+        { detail: "Too many sign-in attempts. Try again in a few minutes." },
+        { status: 429, headers: retryAfter ? { "Retry-After": retryAfter } : undefined },
+      );
+    }
     if (!res.ok) {
       return NextResponse.json({ detail: "Login failed — backend error" }, { status: 502 });
     }

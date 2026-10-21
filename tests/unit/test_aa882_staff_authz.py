@@ -363,6 +363,7 @@ def test_the_machine_policy_routes_are_the_scheduler_posts_and_the_overview():
         ("POST", "/admin/jev/402-sweep"), ("POST", "/admin/job-runner/retention/schedule"),
         ("POST", "/admin/job-runner/staff-reconcile/schedule"),
         ("POST", "/admin/waves/check"), ("GET", "/admin/overview"),
+        ("POST", "/admin/photos/sync/schedule"),   # AA-844
     ])
 
 
@@ -375,6 +376,7 @@ def test_machine_routes_cover_every_role_less_caller_and_nothing_else():
         ("POST", "/admin/jev/402-sweep"), ("POST", "/admin/waves/check"),
         ("POST", "/admin/job-runner/retention/schedule"),
         ("POST", "/admin/job-runner/staff-reconcile/schedule"),
+        ("POST", "/admin/photos/sync/schedule"),   # AA-844
     }
 
 

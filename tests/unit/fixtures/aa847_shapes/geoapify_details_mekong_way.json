@@ -1,0 +1,51 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "feature_type": "details",
+    "name": "Mekong",
+    "country_code": "la",
+    "datasource": {
+     "sourcename": "openstreetmap",
+     "attribution": "© OpenStreetMap contributors",
+     "license": "Open Database License",
+     "raw": {
+      "name": "ແມ່ນ້ຳຂອງ",
+      "name:en": "Mekong",
+      "waterway": "river",
+      "osm_type": "w",
+      "osm_id": 11
+     }
+    },
+    "place_id": "51mekongway11"
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      100.41,
+      20.27
+     ],
+     [
+      100.55,
+      20.15
+     ],
+     [
+      100.75,
+      20.05
+     ],
+     [
+      100.95,
+      19.95
+     ],
+     [
+      101.13,
+      19.89
+     ]
+    ]
+   }
+  }
+ ]
+}

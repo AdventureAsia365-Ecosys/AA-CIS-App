@@ -90,14 +90,19 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
       portal host — no `Domain`), `app/api/tenant/me`, `app/api/tenant/[...path]` (verified tenant Bearer only),
       `app/api/playground/proxy`. **No admin secret**: the portal project has no `ADMIN_SECRET`,
       `INTERNAL_API_KEY` or `COGNITO_*` (a test checks the source). `API_URL` defaults to the Dev API, so the
-      Vercel project needs no env var. CORS is unchanged: the browser only calls its own origin, the BFF
-      calls the API server to server.
+      Vercel project needs no env var. No CORS is needed: the browser only calls its own origin, the BFF
+      calls the API server to server. The API itself sends no CORS grant on a deployed task (AA-876,
+      `cors_allow_origins()` in `api/main.py`: empty when `AWS_EXECUTION_ENV` is set, only `localhost:3000/3001`
+      off ECS); a browser preflight from any origin gets no `Access-Control-Allow-Origin`.
     - Page gate `portal/proxy.ts` (Next 16 Proxy): `/tenant-login` public; `/portal/*` needs a token
       `/auth/verify-tenant` accepts (cached ≤ 20 s, `portal/lib/auth-server.ts`); refused → cookies cleared,
       back to `/tenant-login`; backend unreachable → fail closed outside development.
     - Security headers on every response (`portal/next.config.ts`): HSTS, `nosniff`, `Referrer-Policy`,
       `X-Frame-Options: DENY`, a minimal CSP (`frame-ancestors 'none'; base-uri 'self'; form-action 'self';
       object-src 'none'`), `Permissions-Policy`.
+    - The admin app (`frontend/next.config.ts`) sends the same six headers on every response, plus
+      `poweredByHeader: false` (AA-876). This covers the public white-label `/trip/[tourId]` pages too: nothing
+      embeds them in an iframe today; a partner embed needs an explicit `frame-ancestors` allow-list first.
     - Legal pages (AA-886): `/privacy` and `/terms` are public portal pages (outside the `proxy.ts`
       matcher), **drafts pending legal review**: the shell `portal/app/_legal/LegalPage.tsx` always shows a
       "Draft — pending legal review" banner, and both are `noindex`. The privacy notice describes portal
@@ -275,7 +280,7 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   - Job kinds live in `services/jobs/` (`segment_research`, `t2_rewrite`, `t9_write`, `a3_atomize`,
     `s1_seo_prefetch`, `photo_sync`, `s1_rewrite`, `s1_batch_ingest`, `revalidate`, `recompute`,
     `place_cards_build`, `t7_slate`, `t8_angles`, and the place pipeline `place_extract`,
-    `place_geocode`, `tour_graph_build` — AA-712, the five `retention_*` kinds — AA-825,
+    `place_geocode`, `tour_graph_build` — AA-712, `place_shape`, `place_dedupe` — AA-847, the five `retention_*` kinds — AA-825,
     `ops_alert_email` — AA-828). Every claim merges `progress.attempt_started_at` (AA-751, F18):
     `started_at` keeps the first attempt's start, so per-attempt age reads the progress key.
   - **Background kinds (AA-712)**: `@job_kind(..., background=True)` kinds never take the worker's
@@ -440,9 +445,20 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   Drive folders (public, read with a Google API key from `aa-cis/dev/gdrive-photo-reader`) to S3
   (`photos/<country>/<file id>-{1600,600}.webp`) and records `shared.place_photo`, matched to a tour
   (folder name) and, on request, to a `shared.destinations` place (file name). Images are public via
-  `GET /content/photos/{id}?size=` (302 to presigned S3). With `match_destinations` it fills empty
-  `shared.destinations.cover_image_url` (read by the TripPlanner) — off until the destinations are
-  re-extracted from the rerun tours.
+  `GET /content/photos/{id}?size=`, the stable path every consumer stores (catalog photo views,
+  TripPlanner covers and `og:image`, Booking `CisPhoto`). AA-844: it answers a 302 to the photos CDN
+  (CloudFront `img.lumiguides.it.com`, AA-CIS-Infra `photos_cdn.tf`, in front of the bucket's
+  `photos/` prefix) as `<host>/<slug>/<file>?v=<sha256[:12]>`, cached 1 day; `PHOTO_CDN_BASE=off`
+  falls back to a presigned S3 URL (1 h, redirect cached 50 min). The API stays in the image path
+  (one hop + one row read per view); CloudFront serves the bytes. A rejected photo is 404 on the
+  route, but a CDN URL handed out earlier keeps working (the object stays in S3, edge cache 1 year)
+  — reject is reversible, so objects are not deleted. A daily schedule (Infra ops-probe Lambda,
+  21:00 UTC = 04:00 ICT) calls `POST /admin/photos/sync/schedule`: one incremental `photo_sync` job
+  per CON country, idempotent per UTC day, skipped while another `photo_sync` job is queued or
+  running (not skipped during a rerun wave: no LLM work); `/admin/photos/summary` reports it as
+  `last_scheduled`. Those serial jobs hold the deploy gate for a while around 04:00 ICT. With
+  `match_destinations` it fills empty `shared.destinations.cover_image_url` (read by the TripPlanner)
+  — off until the destinations are re-extracted from the rerun tours (the schedule never sets it).
 - **Place pipeline (AA-712, ADR 0007, migration 226)**: CIS — not TripPlanner — computes each live
   tour's day skeleton (start / end / overnight), places (= itinerary components, stable uuid5 ids),
   geocoded destinations and the tour graph (stops, nodes, edges, legs, junctions) into the CIS-internal
@@ -469,6 +485,64 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   (Cohere 1536-d). `shared.destinations` is unique on `(name_norm, country, locality_norm)` (same
   name in two countries = two places). Other apps will read it only through `catalog.*` views
   (migration 228, next slice); TripPlanner's own extraction is frozen.
+- **Place kinds and the content-validity gate (AA-847).** `geomatch.feature_kind` names a place that is not a
+  pin: a **linear** feature (trail, river, road, loop, stream, path, circuit, expressway …) is stored
+  `geo_precision='line'`, `geo_status='ok'` and DRAWN as a line (owner decision S246: never a pin, a circle or
+  hidden): `place_geocode` inserts its pending `geo.place_shape` row and never moves its point for shape reasons (it
+  stays the only coordinate writer); an **area** feature (national park, delta, plateau, coast, gorge, mountain
+  range) is `area` even when Geoapify confirms a point. A name that names a point on the feature ("River Kwai
+  Bridge", "Kuang Si Falls", "Peradeniya Railway Station") stays a point. A descriptive atom place around a feature
+  ("sandbank on the Nam Ou River", "Annapurna Circuit Trek") links its component to the feature's destination
+  (`geomatch.linked_feature`, labelled set in `tests/unit/test_aa847_linked_feature.py`). A line destination is never
+  a graph stop or node, never in the outlier rule and never in the point-distance same-place rule.
+- **Line geometry (AA-847, CIS 255).** `geo.place_shape` (one row per line destination: status pending / ok /
+  approximate / not_found / failed / manual, GeoJSON at ≤ 2,000 / 300 / 60 vertices clipped to the country, non-null
+  bbox, `osm_type`/`osm_id`) is written only by the job kind `place_shape` (and the admin's manual GeoJSON);
+  `geo.tour_segment` (the stretch a tour-day follows, versioned with `geo.graph_build`) only by `tour_graph_build`.
+  The Geoapify daily credit guard sums `geo.geocode_call.credits` of every endpoint (search + Place Details).
+  `place_shape` (debounced, cap 1, background; off unless `PLACE_SHAPES_ENABLED`; `GEOCODER_PROVIDER=model_only` = no
+  call) takes the geometry from Geoapify Place Details by the stored place id, then Overpass (free, ≤ 1 request / 2 s)
+  when that is missing or only one OSM way; `services/places/shape.py` accepts a candidate on name (name / name:en /
+  int_name / name:*), kind (waterway / road / route), the country POLYGON (Natural Earth admin-0,
+  `services/places/geodata/`; not `guards.BBOX`), distance to the tour-day anchors and a kind-aware length, and
+  prefers a relation or merged same-name ways over one way. No OSM feature → the anchored approximate route of a
+  tour-day (status `approximate`, drawn dashed "approximate route"); no anchors either → `not_found`, retried and
+  listed on `/admin/places` (Lines tab; `POST /admin/places/shapes/backfill` dry run first, ≤ 50 names;
+  `PUT|DELETE /admin/places/{id}/shape` manual GeoJSON). `place_geocode` and `place_shape` share one advisory lock
+  (`services/places/geolock.py`): one Geoapify client at a time. `tour_graph_build` cuts each day's stretch
+  (`shape.day_segment`: between the previous and this day's stop, or ±15 km around one, or none = the whole
+  feature). Two lines are the same place only on the same country + kind + name and the same OSM id or ≥ 70 % overlap
+  (`shape.same_line_place`; labelled pairs `tests/unit/fixtures/aa847_line_pairs.json`).
+- **Automatic duplicate merge (AA-847 Problem 2, CIS 257; owner decision S246: no manual merges as the normal
+  path).** One decision `services/places/dedupe.decide(a, b)` → auto_merge / llm / keep (rules `r1.4`, pinned by
+  `tests/unit/test_aa847_dedupe.py` on a labelled pair set: 0 false merges in every metadata mode). A shared geocoder
+  id or place card is evidence, never a verdict (it auto-merges only POI / natural objects with exact / fuzzy names
+  and no cap); two drawn lines merge on their shape overlap, a line without a drawn shape or a point vs a line is at
+  most the model's call. The job kind `place_dedupe` (debounced, background, cap 1; queued by `place_geocode` when it
+  wrote a destination, by `place_shape` (`enqueue.enqueue_dedupe`), by an undo, by the admin) recomputes every pair
+  per country, asks the middle band of allow-listed countries to two models that must agree (`a3_place_dedupe` GPT-6
+  Luna A/B and B/A, `a3_place_dedupe_check` Haiku; verdicts cached in `geo.place_pair_verdict`, budget
+  bedrock/job:place_dedupe $0.50/run, ≤ 150 pairs/run) and writes only for countries in mode `apply` of
+  `geo.place_dedupe_country` (the approved dry-run diff; more than max(5, 1 %) changes outside it → `held_volume` +
+  alert). `place_dedupe` is the only writer of `duplicate_of` (the admin fix is an override); every merge is a
+  `geo.place_merge` row (repointed rows, flattened members) and is undone by relink (`POST
+  /admin/places/merges/{id}/undo`, `different` pin). place_geocode upsert / relink, the place_extract persist, merges
+  and the admin fix take one advisory lock (`store.lock_destinations`). `catalog.v_destination_redirect` maps a
+  merged id to its keeper (TripPlanner answers 301). `place_extract` maps a tour's in-tour duplicates with the same
+  decision, rules band only (`dedupe.in_tour_remap`). `services/places/validity.py` is the deterministic report (reason codes V1 duration / V2 same place / V3
+  not a pin / V4 day text; V2 is `dedupe.decide`: `near_duplicate` = an auto_merge pair not merged yet,
+  `possible_duplicate` = a model-band pair, informational), run after every
+  `tour_graph_build` (counts in `geo.graph_build.stats.validity`) and on `/admin/places` (Coverage + Content
+  validity tabs; `GET /admin/places/validity|coverage`, `POST /admin/places/validity/fix` dry run by default, apply
+  refused with 409 when the plan changed since the dry run's `fingerprint`, audit row with the prior values,
+  `undo=<audit id>`). The **flip gate** (`validity.GATE_REASONS`, `summary.gate`) counts only map defects the fixes
+  clear: `near_duplicate`, `linear_feature` (a linear name not stored as a line), `area_feature`,
+  `linear_without_shape` (a line whose shape is not ok / manual / approximate); `same_destination_names` (one pin,
+  several spellings),
+  V1 and V4 are informational. A duplicate merge sets `duplicate_of` and repoints the CIS rows
+  (`geo.tour_place`, `geo.tour_day`, `geo.place_name`, `acp_shared.place_card`, `shared.place_photo`); Booking and
+  TripPlanner rows are reported, never written; `store.known_destinations` / `upsert_destination` answer a merged
+  key with its keeper, so a rebuild does not recreate the duplicate.
 
 ## Deploy & CI
 
@@ -556,6 +630,23 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   S22, because the master was the login) **ends when 246 is applied on Dev** (DB Migrate logs `ran as: cis_owner`
   with login `db_migrator`); if the migrator task definition is ever rolled back to the master, DB Migrate refuses a
   recipe file again at `check` (exit 8).
+- **Catalog L4 read model (CIS 253, AA-847; the first view change under the recipe above).** `catalog._live_tour`
+  (internal, not barrier, not granted) is the one definition of a live AA tour (225's `live` CTE, whole projection);
+  `v_tour` is built on it and every place / graph view joins it instead of `v_tour`, so a graph read no longer
+  computes `v_tour`'s photo count, cover, duration regex and md5 per tour. `catalog._live_stop` (current build ⋈ live
+  ⋈ usable destination) feeds `v_tour_stop`, `v_graph_node` and `v_tour_junction`. `catalog.v_component_embedding`
+  (pgvector only, `tripplanner` only) serves the HNSW top-k over the components `v_tour_component` shows (live tour,
+  usable place: never a suspect or merged one), so the reader checks nothing after the scan. Columns and rows of
+  every contract view are unchanged (fingerprint test).
+- **Line places in the catalog (CIS 256, AA-847; contracts `catalog.tour.v1.2`, `catalog.graph.v1.2`).** Columns only
+  appended: `v_destination` gains `shape_kind`, `shape_status`, `shape_source`, `length_km`, never-null `min_lat` /
+  `min_lng` / `max_lat` / `max_lng` (a line's shape bbox, else the point: map tiles filter by bbox intersection with
+  plain float comparisons, pushed below the barrier; a read without photo columns plans no photo LATERAL) and
+  `shape_lo`; `v_tour_place` and `v_tour_component` gain the current build's day stretch (`segment`,
+  `segment_basis`, `segment_from_destination_id`, `segment_to_destination_id`, `segment_km`; the component view also
+  `precision`); `catalog.v_destination_shape` (tripplanner only) serves a line's `shape_mid` / `shape_lo` by id;
+  `_live_stop` never shows a line. Tests apply 253 + 256 inside one rolled-back transaction
+  (`tests/integration/test_aa847_migration_256.py`, with the EXPLAIN checks in the consumer's filter shape).
 - **The CIS runtime role is `cis_app` (X1, AA-860; api + worker switch in S18).** Migration 244 grants it
   DML / sequences / non-trigger function EXECUTE in the 11 CIS runtime schemas (not `catalog`, `booking`,
   `tripplanner`, `public`), default privileges for later objects (`FOR ROLE aa_cis_admin` in 244, restated
@@ -711,6 +802,22 @@ Phase 2. Previews must keep the flag on (they cannot be Cognito callbacks). For 
 `cognito_sub` from that person's own sign-in, managed-login break-glass tested; the secret check is
 principal-aware since C9 (above); then `ADMIN_SECRET` is rotated (I6) and the flag goes off. New staff are created on
 the Staff page only (the legacy password-row script is retired, AA-816 D1).
+
+**Login throttle (AA-876).** `/auth/admin-login` and `/auth/tenant-login` call `api/core/login_throttle.py` before the
+DB read and bcrypt (bcrypt runs in the threadpool). One pipelined Redis call checks, per source IP and scope: at most
+20 **failed** logins per 15 min (`loginfail_ip:*`, successes do not count) and a high ceiling of 100 attempts per 5 min
+(`loginrl:*`, protects bcrypt CPU). Admin only, per username (stored as a hash, never in clear): 5 failures from one
+IP start an exponential wait for that (username, IP) (30 s doubling, max 15 min; a success clears it), and 50
+failures across IPs in 15 min start a 5 min wait for the username everywhere (distributed guessing). Backoff only,
+no hard lockout: every key expires by itself. Every 429 has the same body + `Retry-After` and logs
+`login_throttled` (scope, reason, IP). Redis missing / failing → fail open (`login_throttle_redis_error`). The IP is
+the **rightmost globally routable** `X-Forwarded-For` entry: API Gateway appends the real source and the NLB/ALB hops
+are private, so a caller cannot choose its bucket. This depends on the edge being API GW → VPC link (NLB) → ALB; a
+proxy in front of API GW or a direct ALB path breaks it. Limitation: through the BFFs (admin, portal, Booking bridge)
+the "IP" is a shared Vercel egress address, so an attacker failing through a public BFF can exhaust that bucket for
+everyone behind it for up to 15 min (follow-up: a signed forwarded client IP from the BFF, or retiring legacy login).
+The BFFs pass a 429 on as a 429 with a readable message (not 502). Cognito sign-in is not affected. The API Gateway
+stage also throttles the two login routes (Terraform, AA-CIS-Infra).
 
 **Staff directory writes (AA-816).** `api/services/staff_directory.py`, routes in `api/routers/admin_platform.py`:
 create (`AdminCreateUser` with `MessageAction=SUPPRESS` + `email_verified=true`, `@adventure.asia` only, no
@@ -1274,8 +1381,12 @@ the severity first. S233: blog shape gates F3/F5/F7 are `warn` (F7 auto-drops FA
 restate the body). AA-787 (S245) removed `promises_an_option` (F17_trip_fact owns offered moments, ADR
 0009), F8_framework (its LLM call), F3 and F5; F7 folded into F16_faq (the restate fixer runs before
 the gates, logged as `F7_faq_autofix`). Old ledgers keep those names. S233 also added the blocking
-gates F0_complete (cut-off text), F2_brand_forbidden (the tenant's own forbidden words) and F11_brand_name (another brand / the platform speaking); an F9
-judge outage is a warn, not a hold. Count gate failures from `gate_ledger`, never `held_reason`
+gates F0_complete (cut-off text), F2_brand_forbidden (the tenant's own forbidden words) and F11_brand_name (another brand / the platform speaking). An F9
+judge outage is never a blocking gate (no rewrite on it), but since AA-925 (Q-2, reversing S233's "warn, not a
+hold") it **holds** the piece: the F9 result carries a `degraded` marker and, when the FINAL attempt has it,
+the last step after `_final_integrity` labels an approved piece `held` (`held_reason` "degraded:
+f9_judge_unavailable"), adds a non-blocking `degraded` flag and a `repair_log` entry — see **Degraded
+detectors** below. Count gate failures from `gate_ledger`, never `held_reason`
 (it names only the first blocking gate). `services/acp_shared/grounding.py` is shared by T3 and T9 and reads numbers with units ("4,460m") correctly (AA-639).
 S235 (AA-785): T9/T10 F1 (`quality_gates.gate_grounding`) calls
 `find_novel_numeric_claims(..., year_forms=True)`. In that mode a year range ("1637–38") or a decade
@@ -1419,7 +1530,8 @@ sha256 of the text labelled, so a later admin edit shows as changed). It is the 
 are re-scored against (AA-783 criteria); admin-only, set from the Content Quality drawer, no tenant
 column and no `aa_app_user` grant.
 `held` is an **admin-only quality label** (AA-770, S233): the tenant always receives the content
-and can export and publish a held Piece like an approved one. **Tenants never see internal gate
+and can export and publish a held Piece like an approved one — including a piece held because a detector
+was down (AA-925 `degraded`). **Tenants never see internal gate
 data**: the tenant-safe projection (`_tenant_safe_piece`) drops `status`, `held_reason`,
 `gate_ledger`, `repair_log` and `flags`, exposing only `ready_state` (`ready` / `not_ready`, where
 `not_ready` means there is no content yet). The same rule covers T2 tour versions (see **Tenant
@@ -1610,6 +1722,47 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   Review approve stamps truth=true on the rest, a Review reject stamps nothing (it judges the whole
   version). `GET /admin/decisions/claim-sample` rebuilds a stratified sentence sample (+ the source
   Jev read) for panel labelling ($0).
+- **A1 day oracle + quality shadow** (AA-925, Quality System v1 Q-2): one duration / day-marker reader,
+  `services/content_generation/day_parse.py` (`prompts._estimate_day_count` and `seo_meta_utils.tour_days`
+  are thin wrappers; "3 hours" is one day, "7D/6N" seven). `validate_node` runs the deterministic day oracle
+  (`services/quality/day_oracle.py`: sub-day split, duplicate / out-of-order / skipped / extra day, departure
+  mid-trip, count vs duration, `SOURCE_DAY_CONTRADICTION` — a source fault, never charged to the writer —
+  and `DAY_CHECK_SKIPPED`) and the S2 cut signature (`seo_meta_utils.meta_cut_signature`, "…a 20-kilometre.").
+  Every code ships in **shadow**: it lands in `quality_shadow` (`generated_content.metadata.quality_shadow`)
+  and changes no score or verdict. A code moves to enforce (`DAY_ORACLE_MODES`) only after a precision read on
+  stored tours (`scripts/aa925/day_oracle_report.py`, D5: ≥ 0.70 with the Wilson bound); an enforced code is an
+  A1 hard code (`_HARD_BLOCK_CODES`, rewrite class) and stays shadow on a tenant rewrite (T2/T3).
+- **Degraded detectors + repair contract** (AA-925, Q-2, design §4.3/§6.3; `services/quality/`, pure modules —
+  gate runners are passed in, no writer module is imported):
+  - `degraded[]` (`services/quality/degraded.py`) names every fail-open path that ran on an output: Jev
+    zone=error (`jev_unavailable` — hard on an enforce question or an unknown mode, counted on a shadow one;
+    zone=skipped is not degraded), `grounding_not_run` (hard: the node crashed or the re-check failed; not a
+    tenant rewrite, not the score-only revalidation graph), `grounding_no_source`, `f9_judge_unavailable`
+    (hard, T9), `day_check_skipped`, `judge_unavailable`, `brand_audit_unavailable` (it already fails closed)
+    and `repair_contract` (soft). Stored in `generated_content.metadata.degraded` (A1), the T3 outcome
+    (`job.result`), `content_piece.flags` + `repair_log` (T9). One `quality_degraded` log event per output.
+  - **One A1 hold**: `degraded.apply_a1_hold` at the end of the graph (`_apply_grounding_recheck`) adds the
+    hard code `DEGRADED_DETECTOR` (`_HARD_BLOCK_CODES`, NOT the Sonnet rewrite class — a retry cannot fix an
+    outage; `HARD_CODE_REPAIR` "review: re-run…") and `manual_check`; `_is_publishable`, `human_edit_gate` and
+    the review summary read it through the hard-code path; the Review Queue shows it red.
+  - A1 Jev today: `a1_claim_supported` has no reject ceiling, so Jev only CLEARS numeric hits — an outage is
+    already fail-closed on numbers and the hold adds review load, not safety, until AA-845 sets a ceiling.
+  - Per job: `decide()` notes every zone=error verdict into a contextvar collector bound by the job worker
+    (`shared.job.result.degraded`), so A3 / ingestion / S1 prefetch outages are counted without their code.
+  - **Repair contract** (`services/quality/repair_contract.py`): a repair may not fail a gate that passed,
+    add a figure (or, for the grounding / T3 fact editors, a name) the text and source lack, cut a sentence
+    short (incl. the cut signature "…a 20-kilometre." that `meta_complete_sentence` accepts — a modifier left
+    without its noun; dropping a whole trailing clause before "and / with / to …" is the fact editor's job and
+    is kept), touch an unflagged field, or break a tag / bold / bracket pair. The fit's fact tail may state the
+    day count `tour_days()` derives ("8 nights" → 9 days). A violating field or sentence keeps its pre-repair
+    text (soft `degraded: repair_contract`). Spliced at flag_fix (replaces the AA-641 per-field revert, same
+    behaviour), the A1 grounding repair, revalidate's strip + fit, the T3 sentence repair + meta regenerate and
+    T9 `splice_checked`. The T9 AA-528/AA-780 regression guard of full rewrites stays in
+    `run_write_background` and already covers invariant 1 there.
+  - **AA-740 fitter**: `fit_seo_meta_final` no longer cuts a too-long meta mid-clause; it salvages at a
+    sentence boundary, appends a facts-only clause to a short one, closes an uncut in-band clause, and
+    otherwise leaves the length code to the LLM (A1 flag_fix seo_meta repair + `_rerepair_meta`; T3 a
+    meta-only regenerate on `t2_flag_fix` before any whole-tour rewrite).
 - **A2 — Admin QA Gate**: A1 rows that failed auto-validation (`status='hitl'`), reviewed via the
   Review Queue before they can reach A3. A row can also be **dismissed** (hidden without
   approving; a future real failure is enqueued again — AA-626, `review_status_enum` value
@@ -1730,9 +1883,10 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     failure feedback into the repair.
   - **Deterministic fixes.** An over-long SEO title is fixed with `fit_seo_title()` instead of a tour
     rewrite. Since AA-794, seo_meta gets the same deterministic fit as the graph
-    (`fit_seo_meta_final`) before a length code can trigger a rewrite. That fit tries a clause cut,
-    then a word cut only before a phrase boundary, then a fact clause. The fact clause never adds an
-    "in <country>" tail on a multi-country tour.
+    (`fit_seo_meta_final`) before a length code can trigger a rewrite: a sentence-boundary salvage or a fact
+    clause (AA-925: no clause / word cut any more). The fact clause never adds an "in <country>" tail on a
+    multi-country tour. A meta it cannot land gets ONE meta-only LLM regenerate (`_t3_meta_regenerate`,
+    `t2_flag_fix`, under the repair contract) before a length code costs a whole-tour rewrite.
   - **Best draft and targeted repair (AA-793).** Every checked draft is a candidate: a clean one
     returns at once; when rounds run out the best candidate (clean, then score) is saved, not the
     last, and each round repairs the best so far. With `T2_TARGETED_REPAIR` a grounding-only failure

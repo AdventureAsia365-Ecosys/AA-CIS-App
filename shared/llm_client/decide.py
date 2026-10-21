@@ -358,10 +358,14 @@ def _take_due_hits(force: bool = False) -> list[tuple]:
 
 
 def reset_decision_memo() -> None:
-    """Tests: drop the memo and any pending hit counts."""
+    """Tests: drop the memo and any pending hit counts, and restart the flush clock. The clock starts
+    at import, so without the restart a test running more than _HITS_FLUSH_S after collection sees a
+    time-based rollup flush on its first cache hit (a CI-only failure in AA-925)."""
+    global _hits_flushed_at
     with _memo_lock:
         _memo.clear()
         _hits.clear()
+        _hits_flushed_at = time.monotonic()
 
 
 def cached_answer(q: Question, row: dict) -> Optional[dict]:
@@ -733,16 +737,30 @@ async def decide(stage: str, subject_key: str, state: Any, question_keys: list[s
     (None or aa_internal = platform content)."""
     try:
         if pool is not None:
-            return await _decide(pool, stage, subject_key, state, question_keys, tenant_id, use_cache)
+            return _counted(stage, await _decide(pool, stage, subject_key, state, question_keys, tenant_id,
+                                                 use_cache))
         conn = await asyncpg.connect(get_database_url(), ssl="require")
         try:
-            return await _decide(_SingleConn(conn), stage, subject_key, state, question_keys, tenant_id,
-                                 use_cache)
+            return _counted(stage, await _decide(_SingleConn(conn), stage, subject_key, state, question_keys,
+                                                 tenant_id, use_cache))
         finally:
             await conn.close()
     except Exception as exc:                      # never break the calling stage
         logger.warning("decide_failed", stage=stage, subject=subject_key, error=str(exc)[:200])
-        return Decision(verdicts={k: Verdict(k, "off", "error", error=str(exc)[:500]) for k in question_keys})
+        return _counted(stage, Decision(verdicts={k: Verdict(k, "off", "error", error=str(exc)[:500])
+                                                  for k in question_keys}))
+
+
+def _counted(stage: str, decision: Decision) -> Decision:
+    """AA-925 — Jev fails open; every zone='error' verdict is counted in the running job's degraded collector
+    (services/quality/degraded.py, written to shared.job.result.degraded), so A3, ingestion and the S1
+    prefetch outages are visible without each stage knowing about it. Never raises."""
+    try:
+        from services.quality import degraded
+        degraded.note_verdicts(stage, decision.verdicts.values())
+    except Exception as exc:  # pragma: no cover — counting must never break a decision
+        logger.warning("decide_degraded_note_failed", error=str(exc)[:200])
+    return decision
 
 
 def decide_sync(stage: str, subject_key: str, state: Any, question_keys: list[str], *,
@@ -755,5 +773,5 @@ def decide_sync(stage: str, subject_key: str, state: Any, question_keys: list[st
     except RuntimeError:
         return asyncio.run(decide(stage, subject_key, state, question_keys, tenant_id=tenant_id))
     logger.warning("decide_sync_called_on_event_loop", stage=stage)
-    return Decision(verdicts={k: Verdict(k, "off", "error", error="decide_sync on event loop")
-                              for k in question_keys})
+    return _counted(stage, Decision(verdicts={k: Verdict(k, "off", "error", error="decide_sync on event loop")
+                                              for k in question_keys}))

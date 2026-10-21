@@ -4,8 +4,10 @@
   python3 -m scripts.aa729.report score-regenerate.json [--baseline older-score.json] [--out README.md]
 
 `--baseline` adds a before/after section and refuses two runs on different fixture versions or modes
-(Done-when line 3: before/after numbers on the same fixture version). The report goes to the private root
-repo, `docs/audits/<date>-S<nnn>-aa729-baseline/`.
+(Done-when line 3: before/after numbers on the same fixture version). AA-925: a stratum either run lists in
+`invalid_strata` (a hard detector failed open after one retry) is marked INVALID and gets no delta; the
+fitter revert criterion (s1_flag_fix calls per S1 sample, S1 review rate, T2/T3 rewrites) is printed.
+The report goes to the private root repo, `docs/audits/<date>-S<nnn>-aa729-baseline/`.
 """
 from __future__ import annotations
 
@@ -116,6 +118,20 @@ def render(score: dict, *, baseline: Optional[dict] = None, title: Optional[str]
             ["Embedding responses / rows",
              f"{totals.get('local_embed_calls', 0)} / {totals.get('logged_embed_rows', 0)}"],
         ])
+    invalid = score.get("invalid_strata") or {}
+    lines += ["", "## Degraded detectors (AA-925)", ""]
+    deg_rows = []
+    for k in sorted({r["stratum"] for r in rows}):
+        counts: Counter = Counter()
+        retried = 0
+        for r in rows:
+            if r["stratum"] != k:
+                continue
+            counts.update((r.get("verdict") or {}).get("degraded") or {})
+            retried += bool(r.get("degraded_retry"))
+        deg_rows.append([k, "INVALID (" + ", ".join(invalid[k]) + ")" if k in invalid else "valid",
+                         ", ".join(f"{n} {c}" for n, c in sorted(counts.items())) or "none", retried])
+    lines += _table(["Stratum", "Validity", "Degraded entries", "Samples retried"], deg_rows)
     lines += ["", "## Metrics per stratum", ""]
     label_head = "Judge vs label disagreement" if mode == "score-only" else "Pass-rate by frozen label"
     lines += _table(
@@ -167,15 +183,21 @@ def before_after(before: dict, after: dict) -> list[str]:
     if before.get("mode") != after.get("mode"):
         raise ValueError(f"modes differ: {before.get('mode')} vs {after.get('mode')}")
     bm, am = before.get("metrics") or {}, after.get("metrics") or {}
+    invalid = set(before.get("invalid_strata") or {}) | set(after.get("invalid_strata") or {})
+    if invalid:
+        invalid.add("all")   # the "all" row mixes every stratum, an invalid one included
     lines = ["## Before / after", "", f"Before `{before['run_id']}` → after `{after['run_id']}`, fixture "
              f"{after.get('fixture_version')}, mode {after.get('mode')}.", ""]
+    if invalid:
+        lines += [f"INVALID strata (a hard detector failed open after one retry, AA-925): "
+                  f"{', '.join(sorted(invalid))} — no delta is computed for them.", ""]
     rows = []
     for k in _ordered({**bm, **am}):
         b, a = bm.get(k) or {}, am.get(k) or {}
-        delta = (None if b.get("pass_rate") is None or a.get("pass_rate") is None
+        delta = (None if b.get("pass_rate") is None or a.get("pass_rate") is None or k in invalid
                  else a["pass_rate"] - b["pass_rate"])
         rows.append([k, _pct(b.get("pass_rate")), _pct(a.get("pass_rate")),
-                     "–" if delta is None else f"{delta * 100:+.1f} pt",
+                     ("INVALID" if k in invalid else "–") if delta is None else f"{delta * 100:+.1f} pt",
                      _pct((b.get("disagreement") or {}).get("rate")), _pct((a.get("disagreement") or {}).get("rate")),
                      _usd(b.get("cost_per_sample_usd")), _usd(a.get("cost_per_sample_usd")),
                      b.get("writer_calls_per_sample"), a.get("writer_calls_per_sample")])
@@ -188,7 +210,41 @@ def before_after(before: dict, after: dict) -> list[str]:
     lines += ["", f"Samples whose verdict changed: {len(flips)}"]
     if flips:
         lines += [""] + _table(["Sample", "Before", "After"], [list(f) for f in sorted(flips)])
+    lines += ["", *revert_criterion(before, after, invalid)]
     return lines
+
+
+def _stage_calls(run: dict, stratum: str, stage: str) -> tuple[Optional[float], int]:
+    rows = [r for r in run.get("samples") or [] if r["stratum"] == stratum and not r.get("error")]
+    if not rows:
+        return None, 0
+    return sum(int((r.get("calls_by_stage") or {}).get(stage, 0)) for r in rows) / len(rows), len(rows)
+
+
+def _review_rate(run: dict, stratum: str) -> Optional[float]:
+    rows = [r for r in run.get("samples") or [] if r["stratum"] == stratum and not r.get("error")]
+    return None if not rows else sum(not (r.get("verdict") or {}).get("passed") for r in rows) / len(rows)
+
+
+def revert_criterion(before: dict, after: dict, invalid: set) -> list[str]:
+    """AA-925 — the fitter revert criterion (PR body): the AA-740 mid-clause cut is gone, so a too-long meta
+    costs an LLM repair. Revise the fitter part if s1_flag_fix calls per S1 sample or the S1 review rate move
+    past the baseline plus the A' noise (score-only A vs A'). Regenerate runs only (score-only calls no writer)."""
+    out = ["## Fitter revert criterion (AA-925)", ""]
+    rows = []
+    for stratum, stage in (("s1", "s1_flag_fix"), ("t2", "t2_flag_fix"), ("t2", "t2_generate")):
+        (b, nb), (a, na) = _stage_calls(before, stratum, stage), _stage_calls(after, stratum, stage)
+        rows.append([stratum, f"{stage} calls / sample", "–" if b is None else f"{b:.2f} (n={nb})",
+                     "–" if a is None else f"{a:.2f} (n={na})",
+                     "INVALID" if stratum in invalid else ("–" if a is None or b is None else f"{a - b:+.2f}")])
+    for stratum in ("s1", "t2"):
+        b, a = _review_rate(before, stratum), _review_rate(after, stratum)
+        delta = "–" if a is None or b is None else f"{(a - b) * 100:+.1f} pt"
+        rows.append([stratum, "review rate (not passed)", _pct(b), _pct(a), "INVALID" if stratum in invalid else delta])
+    out += _table(["Stratum", "Measure", "Before", "After", "Δ"], rows)
+    out += ["", "Revise the fitter part of AA-925 when a Δ is past the baseline + A' noise "
+            "(regenerate mode only; score-only calls no writer)."]
+    return out
 
 
 def main(argv: Optional[list[str]] = None) -> int:

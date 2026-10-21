@@ -32,34 +32,21 @@ def _clamp_midpoint() -> float:
     from .itinerary_utils import ITINERARY_CLAMP_MAX, ITINERARY_CLAMP_MIN
     return (ITINERARY_CLAMP_MIN + ITINERARY_CLAMP_MAX) / 2.0
 
-# AA-353: line-anchored so a day-count number mentioned mid-line never matches — e.g. "Easy Day 82
-# km Tarmac Road" as a day's OWN title text must not be misread as a "Day 82" marker (AA-346's own
-# regression case). Only a line that STARTS with "Day <n>" (optionally "Day #3", "Day3", etc.) counts.
-# S207: also accept a leading bullet/symbol ("► Day 01:", "• Day 2", "**Day 3**"), spelled-out numbers
-# ("Day One:", "Day Twelve") and ranges ("Days 1–3:" → the range's first day). Measured on Dev
-# 01/10/2026: Taiwan "Day One" (34 tours) and Sri Lanka "► Day 01" (11) fell back to an even split,
-# which also handed the per-day nudge the WHOLE itinerary as "this day".
-_NUM_WORDS = {w: i for i, w in enumerate(
-    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
-    "sixteen seventeen eighteen nineteen twenty twenty-one twenty-two twenty-three twenty-four "
-    "twenty-five twenty-six twenty-seven twenty-eight twenty-nine thirty".split())}
-_DAY_MARKER_RE = re.compile(
-    r"^[\s►▶•*#>\-–—·|]*days?\s*#?\s*(\d{1,3}|" + "|".join(sorted(_NUM_WORDS, key=len, reverse=True))
-    + r")\b(?:\s*[-–—]\s*\d{1,3}\b)?[*\s]*[:\-–—|.]?\s*",
-    re.IGNORECASE)
-
-
-def _day_num(token: str) -> int:
-    t = token.lower()
-    return int(t) if t.isdigit() else _NUM_WORDS.get(t, 0)
+# AA-353 / S207: the line-anchored "Day N" marker regex, the number words and the duration reader now live
+# in the leaf module day_parse.py (AA-925: one parser, shared with the day oracle); re-exported here so
+# existing imports keep working. Line-anchored so "Easy Day 82 km Tarmac Road" as a day's own title text is
+# never read as a "Day 82" marker (AA-346); a leading bullet, spelled-out numbers ("Day One") and ranges
+# ("Days 1–3:" → the range's first day here) are accepted.
+from .day_parse import _DAY_MARKER_RE, _NUM_WORDS, _day_num, parse_duration, source_day_markers  # noqa: E402,F401
 
 
 def _estimate_day_count(duration_hint: str) -> int:
-    """First integer found in a free-text duration string ("12 Days", "7D/6N") — 0 if none."""
+    """Days a free-text duration states ("12 Days", "7D/6N", "13 Nights 14 days" → 14, "2 weeks" → 14,
+    "3 hours" / "half day" → 1, "8 nights" → 9) — 0 if none. AA-925: was the first integer, so "3 hours"
+    became 3 days and the fallback split a 3-hour ride into Day 1–3."""
     if not duration_hint:
         return 0
-    m = re.search(r"(\d{1,3})", str(duration_hint))
-    return int(m.group(1)) if m else 0
+    return parse_duration(duration_hint).day_count or 0
 
 
 def parse_source_day_word_counts(itineraries_raw: str, duration_hint: str = "") -> dict:
@@ -74,15 +61,14 @@ def parse_source_day_word_counts(itineraries_raw: str, duration_hint: str = "") 
     maps every day to the full (unsegmented) source, since no per-day boundary could be found.
 
     Returns {"day_word_counts": {day_num: word_count}, "day_text": {day_num: text},
-    "used_fallback": bool}.
+    "used_fallback": bool, "markers": [(day_from, day_to, line_idx)]}. AA-925: ``markers`` are the source
+    "Day N" lines with ranges expanded (day_parse.source_day_markers) — the day oracle reads them; the split
+    itself is unchanged (a range "Days 1–3" is one block keyed by its first day).
     """
     text = itineraries_raw or ""
     lines = text.splitlines()
-    matches = []  # (day_num, line_idx)
-    for idx, line in enumerate(lines):
-        m = _DAY_MARKER_RE.match(line.strip())
-        if m and _day_num(m.group(1)) > 0:
-            matches.append((_day_num(m.group(1)), idx))
+    markers = source_day_markers(text)
+    matches = [(first, idx) for first, _last, idx in markers]  # (day_num, line_idx)
 
     if len(matches) < 2:
         total_words = len(text.split())
@@ -94,6 +80,7 @@ def parse_source_day_word_counts(itineraries_raw: str, duration_hint: str = "") 
             "day_word_counts": {d: per_day for d in range(1, est_days + 1)},
             "day_text": {d: text for d in range(1, est_days + 1)},
             "used_fallback": True,
+            "markers": markers,
         }
 
     day_word_counts = {}
@@ -106,7 +93,7 @@ def parse_source_day_word_counts(itineraries_raw: str, duration_hint: str = "") 
         segment_text = " ".join(segment_lines).strip()
         day_word_counts[day_num] = max(len(segment_text.split()), 1)
         day_text[day_num] = segment_text
-    return {"day_word_counts": day_word_counts, "day_text": day_text, "used_fallback": False}
+    return {"day_word_counts": day_word_counts, "day_text": day_text, "used_fallback": False, "markers": markers}
 
 
 # AA-792: the writer rules shared by the A1 (SYSTEM_PROMPT) and the T2 tenant (T2_SYSTEM_PROMPT)

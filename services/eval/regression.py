@@ -179,6 +179,7 @@ async def run_s1_old_eval() -> dict:
 
     avg_score = round(sum(r["quality_score"] for r in scored) / len(scored), 3) if scored else None
     total_cost = round(sum(r.get("cost_usd", 0.0) for r in results), 4)
+    deg = degraded_summary(results)
     return {
         "pipeline": "s1_old",
         "prompt_version": next(iter(prompt_versions), None) or "",
@@ -198,8 +199,29 @@ async def run_s1_old_eval() -> dict:
             # _detect_itinerary_regression (compared against ITINERARY_BASELINE_PATH, separate
             # from this table's own prompt_version-based regression check above).
             "itinerary_compression": _itinerary_compression_summary(results),
+            # AA-925 (design §6.3): a hard detector that failed open makes the run INVALID — never a regression
+            # signal and never a pass.
+            "degraded": deg["counts"],
+            "invalid": deg["invalid"],
+            "invalid_tours": deg["invalid_tours"],
         },
     }
+
+
+def degraded_summary(results: list[dict]) -> dict:
+    """AA-925 — the eval run's degraded counts and whether it is INVALID (a tour whose hard detector — Jev,
+    grounding — failed open)."""
+    from services.quality import degraded
+
+    counts: dict[str, int] = {}
+    invalid_tours = []
+    for r in results:
+        lst = r.get("degraded") or []
+        for name, n in degraded.counts(lst).items():
+            counts[name] = counts.get(name, 0) + n
+        if degraded.is_hard(lst):
+            invalid_tours.append(r.get("src_name"))
+    return {"counts": counts, "invalid": bool(invalid_tours), "invalid_tours": invalid_tours}
 
 
 async def _get_baseline(conn, pipeline: str, current_prompt_version: str):
@@ -232,6 +254,8 @@ async def _get_baseline(conn, pipeline: str, current_prompt_version: str):
 def _detect_regression(pipeline: str, current: dict, baseline) -> bool:
     if baseline is None:
         return False  # first-ever run for this pipeline — nothing to regress against
+    if (current.get("details") or {}).get("invalid"):
+        return False  # AA-925: an INVALID run (a hard detector failed open) measures nothing
     # s1_old: an absolute-point drop in avg_quality_score beyond the threshold is a regression.
     if current["avg_quality_score"] is None or baseline["avg_quality_score"] is None:
         return False

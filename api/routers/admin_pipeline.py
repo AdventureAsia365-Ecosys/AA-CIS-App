@@ -71,6 +71,8 @@ def _as_list(v):
     return []
 
 
+from services.quality.day_oracle import enforced_codes as _day_enforced_codes  # noqa: E402  AA-925
+
 # AA-211/AA-212: master tenant for the aa_internal pipeline (same constant used inline elsewhere).
 _MASTER_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 
@@ -85,7 +87,7 @@ _MASTER_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 # rewrites on Sonnet regardless. It goes straight to review instead of paying for Sonnet twice.
 _REWRITE_CLASS_HARD_CODES = frozenset({
     "BRAND_SEO_META_VIOLATION", "MISSING_FIELD",
-})
+}) | _day_enforced_codes()  # AA-925: an enforced day-oracle code is a rewrite-class hard code (none yet)
 
 
 def _surviving_hard_codes(result: dict) -> set:
@@ -304,6 +306,12 @@ def _build_generated_metadata(result, *, brand_rule_id, brand_name, seo_mode,
             "violations":      result.get("grounding_violations") or [],
             "notes":           result.get("grounding_notes") or [],
         }
+    # AA-925 (Quality System v1): the shadow findings of the last validate (day oracle, S2 cut signature) and the
+    # fail-open paths that ran; omitted when empty (same guard style as ``judge``).
+    if result.get("quality_shadow"):
+        metadata["quality_shadow"] = result["quality_shadow"]
+    if result.get("degraded"):
+        metadata["degraded"] = result["degraded"]
     _day_ratios = result.get("itinerary_day_ratios") or []
     if _day_ratios:
         from services.content_generation.graph import ITINERARY_CLAMP_MIN, ITINERARY_CLAMP_MAX
