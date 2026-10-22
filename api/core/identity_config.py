@@ -1,12 +1,18 @@
 """CIS staff-surface issuer configuration for the multi-issuer verifier (root ADR 0006 §8, AA-816 / AA-854).
 
-CIS staff routes accept exactly WORKFORCE x {cis-admin, breakglass} (ADR 0006 §8 rule 6). The Dev values are
-code constants with an env override, following Booking's settings defaults, so the ECS task definitions need
-no new variables (S242 plan, stage B / C2):
+CIS staff routes accept exactly WORKFORCE x {cis-admin, breakglass, cis-admin-preview} (ADR 0006 §8 rule 6;
+cis-admin-preview: AA-911 decision D-1, root ADR 0006a A11). The Dev values are code constants with an env
+override, following Booking's settings defaults, so the ECS task definitions need no new variables (S242 plan,
+stage B / C2):
 
 - ``COGNITO_WORKFORCE_ISSUER``       default :data:`DEV_WORKFORCE_ISSUER`
 - ``COGNITO_CIS_ADMIN_CLIENT_ID``    default :data:`DEV_CIS_ADMIN_CLIENT_ID`
 - ``COGNITO_BREAKGLASS_CLIENT_ID``   default :data:`DEV_BREAKGLASS_CLIENT_ID`
+- ``COGNITO_CIS_ADMIN_PREVIEW_CLIENT_ID`` default :data:`DEV_CIS_ADMIN_PREVIEW_CLIENT_ID` (the
+  AA-CIS-Infra client; an empty value = no preview client accepted). The client of the fixed Preview
+  host ``aa-cis-preview.lumiguides.it.com`` only: ``api/core/staff_identity.resolve_staff`` caps every token of it
+  at the viewer role (:func:`is_preview_client`), whatever ``cis-*`` group the user holds. It must differ from the
+  two clients above (the verifier build fails otherwise, so every staff token answers 503: fail closed).
 - ``COGNITO_WORKFORCE_POOL_ID``      default: the pool id at the end of the WORKFORCE issuer
   (:data:`DEV_WORKFORCE_POOL_ID` on Dev). Used by the staff directory writer (C6,
   ``api/services/staff_directory.py``); the region is the pool id's prefix.
@@ -36,11 +42,15 @@ log = structlog.get_logger(__name__)
 DEV_WORKFORCE_ISSUER = "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_bCcFvbSOS"
 DEV_CIS_ADMIN_CLIENT_ID = "3oqkumijh04cp81k3nlnub6qtv"
 DEV_BREAKGLASS_CLIENT_ID = "2g3f3ncfuqdiuu1o5b70o4h0lq"
+# AA-911 D-1: the Preview-only cis-admin-preview client (AA-CIS-Infra identity.tf, created by Infra #260). Empty = no
+# preview client accepted (a preview token is then 401).
+DEV_CIS_ADMIN_PREVIEW_CLIENT_ID = "3d6u7r00ljf4m80gjil20fp2kg"
 DEV_WORKFORCE_POOL_ID = "us-west-1_bCcFvbSOS"
 
 ENV_WORKFORCE_ISSUER = "COGNITO_WORKFORCE_ISSUER"
 ENV_CIS_ADMIN_CLIENT_ID = "COGNITO_CIS_ADMIN_CLIENT_ID"
 ENV_BREAKGLASS_CLIENT_ID = "COGNITO_BREAKGLASS_CLIENT_ID"
+ENV_CIS_ADMIN_PREVIEW_CLIENT_ID = "COGNITO_CIS_ADMIN_PREVIEW_CLIENT_ID"
 ENV_WORKFORCE_POOL_ID = "COGNITO_WORKFORCE_POOL_ID"
 
 _verifier: MultiIssuerVerifier | None = None
@@ -63,6 +73,17 @@ def breakglass_client_id() -> str:
     return _env(ENV_BREAKGLASS_CLIENT_ID, DEV_BREAKGLASS_CLIENT_ID)
 
 
+def cis_admin_preview_client_id() -> str:
+    """The Preview-only client id, or "" when none is configured (then no preview token is accepted)."""
+    return _env(ENV_CIS_ADMIN_PREVIEW_CLIENT_ID, DEV_CIS_ADMIN_PREVIEW_CLIENT_ID)
+
+
+def is_preview_client(client_id: Optional[str]) -> bool:
+    """True when ``client_id`` is the Preview-only client (AA-911 D-1): its sessions are always the viewer."""
+    preview = cis_admin_preview_client_id()
+    return bool(preview) and client_id == preview
+
+
 def workforce_pool_id() -> str:
     """The WORKFORCE user pool id: the env override, else the last path segment of the issuer (so an issuer
     override for another pool moves the directory writer with it)."""
@@ -75,11 +96,17 @@ def workforce_region() -> str:
 
 
 def cis_staff_issuers() -> tuple[IssuerConfig, ...]:
-    """The (issuer, client_id) pairs the CIS staff surface accepts: WORKFORCE x {cis-admin, breakglass}."""
+    """The (issuer, client_id) pairs the CIS staff surface accepts: WORKFORCE x {cis-admin, breakglass} plus
+    cis-admin-preview when configured (capped at viewer by staff_identity). A preview id equal to a production
+    client id is refused (ValueError): it would either cap Production or un-cap Preview."""
+    production = {cis_admin_client_id(), breakglass_client_id()}
+    preview = cis_admin_preview_client_id()
+    if preview and preview in production:
+        raise ValueError(f"{ENV_CIS_ADMIN_PREVIEW_CLIENT_ID} must differ from the production client ids")
     return (
         IssuerConfig(
             issuer=workforce_issuer(),
-            client_ids=frozenset({cis_admin_client_id(), breakglass_client_id()}),
+            client_ids=frozenset(production | ({preview} if preview else set())),
             name="workforce",
         ),
     )
