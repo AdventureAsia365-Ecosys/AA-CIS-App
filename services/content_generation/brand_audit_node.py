@@ -109,7 +109,9 @@ def meal_time_claims_supported(itin_text: str, tour: dict, *, tenant_id: str | N
     S205 measure: the regex fired on 41/125 master tours, and most hits were the source's own
     logistics (14/17 clock times appear verbatim in the source; 26/34 tours' sources state meals too).
     - clock time: supported when the same time is in the source (deterministic);
-    - meal claim: every itinerary sentence that makes one (AA-803: short sentences and day-title lines too) is
+    - meal claim (AA-803 part B): first ``meal_claims.claim_sourced``, which clears a claim only on structured
+      evidence (a pure same-day ``Meals:`` / code list, or an unscoped every-day INCLUSIONS item);
+    - every other meal-claim sentence (AA-803: short sentences and day-title lines too) is
       sent to the same enforced Jev Question grounding uses (a1_claim_supported, same source text and subject
       key, so it is normally a cache hit); supported only on a confident, enforced accept of every one.
       Grey/shadow/error/off keep the code (fail-closed), and so does a claim sentence Jev is never asked about."""
@@ -123,6 +125,12 @@ def meal_time_claims_supported(itin_text: str, tour: dict, *, tenant_id: str | N
     claims = [u for u in itinerary_claim_sentences(itin_text) if ITIN_MEAL_INVENTED.search(u["sentence"])]
     if not claims:
         return False
+    # AA-803 part B: a claim the source backs with STRUCTURED evidence (a pure same-day meal list, or an unscoped
+    # every-day INCLUSIONS item) is cleared here, without Jev; every other claim still needs a Jev accept.
+    from services.content_generation import meal_claims
+    claims = [u for u in claims if not meal_claims.claim_sourced(u, tour, itin_text)[0]]
+    if not claims:
+        return True
     return _jev_clears_meal_claims(claims, itin_text, tour, tenant_id=tenant_id,
                                    is_tenant_rewrite=is_tenant_rewrite)
 
