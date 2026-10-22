@@ -76,6 +76,18 @@ class TestAA482TripPage:
         update_call = conn.execute.await_args
         assert "url_alive = false" in update_call.args[0]
 
+    async def test_get_trip_page_404_for_a_non_uuid_id_without_any_query(self):
+        """Sentry AA-CIS-API-E: GET /v1/trip/abc was a 500 (asyncpg DataError)."""
+        from fastapi import HTTPException
+        request, conn = _make_pool(fetch_page_row=None)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await v1_trip_page.get_trip_page("abc", request)
+
+        assert exc_info.value.status_code == 404
+        conn.fetchrow.assert_not_awaited()
+        conn.execute.assert_not_awaited()
+
     async def test_publish_trip_page_computes_real_url_not_placeholder(self, monkeypatch):
         monkeypatch.setattr(v1_trip_page, "verify_admin_secret", lambda *a, **k: None)
         request, conn = _make_pool(fetch_page_row=_TOUR_ROW)
