@@ -562,6 +562,15 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
 - **Backend (ECS)**: shipped via CI; a new task definition rolls out on the `aa-cis-dev-api`
   service. This repo has **branch protection with 5 required CI jobs** — merge PRs with
   `gh pr merge --auto` (auto-merge once checks pass). Agents must not push to `main` directly.
+- **CI gate parity (AA-879)**: `ci.yml` also runs **Frontend Build** and **Portal Build** (`tsc --noEmit` +
+  `next build` of `frontend/` and `portal/`, no secret needed; meant to be required checks next to the 5).
+  The image scan in **Docker Build Check** is blocking: Trivy fails on any fixable CRITICAL/HIGH finding
+  (`ignore-unfixed`); an accepted one goes into `.trivyignore` with a `# reason` line and `exp:YYYY-MM-DD`
+  ≤ 90 days ahead (`.github/scripts/check_trivyignore.py`). **Unit Tests** enforces a coverage ratchet
+  (`.github/coverage-ratchet.json`, `.github/scripts/coverage_ratchet.py`): below `floor` fails, lowering
+  `floor` fails, below the monthly goal (+5 points a month up to `cap`) only warns. `deploy-dev.yml` does
+  not trigger on `frontend/**` (the image has no frontend file). Security headers on previews are checked
+  by the UI smoke specs (`aa876-security-headers.spec.ts`, `aa885-portal-host.spec.ts`).
 - **Public repo, no resource IDs (AA-902)**: the required **Lint** job runs
   `.github/scripts/check_resource_ids.py` over every tracked file and fails on an AWS account ID, an ARN
   with an account, an `<name>-<account>` resource name, a VPC resource ID or an API Gateway host (AWS
@@ -604,7 +613,7 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   `aa-cis/dev/e2e-tenant/<slug>` — re-copy after a key rotation) every portal page with the shared
   `runPageCheck` + a 390 px no-sideways-scroll check, screenshots 1440 + 390, and the host-only cookie check.
   Logged-in tests skip without the key. The preview needs `VERCEL_PORTAL_BYPASS_SECRET` (passed to the
-  helpers as `VERCEL_AUTOMATION_BYPASS_SECRET`). Lint: `portal-lint` CI job (non-required, + `tsc`). e2e specs carry no hardcoded credentials (shared helper
+  helpers as `VERCEL_AUTOMATION_BYPASS_SECRET`). Lint: `portal-lint` CI job (non-required); `tsc` + `next build` in the `portal-build` job (AA-879). e2e specs carry no hardcoded credentials (shared helper
   `tests/e2e/helpers/auth.ts` reads the env). ESLint enforces UI-kit conventions in
   `frontend/eslint.config.mjs` (`frontend-lint` CI job, non-required).
 - **Cognito E2E (AA-816 E1, `.github/workflows/e2e-cognito.yml`)**: `workflow_dispatch` on `main` only,
@@ -1419,10 +1428,10 @@ logged under `F7_faq_autofix`.
 S234 (AA-771): LinkedIn has a **channel spec** by brand register (`services/acp_shared/channel_spec.py`:
 consumer_social / editorial / warm_practical / observational, from the voice adjectives then brand_type) —
 word band 120–250 (editorial 300), ≤3 hashtags, first line ≤140 chars; hygiene.autofix applies the hashtag cap
-and first-line split. **F14_social_shape** (LinkedIn shape; warn, blocks above 1.3× the band → full
+(each tag once — AA-780 S246) and first-line split. **F14_social_shape** (LinkedIn shape; warn, blocks above 1.3× the band → full
 rewrite; AA-780: under the band's floor blocks on attempt 1 only → one full rewrite to the target, and never
 holds a piece — `quality_gates.never_holds`; the AA-528 regression guard keeps a repairable rewrite of a floor-only attempt 1 for the attempt-3 repair, and on a revert waives the floor block), **F15_voice** (stock-phrase hard list; blocks on attempt 1 only, for one sentence repair, and
-never holds a piece — `hold_failure` skips it) and **F15_voice_warn** (trade register, audience-number leak,
+never holds a piece — `hold_failure` skips it; AA-780 S246: a STOCK_PATTERNS sentence still in the final attempt's text is cut in code after the loop, `service._cut_stock_lines` — never the hook or the CTA, never below the word band; shown as the non-blocking `F15_stock_cut` flag) and **F15_voice_warn** (trade register, audience-number leak,
 generic or repeated opener, AA-780 broetry — ≥2 consecutive prose sentences of ≤5 words, bullets and emoji-only lines excluded; warn only, never repaired). All pass for every other channel. The F9 judge
 gets the brand's voice adjectives and no longer favours a calm house voice.
 S234 round 2 (AA-768): **F13_leak** (blocking, sentence-repairable) — writer-instruction wording ("A Sentence

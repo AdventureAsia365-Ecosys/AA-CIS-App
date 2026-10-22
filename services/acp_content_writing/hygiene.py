@@ -28,6 +28,7 @@ from typing import Optional
 
 from services.acp_shared.citation_tags import TAG as _TAG
 from services.acp_shared.citation_tags import strip_citation_tags
+from services.acp_shared.channel_spec import STOCK_PATTERNS
 
 
 def fold(text: Optional[str]) -> str:
@@ -1594,6 +1595,33 @@ def template_lines(text: str) -> list[tuple[str, str]]:
     return out
 
 
+def stock_line_items(text: str) -> list[dict]:
+    """AA-780 (S246) — one cut item per channel_spec.STOCK_PATTERNS match in a prose / bullet sentence:
+    {"start", "end", "sentence", "phrase"}, the item spanning every sentence the match touches ("Not as X.
+    Not as Y."), one item per sentence set. The same list F15_voice blocks on attempt 1 only; the T9 loop
+    cuts what is left of it after its last attempt (service._cut_stock_lines, through
+    sentence_repair.delete_flagged — never the hook, never the CTA, no orphaned pronoun)."""
+    text = text or ""
+    spans = [sp for sp in sentence_spans(text) if sp["kind"] in ("prose", "bullet")]
+    hits: list[tuple[int, int, str]] = []  # (first span index, last span index, phrase)
+    for pattern in STOCK_PATTERNS:
+        for m in pattern.finditer(text):
+            idx = [i for i, sp in enumerate(spans) if sp["start"] < m.end() and m.start() < sp["end"]]
+            if idx:  # a heading / hashtag line / FAQ question is never cut here
+                hits.append((idx[0], idx[-1], " ".join(m.group(0).split())))
+    merged: list[list] = []  # overlapping hits ("Not as filler." in "Not as filler. Not as …") → one item
+    for i, j, phrase in sorted(hits):
+        if merged and i <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], j)
+            if phrase not in merged[-1][2]:
+                merged[-1][2].append(phrase)
+        else:
+            merged.append([i, j, [phrase]])
+    return [{"start": spans[i]["start"], "end": spans[j]["end"],
+             "sentence": " ".join(sp["clean"] for sp in spans[i:j + 1]), "phrase": "; ".join(phrases)}
+            for i, j, phrases in merged]
+
+
 BRIEF_RUN = 5  # 4 fired on generic runs ('in a mountain kingdom', 'steppe gives way to') on clean pieces
 _BRIEF_PACK_FIELDS = ("core_idea", "style_guide", "good_examples", "customer_mindset", "brand_type")
 _BRIEF_ANGLE_FIELDS = ("why_it_works", "best_final_style", "formula_fit")
@@ -1790,22 +1818,32 @@ def hashtag_fixes(text: str, lex: ScopeLexicon, brand_name: Optional[str] = None
 
 
 def _apply_hashtag_layout(text: str, hashtags_max: Optional[int]) -> tuple[str, list[str]]:
-    """Hashtag-only lines go to the end as one line, capped at `hashtags_max` (channel spec)."""
+    """Hashtag-only lines go to the end as one line, capped at `hashtags_max` (channel spec), each tag
+    once. AA-780 (S246 panel t9l-002 / t9l-014 shipped "#Bhutan #PunakhaDzong #PunakhaDzong"): a repeated
+    tag (case-insensitive, the first spelling kept) also takes the rewrite branch — before, a tag line
+    already last and under the cap was returned as written."""
     if hashtags_max is None:
         return text, []
     lines = text.rstrip("\n").split("\n")
     tag_lines = [i for i, ln in enumerate(lines) if ln.strip() and _HASHTAG_LINE_RE.fullmatch(ln.strip())]
     if not tag_lines:
         return text, []
-    tags = list(dict.fromkeys(t for i in tag_lines for t in re.findall(r"#[A-Za-z][A-Za-z0-9]+", lines[i])))
+    raw = [t for i in tag_lines for t in re.findall(r"#[A-Za-z][A-Za-z0-9]+", lines[i])]
+    first: dict[str, str] = {}
+    for t in raw:  # first spelling of each tag, in order
+        first.setdefault(t.lower(), t)
+    tags = list(first.values())
+    dupes = len(raw) - len(tags)
     body = [ln for i, ln in enumerate(lines) if i not in set(tag_lines)]
     while body and not body[-1].strip():
         body.pop()
     kept = tags[:hashtags_max]
     log = []
+    if dupes:
+        log.append(f"removed {dupes} repeated hashtag(s)")
     if len(tags) > len(kept):
         log.append(f"kept {len(kept)} of {len(tags)} hashtags (channel cap {hashtags_max})")
-    if tag_lines != [len(lines) - 1] or len(tags) > len(kept):
+    if tag_lines != [len(lines) - 1] or len(tags) > len(kept) or dupes:
         new = "\n".join(body) + ("\n\n" + " ".join(kept) if kept else "")
         if not log:
             log.append("moved the hashtags to the last line")
@@ -2405,5 +2443,6 @@ __all__ = [
     "find_scope_violations",
     "is_sentence_end", "sentence_tail_end",
     "fold", "hashtag_fixes", "lev", "names_place", "near_verbatim", "phrase_tokens", "places_named", "proper_nouns",
-    "restates", "sentence_spans", "split_seed", "strip_tags", "tidy_after_cut", "TRIP_NAME_WORDS", "trip_name_places",
+    "restates", "sentence_spans", "split_seed", "stock_line_items", "strip_tags", "tidy_after_cut", "TRIP_NAME_WORDS",
+    "trip_name_places",
 ]
