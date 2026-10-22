@@ -756,9 +756,10 @@ lives in `shared.staff_app_grant (admin_user_id, app, role)` (`app` = `booking`,
 - The BFF (`frontend/lib/cognito.ts`, `lib/cognitoRoutes.ts`, routes `app/api/auth/{signin,callback}/{cognito,
   cognito-breakglass}`, `app/api/auth/refresh`) runs authorization code + PKCE (state + nonce in the 5-minute
   `cis_oauth_tx` cookie) with a confidential client. Redirect URIs come from a fixed allow-list
-  (`aa-cis.lumiguides.it.com`, localhost in development); any other host (Vercel previews) gets
-  `cognito_host` and only the password form. Domain, issuer and client ids are code constants with
-  `COGNITO_*` env overrides; only the two client secrets are set in Vercel (Production).
+  (`aa-cis.lumiguides.it.com`, localhost in development; a Vercel preview build only the fixed Preview host,
+  below); any other host (a per-deployment `*.vercel.app` preview URL) gets `cognito_host` and only the password
+  form. Domain, issuer and client ids are code constants with `COGNITO_*` env overrides; the two production client
+  secrets are set in Vercel (Production only), the Preview-only client secret on the Preview target only.
 - Cookies: `cis_admin_token` holds the Cognito **access** token (15 min; the cookie lives for the refresh window
   so `proxy.ts` can see it expired), `cis_staff_rt` the refresh token (httpOnly, `path=/api/auth`, 12 h,
   1 h for break-glass; the window is not extended by rotation). Refresh happens only in `/api/auth/refresh`
@@ -774,7 +775,8 @@ lives in `shared.staff_app_grant (admin_user_id, app, role)` (`app` = `booking`,
 **Verification (backend).** `api/core/identity_verifier.py` (app-neutral, to be copied byte-identical into
 AA-Booking) + `api/core/identity_config.py` (CIS surface) + `api/core/staff_identity.py` (resolver):
 - issuer chosen by the **unverified `iss`**; only the WORKFORCE issuer is accepted for staff (any other `iss` →
-  401, a JWT without `iss` → the legacy HS256 path); RS256 only, `client_id` ∈ {`cis-admin`, `breakglass`},
+  401, a JWT without `iss` → the legacy HS256 path); RS256 only, `client_id` ∈ {`cis-admin`, `breakglass`,
+  `cis-admin-preview` (AA-911 D-1, always capped at viewer, below)},
   `token_use=access`, no `aud`, leeway ≤ 60 s; one JWKS cache per issuer, prefetched at start-up
   (`identity_jwks_prefetched`), unknown `kid` refetched at most once a minute, last good keys kept;
 - the row is found by `(iss, sub)`; on the first sign-in it is linked **once** by `lower(email)` to an active
@@ -809,7 +811,31 @@ AA-Booking) + `api/core/identity_config.py` (CIS surface) + `api/core/staff_iden
 `LEGACY_ADMIN_LOGIN_ENABLED` (default on; only `0` / `false` / `no` / `off` switch it off, same parsing in the
 API and the BFF) gates **only** the CIS UI password form + BFF `/api/auth/login` (404 when off) and the HS256
 path of `/auth/verify-admin`. `/auth/admin-login` and `/auth/booking-token` stay on for AA-Booking until its
-Phase 2. Previews must keep the flag on (they cannot be Cognito callbacks). For an HS256 session
+Phase 2. Per-deployment preview URLs (`*.vercel.app`, not Cognito callbacks) still need the flag on for the
+legacy viewer smoke; the fixed Preview host `aa-cis-preview.lumiguides.it.com` (below) never offers the password
+form (`/login` hides it, BFF `/api/auth/login` answers 404 there).
+
+**Preview staff sign-in (AA-911 D-1, AA-816 P6a, root ADR 0006a A11).** `aa-cis-preview.lumiguides.it.com` is a
+Vercel domain of `aa-cis-frontend` and the only callback / sign-out URL of the Preview-only WORKFORCE client
+`cis-admin-preview` (AA-CIS-Infra; the production `cis-admin` client does not list it; break-glass stays
+production-only). A Vercel production build signs in with `cis-admin` on the production host only, a preview build
+with `cis-admin-preview` on this host only (`VERCEL_ENV`, `frontend/lib/cognito.ts`; its own secret env var
+`COGNITO_CIS_ADMIN_PREVIEW_CLIENT_SECRET`, Preview target only; client id a code constant), so the redirect URI is
+still never built from the Host header and a preview build never reads the production client secret. The Vercel
+Deploy workflow points the host at a preview only on opt-in: the PR label `preview-signin`, or a dispatch from
+`main` with `alias_only_url` (checked over the Vercel API: this project, not production, READY). A Cognito session
+on that host is always the **viewer**: `api/core/staff_identity.resolve_staff` maps every `cis-admin-preview` token
+to role `viewer` with `is_owner` false whatever its `cis-*` groups (`api/core/identity_config.is_preview_client`,
+env override `COGNITO_CIS_ADMIN_PREVIEW_CLIENT_ID`; a preview id equal to a production id fails the verifier build,
+so every staff token answers 503), the bearer middleware forwards `viewer`, `staff_authz` refuses every write
+("Role 'viewer' is read-only") and `/auth/verify-admin` returns `viewer` (log `staff_identity_preview_capped`). The CIS
+to Booking bridge (`/auth/booking-token`, below) stays and mints only from an HS256 password session, so a Cognito
+session (this one included) never gets a Booking token; the bridge retirement is AA-911 P6b. The
+cap holds only while the Vercel Preview `ADMIN_SECRET` is the C9 Preview credential (check V2, root ship plan):
+the main secret with a forged `x-admin-role` would pass on a path without a Bearer. Preview builds send
+`X-Robots-Tag: noindex, nofollow`. Every BFF route that attaches `X-Admin-Secret` calls `requireAdmin()` first
+(audited 21/10/2026). UI smoke keeps the per-deployment URL. Runbook: root
+`docs/ops/runbooks/preview-staff-sign-in.md`. For an HS256 session
 `/auth/verify-admin` re-reads `shared.admin_users` (cached 60 s), so a deactivation or demotion lands within
 ~6 min (BFF verify cache 5 min + 60 s). Cutover preconditions (ADR 0006): every active row has an email and a
 `cognito_sub` from that person's own sign-in, managed-login break-glass tested; the secret check is

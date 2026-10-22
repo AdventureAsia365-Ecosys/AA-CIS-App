@@ -608,7 +608,7 @@ def test_duplicate_or_missing_issuers_rejected():
 @pytest.fixture
 def clean_identity_env(monkeypatch):
     for name in (identity_config.ENV_WORKFORCE_ISSUER, identity_config.ENV_CIS_ADMIN_CLIENT_ID,
-                 identity_config.ENV_BREAKGLASS_CLIENT_ID):
+                 identity_config.ENV_BREAKGLASS_CLIENT_ID, identity_config.ENV_CIS_ADMIN_PREVIEW_CLIENT_ID):
         monkeypatch.delenv(name, raising=False)
     identity_config.reset_cis_staff_verifier()
     yield monkeypatch
@@ -619,7 +619,9 @@ def test_cis_staff_defaults_are_workforce_x_cis_admin_and_breakglass(clean_ident
     (cfg,) = identity_config.cis_staff_issuers()
     assert cfg.issuer == "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_bCcFvbSOS"
     assert cfg.jwks_url == cfg.issuer + "/.well-known/jwks.json"
-    assert cfg.client_ids == frozenset({"3oqkumijh04cp81k3nlnub6qtv", "2g3f3ncfuqdiuu1o5b70o4h0lq"})
+    # AA-911 D-1: plus the Preview-only cis-admin-preview client once its id is filled in (empty until then).
+    preview = {identity_config.DEV_CIS_ADMIN_PREVIEW_CLIENT_ID} - {""}
+    assert cfg.client_ids == frozenset({"3oqkumijh04cp81k3nlnub6qtv", "2g3f3ncfuqdiuu1o5b70o4h0lq"} | preview)
     assert (cfg.audience_claim, cfg.token_use, cfg.groups_claim) == ("client_id", "access", "cognito:groups")
     assert cfg.leeway_s <= 60
     # booking-staff (5ifl9dgkr8a5outnmsjc8v1kt3) is a Booking client: never accepted on the CIS staff surface.
@@ -632,7 +634,8 @@ def test_cis_staff_env_overrides(clean_identity_env):
     clean_identity_env.setenv(identity_config.ENV_BREAKGLASS_CLIENT_ID, "  ")  # blank -> default
     (cfg,) = identity_config.cis_staff_issuers()
     assert cfg.issuer == ISS_A
-    assert cfg.client_ids == frozenset({CIS_ADMIN, identity_config.DEV_BREAKGLASS_CLIENT_ID})
+    preview = {identity_config.DEV_CIS_ADMIN_PREVIEW_CLIENT_ID} - {""}
+    assert cfg.client_ids == frozenset({CIS_ADMIN, identity_config.DEV_BREAKGLASS_CLIENT_ID} | preview)
 
 
 def test_get_cis_staff_verifier_is_cached_until_reset(clean_identity_env):
