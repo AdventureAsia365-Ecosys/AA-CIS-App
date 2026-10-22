@@ -57,7 +57,12 @@ def test_vercel_deploy_calls_the_staff_smoke_only_from_main_callback_hosts():
     jobs = _workflow("vercel-deploy.yml")["jobs"]
     pr = jobs["smoke"]
     assert "staff_session" not in pr.get("with", {})
-    assert "id-token" not in pr["permissions"]
+    # GitHub validates nested-job permissions at startup even for skipped jobs: the caller must grant what
+    # ui-smoke.yml's smoke-staff asks for, or the whole workflow fails to start (S247 startup_failure).
+    staff_perms = _workflow("ui-smoke.yml")["jobs"]["smoke-staff"]["permissions"]
+    for job in (pr, jobs["smoke-production"], jobs["smoke-preview-host"]):
+        for scope, level in staff_perms.items():
+            assert job["permissions"].get(scope) == level, (job.get("name"), scope)
     prod = jobs["smoke-production"]
     assert prod["with"] == {"base_url": PROD, "sha": "${{ needs.deploy.outputs.sha }}", "staff_session": True}
     assert "github.ref == 'refs/heads/main'" in prod["if"] and "'production'" in prod["if"]

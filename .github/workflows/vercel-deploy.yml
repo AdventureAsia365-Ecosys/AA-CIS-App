@@ -364,7 +364,11 @@ jobs:
 
   # AA-732 UI smoke on the fresh PREVIEW. It used to run on Vercel's `deployment_status` event, which
   # only the Git integration sends — so it is now called from here. AA-816 S2 path: public specs only (no
-  # session on a per-deployment URL); no id-token permission on this PR path.
+  # session on a per-deployment URL): staff_session is never passed here, so ui-smoke.yml's smoke-staff job is
+  # skipped. id-token: write is still granted because GitHub checks the permissions of every nested job of a
+  # called workflow at startup, skipped or not, and smoke-staff asks for it; without it the whole workflow
+  # ends in startup_failure on every event (S247, after #912). The OIDC token is unusable here anyway: the
+  # mailbox role trusts main + environment e2e only.
   smoke:
     name: UI smoke
     needs: deploy
@@ -372,6 +376,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      id-token: write
     uses: ./.github/workflows/ui-smoke.yml
     with:
       base_url: ${{ needs.deploy.outputs.url }}
