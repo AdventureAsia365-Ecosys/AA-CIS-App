@@ -71,11 +71,38 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     roles (same list as `lib/rbac.ts` PAGE_RULES, enforced by `proxy.ts`). The legacy `(internal)` route group
     (`/upload`, `/review`, `/catalog`, `/brand`) is deleted; those URLs and `/admin/brand`
     redirect in `next.config.ts`.
-  - Portal pages (`portal/app/portal/*`): `dashboard`, `t0-brand`, `t1-rewrite`, `t4-pool` ("My Catalog Tours" /
-    `CatalogTab`, migrated to the UI kit + react-query, AA-662 PR 3), `t7-planning` (titled
-    "Social Content", renders the Slate), `t8-angle-gate` (T8+T9 wizard), `t10-review` (My
-    Content), `t11-publish`, `marketplace`, `billing`, `activity`, `settings`, `api`, `help/facebook`.
-    The portal works on phones (drawer below 900px, AA-605).
+  - Portal pages (`portal/app/portal/*`, AA-759 — no T-number slugs): `dashboard`; **Tours** —
+    `tours` (Browse Tours, T1), `tours/mine` (My Tours, T4 / `CatalogTab`, kit + react-query, AA-662 PR 3),
+    `tours/marketplace`; **Brand** — `brand` (T0); **Create** — `create/social` (Social Posts: the Slate on
+    every Channel but blog, + trip reallocation), `create/article` (Articles: the Slate on the blog
+    Channel), `create/write` (T8+T9 wizard, deep link only); **Content** — `content` (My Content, with a
+    Publish action), `content/publish` (T11); **Account** — `account/billing`, `account/activity`,
+    `account/settings` (Team & Settings), `account/api`, `account/integrations` (WordPress / Facebook
+    connections); `help/facebook`. Every old slug (`t0-brand`, `t1-rewrite`, `t4-pool`, `t7-planning`,
+    `t8-angle-gate`, `t10-review`, `t11-publish[/connection]`, `marketplace`, `activity`, `billing`,
+    `settings`, `api`) answers **308** to its new path (`portal/next.config.ts` `OLD_SLUG_REDIRECTS`, query
+    string kept). Route constants: `ROUTES` in `portal/app/portal/_shell/portalNav.tsx`.
+  - **PortalShell (AA-759, `portal/app/portal/_shell/`)**: the one portal shell, on the kit — sidebar grouped
+    by workflow (Tours → Brand → Create → Content → Account) with a collapse rail (`[` key), topbar
+    (breadcrumb, search pill, theme switch light → dark → system, notifications bell, account menu with the
+    Privacy / Terms links and Sign out), a real ⌘K palette on the kit `Modal` (Pages · My tours · My
+    content · Tours; tours from `GET /v1/tours/pool?search=`, the rest from the cached `my-versions` /
+    `content-reviews` queries) and a phone bottom bar (Dashboard · Tours · Create · Content · More).
+    Shell data through react-query (`_shell/useShellData.ts`; the My Tours badge shares the page's
+    `["my-versions"]` query). Toasts: kit `ToastProvider`. Responsive rules are CSS on `data-pshell`
+    attributes in `portal/app/globals.css` (drawer < 900 px, bottom bar < 768 px), no className.
+  - **Portal work status (AA-760, `portal/app/portal/_components/workStatus.tsx`)**: one model for tenant-visible
+    work — `queued / writing / checking / done / failed` + `WorkStatusBadge` — read from what the API takes off
+    the job (tour version `status` + `job_status`, piece `ready_state`, the live snapshot's active step for
+    `checking`), never inferred from row flags. Browse Tours, My Tours, My Content, the Writer panel, the live
+    view, the dashboard feed, the Activity page and the bell all use it. Lists poll with react-query
+    `refetchInterval` only while a row is active and stop on terminal states (the AngleGate wizard and the
+    Slate refresh too — no `setInterval` left in the portal's data polling). The activity feed is joined to
+    the shared `["my-versions"]` query for its job state.
+  - **Portal theme (AA-759)**: no longer pinned light. The root layout restores `cis_theme` / `cis_sidebar`
+    before paint (same scripts as the admin; the portal origin has its own localStorage); the portal `T`
+    tokens (`_components/ui.tsx`) read the `--aa-*` CSS variables like the kit `K`. `/tenant-login` and the
+    legal pages still pin `data-theme="light"`.
   - **Tenant portal app (AA-885)**: `portal/` is a second Next.js app (same Next/React versions, its own
     `package-lock.json`, dev port 3004). Paths keep the `/portal/*` prefix on the new host (`/` → `/portal/dashboard`);
     the admin host answers `/portal`, `/portal/*` and `/tenant-login` with **308** to the same path on
@@ -108,7 +135,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
       "Draft — pending legal review" banner, and both are `noindex`. The privacy notice describes portal
       data and links `https://adventure.asia/privacy-policy` as the company-wide policy (the AA-885 redirect
       is gone); the AI acceptable-use clause of the terms waits for AA-820. Factual sentences must match
-      the code; open legal points stay `[to be confirmed]`. Links in the sidebar and on `/tenant-login`.
+      the code; open legal points stay `[to be confirmed]`. Links in the portal account menu (AA-759; was the
+      sidebar footer) and on `/tenant-login`.
     - Staff have **no** access to the tenant portal (no staff session there; a support view is future
       work). Staff sign in on the admin host (the tenant-login "← Staff login" link).
     - **Vendored UI kit** (byte copies, guarded by `tests/unit/test_aa885_portal_split.py`): a change to
@@ -116,7 +144,9 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
       `portal/app/_kit/tokens.ts`, `portal/app/_kit/primitives.tsx`, `portal/app/_kit/Modal.tsx`,
       `portal/app/_kit/Drawer.tsx`, `portal/app/_kit/Toast.tsx`, `portal/app/_kit/api.ts`,
       `portal/app/_kit/useMediaQuery.ts`, `portal/app/_kit/Providers.tsx`, `portal/app/_kit/DataTable.tsx`,
-      `portal/app/_kit/csv.ts`, `portal/app/_kit/savedViews.ts`, `portal/app/_brand/tokens.ts`,
+      `portal/app/_kit/csv.ts`, `portal/app/_kit/savedViews.ts`, `portal/app/_kit/theme.ts`,
+      `portal/app/_kit/useTheme.ts`, `portal/app/_kit/sidebarStore.ts`, `portal/app/_kit/useSidebar.ts`,
+      `portal/app/_kit/useHydrated.ts` (AA-759), `portal/app/_brand/tokens.ts`,
       `portal/lib/bffPath.ts`, `portal/lib/proxyResponse.ts`, `portal/lib/sameOrigin.ts`,
       `portal/lib/crossSiteGuard.ts` (each copied from the same path under `frontend/`). `portal/app/_kit/index.ts` (barrel of just these), `portal/app/globals.css` and
       `portal/lib/auth-server.ts` are portal-owned.
@@ -477,8 +507,9 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   geocoded destinations and the tour graph (stops, nodes, edges, legs, junctions) into the CIS-internal
   schema `geo`, keyed by `source_id` (catalog identity). Jobs (`services/jobs/place_*`,
   `tour_graph_job.py`; logic in `services/places/`): `place_extract` per tour (after A3 atomize,
-  set-active / restore, admin backfill `POST /admin/places/backfill`, ≤ 50 tours, dry-run cost
-  estimate, refused during a wave); `place_geocode` (debounced, the ONLY writer of
+  set-active / restore, admin backfill `POST /admin/places/backfill`, ≤ 50 tours of a country or an explicit
+  `tour_ids` list ≤ 100 (AA-847), dry-run cost estimate priced at each stage's live route and catalog price,
+  refused during a wave); `place_geocode` (debounced, the ONLY writer of
   `shared.destinations` coordinates) — the model proposes a point (`a3_place_locate`), **Geoapify**
   (OpenStreetMap data; S236 decision, all countries; `GEOCODER_PROVIDER` = `geoapify` default |
   `model_only` for tests / emergency; `mapbox_permanent` / `amazon_location` fail as not supported —
@@ -494,7 +525,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   "Powered by Geoapify" (link) + "© OpenStreetMap contributors"** — also kept per row in
   `geocoder_meta.attribution` (Geoapify storage terms). Hard country/bbox guard, transit-aware outlier
   rule → `suspect`; admin-fixed (`manual`) rows are never overwritten; `tour_graph_build` (debounced, versioned swap, current + 2
-  kept). Stages `a3_place_days` and `a3_place_locate` (Haiku 4.5, Sonnet fallback, migration 260), `a3_place_embed`
+  kept). Stages `a3_place_days` (Haiku 4.5, Sonnet fallback, migration 260), `a3_place_locate` (Sonnet, Haiku
+  fallback, migration 261: on Haiku its coarser points left most names `llm`), `a3_place_embed`
   (Cohere 1536-d). `shared.destinations` is unique on `(name_norm, country, locality_norm)` (same
   name in two countries = two places). Other apps will read it only through `catalog.*` views
   (migration 228, next slice); TripPlanner's own extraction is frozen.
@@ -596,30 +628,44 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   the team, 4 projects). `portal/**` is not in `deploy-dev.yml`, so a portal change never redeploys ECS.
   `portal/vercel.json` also sets `git.deploymentEnabled: false`.
 - **UI smoke (AA-732, `.github/workflows/ui-smoke.yml`)**: called by `vercel-deploy.yml` after a
-  successful preview deploy (`workflow_call`, inputs `base_url` + `sha`), or run by hand
-  (`workflow_dispatch`); Vercel's `deployment_status` no longer arrives. A Playwright suite (`tests/e2e/smoke/ui-smoke.spec.ts`, project `smoke`)
-  opens the key admin pages as a logged-in admin and fails the check on any HTTP/console error,
-  failing same-origin `/api/` call, or a blank page (no table rows and no kit empty state).
-  Screenshots (desktop 1440 + mobile 390, light + dark) and the HTML report upload as an artifact
-  and link from one PR comment. Secrets: `VERCEL_AUTOMATION_BYPASS_SECRET` (preview SSO bypass),
-  `E2E_ADMIN_USERNAME`, `E2E_ADMIN_PASSWORD`. The bypass header is sent only to the BASE_URL
-  origin (origin-scoped route), never to a third-party host. The admin suite also checks that the
-  old portal URLs answer 308 to the portal host (`aa885-portal-redirect.spec.ts`). Not a
-  required check.
+  successful deploy (`workflow_call`, inputs `base_url` + `sha` + `staff_session`), or run by hand
+  (`workflow_dispatch`); Vercel's `deployment_status` no longer arrives. A Playwright suite (`tests/e2e/smoke/`)
+  opens the key admin pages and fails the check on any HTTP/console error, failing same-origin `/api/` call, or a
+  blank page (no table rows and no kit empty state). **Split (AA-816 S2 path):** specs that need a session carry
+  the tag `@staff` (project `smoke`, after `smoke-setup`); every other spec is project `smoke-public` (no session).
+  A per-PR preview (`*.vercel.app`, not a Cognito callback) runs only `smoke-public` (job `smoke`). The signed-in
+  run (job `smoke-staff`, `staff_session=true`, from `main` only: GitHub environment `e2e`, the read-only mailbox
+  role, concurrency group `e2e-cognito` shared with the Cognito E2E) signs in as the Cognito E2E user with an email
+  code (`tests/e2e/helpers/cognitoSignIn.ts`, shared with `tests/e2e/cognito/`) on the two callback hosts only:
+  Production after every production deploy (job `smoke-production`; the user is a reviewer, so reviewer mode:
+  pages from `frontend/lib/rbac.ts` `PAGE_RULES`, no writes) and the fixed Preview host after an alias-only
+  dispatch (job `smoke-preview-host`; viewer mode, and the setup fails unless the session's role is `viewer`, the
+  live evidence of the Preview client cap). For a PR labelled `preview-signin`, dispatch `ui-smoke.yml` from `main`
+  with `base_url=https://aa-cis-preview.lumiguides.it.com` and `staff_session=true`. Screenshots (desktop 1440 +
+  mobile 390, light + dark) upload as an artifact (the public run also uploads the HTML report; the signed-in run
+  never does: a `fill` step would name the code) and link from one PR comment each. Secret:
+  `VERCEL_AUTOMATION_BYPASS_SECRET` (preview SSO bypass), sent only to the BASE_URL origin (origin-scoped route),
+  never to a third-party host. The `E2E_ADMIN_*` password secrets are no longer passed (the smoke setup keeps a
+  legacy password mode for local runs until S2). The admin suite also checks that the old portal URLs answer 308
+  to the portal host (`aa885-portal-redirect.spec.ts`). Not a required check.
 - **Portal UI smoke (AA-885, `.github/workflows/ui-smoke-portal.yml`)**: Playwright project
   `smoke-portal` (`tests/e2e/smoke-portal/`) against a portal preview: host checks without a session
-  (redirects, forged cookies refused, no admin routes = 404, security headers, `/privacy` + `/terms` draft pages), and
+  (redirects, the AA-759 old-slug 308s, forged cookies refused, no admin routes = 404, security headers, `/privacy` +
+  `/terms` draft pages), and
   logged in as a test tenant (API key in `E2E_TENANT_API_KEY`, copied by hand from Secrets Manager
   `aa-cis/dev/e2e-tenant/<slug>` — re-copy after a key rotation) every portal page with the shared
-  `runPageCheck` + a 390 px no-sideways-scroll check, screenshots 1440 + 390, and the host-only cookie check.
+  `runPageCheck` + a 390 px no-sideways-scroll check, screenshots 1440 + 390 in light and dark (AA-759), and the
+  host-only cookie check.
   Logged-in tests skip without the key. The preview needs `VERCEL_PORTAL_BYPASS_SECRET` (passed to the
   helpers as `VERCEL_AUTOMATION_BYPASS_SECRET`). Lint: `portal-lint` CI job (non-required); `tsc` + `next build` in the `portal-build` job (AA-879). e2e specs carry no hardcoded credentials (shared helper
   `tests/e2e/helpers/auth.ts` reads the env). ESLint enforces UI-kit conventions in
-  `frontend/eslint.config.mjs` (`frontend-lint` CI job, non-required).
+  `frontend/eslint.config.mjs` (`frontend-lint` CI job, non-required) and `portal/eslint.config.mjs` (AA-759/AA-760: `error`
+  for every portal file except the 3 legacy ones listed in `KIT_LEGACY_FILES`, which stay `warn` until migrated).
 - **Cognito E2E (AA-816 E1, `.github/workflows/e2e-cognito.yml`)**: `workflow_dispatch` on `main` only,
   GitHub environment `e2e`, OIDC role from secret `E2E_MAIL_ROLE_ARN` (Infra `aa-cis-dev-e2e-mail-reader`,
   read-only: List + Get on `s3://aa-cis-dev-e2e-mail-<acc2>/inbound/`, no delete; 1-day expiry). Playwright
-  project `cognito` (`tests/e2e/cognito/`, always the production host — the only registered callback): staff
+  project `cognito` (`tests/e2e/cognito/`, always the production host — the only `cis-admin` callback; the fixed
+  Preview host belongs to the separate preview client and is covered by the signed-in UI smoke): staff
   user "E2E Cognito" (`e2e@e2e-mail.lumiguides.it.com` — the SES test mailbox itself, reviewer, Booking none; a
   TEMPORARY exception to the `@adventure.asia` rule, see Staff roles) signs in by email code (`tests/e2e/helpers/mailbox.ts` reads the code from S3), lands under `/admin`,
   then (AA-680 staff-half evidence) opens the Booking staff admin (input `booking_base_url`: production
@@ -765,9 +811,10 @@ lives in `shared.staff_app_grant (admin_user_id, app, role)` (`app` = `booking`,
 - The BFF (`frontend/lib/cognito.ts`, `lib/cognitoRoutes.ts`, routes `app/api/auth/{signin,callback}/{cognito,
   cognito-breakglass}`, `app/api/auth/refresh`) runs authorization code + PKCE (state + nonce in the 5-minute
   `cis_oauth_tx` cookie) with a confidential client. Redirect URIs come from a fixed allow-list
-  (`aa-cis.lumiguides.it.com`, localhost in development); any other host (Vercel previews) gets
-  `cognito_host` and only the password form. Domain, issuer and client ids are code constants with
-  `COGNITO_*` env overrides; only the two client secrets are set in Vercel (Production).
+  (`aa-cis.lumiguides.it.com`, localhost in development; a Vercel preview build only the fixed Preview host,
+  below); any other host (a per-deployment `*.vercel.app` preview URL) gets `cognito_host` and only the password
+  form. Domain, issuer and client ids are code constants with `COGNITO_*` env overrides; the two production client
+  secrets are set in Vercel (Production only), the Preview-only client secret on the Preview target only.
 - Cookies: `cis_admin_token` holds the Cognito **access** token (15 min; the cookie lives for the refresh window
   so `proxy.ts` can see it expired), `cis_staff_rt` the refresh token (httpOnly, `path=/api/auth`, 12 h,
   1 h for break-glass; the window is not extended by rotation). Refresh happens only in `/api/auth/refresh`
@@ -783,7 +830,8 @@ lives in `shared.staff_app_grant (admin_user_id, app, role)` (`app` = `booking`,
 **Verification (backend).** `api/core/identity_verifier.py` (app-neutral, to be copied byte-identical into
 AA-Booking) + `api/core/identity_config.py` (CIS surface) + `api/core/staff_identity.py` (resolver):
 - issuer chosen by the **unverified `iss`**; only the WORKFORCE issuer is accepted for staff (any other `iss` →
-  401, a JWT without `iss` → the legacy HS256 path); RS256 only, `client_id` ∈ {`cis-admin`, `breakglass`},
+  401, a JWT without `iss` → the legacy HS256 path); RS256 only, `client_id` ∈ {`cis-admin`, `breakglass`,
+  `cis-admin-preview` (AA-911 D-1, always capped at viewer, below)},
   `token_use=access`, no `aud`, leeway ≤ 60 s; one JWKS cache per issuer, prefetched at start-up
   (`identity_jwks_prefetched`), unknown `kid` refetched at most once a minute, last good keys kept;
 - the row is found by `(iss, sub)`; on the first sign-in it is linked **once** by `lower(email)` to an active
@@ -818,7 +866,31 @@ AA-Booking) + `api/core/identity_config.py` (CIS surface) + `api/core/staff_iden
 `LEGACY_ADMIN_LOGIN_ENABLED` (default on; only `0` / `false` / `no` / `off` switch it off, same parsing in the
 API and the BFF) gates **only** the CIS UI password form + BFF `/api/auth/login` (404 when off) and the HS256
 path of `/auth/verify-admin`. `/auth/admin-login` and `/auth/booking-token` stay on for AA-Booking until its
-Phase 2. Previews must keep the flag on (they cannot be Cognito callbacks). For an HS256 session
+Phase 2. Per-deployment preview URLs (`*.vercel.app`, not Cognito callbacks) still need the flag on for the
+legacy viewer smoke; the fixed Preview host `aa-cis-preview.lumiguides.it.com` (below) never offers the password
+form (`/login` hides it, BFF `/api/auth/login` answers 404 there).
+
+**Preview staff sign-in (AA-911 D-1, AA-816 P6a, root ADR 0006a A11).** `aa-cis-preview.lumiguides.it.com` is a
+Vercel domain of `aa-cis-frontend` and the only callback / sign-out URL of the Preview-only WORKFORCE client
+`cis-admin-preview` (AA-CIS-Infra; the production `cis-admin` client does not list it; break-glass stays
+production-only). A Vercel production build signs in with `cis-admin` on the production host only, a preview build
+with `cis-admin-preview` on this host only (`VERCEL_ENV`, `frontend/lib/cognito.ts`; its own secret env var
+`COGNITO_CIS_ADMIN_PREVIEW_CLIENT_SECRET`, Preview target only; client id a code constant), so the redirect URI is
+still never built from the Host header and a preview build never reads the production client secret. The Vercel
+Deploy workflow points the host at a preview only on opt-in: the PR label `preview-signin`, or a dispatch from
+`main` with `alias_only_url` (checked over the Vercel API: this project, not production, READY). A Cognito session
+on that host is always the **viewer**: `api/core/staff_identity.resolve_staff` maps every `cis-admin-preview` token
+to role `viewer` with `is_owner` false whatever its `cis-*` groups (`api/core/identity_config.is_preview_client`,
+env override `COGNITO_CIS_ADMIN_PREVIEW_CLIENT_ID`; a preview id equal to a production id fails the verifier build,
+so every staff token answers 503), the bearer middleware forwards `viewer`, `staff_authz` refuses every write
+("Role 'viewer' is read-only") and `/auth/verify-admin` returns `viewer` (log `staff_identity_preview_capped`). The CIS
+to Booking bridge (`/auth/booking-token`, below) stays and mints only from an HS256 password session, so a Cognito
+session (this one included) never gets a Booking token; the bridge retirement is AA-911 P6b. The
+cap holds only while the Vercel Preview `ADMIN_SECRET` is the C9 Preview credential (check V2, root ship plan):
+the main secret with a forged `x-admin-role` would pass on a path without a Bearer. Preview builds send
+`X-Robots-Tag: noindex, nofollow`. Every BFF route that attaches `X-Admin-Secret` calls `requireAdmin()` first
+(audited 21/10/2026). UI smoke keeps the per-deployment URL. Runbook: root
+`docs/ops/runbooks/preview-staff-sign-in.md`. For an HS256 session
 `/auth/verify-admin` re-reads `shared.admin_users` (cached 60 s), so a deactivation or demotion lands within
 ~6 min (BFF verify cache 5 min + 60 s). Cutover preconditions (ADR 0006): every active row has an email and a
 `cognito_sub` from that person's own sign-in, managed-login break-glass tested; the secret check is
@@ -1013,9 +1085,11 @@ it). Admin-only reads stay refused by POLICY; the role-filtered open reads (sear
 it like reviewer/content. No Booking access (`/auth/booking-token` → 403, `staff_authz.NO_BOOKING_ROLES`). Not
 assignable from the Staff page (`staff_directory.CIS_ROLES`, `lib/rbac.ts` `ASSIGNABLE_STAFF_ROLES`) and no
 Cognito group (a `cis-viewer` group is deferred to AA-816 E1); the reconcile report lists the row under cutover
-readiness (no email / sub), a legacy-only exception. UI smoke runs in **viewer mode** when the GitHub
-`E2E_ADMIN_*` secrets hold this account (the role comes from the login answer): readable pages get the full page
-check, admin-only pages must redirect to `/admin/review`, a BFF write and the staff list must answer 403.
+readiness (no email / sub), a legacy-only exception. UI smoke runs in **viewer mode** when the smoke session is
+the viewer (since the AA-816 S2 path: the Cognito E2E user on the fixed Preview host, capped at viewer by the API;
+before it, this legacy account): readable pages get the full page check, admin-only pages must redirect to
+`/admin/review`, a BFF write and the staff list must answer 403. A smoke-public test keeps the page list's
+`viewerRefused` flags equal to `PAGE_RULES`.
 
 AA-Booking staff roles map onto the same three: `admin` → admin, `sales` → reviewer tier,
 `content_creator` → content (the CIS `viewer` maps to nothing: no Booking token). Reviewer and content reach the backend through the same admin secret;
@@ -1118,8 +1192,9 @@ A tenant (`shared.tenants`) is in one of three states, derived from two columns
 PATCH and generate-key on an offboarded tenant return 409. `POST /admin/tenants/{id}/restore`
 (Nghiệp, 14/10/2026) brings it back whole: it clears the offboard markers, sets `is_active`,
 re-adds the snapshotted Jev allow-list row and issues a **new** API key (the old one stays
-revoked); plan and settings are unchanged, and cancelled jobs are listed, not re-enqueued. GDPR
-data deletion is not automated (follow-up).
+revoked); plan and settings are unchanged, and cancelled jobs are listed, not re-enqueued. Tenant
+data erasure is not automated (AA-839: a separate step after offboarding plus a retention window, with
+explicit approval).
 
 Every admin write to a tenant (create, plan, status, key, brand identity, config, offboard,
 restore) is admin-role only. The BFF enforces this through `lib/rbac.ts` `API_WRITE_RULES`, and the
@@ -1428,10 +1503,10 @@ logged under `F7_faq_autofix`.
 S234 (AA-771): LinkedIn has a **channel spec** by brand register (`services/acp_shared/channel_spec.py`:
 consumer_social / editorial / warm_practical / observational, from the voice adjectives then brand_type) —
 word band 120–250 (editorial 300), ≤3 hashtags, first line ≤140 chars; hygiene.autofix applies the hashtag cap
-and first-line split. **F14_social_shape** (LinkedIn shape; warn, blocks above 1.3× the band → full
+(each tag once — AA-780 S246) and first-line split. **F14_social_shape** (LinkedIn shape; warn, blocks above 1.3× the band → full
 rewrite; AA-780: under the band's floor blocks on attempt 1 only → one full rewrite to the target, and never
 holds a piece — `quality_gates.never_holds`; the AA-528 regression guard keeps a repairable rewrite of a floor-only attempt 1 for the attempt-3 repair, and on a revert waives the floor block), **F15_voice** (stock-phrase hard list; blocks on attempt 1 only, for one sentence repair, and
-never holds a piece — `hold_failure` skips it) and **F15_voice_warn** (trade register, audience-number leak,
+never holds a piece — `hold_failure` skips it; AA-780 S246: a STOCK_PATTERNS sentence still in the final attempt's text is cut in code after the loop, `service._cut_stock_lines` — never the hook or the CTA, never below the word band; shown as the non-blocking `F15_stock_cut` flag) and **F15_voice_warn** (trade register, audience-number leak,
 generic or repeated opener, AA-780 broetry — ≥2 consecutive prose sentences of ≤5 words, bullets and emoji-only lines excluded; warn only, never repaired). All pass for every other channel. The F9 judge
 gets the brand's voice adjectives and no longer favours a calm house voice.
 S234 round 2 (AA-768): **F13_leak** (blocking, sentence-repairable) — writer-instruction wording ("A Sentence
@@ -1813,7 +1888,7 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
 
 ### T-series, old (Tenant rewrite tour, T0-T4)
 
-- **T0 — Brand Identity**: tenant sets up their own brand voice/rules (`/portal/t0-brand`),
+- **T0 — Brand Identity**: tenant sets up their own brand voice/rules (`/portal/brand`, was `t0-brand`),
   incl. a Default Call to Action (`tenant_brand_rules.default_cta`, migration 220). The fields
   become the **brand pack** (`services/acp_shared/brand_pack.py`, AA-771) read by T8, T9 and the
   T10 judge — compiled deterministically at read time; a hand-written `system_prompt` still heads
@@ -1826,7 +1901,7 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     bell row per tenant + CTA text (`tenant.cta.review_claim`). Rule:
     `authenticity.cta_review_claims()`; writer: `services/acp_shared/cta_review_notice.py`.
 - **T1 — Tour Selection / Rewrite trigger**: tenant picks an A3 (Master Content) tour and fires
-  the rewrite (`/portal/t1-rewrite`, `PoolTab.tsx`'s "Rewrite" button).
+  the rewrite (`/portal/tours`, was `t1-rewrite`; `PoolTab.tsx`'s "Rewrite" button).
 - **T2 — Rewrite (execution)**: the LLM rewrite of the picked tour into the tenant's own brand
   voice. It has no dedicated UI route and runs as the durable `t2_rewrite` job on the worker (AA-652).
   - **Writer prompt (AA-792).** T2 has its own writer prompt: `prompts.T2_SYSTEM_PROMPT` plus a
@@ -1929,7 +2004,7 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   - **T2 judge tie-break.** Near the retry line it asks `a1_brand_fit` (stage `t2_judge_tiebreak`,
     shadow).
   - **Other tenants.** `skipped`; T3 is unchanged.
-- **T4 — Pool**: the tenant's own rewritten-tours pool (`/portal/t4-pool`) — a T3-approved tour
+- **T4 — Pool**: the tenant's own rewritten-tours pool (`/portal/tours/mine` "My Tours", was `t4-pool`) — a T3-approved tour
   here is what a tenant can build T7+ content from.
 
 ### T-series, new (per-tenant social content, ported from Ms. Thư's `aa-social-media`, T5-T11)
@@ -1953,11 +2028,11 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   UI (`/portal/t6-atoms`); removed at AA-527, replaced by the admin-only `/admin/atom-curation`
   page (platform-scope atoms only — this is exactly the page AA-527 built into the wrong role
   the first time, which is why this glossary exists).
-- **T7 — Slate** (`/portal/t7-planning`, titled "Social Content"): the tenant's ranked,
+- **T7 — Slate** (`/portal/create/social` "Social Posts" + `/portal/create/article` "Articles", was `t7-planning` "Social Content"): the tenant's ranked,
   per-Channel list of Subjects to pick from, read from the platform-wide Score/Route data (see
   Slate above). The older slot-grid UI on this page was removed (AA-519). Debate's brand-fit cut
   asks the Jev Question `t7_topic_fits_brand` before the Luna call on a cache miss (AA-700, shadow).
-- **T8 — Angle Gate**: Goal + Angle selection (`/portal/t8-angle-gate`, one continuous wizard
+- **T8 — Angle Gate**: Goal + Angle selection (`/portal/create/write`, was `t8-angle-gate`; one continuous wizard
   covering T8 and T9 together — no separate T9 route). Each PAA answer an Angle claims is checked
   with `t8_angle_answers` before the ranking (AA-700, shadow). S234 (AA-771): an Angle's
   `best_final_style` is shape + which seed details to lead with — never a voice, an opening line or an
@@ -1994,14 +2069,14 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   WORDS line built from the brand pack; an unsupported service-level claim is an `F17_trip_fact` finding.
   No Jev on T10: the AA-701 shadow questions were turned off in S234 (no signal) and their
   observer removed; migration 194's `t10_gates` question rows stay at `mode=off` as history.
-  `/portal/t10-review` is now **My Content** (AA-614): the tenant's pieces with no gate/held
+  `/portal/content` (was `t10-review`) is now **My Content** (AA-614): the tenant's pieces with no gate/held
   details, displayed text is copy-locked (select/copy/right-click blocked, with a "Use Export"
   hint; the edit textarea stays editable). AA-669 migrated it to the UI-kit DataTable
   (columns/filters by channel·status·goal/sort/saved views/CSV) with a right-side drawer for the
   piece (content + context + flags + inline edit + exports), and bulk actions (export selected,
   publish selected eligible pieces) via react-query.
 - **T11 — Publish / Export**: tenant-facing WordPress publish, blog Channel only today
-  (`/portal/t11-publish`); the other 7 Channels have no publish step built yet. Blog markdown is
+  (`/portal/content/publish`, was `t11-publish`); the other 7 Channels have no publish step built yet. Blog markdown is
   converted to an HTML fragment before it is sent to WordPress (AA-613 fixed raw `##`/`**`
   appearing on the site). Export has two modes: a full HTML document and a bare HTML fragment
   for pasting into a CMS. Every export and publish writes an audit row.

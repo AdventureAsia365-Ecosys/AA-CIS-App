@@ -29,6 +29,13 @@ Rules
    defence in depth the link is refused when the token says ``email_verified`` is false; absent = trusted
    on the trigger's check.
 5. Unknown identity, an inactive row, or a row bound to another identity -> 401.
+5a. **Preview cap (AA-911 decision D-1, root ADR 0006a A11).** A token from the Preview-only ``cis-admin-preview``
+   client (the fixed Preview host ``aa-cis-preview.lumiguides.it.com``, which runs unmerged PR code) resolves to
+   the **viewer** role and ``is_owner = False`` whatever ``cis-*`` group the user holds (``preview = True`` on the
+   identity, ``staff_identity_preview_capped`` logged). The bearer middleware then rewrites ``x-admin-role`` to
+   ``viewer`` and ``staff_authz`` refuses every write (``READ_ONLY_ROLES``); ``/auth/verify-admin`` returns
+   ``viewer`` to the BFF. The row lookup and first-sign-in link are the same as on Production (the identity is
+   Cognito's, not the preview code's); only the session is capped.
 6. Rows are cached for :data:`STAFF_STATE_TTL_S` keyed by ``(iss, sub)`` (misses too), like the legacy
    verify-admin cache, so a deactivation takes effect within that TTL (plus the BFF's own verify cache).
 
@@ -66,6 +73,10 @@ AUTH_OTHER = "other"          # a JWT with an iss that is not the WORKFORCE issu
 AUTH_MALFORMED = "malformed"
 
 _LEGACY_OFF_VALUES = frozenset({"0", "false", "no", "off"})
+
+# AA-911 D-1: the role of every session from the Preview-only client (staff_authz.READ_ONLY_ROLES), like the C9
+# Preview credential (api/core/staff_credential.PREVIEW_ROLE).
+PREVIEW_ROLE = "viewer"
 
 # WORKFORCE group -> shared.admin_role, highest first (identity.tf group precedence cis-admin 10,
 # cis-reviewer 20, cis-content 30; ADR 0006 §3).
@@ -123,6 +134,8 @@ class StaffIdentity:
     # shared.admin_users.is_owner (C6: staff.write is owner-only). Cached with the row for STAFF_STATE_TTL_S; the
     # staff directory writer re-reads it from the DB inside its own transaction before every write.
     is_owner: bool = False
+    # AA-911 D-1: the token came from the Preview-only client; role is then always PREVIEW_ROLE, is_owner False.
+    preview: bool = False
 
 
 def legacy_login_enabled() -> bool:
@@ -312,10 +325,16 @@ async def resolve_staff(db: Any, principal: Principal, *, touch_login: bool = Fa
         # The group decides (ADR 0006); the reconcile job (C7) reports the difference.
         logger.warning("staff_role_drift", admin_id=row.admin_id, group_role=role, db_role=row.db_role,
                        sub=principal.sub)
+    preview = identity_config.is_preview_client(principal.client_id)
+    if preview:
+        # AA-911 D-1: a Preview-host session is the viewer, never the group role and never an owner.
+        logger.info("staff_identity_preview_capped", admin_id=row.admin_id, group_role=role, role=PREVIEW_ROLE,
+                    client_id=principal.client_id)
     return StaffIdentity(
-        admin_id=row.admin_id, username=row.username, role=role, db_role=row.db_role,
-        email=row.email or principal.email, display_name=row.display_name,
-        iss=principal.iss, sub=principal.sub, client_id=principal.client_id, is_owner=row.is_owner,
+        admin_id=row.admin_id, username=row.username, role=PREVIEW_ROLE if preview else role,
+        db_role=row.db_role, email=row.email or principal.email, display_name=row.display_name,
+        iss=principal.iss, sub=principal.sub, client_id=principal.client_id,
+        is_owner=False if preview else row.is_owner, preview=preview,
     )
 
 

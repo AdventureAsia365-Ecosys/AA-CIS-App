@@ -37,11 +37,30 @@ NAME_SUPERLATIVES = ['the best of', 'ultimate', 'must-see', 'and fun', 'expendit
 # to catch a FABRICATED meal-inclusion CLAIM the source never made (a meal presented as logistics:
 # "Meals: Breakfast, Dinner", "(B, L, D)", "breakfast included/provided/served"), not a narrative
 # reference to the time of day. Narrate freely; only a logistics-style meal claim is flagged.
+# AA-803 (S247): also plural, future and generic claims. On main only "<meal> [is] included/provided/served/arranged"
+# was read, so "Lunch and dinner are included", "dinner will be served", "meals on board the junk are prepared",
+# "The price includes all meals" and "full board" were never checked at all. A gap word may not be a negation, a
+# modal or an advice noun: "Lunch is not included", "Dinner can be arranged" (the traveller's option) and "Dinner
+# recommendations are provided" are not inclusion claims.
+_MEAL_NOUN = (r"(?:(?:breakfast|lunch|dinner|supper)[\s-]?times?|breakfasts?|brunch(?:es)?|lunch(?:eons?|es)?"
+              r"|dinners?|suppers?|meals?|picnics?|feasts?|banquets?|barbecues?|bbqs?)")
+_MEAL_GAP = (r"(?!(?:not|no|never|optional|cannot|can|could|may|might|should|would|recommend\w*|suggest\w*"
+             r"|options?|tips?|ideas?|advice)\b|\w+n['\u2019]t\b)[\w'\u2019-]+")
+_MEAL_VERB = r"(?:included|provided|served|arranged|offered|supplied|prepared|hosted|covered)"
+_MEAL_PLACEHOLDER = "[BLDx\u00d7\\-\u2013\u2014]"
 ITIN_MEAL_INVENTED = re.compile(
     r'(?:'
-    r'\bmeals?\s*(?:included|provided)?\s*[:\-]'                 # "Meals:" / "Meal included -"
-    r'|\((?:\s*[BLD](?:\s*[,/&]\s*[BLD]){0,2}\s*)\)'             # "(B, L, D)" meal codes
-    r'|\b(?:breakfast|lunch|dinner)\s+(?:is\s+)?(?:included|provided|served|arranged)\b'
+    r'\bmeals?\s*(?:included|provided)?\s*[:\-\u2013\u2014]'      # "Meals:" / "Meal included -"
+    # "(B, L, D)" meal codes, also with a placeholder for a meal not given ("(B/-/D)", "(B/x/D)")
+    r'|\((?=[^()]*[BLD])\s*' + _MEAL_PLACEHOLDER + r'(?:\s*(?:[,/&|\u00b7\u2022+]|and)\s*'
+    + _MEAL_PLACEHOLDER + r'){0,2}\s*\)'
+    # "<meal> [up to 4 words] [is/are/will be] [also] included|provided|served|..."
+    r'|\b' + _MEAL_NOUN + r'(?:\s+' + _MEAL_GAP + r'){0,4}?\s+(?:(?:is|are|was|were|will\s+be|being|gets?)\s+)?'
+    r'(?:also\s+)?' + _MEAL_VERB + r'\b'
+    # "includes / including [all|a|daily ...] <meal>"
+    r'|\binclud(?:es|ing|ed)\s+(?:(?:a|an|the|daily|all|full|three|two|packed|picnic|buffet|set|welcome|farewell'
+    r'|local|traditional)\s+){0,2}' + _MEAL_NOUN + r'\b'
+    r'|\b(?:full|half)[\s-]+board\b|\b(?:all|three|daily|every|each)\s+meals?\b'
     r')',
     re.IGNORECASE,
 )
@@ -59,6 +78,30 @@ def _norm_clock(text: str) -> str:
     return re.sub(r"\s+", "", text.lower())
 
 
+def itinerary_claim_sentences(itin_text: str) -> list[dict]:
+    """AA-803: every sentence of a written itinerary as {field, sentence, day}, with the same line / sentence split
+    and the same day rule as ``grounding.sentence_units``, but without its ``MIN_WORDS`` floor and keeping the
+    day-title lines ("Day 3 — Hue (B, L)", one unit each). ``sentence_units`` drops both, so a short meal claim
+    ("Dinner included.") or a title-line code list was never checked."""
+    from services.content_generation import grounding as g
+    out: list[dict] = []
+    day: int | None = None
+    for ln in str(itin_text or "").splitlines():
+        if not ln.strip():
+            continue
+        m = g._GEN_DAY_NUM_RE.match(ln)
+        if m:
+            day = int(m.group(1))
+            if g._DAY_TITLE_RE.match(ln):
+                out.append({"field": "itineraries", "sentence": ln.strip(), "day": day})
+                continue
+        for c in g._SENT_SPLIT_RE.split(ln):
+            s = c.strip()
+            if s:
+                out.append({"field": "itineraries", "sentence": s, "day": day})
+    return out
+
+
 def meal_time_claims_supported(itin_text: str, tour: dict, *, tenant_id: str | None = None,
                                is_tenant_rewrite: bool = False) -> bool:
     """AA-692 A1-3: True when every meal/clock-time hit in the rewrite is backed by the raw source.
@@ -66,9 +109,10 @@ def meal_time_claims_supported(itin_text: str, tour: dict, *, tenant_id: str | N
     S205 measure: the regex fired on 41/125 master tours, and most hits were the source's own
     logistics (14/17 clock times appear verbatim in the source; 26/34 tours' sources state meals too).
     - clock time: supported when the same time is in the source (deterministic);
-    - meal claim: the sentence is sent to the same enforced Jev Question grounding uses
-      (a1_claim_supported, same source text and subject key, so it is normally a cache hit);
-      supported only on a confident, enforced accept. Grey/shadow/error keep the code (fail-closed)."""
+    - meal claim: every itinerary sentence that makes one (AA-803: short sentences and day-title lines too) is
+      sent to the same enforced Jev Question grounding uses (a1_claim_supported, same source text and subject
+      key, so it is normally a cache hit); supported only on a confident, enforced accept of every one.
+      Grey/shadow/error/off keep the code (fail-closed), and so does a claim sentence Jev is never asked about."""
     from services.content_generation import grounding as g
     source = g.source_text(tour)
     src_clocks = {_norm_clock(m.group(0)) for m in ITIN_CLOCK_TIME.finditer(source)}
@@ -76,9 +120,25 @@ def meal_time_claims_supported(itin_text: str, tour: dict, *, tenant_id: str | N
         return False
     if not ITIN_MEAL_INVENTED.search(itin_text):
         return True
-    units = [u for u in g.sentence_units({"itineraries": itin_text}) if ITIN_MEAL_INVENTED.search(u["sentence"])]
-    if not units:
+    claims = [u for u in itinerary_claim_sentences(itin_text) if ITIN_MEAL_INVENTED.search(u["sentence"])]
+    if not claims:
         return False
+    return _jev_clears_meal_claims(claims, itin_text, tour, tenant_id=tenant_id,
+                                   is_tenant_rewrite=is_tenant_rewrite)
+
+
+def _jev_clears_meal_claims(claims: list[dict], itin_text: str, tour: dict, *, tenant_id: str | None,
+                            is_tenant_rewrite: bool) -> bool:
+    """True only when Jev gives an enforced accept on every meal-claim sentence in ``claims``."""
+    from services.content_generation import grounding as g
+    askable = g.sentence_units({"itineraries": itin_text})
+    asked = {(u["sentence"], u["day"]) for u in askable}
+    # AA-803: a claim grounding never builds a unit for (under MIN_WORDS, a title line) cannot get a verdict, so it
+    # keeps the code; Jev is not called, since it could not clear the itinerary anyway.
+    if any((c["sentence"], c["day"]) not in asked for c in claims):
+        return False
+    wanted = {(c["sentence"], c["day"]) for c in claims}
+    units = [u for u in askable if (u["sentence"], u["day"]) in wanted]
     if is_tenant_rewrite and not tenant_id:
         return False            # tenant text with no owner → never sent to Jev; keep the code
     # AA-741 pre-audit: judge_units takes {unit index: per-unit source} since #631; passing the

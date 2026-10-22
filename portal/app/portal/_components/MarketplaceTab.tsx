@@ -16,7 +16,8 @@
 // same small-tool sizing (a tenant reviewing a handful of tours, not a staff catalog browser).
 
 import { AlertTriangle, FolderOpen } from "lucide-react";
-import { useState, useEffect, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { apiGet } from "@/app/_kit";
 import { T, serif, sans, mono, Card, Badge, LoadingScreen, EmptyState, statusVariant } from "./ui";
 
 interface MarketplaceTour {
@@ -43,28 +44,19 @@ interface MarketplaceResponse {
 }
 
 export default function MarketplaceTab() {
-  const [data, setData] = useState<MarketplaceResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
+  // AA-760 — react-query (was a fetch in an effect with three useStates).
+  const { data, isPending, isError, refetch } = useQuery({
+    queryKey: ["tenant-marketplace"],
+    queryFn: () => apiGet<MarketplaceResponse>("/api/tenant/v1/marketplace"),
+  });
 
-  const load = useCallback(() => {
-    setLoading(true);
-    setError(false);
-    fetch("/api/tenant/v1/marketplace")
-      .then(r => (r.ok ? r.json() : Promise.reject()))
-      .then(d => setData(d))
-      .catch(() => setError(true))
-      .finally(() => setLoading(false));
-  }, []);
+  if (isPending) return <LoadingScreen message="Loading your marketplace…" />;
 
-  useEffect(() => { load(); }, [load]);
-
-  if (loading) return <LoadingScreen message="Loading your marketplace…" />;
-
-  if (error || !data) {
+  if (isError || !data) {
     return (
       <EmptyState icon={<AlertTriangle size={32} strokeWidth={1.5} color={T.gold} />} title="Couldn't load your marketplace"
-        sub="Something went wrong reaching your tour and atom data. Try refreshing the page." />
+        sub="Something went wrong reaching your tour data."
+        action={<button onClick={() => refetch()} style={{ background: "none", border: `1px solid ${T.line}`, borderRadius: 999, padding: "6px 14px", cursor: "pointer", fontSize: 12.5, color: T.ink3, fontFamily: sans }}>Try again</button>} />
     );
   }
 
@@ -75,9 +67,8 @@ export default function MarketplaceTab() {
           Marketplace
         </h2>
         <p style={{ fontSize: 13, color: T.muted, lineHeight: 1.6, margin: 0 }}>
-          Every tour you've written and the content atoms curated from it, in one place — a
-          rollup of My Catalog Tours and Atom Curation, read-only. To select a new tour or curate
-          atoms, use Browse Tours or Atom Curation.
+          Every tour you&rsquo;ve written, in one place — a read-only rollup of My Tours. To pick a
+          new tour, use Browse Tours.
         </p>
       </div>
 

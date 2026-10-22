@@ -17,6 +17,8 @@ import { LOGIN_PATH, logoutNavigationTarget } from '../../../frontend/lib/staffL
 import { isSameOrigin } from '../../../frontend/lib/sameOrigin';
 
 const PROD_ORIGIN = 'https://aa-cis.lumiguides.it.com';
+// AA-816 P6a: the fixed Preview host is the sign-out URL of the cis-admin-preview client.
+const PREVIEW_SIGNIN_ORIGIN = 'https://aa-cis-preview.lumiguides.it.com';
 const STAFF_AUTH_ORIGIN = 'https://staff-auth.lumiguides.it.com';
 const SESSION_COOKIES = ['cis_admin_token', 'cis_staff_rt', 'cis_role', 'cis_user'];
 
@@ -112,15 +114,15 @@ test.describe('AA-816 — staff sign-out', () => {
       const res = await ctx.post('/api/auth/admin-logout', { maxRedirects: 0 });
       expect(res.status()).toBe(200);
       const body = (await res.json()) as { redirect?: unknown };
-      if (origin !== PROD_ORIGIN) {
-        // A preview (or localhost in production mode) has no registered logout URL.
+      if (origin !== PROD_ORIGIN && origin !== PREVIEW_SIGNIN_ORIGIN) {
+        // A per-deployment preview URL (or localhost in production mode) has no registered logout URL.
         expect(body.redirect).toBe(LOGIN_PATH);
       } else {
         const url = new URL(String(body.redirect));
         expect(url.origin).toBe(STAFF_AUTH_ORIGIN);
         expect(url.pathname).toBe('/logout');
         expect(url.searchParams.get('client_id')).toBeTruthy();
-        expect(url.searchParams.get('logout_uri')).toBe(`${PROD_ORIGIN}/login`);
+        expect(url.searchParams.get('logout_uri')).toBe(`${origin}/login`);
         expect(logoutNavigationTarget(body.redirect)).toBe(url.toString());
       }
       expect(sessionCookiesCleared(res)).toContain('cis_staff_rt');

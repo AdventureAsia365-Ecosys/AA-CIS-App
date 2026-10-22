@@ -5,15 +5,17 @@
 //      GET /v1/billing for the real tenant-scoped sibling)
 //      GET /api/tenant/v1/tours/pool?page_size=1 (for total count)
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, FileText, Code2, Globe2, BookOpen, Sparkles, Clock, AlertTriangle, Check, X, RefreshCw } from "lucide-react";
 import {
   T, serif, mono, sans,
-  Card, CardHead, Badge, ProgressBar, PageHeader, TextLink,
-  fmtDateTime, statusVariant, statusLabel,
+  Card, CardHead, ProgressBar, PageHeader, TextLink,
+  fmtDateTime,
 } from "./ui";
+import { ActivityStateBadge } from "./workStatus";
 import { usePortalShell } from "./PortalShellContext";
-import { useIsPhone } from "@/app/_kit";
+import { apiGet, useIsPhone } from "@/app/_kit";
 import GettingStarted from "./GettingStarted";
 import UsageSparkline, { type DailyPoint } from "./UsageSparkline";
 import { DashboardSkeleton } from "./Skeleton";
@@ -34,29 +36,35 @@ interface BillingData {
 // AA-430: was onTabChange(t: Tab) — portal is real routes now, so this just takes the
 // destination href directly (router.push in the page.tsx that renders this component).
 export default function DashboardTab({ onNavigate }: { onNavigate: (href: string) => void }) {
-  const [billing, setBilling] = useState<BillingData | null>(null);
-  const [pool, setPool]       = useState(0);
-  const [loading, setLoading] = useState(true);
   const [dismissAlert, setDismissAlert] = useState(false);
-  const [resetsAt, setResetsAt] = useState<string | null>(null);
-  const { tenantName, catTotal } = usePortalShell();
+  // AA-760 — billing, the pool total and the activity feed come from the shell's react-query
+  // queries (they were fetched a second time here, in an effect); only /v1/quota is page-local.
+  const { tenantName, catTotal, poolTotal: pool, activity } = usePortalShell();
+  // Same key + request as the shell's billing query (one cached answer); read here for its state.
+  const billingQ = useQuery({
+    queryKey: ["tenant-billing"],
+    queryFn: () => apiGet<BillingData>("/api/tenant/v1/billing"),
+  });
+  const quotaQ = useQuery({
+    queryKey: ["tenant-quota"],
+    queryFn: () => apiGet<{ resets_at?: string | null }>("/api/tenant/v1/quota"),
+  });
+  const resetsAt = quotaQ.data?.resets_at ?? null;
   const phone = useIsPhone(); // AA-836 — Recent Activity drops its short-date column on a phone
 
-  useEffect(() => {
-    Promise.all([
-      fetch("/api/tenant/v1/billing"),
-      fetch("/api/tenant/v1/tours/pool?page_size=1"),
-      fetch("/api/tenant/v1/quota"),
-    ]).then(async ([bRes, pRes, qRes]) => {
-      if (bRes.ok) setBilling(await bRes.json());
-      if (pRes.ok) { const d = await pRes.json(); setPool(d.pagination?.total ?? 0); }
-      if (qRes.ok) { const d = await qRes.json(); setResetsAt(d.resets_at ?? null); }
-    }).finally(() => setLoading(false));
-  }, []);
+  if (billingQ.isPending) return <DashboardSkeleton />;
+  if (billingQ.isError) {
+    return (
+      <div role="alert" style={{ padding: "28px 20px", textAlign: "center", color: T.muted, fontSize: 13 }}>
+        Couldn&rsquo;t load your dashboard.{" "}
+        <button onClick={() => billingQ.refetch()} style={{ background: "none", border: "none", color: T.goldDeep, fontWeight: 600, cursor: "pointer", fontFamily: sans, fontSize: 13 }}>
+          Try again
+        </button>
+      </div>
+    );
+  }
 
-  if (loading) return <DashboardSkeleton />;
-
-  const b = billing;
+  const b = billingQ.data;
   const toursUsed  = b?.tours_rewritten ?? 0;
   // AA-798 — no invented Growth plan (was 200 tours / 20,000 calls / "growth" when missing).
   const noPlan     = b?.plan_attached === false;
@@ -70,7 +78,6 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
   const planLabel  = noPlan || !planName ? "No plan attached" : planName.charAt(0).toUpperCase() + planName.slice(1);
   const fmtTotal   = (n: number | null) => (n == null ? "—" : n.toLocaleString());
   const month      = b?.billing_month ?? "—";
-  const activity   = b?.activity ?? [];
   const overage    = b?.overage_usd ?? 0;
   const rpm        = b?.rate_limit_rpm ?? null;
   // AA-636: was the literal "22 days". Quota resets on the 1st of next month (UTC) — the same
@@ -86,11 +93,11 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
 
       {/* Usage alert — AA-636: was "> 30%" with a hardcoded "Growth plan = 300 RPM" for every plan */}
       {!dismissAlert && (apiPct >= 80 || toursPct >= 80) && (
-        <div role="status" style={{ background: T.amberSoft, border: `1px solid #F1DDB4`, borderLeft: `4px solid ${T.amber}`, borderRadius: "0 8px 8px 0", padding: "11px 16px", marginBottom: 20, display: "flex", alignItems: "center", gap: 12 }}>
+        <div role="status" style={{ background: T.amberSoft, border: `1px solid ${T.goldSoft}`, borderLeft: `4px solid ${T.amber}`, borderRadius: "0 8px 8px 0", padding: "11px 16px", marginBottom: 20, display: "flex", alignItems: "center", gap: 12 }}>
           <AlertTriangle size={16} color={T.amber} style={{ flexShrink: 0 }} />
-          <div style={{ flex: 1, fontSize: 13, color: "#78350F", lineHeight: 1.5 }}>
+          <div style={{ flex: 1, fontSize: 13, color: "var(--aa-amber-deep)", lineHeight: 1.5 }}>
             <strong>You have used {Math.max(apiPct, toursPct).toFixed(0)}% of this month&rsquo;s {apiPct >= toursPct ? "API calls" : "tour rewrites"}.</strong>{" "}
-            Usage resets in {resetDays} {resetDays === 1 ? "day" : "days"}. <TextLink href="/portal/billing">Compare plans →</TextLink>
+            Usage resets in {resetDays} {resetDays === 1 ? "day" : "days"}. <TextLink href="/portal/account/billing">Compare plans →</TextLink>
           </div>
           <button onClick={() => setDismissAlert(true)} aria-label="Dismiss" style={{ background: "none", border: "none", color: T.amber, cursor: "pointer", padding: 0, display: "flex" }}><X size={16} /></button>
         </div>
@@ -102,7 +109,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
         {/* Membership — dark */}
         <Card dark>
           <CardHead title="Membership Status" light action={
-            <button onClick={() => onNavigate("/portal/billing")} style={{ background: T.gold, color: T.ink, border: 0, fontWeight: 700, fontSize: 12, padding: "7px 14px", borderRadius: 6, cursor: "pointer", fontFamily: sans }}>
+            <button onClick={() => onNavigate("/portal/account/billing")} style={{ background: T.gold, color: "var(--aa-side-bg)", border: 0, fontWeight: 700, fontSize: 12, padding: "7px 14px", borderRadius: 6, cursor: "pointer", fontFamily: sans }}>
               Upgrade →
             </button>
           } />
@@ -113,11 +120,11 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
             </span>
           </div>
           <div style={{ marginTop: 16 }}>
-            <div style={{ fontFamily: serif, fontSize: 36, fontWeight: 500, letterSpacing: "-0.02em", color: "#fff", lineHeight: 1 }}>
+            <div style={{ fontFamily: serif, fontSize: 36, fontWeight: 500, letterSpacing: "-0.02em", color: T.onSolid, lineHeight: 1 }}>
               {planLabel}
             </div>
             <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginTop: 8, color: "rgba(255,255,255,0.65)" }}>
-              <span style={{ fontSize: 22, fontWeight: 600, color: "#fff", letterSpacing: "-0.01em" }}>${price.toLocaleString()}</span>
+              <span style={{ fontSize: 22, fontWeight: 600, color: T.onSolid, letterSpacing: "-0.01em" }}>${price.toLocaleString()}</span>
               <span style={{ fontSize: 12 }}>/ month · billed monthly</span>
             </div>
           </div>
@@ -125,7 +132,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
             {[["Tours/Mo", fmtTotal(toursTotal)], ["API Calls", fmtTotal(apiTotal)], ["Rate limit", rpm ? `${rpm.toLocaleString()} RPM` : "—"]].map(([l, v]) => (
               <div key={l}>
                 <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.12em", color: "rgba(255,255,255,0.45)", marginBottom: 4 }}>{l}</div>
-                <div style={{ fontSize: 12.5, fontWeight: 600, color: "#fff", fontVariantNumeric: "tabular-nums" }}>{v}</div>
+                <div style={{ fontSize: 12.5, fontWeight: 600, color: T.onSolid, fontVariantNumeric: "tabular-nums" }}>{v}</div>
               </div>
             ))}
           </div>
@@ -133,7 +140,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
 
         {/* Quota */}
         <Card>
-          <CardHead title="Quota Usage" action={<TextLink href="/portal/billing">Details →</TextLink>} />
+          <CardHead title="Quota Usage" action={<TextLink href="/portal/account/billing">Details →</TextLink>} />
           <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
             <QuotaRow icon={<FileText size={13} color={T.gold} />} label="Tours rewritten" used={toursUsed} total={toursTotal} pct={toursPct} warn={toursPct >= 80} />
             <QuotaRow icon={<Code2 size={13} color={T.gold} />} label="API calls" used={apiUsed} total={apiTotal} pct={apiPct} warn={apiPct >= 80} />
@@ -158,7 +165,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
         {/* This month — AA-636: was "LLM Cost $0.0000" + "~$0.018/tour · Bedrock" (internal
             cost / model names). Tenants see what they pay for: plan fee, usage, any overage. */}
         <Card>
-          <CardHead title={`This Month · ${month}`} action={<TextLink href="/portal/billing">View billing →</TextLink>} />
+          <CardHead title={`This Month · ${month}`} action={<TextLink href="/portal/account/billing">View billing →</TextLink>} />
           <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
             <div>
               <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.12em", color: T.muted, marginBottom: 6, fontWeight: 600 }}>Amount due</div>
@@ -182,17 +189,18 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
         <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: "22px 22px 8px" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
             <span style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: T.muted }}>Recent Activity</span>
-            <TextLink href="/portal/activity">View all →</TextLink>
+            <TextLink href="/portal/account/activity">View all →</TextLink>
           </div>
           {activity.length === 0 ? (
             <div style={{ padding: "32px 0", textAlign: "center", color: T.muted2, fontSize: 13 }}>
               No activity yet — browse tours to rewrite your first one
             </div>
           ) : activity.slice(0, 5).map((a, i) => {
-            const v = statusVariant(a.status);
-            const iconBg   = a.status === "approved" ? T.greenSoft : a.status === "rejected" ? T.redSoft : T.goldTint;
-            const iconColor = a.status === "approved" ? T.green    : a.status === "rejected" ? T.red     : T.amber;
-            const Icon      = a.status === "approved" ? Check : a.status === "rejected" ? X : RefreshCw;
+            // AA-760 — state from the version's job (shell activity view), not the row status.
+            const bad       = a.state === "rejected" || a.state === "failed";
+            const iconBg    = a.state === "approved" ? T.greenSoft : bad ? T.redSoft : T.goldTint;
+            const iconColor = a.state === "approved" ? T.green    : bad ? T.red     : T.amber;
+            const Icon      = a.state === "approved" ? Check : bad ? X : RefreshCw;
             return (
               // AA-836 — title column can shrink (minmax(0, 1fr)) and the tour name is one line with
               // an ellipsis; on a phone the trailing short date goes (the full date/time is already
@@ -216,16 +224,16 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
                   {phone ? (
                     <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "4px 8px", marginTop: 4, minWidth: 0 }}>
                       <span style={{ fontSize: 11, color: T.muted, whiteSpace: "nowrap" }}>{fmtDateTime(a.created_at)}</span>
-                      <Badge variant={v}>{statusLabel(a.status)}</Badge>
+                      <ActivityStateBadge state={a.state} />
                     </div>
                   ) : (
                     <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>{fmtDateTime(a.created_at)}</div>
                   )}
                 </div>
-                {!phone && <Badge variant={v}>{statusLabel(a.status)}</Badge>}
+                {!phone && <ActivityStateBadge state={a.state} />}
                 {!phone && (
                   <div style={{ fontSize: 11, color: T.muted2, fontFamily: mono, whiteSpace: "nowrap" }}>
-                    {a.created_at ? new Date(a.created_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) : "—"}
+                    {a.created_at ? new Date(a.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "—"}
                   </div>
                 )}
               </div>
@@ -241,9 +249,9 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 }}>
           {[
-            { icon: <Globe2 size={18} />, title: "Browse Tours",      sub: `${pool.toLocaleString()} published tours available`, href: "/portal/t1-rewrite" }, // AA-576 Phần 3 (was "Browse Pool")
-            { icon: <BookOpen size={18} />, title: "My Catalog Tours",  sub: `${toursUsed} rewrites · approve, edit, export`,     href: "/portal/t4-pool" }, // AA-576 Phần 3 (was "My Catalog")
-            { icon: <Sparkles size={18} />, title: "Brand Identity", sub: "Configure your content voice & style",               href: "/portal/t0-brand" },
+            { icon: <Globe2 size={18} />, title: "Browse Tours",      sub: `${pool.toLocaleString()} published tours available`, href: "/portal/tours" }, // AA-576 Phần 3 (was "Browse Pool")
+            { icon: <BookOpen size={18} />, title: "My Tours",  sub: `${toursUsed} rewrites · approve, edit, export`,     href: "/portal/tours/mine" }, // AA-576 Phần 3 (was "My Catalog")
+            { icon: <Sparkles size={18} />, title: "Brand Identity", sub: "Configure your content voice & style",               href: "/portal/brand" },
           ].map(a => (
             <ActionCard key={a.title} icon={a.icon} title={a.title} sub={a.sub} onClick={() => onNavigate(a.href)} />
           ))}
@@ -297,7 +305,7 @@ function SpendTile({ label, value, sub, warn = false }: {
   label: string; value: string; sub?: string; warn?: boolean;
 }) {
   return (
-    <div style={{ background: warn ? T.amberSoft : "#FBF9F4", border: `1px solid ${warn ? "#F1DDB4" : T.line2}`, borderRadius: 8, padding: "12px 14px" }}>
+    <div style={{ background: warn ? T.amberSoft : T.bg, border: `1px solid ${warn ? T.goldSoft : T.line2}`, borderRadius: 8, padding: "12px 14px" }}>
       <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.1em", color: T.muted, fontWeight: 600, marginBottom: 5 }}>{label}</div>
       <div style={{ fontSize: 16, fontWeight: 600, color: T.ink, fontVariantNumeric: "tabular-nums" }}>{value}</div>
       {sub && <div style={{ fontSize: 11, color: T.muted2, marginTop: 4 }}>{sub}</div>}
@@ -320,7 +328,7 @@ function ActionCard({ icon, title, sub, onClick }: {
         boxShadow: hov ? "0 4px 12px -6px rgba(219,150,40,0.35)" : "none",
         transition: "all .15s",
       }}>
-      <div style={{ width: 40, height: 40, borderRadius: 9, background: T.ink, color: T.gold, display: "grid", placeItems: "center", flexShrink: 0 }}>
+      <div style={{ width: 40, height: 40, borderRadius: 9, background: T.darkPanel, color: T.gold, display: "grid", placeItems: "center", flexShrink: 0 }}>
         {icon}
       </div>
       <div style={{ flex: 1 }}>

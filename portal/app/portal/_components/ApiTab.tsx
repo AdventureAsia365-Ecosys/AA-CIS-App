@@ -94,7 +94,7 @@ export default function ApiTab() {
       </Card>
 
       {/* cURL example */}
-      <Card style={{ marginBottom: 20, background: T.ink, border: `1px solid ${T.ink2}` }}>
+      <Card style={{ marginBottom: 20, background: T.darkPanel, border: `1px solid ${T.darkPanel2}` }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: "rgba(255,255,255,0.5)" }}>Quick Start</div>
           <button onClick={() => copy(`curl -X POST https://api-cis.lumiguides.it.com/auth/tenant-login \\\n  -H "Content-Type: application/json" \\\n  -d '{"api_key":"<YOUR_KEY"}' | jq .token`)}
@@ -131,7 +131,7 @@ curl -X POST -H "Authorization: Bearer <JWT>" \\
                 padding: "2px 8px", borderRadius: 4, flexShrink: 0,
                 background: `${e.color}18`, color: e.color, minWidth: 48, textAlign: "center",
               }}>{e.method}</span>
-              <code style={{ fontFamily: mono, fontSize: 12, color: "#1D4ED8", flex: 1 }}>{e.path}</code>
+              <code style={{ fontFamily: mono, fontSize: 12, color: "var(--aa-blue-link)", flex: 1 }}>{e.path}</code>
               <span style={{ fontSize: 12, color: T.muted }}>{e.label}</span>
             </div>
           ))}

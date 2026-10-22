@@ -25,6 +25,7 @@ import {
   useToast,
 } from "@/app/_kit";
 import { T, sans, Card, CardHead } from "./ui";
+import { formatDate } from "@/app/_kit/tokens";
 
 export interface PublishedRow {
   publish_id: string;
@@ -45,8 +46,9 @@ export function channelName(channel: string): string {
   return CHANNEL_NAME[channel] ?? channel.charAt(0).toUpperCase() + channel.slice(1);
 }
 
+// AA-760 — the shared date format ("9 Oct 2026"), was the browser locale ("10/20/2026").
 function fmtDate(iso: string | null): string {
-  return iso ? new Date(iso).toLocaleDateString() : "—";
+  return formatDate(iso);
 }
 
 function PublishedListInner({ onUnpublished }: { onUnpublished?: () => void }) {

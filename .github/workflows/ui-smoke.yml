@@ -5,6 +5,20 @@ name: UI Smoke
 # `deployment_status`. `vercel-deploy.yml` now calls this workflow after a successful PREVIEW deploy
 # (workflow_call). Inside a called workflow `github.event_name` / `github.event` belong to the
 # CALLER (pull_request, …), so everything here reads `inputs.*`, never the event payload.
+#
+# AA-816 S2 path — two jobs:
+#   • `smoke` (always): Playwright project `smoke-public`, every smoke spec without the @staff tag, NO session.
+#     This is all a per-PR *.vercel.app preview can run: those hosts are not Cognito callbacks (no wildcard
+#     callbacks) and the legacy password login is going away (S2).
+#   • `smoke-staff` (only with staff_session=true, from main): project `smoke` (+ its setup) signed in as the
+#     Cognito E2E user "E2E Cognito" with an email code read from the SES mailbox (same OIDC role, environment `e2e`
+#     and concurrency group as e2e-cognito.yml). Only on the two callback hosts: the fixed Preview host
+#     https://aa-cis-preview.lumiguides.it.com (the cis-admin-preview client: the API caps the session at viewer
+#     and the setup fails unless the role is viewer) and Production https://aa-cis.lumiguides.it.com (the E2E user
+#     is a reviewer: read-only checks only). vercel-deploy.yml calls it after a production deploy and after an
+#     alias-only dispatch of the Preview host; for a PR labelled preview-signin, dispatch this workflow from main
+#     with base_url=https://aa-cis-preview.lumiguides.it.com and staff_session=true (the mailbox role trusts main
+#     only). Uploads screenshots only: the HTML report would name the typed code in a `fill` step.
 on:
   workflow_call:
     inputs:
@@ -17,12 +31,13 @@ on:
         required: false
         type: string
         default: ""
+      staff_session:
+        description: "AA-816: also run the authenticated smoke (Cognito E2E user; main only, callback hosts only)"
+        required: false
+        type: boolean
+        default: false
     secrets:
       VERCEL_AUTOMATION_BYPASS_SECRET:
-        required: false
-      E2E_ADMIN_USERNAME:
-        required: false
-      E2E_ADMIN_PASSWORD:
         required: false
   workflow_dispatch:
     inputs:
@@ -35,6 +50,11 @@ on:
         required: false
         type: string
         default: ""
+      staff_session:
+        description: "AA-816: also run the authenticated smoke as the Cognito E2E user (dispatch from main; base_url must be https://aa-cis-preview.lumiguides.it.com or https://aa-cis.lumiguides.it.com)"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -55,8 +75,6 @@ jobs:
       # Preview is behind Vercel SSO — the bypass secret lets Playwright reach it; the spec only
       # sends the header to the BASE_URL origin, and only when the secret is present.
       VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
-      E2E_ADMIN_USERNAME: ${{ secrets.E2E_ADMIN_USERNAME }}
-      E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
       BASE_URL: ${{ inputs.base_url }}
     steps:
       - name: Checkout the deployed commit
@@ -78,8 +96,9 @@ jobs:
       - name: Install Playwright browser (chromium)
         run: npx playwright install --with-deps chromium
 
-      - name: Run the UI smoke project
-        run: npx playwright test --project=smoke -c playwright.config.ts
+      # AA-816 S2 path: no session on a per-PR preview (the @staff specs run in job smoke-staff).
+      - name: Run the public UI smoke project (no session)
+        run: npx playwright test --project=smoke-public -c playwright.config.ts
 
       - name: Upload smoke artifacts (screenshots + HTML report only — NO auth state)
         if: always()
@@ -136,6 +155,117 @@ jobs:
 
       # Scrub the Playwright auth storage state (live session cookies) regardless of outcome, so it
       # never lingers on the runner or leaks into any later step/artifact.
+      - name: Delete auth state
+        if: always()
+        run: rm -rf tests/e2e/.auth
+
+  # ── AA-816 S2 path: authenticated smoke as the Cognito E2E user (callback hosts only, main only) ──
+  smoke-staff:
+    name: UI smoke, signed in (Cognito E2E user)
+    runs-on: ubuntu-latest
+    # The mailbox role trusts refs/heads/main + environment e2e only. Inside a called workflow github.ref is the
+    # caller's ref (a push to main, or a dispatch from main).
+    if: inputs.base_url != '' && inputs.staff_session && github.ref == 'refs/heads/main'
+    environment: e2e
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    # Shared with e2e-cognito.yml: two runs at once would race for the same mailbox and the same user's codes.
+    concurrency:
+      group: e2e-cognito
+      cancel-in-progress: false
+    env:
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+      BASE_URL: ${{ inputs.base_url }}
+      # Opt-in switch the smoke setup checks (no underscore by design, like e2e-cognito.yml).
+      E2ECOGNITO: "1"
+    steps:
+      - name: Only the two Cognito callback hosts
+        env:
+          URL: ${{ inputs.base_url }}
+        run: |
+          case "${URL%/}" in
+            https://aa-cis.lumiguides.it.com|https://aa-cis-preview.lumiguides.it.com) echo "Staff smoke on $URL" ;;
+            *) echo "::error::staff_session needs base_url https://aa-cis.lumiguides.it.com or https://aa-cis-preview.lumiguides.it.com (got $URL)"; exit 1 ;;
+          esac
+
+      - name: Checkout the deployed commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+
+      - name: Configure AWS credentials (OIDC, read-only mailbox role)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.E2E_MAIL_ROLE_ARN }}
+          aws-region: us-west-1
+          role-session-name: cis-ui-smoke-staff-${{ github.run_id }}
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # `npm install`, not `npm ci`: the repo root's package-lock.json is gitignored (S220 lesson).
+      - name: Install dependencies (repo root — Playwright lives here)
+        run: npm install --no-audit --no-fund
+
+      - name: Install Playwright browser (chromium)
+        run: npx playwright install --with-deps chromium
+
+      # `smoke` pulls in `smoke-setup` (the Cognito sign-in); `smoke-public` runs on the same host without a session.
+      - name: Run the signed-in UI smoke (+ the public specs)
+        run: npx playwright test --project=smoke --project=smoke-public -c playwright.config.ts
+
+      # Screenshots only. NOT the HTML/JSON reports: a `fill` step title would carry the typed sign-in code.
+      - name: Upload smoke screenshots (NO report, NO auth state)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-smoke-staff-${{ github.run_id }}
+          path: tests/e2e/results/smoke/**/*.png
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Find PR for the deployed sha
+        if: always()
+        id: findpr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ inputs.sha || github.sha }}
+        run: |
+          PR=$(gh api "repos/$REPO/commits/$SHA/pulls" --jq '.[0].number // empty' 2>/dev/null || true)
+          echo "pr=$PR" >> "$GITHUB_OUTPUT"
+          echo "Found PR: ${PR:-none}"
+
+      - name: Comment the signed-in smoke result on the PR
+        if: always() && steps.findpr.outputs.pr != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ steps.findpr.outputs.pr }}
+          OUTCOME: ${{ job.status }}
+          SERVER_URL: ${{ github.server_url }}
+          RUN_ID: ${{ github.run_id }}
+          BASE_URL: ${{ inputs.base_url }}
+        run: |
+          MARKER="<!-- ui-smoke-staff-report -->"
+          RUN_URL="$SERVER_URL/$REPO/actions/runs/$RUN_ID"
+          if [ "$OUTCOME" = "success" ]; then STATUS="✅ passed"; else STATUS="❌ failed"; fi
+          BODY=$(printf '%s\n### UI smoke, signed in (Cognito E2E user) — %s\n\nHost: %s\n\n[Run & screenshots](%s)\n' \
+                   "$MARKER" "$STATUS" "${BASE_URL:-n/a}" "$RUN_URL")
+          EXISTING=$(gh api "repos/$REPO/issues/$PR/comments" \
+                       --jq ".[] | select(.body | contains(\"$MARKER\")) | .id" 2>/dev/null | head -n1 || true)
+          if [ -n "$EXISTING" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$EXISTING" -f body="$BODY" >/dev/null
+          else
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -f body="$BODY" >/dev/null
+          fi
+
+      # The storage state holds live session cookies: scrub it regardless of outcome.
       - name: Delete auth state
         if: always()
         run: rm -rf tests/e2e/.auth

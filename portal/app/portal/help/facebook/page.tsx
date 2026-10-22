@@ -124,7 +124,7 @@ const PROBLEMS: { title: string; cause: React.ReactNode; fix: React.ReactNode }[
 export default function FacebookGuidePage() {
   return (
     <div style={{ maxWidth: 760 }}>
-      <Link href="/portal/t11-publish" style={{
+      <Link href="/portal/content/publish" style={{
         display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 600,
         color: T.muted, textDecoration: "none", marginBottom: 16, fontFamily: sans,
       }}>
@@ -243,7 +243,7 @@ export default function FacebookGuidePage() {
 
         <Step n={7} title="Test & Connect in the portal">
           <p style={text}>
-            Go to <Link href="/portal/t11-publish" style={{ color: T.goldDeep, fontWeight: 600, textDecoration: "none" }}>Publish</Link>.
+            Go to <Link href="/portal/content/publish" style={{ color: T.goldDeep, fontWeight: 600, textDecoration: "none" }}>Publish</Link>.
             In the <strong>Connect Facebook Page</strong> card, paste the Page ID and the Page
             Access Token, then click <strong>Test &amp; Connect</strong>.
           </p>

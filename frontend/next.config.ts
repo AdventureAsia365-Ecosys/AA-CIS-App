@@ -26,7 +26,10 @@ const nextConfig: NextConfig = {
   },
   poweredByHeader: false,
   async headers() {
-    return [{ source: "/(.*)", headers: SECURITY_HEADERS }];
+    // AA-911: Preview builds (served on aa-cis-preview.lumiguides.it.com when aliased) are never indexed.
+    const robots =
+      process.env.VERCEL_ENV === "preview" ? [{ key: "X-Robots-Tag", value: "noindex, nofollow" }] : [];
+    return [{ source: "/(.*)", headers: [...SECURITY_HEADERS, ...robots] }];
   },
   // AA-663 — admin IA consolidation. The legacy (internal) route group duplicated /admin/* and was
   // deleted; Brand Identity moved into Settings. Old URLs keep working. Redirects run before

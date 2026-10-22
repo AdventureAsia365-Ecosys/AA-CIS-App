@@ -66,6 +66,15 @@ async def live_tours(conn, country: Optional[str] = None) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+async def live_tours_by_ids(conn, ids: list[str]) -> list[dict]:
+    """AA-847: the live tours whose tour id or source id is in `ids` (uuid text); not-live ids simply match nothing."""
+    if not ids:
+        return []
+    sql = _LIVE_SQL + (" AND (pt.tour_id::text = ANY($1::text[])"
+                       " OR COALESCE(rt.source_group_id, rt.tour_id)::text = ANY($1::text[]))")
+    return [dict(r) for r in await _catalog_fetch(conn, sql, list(ids))]
+
+
 ATOMS_SQL = """
     SELECT a.atom_id, a.itinerary_day, btrim(a.place) AS place, a.activity_type, a.text,
            pc.card_id::text AS card_id, pc.display_name AS card_display_name, pc.country AS card_country,

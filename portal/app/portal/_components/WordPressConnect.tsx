@@ -1,8 +1,8 @@
 "use client";
 // portal/app/portal/_components/WordPressConnect.tsx — AA-457 [T11 PR1]
 //
-// Shared between /portal/t11-publish (inline first-run form when not connected) and
-// /portal/t11-publish/connection (manage/change credentials + re-test) — Option 3+2 from
+// Shared between /portal/content/publish (inline first-run form when not connected) and
+// /portal/account/integrations (manage/change credentials + re-test) — Option 3+2 from
 // AA-456's STEP0 report §9: an inline connect flow for the common first-time case, backed by a
 // real standalone page for later edits, sharing one form component rather than building the
 // credentials UI twice.
@@ -20,6 +20,7 @@ import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { T, sans, Card, CardHead, Btn } from "./ui";
 import { DisconnectConnection } from "./DisconnectConnection";
+import { formatDateTime } from "@/app/_kit/tokens";
 
 export interface WordPressStatus {
   connected: boolean;
@@ -41,8 +42,9 @@ export function useWordPressStatus() {
   return { status: q.data ?? null, loading: q.isLoading, refresh };
 }
 
+// AA-760 — the shared date-time format ("9 Oct 2026, 14:05"), was the browser locale.
 export function fmtDateTime(iso: string | null): string {
-  return iso ? new Date(iso).toLocaleString() : "—";
+  return formatDateTime(iso);
 }
 
 export const inputStyle: React.CSSProperties = {
@@ -165,7 +167,7 @@ export function WordPressConnectForm({ onConnected }: { onConnected?: () => void
 }
 
 /** Read-only connection summary + re-test action, used on the manage-connection page and
- * (once connected) at the top of /portal/t11-publish. */
+ * (once connected) at the top of /portal/content/publish. */
 export function WordPressStatusCard({ status, onRetest, onDisconnected }: {
   status: WordPressStatus; onRetest: () => void;
   /** AA-815 — when given, the card shows a Disconnect action (confirm step) and calls this after. */

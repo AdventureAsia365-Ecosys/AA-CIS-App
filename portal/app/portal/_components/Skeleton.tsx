@@ -6,7 +6,7 @@ import { T } from "./ui";
 
 const CSS = `
 @keyframes sk-shimmer { 0% { background-position: -400px 0 } 100% { background-position: 400px 0 } }
-.sk { background: linear-gradient(90deg, ${T.line2} 0px, #F7F3EA 160px, ${T.line2} 320px); background-size: 800px 100%;
+.sk { background: linear-gradient(90deg, ${T.line2} 0px, ${T.bg} 160px, ${T.line2} 320px); background-size: 800px 100%;
       animation: sk-shimmer 1.3s linear infinite; border-radius: 6px; }
 @media (prefers-reduced-motion: reduce) { .sk { animation: none; } }
 `;

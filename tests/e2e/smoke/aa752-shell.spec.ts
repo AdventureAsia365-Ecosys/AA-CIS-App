@@ -15,12 +15,12 @@
 // admin-only, the proxy redirects), and (e) — the admin Platform section — is skipped.
 import { test, expect } from '@playwright/test';
 import {
-  ADMIN_STATE, baseUrl, installBypassRoute, isViewerRun, landingPathFor, smokeRole, waitForShellHydrated,
+  ADMIN_STATE, baseUrl, installBypassRoute, isAdminRun, landingPathFor, smokeRole, waitForShellHydrated,
 } from './smoke-helpers';
 
 /** A page with the full shell that the smoke account may open (Jobs is admin-only). */
 function shellPath(): string {
-  return isViewerRun() ? '/admin/review' : '/admin/jobs';
+  return isAdminRun() ? '/admin/jobs' : '/admin/review';
 }
 
 async function adminPage(browser: import('@playwright/test').Browser) {
@@ -34,14 +34,15 @@ async function adminPage(browser: import('@playwright/test').Browser) {
   return { context, page };
 }
 
-test.describe('AA-752 — admin shell', () => {
+// AA-816 S2 path: @staff = needs the smoke session (project `smoke`, never the per-PR `smoke-public` run).
+test.describe('AA-752 — admin shell', { tag: '@staff' }, () => {
   test('(a) sidebar logo links to /admin/overview', async ({ browser }) => {
     const { context, page } = await adminPage(browser);
     // The logo pushes /admin/overview; a viewer is redirected to its landing page (/admin/review), so it
     // starts elsewhere to see the move.
     const target = landingPathFor(smokeRole());
     try {
-      await page.goto(isViewerRun() ? '/admin/master-content' : '/admin/jobs', { waitUntil: 'domcontentloaded' });
+      await page.goto(isAdminRun() ? '/admin/jobs' : '/admin/master-content', { waitUntil: 'domcontentloaded' });
       const logo = page.getByTestId('sidebar-logo');
       await expect(logo).toBeVisible({ timeout: 10000 });
       // The logo is a client-component button whose onClick (router.push) only works AFTER React
@@ -140,7 +141,7 @@ test.describe('AA-752 — admin shell', () => {
   });
 
   test('(e) AA-883: Platform / CIS Content sections and the Apps links', async ({ browser }) => {
-    test.skip(isViewerRun(), 'AA-878: the Platform section is admin-only');
+    test.skip(!isAdminRun(), 'AA-878: the Platform section is admin-only');
     const { context, page } = await adminPage(browser);
     try {
       await page.goto(shellPath(), { waitUntil: 'domcontentloaded' });
