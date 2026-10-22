@@ -1349,7 +1349,13 @@ Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`
   gets 403 and logs `aa859_admin_atoms_tenant_refused`. No tenant route writes `acp_contract.tour_atoms`.
 - **Sizing:** tenant pool `max_size` 2 per api task, api autoscaling max 7 (AA-CIS-Infra #156), so 14 ≤
   `aa_app_user` CONNECTION LIMIT 15. `aa859_tenant_pool_timing` (wait/hold ms) and the 60 s
-  `aa859_main_pool_gauge` line are the inputs for any later resize. Per-role connections are alarmed
+  `aa859_main_pool_gauge` line are the inputs for any later resize. Since S247 the main pool is
+  instrumented too (`api/core/aa859_main_pool_gauge.py::instrument_main_pool`): the gauge line carries the
+  interval's `acquires` / `peak_in_use` / `waited` / `max_wait_ms` / `timeouts`, an acquire that waited
+  >= 50 ms logs `aa859_main_pool_wait` (capped per interval), and an acquire with no timeout of its own gives
+  up after 5 s (C2.3g) with ERROR `aa859_main_pool_acquire_timeout` (a 500, instead of hanging to the API Gateway
+  30 s limit). Main pool size: the literal in `api/main.py` (source of truth, read by the Infra connection
+  budget check). Per-role connections are alarmed
   (`AA/RDS RoleConnectionLimitPct`, AA-832, published by the api's ops metrics sampler, AA-751).
 
 ## Boundaries — what this repo does NOT do

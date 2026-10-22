@@ -101,11 +101,15 @@ async def lifespan(app: FastAPI):
         # holds the connections on the shared RDS (data standards C2.2).
         server_settings={"application_name": "cis-api"},
     )
+    # AA-859 wave 4 (S247) — timed acquires on the main pool: `aa859_main_pool_wait` (only waits >= 50 ms),
+    # per-interval peak in-use / max wait on the gauge line, and a default acquire timeout
+    # (`aa859_main_pool_acquire_timeout`). Same object, so every caller of app.state.pool is covered.
+    from api.core.aa859_main_pool_gauge import instrument_main_pool, start_main_pool_gauge, stop_main_pool_gauge
+    pool = instrument_main_pool(pool)
     app.state.pool = pool
 
     # AA-859 PR-S — 60 s INFO line `aa859_main_pool_gauge` (size / idle / max of the main pool), the
     # baseline for the wave-4 main-pool shrink decision. api only; cancelled before the pool closes.
-    from api.core.aa859_main_pool_gauge import start_main_pool_gauge, stop_main_pool_gauge
     main_pool_gauge_task = start_main_pool_gauge(app)
 
     # AA-751 / AA-832 — every 300 s publish AA/RDS per-role connections and AA/Jobs/CIS backlog metrics
