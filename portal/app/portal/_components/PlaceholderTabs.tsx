@@ -11,20 +11,21 @@
 
 import { useState } from "react";
 import { Check, X, RefreshCw, Mail, ExternalLink, KeyRound, LogOut } from "lucide-react";
-import { T, sans, Card, PageHeader, Btn, fmtDateTime, statusLabel } from "./ui";
-import { usePortalShell } from "./PortalShellContext";
+import { T, sans, Card, PageHeader, Btn, fmtDateTime } from "./ui";
+import { usePortalShell, type ShellActivityView, type ShellBilling } from "./PortalShellContext";
+import { ActivityStateBadge } from "./workStatus";
 import { SUPPORT_EMAIL, SITE_URL } from "@/app/_brand/tokens";
 
-type Activity = { id: string; status: string; edit_source: string; tour_name: string; country: string | null; created_at: string };
 
 const titleCase = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
 // ─── Activity Log ─────────────────────────────────────────────────────────────
-export function ActivityLogTab({ activity }: { activity: Activity[] }) {
+export function ActivityLogTab({ activity }: { activity: ShellActivityView[] }) {
   const { tenantName } = usePortalShell();
-  const sc = (s: string) =>
+  // AA-760 — icon + badge from the job-backed state (ShellActivityView.state), not the row status.
+  const sc = (s: ShellActivityView["state"]) =>
     s === "approved" ? { bg: T.greenSoft, color: T.green, Icon: Check } :
-    s === "rejected" ? { bg: T.redSoft, color: T.red, Icon: X } :
+    s === "rejected" || s === "failed" ? { bg: T.redSoft, color: T.red, Icon: X } :
     { bg: T.amberSoft, color: T.amber, Icon: RefreshCw };
 
   return (
@@ -35,7 +36,7 @@ export function ActivityLogTab({ activity }: { activity: Activity[] }) {
       ) : (
         <Card style={{ padding: 0, overflow: "hidden" }}>
           {activity.map((a, i) => {
-            const s = sc(a.status);
+            const s = sc(a.state);
             return (
               <div key={a.id} style={{ display: "grid", gridTemplateColumns: "36px minmax(0,1fr) auto", alignItems: "center", gap: 14, padding: "14px 20px", borderBottom: i < activity.length - 1 ? `1px solid ${T.line2}` : "none" }}>
                 <div style={{ width: 36, height: 36, borderRadius: 8, background: s.bg, color: s.color, display: "grid", placeItems: "center" }}>
@@ -48,7 +49,7 @@ export function ActivityLogTab({ activity }: { activity: Activity[] }) {
                     {a.country ? ` · ${a.country}` : ""} · {fmtDateTime(a.created_at)}
                   </div>
                 </div>
-                <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 9px", borderRadius: 999, textTransform: "uppercase", letterSpacing: "0.04em", background: s.bg, color: s.color, whiteSpace: "nowrap" }}>{statusLabel(a.status)}</span>
+                <ActivityStateBadge state={a.state} />
               </div>
             );
           })}
@@ -98,22 +99,27 @@ type Plan = { plan_name: string; tours_quota_monthly: number; api_calls_quota_mo
 
 const fmtQuota = (n: number | null | undefined) => (n == null ? "—" : n >= 999999 ? "Unlimited" : n.toLocaleString());
 
-export function BillingTab({ billing }: { billing: any }) {
+// AA-760 — typed as the shell's /v1/billing value (was `any`); the fields are read defensively below.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the plan fields are read loosely (number | string | null)
+type BillingRecord = Record<string, any>;
+
+export function BillingTab({ billing }: { billing: ShellBilling | null }) {
+  const b: BillingRecord | null = billing;
   const { tenantName } = usePortalShell();
   const [contactPlan, setContactPlan] = useState<string | null>(null);
 
   // AA-798 — no "starter" fallback: a tenant without a plan sees "No plan attached", not a made-up one.
-  const noPlan     = billing?.plan_attached === false;
-  const plan       = noPlan ? "" : String(billing?.plan_tier ?? "");
-  const price      = Number(billing?.price_usd_monthly ?? 0);
-  const toursUsed  = Number(billing?.tours_rewritten ?? 0);
-  const toursTotal = billing?.tours_quota_monthly == null ? null : Number(billing.tours_quota_monthly);
-  const apiUsed    = Number(billing?.api_calls_used ?? 0);
-  const apiTotal   = billing?.api_calls_quota_monthly == null ? null : Number(billing.api_calls_quota_monthly);
-  const overage    = Number(billing?.overage_usd ?? 0);
-  const rpm        = billing?.rate_limit_rpm as number | null | undefined;
-  const month      = billing?.billing_month ?? "—";
-  const plans: Plan[] = billing?.plans ?? [];
+  const noPlan     = b?.plan_attached === false;
+  const plan       = noPlan ? "" : String(b?.plan_tier ?? "");
+  const price      = Number(b?.price_usd_monthly ?? 0);
+  const toursUsed  = Number(b?.tours_rewritten ?? 0);
+  const toursTotal = b?.tours_quota_monthly == null ? null : Number(b.tours_quota_monthly);
+  const apiUsed    = Number(b?.api_calls_used ?? 0);
+  const apiTotal   = b?.api_calls_quota_monthly == null ? null : Number(b.api_calls_quota_monthly);
+  const overage    = Number(b?.overage_usd ?? 0);
+  const rpm        = b?.rate_limit_rpm as number | null | undefined;
+  const month      = b?.billing_month ?? "—";
+  const plans: Plan[] = b?.plans ?? [];
   const pct = (u: number, t: number | null) => (t != null && t > 0 ? Math.min(100, (u / t) * 100) : 0);
 
   return (
@@ -238,7 +244,7 @@ export function SettingsTab() {
         />
       )}
 
-      <PageHeader title="Settings" sub={`Account details for ${tenantName}.`} />
+      <PageHeader title="Team & Settings" sub={`Account details for ${tenantName}.`} />
 
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <Card>

@@ -9,6 +9,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, X, Loader2 } from "lucide-react";
 import { T, sans } from "./ui";
+import { WorkStatusBadge, liveWorkStatus } from "./workStatus";
 
 type Step = { key: string; label: string; state: "pending" | "active" | "done" | "skipped" | "failed" };
 type Section = { key: string; label: string; text: string };
@@ -157,7 +158,11 @@ export default function LiveWriter({ kind, jobId, active = true, title = "Writin
 
       {/* Steps */}
       <div aria-live="polite" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: T.muted }}>{title}</div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: T.muted }}>{title}</div>
+          {/* AA-760 — the shared status (queued / writing / checking / done / failed) from the live steps. */}
+          <span data-testid="live-writer-status"><WorkStatusBadge status={liveWorkStatus(snap)} /></span>
+        </div>
         {steps.length === 0 ? (
           <StepRow state="active" label="Starting…" />
         ) : steps.map(s => <StepRow key={s.key} state={s.state} label={s.label} />)}

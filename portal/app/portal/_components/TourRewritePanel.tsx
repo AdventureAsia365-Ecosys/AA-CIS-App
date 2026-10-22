@@ -20,7 +20,8 @@ import { Button, K } from "@/app/_kit";
 import { AiContentNotice } from "./AiContentNotice";
 import LiveWriter from "./LiveWriter";
 import { WriterDrawer, type WatchItem, type WatchOutcome } from "./WriterPanel";
-import { fetchVersionDetail, isAiWriting, isRewriteFailed, type Version } from "./catalogApi";
+import { fetchVersionDetail, type Version } from "./catalogApi";
+import { tourWorkStatus } from "./workStatus";
 
 /** What My Catalog hands the panel when a rewrite starts (or a writing / failed row is opened). */
 export interface TourRewriteTarget {
@@ -37,9 +38,9 @@ export type RewriteState = "starting" | "writing" | "failed" | "ready";
 
 export function rewriteState(version: Pick<Version, "status" | "edit_source" | "job_status"> | null): RewriteState {
   if (!version) return "starting"; // the list has not picked the new version up yet
-  if (isRewriteFailed(version)) return "failed";
-  if (isAiWriting(version)) return "writing";
-  return "ready";
+  // AA-760 — the shared work-status model (job_status included); queued counts as writing here.
+  const s = tourWorkStatus(version);
+  return s === "failed" ? "failed" : s === "done" ? "ready" : "writing";
 }
 
 /** The watch item for a tour rewrite closed mid-write (useWriteWatcher in WriterPanel.tsx). */
@@ -50,9 +51,9 @@ export function watchTourRewrite(t: TourRewriteTarget): WatchItem {
       const s = rewriteState(v);
       return s === "ready" ? "ready" : s === "failed" ? "failed" : "running";
     }),
-    readyText: `"${t.title}" is ready — find it in My Catalog Tours.`,
-    failedText: `Rewriting "${t.title}" didn't finish — open it in My Catalog Tours to retry.`,
-    slowText: `"${t.title}" is still being written — it will show up in My Catalog Tours.`,
+    readyText: `"${t.title}" is ready — find it in My Tours.`,
+    failedText: `Rewriting "${t.title}" didn't finish — open it in My Tours to retry.`,
+    slowText: `"${t.title}" is still being written — it will show up in My Tours.`,
   };
 }
 
@@ -93,7 +94,7 @@ export function TourRewritePanel({
               <Download size={12} /> {exporting ? "Exporting…" : "Export DOCX"}
             </Button>
             <Button size="sm" variant="primary" onClick={onOpenResult}>
-              <ExternalLink size={12} /> Open in My Catalog
+              <ExternalLink size={12} /> Open in My Tours
             </Button>
           </div>
         </div>
@@ -113,7 +114,7 @@ export function TourRewritePanel({
       {target && ready && (
         <div data-testid="tour-rewrite-ready" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: K.body }}>
           <CheckCircle2 size={15} color={K.success} />
-          <span>Your new version is ready and saved in My Catalog Tours, where you can edit and export it.</span>
+          <span>Your new version is ready and saved in My Tours, where you can edit and export it.</span>
         </div>
       )}
       {target && state !== "failed" && (

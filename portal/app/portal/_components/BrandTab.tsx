@@ -23,7 +23,7 @@ import { useState, useEffect, useRef } from "react";
 import { History, Upload, Check, RotateCcw } from "lucide-react";
 import {
   T, serif, sans, mono,
-  Card, CardHead, Btn, Field, LoadingScreen,
+  Btn, Field, LoadingScreen,
   fmtDate,
 } from "./ui";
 import { CtaReviewNotice, ctaWarningFrom, useCtaReviewCheck, type CtaWarning } from "./CtaReviewNotice";

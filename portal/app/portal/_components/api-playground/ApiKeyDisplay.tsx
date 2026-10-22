@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { Eye, EyeOff, Copy, CheckCircle } from "lucide-react";
-import { T, mono, sans } from "../ui";
+import { T, mono } from "../ui";
 
 interface ApiKeyDisplayProps {
   apiKey?: string | null;

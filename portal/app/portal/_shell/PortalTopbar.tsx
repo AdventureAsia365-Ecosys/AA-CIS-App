@@ -12,13 +12,13 @@ import { ChevronDown, LogOut, Menu, Monitor, Moon, Search, Settings, Sun, Credit
 import { Breadcrumb, K, sans, serif, useThemeChoice, type ThemeChoice } from "@/app/_kit";
 import { PRIVACY_PATH, TERMS_PATH } from "@/lib/hosts";
 import NotificationsBell from "../_components/NotificationsBell";
-import type { ShellActivity } from "../_components/PortalShellContext";
+import type { ShellActivityView } from "../_components/PortalShellContext";
 import { ROUTES, pageGroup, pageTitle } from "./portalNav";
 
 export function PortalTopbar({ tenantName, planTier, activity, onOpenSearch, onOpenMenu }: {
   tenantName: string;
   planTier: string;
-  activity: ShellActivity[];
+  activity: ShellActivityView[];
   onOpenSearch: () => void;
   onOpenMenu: () => void;
 }) {

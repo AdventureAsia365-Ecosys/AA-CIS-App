@@ -28,6 +28,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, ConfirmModal, Drawer, K, useToast } from "@/app/_kit";
+import { pieceWorkStatus } from "./workStatus";
 import { T, sans } from "./ui";
 import AngleGateWizard, { type ContentPiece } from "./AngleGateWizard";
 import { AiContentNotice } from "./AiContentNotice";
@@ -262,7 +263,11 @@ export function watchPiece(pieceId: string, requestId: string, title: string): W
     id: pieceId, group: requestId, title,
     check: () => fetch(`/api/tenant/v1/content-writing/pieces/${pieceId}`, { cache: "no-store" })
       .then(r => (r.ok ? r.json() : null))
-      .then((p: ContentPiece | null) => (!p ? null : p.ready_state === "in_progress" ? "running" : p.ready_state === "ready" ? "ready" : "failed")),
+      .then((p: ContentPiece | null) => {
+        if (!p) return null;
+        const s = pieceWorkStatus(p); // AA-760 — shared work-status model
+        return s === "done" ? "ready" : s === "failed" ? "failed" : "running";
+      }),
     readyText: `"${title}" is ready — find it in My Content.`,
     failedText: `Writing "${title}" didn't finish — open it again to retry.`,
     slowText: `"${title}" is still being written — it will show up in My Content.`,

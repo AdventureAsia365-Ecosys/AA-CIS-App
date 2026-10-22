@@ -8,8 +8,9 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Bell, Check, X, RefreshCw } from "lucide-react";
 import { T, sans, fmtDateTime } from "./ui";
+import type { ShellActivityView } from "./PortalShellContext";
 
-type Activity = { id: string; status: string; edit_source: string; tour_name: string; country: string | null; created_at: string };
+type Activity = ShellActivityView;
 
 const SEEN_KEY = "cis_portal_notif_seen_at";
 
@@ -20,10 +21,18 @@ function writeSeen(ts: number) {
   try { localStorage.setItem(SEEN_KEY, String(ts)); } catch { /* storage blocked — dot just stays */ }
 }
 
-const describe = (a: Activity) =>
-  a.status === "approved" ? "was approved" :
-  a.status === "rejected" ? "was rejected" :
-  a.edit_source === "ai_generated" ? "rewrite is ready to review" : "was edited";
+// AA-760 — the sentence follows the job state the shell joined in, never the row flags alone.
+const describe = (a: Activity) => {
+  switch (a.state) {
+    case "approved": return "was approved";
+    case "rejected": return "was rejected";
+    case "failed": return "rewrite didn't finish — retry it in My Tours";
+    case "queued": case "writing": case "checking": return "is being rewritten";
+    case "done": return "rewrite is ready to review";
+    case "edited": return "was edited";
+    default: return "was updated";
+  }
+};
 
 export default function NotificationsBell({ activity }: { activity: Activity[] }) {
   const [open, setOpen] = useState(false);
@@ -69,9 +78,10 @@ export default function NotificationsBell({ activity }: { activity: Activity[] }
           {activity.length === 0 ? (
             <div style={{ padding: "28px 16px", textAlign: "center", fontSize: 13, color: T.muted2 }}>You&rsquo;re all caught up.</div>
           ) : activity.slice(0, 6).map(a => {
-            const Icon = a.status === "approved" ? Check : a.status === "rejected" ? X : RefreshCw;
-            const color = a.status === "approved" ? T.green : a.status === "rejected" ? T.red : T.amber;
-            const bg = a.status === "approved" ? T.greenSoft : a.status === "rejected" ? T.redSoft : T.goldTint;
+            const bad = a.state === "rejected" || a.state === "failed";
+            const Icon = a.state === "approved" ? Check : bad ? X : RefreshCw;
+            const color = a.state === "approved" ? T.green : bad ? T.red : T.amber;
+            const bg = a.state === "approved" ? T.greenSoft : bad ? T.redSoft : T.goldTint;
             return (
               <Link key={a.id} href="/portal/tours/mine" onClick={() => setOpen(false)} style={{
                 display: "grid", gridTemplateColumns: "30px minmax(0,1fr)", gap: 10, padding: "11px 16px", textDecoration: "none",
