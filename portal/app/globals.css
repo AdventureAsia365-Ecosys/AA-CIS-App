@@ -33,7 +33,7 @@
 [data-theme="light"] {
   /* Accent — brand gold */
   --aa-accent:        #DB9628;
-  --aa-accent-deep:   #9E6E16;
+  --aa-accent-deep:   #8A5F12;   /* AA-760: was #9E6E16 (4.0:1 as text on accent-tint) → 5.1:1 */
   --aa-accent-soft:   #F4E2C2;
   --aa-accent-tint:   #FBF3E3;
   --aa-accent-border: #DDA64E;
@@ -47,13 +47,13 @@
   --aa-red-tint:      #FDF4F3;
   --aa-red-border:    #F2C4BF;
   /* Success (green) */
-  --aa-green:         #2E7D5B;
+  --aa-green:         #276B4E;   /* AA-760: was #2E7D5B (4.3:1 on green-soft, the READY pill) → 5.5:1 */
   --aa-green-soft:    #E4F1E9;
   /* Amber / warning (admin A.amber/amberSoft) */
   --aa-amber:         #F59E0B;
   --aa-amber-soft:    #FEF3C7;
   /* Kit amber (K.amber/amberSoft — a slightly different, consistent kit value) */
-  --aa-kit-amber:      #B5791F;
+  --aa-kit-amber:      #8F5F16;  /* AA-760: was #B5791F (3.2:1 on kit-amber-soft) → 4.8:1 */
   --aa-kit-amber-soft: #FBEFD6;
   /* Info (blue) — kit owns these (K.info/infoSoft) */
   --aa-info:          #1E40AF;
@@ -138,8 +138,9 @@
   --aa-panel-bg1:     #F8FAFF;
   --aa-panel-bg2:     #F0FDF4;
   --aa-panel-bg3:     #F5F3FF;
-  /* on-accent / on-strong text (white on gold buttons, badge dots) */
-  --aa-on-accent:     #FFFFFF;
+  /* on-accent / on-strong text on the gold buttons. AA-760: dark ink, as in dark mode — white on
+     #DB9628 is 2.5:1 (fails WCAG AA for the 11–13 px button labels); #1A1206 is 7.4:1. */
+  --aa-on-accent:     #1A1206;
   /* on-solid — white text/icon that must stay white in BOTH themes, sitting on a solid coloured
      surface (green/red/blue/dark buttons, toasts, spinner icons on coloured buttons). */
   --aa-on-solid:      #FFFFFF;

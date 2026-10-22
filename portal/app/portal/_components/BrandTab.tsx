@@ -18,12 +18,22 @@
 //                                                        tenant_id from the caller; the tenant
 //                                                        proxy now passes multipart through
 //                                                        unmangled instead of forcing JSON.)
+//
+// AA-760 — the brand record is a react-query query (was a fetch in an effect that also filled the
+// form: the last portal lint error). `BrandTab` owns the query; `BrandForm` takes the record and
+// initialises its fields from it once (useState initialisers, no effect). The form remounts (new
+// `key`) only when it must start again from the server: after a save and on "Back to active". A
+// failed load shows an error with Retry instead of an empty form that could be saved over the
+// real one. Tenant copy: no "29 core brand standards", "rewrite", "quality thresholds" or
+// "system prompt" (tenant sees content only).
 
-import { useState, useEffect, useRef } from "react";
-import { History, Upload, Check, RotateCcw } from "lucide-react";
+import { useState, useRef } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { AlertTriangle, History, Upload, Check, RotateCcw } from "lucide-react";
+import { apiGet } from "@/app/_kit";
 import {
   T, serif, sans, mono,
-  Btn, Field, LoadingScreen,
+  Btn, Field, LoadingScreen, EmptyState,
   fmtDate,
 } from "./ui";
 import { CtaReviewNotice, ctaWarningFrom, useCtaReviewCheck, type CtaWarning } from "./CtaReviewNotice";
@@ -86,71 +96,91 @@ function toBase64(file: File): Promise<string> {
   });
 }
 
+const BRAND_KEY = ["tenant-brand-identity"] as const;
+
+type MarketNote = { countries: string[]; unsupported: string[]; unknown: string[] };
+/** What the last save returned (kept by BrandTab: the form remounts after a save). */
+interface SaveResult { marketNote: MarketNote | null; ctaWarning: CtaWarning }
+
+function forbiddenList(raw: BrandData["forbidden_words"]): string[] {
+  if (Array.isArray(raw)) return raw;
+  try { return typeof raw === "string" ? JSON.parse(raw || "[]") : []; } catch { return []; }
+}
+
 export default function BrandTab() {
-  const [data, setData]     = useState<BrandData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const q = useQuery({
+    queryKey: BRAND_KEY,
+    queryFn: () => apiGet<BrandData>("/api/tenant/admin/brand-identity"),
+    // The form is filled from this once; a background refetch must not race an edit.
+    staleTime: Infinity,
+  });
+  const [formKey, setFormKey] = useState(0);
+  const [result, setResult] = useState<SaveResult | null>(null);
+
+  if (q.isPending) return <LoadingScreen message="Loading brand identity…" />;
+  if (q.isError) {
+    return (
+      <EmptyState icon={<AlertTriangle size={32} strokeWidth={1.5} color={T.gold} />} title="Couldn't load your brand identity"
+        sub="Something went wrong reaching your brand settings."
+        action={<Btn variant="secondary" onClick={() => { void q.refetch(); }}>Try again</Btn>} />
+    );
+  }
+
+  return (
+    <BrandForm
+      key={formKey}
+      data={q.data}
+      result={result}
+      clearResult={() => setResult(null)}
+      onSaved={async (r) => { await q.refetch(); setResult(r); setFormKey(k => k + 1); }}
+      onReset={() => setFormKey(k => k + 1)}
+    />
+  );
+}
+
+function BrandForm({ data, result, clearResult, onSaved, onReset }: {
+  data: BrandData;
+  result: SaveResult | null;
+  clearResult: () => void;
+  onSaved: (r: SaveResult) => Promise<void>;
+  /** Start again from the saved record (drops unsaved edits). */
+  onReset: () => void;
+}) {
   const [saving, setSaving]   = useState(false);
-  const [saved, setSaved]     = useState(false);
   const [dirty, setDirty]     = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [viewingV, setViewingV] = useState<number | null>(null);
   const [uploadStatus, setUploadStatus] = useState<"idle" | "uploading" | "done" | "stored" | "error">("idle");
-  // AA-741 (S229): what the brief upload found, and what the last save did with the markets.
+  // AA-741 (S229): what the brief upload found.
   const [briefNotes, setBriefNotes] = useState<string[]>([]);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [marketNote, setMarketNote] = useState<{ countries: string[]; unsupported: string[]; unknown: string[] } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const saved = result !== null && !dirty;
+  const marketNote = result?.marketNote ?? null;
 
-  // Form state
-  const [sp, setSp]   = useState("");
-  const [sg, setSg]   = useState("");
-  const [fw, setFw]   = useState("");  // comma-separated
+  // Form state, initialised once from the saved record.
+  const [sp, setSp]   = useState(data.system_prompt ?? "");
+  const [sg, setSg]   = useState(data.style_guide ?? "");
+  const [fw, setFw]   = useState(() => forbiddenList(data.forbidden_words).join(", "));  // comma-separated
   // AA-557 J.23 — the extended field set.
-  const [brandName, setBrandName] = useState("");
-  const [brandType, setBrandType] = useState("");
-  const [coreIdea, setCoreIdea] = useState("");
-  const [targetMarkets, setTargetMarkets] = useState("");
-  const [customerSegment, setCustomerSegment] = useState("");
-  const [customerMindset, setCustomerMindset] = useState("");
-  const [toneOfVoice, setToneOfVoice] = useState("");
-  const [goodExamples, setGoodExamples] = useState("");
-  const [defaultCta, setDefaultCta] = useState("");
+  const [brandName, setBrandName] = useState(data.brand_name ?? "");
+  const [brandType, setBrandType] = useState(data.brand_type ?? "");
+  const [coreIdea, setCoreIdea] = useState(data.core_idea ?? "");
+  const [targetMarkets, setTargetMarkets] = useState((data.target_markets ?? []).join(", "));
+  const [customerSegment, setCustomerSegment] = useState(data.customer_segment ?? "");
+  const [customerMindset, setCustomerMindset] = useState(data.customer_mindset ?? "");
+  const [toneOfVoice, setToneOfVoice] = useState((data.tone_of_voice ?? []).join(", "));
+  const [goodExamples, setGoodExamples] = useState(data.good_examples ?? "");
+  const [defaultCta, setDefaultCta] = useState(data.default_cta ?? "");
   // AA-819 follow-up — a CTA that mentions reviews or ratings is saved as typed, with a warning:
   // live while typing, and from the save response.
   const liveCtaWarning = useCtaReviewCheck(defaultCta);
-  const [savedCtaWarning, setSavedCtaWarning] = useState<CtaWarning>(null);
+  const savedCtaWarning = result?.ctaWarning ?? null;
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      const r = await fetch("/api/tenant/admin/brand-identity");
-      if (r.ok) {
-        const d: BrandData = await r.json();
-        setData(d);
-        setSp(d.system_prompt ?? "");
-        setSg(d.style_guide ?? "");
-        const words = Array.isArray(d.forbidden_words) ? d.forbidden_words : (typeof d.forbidden_words === "string" ? JSON.parse(d.forbidden_words || "[]") : []);
-        setFw(words.join(", "));
-        setBrandName(d.brand_name ?? "");
-        setBrandType(d.brand_type ?? "");
-        setCoreIdea(d.core_idea ?? "");
-        setTargetMarkets((d.target_markets ?? []).join(", "));
-        setCustomerSegment(d.customer_segment ?? "");
-        setCustomerMindset(d.customer_mindset ?? "");
-        setToneOfVoice((d.tone_of_voice ?? []).join(", "));
-        setGoodExamples(d.good_examples ?? "");
-        setDefaultCta(d.default_cta ?? "");
-        setDirty(false);
-      }
-    } finally { setLoading(false); }
-  };
-
-  useEffect(() => { load(); }, []);
-
-  function markDirty() { setDirty(true); setSaved(false); }
+  function markDirty() { setDirty(true); if (result) clearResult(); }
 
   async function save() {
-    setSaving(true); setSaved(false); setSaveError(null);
+    setSaving(true); setSaveError(null);
     try {
       const r = await fetch("/api/tenant/admin/brand-identity", {
         method: "POST",
@@ -172,10 +202,9 @@ export default function BrandTab() {
       });
       const body = await r.json().catch(() => ({}));
       if (r.ok) {
-        setSaved(true); setDirty(false); setViewingV(null); setBriefNotes([]);
-        setMarketNote(body.markets ?? null);
-        setSavedCtaWarning(ctaWarningFrom(body));
-        await load();
+        // The form remounts on the saved record (BrandTab bumps its key after the refetch).
+        await onSaved({ marketNote: body.markets ?? null, ctaWarning: ctaWarningFrom(body) });
+        return;
       } else {
         // AA-741 (S229): was silently ignored — the tenant saw nothing when a save failed.
         setSaveError(typeof body.detail === "string" ? body.detail : "Could not save. Please try again.");
@@ -188,7 +217,7 @@ export default function BrandTab() {
   function restoreVersion(v: NonNullable<BrandData["history"]>[0]) {
     setSp(v.system_prompt ?? ""); setSg(v.style_guide ?? "");
     setFw((v.forbidden_words ?? []).join(", "));
-    setDirty(true); setSaved(false); setViewingV(v.version);
+    markDirty(); setViewingV(v.version);
   }
 
   // AA-741 (S229): a .docx brief is READ and pre-fills the form for review (nothing is saved until
@@ -253,19 +282,17 @@ export default function BrandTab() {
 
   const wordCount = fw.split(",").map(w => w.trim()).filter(Boolean).length;
 
-  if (loading) return <LoadingScreen message="Loading brand identity…" />;
-
   return (
     <div style={{ display: "grid", gridTemplateColumns: showHistory ? "1fr 300px" : "1fr", gap: 24, alignItems: "start" }}>
 
       {/* MAIN FORM */}
       <div>
-        {/* Header */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 22 }}>
-          <div>
+        {/* Header — AA-760: wraps on a phone (the History button squeezed the subtitle to ~235 px). */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 22 }}>
+          <div style={{ flex: "1 1 280px", minWidth: 0 }}>
             <h2 style={{ fontFamily: serif, fontSize: 22, fontWeight: 500, color: T.ink, margin: "0 0 6px", letterSpacing: "-0.01em" }}>Brand Identity</h2>
             <p style={{ fontSize: 13, color: T.muted, lineHeight: 1.6, margin: 0 }}>
-              Rules are appended to AA&apos;s 29 core brand standards on every rewrite. They do not override quality thresholds.
+              Tell us who you are and who you write for. Every piece we write for you follows this.
             </p>
           </div>
           {data?.version && (
@@ -289,7 +316,7 @@ export default function BrandTab() {
         {viewingV !== null && (
           <div style={{ padding: "10px 14px", marginBottom: 18, background: T.amberSoft, border: `1px solid ${T.goldSoft}`, borderRadius: 8, display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ fontSize: 13, color: T.amber }}>Viewing v{viewingV} — unsaved changes</span>
-            <button onClick={() => { load(); setViewingV(null); }} style={{ marginLeft: "auto", fontSize: 12, color: T.amber, background: "none", border: "none", cursor: "pointer", fontFamily: sans, fontWeight: 600 }}>← Back to active</button>
+            <button onClick={onReset} style={{ marginLeft: "auto", fontSize: 12, color: T.amber, background: "none", border: "none", cursor: "pointer", fontFamily: sans, fontWeight: 600 }}>← Back to active</button>
           </div>
         )}
 
@@ -300,40 +327,40 @@ export default function BrandTab() {
           <TextField label="Brand Type" value={brandType} onChange={v => { setBrandType(v); markDirty(); }}
             placeholder="e.g. Luxury private-travel operator" />
           <Field
-            label="Core Idea" rows={2}
+            autoGrow label="Core Idea" rows={2}
             placeholder="The single idea every piece of content should reinforce."
             value={coreIdea} onChange={v => { setCoreIdea(v); markDirty(); }}
           />
           <TagListField label="Target Markets" value={targetMarkets} onChange={v => { setTargetMarkets(v); markDirty(); }}
             placeholder="US, UK, Europe" hint="Comma-separated countries or regions. Europe = UK, Germany, France, Netherlands. Sets the keywords and research your content is written for." />
           <Field
-            label="Customer Segment" rows={2}
+            autoGrow label="Customer Segment" rows={2}
             placeholder="Who buys this — demographics, income, travel habits."
             value={customerSegment} onChange={v => { setCustomerSegment(v); markDirty(); }}
           />
           <Field
-            label="Customer Mindset" rows={2}
+            autoGrow label="Customer Mindset" rows={2}
             placeholder="What they're thinking/feeling when they decide to book."
             value={customerMindset} onChange={v => { setCustomerMindset(v); markDirty(); }}
           />
           <TagListField label="Tone of Voice" value={toneOfVoice} onChange={v => { setToneOfVoice(v); markDirty(); }}
             placeholder="confident, warm, precise" />
           <Field
-            label="Writing Style" rows={4}
+            autoGrow label="Writing Style" rows={4}
             placeholder="e.g. Use active voice. Prefer concrete specifics over adjectives. Keep sentences under 25 words."
             value={sg} onChange={v => { setSg(v); markDirty(); }}
           />
           <Field
-            label="Good Examples" rows={3}
+            autoGrow label="Good Examples" rows={3}
             placeholder="Paste 1-2 short passages that read exactly the way this brand should sound."
             value={goodExamples} onChange={v => { setGoodExamples(v); markDirty(); }}
           />
           <TextField label="Default Call to Action" value={defaultCta}
-            onChange={v => { setDefaultCta(v); setSavedCtaWarning(null); markDirty(); }}
+            onChange={v => { setDefaultCta(v); markDirty(); }}
             placeholder="e.g. Ask us for the full itinerary and dates" />
           <CtaReviewNotice warning={liveCtaWarning ?? savedCtaWarning} style={{ marginTop: -6, marginBottom: 16 }} />
           <Field
-            label="Should Write (System Prompt)" rows={5}
+            autoGrow label="Brand context" rows={5}
             placeholder="e.g. We are a luxury private-travel operator for US/UK professionals aged 40–60. Emphasise depth of experience, exclusivity, and cultural immersion."
             value={sp} onChange={v => { setSp(v); markDirty(); }}
             hint={`${sp.length}/2000`} hintColor={sp.length > 1800 ? T.red : T.muted2}
@@ -347,14 +374,14 @@ export default function BrandTab() {
               onChange={e => { setFw(e.target.value); markDirty(); }}
               placeholder="cheap, budget, bargain, amazing, incredible, stunning"
               style={{ width: "100%", padding: "10px 12px", background: T.bg, border: `1px solid ${T.line}`, borderRadius: 8, color: T.body, fontSize: 13, fontFamily: sans, outline: "none", boxSizing: "border-box" }} />
-            <div style={{ fontSize: 11, color: T.muted2, marginTop: 5 }}>Comma-separated. Applied as post-process validation on all rewrites.</div>
+            <div style={{ fontSize: 11, color: T.muted2, marginTop: 5 }}>Comma-separated. We keep these words out of everything we write for you.</div>
           </div>
         </div>
 
         {/* Preview */}
         {(sp || sg || fw) && (
           <div style={{ background: T.bg, border: `1px solid ${T.line}`, borderRadius: 10, padding: "14px 16px", marginBottom: 16 }}>
-            <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", color: T.muted, marginBottom: 10 }}>How it applies to rewrites</div>
+            <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", color: T.muted, marginBottom: 10 }}>How we use this</div>
             <div style={{ fontSize: 12.5, color: T.muted, lineHeight: 1.7 }}>
               {sp && <div style={{ marginBottom: 5 }}><strong style={{ color: T.ink }}>Brand context:</strong> {sp.slice(0, 120)}{sp.length > 120 ? "…" : ""}</div>}
               {sg && <div style={{ marginBottom: 5 }}><strong style={{ color: T.ink }}>Style:</strong> {sg.slice(0, 80)}{sg.length > 80 ? "…" : ""}</div>}
@@ -405,7 +432,7 @@ export default function BrandTab() {
           <Btn variant="primary" size="lg" disabled={saving || !dirty} onClick={save}>
             {saving ? "Saving…" : "Save as New Version"}
           </Btn>
-          {saved && <span style={{ fontSize: 13, color: T.green, fontWeight: 600 }}><Check size={14} style={{ display: "inline" }} /> Saved — active on next pipeline run</span>}
+          {saved && <span style={{ fontSize: 13, color: T.green, fontWeight: 600 }}><Check size={14} style={{ display: "inline" }} /> Saved — used for everything we write from now on</span>}
           {dirty && !saved && !saveError && <span style={{ fontSize: 13, color: T.amber }}>● Unsaved changes</span>}
           {saveError && <span role="alert" style={{ fontSize: 13, color: T.red }}>{saveError}</span>}
           {saved && marketNote && (
@@ -422,7 +449,7 @@ export default function BrandTab() {
         <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, overflow: "hidden", position: "sticky", top: 20 }}>
           <div style={{ padding: "14px 16px", borderBottom: `1px solid ${T.line}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: T.ink }}>Version History</div>
-            <button onClick={() => setShowHistory(false)} style={{ background: "none", border: "none", cursor: "pointer", color: T.muted2, fontSize: 18 }}>×</button>
+            <button onClick={() => setShowHistory(false)} aria-label="Close version history" title="Close" style={{ background: "none", border: "none", cursor: "pointer", color: T.muted2, fontSize: 18 }}><span aria-hidden>×</span></button>
           </div>
           <div style={{ padding: 14, maxHeight: "70vh", overflowY: "auto" }}>
             {data.history.map(h => (

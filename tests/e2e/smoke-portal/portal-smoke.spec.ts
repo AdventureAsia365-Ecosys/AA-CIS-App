@@ -12,16 +12,18 @@ import { test, expect } from '@playwright/test';
 import { baseUrl, installBypassRoute, runPageCheck, type PageSpec } from '../smoke/smoke-helpers';
 import {
   NO_KEY_REASON,
+  PORTAL_RESULTS_DIR,
   TENANT_STATE,
   assertPortalNoOverflowAt390,
   ensurePortalResultsDir,
   hasTenantState,
   portalScreenshots,
+  waitForPortalData,
 } from './portal-helpers';
 
 ensurePortalResultsDir();
 
-// Page title: PageHeader renders an h1; the older tabs (Brand Identity, Social Content, Marketplace) an h2.
+// Page title: PageHeader renders an h1; the older tabs (Brand Identity) an h2.
 const RENDERED = 'main :is(h1, h2)';
 
 // Add a page = add one line here (the portal nav + the deep-link-only pages). AA-759: new paths, no
@@ -30,7 +32,7 @@ const PORTAL_PAGES: PageSpec[] = [
   { id: 'dashboard', label: 'Dashboard', path: '/portal/dashboard', readySelector: RENDERED },
   { id: 'tours', label: 'Browse Tours', path: '/portal/tours', readySelector: RENDERED },
   { id: 'tours-mine', label: 'My Tours', path: '/portal/tours/mine', readySelector: RENDERED },
-  { id: 'tours-marketplace', label: 'Marketplace', path: '/portal/tours/marketplace', readySelector: RENDERED },
+  { id: 'tours-marketplace', label: 'Tour overview', path: '/portal/tours/marketplace', readySelector: RENDERED },
   { id: 'brand', label: 'Brand Identity', path: '/portal/brand', readySelector: RENDERED },
   { id: 'create-social', label: 'Social Posts', path: '/portal/create/social', readySelector: RENDERED },
   { id: 'create-article', label: 'Articles', path: '/portal/create/article', readySelector: RENDERED },
@@ -38,7 +40,7 @@ const PORTAL_PAGES: PageSpec[] = [
   { id: 'content-publish', label: 'Publish', path: '/portal/content/publish', readySelector: RENDERED },
   { id: 'account-billing', label: 'Billing', path: '/portal/account/billing', readySelector: RENDERED },
   { id: 'account-activity', label: 'Activity', path: '/portal/account/activity', readySelector: RENDERED },
-  { id: 'account-settings', label: 'Team & Settings', path: '/portal/account/settings', readySelector: RENDERED },
+  { id: 'account-settings', label: 'Account settings', path: '/portal/account/settings', readySelector: RENDERED },
   { id: 'account-api', label: 'API', path: '/portal/account/api', readySelector: RENDERED },
   { id: 'account-integrations', label: 'Integrations', path: '/portal/account/integrations', readySelector: RENDERED },
   { id: 'help-facebook', label: 'Connect your Facebook Page', path: '/portal/help/facebook', readySelector: RENDERED },
@@ -55,6 +57,32 @@ test.describe('UI smoke — portal pages', () => {
       });
     });
   }
+
+  // AA-760 — the Browse Tours "no results" state (a search that matches no tour), captured in light
+  // and dark at 1440 and 390 like the page screenshots. Every wait is bounded.
+  test('portal: Browse Tours shows its empty state for a search with no match', async ({ browser }) => {
+    const context = await browser.newContext({ baseURL: baseUrl(), storageState: TENANT_STATE, viewport: { width: 1440, height: 900 } });
+    await installBypassRoute(context);
+    const page = await context.newPage();
+    try {
+      ensurePortalResultsDir();
+      for (const scheme of ['light', 'dark'] as const) {
+        // The search is page state: each scheme loads the page and searches again.
+        await page.emulateMedia({ colorScheme: scheme });
+        await page.goto('/portal/tours', { waitUntil: 'domcontentloaded' });
+        await waitForPortalData(page);
+        await page.getByPlaceholder('Search tours by name…').fill('zzqx-no-such-tour-aa760');
+        await expect(page.getByText('No tours found')).toBeVisible({ timeout: 15000 });
+        for (const vp of [{ name: 'desktop', width: 1440, height: 900 }, { name: 'mobile', width: 390, height: 844 }]) {
+          await page.setViewportSize({ width: vp.width, height: vp.height });
+          await page.waitForTimeout(300);
+          await page.screenshot({ path: `${PORTAL_RESULTS_DIR}/tours-no-results-${vp.name}-${scheme}.png` });
+        }
+      }
+    } finally {
+      await context.close();
+    }
+  });
 
   // AA-831 (S239 UI verify D) — at 390px the longest portal breadcrumb ("Connect your Facebook
   // Page") was hard-clipped next to the bell. The kit Breadcrumb must end the title in an ellipsis

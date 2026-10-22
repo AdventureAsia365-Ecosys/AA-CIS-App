@@ -13,7 +13,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Settings2 } from "lucide-react";
-import { T, sans, LoadingScreen, PageHeader } from "../../_components/ui";
+import { T, sans, CardSkeleton, PageHeader } from "../../_components/ui";
 import { useWordPressStatus, WordPressConnectForm, WordPressStatusCard } from "../../_components/WordPressConnect";
 import { useFacebookStatus, FacebookConnectForm, FacebookStatusCard } from "../../_components/FacebookConnect";
 import { PublishPendingList } from "../../_components/PublishPendingList";
@@ -24,11 +24,11 @@ export default function T11PublishPage() {
   const fb = useFacebookStatus();
   const [pendingReload, setPendingReload] = useState(0);
 
-  // Only the first load blocks the page; a later refresh (after connect / re-test) keeps it up.
-  if ((wp.loading && !wp.status) || (fb.loading && !fb.status)) {
-    return <LoadingScreen message="Loading connection status…" />;
-  }
-
+  // AA-760 — no full-page spinner any more: the header and both lists render at once, and each
+  // channel card shows its own skeleton until that channel's status answers (one slow call used to
+  // blank the whole page). A later refresh (after connect / re-test) keeps the card up.
+  const wpPending = wp.loading && !wp.status;
+  const fbPending = fb.loading && !fb.status;
   const wpConnected = !!wp.status?.connected;
   const fbConnected = !!fb.status?.connected;
 
@@ -54,12 +54,14 @@ export default function T11PublishPage() {
           display: "grid", gap: 16, alignItems: "start",
           gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))",
         }}>
-          {wpConnected && wp.status
-            ? <WordPressStatusCard status={wp.status} onRetest={wp.refresh} />
-            : <WordPressConnectForm onConnected={wp.refresh} />}
-          {fbConnected && fb.status
-            ? <FacebookStatusCard status={fb.status} onRetest={fb.refresh} />
-            : <FacebookConnectForm onConnected={fb.refresh} />}
+          {wpPending ? <CardSkeleton label="Loading WordPress connection" />
+            : wpConnected && wp.status
+              ? <WordPressStatusCard status={wp.status} onRetest={wp.refresh} />
+              : <WordPressConnectForm onConnected={wp.refresh} />}
+          {fbPending ? <CardSkeleton label="Loading Facebook connection" />
+            : fbConnected && fb.status
+              ? <FacebookStatusCard status={fb.status} onRetest={fb.refresh} />
+              : <FacebookConnectForm onConnected={fb.refresh} />}
         </div>
 
         <PublishPendingList

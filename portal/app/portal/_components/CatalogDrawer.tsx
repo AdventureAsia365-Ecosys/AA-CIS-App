@@ -41,7 +41,7 @@ function CompareRow({ label, yours, onEdit }: { label: string; yours: string; on
             }}
             style={{ background: "none", border: "none", cursor: "pointer", color: T.gold, fontSize: 10, fontFamily: sans }}
           >
-            ✏ Edit
+            <span aria-hidden>✏</span> Edit
           </button>
         )}
       </div>
@@ -88,13 +88,16 @@ function HighlightsCompare({ yours, onChange }: { yours: string[]; onChange: (v:
                 n[i] = e.target.value;
                 onChange(n);
               }}
+              aria-label={`Highlight ${i + 1}`}
               style={{ flex: 1, fontSize: 11, border: `1px solid ${T.line}`, borderRadius: 4, padding: "2px 6px", fontFamily: sans, outline: "none", background: "transparent" }}
             />
             <button
               onClick={() => onChange(yours.filter((_, j) => j !== i))}
+              aria-label={`Remove highlight ${i + 1}`}
+              title="Remove"
               style={{ background: "none", border: "none", cursor: "pointer", color: T.muted2, padding: 0, flexShrink: 0 }}
             >
-              ×
+              <span aria-hidden>×</span>
             </button>
           </div>
         ))}
@@ -210,8 +213,8 @@ export function CatalogDrawer(props: CatalogDrawerBody) {
           </Btn>
         )}
         {saveOk && !dirty && <span style={{ fontSize: 12, color: T.green, fontWeight: 600 }}>✓ Saved</span>}
-        <button onClick={props.onClose} style={{ background: "none", border: "none", cursor: "pointer", color: T.muted2 }}>
-          <X size={16} />
+        <button onClick={props.onClose} aria-label="Close" title="Close" style={{ background: "none", border: "none", cursor: "pointer", color: T.muted2 }}>
+          <X size={16} aria-hidden />
         </button>
       </div>
     </div>

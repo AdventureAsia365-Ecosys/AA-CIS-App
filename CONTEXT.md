@@ -73,11 +73,11 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     redirect in `next.config.ts`.
   - Portal pages (`portal/app/portal/*`, AA-759 — no T-number slugs): `dashboard`; **Tours** —
     `tours` (Browse Tours, T1), `tours/mine` (My Tours, T4 / `CatalogTab`, kit + react-query, AA-662 PR 3),
-    `tours/marketplace`; **Brand** — `brand` (T0); **Create** — `create/social` (Social Posts: the Slate on
+    `tours/marketplace` (Tour overview, AA-760: was labelled Marketplace); **Brand** — `brand` (T0); **Create** — `create/social` (Social Posts: the Slate on
     every Channel but blog, + trip reallocation), `create/article` (Articles: the Slate on the blog
     Channel), `create/write` (T8+T9 wizard, deep link only); **Content** — `content` (My Content, with a
     Publish action), `content/publish` (T11); **Account** — `account/billing`, `account/activity`,
-    `account/settings` (Team & Settings), `account/api`, `account/integrations` (WordPress / Facebook
+    `account/settings` (Account settings, AA-760), `account/api`, `account/integrations` (WordPress / Facebook
     connections); `help/facebook`. Every old slug (`t0-brand`, `t1-rewrite`, `t4-pool`, `t7-planning`,
     `t8-angle-gate`, `t10-review`, `t11-publish[/connection]`, `marketplace`, `activity`, `billing`,
     `settings`, `api`) answers **308** to its new path (`portal/next.config.ts` `OLD_SLUG_REDIRECTS`, query
@@ -763,6 +763,12 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   migration in `shared.schema_versions` is ≥ `api/core/readiness.py` `REQUIRED_CIS_SCHEMA` (bump it in the PR whose
   code needs a newer migration). Deploy Dev's smoke asserts both, and that a live worker reports the same SHA
   (`shared.job_worker.git_sha`, written at worker start).
+- **Release version (AA-891)**: release-please (manifest mode, `release-please-config.json`,
+  `.release-please-manifest.json`, workflow `release-please.yml` with the CI bot GitHub App token) keeps one release PR
+  open on `main`; merging it bumps the manifest, `CHANGELOG.md` and `api/version.py` (the only copy in code: FastAPI app
+  version and `/health` `version`) and tags `vX.Y.Z`. Never edit the version by hand. A release-only merge does not
+  deploy (`!api/version.py` in Deploy Dev's paths); the next code merge ships it, and the smoke asserts `/health`
+  `version` equals the deployed commit's manifest.
 - **Logs are JSON with request / job ids (AA-871)**: `shared/log_config.py` (called once by `api.main` and
   `python -m worker`, not under unit tests) renders structlog, stdlib and uvicorn lines as one JSON object each on
   `/ecs/aa-cis-dev` (`service` = `cis-api` | `cis-worker`, `git_sha`, `environment`). The outermost API middleware

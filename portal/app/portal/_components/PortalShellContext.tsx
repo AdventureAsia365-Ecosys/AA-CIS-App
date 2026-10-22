@@ -17,17 +17,30 @@ export interface ShellActivity {
 }
 
 /** AA-760 — an activity row with its state read from the job (null until the versions load). */
-export type ShellActivityView = ShellActivity & { state: ActivityState | null };
+export type ShellActivityView = ShellActivity & {
+  state: ActivityState | null;
+  /** AA-760 — the version's number from ["my-versions"] (null until it loads), to tell repeat rows apart. */
+  version_number: number | null;
+};
+
+/** react-query status of a shell query: "pending" (no answer yet) | "error" | "success". */
+export type ShellLoadStatus = "pending" | "error" | "success";
 
 /** `/v1/billing` as the shell holds it; pages read the fields they need. */
 export type ShellBilling = { activity?: ShellActivity[] } & Record<string, unknown>;
 
 export interface PortalShellValue {
+  /** "" while /api/tenant/me loads (render a skeleton, not a placeholder name). */
   tenantName: string;
   planTier: string;
-  poolTotal: number;
+  tenantStatus: ShellLoadStatus;
+  /** null until the pool answers. */
+  poolTotal: number | null;
   catTotal: number;
   billing: ShellBilling | null;
+  /** AA-760 — /v1/billing load state (billing + activity): loading / failed is not "empty". */
+  billingStatus: ShellLoadStatus;
+  retryBilling: () => void;
   /** AA-760 — `billing.activity` joined to the job state (dashboard feed, Activity page, bell). */
   activity: ShellActivityView[];
   globalSearch: string;

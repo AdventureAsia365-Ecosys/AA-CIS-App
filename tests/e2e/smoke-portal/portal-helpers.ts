@@ -65,21 +65,52 @@ export async function assertPortalNoOverflowAt390(page: Page, label: string): Pr
   await page.setViewportSize({ width: 1440, height: 900 });
 }
 
-/** Portal screenshots: desktop 1440 (full page) + phone 390 (first screen), in light and dark.
+/**
+ * AA-760 — wait until the page shows data, not its loading state: the network goes quiet (bounded:
+ * a page that polls never goes idle) and no loading placeholder is left (`aria-busy="true"` marks
+ * every portal skeleton / spinner). The S247 screenshot audit found every desktop-dark capture still
+ * on a skeleton (the dark pass reloads, then waited only 300 ms).
+ */
+export async function waitForPortalData(page: Page): Promise<void> {
+  await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+  await page
+    .waitForFunction(() => !document.querySelector('[aria-busy="true"]'), null, { timeout: 15000 })
+    .catch(() => {});
+}
+
+/**
+ * AA-760 — the portal scrolls inside `<main data-pshell="main">`, not the document, so Playwright's
+ * fullPage stopped at 900 px. For the desktop capture the viewport is made as tall as main's content
+ * (capped), so the whole page is in the shot.
+ */
+async function fitViewportToMain(page: Page, width: number, minHeight: number): Promise<void> {
+  const contentHeight = await page.evaluate(() => {
+    const main = document.querySelector<HTMLElement>('[data-pshell="main"]');
+    if (!main) return 0;
+    return main.getBoundingClientRect().top + main.scrollHeight;
+  });
+  await page.setViewportSize({ width, height: Math.min(Math.max(minHeight, Math.ceil(contentHeight)), 8000) });
+}
+
+/** Portal screenshots: desktop 1440 (the whole page) + phone 390 (first screen), in light and dark.
  * AA-759: the portal follows the theme; with no stored choice it follows `prefers-color-scheme`,
- * so emulating the colour scheme is enough (the page reloads so the pre-paint restore script runs). */
+ * so emulating the colour scheme is enough (the page reloads so the pre-paint restore script runs).
+ * AA-760: each capture waits for the data (waitForPortalData), and the desktop one covers the full
+ * height of the main scroll container. */
 export async function portalScreenshots(page: Page, slug: string): Promise<void> {
   ensurePortalResultsDir();
   for (const scheme of ['light', 'dark'] as const) {
     await page.emulateMedia({ colorScheme: scheme });
     if (scheme === 'dark') await page.reload({ waitUntil: 'domcontentloaded' });
+    await waitForPortalData(page);
     for (const vp of [
-      { name: 'desktop', width: 1440, height: 900, fullPage: true },
-      { name: 'mobile', width: 390, height: 844, fullPage: false },
+      { name: 'desktop', width: 1440, height: 900 },
+      { name: 'mobile', width: 390, height: 844 },
     ]) {
       await page.setViewportSize({ width: vp.width, height: vp.height });
       await page.waitForTimeout(300);
-      await page.screenshot({ path: path.join(PORTAL_RESULTS_DIR, `${slug}-${vp.name}-${scheme}.png`), fullPage: vp.fullPage });
+      if (vp.name === 'desktop') await fitViewportToMain(page, vp.width, vp.height);
+      await page.screenshot({ path: path.join(PORTAL_RESULTS_DIR, `${slug}-${vp.name}-${scheme}.png`) });
     }
   }
   await page.emulateMedia({ colorScheme: 'light' });

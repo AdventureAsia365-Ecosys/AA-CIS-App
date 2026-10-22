@@ -9,6 +9,10 @@ on:
       - 'worker/**'
       - 'Dockerfile'
       - 'requirements.txt'
+      # AA-891: a release PR (release-please) changes only CHANGELOG.md, .release-please-manifest.json and
+      # api/version.py. The first two are not listed above; this negation (it must stay after 'api/**') drops the
+      # third, so merging a release PR does not restart api/worker. The next code merge ships the new version.
+      - '!api/version.py'
       # AA-879: no 'frontend/**' — the image holds no frontend file (see the Dockerfile COPY lines), so a
       # frontend-only merge must not restart api/worker. The admin app deploys from vercel-deploy.yml.
   workflow_dispatch:
@@ -238,12 +242,15 @@ jobs:
           set -uo pipefail
           sleep 10
           fail=0
+          # AA-891: the release version of this commit (the image carries api/version.py, kept equal to the manifest).
+          APP_VERSION=$(jq -r '."."' .release-please-manifest.json)
 
           # name|path|jq-shape-assertion (empty assertion = only check HTTP 200)
           # AA-884: /health carries the image's git SHA (must be this run's commit) and /health/ready the DB +
           # newest numeric CIS migration (503 when the code needs a migration that is not applied yet).
+          # AA-891: /health also carries the release version, which must be this commit's manifest version.
           public_checks=(
-            "health|/health|.status == \"ok\" and .git_sha == \"${GITHUB_SHA}\""
+            "health|/health|.status == \"ok\" and .git_sha == \"${GITHUB_SHA}\" and .version == \"${APP_VERSION}\""
             "health-ready|/health/ready|.status == \"ok\" and .db == \"ok\""
           )
           admin_checks=(

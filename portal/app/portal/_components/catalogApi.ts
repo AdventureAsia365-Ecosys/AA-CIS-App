@@ -31,10 +31,34 @@ export interface Version {
   tour_id?: string;
 }
 
-export function fetchMyVersions(): Promise<Version[]> {
-  return apiGet<{ data?: Version[] }>(`/api/tenant/v1/tours/my-versions?page_size=50`).then(
-    (d) => d.data ?? [],
-  );
+// AA-760 — every version, not the first page: My Tours groups versions by tour (latest per tour), the
+// sidebar counts tours, Browse Tours and the command palette read the same ["my-versions"] query, so a
+// tenant past one page used to lose tours silently (page_size=50 before). The API
+// pages by version (page_size ≤ 100, newest first); pages after the first load in parallel, capped at
+// MAX_VERSION_PAGES (2,000 versions — far above any tenant today), duplicates dropped by id (a rewrite
+// finishing between two page reads shifts rows by one).
+const VERSION_PAGE_SIZE = 100;
+const MAX_VERSION_PAGES = 20;
+
+type VersionsPage = { data?: Version[]; pagination?: { pages?: number } };
+
+function versionsPage(page: number): Promise<VersionsPage> {
+  return apiGet<VersionsPage>(`/api/tenant/v1/tours/my-versions?page=${page}&page_size=${VERSION_PAGE_SIZE}`);
+}
+
+export async function fetchMyVersions(): Promise<Version[]> {
+  const first = await versionsPage(1);
+  const pages = Math.min(Math.max(first.pagination?.pages ?? 1, 1), MAX_VERSION_PAGES);
+  const rest = await Promise.all(Array.from({ length: pages - 1 }, (_, i) => versionsPage(i + 2)));
+  const seen = new Set<string>();
+  const out: Version[] = [];
+  for (const v of [first, ...rest].flatMap((p) => p.data ?? [])) {
+    if (!seen.has(v.id)) {
+      seen.add(v.id);
+      out.push(v);
+    }
+  }
+  return out;
 }
 
 export function fetchVersionDetail(id: string): Promise<Version> {

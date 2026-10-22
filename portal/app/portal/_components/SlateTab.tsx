@@ -140,19 +140,24 @@ export const ARTICLE_CHANNELS: readonly string[] = ["blog"];
 export const SOCIAL_CHANNELS: readonly string[] = CHANNEL_TABS.map(c => c.key).filter(k => !ARTICLE_CHANNELS.includes(k));
 
 // The kit toast needs a provider; the Slate is the only toast user on this page.
-export default function SlateTab({ channels, title = "Social Content" }: {
+export default function SlateTab({ channels, title = "Social Content", intro = DEFAULT_INTRO }: {
   /** AA-759 — the Channel tabs to show (default: all 8). */
   channels?: readonly string[];
   title?: string;
+  /** AA-760 — the plain-words line under the card title (each Create page passes its own). */
+  intro?: string;
 }) {
   return (
     <ToastProvider>
-      <SlateTabInner channels={channels} title={title} />
+      <SlateTabInner channels={channels} title={title} intro={intro} />
     </ToastProvider>
   );
 }
 
-function SlateTabInner({ channels, title }: { channels?: readonly string[]; title: string }) {
+// AA-760 — tenant copy only: no Channel "bar", demand thresholds or ranking terms (tenant sees content only).
+const DEFAULT_INTRO = "Topics from your tours that suit this channel, best first. Pick one to start writing.";
+
+function SlateTabInner({ channels, title, intro }: { channels?: readonly string[]; title: string; intro: string }) {
   const tabs = channels ? CHANNEL_TABS.filter(c => channels.includes(c.key)) : CHANNEL_TABS;
   const [activeChannel, setActiveChannel] = useState(() => tabs[0]?.key ?? "blog");
   const [panel, setPanel] = useState<WriterTarget | null>(null);
@@ -243,11 +248,7 @@ function SlateTabInner({ channels, title }: { channels?: readonly string[]; titl
             name (SlateTab.tsx, internal-only) is unchanged, matching CONTEXT.md's own Subject/Slate
             terminology used everywhere else in the codebase. */}
         <CardHead title={title} />
-        <p style={{ fontSize: 12.5, color: T.muted, lineHeight: 1.6, margin: "0 0 14px" }}>
-          Every moment that has cleared its Channel&rsquo;s bar — search-led Channels need
-          measured demand and questions to answer; attention-led Channels need enough of the
-          journey actually described. Sorted strongest first. Pick one to start writing.
-        </p>
+        <p style={{ fontSize: 12.5, color: T.muted, lineHeight: 1.6, margin: "0 0 14px" }}>{intro}</p>
 
         {/* AA-764 — proposal state: topics are re-ranked in the background, never on page load. */}
         {data && (
@@ -261,7 +262,7 @@ function SlateTabInner({ channels, title }: { channels?: readonly string[]; titl
               <span>
                 {data.refresh?.finished_at
                   ? <>Topics last updated {new Date(data.refresh.finished_at).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}.</>
-                  : <>Topics haven&rsquo;t been ranked yet.</>}
+                  : <>Topics haven&rsquo;t been prepared yet.</>}
                 {data.refresh?.status === "failed" && <> The last update didn&rsquo;t finish.</>}
               </span>
             )}
@@ -284,16 +285,19 @@ function SlateTabInner({ channels, title }: { channels?: readonly string[]; titl
             <span>
               Your configured market{data.unmatched_markets.length > 1 ? "s" : ""} (
               <strong>{data.unmatched_markets.join(", ")}</strong>) {data.unmatched_markets.length > 1 ? "aren't" : "isn't"} supported
-              for SEO research yet — the ranking data below is not specific to{" "}
+              for SEO research yet — the search data below is not specific to{" "}
               {data.unmatched_markets.length > 1 ? "those markets" : "that market"}. We&rsquo;ve
               recorded your request; reach out if you need this prioritized.
             </span>
           </div>
         )}
 
+        {/* AA-760 — on a phone the strip scrolls sideways with its scrollbar hidden; a right-edge fade
+            shows there are more Channels (the end padding lets the last tab clear the fade). */}
         <div className="aa511-slate-tabstrip" style={{
           display: "flex", gap: 4, alignItems: "center", overflowX: "auto", flexWrap: "nowrap",
-          borderBottom: `1px solid ${T.line2}`, paddingBottom: 2,
+          borderBottom: `1px solid ${T.line2}`, paddingBottom: 2, paddingRight: tabs.length > 1 ? 28 : 0,
+          ...(tabs.length > 1 ? TABSTRIP_FADE : {}),
         }}>
           {tabs.map(({ key, label, group }, i) => {
             const showDivider = i > 0 && tabs[i - 1].group !== group;
@@ -346,6 +350,11 @@ function SlateTabInner({ channels, title }: { channels?: readonly string[]; titl
   );
 }
 
+const TABSTRIP_FADE: React.CSSProperties = {
+  maskImage: "linear-gradient(to right, #000 calc(100% - 28px), transparent)",
+  WebkitMaskImage: "linear-gradient(to right, #000 calc(100% - 28px), transparent)",
+};
+
 // ── Skeleton (FE audit #1) ──────────────────────────────────────────────────
 // Shaped like the real content (a counts line + a few SubjectRow-shaped cards), shown in the
 // active panel's own place — the tab strip above it is never hidden or replaced.
@@ -377,7 +386,7 @@ function SkeletonRow() {
 
 function SkeletonPanel() {
   return (
-    <div>
+    <div aria-busy="true" aria-label="Loading topics">
       <SkeletonBlock width="220px" height={12} />
       <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 14 }}>
         <SkeletonRow />
@@ -397,24 +406,25 @@ function ChannelPanel({ channel, postsPerWeek, onPicked, writer }: {
   return (
     <div>
       <div style={{ fontSize: 12, color: T.muted, marginBottom: 14 }}>
-        <strong style={{ color: T.ink, fontFamily: mono }}>{channel.eligible_count}</strong> eligible subject{channel.eligible_count === 1 ? "" : "s"}
+        <strong style={{ color: T.ink, fontFamily: mono }}>{channel.eligible_count}</strong> topic{channel.eligible_count === 1 ? "" : "s"} ready
         {!channel.on_demand && (
-          <> · target rhythm <strong style={{ color: T.ink, fontFamily: mono }}>{postsPerWeek}</strong> posts/week</>
+          <> · plan: <strong style={{ color: T.ink, fontFamily: mono }}>{postsPerWeek}</strong> posts/week</>
         )}
         {channel.on_demand && <> · written on demand</>}
       </div>
 
       {channel.subjects.length === 0 ? (
-        // Never had any Subject at all — the original "atomize a tour first" guidance.
+        // Never had any Subject at all. AA-760 — tenant words: no "atomize / rank / bar" (steps the
+        // tenant cannot run), and a way forward they can take.
         <EmptyState icon={<ClipboardList size={32} strokeWidth={1.5} color={T.gold} />} title="Nothing here yet"
-          sub="No Segment or Route on this tenant has cleared this Channel's bar yet — atomize and rank a tour first." />
+          sub="We add topics here as your tours are written and updated. Rewrite a tour from Browse Tours, or press Update topics." />
       ) : proposed.length === 0 ? (
         // FE audit #3 — DIFFERENT message: this Channel has decided history, just nothing NEW
         // to pick right now. Conflating this with the "never had any Subject" case above was the
         // reported gap — a tenant seeing a bare gap above "Already decided" with no explanation.
         <>
-          <EmptyState icon={<CheckCircle2 size={32} strokeWidth={1.5} color={T.gold} />} title="No new eligible Subjects right now"
-            sub="Review the Subjects already decided below, or rewrite/atomize more tours for new proposals." />
+          <EmptyState icon={<CheckCircle2 size={32} strokeWidth={1.5} color={T.gold} />} title="No new topics right now"
+            sub="We add new ones as your tours are updated. Meanwhile, reuse a topic below or press Update topics." />
           <DecidedList subjects={decided} onPicked={onPicked} writer={writer} />
         </>
       ) : (
@@ -444,20 +454,31 @@ function DecidedList({ subjects, onPicked, writer }: {
   );
 }
 
-function barReasonText(reason: ClearedBarReason): string {
-  if (reason.on_demand) return "On demand — no threshold applies";
-  const parts: string[] = [];
-  if (reason.needs_demand > 0) {
-    parts.push(`Demand ${reason.demand?.toLocaleString() ?? 0} ≥ ${reason.needs_demand.toLocaleString()}`);
-  }
-  if (reason.needs_questions > 0) {
-    parts.push(`Questions ${reason.questions} ≥ ${reason.needs_questions}`);
-  }
-  if (reason.needs_said > 0) {
-    parts.push(`Said ${reason.said} chars ≥ ${reason.needs_said}`);
-  }
-  return parts.length > 0 ? parts.join(" · ") : "No threshold applies";
+// AA-760 — the row's second line in tenant words. The Bar check itself (thresholds, rank-sum score,
+// Segment/Route kind) is internal ranking data and is no longer shown (tenant sees content only);
+// only measured search demand is kept, as "~N searches a month", where the Channel uses it.
+function demandText(reason: ClearedBarReason): string | null {
+  if (reason.on_demand || reason.needs_demand <= 0 || !reason.demand) return null;
+  return `~${reason.demand.toLocaleString("en-US")} searches a month`;
 }
+
+/** First letter upper-case ("a local Buddhist monastery → …" → "A local …"). */
+function capFirst(s: string): string {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
+
+/** AA-760 — a Segment topic reads action-first ("Swim in the lower pools · Kuang Si Falls"), not the
+ *  mechanical "place — action". The API has no written headline for a Subject yet. */
+export function subjectTitle(s: Pick<SlateSubject, "route_id" | "hub_name" | "place" | "action">): string {
+  if (s.route_id) return capFirst(s.hub_name ?? "") || "Untitled journey";
+  if (s.action && s.place) return `${capFirst(s.action)} · ${s.place}`;
+  return capFirst(s.action ?? s.place ?? "") || "Untitled moment";
+}
+
+/** Tenant wording for a decided topic. */
+const DECIDED_LABEL: Record<Exclude<SlateSubject["state"], "proposed">, string> = {
+  picked: "In progress", used: "Written", cut: "Skipped",
+};
 
 function SubjectRow({ subject, onPicked, writer }: {
   subject: SlateSubject; onPicked: () => void; writer: WriterControls;
@@ -467,9 +488,8 @@ function SubjectRow({ subject, onPicked, writer }: {
   const [cutting, setCutting] = useState(false);
   const [cutError, setCutError] = useState<string | null>(null);
 
-  const title = subject.route_id
-    ? (subject.hub_name ?? "Untitled journey")
-    : [subject.place, subject.action].filter(Boolean).join(" — ") || "Untitled moment";
+  const title = subjectTitle(subject);
+  const demand = demandText(subject.cleared_bar_reason);
 
   const kindLabel = subject.route_id ? "Route" : "Segment";
   // AA-668 — kept the AA-556 name: "this row's writer is open".
@@ -506,7 +526,7 @@ function SubjectRow({ subject, onPicked, writer }: {
         // "picked" badge if the backend had actually succeeded before the client gave up waiting
         // on the response. Leaving the Slate untouched means the row keeps showing "Pick to write"
         // (its last KNOWN state) alongside the error — never a state the tenant never asked for.
-        setPickError(e?.detail ?? "Couldn't pick this Subject — try again.");
+        setPickError(e?.detail ?? "Couldn't pick this topic — try again.");
         setPicking(false);
       });
   }, [subject.subject_id, subject.channel, title, kindLabel, onPicked, openWriter]);
@@ -515,7 +535,7 @@ function SubjectRow({ subject, onPicked, writer }: {
   // `picking` or `isExpanded` (see file header) — purely to avoid a same-row race that would just
   // 409 harmlessly, not a data-safety guard (the backend already re-checks live DB state).
   const cut = useCallback(() => {
-    if (!window.confirm("Cut this proposal? This cannot be undone.")) return;
+    if (!window.confirm("Skip this topic? It won't be suggested again.")) return;
     setCutting(true);
     setCutError(null);
     fetch(`/api/tenant/v1/subjects/${subject.subject_id}/cut`, { method: "POST" })
@@ -529,7 +549,7 @@ function SubjectRow({ subject, onPicked, writer }: {
         onPicked();
       })
       .catch(e => {
-        setCutError(e?.detail ?? "Couldn't cut this Subject — try again.");
+        setCutError(e?.detail ?? "Couldn't skip this topic — try again.");
         setCutting(false);
       });
   }, [subject.subject_id, onPicked]);
@@ -543,24 +563,18 @@ function SubjectRow({ subject, onPicked, writer }: {
       borderRadius: 10, border: `1px solid ${isExpanded ? T.gold : T.line}`, background: T.card,
       overflow: "hidden",
     }}>
+      {/* AA-760 — wraps: the title keeps at least 260 px, so on a phone the buttons drop to their own
+          row under it instead of squeezing the title into a ~70 px column. */}
       <div style={{
         display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12,
-        padding: "12px 14px",
+        padding: "12px 14px", flexWrap: "wrap",
       }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
-            <span style={{ fontFamily: serif, fontSize: 14.5, fontWeight: 500, color: T.ink }}>{title}</span>
-            <Badge variant="default">{kindLabel}</Badge>
-            {subject.state !== "proposed" && <Badge variant={stateVariant}>{subject.state}</Badge>}
-            {subject.score != null && (
-              <span style={{ fontFamily: mono, fontSize: 10.5, color: T.muted2 }} title="Rank-sum — lower is better">
-                rank {subject.score}
-              </span>
-            )}
+        <div style={{ flex: "1 1 260px", minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: demand ? 4 : 0, flexWrap: "wrap" }}>
+            <span style={{ fontFamily: serif, fontSize: 14.5, fontWeight: 500, color: T.ink, overflowWrap: "anywhere", minWidth: 0 }}>{title}</span>
+            {subject.state !== "proposed" && <Badge variant={stateVariant}>{DECIDED_LABEL[subject.state]}</Badge>}
           </div>
-          <div style={{ fontSize: 11.5, color: T.muted, lineHeight: 1.5 }}>
-            {barReasonText(subject.cleared_bar_reason)}
-          </div>
+          {demand && <div style={{ fontSize: 11.5, color: T.muted, lineHeight: 1.5 }}>{demand}</div>}
           {pickError && (
             <div style={{
               marginTop: 6, padding: "6px 8px", background: T.redSoft, border: `1px solid ${T.redBorder}`,
@@ -604,8 +618,8 @@ function SubjectRow({ subject, onPicked, writer }: {
             </Btn>
             {/* AA-556 — disabled while picking/isExpanded/cutting: UX polish only (see file
                 header) — the backend already 409s a stale/racing cut safely on its own. */}
-            <Btn variant="danger" size="sm" disabled={picking || isExpanded || cutting} onClick={cut}>
-              {cutting ? "Cutting…" : <><X size={12} /> Cut</>}
+            <Btn variant="ghost" size="sm" disabled={picking || isExpanded || cutting} onClick={cut}>
+              {cutting ? "Skipping…" : <><X size={12} /> Skip topic</>}
             </Btn>
           </div>
         )}

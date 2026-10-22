@@ -20,6 +20,7 @@ import {
   Drawer,
   formatDate,
   ToastProvider,
+  useIsPhone,
   useToast,
 } from "@/app/_kit";
 import { ReviewDrawer } from "./ReviewDrawer";
@@ -68,6 +69,8 @@ function ReviewListInner() {
   });
 
   const channels = useMemo(() => [...new Set(items.map((i) => i.channel))], [items]);
+  const isPhone = useIsPhone();
+  const sel: React.CSSProperties = isPhone ? { ...selectStyle, flex: "1 1 140px", minWidth: 0 } : selectStyle;
   const goals = useMemo(
     () => [...new Set(items.map((i) => i.goal?.label).filter(Boolean))] as string[],
     [items],
@@ -145,7 +148,7 @@ function ReviewListInner() {
               </div>
               {it.tour && (
                 <div style={{ fontSize: 11.5, color: T.muted2 }}>
-                  {it.tour.name} · {it.tour.destination}
+                  {tourLine(it.tour)}
                 </div>
               )}
             </div>
@@ -161,7 +164,8 @@ function ReviewListInner() {
         id: "goal",
         accessorFn: (r) => r.goal?.label ?? "—",
         header: "Goal",
-        cell: (c) => <span style={{ color: T.body }}>{c.row.original.goal?.label ?? "—"}</span>,
+        // AA-760 — one line: "Trust-building" broke at the hyphen, "Introduction / Awareness" wrapped.
+        cell: (c) => <span style={{ color: T.body, whiteSpace: "nowrap" }}>{c.row.original.goal?.label ?? "—"}</span>,
       },
       {
         id: "status",
@@ -174,7 +178,7 @@ function ReviewListInner() {
         accessorFn: (r) => (r.created_at ? new Date(r.created_at).getTime() : 0),
         header: "Created",
         cell: (c) => (
-          <span style={{ color: T.muted, fontSize: 12 }}>
+          <span style={{ color: T.muted, fontSize: 12, whiteSpace: "nowrap" }}>
             {formatDate(c.row.original.created_at)}
           </span>
         ),
@@ -201,31 +205,32 @@ function ReviewListInner() {
         csvFilename="my-content"
         pageSize={25}
         emptyTitle="Nothing written yet"
-        emptyDescription="Once you've written content from Social Content, it'll show up here to review before publishing."
+        emptyDescription="Once you've written content from Social Posts or Articles, it'll show up here to review before publishing."
         onRowClick={(r) => setOpenPieceId(r.piece_id)}
         toolbarExtra={
           // AA-836 — the three selects wrap inside their own row on a phone (they overflowed 390px).
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", maxWidth: "100%", minWidth: 0 }}>
-            <select value={channelFilter} onChange={(e) => setChannelFilter(e.target.value)} style={selectStyle}>
+          // AA-760 — on a phone the selects share the row evenly (flex 1 1 140px) instead of leaving
+          // "All goals" alone on a ragged second line.
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", maxWidth: "100%", minWidth: 0, ...(isPhone ? { flex: "1 1 100%" } : {}) }}>
+            <select value={channelFilter} onChange={(e) => setChannelFilter(e.target.value)} style={sel}>
               <option value="all">All channels</option>
               {channels.map((c) => (
                 <option key={c} value={c}>{channelLabel(c)}</option>
               ))}
             </select>
-            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={selectStyle}>
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={sel}>
               <option value="all">All statuses</option>
               <option value="ready">Ready</option>
               <option value="in_progress">{WORK_STATUS_LABEL.writing}</option>
               <option value="not_ready">{WORK_STATUS_LABEL.failed}</option>
             </select>
-            {goals.length > 0 && (
-              <select value={goalFilter} onChange={(e) => setGoalFilter(e.target.value)} style={selectStyle}>
-                <option value="all">All goals</option>
-                {goals.map((g) => (
-                  <option key={g} value={g}>{g}</option>
-                ))}
-              </select>
-            )}
+            {/* AA-760 — always there (disabled until goals exist) so the toolbar does not shift on load. */}
+            <select value={goalFilter} onChange={(e) => setGoalFilter(e.target.value)} style={sel} disabled={goals.length === 0} aria-label="Goal">
+              <option value="all">All goals</option>
+              {goals.map((g) => (
+                <option key={g} value={g}>{g}</option>
+              ))}
+            </select>
           </div>
         }
         bulkActions={({ selectedRows, clearSelection }) => (
@@ -271,6 +276,14 @@ function ReviewListInner() {
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </>
   );
+}
+
+/** "Tour name · Country", without the country when the name already starts with it
+ *  ("Mongolia: Khövsgöl Lake …" was followed by "· Mongolia"). */
+function tourLine(t: { name: string; destination?: string | null }): string {
+  const dest = (t.destination ?? "").trim();
+  if (!dest || t.name.toLowerCase().startsWith(dest.toLowerCase())) return t.name;
+  return `${t.name} · ${dest}`;
 }
 
 const selectStyle: React.CSSProperties = {
