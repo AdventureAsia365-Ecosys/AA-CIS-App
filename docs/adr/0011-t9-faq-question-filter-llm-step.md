@@ -71,11 +71,13 @@ the asked-for fact is wrong.
    - Where: once per blog piece, after the attempt loop, on the text that is stored (after the citation-tag strip,
      before the final integrity pass). Every final pair is checked, whatever its source: a real search question
      or a writer-invented one.
-   - What: ONE call over all the pairs. It reads the question and the answer only, because it judges fit, not
-     truth (F1/F9 own truth). Each pair is marked `ANSWERS`, `NON_ANSWER` or `WRONG_SUBJECT` with a short reason.
+   - What: the model reads the question and the answer only, because it judges fit, not truth (F1/F9 own
+     truth). How the pairs are sent is the call mode `faq_answer_fit.FIT_MODE` (see "Answer-fit call mode"
+     below): `batched` = ONE call over all the pairs, `isolated` = one call per pair. Each pair is marked `ANSWERS`, `NON_ANSWER` or `WRONG_SUBJECT` with a short reason.
      A partial or general answer is `ANSWERS`, and "when unsure, ANSWERS".
    - Stage `t9_faq_answer_fit`, role `validate`, Claude `haiku`, `acc3`, no fallback, no shadow (migration 266,
-     `SAFE_DEFAULTS`). One `shared.llm_call_log` row per reply in the AA-927 shape.
+     `SAFE_DEFAULTS`). The code never names a model: the stage row decides. One `shared.llm_call_log` row per
+     call in the AA-927 shape (isolated: one row per pair).
    - Same flag `T9_FAQ_LLM_FILTER`. `off`: no call. `shadow`: verdicts in `writer_input.faq_answer_fit`, FAQ
      unchanged. `on`: the failing pairs are dropped. If fewer than `FAQ_MIN_PAIRS` (3) are left, the piece keeps
      its status and the record says `below_min` (plus an admin-only `F7_faq_autofix` line). It never holds and
@@ -96,7 +98,9 @@ Haiku 4.5). The S247 trial batches of ~8 questions cost ~$0.002 per call. When t
 real questions, the cost is $0.
 
 The answer fit adds one call per blog, about $0.0016 (≤ 5 pairs, ~1.2k tokens in, ≤ 200 out). The offline eval
-estimate is $0.013 for the 8 checkpoint blogs. The cost is $0 when the flag is `off` or the blog has no FAQ.
+estimate is $0.013 for the 8 checkpoint blogs. The cost is $0 when the flag is `off` or the blog has no FAQ. In
+`isolated` mode it is one call per pair: about $0.0027 per blog on Haiku (the system prompt is sent once per pair).
+`batched` on the Sonnet tier would be about $0.0044 per blog.
 
 ## Measurement bar (before `on`)
 
@@ -174,12 +178,75 @@ is labelled by a separate judge panel, and the eval is scored against it separat
 
 `on` needs E1–E3 and E1-held–E3-held to pass, plus a read of `shadow` verdicts on new blogs.
 
-The eval's $0.10 cap covers the whole run (both sets). An attempt (a retry too) is started only if its worst case
-(the whole `max_tokens` billed as output) still fits under the cap. A finished attempt is counted at the largest of
-its reported cost and its reported tokens priced at Haiku rates; a reply with no tokens and no cost, or a call that
-raised before a reply came back, is counted at its worst case. So a reply that reports no cost cannot push the run
+The round-2 eval's $0.10 cap covered the whole run (both sets; round 3: $0.25, below). An attempt (a retry too)
+is started only if its worst case (the whole `max_tokens` billed as output) still fits under the cap. A finished
+attempt is counted at the largest of its reported cost and its reported tokens priced at Haiku rates (round 3: the
+variant's rates); a reply with no tokens and no cost, or a call that raised before a reply came back, is counted at
+its worst case. So a reply that reports no cost cannot push the run
 past the cap. (Counting every finished call at its worst case, as the first run did, would stop a 20-call run at
 about 11 calls.) The typical estimate is about $0.013 for the checkpoint set alone.
+
+**Second run (S247, both sets, revised prompt, batched on Haiku): FAIL.** 20 calls, $0.033, no errors
+(`.tmp-session/aa779-fit-eval-r2.json`, root repo). In-sample: E1 2/3 (the "called in English?" non-answer still
+passed as `ANSWERS`), E2 2/25 (the same two topic-bleed false flags: "Do I need a visa to visit Laos?" called
+"not specific to the falls", and the "this route" question). The revised rules did not stop the model from judging
+a pair against the topic it infers from the other pairs. Held-out: the first score said "E1-held n/a, 0
+unanimous non-answers" because the scorer counted only the kinds `non_answer` / `wrong_subject`, while the held-out
+judges used `partial` and `off_subject`. Fixed: a pair is a unanimous non-answer when every judge says
+`answers_question: false`, whatever the kind (the checkpoint set gives the same 3 / 25 / 3 under both rules).
+Re-scored (`.tmp-session/aa779-fit-eval-score-r2-rescored.json`): E1-held 4/7 = 57% (FAIL, bar 80%), E2-held 1/31 =
+3.2% (pass), E3-held pass. The model caught both `off_subject` pairs and two of the five `partial` ones; the three
+misses are `partial` for at least two judges and `ANSWERS` for the model. The one held-out false flag is the same
+Laos visa question in another piece, again judged against the falls.
+
+Known tension for round 3: five of the seven held-out non-answers are `partial` for the judges (the answer stays
+on the subject but leaves out what was asked), while the prompt says "a short, general or partial answer still
+ANSWERS". The prompt is not changed for round 3 (tuning it on the held-out labels would spend the held-out set).
+If round 3 misses E1-held on `partial` pairs, the next step is a decision on what a drop is for (only clear
+non-answers, or also answers that leave out the asked-for fact), not another wording pass on these pairs.
+
+### Answer-fit call mode
+
+The round 1–2 false flags come from the batched input: the model sees every pair of the post, infers the post's
+topic and marks a good pair as off-topic. Two ways out, measured in round 3 before one is chosen:
+
+- `isolated`: one call per pair; the model sees only that question and answer (its own system prompt,
+  `ISOLATED_SYSTEM_PROMPT`, with the same verdict rules and the same reply format, one item). The calls run
+  concurrently, at most `FIT_CONCURRENCY` (3) at a time, each in a copy of the caller's contextvars. Fail open per
+  pair: a pair whose call raises, or that has no reply by `PAIR_DEADLINE_S` (50 s, inside the 60 s step timeout),
+  is kept and listed in `pair_errors`; the other pairs still count. Only when no pair gets a verdict is the FAQ
+  unchanged with `fallback: true`.
+- `batched` on a stronger model: the same single call on the Sonnet tier.
+
+The mode is a module constant, `faq_answer_fit.FIT_MODE`. Until the round-3 result is written here it stays:
+
+    FIT_MODE = "batched"
+
+(a unit test checks that this line names the code's value). The model is never named in code: the stage row
+(migration 266, `haiku`) decides in production, and only the ad-hoc eval passes a tier (`haiku` / `sonnet`).
+
+**Round 3 plan (not run yet).** One container run, both sets (31 checkpoint + 40 held-out pairs), two variants:
+
+- A: `batched`, tier `sonnet` (the legacy tier LLMClient accepts; satellite Sonnet, $3/$15 per Mtok), 20 calls,
+  estimate $0.087;
+- B: `isolated`, tier `haiku`, 71 calls, estimate $0.053.
+
+B runs first, so a cap stop can only cut A. Hard cap $0.25 for the whole run, enforced in a metering wrapper around
+`LLMClient.generate` (so it also holds for concurrent isolated calls): an attempt starts only if the counted spend,
+the worst case of every attempt in flight and its own worst case (input at chars/3 tokens, the whole `max_tokens`
+as output, at the variant's prices) still fit. Finished attempts are counted as in round 2, at the variant's prices.
+A variant whose replies came from another model than its tier (Sonnet falling back to Haiku) is marked invalid.
+Scored per variant and per set against the same bars: in-sample E1 3/3, E2 ≤ 1/25, E3 0 errors; held-out E1-held
+≥ 80% of the unanimous non-answers, E2-held ≤ 5%, E3-held 0 errors; split pairs reported separately.
+
+Choosing the production default from the result:
+
+- B passes every bar: `FIT_MODE = "isolated"`, the stage row stays `haiku` (cheapest passing variant);
+- only A passes: `FIT_MODE` stays `"batched"` and the stage row moves to the Sonnet key (a migration or an admin
+  change of the `t9_faq_answer_fit` row; the cost line above changes with it);
+- neither passes: no `on`; the flag stays `shadow`, and the next step is the decision above on `partial`.
+
+Whatever is chosen, the line above is updated to the code's value in the same PR.
 
 ### Rollout: one flag drives both steps
 

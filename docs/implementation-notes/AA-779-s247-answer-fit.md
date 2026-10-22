@@ -150,3 +150,77 @@ see that the subject or the asked-for fact is wrong.
   a finished one is counted at max(reported cost, reported tokens priced at Haiku rates with every input token at
   the 1.25x cache-write rate); no tokens and no cost, or a raise before any reply, counts the worst case. A
   wrapper client keeps the last reply, so an unusable (billed) reply is counted by its tokens too.
+
+## S247 eval round 2 (both sets) and the round-3 plan (isolated mode, eval variants)
+
+- **Round 2 result: FAIL** (`.tmp-session/aa779-fit-eval-r2.json`, root repo; 20 calls, $0.033, 0 errors; batched
+  on Haiku, revised prompt). In-sample E1 2/3 ("What is Paro called in English?" still `ANSWERS`), E2 2/25 (the
+  same topic bleed: "Do I need a visa to visit Laos?" → "not Kuang Si Falls-specific", and the "this route"
+  question). The rule "judge each pair only against its own question" did not stop the model inferring the blog
+  topic from the other pairs.
+- **Scorer bug (fixed).** The held-out score said "0 unanimous non-answers, E1-held n/a": `panel_classes` counted
+  only the kinds `non_answer` / `wrong_subject`, and the held-out judges wrote `partial` / `off_subject`. Now a
+  pair is a unanimous non-answer when every judge says `answers_question: false` (kinds may differ), a unanimous
+  answer when every judge says true, split otherwise; the same rule for both sets (the checkpoint panel gives the
+  same 3 / 25 / 3 classes under both rules, checked). Re-scored round 2
+  (`.tmp-session/aa779-fit-eval-score-r2-rescored.json`): E1-held 4/7 = 57% FAIL, E2-held 1/31 = 3.2%, E3-held pass.
+
+### Decisions
+
+- **Isolated mode = one call per pair, same verdict format.** The model gets only that Q and A
+  (`ISOLATED_SYSTEM_PROMPT`: same `_VERDICT_RULES`, an intro for one pair, the same `{"items": [...]}` reply with one
+  item, parsed by the same `parse_fit_verdicts(content, 1)`), header `FAQ PAIR:`, `ISOLATED_MAX_TOKENS` 150. The
+  batched `SYSTEM_PROMPT` is rebuilt from the shared rules and stays byte-identical to round 2 (sha1 checked), so
+  round 2 and round 3 batched results are comparable.
+- **The mode is a module constant, `FIT_MODE` (default `batched`), named in ADR 0011**; a unit test checks the ADR
+  line `FIT_MODE = "<value>"` matches the code. The production default is chosen after round 3 (ADR rule: B passes
+  → `isolated`; only A → stay `batched` and move the stage row to Sonnet; neither → no `on`).
+- **No model id in code.** `model_tier` stays None in production (the stage row, migration 266, decides); the eval
+  passes a tier, as `aa779-remeasure.py` passes `"haiku"`. Variant A uses tier `"sonnet"`, which LLMClient accepts
+  as a legacy key (`shared/llm_client/catalog.py` LEGACY_KEYS; satellite Sonnet, $3/$15).
+- **Concurrency:** `ThreadPoolExecutor(max_workers=min(FIT_CONCURRENCY=3, pairs))`, each call in
+  `contextvars.copy_context().run` (the `brand_fit._judge_parallel` pattern, AA-801), one shared LLMClient.
+- **Fail open per pair.** A pair whose call raises, whose reply is unusable (its `billed_unusable` row is written,
+  its billed cost still added to `cost_usd`), or with no reply by `PAIR_DEADLINE_S` (50 s, inside the 60 s step
+  timeout) gets `verdict: None` + `error`, is kept, and is listed in the record's `pair_errors`; the others still
+  count. `FitAllPairsFailed` (→ `fallback: true`, FAQ unchanged) only when no pair got a verdict. The pool is shut
+  down with `wait=False, cancel_futures=True`, so a slow pair never holds the step past its deadline.
+- **llm_call_log: one row per call.** The generate + row code moved into `_fit_call` (used by both modes), so the
+  AA-927 registry entry is now `faq_answer_fit._fit_call`. Isolated rows carry `fit_mode: isolated`, `n_pairs: 1`,
+  `pair_n`, `piece_pairs`; batched rows carry `fit_mode: batched`.
+
+### Changed
+
+- `faq_answer_fit.py`: `FIT_MODE*`, `FIT_CONCURRENCY`, `ISOLATED_MAX_TOKENS`, `PAIR_DEADLINE_S`, `_VERDICT_RULES`,
+  `ISOLATED_SYSTEM_PROMPT`, `build_request`, `_fit_call`, `_check_isolated`, `FitAllPairsFailed`;
+  `check_answer_fit(..., fit_mode=, concurrency=, deadline_s=)`; `FitOutcome` gains `fit_mode`, `calls`, `errors`
+  (isolated rows also carry `model`); `apply_answer_fit(..., fit_mode=)` records `fit_mode`, `calls` and
+  `pair_errors`.
+- Tests: 13 new test functions, 15 cases (per-pair calls see only their pair, one row per call, on-drops, a
+  failing / unusable / late pair kept while the others count, all failing → fallback, the concurrency bound at
+  1/2/3 and the default, contextvars, tier override, unknown mode, the ADR names `FIT_MODE`); the no-FAQ record
+  now has `fit_mode`.
+- Root `.tmp-session/aa779-fit-eval.py` (round 3): variants A (batched, `sonnet`) and B (isolated, `haiku`), both sets
+  in one run, cap $0.25, a thread-safe metering wrapper (cap gate per attempt incl. the in-flight worst cases,
+  `BudgetStop`), retries (batched: the piece; isolated: the failed pairs), per-variant stats (models, fallback_used),
+  the fixed scorer, per-variant/per-set report, a model-mismatch check (variant invalid if Sonnet fell back to
+  Haiku). Rebuilt `--build` → `.tmp-session/aa779-fit-eval.run.py` (estimate $0.14: B $0.053, A $0.087). Not run.
+
+### Tradeoffs
+
+- **Isolated costs more input** (the ~1.5k-char system prompt is sent once per pair): ~$0.0027 per blog on Haiku vs
+  ~$0.0016 batched. Still cheaper than batched on Sonnet (~$0.0044). Latency is bounded by the concurrency (≤ 5
+  pairs → 2 rounds of 3).
+- **Isolated loses cross-pair context on purpose.** That context is what caused the false flags; nothing in the
+  verdict rules needs another pair.
+- **Run order B then A**: if the cap stops the run, the cut lands on the expensive variant, not on the new mode.
+
+### Should know
+
+- The held-out non-answers are mostly `partial` (5 of 7), and the prompt says a partial answer `ANSWERS`. Round 3
+  may fail E1-held for both variants for that reason alone; the ADR says the next step is then a decision on what
+  a drop is for, not another wording pass on the held-out pairs.
+- Run order for round 3: `--build` (done, re-run after the last commit so `fit_sha` / `worktree_head` match the
+  commit), upload `.tmp-session/aa779-fit-eval.run.py`, dry run, `--run` in the CIS api container, download
+  `s3://…/scripts/out/s247/aa779-fit-eval-r3.json`, `--score <file>` locally (held-out pairs + labels default to
+  `.tmp-session/aa779-heldout/`), write the result and the chosen `FIT_MODE` into ADR 0011.

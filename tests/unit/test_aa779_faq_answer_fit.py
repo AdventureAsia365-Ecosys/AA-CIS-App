@@ -111,7 +111,8 @@ def test_on_at_or_above_the_minimum_is_not_below_min():
 def test_no_faq_means_no_call():
     client = _client(_reply([]))
     (text, record), rec = _apply("on", client=client, text=BODY)
-    assert text == BODY and record == {"mode": "on", "stage": "t9_faq_answer_fit", "pairs": 0}
+    assert text == BODY and record == {"mode": "on", "fit_mode": fit.FIT_MODE, "stage": "t9_faq_answer_fit",
+                                      "pairs": 0}
     client.generate.assert_not_called()
 
 
@@ -324,3 +325,187 @@ def test_safe_default_and_migration_266_agree():
     assert ("('t9_faq_answer_fit', 'validate', 'claude', 'haiku', 'acc3', true, ARRAY[]::text[], NULL, 0,\n"
             "     'migration-266-aa779')") in sql
     assert "ON CONFLICT (stage) DO NOTHING" in sql and "VALUES ('266'" in sql
+
+
+# ---------------------------------------------------------------- isolated mode (one call per pair)
+
+ISO_VERDICTS = dict(zip([q for q, _a in PAIRS], FAIL_TWO))
+
+
+def _pair_client(verdicts=None, fail=None, bad=None, delay=None, inflight=None):
+    """generate() answers by the one question in the request: `fail` = questions whose call raises, `bad` =
+    questions that get an unusable (billed) reply, `delay` = {question: seconds}, `inflight` = a dict tracking
+    the peak number of calls running at once."""
+    import threading
+    import time
+    lock = threading.Lock()
+    verdicts = verdicts or ISO_VERDICTS
+
+    def generate(request):
+        q = next(q for q in verdicts if f"1. Q: {q}" in request.user_prompt)
+        if inflight is not None:
+            with lock:
+                inflight["now"] = inflight.get("now", 0) + 1
+                inflight["peak"] = max(inflight.get("peak", 0), inflight["now"])
+        try:
+            time.sleep((delay or {}).get(q, 0.02 if inflight is not None else 0))
+            if q in (fail or ()):
+                raise RuntimeError(f"bedrock down for {q}")
+            if q in (bad or ()):
+                return LLMResponse(content="not json", model_used="satellite-haiku-4-5", provider="bedrock",
+                                   cost_usd=0.001)
+            return _reply([verdicts[q]])
+        finally:
+            if inflight is not None:
+                with lock:
+                    inflight["now"] -= 1
+    client = MagicMock()
+    client.generate.side_effect = generate
+    return client
+
+
+def _apply_iso(client, mode="on", text=TEXT):
+    with patch.object(fit, "LLMClient", return_value=client), patch.object(fit, "record_call_sync") as rec, \
+            patch.object(fit, "record_unusable_sync") as unusable:
+        out = asyncio.run(fit.apply_answer_fit(text, context=CONTEXT, piece_id="p-1", request_id="r-1", mode=mode,
+                                               fit_mode="isolated"))
+    return out, rec, unusable
+
+
+def test_production_default_is_batched_and_adr_0011_names_it():
+    assert fit.FIT_MODE == fit.FIT_MODE_BATCHED and fit.FIT_MODES == ("batched", "isolated")
+    adr = (Path(__file__).resolve().parents[2] / "docs" / "adr" / "0011-t9-faq-question-filter-llm-step.md").read_text()
+    assert f'FIT_MODE = "{fit.FIT_MODE}"' in adr
+
+
+def test_isolated_makes_one_call_per_pair_that_sees_only_that_pair():
+    client = _pair_client()
+    (text, record), rec, _ = _apply_iso(client, mode="shadow")
+    assert text == TEXT and client.generate.call_count == len(PAIRS)
+    seen = set()
+    for call in client.generate.call_args_list:
+        req = call.args[0]
+        assert req.system_prompt == fit.ISOLATED_SYSTEM_PROMPT and req.max_tokens == fit.ISOLATED_MAX_TOKENS
+        assert req.stage == fit.FIT_STAGE and req.model_tier is None  # the stage row picks the model
+        assert req.user_prompt.startswith("FAQ PAIR:\n1. Q: ") and req.user_prompt.count("Q: ") == 1
+        assert "2. Q:" not in req.user_prompt
+        seen.add(req.user_prompt.split("1. Q: ", 1)[1].split("\n", 1)[0])
+    assert seen == {q for q, _a in PAIRS}
+    assert "other pairs" not in fit.ISOLATED_SYSTEM_PROMPT
+    # one llm_call_log row per call, each for one pair
+    assert rec.call_count == len(PAIRS)
+    qs = [c.kwargs["quality_signal"] for c in rec.call_args_list]
+    assert all(s["fit_mode"] == "isolated" and s["n_pairs"] == 1 and s["mode"] == "shadow" for s in qs)
+    assert sorted(s["pair_n"] for s in qs) == [1, 2, 3, 4]
+    assert record["fit_mode"] == "isolated" and record["calls"] == 4 and record["fallback"] is False
+    assert [v["verdict"] for v in record["verdicts"]] == FAIL_TWO
+    assert [v["n"] for v in record["verdicts"]] == [1, 2, 3, 4]
+    assert record["cost_usd"] == round(4 * 0.0012, 6) and "pair_errors" not in record
+
+
+def test_isolated_on_drops_only_the_failing_pairs():
+    (text, record), _, _ = _apply_iso(_pair_client())
+    assert qg.faq_pairs(text) == [PAIRS[0], PAIRS[2]]
+    assert record["dropped"] == [PAIRS[1][0], PAIRS[3][0]] and record["below_min"] is True
+
+
+def test_isolated_a_failing_pair_is_kept_and_recorded_and_the_others_still_count():
+    # PAIRS[1] would be NON_ANSWER, but its call fails: it is kept; PAIRS[3] (WRONG_SUBJECT) is still dropped.
+    (text, record), rec, unusable = _apply_iso(_pair_client(fail={PAIRS[1][0]}))
+    assert qg.faq_pairs(text) == [PAIRS[0], PAIRS[1], PAIRS[2]]
+    assert record["fallback"] is False and record["dropped"] == [PAIRS[3][0]]
+    assert record["pair_errors"] == [{"n": 2, "q": PAIRS[1][0], "error": f"RuntimeError: bedrock down for "
+                                                                         f"{PAIRS[1][0]}"}]
+    row = record["verdicts"][1]
+    assert row["n"] == 2 and row["verdict"] is None and "bedrock down" in row["error"]
+    assert PAIRS[1][0] not in record["failing"]
+    assert rec.call_count == 3 and not unusable.called  # the gateway logs its own billed failures
+
+
+def test_isolated_an_unusable_reply_keeps_that_pair_and_writes_its_billed_unusable_row():
+    (text, record), rec, unusable = _apply_iso(_pair_client(bad={PAIRS[3][0]}))
+    assert qg.faq_pairs(text) == [PAIRS[0], PAIRS[2], PAIRS[3]]
+    assert [e["n"] for e in record["pair_errors"]] == [4] and "FitReplyError" in record["pair_errors"][0]["error"]
+    unusable.assert_called_once()
+    assert unusable.call_args.kwargs["quality_signal_extra"]["pair_n"] == 4
+    assert rec.call_count == 3
+    assert record["cost_usd"] == round(3 * 0.0012 + 0.001, 6)  # the billed unusable reply is counted
+
+
+def test_isolated_every_pair_failing_leaves_the_faq_unchanged():
+    (text, record), _, _ = _apply_iso(_pair_client(fail={q for q, _a in PAIRS}))
+    assert text == TEXT and record["fallback"] is True and "FitAllPairsFailed" in record["error"]
+
+
+@pytest.mark.parametrize("bound", [1, 2, 3])
+def test_isolated_runs_concurrently_within_the_bound(bound):
+    inflight: dict = {}
+    pairs = PAIRS + [("When is the Paro festival?", "In spring, usually March."),
+                     ("Is there an airport in Paro?", "Yes, Paro has the country's international airport.")]
+    verdicts = {q: "ANSWERS" for q, _a in pairs}
+    client = _pair_client(verdicts=verdicts, inflight=inflight)
+    with patch.object(fit, "record_call_sync"):
+        out = fit.check_answer_fit(pairs, fit_mode="isolated", client=client, concurrency=bound)
+    assert client.generate.call_count == 6 and out.calls == 6 and out.errors == []
+    assert inflight["peak"] == bound
+
+
+def test_isolated_default_bound_is_fit_concurrency(monkeypatch):
+    monkeypatch.setattr(fit, "FIT_CONCURRENCY", 2)
+    inflight: dict = {}
+    client = _pair_client(inflight=inflight)
+    with patch.object(fit, "record_call_sync"):
+        fit.check_answer_fit(PAIRS, fit_mode="isolated", client=client)
+    assert inflight["peak"] == 2
+
+
+def test_isolated_a_pair_past_the_deadline_is_kept():
+    client = _pair_client(delay={PAIRS[2][0]: 0.5})
+    import time
+    with patch.object(fit, "record_call_sync"):
+        t0 = time.monotonic()
+        out = fit.check_answer_fit(PAIRS, fit_mode="isolated", client=client, deadline_s=0.2)
+        assert time.monotonic() - t0 < 0.45  # returned at the deadline, not after the slow pair
+        time.sleep(0.5)  # let the late call finish (and write its row) while record_call_sync is still patched
+    assert [v["verdict"] for v in out.verdicts] == ["ANSWERS", "NON_ANSWER", None, "WRONG_SUBJECT"]
+    assert out.errors[0]["n"] == 3 and "TimeoutError" in out.errors[0]["error"]
+
+
+def test_isolated_calls_see_the_callers_contextvars():
+    import contextvars
+    var = contextvars.ContextVar("aa779_test_var", default=None)
+    seen = []
+    inner = _pair_client()
+
+    def generate(request):
+        seen.append(var.get())
+        return inner.generate(request)
+    client = MagicMock()
+    client.generate.side_effect = generate
+    var.set("tenant-1")
+    with patch.object(fit, "record_call_sync"):
+        fit.check_answer_fit(PAIRS, fit_mode="isolated", client=client)
+    assert seen == ["tenant-1"] * len(PAIRS)
+
+
+def test_isolated_model_tier_override_and_adhoc_stage_pass_through():
+    client = _pair_client()
+    with patch.object(fit, "record_call_sync") as rec:
+        out = fit.check_answer_fit(PAIRS[:2], fit_mode="isolated", stage="adhoc_aa779", model_tier="haiku",
+                                   client=client)
+    assert {c.args[0].model_tier for c in client.generate.call_args_list} == {"haiku"}
+    assert {c.args[0].stage for c in client.generate.call_args_list} == {"adhoc_aa779"}
+    assert {c.kwargs["stage"] for c in rec.call_args_list} == {"adhoc_aa779"}
+    assert out.verdicts[0] == {"n": 1, "q": PAIRS[0][0], "verdict": "ANSWERS", "reason": "x",
+                               "model": "satellite-haiku-4-5"}
+
+
+def test_unknown_fit_mode_is_rejected():
+    with pytest.raises(ValueError, match="unknown answer-fit mode"):
+        fit.check_answer_fit(PAIRS, fit_mode="parallel", client=_client(_reply(FAIL_TWO)))
+
+
+def test_batched_record_names_its_mode_and_one_call():
+    (_text, record), rec = _apply("shadow")
+    assert record["fit_mode"] == "batched" and record["calls"] == 1
+    assert rec.call_args.kwargs["quality_signal"]["fit_mode"] == "batched"
