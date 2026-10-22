@@ -1,0 +1,44 @@
+# CODEOWNERS - AA-CIS-App.
+#
+# Owners of the risky paths only: CI and workflows, database migrations, sign-in / authorization / tenant isolation
+# code, the container build and the agent rules. There is deliberately no catch-all `*` rule.
+# Dev phase: not enforced. Branch protection does not require code-owner review, so this file only adds a review
+# request; the agent still merges after green CI (risky classes after an agent review). From the first prod or the
+# first paying tenant, "Require review from Code Owners" is turned on and these paths need the owner's approval.
+# Later rules win over earlier ones.
+
+# CI, workflows, Dependabot, CI scripts and this file
+/.github/                                     @pqnghiep1354
+
+# Database migrations (copied to the infra repo and applied by its DB Migrate workflow)
+/api/migrations/                              @pqnghiep1354
+
+# Staff and tenant sign-in, authorization, tenant isolation, secret handling (API)
+/api/routers/auth.py                          @pqnghiep1354
+/api/core/identity_*.py                       @pqnghiep1354
+/api/core/staff_*.py                          @pqnghiep1354
+/api/core/secret_compare.py                   @pqnghiep1354
+/api/core/booking_jwt.py                      @pqnghiep1354
+/api/core/login_throttle.py                   @pqnghiep1354
+/api/core/aa544_tenant_pool.py                @pqnghiep1354
+/api/middleware/staff_*.py                    @pqnghiep1354
+/api/middleware/rate_limit.py                 @pqnghiep1354
+/api/lambda_authorizer/                       @pqnghiep1354
+/shared/secrets.py                            @pqnghiep1354
+/scripts/link_staff_identity.py               @pqnghiep1354
+
+# Sign-in routes, sessions and page gates (admin app and tenant portal)
+/frontend/app/api/auth/                       @pqnghiep1354
+/frontend/lib/auth-server.ts                  @pqnghiep1354
+/frontend/lib/cognito*.ts                     @pqnghiep1354
+/frontend/proxy.ts                            @pqnghiep1354
+/portal/app/api/auth/                         @pqnghiep1354
+/portal/lib/auth-server.ts                    @pqnghiep1354
+/portal/proxy.ts                              @pqnghiep1354
+
+# Container image
+/Dockerfile                                   @pqnghiep1354
+
+# Agent rules and skills
+/.claude/                                     @pqnghiep1354
+/skills-lock.json                             @pqnghiep1354
