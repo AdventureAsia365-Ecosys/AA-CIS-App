@@ -42,6 +42,7 @@ flagged rather than blocking indefinitely):
 """
 import datetime as _dt
 import json
+import uuid
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -93,6 +94,14 @@ async def _fetch_page_data(conn, tour_id: str):
     """, tour_id)
 
 
+def _is_uuid(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+    except (ValueError, AttributeError, TypeError):
+        return False
+    return True
+
+
 @router.get("/{tour_id}")
 async def get_trip_page(tour_id: str, request: Request):
     """Public, no-auth -- the actual data the /trip/{tour_id} frontend page renders. Real D5
@@ -102,6 +111,10 @@ async def get_trip_page(tour_id: str, request: Request):
     -- no separate HTTP-ping cron needed since we host the page ourselves and can check the
     underlying eligibility directly, cheaper and more reliable than an HTTP loopback would be.
     """
+    # A tour id that is not a UUID can never be a page: 404 before any query (it was a 500 from asyncpg,
+    # Sentry AA-CIS-API-E, and the self-heal UPDATE must not run for it).
+    if not _is_uuid(tour_id):
+        raise HTTPException(status_code=404, detail="Trip page not found")
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         row = await _fetch_page_data(conn, tour_id)
@@ -145,6 +158,8 @@ async def publish_trip_page(
     placeholder) and upserts a real acp_deliver.tenant_tour_pages row. Scoped to aa_internal
     for this v1 (see module docstring) -- tenant param intentionally not yet exposed."""
     verify_admin_secret(x_admin_secret)
+    if not _is_uuid(tour_id):
+        raise HTTPException(status_code=404, detail="Tour not found")
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         row = await _fetch_page_data(conn, tour_id)
