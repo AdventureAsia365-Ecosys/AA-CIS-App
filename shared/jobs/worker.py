@@ -23,6 +23,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
+import sentry_sdk
 import structlog
 
 from shared.cost_guard import BudgetExceeded
@@ -195,7 +196,12 @@ class Worker:
         # AA-871 — every log line written while this job runs (handler included: its task copies this context)
         # carries job_id / job_kind. `_execute` runs in its own task (`_fill_slots`), so the binding never reaches
         # another job; it is cleared when the job ends.
-        with structlog.contextvars.bound_contextvars(job_id=job.id, job_kind=job.kind):
+        # Its own Sentry isolation scope too: tasks copy the context but share the parent's scope object, so without
+        # the fork the breadcrumbs and tags of concurrent jobs would mix in each other's events.
+        with structlog.contextvars.bound_contextvars(job_id=job.id, job_kind=job.kind), \
+                sentry_sdk.isolation_scope() as scope:
+            scope.set_tag("job_id", job.id)
+            scope.set_tag("job_kind", job.kind)
             await self._execute_job(job)
 
     async def _execute_job(self, job: queue.Job) -> None:
@@ -266,7 +272,8 @@ class Worker:
                                       f"{type(e).__name__}: {str(e)[:900]}",
                                       retryable=not isinstance(e, NonRetryable),
                                       cost_usd=round(ctx.cost_usd, 6), result=ctx.result)
-            log.error("job_failed", next_status=status, error=str(e)[:300], exc_info=True)
+            # .exception: the traceback reaches Sentry with the event (event name unchanged: metric filters).
+            log.exception("job_failed", next_status=status, error=str(e)[:300])
             if status == "failed":
                 await run_terminal_hook(self.pool, job.id)
 

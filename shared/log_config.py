@@ -42,24 +42,71 @@ QUIET_LOGGERS = (
 # plus the AA-712 key-like query parameters (``?apiKey=…``) handled by shared.sentry_init._redact.
 _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
 _BEARER = re.compile(r"(?i)\b(bearer)\s+[A-Za-z0-9._~+/=-]{8,}")
+# Credentials in a DSN / URL (``postgresql://user:pass@host``): user and password are replaced, the host is kept.
+# Runs before the e-mail pattern, which would otherwise eat ``pass@host.tld`` and leave the user name.
+_DSN_USERINFO = re.compile(r"\b([A-Za-z][A-Za-z0-9+.-]*://)[^/\s:@]+:[^/\s@]+@")
+# ``Authorization: <anything>`` as header text (any scheme).
+_AUTH_HEADER = re.compile(r"(?i)\b(authorization[\"']?\s*[:=]\s*[\"']?)[^\r\n\"',;}]+")
+# ``password=…`` / ``secret: …`` / ``"client_secret": "…"`` key=value text.
+_SECRET_KV = re.compile(
+    r"(?i)\b((?:password|passwd|pwd|secret|client_secret)[\"']?\s*[:=]\s*[\"']?)[^\s&\"',;}]+")
+# ``Basic <base64>``: the token must look like base64 (a digit, ``+/=``, or a lower→upper case change), so plain
+# words after "basic" ("basic information") are kept.
+_BASIC = re.compile(r"\b(Basic|BASIC|basic)\s+(?=[A-Za-z0-9+/]*(?:[0-9+/=]|[a-z][A-Z]))[A-Za-z0-9+/]{8,}={0,2}")
+
+
+def _scrub_str(value: str) -> str:
+    value = _DSN_USERINFO.sub(r"\1[Filtered]@", value)
+    value = _AUTH_HEADER.sub(r"\1[Filtered]", value)
+    value = _SECRET_KV.sub(r"\1[Filtered]", value)
+    value = _BEARER.sub(r"\1 [Filtered]", value)
+    value = _BASIC.sub(r"\1 [Filtered]", value)
+    return _EMAIL.sub("[email]", _redact(value))
 
 
 def _scrub_value(value: Any) -> Any:
     if isinstance(value, str):
-        return _BEARER.sub(r"\1 [Filtered]", _EMAIL.sub("[email]", _redact(value)))
+        return _scrub_str(value)
     if isinstance(value, dict):
         return {k: _scrub_value(v) for k, v in value.items()}
+    if isinstance(value, tuple) and hasattr(value, "_fields"):  # NamedTuple: positional constructor
+        return type(value)(*(_scrub_value(v) for v in value))
     if isinstance(value, (list, tuple)):
         return type(value)(_scrub_value(v) for v in value)
     return value
 
 
 def scrub_event(_logger: Any, _method: str, event_dict: dict) -> dict:
-    """structlog processor: drop uvicorn's ANSI copy of the message, redact secrets / e-mails in every value."""
-    event_dict.pop("color_message", None)
-    if event_dict.get("message") == event_dict.get("event"):
-        event_dict.pop("message")  # LogRecord.message, set when another handler formatted the record first
-    return {k: (v if k.startswith("_") else _scrub_value(v)) for k, v in event_dict.items()}
+    """structlog processor: drop uvicorn's ANSI copy of the message, redact secrets / e-mails in every value.
+    Never raises: logging must not fail because of a value it cannot rebuild (the line is then kept unscrubbed)."""
+    try:
+        event_dict.pop("color_message", None)
+        if event_dict.get("message") == event_dict.get("event"):
+            event_dict.pop("message")  # LogRecord.message, set when another handler formatted the record first
+        return {k: (v if k.startswith("_") else _scrub_value(v)) for k, v in event_dict.items()}
+    except Exception:
+        return event_dict
+
+
+def rename_domain_request_id(_logger: Any, _method: str, event_dict: dict) -> dict:
+    """structlog processor, before ``merge_contextvars``: an explicit ``request_id=`` on a log call is the T8/T9
+    angle-gate / content-writing request (a domain id), not the HTTP request. It is logged as ``acp_request_id`` so
+    the HTTP ``request_id`` from the request-id middleware stays on the line."""
+    if "request_id" in event_dict and "acp_request_id" not in event_dict:
+        event_dict["acp_request_id"] = event_dict.pop("request_id")
+    return event_dict
+
+
+def _wrap_for_formatter(logger: Any, name: str, event_dict: dict):
+    """``ProcessorFormatter.wrap_for_formatter`` that also hands ``exc_info`` to stdlib:
+    ``log.error(..., exc_info=True)`` then sets ``LogRecord.exc_info``, so Sentry's logging integration attaches the
+    traceback (it reads only the record). The JSON line is unchanged: the formatter still renders ``exc_info`` from
+    the event dict."""
+    args, kwargs = structlog.stdlib.ProcessorFormatter.wrap_for_formatter(logger, name, event_dict)
+    exc_info = event_dict.get("exc_info")
+    if exc_info:
+        kwargs["exc_info"] = exc_info
+    return args, kwargs
 
 
 def _static_fields(service: str):
@@ -134,12 +181,13 @@ def configure_logging(service: str, stream: IO[str] | None = None, level: int | 
     structlog.configure(
         processors=[
             structlog.stdlib.filter_by_level,
+            rename_domain_request_id,
             *shared,
             structlog.stdlib.PositionalArgumentsFormatter(),
             # Scrubbed before the record leaves structlog too, so Sentry's logging integration (ERROR lines become
             # Sentry events) gets the redacted values.
             scrub_event,
-            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+            _wrap_for_formatter,
         ],
         logger_factory=structlog.stdlib.LoggerFactory(),
         wrapper_class=structlog.stdlib.BoundLogger,

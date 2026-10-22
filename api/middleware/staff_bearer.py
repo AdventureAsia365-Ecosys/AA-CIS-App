@@ -127,6 +127,7 @@ class StaffBearerMiddleware:
             await self.app(inner, receive, send)
         finally:
             staff_identity.current_staff.reset(reset)
+            _copy_route(inner, scope)
 
     async def _preview(self, scope: Scope, receive: Receive, send: Send, headers: list) -> None:
         """C9: the Preview credential is always the viewer."""
@@ -140,6 +141,14 @@ class StaffBearerMiddleware:
             await self.app(inner, receive, send)
         finally:
             staff_credential.current_credential.reset(reset)
+            _copy_route(inner, scope)
+
+
+def _copy_route(inner: Scope, outer: Scope) -> None:
+    """AA-871 — the router writes the matched route into the scope it was given (``inner``, a copy); hand it back so
+    the request-id middleware's ``request_completed`` line has the route template for staff calls too."""
+    if "route" in inner and "route" not in outer:
+        outer["route"] = inner["route"]
 
 
 def _pool(scope: Scope) -> Any:

@@ -772,6 +772,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   verified `tenant_id` (rate limiter); worker lines carry `job_id` / `job_kind`. Find a request with Logs Insights:
   `fields @timestamp, event, level | filter request_id = "<id>" | sort @timestamp`. Keep event names stable: Infra
   metric filters match them as substrings.
+  An explicit `request_id=` on a log call (the T8/T9 angle-gate / content-writing request) is logged as
+  `acp_request_id`, so the HTTP `request_id` stays on the line; use `acp_request_id` for the domain id.
 - **Definition of "done" for a backend issue** (program rule): merge + green CI is not enough.
   Also verify (a) Dev deploy **rollout COMPLETED** (ECS running the new taskDef, old deployment
   drained) and (b) the **live endpoint** (curl → HTTP 200 + correct shape). Only then is it Done.

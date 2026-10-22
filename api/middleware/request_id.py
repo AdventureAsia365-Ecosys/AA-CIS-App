@@ -6,10 +6,17 @@ Each request gets one id:
 - otherwise a new ``uuid4().hex``. A malformed header is replaced, never echoed or logged.
 
 The id is bound to :mod:`structlog.contextvars` for the request (every log line written while serving it carries
-``request_id``; cleared when the request ends), set as the Sentry tag ``request_id``, stored in
-``request.state.request_id`` and returned as ``X-Request-ID`` on the response. One ``request_completed`` line per
-request records method, path, route template, status and duration — never the query string, headers or body
-(DM-6.4). It replaces uvicorn's access log (shared/log_config.py).
+``request_id``), set as the Sentry tag ``request_id``, stored in ``request.state.request_id`` and returned as
+``X-Request-ID`` on the response. The contextvars are cleared when a request STARTS, not when it ends: uvicorn runs
+each request in its own task (a fresh copy of the server's context), so nothing leaks to the next request, and
+uvicorn's "Exception in ASGI application" traceback — logged in that task after the app raised — keeps the id.
+
+One ``request_completed`` line per request records method, path, route template, status, duration and, for
+``/v1/*`` tenant calls, ``tenant_id`` (``request.state.tenant_id``, set by the rate limiter) — never the query
+string, headers or body (DM-6.4). It replaces uvicorn's access log (shared/log_config.py). ``status`` is 500 when an
+exception went through (Starlette's ServerErrorMiddleware answers it outside this middleware); when no response
+was started and nothing was raised through it (client gone, task cancelled) ``status`` is null and
+``aborted`` is true.
 
 Pure ASGI (not ``BaseHTTPMiddleware``): no extra task and no body buffering, so the contextvars reach the endpoint.
 Registered last in ``api/main.py`` = outermost user middleware, so a 401/403/429 answered by an inner middleware
@@ -70,7 +77,7 @@ class RequestIdMiddleware:
         request_id = _incoming(scope) or new_request_id()
         scope.setdefault("state", {})["request_id"] = request_id
         sentry_sdk.set_tag("request_id", request_id)
-        status = 500
+        status: int | None = None
         started = time.perf_counter()
 
         async def send_with_id(message: Message) -> None:
@@ -84,19 +91,25 @@ class RequestIdMiddleware:
         structlog.contextvars.bind_contextvars(request_id=request_id)
         try:
             await self.app(scope, receive, send_with_id)
+        except Exception:
+            if status is None:
+                status = 500  # answered by ServerErrorMiddleware, outside this middleware
+            raise
         finally:
+            # No clear_contextvars() here: see the module docstring (the 500 traceback line keeps request_id).
             route = scope.get("route")
-            try:
-                log.info(
-                    "request_completed",
-                    method=scope.get("method"),
-                    path=scope.get("path"),
-                    route=getattr(route, "path", None),
-                    status=status,
-                    duration_ms=round((time.perf_counter() - started) * 1000, 1),
-                )
-            finally:
-                structlog.contextvars.clear_contextvars()
+            fields = {
+                "method": scope.get("method"),
+                "path": scope.get("path"),
+                "route": getattr(route, "path", None),
+                "status": status,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+            }
+            if (tenant_id := (scope.get("state") or {}).get("tenant_id")) is not None:
+                fields["tenant_id"] = tenant_id
+            if status is None:
+                fields["aborted"] = True
+            log.info("request_completed", **fields)
 
 
 async def unhandled_error_handler(request: Request, exc: Exception) -> Response:

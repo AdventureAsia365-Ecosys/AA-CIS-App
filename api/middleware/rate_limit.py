@@ -89,9 +89,12 @@ async def rate_limit_middleware(request: Request, call_next):
     tenant_id = payload["sub"]
     plan_tier = payload.get("plan_tier", "starter")
     # AA-871 — the verified tenant on every log line the route writes (call_next starts the route in a new task that
-    # copies this context). Never outlives the request: this dispatch runs in a per-request task, whose context the
-    # request-id middleware clears at the end.
+    # copies this context). Never outlives the request: this dispatch runs in a task of this request only (in api.main,
+    # the child task started by the outer `sentry_context_middleware`), which ends with it. request.state carries the
+    # id out to the request-id middleware's `request_completed` line, which runs in the outer task and does not see
+    # this binding.
     structlog.contextvars.bind_contextvars(tenant_id=str(tenant_id))
+    request.state.tenant_id = str(tenant_id)
 
     # AA-432: revoke + real per-tenant rate limit. tenant_meta is None only when
     # BOTH the Redis cache and the DB are unreachable — fail OPEN in that case
