@@ -321,10 +321,10 @@ def test_safe_default_and_migration_266_agree():
     cfg = SAFE_DEFAULTS["t9_faq_answer_fit"]
     assert (cfg.role, cfg.provider, cfg.model_id, cfg.account_route) == ("validate", "claude", "haiku", "acc3")
     assert cfg.fallback_model_ids == () and cfg.shadow_model_id is None
-    sql = (Path(__file__).resolve().parents[2] / "api" / "migrations" / "266_t9_faq_answer_fit_stage.sql").read_text()
+    sql = (Path(__file__).resolve().parents[2] / "api" / "migrations" / "267_t9_faq_answer_fit_stage.sql").read_text()
     assert ("('t9_faq_answer_fit', 'validate', 'claude', 'haiku', 'acc3', true, ARRAY[]::text[], NULL, 0,\n"
             "     'migration-266-aa779')") in sql
-    assert "ON CONFLICT (stage) DO NOTHING" in sql and "VALUES ('266'" in sql
+    assert "ON CONFLICT (stage) DO NOTHING" in sql and "VALUES ('267'" in sql
 
 
 # ---------------------------------------------------------------- isolated mode (one call per pair)

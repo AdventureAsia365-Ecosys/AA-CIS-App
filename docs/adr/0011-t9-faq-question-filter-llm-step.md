@@ -279,3 +279,20 @@ while the flag is off).
 The answer fit uses the same flag, so `off` turns both steps off; there is no separate switch. Its row goes with
 `DELETE FROM shared.llm_role_config WHERE stage = 't9_faq_answer_fit'` (migration 266 rollback).
 
+
+
+## Answer-fit round 3 result (S247, 22/10/2026) — decision input
+
+Paid eval, one run, $0.140 (cap $0.25), 0 errors. In-sample = the 31 checkpoint pairs (3 unanimous non-answers, 25
+unanimous answers); held-out = 40 pairs from 12 older blog pieces (7 unanimous non-answers, 31 unanimous answers; 5
+questions repeat a checkpoint question word for word, also scored without them).
+
+| Variant | In-sample E1 / E2 | Held-out E1 / E2 | Held-out without repeated questions | Result |
+|---|---|---|---|---|
+| A — batched, Sonnet | 3/3 / 1/25 | 7/7 / 0/31 | 7/7 / 0/26 | **PASS** |
+| B — isolated, Haiku | 3/3 / 0/25 | 4/7 / 0/31 | 4/7 / 0/26 | FAIL (held-out recall 57% < 80%) |
+
+Decision per the rule above: `FIT_MODE = "batched"`, stage `t9_faq_answer_fit` on `sonnet` (migration 267, SAFE_DEFAULTS
+mirrors it). Cost about $0.004 per blog (20 batched calls $0.087). Rounds 1–2 (batched Haiku) failed in-sample: the model
+judged pairs against the topic it inferred from the other pairs. `on` still needs this ADR accepted and a read of shadow
+verdicts on new blogs.

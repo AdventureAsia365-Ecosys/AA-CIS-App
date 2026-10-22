@@ -63,7 +63,7 @@ see that the subject or the asked-for fact is wrong.
   attempt's existing entry or a new one, returns the cost added to `total_cost`), called for `channel == "blog"`
   between the citation-tag strip and `_final_integrity`; `writer_input_snapshot` carries `faq_answer_fit` when set.
 - `shared/llm_client/role_config.py`: `SAFE_DEFAULTS["t9_faq_answer_fit"]` (validate, claude, haiku, acc3).
-- `api/migrations/266_t9_faq_answer_fit_stage.sql`: the stage row, same shape as 264.
+- `api/migrations/267_t9_faq_answer_fit_stage.sql`: the stage row, same shape as 264.
 - `tests/unit/test_aa927_llm_call_site_registry.py`: the new call site `faq_answer_fit.check_answer_fit`.
 - `tests/unit/test_aa779_faq_answer_fit.py`: flag off / shadow / on, writer questions, cap, error / unusable /
   timeout fail open, the llm_call_log row (stage, role, ids, `json_parsed`), parser, service glue, the call's place
