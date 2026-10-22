@@ -6,18 +6,16 @@
 // the `smoke-setup` project and listed as a dependency of the `smoke` project — the `smoke-public` project (the
 // per-PR preview run) and the legacy `chromium` project never run it.
 //
-// AA-816 S2 path — two ways in:
-//   • Cognito (E2ECOGNITO=1, set only by the staff job of .github/workflows/ui-smoke.yml, which also assumes the
-//     read-only mailbox role): the E2E staff user "E2E Cognito" signs in with an email code (helpers/cognitoSignIn.ts)
-//     on one of the two hosts that are registered callbacks: the production host (cis-admin client; the user is a
-//     reviewer) or the fixed Preview host (cis-admin-preview client; the API caps every session there at viewer,
-//     so the setup FAILS unless the role is viewer — that is the cap's live evidence).
-//   • Legacy password (E2E_ADMIN_USERNAME / E2E_ADMIN_PASSWORD), for local runs only until the API legacy flag goes
-//     off (AA-816 S2). CI no longer passes these secrets.
+// AA-816 S2 path — Cognito only (E2ECOGNITO=1, set only by the staff job of .github/workflows/ui-smoke.yml, which
+// also assumes the read-only mailbox role): the E2E staff user "E2E Cognito" signs in with an email code
+// (helpers/cognitoSignIn.ts) on one of the two hosts that are registered callbacks: the production host (cis-admin
+// client; the user is a reviewer) or the fixed Preview host (cis-admin-preview client; the API caps every session
+// there at viewer, so the setup FAILS unless the role is viewer — that is the cap's live evidence).
+// The legacy password mode is gone (AA-816 S2: the API refuses every HS256 session on /auth/verify-admin). Without
+// E2ECOGNITO=1 (a local run has no mailbox access) the setup fails with a clear message: run `smoke-public` locally.
 //
 // The tenant storageState is NOT created here (the portal smoke has its own setup, tests/e2e/smoke-portal/).
 import { test as setup, type Browser } from '@playwright/test';
-import { adminUsername, adminPassword } from '../helpers/auth';
 import { STAFF_AUTH_HOST, signInByEmailCode } from '../helpers/cognitoSignIn';
 import fs from 'fs';
 import {
@@ -68,41 +66,16 @@ async function cognitoSignIn(browser: Browser): Promise<string> {
   }
 }
 
-async function legacySignIn(browser: Browser): Promise<string> {
-  // Fail loudly if the credentials are missing: `adminUsername()` / `adminPassword()` throw
-  // `Missing env var E2E_ADMIN_USERNAME|PASSWORD`.
-  adminUsername();
-  adminPassword();
-  const context = await browser.newContext({ baseURL: baseUrl() });
-  await installBypassRoute(context);
-  const page = await context.newPage();
-  try {
-    // AA-878 — the role comes from the server's login answer (the DB role, POST /api/auth/login → { role }),
-    // never from the display cookie. The login is a direct request on the browser context (same cookie jar): a
-    // form submit navigates away, and the browser may drop the response body before the test can read it (S243).
-    const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
-    const res = await context.request.post('/api/auth/login', {
-      data: { username: adminUsername(), password: adminPassword() },
-      headers: bypass ? { 'x-vercel-protection-bypass': bypass, 'x-vercel-set-bypass-cookie': 'samesitenone' } : {},
-    });
-    const body = (await res.json().catch(() => ({}))) as { role?: unknown };
-    if (!res.ok() || typeof body.role !== 'string' || !body.role) {
-      throw new Error(`smoke login failed: POST /api/auth/login → HTTP ${res.status()} (no role in the answer)`);
-    }
-    await page.goto('/admin/review');
-    await page.waitForURL(/\/admin\//, { timeout: 20000 });
-    await context.storageState({ path: ADMIN_STATE });
-    return body.role;
-  } finally {
-    await context.close();
-  }
-}
-
 setup('authenticate staff', async ({ browser }) => {
   ensureAuthDir();
-  const cognito = process.env.E2ECOGNITO === '1';
-  if (cognito) setup.setTimeout(180000); // one code mail (up to 90 s) plus the page steps
-  const role = cognito ? await cognitoSignIn(browser) : await legacySignIn(browser);
+  if (process.env.E2ECOGNITO !== '1') {
+    throw new Error(
+      'The signed-in smoke needs E2ECOGNITO=1 and the e2e mailbox role (ui-smoke.yml job smoke-staff, from main). ' +
+        'The legacy password login is off since AA-816 S2; run --project=smoke-public locally.',
+    );
+  }
+  setup.setTimeout(180000); // one code mail (up to 90 s) plus the page steps
+  const role = await cognitoSignIn(browser);
   fs.writeFileSync(ROLE_FILE, JSON.stringify({ role }));
-  console.log(`[smoke] signed in (${cognito ? 'cognito' : 'legacy password'}) with staff role: ${role}`);
+  console.log(`[smoke] signed in (cognito) with staff role: ${role}`);
 });

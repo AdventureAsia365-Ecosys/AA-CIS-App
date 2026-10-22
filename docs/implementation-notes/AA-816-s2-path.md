@@ -106,3 +106,58 @@ Approved by Nghiệp in S247 (AA-816 S247 comment, AA-911). Three CIS branches, 
   `tests/unit/test_aa816_smoke_split.py`, `tests/unit/test_aa885_portal_split.py`.
 - The signed-in job has not run yet (it needs `main`). First check after merge: dispatch
   `ui-smoke.yml` from main with `base_url=https://aa-cis.lumiguides.it.com staff_session=true`.
+
+## Branch 3: S2, API legacy flag off
+
+### Decisions
+
+- **Where the flag was set:** nowhere for the API. `LEGACY_ADMIN_LOGIN_ENABLED` is not in the CIS api task
+  definition (grep AA-CIS-Infra, 22/10/2026), so the API ran on the code default (on). Vercel `aa-cis-frontend`
+  Production holds `false` since S1. So S2 is a code change: the default flips to **off** in
+  `api/core/staff_identity.legacy_login_enabled` and, with the same values, in `frontend/lib/staffSession.ts`
+  `legacyAdminLoginEnabled`. Only an explicit `1`/`true`/`yes`/`on` turns it back on (fail closed: unset, empty or
+  a typo = off). The old rule was the reverse (only an explicit off value turned it off).
+- **BFF default flipped too.** With the API refusing HS256, a password form on a per-deployment preview would
+  "succeed" at `/auth/admin-login` and then bounce at the first verify. Off by default hides it. Production already
+  had `false`.
+- **Booking unaffected (checked in code):** `/auth/admin-login` and `/auth/booking-token` (`api/main.py`) do not read
+  the flag and never call `/auth/verify-admin`; the booking-token handler decodes the HS256 token itself
+  (`verify_jwt`) and re-reads the row. AA-Booking `frontend/app/api/auth/login/route.ts` + `lib/session.ts` call
+  only those two routes. A test mints a Booking token from a password session with the flag unset.
+- **Other HS256 readers stay as they were:** `core/staff_secret.py`, `v1_pipeline._require_admin` and the rate
+  limiter only decode a Bearer to answer 401/403 or to key a bucket; none turns an HS256 token into a staff session.
+- **Smoke setup:** the legacy password mode is removed (it can no longer work). Without `E2ECOGNITO=1` the setup
+  fails with a message pointing to `--project=smoke-public`.
+- **Tests:** the legacy-path tests in `test_aa656_staff_roles.py` and `test_aa878_viewer_role.py` now set the flag
+  on explicitly (they cover the rollback path); `test_aa854_verify_admin_cognito.py` flips its flag cases; new
+  `tests/unit/test_aa816_s2_legacy_off.py` (HS256 from admin-login refused, Cognito accepted, Booking bridge still
+  mints, BFF and API parse the same "on" values).
+
+### Changed
+
+- The cutover plan (G) said "API flag off (Infra task-definition env, HAND EDIT in VSCode)". The env var is not set
+  there at all, and setting `false` in Terraform would leave the code default on for every other environment
+  (tests, a new task definition). Flipping the code default is one reviewed change in one repo and fails closed.
+  Setting the env var to `true` in the task definition stays available as the rollback.
+
+### Tradeoffs
+
+- Rollback by env var now needs two places (API task definition and the Vercel target), or a revert of this
+  commit (one Deploy Dev + one Vercel production deploy). A revert is the simpler rollback.
+- Live HS256 sessions end at once (their next verify, at most the BFF verify cache of 5 min): by design.
+- After S2 no agent can sign in to the CIS UI locally (no mailbox access); authenticated checks are CI-only
+  (the signed-in smoke from main) or Nghiệp in a browser.
+
+### Should know
+
+- Before merge: branch 2 (smoke split) is merged and live, otherwise every PR smoke goes red after this deploys.
+  Check Vercel `aa-cis-frontend` env: if the **Preview** target holds `LEGACY_ADMIN_LOGIN_ENABLED=true`, remove
+  it (the password form would come back on previews and fail at verify).
+- After deploy: disable `e2e-claude-code` on the Staff page (audited `staff.disabled`); delete the GitHub secrets
+  `E2E_ADMIN_USERNAME` / `E2E_ADMIN_PASSWORD` once nothing reads them (the legacy `chromium` live-verify specs in
+  `tests/e2e/*.spec.ts` still name them but no workflow runs them); update the `e2e-admin-login` memory and the root
+  `aa-ui-verify` skill and `legacy-login-flag.md` runbook (rollback semantics changed: unset = off).
+- Tests run locally: `test_aa816_s2_legacy_off.py`, `test_aa854_verify_admin_cognito.py`, `test_aa656_staff_roles.py`,
+  `test_aa878_viewer_role.py`, `test_aa854_staff_bearer_middleware.py`, `test_aa911_preview_client_cap.py`,
+  `test_s241_admin_routes_require_auth.py`, `test_aa680_booking_jwt.py`, `test_aa816_smoke_split.py`; flake8;
+  frontend `tsc --noEmit` + eslint on the touched files; ad hoc `tsc --strict` on the changed e2e files.

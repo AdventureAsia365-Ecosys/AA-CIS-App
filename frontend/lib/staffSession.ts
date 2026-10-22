@@ -79,11 +79,13 @@ export function safeNextPath(raw: string | null | undefined): string {
 }
 
 /**
- * LEGACY_ADMIN_LOGIN_ENABLED (ADR 0006 D3): gates only the CIS UI password login. Default ON when
- * unset; only an explicit false / 0 / off / no turns it off. Read per call so a Vercel env change
- * plus redeploy is the whole rollback.
+ * LEGACY_ADMIN_LOGIN_ENABLED (ADR 0006 D3): gates only the CIS UI password login. AA-816 S2: default OFF,
+ * like the API (api/core/staff_identity.py legacy_login_enabled), which refuses every HS256 session on
+ * /auth/verify-admin unless its own flag is on, so a password form here could no longer sign anyone in. Only an
+ * explicit true / 1 / on / yes turns it back on (rollback together with the API flag). Read per call so a Vercel
+ * env change plus redeploy is the BFF half of the rollback.
  */
 export function legacyAdminLoginEnabled(): boolean {
   const raw = (process.env.LEGACY_ADMIN_LOGIN_ENABLED ?? "").trim().toLowerCase();
-  return !["false", "0", "off", "no"].includes(raw);
+  return ["true", "1", "on", "yes"].includes(raw);
 }

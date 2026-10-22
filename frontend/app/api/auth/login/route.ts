@@ -29,8 +29,9 @@
 // shared.admin_users with role 'content' (migration 218) and log in here like
 // admin/reviewer, so every staff session carries a verifiable JWT.
 //
-// AA-816 (C4, ADR 0006 D3): this password login is the legacy path. LEGACY_ADMIN_LOGIN_ENABLED=false
-// makes it 404 (default ON when unset; the code stays 30 days as the rollback path). The display
+// AA-816 (C4, ADR 0006 D3): this password login is the legacy path. It answers 404 unless
+// LEGACY_ADMIN_LOGIN_ENABLED is explicitly on (default OFF since AA-816 S2, when the API also stopped accepting
+// HS256 sessions; the code stays as the rollback path, which needs the API flag on too). The display
 // cookies cis_role / cis_user are now set here by the server (they used to be written by
 // login/page.tsx with document.cookie), which also overwrites a tenant session's httpOnly cis_role.
 import { NextRequest, NextResponse } from "next/server";
