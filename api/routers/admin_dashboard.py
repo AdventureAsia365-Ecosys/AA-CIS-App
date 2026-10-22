@@ -305,7 +305,7 @@ async def list_routes(
     bảng riêng").
 
     AA-532: when scoped to ONE Tour, deliberately does NOT filter `superseded_at IS NULL` the way
-    every other reader of this table now does (v1_route_hub.py, slate.py, admin_atoms.py) — this
+    every other reader of this table now does (slate.py, admin_atoms.py) — this
     IS the audit view, the one place seeing a Route's version history (current AND superseded) is
     the actual point, not a bug. AA-551: in "All tours" mode (no `tour_id`), DOES filter to
     current-only — a platform-wide table listing every historical version of every tour's routes

@@ -1,8 +1,11 @@
-"""services/acp_contract/route_detection.py — AA-510, Route/Hub detection + route_pick snapshot.
+"""services/acp_contract/route_detection.py — AA-510, Route/Hub detection.
 
 (`create_subject()`/`acp_contract.subject` renamed to `create_route_pick()`/
 `acp_contract.route_pick` at AA-511 STEP0, migration 132 — freed the name `subject` for the
-unrelated Slate-proposal concept `acp_shared.subject`.)
+unrelated Slate-proposal concept `acp_shared.subject`. AA-859 wave 4 (S247) retired the tenant
+route hub `/v1/routes`, `/v1/hubs`, `/v1/route-picks` (0 callers in code, 0 requests in 30 days of
+api logs) and with it `create_route_pick()`; the `acp_contract.route_pick` table stays, a Dead
+Table Registry candidate.)
 
 Ported from Ms. Thư's aa-social-media `src/aa_social/routes.py` (`derive_routes()`/`families()`/
 `stops()`) and `stages/score.py`'s `_store_routes()` (rebuild-whole persistence). Full evidence
@@ -553,95 +556,9 @@ async def run_route_detection(pool) -> dict:
     }
 
 
-async def create_route_pick(
-    tenant_id: str, route_id: str, pool, selected_by: str | None = None,
-) -> dict | None:
-    """Snapshot one Route into a route_pick at the moment a marketer picks it (ADR 0024) — no
-    live FK, ever, into route.route_id (the same lesson the origin's own Subject layer learned
-    the hard way, docs/adr/0024-a-subject-outlives-the-segment-it-came-from.md, applied one
-    layer up here).
-
-    Named `create_subject()`/`acp_contract.subject` at AA-510; renamed here (AA-511 STEP0,
-    migration 132) to free the name `subject` for the unrelated Slate-proposal concept
-    `acp_shared.subject` this issue builds — the two are a different grain/purpose entirely, not
-    a compatibility rename.
-
-    Returns None if the Route no longer exists, OR (AA-532) if it exists but has since been
-    superseded by a newer version — the caller's job to surface as "pick again", not this
-    function's; a marketer should never snapshot a Route re-detection has already moved past
-    even though the old row itself is never deleted. Re-joins the underlying Segments at snapshot
-    time (best-effort — a partial/empty join degrades the snapshot's `stops` detail but never
-    fails route_pick creation) so the snapshot is a human-readable, self-sufficient record that no
-    longer depends on anything staying in place afterward.
-
-    `tenant_id` here is the PICKING tenant, written onto the (still per-tenant, unchanged by
-    AA-545) `route_pick` row it creates — NOT a filter on `route` itself, which is platform-wide
-    and carries no tenant column at all.
-    """
-    async with pool.acquire() as conn:
-        route = await conn.fetchrow("""
-            SELECT route_id, tour_id, hub_id, hub_name, ordered_segment_ids,
-                   first_day, last_day
-            FROM acp_contract.route
-            WHERE route_id = $1 AND superseded_at IS NULL
-        """, route_id)
-        if not route:
-            return None
-
-        segment_ids = route["ordered_segment_ids"]
-        if isinstance(segment_ids, str):
-            segment_ids = json.loads(segment_ids)
-
-        step_rows = await conn.fetch("""
-            SELECT asg.segment_id, asg.canonical_place, asg.canonical_action,
-                   MIN(ta.itinerary_day) AS day
-            FROM acp_contract.atom_segment asg
-            JOIN acp_contract.atom_segment_member asm ON asm.segment_id = asg.segment_id
-            JOIN acp_contract.tour_atoms ta
-                ON ta.atom_id = asm.atom_id AND ta.tour_id = $1::uuid
-            WHERE asg.segment_id = ANY($2::text[])
-            GROUP BY asg.segment_id, asg.canonical_place, asg.canonical_action
-        """, route["tour_id"], segment_ids)
-
-        snapshot = _build_snapshot(route, segment_ids, step_rows)
-        route_pick_id = await conn.fetchval("""
-            INSERT INTO acp_contract.route_pick (tenant_id, hub_name, route_snapshot, selected_by)
-            VALUES ($1::uuid, $2, $3::jsonb, $4)
-            RETURNING route_pick_id
-        """, tenant_id, route["hub_name"], json.dumps(snapshot), selected_by)
-
-    return {
-        "route_pick_id": str(route_pick_id),
-        "hub_name": route["hub_name"],
-        "route_snapshot": snapshot,
-    }
-
-
-def _build_snapshot(route, segment_ids: list[str], step_rows) -> dict:
-    by_day = sorted(
-        (r["day"], r["canonical_place"], r["canonical_action"] or "")
-        for r in step_rows if r["day"] is not None
-    )
-    resolved_stops = stops(by_day)
-    return {
-        "route_id": route["route_id"],
-        "tour_id": str(route["tour_id"]),
-        "hub_id": str(route["hub_id"]) if route["hub_id"] else None,
-        "hub_name": route["hub_name"],
-        "ordered_segment_ids": segment_ids,
-        "first_day": route["first_day"],
-        "last_day": route["last_day"],
-        "places": list(dict.fromkeys(s.place for s in resolved_stops)),
-        "stops": [
-            {"day": s.day, "place": s.place, "actions": list(s.actions)}
-            for s in resolved_stops
-        ],
-    }
-
-
 __all__ = [
     "Moment", "Route", "Stop",
     "LEAST_DAYS", "LEAST_PLACES", "MOST_DAYS", "SHARED_ENOUGH",
     "derive_routes", "families", "stops", "journey_name",
-    "run_route_detection", "create_route_pick",
+    "run_route_detection",
 ]

@@ -190,7 +190,7 @@ async def _fetch_route_segments(
     OWN single-atom fallback (identical query, one tour_id filter, first live non-alias member
     atom) — applied here to every Segment in the walk, not just the first.
 
-    Best-effort per Segment (matches `route_detection.py::create_route_pick()`'s own precedent,
+    Best-effort per Segment (matches the precedent of the retired `route_detection.py::create_route_pick()`,
     "a partial/empty join degrades the snapshot's detail but never fails route_pick creation") —
     a Segment rebuilt away since pick time is silently skipped rather than failing the whole
     write; only an ENTIRELY empty join (every Segment gone) raises, since there would be nothing
