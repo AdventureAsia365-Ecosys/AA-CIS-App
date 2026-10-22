@@ -516,3 +516,14 @@ def test_failed_job_reaches_sentry_with_traceback_and_job_tags(json_lines, sentr
     assert event["extra"]["next_status"] == "queued"
     line = next(x for x in json_lines() if x["event"] == "job_failed")
     assert line["level"] == "error" and "RuntimeError: handler broke" in line["exception"]
+
+
+def test_first_process_configuration_wins(monkeypatch):
+    """Live S247: the worker said service=cis-api because a later import of api.main re-configured logging."""
+    calls = []
+    monkeypatch.setattr(log_config, "configure_logging", lambda service, **kw: calls.append(service))
+    monkeypatch.setattr(log_config, "_process_service", None)
+    monkeypatch.setenv("ENVIRONMENT", "dev")
+    log_config.configure_for_process("cis-worker")
+    log_config.configure_for_process("cis-api")
+    assert calls == ["cis-worker"]

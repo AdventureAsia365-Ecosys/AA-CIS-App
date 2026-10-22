@@ -195,9 +195,17 @@ def configure_logging(service: str, stream: IO[str] | None = None, level: int | 
     )
 
 
+_process_service: str | None = None
+
+
 def configure_for_process(service: str) -> None:
     """The process entrypoints' call: configure, except under unit tests (``ENVIRONMENT=test``), where importing
-    ``api.main`` must not swap the global logging set-up of the whole test session."""
-    if os.getenv("ENVIRONMENT") == "test":
+    ``api.main`` must not swap the global logging set-up of the whole test session.
+
+    The first call of a process wins: the worker entrypoint configures ``cis-worker`` and later imports modules that
+    import ``api.main`` (which asks for ``cis-api`` at import), so live worker lines said ``service: cis-api``."""
+    global _process_service
+    if os.getenv("ENVIRONMENT") == "test" or _process_service is not None:
         return
+    _process_service = service
     configure_logging(service)
