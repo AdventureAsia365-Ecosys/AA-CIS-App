@@ -1243,7 +1243,7 @@ Tenant routes moved off the main pool run on the **tenant pool** (`acquire_scope
 Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`) and sets
 `app.tenant_id` for the transaction; isolation is RLS, not the query's own `WHERE tenant_id`.
 
-- **RLS template** (229): `ENABLE ROW LEVEL SECURITY` without FORCE (the owner `cis_owner` stays exempt; the
+- **RLS template** (229; also 237, 241, 262): `ENABLE ROW LEVEL SECURITY` without FORCE (the owner `cis_owner` stays exempt; the
   main pool and the worker log in as `cis_app` since X1 S18 and read through `<table>_cis_app_all`, CIS 244), policy `tenant_isolation` `FOR ALL TO aa_app_user`, USING and WITH CHECK on
   `NULLIF(current_setting('app.tenant_id', true), '')::uuid` (`''` = no rows, never an error). A table
   without a tenant column goes through its parent: `acp_shared.angle_gate_option` matches options of
@@ -1296,19 +1296,24 @@ Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`
   | PATCH `/v1/content-writing/pieces/{id}` (W2) | `aa859:piece_edit_pool` | audit after commit on MAIN |
   | POST `/v1/angle-gate/requests/{id}/choose`, `/reopen` (W3) | `aa859:angle_gate_decide_pool` | one transaction, request locked first (same order as the T8 worker); response re-read on MAIN; needs 241 |
   | DELETE `/v1/publish-log/{id}` (W4, unpublish) | `aa859:unpublish_pool` | three short blocks; Secrets Manager and the remote delete hold no connection |
-  | GET `/v1/tours/pool`, `/my-versions`, `/versions/{id}` (W5a) | `aa859:t2_version_reads_pool` | job status from a second MAIN query keyed by job ids returned through RLS; `/{id}/full` tenant branch, `/{id}`, `/versions/{id}/export-docx` still on MAIN (D5b) |
+  | GET `/v1/tours/pool`, `/my-versions`, `/versions/{id}` (W5a) | `aa859:t2_version_reads_pool` | job status from a second MAIN query keyed by job ids returned through RLS |
+  | GET `/v1/tours/{id}/full` (tenant-JWT branch), `/{id}`, `/versions/{id}/export-docx` (D5b, S247) | `aa859:t2_version_detail_reads_pool` | own flag (not W5a's); the `/full` staff branch (X-Admin-Secret) stays on MAIN and reads no flag; export-docx audit on MAIN after the block; a master tour's raw / seo fields show only when those rows are the AA master tenant's (239), as in W5a |
   | PATCH `/v1/tours/versions/{id}` (W6) | `aa859:t2_version_write_pool` | `pg_advisory_xact_lock(859, hashtext(tenant:published_tour))` + `MAX + 1`; UNIQUE backstop → 409 `version_conflict` |
   | GET/POST `/v1/integrations/{wordpress,facebook}`, POST `.../test` (W9) | `aa859:integration_connect_pool` | Secrets Manager / remote HTTP hold no connection; the UPSERT writes only 241's column grants; needs 241 |
+  | GET / POST `/admin/brand-identity` with a tenant Bearer (wave 3, S247) | `aa859:brand_identity_pool` | needs 262 (RLS on `tenant_brand_rules` / `tenant_seo_config`); POST = one transaction, `pg_advisory_xact_lock(859, hashtext(tenant:brand_identity))` + `MAX + 1`, UNIQUE backstop → 409 `version_conflict`; the X-Admin-Secret staff branch stays on MAIN and reads no flag; `check_saved_cta` on MAIN after commit |
+  | POST `/v1/publish-log/{piece_id}/publish` (wave 3, S247) | `aa859:publish_pool` | three short blocks (piece + connection, `claim()` as a savepoint, `finish()`); Secrets Manager and the remote post hold no connection; daily-limit override read and audit row on MAIN; no new grant |
 
   A 241 rollback must `SET ... false` the two "needs 241" flags first (and list them in
-  `TENANT_POOL_FORCE_ADMIN_FLAGS`), as 241's rollback comment STEP 0 says.
+  `TENANT_POOL_FORCE_ADMIN_FLAGS`), as 241's rollback comment STEP 0 says; a 262 rollback the same for
+  `aa859:brand_identity_pool` (262's rollback comment STEP 0).
 - **MAIN exceptions** (code comment `# AA-859 MAIN exception: <reason>`): `write_audit_log`
   (`acp_shared.audit_log` has no RLS and is never granted; written after the tenant transaction
   commits, best-effort on the tenant path); enqueue-in-transaction routes (angle-gate goal, T2 rewrite /
   retry, content-writing write, slate refresh); `shared.job` status lookups (no tenant column); tenant
-  self-config and usage reads (`/v1/quota`, `/v1/billing`, `shared.tenants` limits) keyed on the JWT
-  `sub`; the angle-gate `fetch_request` re-read (subject / segment / route have no grant until wave 4);
-  staff branches.
+  self-config and usage reads (`/v1/quota`, `/v1/billing`, `shared.tenants` limits incl. publish's
+  `daily_publish_limit`) keyed on the JWT `sub`; the angle-gate `fetch_request` re-read (subject / segment /
+  route have no grant until wave 4); `check_saved_cta` → `notify_admins` after a brand save; staff branches
+  (`/admin/brand-identity` with X-Admin-Secret, `/v1/tours/{id}/full` with X-Admin-Secret).
 - **`/admin/atoms*` is staff only** (AA-859, S240): the AA-431 tenant-JWT branch was removed with no flag
   after 30 days of WAF logs showed 0 Bearer callers (1,041 calls, all `X-Admin-Secret`). A Bearer token
   gets 403 and logs `aa859_admin_atoms_tenant_refused`. No tenant route writes `acp_contract.tour_atoms`.
