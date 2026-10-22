@@ -29,13 +29,17 @@ jobs:
     steps:
       - name: Mint the CI bot App token
         id: app-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ vars.AA_CI_BOT_APP_ID }}
           private-key: ${{ secrets.AA_CI_BOT_PRIVATE_KEY }}
+          # Only what release-please writes: branch/tag/release (contents), the PR, its labels (issues).
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
       - name: Release Please
         id: release
-        uses: googleapis/release-please-action@v4
+        uses: googleapis/release-please-action@v5
         with:
           token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json

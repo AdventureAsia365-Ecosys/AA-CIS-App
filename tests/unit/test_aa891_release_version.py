@@ -81,10 +81,16 @@ def test_release_workflow_triggers_and_permissions():
 
 
 def test_release_workflow_uses_the_ci_bot_app_token():
-    assert re.search(r"uses: actions/create-github-app-token@v\d+\n", RELEASE_WF)
+    assert re.search(r"uses: actions/create-github-app-token@v3\n", RELEASE_WF)
     assert "app-id: ${{ vars.AA_CI_BOT_APP_ID }}" in RELEASE_WF
     assert "private-key: ${{ secrets.AA_CI_BOT_PRIVATE_KEY }}" in RELEASE_WF
-    assert re.search(r"uses: googleapis/release-please-action@v4\n", RELEASE_WF)
+    # The App token is narrowed to what release-please writes (as in AA-Booking).
+    assert re.findall(r"permission-([a-z-]+): (\w+)", RELEASE_WF) == [
+        ("contents", "write"),
+        ("pull-requests", "write"),
+        ("issues", "write"),
+    ]
+    assert re.search(r"uses: googleapis/release-please-action@v5\n", RELEASE_WF)
     assert "token: ${{ steps.app-token.outputs.token }}" in RELEASE_WF
     assert "secrets.GITHUB_TOKEN" not in RELEASE_WF and "github.token" not in RELEASE_WF
 
