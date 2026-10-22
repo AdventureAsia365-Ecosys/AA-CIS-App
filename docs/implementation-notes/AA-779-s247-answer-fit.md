@@ -34,7 +34,16 @@ see that the subject or the asked-for fact is wrong.
 - **`on` with fewer than `FAQ_MIN_PAIRS` left:** the failing pairs are still dropped (a FAQ answer that answers a
   different question is worse than a shorter FAQ), the piece keeps its status, and the record says `below_min: true`
   plus an admin-only `F7_faq_autofix` line. No regeneration (the spec: never regenerate). If every pair fails the
-  FAQ section is removed (`replace_faq_section(text, [])`), recorded the same way.
+  FAQ section is removed, recorded the same way.
+- **Review fix 1 (S247): the drop cuts blocks, it does not rebuild the FAQ.** The first version rebuilt the FAQ
+  with `replace_faq_section(text, kept)`, which keeps only each answer's first paragraph and moves every other
+  paragraph above `## FAQ`; a dropped wrong-subject answer's second paragraph landed in the body (and the new text
+  reached `_final_integrity`, which can hold). New `quality_gates.drop_faq_pairs(text, {n})` cuts each dropped
+  pair's whole `_FAQ_PAIR_RE` block plus the blank line after it and keeps every other byte in place (the
+  `drop_unanswerable_faq` approach, without its rebuild). Numbering matches `faq_pairs`. Exception: a failing LAST
+  pair with more than one paragraph is kept and listed in `kept_multi_paragraph` (+ an F7 line), because the last
+  block runs to the end of the text and its tail may be a CTA written after the FAQ; guessing would either delete
+  a CTA or glue the wrong-subject tail onto the previous pair. `pairs_after` is now counted on the result text.
 - **Fail open.** A gateway error, an unusable reply or the 60 s timeout leaves the FAQ unchanged and records
   `fallback: true` with the error. A billed unusable reply writes its `billed_unusable` row (AA-927).
 - **Writer-invented questions are checked too**: the step reads every pair of the final FAQ, whatever its source.
@@ -84,4 +93,27 @@ see that the subject or the asked-for fact is wrong.
   The container script stubs the module's flag import, so it runs against an image without this branch.
 - The flag is shared: turning `T9_FAQ_LLM_FILTER` to `shadow` now records both `writer_input.faq_filter` and
   `writer_input.faq_answer_fit`; `on` applies both. Do not turn `on` before the eval bar passes (ADR 0011).
+- **Review fix 4: Dev is already in `shadow`.** The Dev worker task definition has `T9_FAQ_LLM_FILTER=shadow`, so
+  merging this starts answer-fit shadow calls on the next blog (~$0.0016 each, FAQ unchanged). The real risk:
+  flipping the shared flag to `on` for the (measured) question filter also turns answer-fit drops on. ADR 0011
+  "Rollout" now says: do not set `on` until the E1–E3 result and a read of new-blog shadow verdicts are in the ADR;
+  if the question filter must go `on` first, split the flag first (code change). Put the same line in the PR body:
+  "Do not set T9_FAQ_LLM_FILTER=on until the answer-fit E1–E3 result is in ADR 0011." and in the root backlog row.
+- **Review fix 2: the eval is in-sample.** The prompt's examples are new, but its rules were written from the 3
+  checkpoint failures, so E1 is optimistic on recall. Written into ADR 0011 like decision 5; `on` also needs
+  shadow verdicts on new blogs.
+- **Review fix 3 (deferred, conditional): predicted E2 risk.** The "one part instead of the whole" clause may flag
+  the pair on northern Mongolia's ecological zones (answered via Lake Khövsgöl) and the pair on the ethnic groups
+  along a route (answered via Phongsali Province); two false flags fail E2. Predicted E1 miss: the Paro
+  English-name pair ("referred to as Paro town" may read as a name). The prompt is NOT changed before the run (the reviewer asked for it only if the eval
+  misses, and tuning it on the checkpoint pairs before measuring would make the eval more in-sample still). If E2
+  fails, replace the clause with: "the question asks for a figure or fact about the whole, and the answer gives it
+  only for one part (asked a country's average altitude, answered with one town's)"; add "an answer about a part
+  that still answers what was asked about the whole ANSWERS"; examples off the checkpoint pairs; rebuild and re-run.
+- **Review fix 5: the eval cap is worst-case.** `aa779-fit-eval.py` counts each attempt (retries too) at
+  `max(reported cost_usd, worst case)` where worst case = input at chars/3 tokens + all `MAX_TOKENS` (1,500) billed
+  as output (~$0.0087 a call), and makes an attempt only if that worst case still fits under $0.10. A reply
+  reporting cost 0 / none can no longer hide spend. `spent_usd` is still the reported cost; `budget_counted_usd`
+  is what the cap counted. The container loader stubs the new `quality_gates.drop_faq_pairs` when the deployed
+  image lacks it (the eval only calls `check_answer_fit`).
 - Held pieces are checked too: a held piece still reaches the tenant (AA-770), so its FAQ ships the same way.

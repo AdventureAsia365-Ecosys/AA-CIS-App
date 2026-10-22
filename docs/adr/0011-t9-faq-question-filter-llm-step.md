@@ -80,6 +80,12 @@ the asked-for fact is wrong.
      unchanged. `on`: the failing pairs are dropped. If fewer than `FAQ_MIN_PAIRS` (3) are left, the piece keeps
      its status and the record says `below_min` (plus an admin-only `F7_faq_autofix` line). It never holds and
      never regenerates: it is a repair step, not a gate.
+   - How a pair is dropped: its whole block is cut out (question, answer and any later paragraph under it) and
+     every other part of the text stays verbatim and in place (`quality_gates.drop_faq_pairs`). The FAQ is not
+     rebuilt from first paragraphs (`replace_faq_section`), because that moves every other paragraph above
+     `## FAQ`, and a dropped wrong-subject answer's second paragraph would land in the body (S247 review). The one
+     case it cannot settle: a failing LAST pair with more than one paragraph, since text after the last pair may be
+     a CTA. That pair is kept and listed in `kept_multi_paragraph` (and an `F7_faq_autofix` line).
    - Fallback: on a gateway error, an unusable reply or a 60 s timeout the FAQ is unchanged and `fallback: true`
      is recorded.
 
@@ -121,8 +127,37 @@ only, the same input production sends. Bars:
 
 The three 2-1 "partial" pairs are reported but are not in the bar. The prompt's examples are not checkpoint pairs.
 
+The eval is **in-sample**, so passing it is weak evidence, as with the question filter's re-measure (decision 5).
+The examples are new, but the rules were written from the three failures: "asked about a country, answered with
+one town in it", "a generic reference ('the museum') … that describes something other than what the question
+names", and "the question asks for a name …". E1 is therefore optimistic on recall. `on` needs more than E1–E3: it
+needs `shadow` verdicts on new blogs (pairs the rules were not written from), read by hand, with no clear false
+drop.
+
+Known risk to E2 before the run: the "one part instead of the whole" clause may flag an answer that reaches the
+whole through one part (a region's ecological zones explained through one lake; the ethnic groups along a route
+explained through one province). If E2 fails on such pairs, tie the clause to the asked-for fact ("the question
+asks for a figure or fact about the whole and the answer gives it only for one part") and add that an answer about
+a part that still answers what was asked about the whole is `ANSWERS`, with examples kept off the checkpoint
+pairs. Then re-run the eval.
+
 **Result: pending.** The orchestrator runs it in the CIS api container; fill it in here before `on`. 31 pairs is a
 small set, so `shadow` on new live blogs is the held-out check, as for the question filter.
+
+The eval's $0.10 cap is a worst-case cap: each attempt (a retry too) is counted at the larger of its reported cost
+and its worst case (the whole `max_tokens` billed as output), so a reply that reports no cost cannot push the run
+past it. The typical estimate is about $0.013.
+
+### Rollout: one flag drives both steps
+
+`T9_FAQ_LLM_FILTER` switches the question filter AND the answer fit together. The Dev worker already runs `shadow`
+for the question filter, so merging the answer fit starts its `shadow` calls on the next blog (about $0.0016 each;
+the FAQ is unchanged). The risk is the other way: setting `on` for the question filter, which has passed its bar,
+also turns on answer-fit drops.
+
+**Do not set `on` until the E1–E3 result, and a read of `shadow` verdicts on new blogs, are written in this ADR.**
+If the question filter must go `on` first, the answer fit needs its own flag first (a code change); do not flip the
+shared flag to get it.
 
 ## Rollback
 
