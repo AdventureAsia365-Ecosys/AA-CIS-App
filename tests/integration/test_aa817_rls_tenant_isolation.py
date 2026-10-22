@@ -7,12 +7,15 @@ angle_gate_request (113), content_piece (115), publish_log (116), facts (145, pl
 design), gold_aa_internal.tenant_tour_versions (the stage-2 T2 table), all on the policy template of
 migration 229, and shared.tenant_integrations (the AA-815 disconnect route, same template, migration 237),
 shared.tenant_brand_rules and shared.tenant_seo_config (the AA-859 wave-3 brand identity routes, same template,
-migration 262).
+migration 262), acp_shared.subject / quarter_plan / year_plan and acp_deliver.tenant_tour_pages (the AA-859 wave-4
+Slate / planning / review routes, migration 265; tenant_tour_pages compares text and shows the AA master's pages).
+acp_shared.quarter_plan_version goes through its parent quarter_plan (CHILD_RLS_TABLES), and acp_contract.tour_atoms
+(266) shows every platform atom plus the tenant's own, read only (ATOMS).
 acp_shared.angle_gate_option has no tenant column: migration 241 puts it under RLS through its parent
 angle_gate_request (CHILD_RLS_TABLES, checked by the key expression, not by tenant_id).
 The CI DB does not create tenant_tour_versions (migration 001 is skipped), so each test creates
-conftest's stand-in and re-applies 229, 237, 239, 241 and 262 in its own rolled-back transaction (239 after
-undo_241_for_239_reapply: its guard refuses RLS on angle_gate_option).
+conftest's stand-in and re-applies 229, 237, 239, 241, 262, 265 and 266 in its own rolled-back transaction (239 after
+undo_241_for_239_reapply: its guard refuses RLS on angle_gate_option and year_plan).
 
 Write side: a WHERE-less UPDATE touches only the own tenant's rows, a row can be neither handed to nor
 inserted for another tenant (or under ''), and platform facts can be read but never written or
@@ -31,10 +34,11 @@ and seo_context show the tenant its own rows plus the AA master rows (aa_app_use
 T2 read path) and never another tenant's; generated_content, quality_scores, content_exports,
 webhook_deliveries and pipeline_runs show only the own tenant's rows; '' gives no rows instead of
 22P02 on all eight. Master rows stay read-only even with a write grant. acp_shared.acp_output_rules
-(RLS on, no policy) is deny-all for the tenant role. ALL_RLS_TABLES lists the 18 RLS tables of Dev
-after 262 (AA-817 plan §0 + angle_gate_option + the two wave-3 tables); each is checked here. On a relation without RLS the
-tenant role holds no privilege at all, the catalog contract excepted (241, AA-859 plan D1:
-NO_PRIVILEGE_WITHOUT_RLS_SQL).
+(RLS on, no policy) is deny-all for the tenant role. ALL_RLS_TABLES lists the 24 RLS tables of Dev
+after 266 (AA-817 plan §0 + angle_gate_option + the two wave-3 tables + the five 265 tables + tour_atoms); each is
+checked here. On a relation without RLS the tenant role holds no privilege at all, the catalog contract and the
+table-level SELECT on the 265 platform read allowlist excepted (241, AA-859 plan D1, wave 4:
+NO_PRIVILEGE_WITHOUT_RLS_SQL_V2).
 
 The CI DB skips 007b/008, so aa_app_user has none of Dev's SELECT grants on the five non-master legacy
 tables (nor SELECT/INSERT/UPDATE on pipeline_runs): the fixture grants them in its transaction, as on
@@ -56,7 +60,8 @@ import pytest
 sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER, TTV_STANDIN_DDL  # noqa: E402
 from _rls_fixture_helpers import (  # noqa: E402
-    NO_PRIVILEGE_WITHOUT_RLS_SQL, migration_body, undo_241_for_239_reapply,
+    NO_PRIVILEGE_WITHOUT_RLS_SQL_V2, PLATFORM_READ_ALLOWLIST, PLATFORM_READ_COLUMNS, migration_body,
+    undo_241_for_239_reapply,
 )
 
 TENANT_ROLE = "aa_app_user"
@@ -70,11 +75,18 @@ TENANT_TABLES = {
     "shared.tenant_integrations": False,
     "shared.tenant_brand_rules": False,     # 262 (AA-859 wave 3)
     "shared.tenant_seo_config": False,      # 262 (AA-859 wave 3)
+    "acp_shared.subject": False,            # 265 (AA-859 wave 4)
+    "acp_shared.quarter_plan": False,       # 265
+    "acp_shared.year_plan": False,          # 265
+    "acp_deliver.tenant_tour_pages": False,  # 265, text tenant_id (+ master read, own test below)
 }
 # tables the tenant role writes through column grants only (241: connect / test-connection columns; 237:
 # DELETE; 262: the brand POST's columns): the generic `SET tenant_id = tenant_id` write tests do not apply, the
 # dedicated ones below do
-COLUMN_WRITE_TABLES = {"shared.tenant_integrations", "shared.tenant_brand_rules", "shared.tenant_seo_config"}
+# 265: the pick / cut / trip-reallocation columns; tenant_tour_pages is read only for the tenant role
+COLUMN_WRITE_TABLES = {"shared.tenant_integrations", "shared.tenant_brand_rules", "shared.tenant_seo_config",
+                       "acp_shared.subject", "acp_shared.quarter_plan", "acp_shared.year_plan",
+                       "acp_deliver.tenant_tour_pages"}
 # tables the tenant role may DELETE from (237: the disconnect route); the others have no DELETE grant
 DELETE_TABLES = {"shared.tenant_integrations"}
 # RLS tables without a tenant column: table -> (primary key, the row's tenant through its parent). The
@@ -84,6 +96,9 @@ CHILD_RLS_TABLES = {
     "acp_shared.angle_gate_option": (
         "option_id",
         "(SELECT r.tenant_id FROM acp_shared.angle_gate_request r WHERE r.request_id = t.request_id)"),
+    "acp_shared.quarter_plan_version": (    # 265 (AA-859 wave 4)
+        "version_id",
+        "(SELECT qp.tenant_id FROM acp_shared.quarter_plan qp WHERE qp.plan_id = t.plan_id)"),
 }
 
 MASTER_TENANT = "00000000-0000-0000-0000-000000000001"
@@ -100,7 +115,8 @@ LEGACY_TABLES = {
     "shared.pipeline_runs": False,
 }
 OUTPUT_RULES = "acp_shared.acp_output_rules"   # RLS on, no policy: deny-all for every non-owner (229)
-ALL_RLS_TABLES = set(TENANT_TABLES) | set(CHILD_RLS_TABLES) | set(LEGACY_TABLES) | {OUTPUT_RULES}
+ATOMS = "acp_contract.tour_atoms"              # 266: platform atoms + own, FOR SELECT only
+ALL_RLS_TABLES = set(TENANT_TABLES) | set(CHILD_RLS_TABLES) | set(LEGACY_TABLES) | {OUTPUT_RULES, ATOMS}
 # stand-in for the live-only acp_output_rules (no CIS migration creates it; Dev: RLS on, no policy)
 OUTPUT_RULES_STANDIN_DDL = """
     CREATE TABLE IF NOT EXISTS acp_shared.acp_output_rules (
@@ -127,6 +143,8 @@ def cur():
         c.execute(migration_body(239))         # legacy-table grants
         c.execute(migration_body(241))
         c.execute(migration_body(262))         # idempotent re-apply (its guards run on the replayed state)
+        c.execute(migration_body(265))         # 241's loop revoked the platform reads, 239's REVOKE year_plan's
+        c.execute(migration_body(266))         # INSERT: 265 puts them back; 266 re-applies on the replayed state
         yield c
     finally:
         conn.rollback()
@@ -164,6 +182,21 @@ def _seed(c, tid):
               "VALUES (%s, 'default', 1, true, 'aa817 brand')", (tid,))
     c.execute("INSERT INTO shared.tenant_seo_config (tenant_id, target_market) VALUES (%s, %s::jsonb)",
               (tid, json.dumps({"countries": ["UK"]})))
+    # 265 (AA-859 wave 4): a Subject on a platform Segment, a year / quarter plan with one version, a trip page
+    segment = f"aa817-seg-{uuid.uuid4().hex[:10]}"
+    c.execute("INSERT INTO acp_contract.atom_segment (segment_id, canonical_place, canonical_action) "
+              "VALUES (%s, 'Hanoi', 'walk')", (segment,))
+    c.execute("INSERT INTO acp_shared.subject (tenant_id, segment_id, channel, state, cleared_bar_reason) "
+              "VALUES (%s, %s, 'blog', 'proposed', '{}'::jsonb)", (tid, segment))
+    c.execute("INSERT INTO acp_shared.year_plan (tenant_id, year) VALUES (%s, 2031) RETURNING year_plan_id", (tid,))
+    year_plan = c.fetchone()[0]
+    c.execute("INSERT INTO acp_shared.quarter_plan (tenant_id, year, quarter, year_plan_id) VALUES (%s, 2031, 1, %s) "
+              "RETURNING plan_id", (tid, year_plan))
+    plan = c.fetchone()[0]
+    c.execute("INSERT INTO acp_shared.quarter_plan_version (plan_id, version_no, payload, source, approval_status) "
+              "VALUES (%s, 1, '{}'::jsonb, 'standard', 'pending')", (plan,))
+    c.execute("INSERT INTO acp_deliver.tenant_tour_pages (tenant_id, tour_id, url) VALUES (%s, %s, %s)",
+              (tid, str(uuid.uuid4()), f"https://example.invalid/{tid[:8]}"))
 
 
 @pytest.fixture
@@ -558,9 +591,9 @@ def _ours(tenants, a, b):
 
 
 def test_every_rls_table_is_covered(cur):
-    """The 18 RLS tables of Dev after 262 (AA-817 plan §0 + angle_gate_option + tenant_brand_rules /
-    tenant_seo_config) all have RLS here, and none is owned by the tenant role."""
-    assert len(ALL_RLS_TABLES) == 18
+    """The 24 RLS tables of Dev after 266 (AA-817 plan §0 + angle_gate_option + tenant_brand_rules /
+    tenant_seo_config + the five 265 tables + tour_atoms) all have RLS here, and none is owned by the tenant role."""
+    assert len(ALL_RLS_TABLES) == 24
     for table in sorted(ALL_RLS_TABLES):
         cur.execute("SELECT c.relrowsecurity, pg_has_role(%s, c.relowner, 'USAGE') FROM pg_class c "
                     "WHERE c.oid = %s::regclass", (TENANT_ROLE, table))
@@ -632,13 +665,180 @@ def test_output_rules_is_deny_all_for_the_tenant_role(cur):
 def test_tenant_role_has_no_privilege_on_any_relation_without_rls(cur):
     """AA-859 plan D1 (241): without RLS a grant to the tenant role is a grant on every tenant's rows, so
     it holds none (table or column level), the catalog contract (SELECT on catalog_owner's catalog.*
-    views, 225 / 228) excepted. Also holds after test_aa679 / test_aa712_228 re-apply 225 / 228 with
-    commit: they grant only that contract."""
-    cur.execute(NO_PRIVILEGE_WITHOUT_RLS_SQL)
+    views, 225 / 228) and (wave 4, 265) the table-level SELECT on the platform read allowlist excepted. Also holds
+    after test_aa679 / test_aa712_228 re-apply 225 / 228 with commit: they grant only that contract."""
+    cur.execute(NO_PRIVILEGE_WITHOUT_RLS_SQL_V2)
     assert cur.fetchall() == []
+    for rel in PLATFORM_READ_ALLOWLIST:        # the allowlist is used, and nothing beyond SELECT
+        cur.execute("SELECT has_table_privilege(%s, %s, 'SELECT'), "
+                    "has_table_privilege(%s, %s, 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER'), "
+                    "has_any_column_privilege(%s, %s, 'INSERT, UPDATE, REFERENCES')",
+                    (TENANT_ROLE, rel, TENANT_ROLE, rel, TENANT_ROLE, rel))
+        # place_card: column-level SELECT (card_id, status) only, not the staff columns (review S247)
+        assert cur.fetchone() == (rel not in PLATFORM_READ_COLUMNS, False, False), rel
+    for rel, cols in PLATFORM_READ_COLUMNS.items():
+        cur.execute("SELECT att.attname FROM pg_attribute att WHERE att.attrelid = %s::regclass AND att.attnum > 0 "
+                    "AND NOT att.attisdropped AND has_column_privilege(%s, att.attrelid, att.attnum, 'SELECT')",
+                    (rel, TENANT_ROLE))
+        assert sorted(r[0] for r in cur.fetchall()) == sorted(cols), rel
 
 
 def test_tenant_pool_still_reads_angle_gate_option(cur):
     """The publish-log list and the latest-piece read join angle_gate_option on the tenant pool."""
     cur.execute("SELECT has_table_privilege(%s, 'acp_shared.angle_gate_option', 'SELECT')", (TENANT_ROLE,))
     assert cur.fetchone()[0]
+
+
+# ── 265 (AA-859 wave 4): the Slate / planning writes on the tenant role ─────────────────────────────────
+# The statements of services/acp_shared/slate.py (pick / cut) and services/acp_planning/quarter.py (save / approve),
+# verbatim but for the placeholders, plus WHERE-less variants that drop the route's own tenant filter on purpose.
+
+def _own(c, table, col, tid):
+    c.execute(f"SELECT {col} FROM {table} WHERE tenant_id = %s", (tid,))
+    return c.fetchone()[0]
+
+
+def test_subject_pick_and_cut_statements_run_on_the_tenant_role(cur, two_tenants):
+    from services.acp_shared import slate
+    a, b = two_tenants
+    sid = _own(cur, "acp_shared.subject", "subject_id", a)
+    with _as_tenant(cur, a) as c:
+        c.execute(slate._SUBJECT_LOCK_SQL.replace("$1::uuid", "%s::uuid").replace("$2::uuid", "%s::uuid"), (sid, a))
+        assert c.fetchone()[2] == "proposed"
+        c.execute(slate._SUBJECT_PICKED_SQL.replace("$1::uuid", "%s::uuid").replace("$2::uuid", "%s::uuid"), (sid, a))
+        assert c.rowcount == 1
+    for guc in (b, str(uuid.uuid4()), ""):
+        with _as_tenant(cur, guc) as c:
+            c.execute("UPDATE acp_shared.subject SET state = 'cut'")        # no WHERE on purpose
+            assert c.rowcount == (1 if guc == b else 0), guc
+            c.execute("SELECT subject_id FROM acp_shared.subject WHERE subject_id = %s FOR UPDATE", (sid,))
+            assert c.fetchall() == [], "another tenant can neither see nor lock a's Subject"
+
+
+def test_planning_save_and_approve_statements_run_on_the_tenant_role(cur, two_tenants):
+    from services.acp_planning import quarter
+    a, b = two_tenants
+
+    def _run(c, sql, *args):   # asyncpg $n placeholders -> psycopg2 named ones, so their order does not matter
+        for i in range(9, 0, -1):
+            sql = sql.replace(f"${i}", f"%(p{i})s")
+        c.execute(sql, {f"p{i}": v for i, v in enumerate(args, 1)})
+    with _as_tenant(cur, a) as c:
+        _run(c, quarter._YEAR_PLAN_UPSERT_SQL, a, 2031)                     # conflict path (seeded row)
+        _run(c, quarter._YEAR_PLAN_ID_SQL, a, 2031)
+        year_plan = c.fetchone()[0]
+        _run(c, quarter._QUARTER_PLAN_UPSERT_SQL, a, 2031, 1, year_plan)
+        _run(c, quarter._QUARTER_PLAN_UPSERT_SQL, a, 2031, 2, year_plan)    # new row
+        _run(c, quarter._QUARTER_PLAN_ID_SQL, a, 2031, 1)
+        plan = c.fetchone()[0]
+        _run(c, quarter._NEXT_VERSION_NO_SQL, plan)
+        assert c.fetchone()[0] == 2
+        _run(c, quarter._VERSION_INSERT_SQL, plan, 2, "{}", "override")
+        version = c.fetchone()[0]
+        _run(c, quarter._VERSION_LOCK_SQL, version)
+        assert c.fetchone()[1] == "pending"
+        _run(c, quarter._VERSION_APPROVE_SQL, version, f"tenant:{a}")
+        assert c.rowcount == 1
+        _run(c, quarter._CURRENT_VERSION_SQL, plan, version)
+        assert c.rowcount == 1
+        _run(c, quarter._APPROVED_PLAN_SQL, a, 2031, 1)
+        assert c.fetchone() is not None
+        c.execute("UPDATE acp_shared.quarter_plan_version SET approval_status = approval_status")   # no WHERE
+        assert c.rowcount == 2, "only a's two versions"
+    with _as_tenant(cur, b) as c:                                          # b sees none of a's plan rows
+        c.execute("SELECT count(*) FROM acp_shared.quarter_plan_version v JOIN acp_shared.quarter_plan qp "
+                  "USING (plan_id) WHERE qp.tenant_id = %s", (a,))
+        assert c.fetchone()[0] == 0
+    plan_a = _own(cur, "acp_shared.quarter_plan", "plan_id", a)
+    with _as_tenant(cur, b) as c:                                          # a version under a's plan (WITH CHECK)
+        _rls_violation(c, "INSERT INTO acp_shared.quarter_plan_version (plan_id, version_no, payload, source, "
+                          "approval_status) VALUES (%s, 9, '{}'::jsonb, 'standard', 'pending')", (plan_a,))
+    with _as_tenant(cur, a) as c:                                          # a plan for another tenant
+        _rls_violation(c, "INSERT INTO acp_shared.quarter_plan (tenant_id, year, quarter) VALUES (%s, 2032, 1)", (b,))
+    with _as_tenant(cur, "") as c:
+        _rls_violation(c, "INSERT INTO acp_shared.year_plan (tenant_id, year) VALUES (%s, 2033)", (a,))
+
+
+@pytest.mark.parametrize("sql,params", [
+    ("UPDATE acp_shared.subject SET tenant_id = %s", "b"),
+    ("UPDATE acp_shared.subject SET score = 1", None),
+    ("INSERT INTO acp_shared.subject (tenant_id, route_id, channel, cleared_bar_reason) VALUES (%s, 'r', 'blog', "
+     "'{}'::jsonb)", "a"),
+    ("DELETE FROM acp_shared.subject", None),
+    ("TRUNCATE acp_shared.subject", None),
+    ("UPDATE acp_shared.year_plan SET tenant_id = %s", "b"),
+    ("DELETE FROM acp_shared.year_plan", None),
+    ("UPDATE acp_shared.quarter_plan SET tenant_id = %s", "b"),
+    ("UPDATE acp_shared.quarter_plan SET year = 2040", None),
+    ("DELETE FROM acp_shared.quarter_plan", None),
+    ("UPDATE acp_shared.quarter_plan_version SET payload = '{}'::jsonb", None),
+    ("UPDATE acp_shared.quarter_plan_version SET plan_id = plan_id", None),
+    ("DELETE FROM acp_shared.quarter_plan_version", None),
+    ("UPDATE acp_deliver.tenant_tour_pages SET url_alive = false", None),
+    ("INSERT INTO acp_deliver.tenant_tour_pages (tenant_id, tour_id, url) VALUES (%s, gen_random_uuid(), 'x')", "a"),
+    ("DELETE FROM acp_deliver.tenant_tour_pages", None),
+    ("TRUNCATE acp_deliver.tenant_tour_pages", None),
+])
+def test_planning_columns_outside_the_grant_are_refused(cur, two_tenants, sql, params):
+    """265 grants exactly the moved statements' columns: tenant_id is never updatable, no DELETE / TRUNCATE (which RLS
+    does not filter), tenant_tour_pages is read only for the tenant role (the trip page / publish write it on MAIN)."""
+    a, b = two_tenants
+    args = () if params is None else ({"a": a, "b": b}[params],)
+    with _as_tenant(cur, a) as c:
+        with pytest.raises(psycopg2.errors.InsufficientPrivilege, match="permission denied"):
+            c.execute(sql, args)
+
+
+def test_tenant_tour_pages_show_own_and_master_pages_only(cur, two_tenants):
+    a, b = two_tenants
+    cur.execute("INSERT INTO acp_deliver.tenant_tour_pages (tenant_id, tour_id, url) VALUES (%s, %s, 'https://m')",
+                (MASTER_TENANT, str(uuid.uuid4())))
+    ours = {a, b, MASTER_TENANT}
+    assert _visible_tenants(cur, "acp_deliver.tenant_tour_pages", a) & ours == {a, MASTER_TENANT}
+    assert _visible_tenants(cur, "acp_deliver.tenant_tour_pages", b) & ours == {b, MASTER_TENANT}
+    assert _visible_tenants(cur, "acp_deliver.tenant_tour_pages", str(uuid.uuid4())) & ours == {MASTER_TENANT}
+    assert _visible_tenants(cur, "acp_deliver.tenant_tour_pages", "") & ours == {MASTER_TENANT}
+
+
+# ── 266 (AA-859 wave 4): tour_atoms, every platform atom + the tenant's own, read only ──────────────────
+
+@pytest.fixture
+def atoms(cur, two_tenants):
+    a, b = two_tenants
+    cur.execute("INSERT INTO silver_aa_internal.raw_tours (tenant_id, batch_id, src_name) "
+                "VALUES (%s, gen_random_uuid(), 'aa859-266') RETURNING tour_id", (MASTER_TENANT,))
+    tour = cur.fetchone()[0]
+    ids = {}
+    for scope in ("platform", a, b):
+        atom = f"aa859-266-{uuid.uuid4().hex[:10]}"
+        cur.execute("INSERT INTO acp_contract.tour_atoms (atom_id, tour_id, owner_scope, text) "
+                    "VALUES (%s, %s, %s, 'x')", (atom, tour, scope))
+        ids[scope] = atom
+    return a, b, ids
+
+
+def _visible_atoms(c, guc, ids):
+    with _as_tenant(c, guc):
+        c.execute(f"SELECT atom_id FROM {ATOMS}")          # no WHERE on purpose
+        return {r[0] for r in c.fetchall()} & set(ids.values())
+
+
+def test_tour_atoms_platform_plus_own_only(cur, atoms):
+    a, b, ids = atoms
+    assert _visible_atoms(cur, a, ids) == {ids["platform"], ids[a]}
+    assert _visible_atoms(cur, b, ids) == {ids["platform"], ids[b]}
+    assert _visible_atoms(cur, str(uuid.uuid4()), ids) == {ids["platform"]}
+    assert _visible_atoms(cur, "", ids) == {ids["platform"]}, "'' is no tenant: platform atoms only, no 22P02"
+
+
+@pytest.mark.parametrize("sql", [
+    f"UPDATE {ATOMS} SET weight = weight",
+    f"DELETE FROM {ATOMS}",
+    f"INSERT INTO {ATOMS} (atom_id, tour_id, text) SELECT 'zz', tour_id, 'x' FROM {ATOMS} LIMIT 1",
+    f"TRUNCATE {ATOMS}",
+])
+def test_tour_atoms_are_read_only_for_the_tenant_role(cur, atoms, sql):
+    a, _, _ = atoms
+    with _as_tenant(cur, a) as c:
+        with pytest.raises(psycopg2.errors.InsufficientPrivilege, match="permission denied"):
+            c.execute(sql)

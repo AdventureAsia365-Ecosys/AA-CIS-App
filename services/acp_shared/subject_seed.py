@@ -192,11 +192,18 @@ def choose_route_anchor(place: Optional[str], members: Iterable[Member], route_t
 
 # Live (active tour, not deleted, not an empty marker), non-alias members of the given Segments,
 # with the tour's country and the atom's place card. owner_scope as AA-567: platform or this tenant.
+# AA-859 wave 4 (C9) — the rule of acp_contract.v_active_tour_atoms (migration 203: a live master tour, not
+# deleted, not an empty marker) inlined on the base table, the 225 / 253 / 256 precedent: the view runs with its
+# owner's rights (RLS bypassed) and 241 revoked the tenant role on it, while the pick runs on the tenant pool
+# (SUBJECT_DECIDE_FLAG), where 266's policies on tour_atoms and 239's master read on published_tours apply.
+# Same rows as the view for the main pool and the worker (cis_app reads every row of both tables).
 _MEMBERS_SQL = """
     SELECT m.segment_id, ta.atom_id, ta.tour_id::text AS tour_id, ta.place, ta.evidence,
            rt.country, apc.card_id::text AS card_id
     FROM acp_contract.atom_segment_member m
-    JOIN acp_contract.v_active_tour_atoms ta ON ta.atom_id = m.atom_id
+    JOIN acp_contract.tour_atoms ta ON ta.atom_id = m.atom_id
+    JOIN gold_aa_internal.published_tours pt
+      ON pt.tour_id = ta.tour_id AND pt.master_status = 'active' AND pt.deleted_at IS NULL
     LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = ta.tour_id
     LEFT JOIN acp_shared.atom_place_card apc ON apc.atom_id = ta.atom_id
     WHERE m.segment_id = ANY($1::text[]) AND NOT m.is_alias
@@ -231,10 +238,28 @@ async def load_alias_cards(conn, places: Iterable[Optional[str]]) -> dict[tuple[
     if not forms:
         return {}
     try:
-        rows = await conn.fetch(_ALIAS_SQL, forms)
+        if _in_transaction(conn):
+            # AA-859 wave 4 (C10) — a failed statement aborts the caller's whole transaction (the pick on the
+            # tenant pool): a savepoint keeps the catch below from leaving it unusable.
+            async with conn.transaction():
+                rows = await conn.fetch(_ALIAS_SQL, forms)
+        else:
+            rows = await conn.fetch(_ALIAS_SQL, forms)
     except Exception:  # the alias table is an aid, never a reason to fail a Slate read or a pick
         return {}
     return {(r["alias_norm"], r["country_norm"]): r["card_id"] for r in rows}
+
+
+def _in_transaction(conn) -> bool:
+    """True for an asyncpg connection (or pool proxy) inside a transaction. Looked up on the class, so a test
+    double without the method (or a mock that would answer anything) counts as "not in a transaction"."""
+    check = getattr(type(conn), "is_in_transaction", None)
+    if not callable(check):
+        return False
+    try:
+        return check(conn) is True
+    except Exception:
+        return False
 
 
 __all__ = [

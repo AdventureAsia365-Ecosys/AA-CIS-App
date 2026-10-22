@@ -175,12 +175,13 @@ class TestRequestSlateProposal:
 async def test_get_slate_never_proposes_inline():
     request = MagicMock()
     request.app.state.pool = _pool(AsyncMock())
+    request.app.state.redis.get = AsyncMock(return_value="false")  # AA-859 wave 4: SLATE_READS_FLAG explicitly OFF
     with patch.object(v1_planning, "request_slate_proposal",
                       new=AsyncMock(return_value=_job("running"))) as req, \
          patch.object(slate, "propose_slate", new=AsyncMock()) as propose, \
          patch.object(v1_planning, "_resolve_config",
-                      new=AsyncMock(return_value=MagicMock(capacity_posts_per_week=3))), \
-         patch.object(v1_planning, "fetch_slate", new=AsyncMock(return_value={"blog": {}})), \
+                      new=AsyncMock(return_value=MagicMock(capacity_posts_per_week=3, channels=["blog"]))), \
+         patch.object(v1_planning, "fetch_slate_on", new=AsyncMock(return_value={"blog": {}})), \
          patch.object(v1_planning, "last_proposal",
                       new=AsyncMock(return_value={"result": {"unmatched_markets": ["XX"]}, "finished_at": None})):
         out = await v1_planning.get_slate(request, tenant={"sub": str(TENANT)})

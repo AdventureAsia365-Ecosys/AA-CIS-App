@@ -24,17 +24,24 @@ endpoint).
 GET /v1/marketplace — one tour per row (latest tenant_tour_versions per
 published_tour_id), with that tour's owner_scope=tenant_id atom aggregate and a
 reused (not reimplemented) price/runway estimate.
+
+AA-859 wave 4 (S247): the tours / atoms query runs on the aa_app_user tenant pool behind MARKETPLACE_FLAG
+(`aa859:marketplace_pool`, fail closed; needs migration 266, RLS on tour_atoms). posts_per_week stays on the
+main pool (shared.tenants, the tenant's own setting, D2).
 """
 from decimal import Decimal
 from uuid import UUID
 
+import structlog
 from fastapi import APIRouter, Depends, Request
 
+from api.core.aa544_tenant_pool import MARKETPLACE_FLAG, acquire_scoped_conn
 from api.routers._tenant_projection import project_version, tenant_version_state  # AA-796 — shared rule
 from api.routers.v1_tours import get_tenant
 from services.acp_shared.marketplace_estimates import parse_price, runway_months
 
 router = APIRouter(prefix="/v1/marketplace", tags=["tenant-marketplace"])
+logger = structlog.get_logger()
 
 
 def _safe(row) -> dict:
@@ -62,10 +69,11 @@ def _safe(row) -> dict:
 # the result (COALESCE to 0) rather than dropping it — a rewritten tour with no
 # atoms yet is a real, useful gap signal for T7 planning (ADR §0.3's stated
 # purpose), not noise to filter out.
-# INTENTIONAL: the JOIN into published_tours/raw_tours below reads a shared reference pool
-# (100% sentinel tenant_id=aa_internal), not per-tenant data — the real per-tenant boundary is
-# already drawn by tenant_tour_versions.tenant_id above it. KHÔNG BAO GIỜ chuyển sang RLS pool
-# thật cho các query này — xem AA-578.
+# The JOIN into published_tours/raw_tours below reads a shared reference pool (100% sentinel tenant_id =
+# aa_internal), not per-tenant data — the real per-tenant boundary is drawn by tenant_tour_versions.tenant_id.
+# AA-859 wave 4: it runs on the RLS tenant pool (MARKETPLACE_FLAG): since 239 the tenant role reads the AA master
+# rows of published_tours / raw_tours, and since 266 the platform atoms plus its own (this query counts its own
+# only). The old "never move this to the RLS pool, AA-578" note predates 239 and no longer holds.
 _MARKETPLACE_QUERY = """
     WITH latest_versions AS (
         SELECT DISTINCT ON (ttv.published_tour_id)
@@ -108,11 +116,14 @@ async def get_marketplace(request: Request, tenant=Depends(get_tenant)):
     tenant_id = tenant["sub"]
     pool = request.app.state.pool
 
+    # AA-859 MAIN exception (D2): the tenant's own posts_per_week (shared.tenants, no RLS, no tenant-role grant)
     async with pool.acquire() as conn:
         tenant_row = await conn.fetchrow(
             "SELECT posts_per_week FROM shared.tenants WHERE tenant_id = $1::uuid",
             tenant_id,
         )
+    async with acquire_scoped_conn(request, str(tenant_id), MARKETPLACE_FLAG, fail_closed=True) as (conn, used):
+        logger.info("aa859_marketplace_read", tenant_id=str(tenant_id), used_tenant_pool=used)
         rows = await conn.fetch(_MARKETPLACE_QUERY, tenant_id, tenant_id)
 
     posts_per_week = tenant_row["posts_per_week"] if tenant_row else None

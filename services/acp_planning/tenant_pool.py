@@ -47,13 +47,21 @@ from .models import AtomRecord, Trip
 from .quarter import _row_to_atom
 from .runway import _row_to_trip
 
-# INTENTIONAL: the JOIN into published_tours/raw_tours below reads a shared reference pool
-# (100% sentinel tenant_id=aa_internal), not per-tenant data — the real per-tenant boundary is
-# already drawn by tenant_tour_versions.tenant_id above it. This is the query behind T7's live
-# quarterly reallocation suggestion panel (trip_reallocation.py -> fetch_tenant_trips(), real
-# CloudWatch traffic confirmed AA-578) — KHÔNG BAO GIỜ chuyển sang RLS pool thật cho query này —
-# xem AA-578.
-_TENANT_TRIP_QUERY = """
+# The JOIN into published_tours/raw_tours below reads a shared reference pool (100% sentinel tenant_id =
+# aa_internal), not per-tenant data — the real per-tenant boundary is drawn by tenant_tour_versions.tenant_id.
+# This is the query behind T7's quarterly reallocation panel (trip_reallocation.py), the T10 review list / detail
+# and the T8 trip context. AA-859 wave 4: it runs on the RLS tenant pool too (TRIP_REALLOCATION_FLAG,
+# REVIEWS_FLAG): since 239 the tenant role reads the AA master rows of published_tours / raw_tours
+# (aa_app_user_aa_master_read), and since 265 tenant_tour_pages through its own policy (own rows + the master's).
+# The old "never move this to the RLS pool, AA-578" note predates 239 and no longer holds.
+#
+# AA-859 wave 4 (C12) — the trip page is one LATERAL row per tour: the tenant's own page first, else the AA
+# master's. The old LEFT JOIN on tour_id alone returned one duplicate trip row per tenant with a page for that
+# tour (on the main pool). $1 is the tenant as uuid (tenant_tour_versions), $2 the same tenant as text
+# (tenant_tour_pages.tenant_id is text): one type per placeholder (the asyncpg lesson of
+# content_writing._TENANT_REVIEWS_QUERY).
+_MASTER_TENANT_TEXT = "00000000-0000-0000-0000-000000000001"
+_TENANT_TRIP_QUERY = f"""
     WITH latest_versions AS (
         SELECT DISTINCT ON (ttv.published_tour_id) ttv.published_tour_id
         FROM gold_aa_internal.tenant_tour_versions ttv
@@ -67,7 +75,13 @@ _TENANT_TRIP_QUERY = """
     FROM latest_versions lv
     JOIN gold_aa_internal.published_tours pt ON pt.id = lv.published_tour_id
     JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
-    LEFT JOIN acp_deliver.tenant_tour_pages ttp ON ttp.tour_id = rt.tour_id
+    LEFT JOIN LATERAL (
+        SELECT p.url, p.url_alive
+        FROM acp_deliver.tenant_tour_pages p
+        WHERE p.tour_id = rt.tour_id AND p.tenant_id IN ($2::text, '{_MASTER_TENANT_TEXT}')
+        ORDER BY (p.tenant_id = $2::text) DESC
+        LIMIT 1
+    ) ttp ON true
 """
 
 _TENANT_ATOM_QUERY = """
@@ -139,12 +153,28 @@ def _month_bounds(year: int, month: int) -> tuple[date, date]:
     return start, end
 
 
+async def fetch_tenant_trips_on(conn, tenant_id: UUID) -> list[Trip]:
+    """fetch_tenant_trips() on the caller's connection (AA-859 wave 4: the tenant pool's block)."""
+    rows = await conn.fetch(_TENANT_TRIP_QUERY, tenant_id, str(tenant_id))
+    return [_row_to_trip(r) for r in rows]
+
+
 async def fetch_tenant_trips(tenant_id: UUID, pool) -> list[Trip]:
     """Replaces `runway.fetch_trips()` for T7 — one tenant's own rewritten tours only (via
     `tenant_tour_versions`), not the platform-wide 763-trip catalog."""
     async with pool.acquire() as conn:
-        rows = await conn.fetch(_TENANT_TRIP_QUERY, tenant_id)
-    return [_row_to_trip(r) for r in rows]
+        return await fetch_tenant_trips_on(conn, tenant_id)
+
+
+async def fetch_tenant_atoms_by_trip_on(conn, tenant_id: UUID) -> dict[UUID, list[AtomRecord]]:
+    """fetch_tenant_atoms_by_trip() on the caller's connection (AA-859 wave 4: the tenant pool's block, where
+    266 shows the tenant role its own atoms and the platform's; this query reads its own only)."""
+    rows = await conn.fetch(_TENANT_ATOM_QUERY, str(tenant_id))
+    by_trip: dict[UUID, list[AtomRecord]] = {}
+    for r in rows:
+        atom = _row_to_atom(r)
+        by_trip.setdefault(atom.trip_id, []).append(atom)
+    return by_trip
 
 
 async def fetch_tenant_atoms_by_trip(tenant_id: UUID, pool) -> dict[UUID, list[AtomRecord]]:
@@ -153,12 +183,7 @@ async def fetch_tenant_atoms_by_trip(tenant_id: UUID, pool) -> dict[UUID, list[A
     param (matches `tour_atoms.owner_scope`'s column type — free-text per ADR-2026-038 Hướng B,
     not a UUID FK — asyncpg will stringify a UUID param automatically for a text column)."""
     async with pool.acquire() as conn:
-        rows = await conn.fetch(_TENANT_ATOM_QUERY, str(tenant_id))
-    by_trip: dict[UUID, list[AtomRecord]] = {}
-    for r in rows:
-        atom = _row_to_atom(r)
-        by_trip.setdefault(atom.trip_id, []).append(atom)
-    return by_trip
+        return await fetch_tenant_atoms_by_trip_on(conn, tenant_id)
 
 
 async def fetch_used_atom_ids(tenant_id: UUID, year: int, month: int, pool) -> dict[str, UsedAtom]:
@@ -175,4 +200,5 @@ async def fetch_used_atom_ids(tenant_id: UUID, year: int, month: int, pool) -> d
     }
 
 
-__all__ = ["fetch_tenant_trips", "fetch_tenant_atoms_by_trip", "fetch_used_atom_ids", "UsedAtom"]
+__all__ = ["fetch_tenant_trips", "fetch_tenant_trips_on", "fetch_tenant_atoms_by_trip", "fetch_tenant_atoms_by_trip_on",
+           "fetch_used_atom_ids", "UsedAtom"]

@@ -1,5 +1,6 @@
 """AA-532 — services/acp_contract/route_detection.py's DB-facing functions
-(run_route_detection/create_route_pick), switched from DELETE+INSERT-whole to versioning
+(run_route_detection; create_route_pick was retired with the route hub, AA-859 wave 4), switched from
+DELETE+INSERT-whole to versioning
 (supersede, never delete) to stop a real FK violation against acp_shared.subject.route_id
 (migration 133) on any tenant with an active Subject.
 
@@ -198,19 +199,3 @@ class TestRunRouteDetectionVersioning:
         insert_row = conn.executemany.call_args.args[1][0]
         assert insert_row[0] == f"{base_id}:v2"  # NOT the raw base_id that still exists superseded
         assert insert_row[-1] == 2
-
-
-class TestCreateRoutePick:
-    @pytest.mark.asyncio
-    async def test_superseded_route_returns_none_not_a_stale_pick(self):
-        """AA-532 — a route_id that still exists as a row (never deleted) but has been
-        superseded must not be pick-able as if it were still current."""
-        conn = AsyncMock()
-        conn.fetchrow.return_value = None  # WHERE ... AND superseded_at IS NULL matches 0 rows
-        pool = _make_pool(conn)
-
-        result = await route_detection.create_route_pick(str(uuid.uuid4()), "some-route-id", pool)
-
-        assert result is None
-        query = conn.fetchrow.call_args.args[0]
-        assert "superseded_at IS NULL" in query

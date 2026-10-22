@@ -170,10 +170,11 @@ async def _tenant_tour_ids(tenant_id: UUID, conn) -> list:
     table's own tenant_id filter — must now be explicit here, same join
     `segment_matching.py::run_segment_matching()`'s own docstring already established as "the
     tours this tenant made their own"."""
-    # INTENTIONAL: the JOIN into published_tours below reads a shared reference pool (100%
-    # sentinel tenant_id=aa_internal), not per-tenant data — the real per-tenant boundary is
-    # already drawn by tenant_tour_versions.tenant_id above it. KHÔNG BAO GIỜ chuyển sang RLS
-    # pool thật cho query này — xem AA-578.
+    # The JOIN into published_tours below reads a shared reference pool (100% sentinel tenant_id =
+    # aa_internal), not per-tenant data — the real per-tenant boundary is drawn by
+    # tenant_tour_versions.tenant_id. AA-859 wave 4: it also runs on the RLS tenant pool (pick,
+    # SUBJECT_DECIDE_FLAG): since 239 the tenant role reads the AA master rows of published_tours, so
+    # the old "never move this to the RLS pool, AA-578" note no longer holds (W5a moved the same join).
     rows = await conn.fetch("""
         SELECT pt.tour_id
         FROM gold_aa_internal.tenant_tour_versions ttv
@@ -390,6 +391,17 @@ async def _fetch_segment_hub_map(tenant_id: UUID, pool) -> dict[str, str]:
     }
 
 
+def enabled_channels(configured) -> list[str]:
+    """AA-840 — the Channels a tenant's Slate proposes for, in `CHANNEL_BARS` order, from its configured
+    `acp_shared.tenant_config.channels` (None / empty = never configured = every Channel; unknown values are
+    dropped). Pure, so the tenant-pool Slate read (AA-859 wave 4) can apply it to the config it read on the main
+    pool (fetch_tenant_planning_config, D2) without reading tenant_config on the tenant connection."""
+    if not configured:
+        return list(CHANNEL_BARS)
+    wanted = set(configured)
+    return [channel for channel in CHANNEL_BARS if channel in wanted]
+
+
 async def _tenant_enabled_channels(tenant_id: UUID, conn) -> list[str]:
     """AA-840 — the Channels this tenant's Slate proposes for, in `CHANNEL_BARS` order.
 
@@ -400,10 +412,7 @@ async def _tenant_enabled_channels(tenant_id: UUID, conn) -> list[str]:
     configured = await conn.fetchval(
         "SELECT channels FROM acp_shared.tenant_config WHERE tenant_id = $1::uuid", tenant_id,
     )
-    if not configured:
-        return list(CHANNEL_BARS)
-    wanted = set(configured)
-    return [channel for channel in CHANNEL_BARS if channel in wanted]
+    return enabled_channels(configured)
 
 
 def _hub_key(candidate: Candidate, hub_of: dict[str, str]) -> str | None:
@@ -721,23 +730,39 @@ async def fetch_slate(tenant_id: UUID, pool) -> dict:
     tenant's channel config, see `_tenant_enabled_channels()`), and a still-`proposed` Subject on a
     Channel the tenant has switched off is not returned (the next `propose_slate()` deletes it);
     its picked/used rows still are.
+
+    AA-859 wave 4 — the reads are in fetch_slate_on() (the tenant pool's block behind SLATE_READS_FLAG, or a
+    main-pool connection); this wrapper reads the channel config on the same main connection, as before.
     """
     async with pool.acquire() as conn:
-        enabled = set(await _tenant_enabled_channels(tenant_id, conn))
-        rows = await conn.fetch("""
-            SELECT s.subject_id, s.channel, s.state, s.score, s.cleared_bar_reason,
-                   s.segment_id, s.route_id, s.created_at,
-                   asg.canonical_place, asg.canonical_action,
-                   r.hub_name, r.ordered_segment_ids, r.tour_id
-            FROM acp_shared.subject s
-            LEFT JOIN acp_contract.atom_segment asg ON asg.segment_id = s.segment_id
-            LEFT JOIN acp_contract.route r ON r.route_id = s.route_id
-            WHERE s.tenant_id = $1::uuid AND s.state != 'cut'
-            ORDER BY s.channel, s.score ASC NULLS LAST, s.subject_id
-        """, tenant_id)
-        # AA-857 — a Subject stored on an id that has since merged into another (atom_segment_alias)
-        # is shown on the live id, with the live Segment's label (the old row keeps its old label).
-        moved = await live_segment_labels(conn, [r["segment_id"] for r in rows])
+        enabled = await _tenant_enabled_channels(tenant_id, conn)
+        return await fetch_slate_on(conn, tenant_id, enabled)
+
+
+# AA-859 wave 4 — module level so the tests can mutate it (forgotten-WHERE check). On the tenant pool RLS on
+# acp_shared.subject (265) holds the boundary even without `s.tenant_id = $1`; atom_segment / route are platform
+# tables (265's platform read allowlist).
+_SLATE_SUBJECTS_SQL = """
+    SELECT s.subject_id, s.channel, s.state, s.score, s.cleared_bar_reason,
+           s.segment_id, s.route_id, s.created_at,
+           asg.canonical_place, asg.canonical_action,
+           r.hub_name, r.ordered_segment_ids, r.tour_id
+    FROM acp_shared.subject s
+    LEFT JOIN acp_contract.atom_segment asg ON asg.segment_id = s.segment_id
+    LEFT JOIN acp_contract.route r ON r.route_id = s.route_id
+    WHERE s.tenant_id = $1::uuid AND s.state != 'cut'
+    ORDER BY s.channel, s.score ASC NULLS LAST, s.subject_id
+"""
+
+
+async def fetch_slate_on(conn, tenant_id: UUID, enabled_channel_list) -> dict:
+    """fetch_slate()'s reads on `conn` with the tenant's enabled Channels already resolved (`enabled_channels()`
+    of its config): the Subject rows and the live labels of merged Segment ids."""
+    enabled = set(enabled_channel_list)
+    rows = await conn.fetch(_SLATE_SUBJECTS_SQL, tenant_id)
+    # AA-857 — a Subject stored on an id that has since merged into another (atom_segment_alias)
+    # is shown on the live id, with the live Segment's label (the old row keeps its old label).
+    moved = await live_segment_labels(conn, [r["segment_id"] for r in rows])
 
     by_channel: dict[str, list[dict]] = {c: [] for c in CHANNEL_BARS}
     for r in rows:
@@ -782,6 +807,40 @@ class SubjectNotEligibleError(Exception):
     """The Subject exists but is not in `state = 'proposed'` (already picked/used/cut)."""
 
 
+# AA-859 wave 4 — module level so the tests can mutate them (forgotten-WHERE check). Each subject statement keeps
+# its tenant filter; on the tenant pool RLS on acp_shared.subject (265) also holds the boundary.
+# The row lock serializes a pick / cut with the t7_slate proposal's DELETE of 'proposed' rows (it waits, then sees
+# 'picked') and with a second pick / cut of the same Subject (the second sees the first one's state: 409).
+_SUBJECT_LOCK_SQL = """
+    SELECT subject_id, channel, state, segment_id, route_id
+    FROM acp_shared.subject WHERE subject_id = $1::uuid AND tenant_id = $2::uuid
+    FOR UPDATE
+"""
+_SUBJECT_PICKED_SQL = """
+    UPDATE acp_shared.subject SET state = 'picked'
+    WHERE subject_id = $1::uuid AND tenant_id = $2::uuid AND state = 'proposed'
+"""
+_SUBJECT_CUT_SQL = """
+    UPDATE acp_shared.subject SET state = 'cut'
+    WHERE subject_id = $1::uuid AND tenant_id = $2::uuid AND state = 'proposed'
+    RETURNING subject_id, channel, state
+"""
+_SUBJECT_STATE_SQL = """
+    SELECT state FROM acp_shared.subject WHERE subject_id = $1::uuid AND tenant_id = $2::uuid
+"""
+_PICK_REQUEST_INSERT_SQL = """
+    INSERT INTO acp_shared.angle_gate_request
+        (tenant_id, atom_id, trip_id, channel, subject_id, route_segment_ids)
+    VALUES ($1::uuid, $2, $3::uuid, $4, $5::uuid, $6::jsonb)
+    RETURNING request_id, tenant_id, atom_id, trip_id, channel, status, created_at,
+              route_segment_ids
+"""
+
+
+def _not_proposed(subject_id: UUID, state: str) -> "SubjectNotEligibleError":
+    return SubjectNotEligibleError(f"subject_id={subject_id} is '{state}', not 'proposed'")
+
+
 async def pick_subject(tenant_id: UUID, subject_id: UUID, pool, selected_by: str) -> dict:
     """Flip a Subject `proposed -> picked` and create the matching `angle_gate_request`
     (T8's own entry point, `services/acp_angle_gate/service.py::create_request()` grain is
@@ -801,61 +860,68 @@ async def pick_subject(tenant_id: UUID, subject_id: UUID, pool, selected_by: str
     (this build knows it already, from the Subject) rather than through the AA-469 Việc 4
     two-step atom-then-channel flow, which stays exactly as it is for the atom-picker's own
     (non-Slate) entry point.
+
+    AA-859 wave 4 — the statements are in pick_subject_on() (one transaction the caller opens: the tenant
+    pool's block behind SUBJECT_DECIDE_FLAG, or this wrapper's main-pool transaction). This wrapper keeps the
+    pre-wave-4 contract: the audit row is written inside the same transaction (AA-559), so a lost audit row
+    fails the pick. The tenant-pool route writes it on MAIN after commit instead (audit_log has no RLS).
     """
     async with pool.acquire() as conn:
-        row = await conn.fetchrow("""
-            SELECT subject_id, channel, state, segment_id, route_id
-            FROM acp_shared.subject WHERE subject_id = $1::uuid AND tenant_id = $2::uuid
-        """, subject_id, tenant_id)
-        if row is None:
-            raise SubjectNotFoundError(f"subject_id={subject_id} not found for this tenant")
-        if row["state"] != "proposed":
-            raise SubjectNotEligibleError(
-                f"subject_id={subject_id} is '{row['state']}', not 'proposed'"
-            )
-
-        # AA-857 — a Subject on an id that has since merged into another seeds from the live id
-        # (the old id has no members left after the merge re-pointed them).
-        segment_id = row["segment_id"]
-        if segment_id:
-            segment_id = (await resolve_segment_aliases(conn, [segment_id])).get(segment_id, segment_id)
-        atom_id, trip_id, route_segment_ids = await _resolve_representative_atom(
-            conn, tenant_id, segment_id, row["route_id"],
-        )
-        if atom_id is None:
-            raise SubjectNotEligibleError(
-                f"subject_id={subject_id} has no live atom left to write from "
-                "(its Segment/Route was rebuilt away, or no atom on your tours is about its place) "
-                "— refresh the Slate and pick again."
-            )
-
         async with conn.transaction():
-            await conn.execute(
-                "UPDATE acp_shared.subject SET state = 'picked' WHERE subject_id = $1::uuid",
-                subject_id,
-            )
-            request_row = await conn.fetchrow("""
-                INSERT INTO acp_shared.angle_gate_request
-                    (tenant_id, atom_id, trip_id, channel, subject_id, route_segment_ids)
-                VALUES ($1::uuid, $2, $3::uuid, $4, $5::uuid, $6::jsonb)
-                RETURNING request_id, tenant_id, atom_id, trip_id, channel, status, created_at,
-                          route_segment_ids
-            """, tenant_id, atom_id, trip_id, row["channel"], subject_id,
-                json.dumps(route_segment_ids) if route_segment_ids is not None else None)
+            result = await pick_subject_on(conn, tenant_id, subject_id)
+            # AA-559 — semantic tenant-activity log, same transaction as the state change (a lost audit
+            # row fails the whole pick, not a silently-dropped side effect).
+            await write_pick_audit(conn, tenant_id, subject_id, result, selected_by)
+    return result
 
-            # AA-559 — semantic tenant-activity log, same transaction as the state change above
-            # (matches every other tenant-self-service audit_log writer's own convention —
-            # trip_reallocation.py's confirm_trip_reallocation() — a lost audit row fails the
-            # whole pick, not a silently-dropped side effect).
-            await write_audit_log(
-                conn, tenant_id=str(tenant_id), actor=selected_by,
-                action=TenantAuditAction.SLATE_SUBJECT_PICKED, resource_type="subject",
-                resource_id=str(subject_id),
-                details={
-                    "channel": row["channel"], "request_id": str(request_row["request_id"]),
-                    "atom_id": atom_id, "trip_id": str(trip_id) if trip_id else None,
-                },
-            )
+
+async def write_pick_audit(conn_or_pool, tenant_id: UUID, subject_id: UUID, result: dict, selected_by: str) -> None:
+    """AA-559 — the `slate.subject_picked` audit row for a pick_subject_on() result."""
+    await write_audit_log(
+        conn_or_pool, tenant_id=str(tenant_id), actor=selected_by,
+        action=TenantAuditAction.SLATE_SUBJECT_PICKED, resource_type="subject",
+        resource_id=str(subject_id),
+        details={
+            "channel": result["channel"], "request_id": result["request_id"],
+            "atom_id": result["atom_id"], "trip_id": result["trip_id"],
+        },
+    )
+
+
+async def pick_subject_on(conn, tenant_id: UUID, subject_id: UUID) -> dict:
+    """pick_subject()'s statements on `conn`, inside the caller's transaction: lock the Subject row (404 /
+    409), resolve the representative atom (Segment members, alias cards, the tenant's tours, the current
+    Route), flip it `proposed -> picked` (tenant- and state-guarded) and insert the angle_gate_request. Any
+    error rolls the whole pick back. No audit row (see pick_subject / write_pick_audit)."""
+    row = await conn.fetchrow(_SUBJECT_LOCK_SQL, subject_id, tenant_id)
+    if row is None:
+        raise SubjectNotFoundError(f"subject_id={subject_id} not found for this tenant")
+    if row["state"] != "proposed":
+        raise _not_proposed(subject_id, row["state"])
+
+    # AA-857 — a Subject on an id that has since merged into another seeds from the live id
+    # (the old id has no members left after the merge re-pointed them).
+    segment_id = row["segment_id"]
+    if segment_id:
+        segment_id = (await resolve_segment_aliases(conn, [segment_id])).get(segment_id, segment_id)
+    atom_id, trip_id, route_segment_ids = await _resolve_representative_atom(
+        conn, tenant_id, segment_id, row["route_id"],
+    )
+    if atom_id is None:
+        raise SubjectNotEligibleError(
+            f"subject_id={subject_id} has no live atom left to write from "
+            "(its Segment/Route was rebuilt away, or no atom on your tours is about its place) "
+            "— refresh the Slate and pick again."
+        )
+
+    # Backstop: under the FOR UPDATE above the state cannot change before this UPDATE, so 0 rows means the
+    # lock was not taken. Never a request for a Subject that is not picked; the transaction rolls back.
+    if await conn.execute(_SUBJECT_PICKED_SQL, subject_id, tenant_id) == "UPDATE 0":
+        logger.error("aa859_subject_pick_state_changed", subject_id=str(subject_id))
+        raise SubjectNotEligibleError(f"subject_id={subject_id} changed while picking — reload the Slate.")
+    request_row = await conn.fetchrow(
+        _PICK_REQUEST_INSERT_SQL, tenant_id, atom_id, trip_id, row["channel"], subject_id,
+        json.dumps(route_segment_ids) if route_segment_ids is not None else None)
 
     return {
         "subject_id": str(subject_id),
@@ -878,23 +944,21 @@ async def cut_subject(tenant_id: UUID, subject_id: UUID, pool) -> dict:
     already `picked`/`used` has already become real tenant activity (an `angle_gate_request`, and
     for `used`, a real `content_piece`); retracting it after the fact is a different, unbuilt
     decision (it would need to also unwind or flag what it already spawned) and out of this
-    function's scope."""
+    function's scope. AA-859 wave 4: the statements are in cut_subject_on()."""
     async with pool.acquire() as conn:
-        row = await conn.fetchrow("""
-            SELECT subject_id, channel, state FROM acp_shared.subject
-            WHERE subject_id = $1::uuid AND tenant_id = $2::uuid
-        """, subject_id, tenant_id)
-        if row is None:
-            raise SubjectNotFoundError(f"subject_id={subject_id} not found for this tenant")
-        if row["state"] != "proposed":
-            raise SubjectNotEligibleError(
-                f"subject_id={subject_id} is '{row['state']}', not 'proposed'"
-            )
-        updated = await conn.fetchrow("""
-            UPDATE acp_shared.subject SET state = 'cut' WHERE subject_id = $1::uuid
-            RETURNING subject_id, channel, state
-        """, subject_id)
+        async with conn.transaction():
+            return await cut_subject_on(conn, tenant_id, subject_id)
 
+
+async def cut_subject_on(conn, tenant_id: UUID, subject_id: UUID) -> dict:
+    """One conditional UPDATE (tenant- and state-guarded, so a concurrent pick / cut cannot both win); 0 rows
+    -> the same connection tells "not this tenant's" (404) from "not proposed" (409)."""
+    updated = await conn.fetchrow(_SUBJECT_CUT_SQL, subject_id, tenant_id)
+    if updated is None:
+        state = await conn.fetchval(_SUBJECT_STATE_SQL, subject_id, tenant_id)
+        if state is None:
+            raise SubjectNotFoundError(f"subject_id={subject_id} not found for this tenant")
+        raise _not_proposed(subject_id, state)
     return {
         "subject_id": str(updated["subject_id"]), "channel": updated["channel"],
         "state": updated["state"],
@@ -977,7 +1041,8 @@ async def _resolve_representative_atom(
 
 __all__ = [
     "CHANNEL_BARS", "WEEKLY_RHYTHM_CHANNELS", "ON_DEMAND_CHANNELS", "MAX_CHANNELS_PER_PLACE",
-    "Candidate", "propose_slate", "fetch_slate", "pick_subject",
+    "Candidate", "propose_slate", "fetch_slate", "fetch_slate_on", "enabled_channels", "pick_subject",
+    "pick_subject_on", "write_pick_audit", "cut_subject", "cut_subject_on",
     "T7_SLATE_KIND", "latest_slate_job", "last_proposal", "request_slate_proposal",
     "SubjectNotFoundError", "SubjectNotEligibleError",
 ]

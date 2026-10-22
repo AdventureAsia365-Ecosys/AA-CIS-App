@@ -33,22 +33,41 @@ tables (never the live T-series `acp_shared.content_piece`), never ran against r
 panel below) are KEPT — they no longer receive a feedback-adjusted weight, so
 `compute_quarter_plan()`'s scoring is now purely runway/richness/DFS/engagement (AA-754 removed
 the distinctiveness term).
+
+AA-859 wave 4 (S247) — the tenant-data reads and writes of this file run on the aa_app_user tenant pool, each group
+behind its own fail-closed flag (api/core/aa544_tenant_pool.py): GET /v1/slate's Subject list (SLATE_READS_FLAG),
+POST /v1/subjects/{id}/pick and /cut (SUBJECT_DECIDE_FLAG, one transaction each), the trip-reallocation suggest /
+confirm (TRIP_REALLOCATION_FLAG, services/acp_planning/trip_reallocation.py). What stays on the main pool (D2):
+the tenant's own planning config (shared.tenants / acp_shared.tenant_config), the t7_slate job enqueue and status
+(shared.job) and the audit rows (acp_shared.audit_log), none of which has RLS or a tenant-role grant.
 """
 from __future__ import annotations
 
+from contextlib import nullcontext
 from uuid import UUID
 
+import structlog
+import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
+from api.core.aa544_tenant_pool import SLATE_READS_FLAG, SUBJECT_DECIDE_FLAG, acquire_scoped_conn
 from api.routers.v1_tours import get_tenant
 from services.acp_planning.tenant_config import TenantNotFoundError, fetch_tenant_planning_config
-from services.acp_planning.trip_reallocation import confirm_trip_reallocation, suggest_trip_reallocation
+from services.acp_planning.trip_reallocation import (PlanBusyError, VersionConflictError,
+                                                     confirm_trip_reallocation_scoped,
+                                                     suggest_trip_reallocation_scoped)
 from services.acp_shared.slate import (SubjectNotEligibleError, SubjectNotFoundError,
-                                        cut_subject, fetch_slate, last_proposal, pick_subject,
-                                        request_slate_proposal)
+                                        cut_subject_on, enabled_channels, fetch_slate_on, last_proposal,
+                                        pick_subject_on, request_slate_proposal, write_pick_audit)
+
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/v1/planning", tags=["tenant-planning"])
+
+# AA-859 wave 4 — the tenant pool's lock_timeout (5 s) on pick's Subject row lock (behind a long t7_slate proposal
+# transaction) or cut's conditional UPDATE: a retryable 409, never a 500. One string shape, as VERSION_CONFLICT_DETAIL.
+SUBJECT_BUSY_DETAIL = "subject_busy: the Slate is updating, retry in a moment"
 
 # AA-511 — the Slate (Weekly Slots' replacement, docs/claude_audit/
 # AA-511-step0-slate-investigation.md). A SEPARATE router in this same file, under a bare `/v1`
@@ -76,9 +95,16 @@ async def get_slate(request: Request, tenant=Depends(get_tenant)):
     `refresh` so the portal can show "updating…" and re-load when it finishes."""
     tenant_id = UUID(tenant["sub"])
     pool = request.app.state.pool
+    # AA-859 MAIN exception (D2): the enqueue (shared.job, advisory lock) and the tenant's own config
+    # (shared.tenants / acp_shared.tenant_config); the Subject list below is the tenant block.
     job = await request_slate_proposal(tenant_id, pool, only_if_stale=True)
     config = await _resolve_config(tenant_id, pool)
-    channels = await fetch_slate(tenant_id, pool)
+    async with acquire_scoped_conn(
+        request, str(tenant_id), SLATE_READS_FLAG, fail_closed=True,
+    ) as (conn, used_tenant_pool):
+        logger.info("aa859_slate_read", tenant_id=str(tenant_id), used_tenant_pool=used_tenant_pool)
+        channels = await fetch_slate_on(conn, tenant_id, enabled_channels(config.channels))
+    # AA-859 MAIN exception: the last proposal job (shared.job, no tenant column), after the block.
     async with pool.acquire() as conn:
         last = await last_proposal(tenant_id, conn)
     return {
@@ -106,16 +132,38 @@ async def post_slate_refresh(request: Request, tenant=Depends(get_tenant)):
 async def post_pick_subject(
     subject_id: UUID, request: Request, tenant=Depends(get_tenant),
 ):
+    """AA-859 wave 4 — one transaction behind SUBJECT_DECIDE_FLAG (fail closed): the Subject row locked FOR
+    UPDATE, the representative atom resolved, the state flipped, the angle_gate_request inserted. Flag on: the
+    audit row is written on MAIN after commit, best-effort (`aa859_subject_pick_audit_failed`; the pick still
+    answers 200). Flag off: the main pool with its own transaction and the audit row inside it (AA-559)."""
     tenant_id = UUID(tenant["sub"])
-    pool = request.app.state.pool
+    selected_by = f"tenant:{tenant_id}"
     try:
-        result = await pick_subject(
-            tenant_id, subject_id, pool, selected_by=f"tenant:{tenant_id}",
-        )
+        async with acquire_scoped_conn(
+            request, str(tenant_id), SUBJECT_DECIDE_FLAG, fail_closed=True,
+        ) as (conn, used_tenant_pool):
+            logger.info("aa859_subject_pick", tenant_id=str(tenant_id), subject_id=str(subject_id),
+                        used_tenant_pool=used_tenant_pool)
+            async with (nullcontext() if used_tenant_pool else conn.transaction()):
+                result = await pick_subject_on(conn, tenant_id, subject_id)
+                if not used_tenant_pool:
+                    await write_pick_audit(conn, tenant_id, subject_id, result, selected_by)
     except SubjectNotFoundError:
         raise HTTPException(status_code=404, detail=f"No subject {subject_id} for this tenant")
     except SubjectNotEligibleError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+    except asyncpg.LockNotAvailableError as exc:
+        logger.warning("aa859_subject_lock_timeout", tenant_id=str(tenant_id), subject_id=str(subject_id),
+                       action="pick")
+        raise HTTPException(status_code=409, detail=SUBJECT_BUSY_DETAIL) from exc
+    if used_tenant_pool:
+        # AA-859 MAIN exception: acp_shared.audit_log has no RLS and no tenant-role grant; written after the
+        # tenant transaction committed. Best-effort: the pick is saved, a lost audit row must not make it a 500.
+        try:
+            await write_pick_audit(request.app.state.pool, tenant_id, subject_id, result, selected_by)
+        except Exception as exc:
+            logger.warning("aa859_subject_pick_audit_failed", tenant_id=str(tenant_id),
+                           subject_id=str(subject_id), error=repr(exc))
     return result
 
 
@@ -128,13 +176,23 @@ async def post_cut_subject(
     subject_id: UUID, request: Request, tenant=Depends(get_tenant),
 ):
     tenant_id = UUID(tenant["sub"])
-    pool = request.app.state.pool
     try:
-        result = await cut_subject(tenant_id, subject_id, pool)
+        # AA-859 wave 4 — behind SUBJECT_DECIDE_FLAG (fail closed); one conditional UPDATE.
+        async with acquire_scoped_conn(
+            request, str(tenant_id), SUBJECT_DECIDE_FLAG, fail_closed=True,
+        ) as (conn, used_tenant_pool):
+            logger.info("aa859_subject_cut", tenant_id=str(tenant_id), subject_id=str(subject_id),
+                        used_tenant_pool=used_tenant_pool)
+            async with (nullcontext() if used_tenant_pool else conn.transaction()):
+                result = await cut_subject_on(conn, tenant_id, subject_id)
     except SubjectNotFoundError:
         raise HTTPException(status_code=404, detail=f"No subject {subject_id} for this tenant")
     except SubjectNotEligibleError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+    except asyncpg.LockNotAvailableError as exc:
+        logger.warning("aa859_subject_lock_timeout", tenant_id=str(tenant_id), subject_id=str(subject_id),
+                       action="cut")
+        raise HTTPException(status_code=409, detail=SUBJECT_BUSY_DETAIL) from exc
     return result
 
 
@@ -155,8 +213,8 @@ async def get_trip_reallocation_suggestion(
     year: int = Query(...), quarter: int = Query(...),
 ):
     tenant_id = UUID(tenant["sub"])
-    pool = request.app.state.pool
-    return await suggest_trip_reallocation(tenant_id, year, quarter, pool)
+    # AA-859 wave 4 — tenant-data reads in one block behind TRIP_REALLOCATION_FLAG (fail closed)
+    return await suggest_trip_reallocation_scoped(request, tenant_id, year, quarter)
 
 
 class TripReallocationConfirmRequest(BaseModel):
@@ -170,10 +228,16 @@ async def post_trip_reallocation_confirm(
     body: TripReallocationConfirmRequest, request: Request, tenant=Depends(get_tenant),
 ):
     tenant_id = UUID(tenant["sub"])
-    pool = request.app.state.pool
-    return await confirm_trip_reallocation(
-        pool, tenant_id, body.year, body.quarter, body.accept, actor=f"tenant:{tenant_id}",
-    )
+    # AA-859 wave 4 — reads and (on accept) save + approve on the tenant pool behind TRIP_REALLOCATION_FLAG
+    try:
+        return await confirm_trip_reallocation_scoped(
+            request, tenant_id, body.year, body.quarter, body.accept, actor=f"tenant:{tenant_id}",
+        )
+    except VersionConflictError as exc:
+        # one 409 shape across the tenant routes: a string with a stable prefix (VERSION_CONFLICT_DETAIL in v1_tours)
+        raise HTTPException(status_code=409, detail=f"version_conflict: {exc}") from exc
+    except PlanBusyError as exc:
+        raise HTTPException(status_code=409, detail=f"plan_busy: {exc}") from exc
 
 
 __all__ = ["router", "slate_router"]

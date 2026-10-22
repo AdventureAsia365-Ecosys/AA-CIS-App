@@ -79,11 +79,15 @@ def filter_route_segments(
 
 # Same member test as content_writing._ROUTE_SEGMENT_TEXT_QUERY (live atom of this trip, platform or
 # this tenant's own, not an alias member), answered for every Segment of the snapshot in one read.
+# AA-859 wave 4 (C9) — the v_active_tour_atoms rule (203) inlined on the base table, as subject_seed._MEMBERS_SQL:
+# the pick runs this on the tenant pool, where the owner-rights view is not granted. Same rows for cis_app.
 _TRIP_MEMBER_SQL = """
     SELECT s.segment_id,
            EXISTS (
                SELECT 1 FROM acp_contract.atom_segment_member m
-               JOIN acp_contract.v_active_tour_atoms ta ON ta.atom_id = m.atom_id
+               JOIN acp_contract.tour_atoms ta ON ta.atom_id = m.atom_id
+               JOIN gold_aa_internal.published_tours pt
+                 ON pt.tour_id = ta.tour_id AND pt.master_status = 'active' AND pt.deleted_at IS NULL
                WHERE m.segment_id = s.segment_id AND ta.tour_id = $2::uuid
                  AND ta.owner_scope IN ('platform', $3::text)
                  AND NOT m.is_alias AND NOT ta.deleted AND NOT ta.is_empty_marker

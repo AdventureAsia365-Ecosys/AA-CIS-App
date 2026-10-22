@@ -27,7 +27,10 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
-from _rls_fixture_helpers import NO_PRIVILEGE_WITHOUT_RLS_SQL, migration_body, migration_path  # noqa: E402
+from _rls_fixture_helpers import (  # noqa: E402
+    NO_PRIVILEGE_WITHOUT_RLS_SQL, NO_PRIVILEGE_WITHOUT_RLS_SQL_V2, migration_body, migration_path,
+    revoke_platform_reads,
+)
 
 TENANT_ROLE = "aa_app_user"
 BRAND = "shared.tenant_brand_rules"
@@ -87,6 +90,9 @@ def _to_pre_262(c):
 
 
 def _apply(c):
+    # AA-859 wave 4: guard 5 is invariant v1, which the 265 platform reads (applied later) break by design; a re-apply
+    # here starts from the pre-265 state for them.
+    revoke_platform_reads(c)
     c.execute(migration_body(262))
 
 
@@ -134,7 +140,8 @@ def test_invariant_query_is_the_migration_guard():
 
 
 def test_committed_db_meets_the_invariant(cur):
-    cur.execute(NO_PRIVILEGE_WITHOUT_RLS_SQL)
+    # the committed DB is past 265: the invariant there is v2 (the platform read allowlist)
+    cur.execute(NO_PRIVILEGE_WITHOUT_RLS_SQL_V2)
     assert cur.fetchall() == []
 
 
@@ -180,6 +187,7 @@ def test_rerun_is_idempotent(cur):
 
 def test_first_apply_from_the_pre_262_state(cur):
     _to_pre_262(cur)
+    revoke_platform_reads(cur)
     cur.execute(NO_PRIVILEGE_WITHOUT_RLS_SQL)
     assert cur.fetchall() == [], "pre-262 state meets the invariant (241)"
     _apply(cur)

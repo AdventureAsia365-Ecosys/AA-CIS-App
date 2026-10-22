@@ -6,6 +6,8 @@ STEP0 (this task, 04/09/2026) confirmed live:
     rows points to the SAME placeholder URL (https://aa-cis.lumiguides.it.com/, the admin
     frontend's own root), all with the identical bulk-insert published_at timestamp -- a
     one-time manual/script seed, not a real per-tour page. 0 real landing pages exist today.
+    (AA-859 wave 4, S247: the 22/10/2026 schema dump shows ~0 rows; since CIS 265 the table has RLS, this
+    router writes it on the main pool as cis_app through tenant_tour_pages_cis_app_all.)
   - Confirmed (grep, re-verified against current code): still 0 real code callers write to
     this table -- AA-478's "0 writers" finding still holds, only the "0 rows" half was stale.
   - T10's gate F6 (services/acp_produce/gates.py, services/acp_produce/pipeline.py) already
