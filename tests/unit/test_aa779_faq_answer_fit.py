@@ -132,6 +132,57 @@ def test_pairs_past_the_cap_are_never_sent_or_dropped(monkeypatch):
     assert qg.faq_pairs(text) == [PAIRS[0], PAIRS[2], PAIRS[3]]
 
 
+# ---------------------------------------------------------------- on: the drop cuts blocks, nothing moves
+
+STRAY = "It sits at 2,200 m and the town is the gateway to the valley."
+MULTI = (f"{BODY}\n\n## FAQ\n\n**Q: {PAIRS[0][0]}**\nA: {PAIRS[0][1]}\n\n"
+         f"**Q: {PAIRS[1][0]}**\nA: {PAIRS[1][1]}\n\n{STRAY}\n\n"
+         f"**Q: {PAIRS[2][0]}**\nA: {PAIRS[2][1]}\n\nThe dzong is open on weekdays.\n\n"
+         f"**Q: {PAIRS[3][0]}**\nA: {PAIRS[3][1]}\n")
+
+
+def test_on_drop_takes_a_dropped_answers_later_paragraph_with_it():
+    # S247 review: replace_faq_section moved a dropped pair's second paragraph above "## FAQ" (into the body).
+    (text, record), _ = _apply("on", text=MULTI)
+    assert STRAY not in text
+    assert text.partition("## FAQ")[0] == MULTI.partition("## FAQ")[0]  # the body is untouched
+    assert qg.faq_pairs(text) == [PAIRS[0], PAIRS[2]]
+    assert record["dropped"] == [PAIRS[1][0], PAIRS[3][0]] and "kept_multi_paragraph" not in record
+
+
+def test_on_drop_keeps_every_kept_pair_verbatim_in_place():
+    (text, _), _ = _apply("on", text=MULTI)
+    faq = text.partition("## FAQ")[2]
+    # a kept pair's own later paragraph stays under it, inside the FAQ
+    assert f"A: {PAIRS[2][1]}\n\nThe dzong is open on weekdays." in faq
+    assert text == (f"{BODY}\n\n## FAQ\n\n**Q: {PAIRS[0][0]}**\nA: {PAIRS[0][1]}\n\n"
+                    f"**Q: {PAIRS[2][0]}**\nA: {PAIRS[2][1]}\n\nThe dzong is open on weekdays.\n")
+
+
+def test_on_keeps_a_failing_last_pair_whose_tail_may_be_a_cta():
+    text_cta = TEXT.rstrip() + "\n\nBook the Paro valley trip with us today.\n"
+    (text, record), _ = _apply("on", text=text_cta)
+    assert "Book the Paro valley trip with us today." in text.partition("## FAQ")[2]
+    assert [q for q, _a in qg.faq_pairs(text)] == [PAIRS[0][0], PAIRS[2][0], PAIRS[3][0]]
+    assert record["dropped"] == [PAIRS[1][0]] and record["kept_multi_paragraph"] == [PAIRS[3][0]]
+    assert record["pairs_after"] == 3 and record["below_min"] is False
+    lines = fit.fit_log_lines(record)
+    assert any("dropped" in v and PAIRS[1][0] in v for v in lines)
+    assert any("kept FAQ pair" in v and PAIRS[3][0] in v for v in lines)
+    assert not any("dropped" in v and PAIRS[3][0] in v for v in lines)
+
+
+def test_on_dropping_every_pair_removes_the_heading_and_keeps_the_body():
+    (text, record), _ = _apply("on", client=_client(_reply(["NON_ANSWER"] * 4)))
+    assert "## FAQ" not in text and text == BODY + "\n"
+    assert record["pairs_after"] == 0 and record["below_min"] is True
+
+
+def test_drop_faq_pairs_with_nothing_to_drop_is_the_identity():
+    assert qg.drop_faq_pairs(MULTI, set()) == (MULTI, [])
+    assert qg.drop_faq_pairs(BODY, {1}) == (BODY, [])
+
+
 # ---------------------------------------------------------------- fail open
 
 def test_gateway_error_leaves_the_faq_unchanged():

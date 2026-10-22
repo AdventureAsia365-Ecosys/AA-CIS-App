@@ -32,7 +32,7 @@ from typing import Optional, Sequence
 import structlog
 
 from services.acp_content_writing.faq_filter import MODE_OFF, MODE_ON, faq_filter_mode
-from services.acp_content_writing.quality_gates import (FAQ_MIN_PAIRS, faq_pairs, replace_faq_section,
+from services.acp_content_writing.quality_gates import (FAQ_MIN_PAIRS, drop_faq_pairs, faq_pairs,
                                                         strip_citation_tags)
 from shared.llm_client.call_log import record_call_sync, record_unusable_sync
 from shared.llm_client.client import LLMClient
@@ -176,8 +176,10 @@ async def apply_answer_fit(content_text: str, *, context: dict, piece_id=None, r
     """The blog text after the answer-fit step, and the admin record of it ({} when the flag is off).
 
     `off`: no call, text unchanged. No FAQ pair: no call, a record with `pairs: 0`. `shadow`: verdicts recorded,
-    text unchanged. `on`: the failing pairs are dropped from the FAQ (replace_faq_section); `below_min` says
-    fewer than FAQ_MIN_PAIRS are left. Any failure or timeout: text unchanged, `fallback: true`."""
+    text unchanged. `on`: the failing pairs' blocks are cut from the FAQ (quality_gates.drop_faq_pairs, the rest of
+    the text verbatim); `below_min` says fewer than FAQ_MIN_PAIRS are left; a failing LAST pair with more than
+    one paragraph is kept and listed in `kept_multi_paragraph`. Any failure or timeout: text unchanged,
+    `fallback: true`."""
     mode = mode or faq_filter_mode()
     if mode == MODE_OFF:
         return content_text, {}
@@ -201,11 +203,17 @@ async def apply_answer_fit(content_text: str, *, context: dict, piece_id=None, r
                "verdicts": outcome.verdicts, "failing": [v["q"] for v in failing]}
     if mode != MODE_ON or not failing:
         return content_text, record
-    drop_n = {v["n"] for v in failing}
-    kept = [p for n, p in enumerate(pairs, 1) if n not in drop_n]
-    record |= {"dropped": [v["q"] for v in failing], "pairs_after": len(kept),
-               "below_min": len(kept) < FAQ_MIN_PAIRS}
-    return replace_faq_section(content_text, kept), record
+    # Cut the failing blocks out and keep every other part of the text verbatim (drop_faq_pairs): rebuilding the
+    # FAQ from first paragraphs (replace_faq_section) would move a dropped answer's later paragraph into the body.
+    text, kept_multi = drop_faq_pairs(content_text, {v["n"] for v in failing})
+    dropped = [v for v in failing if v["n"] not in kept_multi]
+    pairs_after = len(faq_pairs(text))
+    record |= {"dropped": [v["q"] for v in dropped], "dropped_n": [v["n"] for v in dropped],
+               "pairs_after": pairs_after, "below_min": pairs_after < FAQ_MIN_PAIRS}
+    if kept_multi:
+        # The last pair runs past one paragraph to the end of the text (a CTA may follow it): kept, recorded.
+        record["kept_multi_paragraph"] = [v["q"] for v in failing if v["n"] in kept_multi]
+    return text, record
 
 
 _KIND_TEXT = {NON_ANSWER: "the answer does not give what the question asks",
@@ -214,11 +222,14 @@ _KIND_TEXT = {NON_ANSWER: "the answer does not give what the question asks",
 
 def fit_log_lines(record: dict) -> list[str]:
     """Admin-only F7_faq_autofix lines for what the `on` step removed (none for off / shadow / fallback)."""
-    if not record.get("dropped"):
+    if not record.get("dropped") and not record.get("kept_multi_paragraph"):
         return []
+    dropped_n = set(record.get("dropped_n") or [])
     lines = [f"dropped FAQ pair (answer fit: {_KIND_TEXT.get(v['verdict'], v['verdict'])}): '{v['q'][:160]}'"
-             for v in record.get("verdicts") or [] if v["verdict"] in FAILING]
-    if record.get("below_min"):
+             for v in record.get("verdicts") or [] if v["n"] in dropped_n]
+    lines += [f"kept FAQ pair the answer-fit check failed (last pair, more than one paragraph, may hold a CTA): "
+              f"'{q[:160]}'" for q in record.get("kept_multi_paragraph") or []]
+    if record.get("dropped") and record.get("below_min"):
         lines.append(f"FAQ has {record.get('pairs_after', 0)} pair(s) after the answer-fit drop, under the "
                      f"{FAQ_MIN_PAIRS}-pair minimum (kept, not held)")
     return lines
