@@ -69,6 +69,7 @@ from api.middleware.staff_bearer import StaffBearerMiddleware  # AA-816 C3
 from api.middleware.staff_audit import StaffAuditMiddleware  # AA-884
 from api.middleware.request_id import RequestIdMiddleware, unhandled_error_handler  # AA-871
 from api.core import readiness  # AA-884 — /health git_sha, /health/ready
+from api.version import __version__  # AA-891 — release version (release-please bumps it)
 from api.core import staff_identity  # AA-816 C3
 from api.core import login_throttle  # AA-876
 from api.core.staff_authz import NO_BOOKING_ROLES  # AA-878
@@ -163,7 +164,7 @@ async def lifespan(app: FastAPI):
 # below, each behind require_admin_secret_for_docs().
 app = FastAPI(
     title="AA-CIS API",
-    version="0.3.0",
+    version=__version__,
     description="Adventure Asia Content Intelligence System",
     lifespan=lifespan,
     docs_url=None, redoc_url=None, openapi_url=None,
@@ -576,8 +577,10 @@ async def booking_jwks():
 @app.get("/health")
 async def health():
     # AA-884: git_sha = the commit the image was built from (deploy smoke asserts it equals the deployed SHA).
+    # AA-891: version = the release version in the image (api/version.py, bumped by release-please; the deploy smoke
+    # asserts it equals .release-please-manifest.json of the deployed commit).
     # `status` stays the first field and "ok" (ALB health check and CI smoke read it).
-    return {"status": "ok", "service": "aa-cis-api", "version": "0.3.0", "git_sha": readiness.git_sha()}
+    return {"status": "ok", "service": "aa-cis-api", "version": __version__, "git_sha": readiness.git_sha()}
 
 
 @app.get("/health/ready")
