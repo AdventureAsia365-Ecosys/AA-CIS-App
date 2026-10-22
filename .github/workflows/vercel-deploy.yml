@@ -25,6 +25,14 @@ name: Vercel Deploy
 # production deployment and is READY. UI smoke keeps using the per-deployment URL. Runbook: root
 # docs/ops/runbooks/preview-staff-sign-in.md.
 #
+# AA-816 S2 path — UI smoke (ui-smoke.yml) per target:
+#   - PR preview (*.vercel.app): job `smoke`, public specs only (no session: not a Cognito callback host);
+#   - production (push to main, or a production dispatch from main): job `smoke-production`, public specs plus the
+#     signed-in specs as the Cognito E2E user on https://aa-cis.lumiguides.it.com;
+#   - alias-only dispatch from main: job `smoke-preview-host`, the same on https://aa-cis-preview.lumiguides.it.com
+#     (the session there is capped at viewer). A PR labelled preview-signin is not on main, so its signed-in smoke
+#     is a separate dispatch of ui-smoke.yml from main (the mailbox role trusts main only).
+#
 # The deploy runs from the REPO ROOT: the project's Root Directory setting is `frontend`, so Vercel
 # builds `frontend/` remotely with the project's own env vars (no `vercel pull` / prebuilt here).
 #
@@ -355,7 +363,8 @@ jobs:
           fi
 
   # AA-732 UI smoke on the fresh PREVIEW. It used to run on Vercel's `deployment_status` event, which
-  # only the Git integration sends — so it is now called from here.
+  # only the Git integration sends — so it is now called from here. AA-816 S2 path: public specs only (no
+  # session on a per-deployment URL); no id-token permission on this PR path.
   smoke:
     name: UI smoke
     needs: deploy
@@ -367,4 +376,40 @@ jobs:
     with:
       base_url: ${{ needs.deploy.outputs.url }}
       sha: ${{ needs.deploy.outputs.sha }}
+    secrets: inherit
+
+  # AA-816 S2 path — after a production deploy from main: public + signed-in smoke on the production host as the
+  # Cognito E2E user (a reviewer: read-only checks). id-token: write lets ui-smoke.yml assume the mailbox role.
+  smoke-production:
+    name: UI smoke (production, signed in)
+    needs: deploy
+    if: needs.deploy.outputs.target == 'production' && needs.deploy.outputs.url != '' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    uses: ./.github/workflows/ui-smoke.yml
+    with:
+      base_url: https://aa-cis.lumiguides.it.com
+      sha: ${{ needs.deploy.outputs.sha }}
+      staff_session: true
+    secrets: inherit
+
+  # AA-816 S2 path — after an alias-only dispatch from main: the same on the fixed Preview host (session capped at
+  # viewer by the API; the smoke setup fails on any other role). Not on the PR label path (not main).
+  smoke-preview-host:
+    name: UI smoke (Preview host, signed in)
+    needs: preview-alias
+    # always(): job `deploy` is skipped on this path, and a skipped ancestor would otherwise skip this job too.
+    if: >-
+      always() && needs.preview-alias.result == 'success' &&
+      github.event_name == 'workflow_dispatch' && inputs.alias_only_url != '' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    uses: ./.github/workflows/ui-smoke.yml
+    with:
+      base_url: https://aa-cis-preview.lumiguides.it.com
+      staff_session: true
     secrets: inherit

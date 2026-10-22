@@ -11,10 +11,16 @@
 // from that state, so the tests are independent — one red page does not skip the others.
 // This spec is its own Playwright project ("smoke"), so legacy specs are not run by CI.
 //
-// AA-878 — viewer mode. When the smoke account is the read-only `viewer` (auth.setup.ts records the role the
-// server answered at login), the same list runs as: the pages the viewer may read get the full page check;
+// AA-878 — viewer mode. When the smoke account is the read-only `viewer` (auth.setup.ts records the session's
+// role), the same list runs as: the pages the viewer may read get the full page check;
 // the pages it may not open (`viewerRefused`) must be refused (the proxy sends it to its landing page); one
 // write through the BFF must answer 403, and the staff list API must answer 403. Admin mode is unchanged.
+//
+// AA-816 S2 path — the authenticated describes carry the tag @staff: only the `smoke` project (after smoke-setup)
+// runs them, on the two Cognito callback hosts (the fixed Preview host as the capped viewer, Production as the
+// Cognito E2E user, a reviewer). Per-PR previews run the `smoke-public` project, which skips @staff. Any other
+// non-admin role (reviewer, content) runs the page list against frontend/lib/rbac.ts PAGE_RULES: a page it may not
+// open must be refused like the viewer's; it does no write and no admin-only check (Production stays read-only).
 import { test, expect } from '@playwright/test';
 import {
   ADMIN_STATE,
@@ -23,8 +29,10 @@ import {
   installBypassRoute,
   ensureResultsDir,
   assertNavOk,
+  isAdminRun,
   isViewerRun,
   landingPathFor,
+  roleMaySeePage,
   runPageCheck,
   smokeRole,
   type PageSpec,
@@ -73,7 +81,8 @@ const ADMIN_PAGES: PageSpec[] = [
 ];
 
 // AA-878 — viewer mode: an admin-only page must not render for the viewer. The proxy answers with a redirect
-// to the role's landing page (/admin/review), so the final URL is that page, never the asked one.
+// to the role's landing page (/admin/review), so the final URL is that page, never the asked one. AA-816: the same
+// for any non-admin role (reviewer on Production).
 async function assertViewerRefused(browser: import('@playwright/test').Browser, spec: PageSpec): Promise<void> {
   const context = await browser.newContext({ baseURL: baseUrl(), storageState: ADMIN_STATE, viewport: { width: 1440, height: 900 } });
   await installBypassRoute(context);
@@ -83,9 +92,10 @@ async function assertViewerRefused(browser: import('@playwright/test').Browser, 
     await page.goto(spec.path, { waitUntil: 'domcontentloaded' });
     await page.waitForURL((u) => u.pathname === landing, { timeout: 15000 }).catch(() => {});
     const asked = new URL(spec.path, baseUrl()).pathname;
-    expect(new URL(page.url()).pathname, `${spec.label}: viewer was not refused (stayed on ${page.url()})`).toBe(landing);
+    expect(new URL(page.url()).pathname, `${spec.label}: ${smokeRole()} was not refused (stayed on ${page.url()})`)
+      .toBe(landing);
     expect(new URL(page.url()).pathname).not.toBe(asked);
-    await page.screenshot({ path: `${SMOKE_RESULTS_DIR}/viewer-refused-${spec.id}-desktop-light.png` });
+    await page.screenshot({ path: `${SMOKE_RESULTS_DIR}/${smokeRole()}-refused-${spec.id}-desktop-light.png` });
   } finally {
     await context.close();
   }
@@ -142,16 +152,27 @@ async function firstStaffId(browser: import('@playwright/test').Browser): Promis
   }
 }
 
-test.describe('UI smoke — admin', () => {
+// AA-816 S2 path — no session needed (runs in smoke-public too): the viewer flags on the page list say exactly
+// what the frontend page matrix says, so viewer mode and the rbac-driven reviewer mode never disagree.
+test.describe('UI smoke — page list matches the page matrix', () => {
+  test('viewerRefused equals !canSeePage(viewer) for every listed page', () => {
+    const mismatched = ADMIN_PAGES.filter((p) => !!p.viewerRefused === roleMaySeePage('viewer', p.path))
+      .map((p) => `${p.path} (viewerRefused=${!!p.viewerRefused})`);
+    expect(mismatched, 'fix viewerRefused or frontend/lib/rbac.ts PAGE_RULES').toEqual([]);
+  });
+});
+
+test.describe('UI smoke — admin', { tag: '@staff' }, () => {
   for (const spec of ADMIN_PAGES) {
     test(`admin: ${spec.label} (${spec.path})`, async ({ browser }) => {
-      if (isViewerRun()) {
-        if (spec.viewerRefused) {
+      if (!isAdminRun()) {
+        const refused = isViewerRun() ? !!spec.viewerRefused : !roleMaySeePage(smokeRole(), spec.path);
+        if (refused) {
           await assertViewerRefused(browser, spec);
           return;
         }
         const readySelector = spec.viewerReadySelector ?? spec.readySelector;
-        await runPageCheck(browser, ADMIN_STATE, { ...spec, id: `viewer-${spec.id}`, readySelector },
+        await runPageCheck(browser, ADMIN_STATE, { ...spec, id: `${smokeRole()}-${spec.id}`, readySelector },
           { checkMobileLayout: true });
         return;
       }
@@ -160,7 +181,7 @@ test.describe('UI smoke — admin', () => {
   }
 
   test('admin: Staff · detail (/admin/platform/staff/{id}, first account)', async ({ browser }) => {
-    test.skip(isViewerRun(), 'AA-878: the staff directory is admin-only; viewer mode checks its 403 below');
+    test.skip(!isAdminRun(), 'AA-878: the staff directory is admin-only; viewer mode checks its 403 below');
     const id = await firstStaffId(browser);
     await runPageCheck(browser, ADMIN_STATE, {
       id: 'platform-staff-detail',
@@ -195,7 +216,7 @@ test.describe('UI smoke — admin', () => {
 // AA-878 — viewer mode only: the read-only account is refused on a write and on the staff list, through the
 // same BFF the pages use. The write is harmless even if a gate ever failed open: trashing a tour id that does
 // not exist (the backend's content.write policy and the 404 stop it too).
-test.describe('UI smoke — viewer (read-only)', () => {
+test.describe('UI smoke — viewer (read-only)', { tag: '@staff' }, () => {
   test('viewer: a BFF write answers 403', async ({ browser }) => {
     test.skip(!isViewerRun(), 'runs only when the smoke account is the read-only viewer');
     const res = await bffCall(browser, 'PATCH', '/api/admin/tours/00000000-0000-0000-0000-000000000878/trash');

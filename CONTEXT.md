@@ -626,16 +626,26 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   the team, 4 projects). `portal/**` is not in `deploy-dev.yml`, so a portal change never redeploys ECS.
   `portal/vercel.json` also sets `git.deploymentEnabled: false`.
 - **UI smoke (AA-732, `.github/workflows/ui-smoke.yml`)**: called by `vercel-deploy.yml` after a
-  successful preview deploy (`workflow_call`, inputs `base_url` + `sha`), or run by hand
-  (`workflow_dispatch`); Vercel's `deployment_status` no longer arrives. A Playwright suite (`tests/e2e/smoke/ui-smoke.spec.ts`, project `smoke`)
-  opens the key admin pages as a logged-in admin and fails the check on any HTTP/console error,
-  failing same-origin `/api/` call, or a blank page (no table rows and no kit empty state).
-  Screenshots (desktop 1440 + mobile 390, light + dark) and the HTML report upload as an artifact
-  and link from one PR comment. Secrets: `VERCEL_AUTOMATION_BYPASS_SECRET` (preview SSO bypass),
-  `E2E_ADMIN_USERNAME`, `E2E_ADMIN_PASSWORD`. The bypass header is sent only to the BASE_URL
-  origin (origin-scoped route), never to a third-party host. The admin suite also checks that the
-  old portal URLs answer 308 to the portal host (`aa885-portal-redirect.spec.ts`). Not a
-  required check.
+  successful deploy (`workflow_call`, inputs `base_url` + `sha` + `staff_session`), or run by hand
+  (`workflow_dispatch`); Vercel's `deployment_status` no longer arrives. A Playwright suite (`tests/e2e/smoke/`)
+  opens the key admin pages and fails the check on any HTTP/console error, failing same-origin `/api/` call, or a
+  blank page (no table rows and no kit empty state). **Split (AA-816 S2 path):** specs that need a session carry
+  the tag `@staff` (project `smoke`, after `smoke-setup`); every other spec is project `smoke-public` (no session).
+  A per-PR preview (`*.vercel.app`, not a Cognito callback) runs only `smoke-public` (job `smoke`). The signed-in
+  run (job `smoke-staff`, `staff_session=true`, from `main` only: GitHub environment `e2e`, the read-only mailbox
+  role, concurrency group `e2e-cognito` shared with the Cognito E2E) signs in as the Cognito E2E user with an email
+  code (`tests/e2e/helpers/cognitoSignIn.ts`, shared with `tests/e2e/cognito/`) on the two callback hosts only:
+  Production after every production deploy (job `smoke-production`; the user is a reviewer, so reviewer mode:
+  pages from `frontend/lib/rbac.ts` `PAGE_RULES`, no writes) and the fixed Preview host after an alias-only
+  dispatch (job `smoke-preview-host`; viewer mode, and the setup fails unless the session's role is `viewer`, the
+  live evidence of the Preview client cap). For a PR labelled `preview-signin`, dispatch `ui-smoke.yml` from `main`
+  with `base_url=https://aa-cis-preview.lumiguides.it.com` and `staff_session=true`. Screenshots (desktop 1440 +
+  mobile 390, light + dark) upload as an artifact (the public run also uploads the HTML report; the signed-in run
+  never does: a `fill` step would name the code) and link from one PR comment each. Secret:
+  `VERCEL_AUTOMATION_BYPASS_SECRET` (preview SSO bypass), sent only to the BASE_URL origin (origin-scoped route),
+  never to a third-party host. The `E2E_ADMIN_*` password secrets are no longer passed (the smoke setup keeps a
+  legacy password mode for local runs until S2). The admin suite also checks that the old portal URLs answer 308
+  to the portal host (`aa885-portal-redirect.spec.ts`). Not a required check.
 - **Portal UI smoke (AA-885, `.github/workflows/ui-smoke-portal.yml`)**: Playwright project
   `smoke-portal` (`tests/e2e/smoke-portal/`) against a portal preview: host checks without a session
   (redirects, the AA-759 old-slug 308s, forged cookies refused, no admin routes = 404, security headers, `/privacy` +
@@ -652,7 +662,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
 - **Cognito E2E (AA-816 E1, `.github/workflows/e2e-cognito.yml`)**: `workflow_dispatch` on `main` only,
   GitHub environment `e2e`, OIDC role from secret `E2E_MAIL_ROLE_ARN` (Infra `aa-cis-dev-e2e-mail-reader`,
   read-only: List + Get on `s3://aa-cis-dev-e2e-mail-<acc2>/inbound/`, no delete; 1-day expiry). Playwright
-  project `cognito` (`tests/e2e/cognito/`, always the production host — the only registered callback): staff
+  project `cognito` (`tests/e2e/cognito/`, always the production host — the only `cis-admin` callback; the fixed
+  Preview host belongs to the separate preview client and is covered by the signed-in UI smoke): staff
   user "E2E Cognito" (`e2e@e2e-mail.lumiguides.it.com` — the SES test mailbox itself, reviewer, Booking none; a
   TEMPORARY exception to the `@adventure.asia` rule, see Staff roles) signs in by email code (`tests/e2e/helpers/mailbox.ts` reads the code from S3), lands under `/admin`,
   then (AA-680 staff-half evidence) opens the Booking staff admin (input `booking_base_url`: production
@@ -1072,9 +1083,11 @@ it). Admin-only reads stay refused by POLICY; the role-filtered open reads (sear
 it like reviewer/content. No Booking access (`/auth/booking-token` → 403, `staff_authz.NO_BOOKING_ROLES`). Not
 assignable from the Staff page (`staff_directory.CIS_ROLES`, `lib/rbac.ts` `ASSIGNABLE_STAFF_ROLES`) and no
 Cognito group (a `cis-viewer` group is deferred to AA-816 E1); the reconcile report lists the row under cutover
-readiness (no email / sub), a legacy-only exception. UI smoke runs in **viewer mode** when the GitHub
-`E2E_ADMIN_*` secrets hold this account (the role comes from the login answer): readable pages get the full page
-check, admin-only pages must redirect to `/admin/review`, a BFF write and the staff list must answer 403.
+readiness (no email / sub), a legacy-only exception. UI smoke runs in **viewer mode** when the smoke session is
+the viewer (since the AA-816 S2 path: the Cognito E2E user on the fixed Preview host, capped at viewer by the API;
+before it, this legacy account): readable pages get the full page check, admin-only pages must redirect to
+`/admin/review`, a BFF write and the staff list must answer 403. A smoke-public test keeps the page list's
+`viewerRefused` flags equal to `PAGE_RULES`.
 
 AA-Booking staff roles map onto the same three: `admin` → admin, `sales` → reviewer tier,
 `content_creator` → content (the CIS `viewer` maps to nothing: no Booking token). Reviewer and content reach the backend through the same admin secret;

@@ -51,3 +51,58 @@ Approved by Nghiệp in S247 (AA-816 S247 comment, AA-911). Three CIS branches, 
   `test_aa854_staff_bearer_middleware.py`, `test_aa854_verify_admin_cognito.py`, `test_aa878_viewer_role.py`,
   `test_aa656_staff_roles.py`, `test_s241_admin_routes_require_auth.py`, `test_aa680_booking_jwt.py` (604 passed,
   1 skipped); flake8 on touched files; `tsc --noEmit`; eslint on the touched frontend files.
+
+## Branch 2: smoke split
+
+### Decisions
+
+- **Split by tag, not by folder.** Specs that load the smoke session carry `{ tag: '@staff' }` on their describes
+  (`ui-smoke.spec.ts`, `aa752-shell.spec.ts`, `aa858-ops-overview.spec.ts`). Project `smoke` = `grep: /@staff/`
+  (needs `smoke-setup`), project `smoke-public` = `grepInvert: /@staff/` (no setup). No file moves, so links in
+  docs stay valid. A unit test (`tests/unit/test_aa816_smoke_split.py`) fails if a spec uses `ADMIN_STATE` without
+  the tag, and pins the workflow shape.
+- **Signed-in smoke = the Cognito E2E user**, the same mailbox flow as `e2e-cognito.yml`; the email-code steps moved
+  to `tests/e2e/helpers/cognitoSignIn.ts` and both the E2E spec and the smoke setup use them.
+- **Where it runs:** only from `main` (the mailbox role trusts `refs/heads/main` + environment `e2e`), only on the two
+  callback hosts. Production after every production deploy (`smoke-production`), the fixed Preview host after an
+  alias-only dispatch (`smoke-preview-host`). A PR labelled `preview-signin` runs on `refs/pull/...`, so its signed-in
+  smoke is a separate dispatch of `ui-smoke.yml` from `main`.
+- **Role of the session:** read from the `cis_role` display cookie, which the BFF writes from the
+  `/auth/verify-admin` answer at the end of the Cognito callback (the browser never writes it on this path). On the
+  Preview host the setup fails unless the role is `viewer`: that is the live evidence of the cap.
+- **Reviewer mode (Production):** the E2E user is a reviewer, so a non-admin, non-viewer run takes the page list
+  from `frontend/lib/rbac.ts` `PAGE_RULES` (`canSeePage`, dependency-free, imported by the test): a page it may not
+  open must redirect to its landing page. No write test runs on Production. Viewer mode keeps its `viewerRefused`
+  flags, and a public test checks they equal `PAGE_RULES`.
+- **No code leak:** `smoke-setup` has no retries (a retry asks for another code), no automatic screenshots or
+  traces, and the signed-in job uploads screenshots only, never the HTML report (a `fill` step names the code).
+- **Concurrency:** the signed-in job shares the group `e2e-cognito` with `e2e-cognito.yml` (one mailbox, one user).
+- The legacy password mode of the setup stays for local runs until S2; CI no longer passes `E2E_ADMIN_*`.
+
+### Changed
+
+- `aa816-admin-logout.spec.ts` and `aa816-cognito-auth-routes.spec.ts` treat the fixed Preview host like
+  Production (it is a registered callback / sign-out URL of the preview client since P6a).
+- `npm run test:e2e:smoke` runs both projects; `npm run test:e2e:smoke-public` only the public one.
+
+### Tradeoffs
+
+- PR previews lose every authenticated page check. Authenticated coverage moves to after merge (Production, as a
+  reviewer) and to opt-in Preview-host runs (as the viewer). Admin-only pages are no longer page-checked by CI at
+  all (no admin test identity: the E2E user is a reviewer and Preview is capped at viewer).
+- One Cognito access token (15 min) and one refresh token are shared by every test context from the storage state.
+  A run longer than the access token relies on `/api/auth/refresh`; with refresh-token rotation, parallel contexts
+  refreshing with the same old token could fail after Cognito's grace period. Today's run is well under 15 min
+  (workers: 1).
+- The Preview-host run comments on the PR of the main commit it checks out (no PR of its own).
+
+### Should know
+
+- Preconditions for the Preview-host run: P6a deployed (API knows the preview client), Vercel Preview
+  `COGNITO_CIS_ADMIN_PREVIEW_CLIENT_SECRET` set, the host aliased to a preview built after it, check V2 done.
+- Ran locally: `npx playwright test --project=smoke-public` against the production host (44 passed, 1 skipped:
+  the "no registered callback" test skips on callback hosts); `--list` for `smoke`, `smoke-public`, `cognito`;
+  an ad hoc `tsc --noEmit --strict` over the changed e2e files and `playwright.config.ts`;
+  `tests/unit/test_aa816_smoke_split.py`, `tests/unit/test_aa885_portal_split.py`.
+- The signed-in job has not run yet (it needs `main`). First check after merge: dispatch
+  `ui-smoke.yml` from main with `base_url=https://aa-cis.lumiguides.it.com staff_session=true`.

@@ -24,6 +24,9 @@ import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import fs from 'fs';
 import path from 'path';
 import { E2E_COGNITO_EMAIL, mailboxBaseline, waitForSignInCode } from '../helpers/mailbox';
+import {
+  STAFF_AUTH_HOST, onStaffAuth, reachCodeStep, signInByEmailCode as signInByEmailCodeShared,
+} from '../helpers/cognitoSignIn';
 
 const CIS_PROD_ORIGIN = 'https://aa-cis.lumiguides.it.com';
 // AA-680: the Booking staff admin host (a registered callback of the booking-staff client). AA-911: the run may
@@ -42,16 +45,7 @@ function bookingOrigin(): string {
 const BOOKING_ORIGIN = bookingOrigin();
 // Booking session cookies (AA-Booking frontend/lib/session.ts): none may hold a value after a refusal.
 const BOOKING_SESSION_COOKIES = ['bk_access', 'bk_staff_rt', 'bk_cis_session'];
-const STAFF_AUTH_HOST = 'staff-auth.lumiguides.it.com';
 const SHOTS_DIR = 'tests/e2e/results/cognito';
-
-const onStaffAuth = (page: Page) => {
-  try {
-    return new URL(page.url()).host === STAFF_AUTH_HOST;
-  } catch {
-    return false;
-  }
-};
 
 async function shot(page: Page, name: string) {
   // Never while the managed-login code field could hold a code (see the failure hook below too).
@@ -59,52 +53,9 @@ async function shot(page: Page, name: string) {
   await page.screenshot({ path: path.join(SHOTS_DIR, `${name}.png`), fullPage: false });
 }
 
-/** After "Next": either the code page directly (passwordless user), or a sign-in method choice first. */
-async function reachCodeStep(page: Page) {
-  const codeField = page.getByLabel(/verification code|sign-in code|^code$/i);
-  await expect
-    .poll(
-      async () => {
-        if (await codeField.first().isVisible().catch(() => false)) return 'code';
-        // A user with a password gets a method choice; pick the email code option.
-        const emailChoice = page
-          .getByRole('button', { name: /email|one-time code/i })
-          .or(page.getByRole('radio', { name: /email/i }))
-          .first();
-        if (await emailChoice.isVisible().catch(() => false)) {
-          await emailChoice.click({ timeout: 5000 });
-          const next = page.getByRole('button', { name: /^(next|continue)$/i }).first();
-          if (await next.isVisible().catch(() => false)) await next.click({ timeout: 5000 }).catch(() => {});
-        }
-        return 'waiting';
-      },
-      { timeout: 30000, intervals: [500, 1000, 2000] },
-    )
-    .toBe('code');
-  return codeField.first();
-}
-
-/**
- * On the managed-login email form: type the E2E address, ask for a code, read it from the mailbox, submit it.
- * Screenshots only before the code is typed (`emailShot` with the address, `codeShot` with the code field empty).
- */
+/** The shared email-code steps (helpers/cognitoSignIn.ts) with this spec's screenshots before the code is typed. */
 async function signInByEmailCode(page: Page, emailShot: string, codeShot: string) {
-  const emailField = page.getByLabel(/email/i).first();
-  await expect(emailField).toBeVisible({ timeout: 15000 });
-  await emailField.fill(E2E_COGNITO_EMAIL);
-  await shot(page, emailShot);
-
-  // Snapshot the mailbox BEFORE asking for a code, then ask.
-  const baseline = await mailboxBaseline();
-  const since = new Date();
-  await page.getByRole('button', { name: /^next$/i }).click({ timeout: 10000 });
-  const codeField = await reachCodeStep(page);
-  await shot(page, codeShot);
-
-  // Code from S3 (hard 90 s cap inside the helper).
-  const code = await waitForSignInCode({ since, baseline, timeoutMs: 90000 });
-  await codeField.fill(code);
-  await page.getByRole('button', { name: /^(continue|sign in|next)$/i }).first().click({ timeout: 10000 });
+  await signInByEmailCodeShared(page, { shot: (name) => shot(page, name), emailShot, codeShot });
 }
 
 /** Booking session cookies that still hold a value (names only — values are never printed). */
