@@ -50,7 +50,8 @@ from services.acp_content_writing.quality_gates import (
     keyword_covered, title_taken,
 )
 from services.acp_content_writing.facts import fetch_facts_for_writing, format_facts_block
-from services.acp_content_writing import authenticity, hygiene, sentence_repair, text_integrity, trip_facts
+from services.acp_content_writing import (authenticity, faq_filter, hygiene, sentence_repair, text_integrity,
+                                          trip_facts)
 from services.acp_content_writing.generate import (SEO_FIT_STAGE, SentenceRepairError, fit_seo_fields,
                                                    repair_sentences, rewrite_with_feedback, write_content, write_faq)
 from services.acp_content_writing.quality_gates import (CHEAP_REPAIR_GATES, F13_REPEAT_GATE, F14_GATE, F19_GATE,
@@ -59,7 +60,7 @@ from services.acp_content_writing.quality_gates import (CHEAP_REPAIR_GATES, F13_
                                                           drop_subjectless_faq, drop_unanswerable_faq,
                                                           faq_answer_problem, faq_pair_count, faq_pairs,
                                                           hold_failure, merge_faq_pairs, never_holds,
-                                                          paa_for_scope, replace_faq_section, seed_place_names,
+                                                          replace_faq_section, seed_place_names,
                                                           run_quality_gates, strip_citation_tags,
                                                           unused_source_facts)
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
@@ -1637,8 +1638,15 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
     openers_kw = {"sibling_openers": sibling_openers} if sibling_openers else {}
     # AA-779 — the blog's in-scope People Also Ask questions: the writer, the rewrite and the FAQ
     # regeneration (_enforce_faq_contract reads context["paa_questions"]) prefer one a seed fact answers.
-    paa_questions = (paa_for_scope(context.get("people_also_ask"), hyg.lexicon.own_text, facts_text,
-                                   hyg.lexicon.gazetteer) if channel == "blog" else [])
+    # S247 (AA-779, ADR 0011) — behind T9_FAQ_LLM_FILTER (default off) an LLM step on stage t9_faq_filter
+    # chooses them instead (or, in shadow mode, only records its verdicts); any failure keeps paa_for_scope.
+    paa_questions: list[str] = []
+    if channel == "blog":
+        paa_questions, faq_filter_record = await faq_filter.select_faq_questions(
+            context.get("people_also_ask"), own_seed=hyg.lexicon.own_text, facts_text=facts_text,
+            out_of_scope=hyg.lexicon.gazetteer, context=context, piece_id=piece_id, request_id=request_id)
+        if faq_filter_record:
+            context["faq_filter"] = faq_filter_record
     context["paa_questions"] = paa_questions
     # S245 (AA-779 2A) — the source of each question the writer got (admin-only, writer_input).
     context["search_questions"] = (label_questions(paa_questions, context.get("real_questions") or [])
@@ -2243,6 +2251,8 @@ def writer_input_snapshot(context: dict) -> dict:
             "faq_questions": context.get("faq_questions") or [],
             **{k: context[k] for k in ("faq_pairs_before", "faq_pairs_after") if k in context}}
            if context.get("channel") == "blog" and "real_questions" in context else {}),
+        # S247 (AA-779, ADR 0011) — the LLM question filter's mode, verdicts and fallback; absent when it is off.
+        **({"faq_filter": context["faq_filter"]} if context.get("faq_filter") else {}),
     }
 
 

@@ -128,6 +128,10 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
                                       fallback_model_ids=("sonnet",)),
     "t10_claims":         StageConfig("t10_claims", "validate", "openai", "gpt-6-luna", "acc3",
                                       fallback_model_ids=("gpt-5.6-luna",)),
+    # AA-779 (S247, migration 264, ADR 0011): the optional LLM filter of the blog FAQ's real search questions
+    # (flag T9_FAQ_LLM_FILTER, default off). A classification nobody scores → `validate` (ADR 0008), on the
+    # Haiku the S247 trial measured; no model fallback (on failure the code keeps the deterministic list).
+    "t9_faq_filter":      StageConfig("t9_faq_filter", "validate", "claude", "haiku", "acc3"),
     # AA-753 (10/10/2026) — the n7_* stages (n7_draft/adapt/faq/repair/gap_research/judge) were the
     # removed N7 produce pipeline (services/acp_produce/gates.py, 0 live callers). Dropped from
     # SAFE_DEFAULTS here and deleted from shared.llm_role_config by migration 207.

@@ -1800,6 +1800,21 @@ def seed_place_names(own_seed: str) -> tuple[set[str], set[str], set[str]]:
     return names, single, countries
 
 
+def normalize_paa_question(raw) -> Optional[str]:
+    """AA-779 — one real search question cleaned for the FAQ: citation tags cut, whitespace collapsed,
+    10–160 chars, a capital first letter and a final '?'. None when it is not a usable question.
+    Shared by paa_for_scope and the S247 LLM filter (faq_filter.py), so both see the same text."""
+    if not isinstance(raw, str):
+        return None
+    q = " ".join(strip_citation_tags(raw).split()).strip()
+    if not 10 <= len(q) <= 160:
+        return None
+    q = q[0].upper() + q[1:]
+    if not q.endswith("?"):
+        q = q.rstrip(".!") + "?"
+    return q
+
+
 def paa_for_scope(questions, own_seed: str, facts_text: Optional[str] = None,
                   out_of_scope=(), limit: int = PAA_MAX_QUESTIONS) -> list[str]:
     """AA-779 — the PAA questions a piece's FAQ may use (see the comment above). `own_seed` = the
@@ -1812,14 +1827,9 @@ def paa_for_scope(questions, own_seed: str, facts_text: Optional[str] = None,
     out: list[str] = []
     seen: set[str] = set()
     for raw in questions or []:
-        if not isinstance(raw, str):
+        q = normalize_paa_question(raw)
+        if q is None:
             continue
-        q = " ".join(strip_citation_tags(raw).split()).strip()
-        if not 10 <= len(q) <= 160:
-            continue
-        q = q[0].upper() + q[1:]
-        if not q.endswith("?"):
-            q = q.rstrip(".!") + "?"
         key = fold(q)
         if key in seen or any(names_place(q, g) for g in out_of_scope):
             continue
