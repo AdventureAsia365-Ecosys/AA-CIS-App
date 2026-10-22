@@ -1,0 +1,61 @@
+[
+ {
+  "id": "a1-meal-plural-claim-unsourced",
+  "class_id": "source.unsupported_specific",
+  "severity": "hard",
+  "writer": "A1",
+  "artefact": "output",
+  "chain": "a1",
+  "detector": "ITINERARY_MEAL_TIME_INVENTED",
+  "expected": "fire",
+  "note": "AA-803 part A: the rewrite says 'Lunch and dinner are included at the hotel in Punakha' on Day 3; the source names no meal on Day 3 and INCLUSIONS name none. On main the plural form was never read as a meal claim, so no code, no fix, and the invented meals were publishable. Now the pre-audit raises ITINERARY_MEAL_TIME_INVENTED (Jev off: nothing clears it) and flag_fix rewrites the itinerary without the meals.",
+  "expect": {
+   "publishable": true,
+   "brand_audit_status": "fixed",
+   "field_not_contains": {
+    "itineraries": [
+     "Lunch and dinner are included"
+    ]
+   }
+  },
+  "input": {
+   "base": "a1-bhutan-4d",
+   "brand_audit": {
+    "status": "pass",
+    "pre_audit": true
+   },
+   "writer_patch": {
+    "itineraries": [
+     {
+      "day": 1,
+      "title": "Arrival in Paro",
+      "body": "Arrive at Paro airport and drive to the hotel. In the afternoon visit Rinpung Dzong and the National Museum, then walk the old market street."
+     },
+     {
+      "day": 2,
+      "title": "Taktsang Monastery hike",
+      "body": "Hike to Taktsang Monastery, the Tiger's Nest, set on a cliff above the Paro valley. Lunch is at the cafeteria viewpoint before the walk back down."
+     },
+     {
+      "day": 3,
+      "title": "Dochula Pass and Punakha",
+      "body": "Drive over Dochula Pass to Punakha. Visit Punakha Dzong where two rivers meet and cross the suspension bridge before evening. Lunch and dinner are included at the hotel in Punakha."
+     },
+     {
+      "day": 4,
+      "title": "Paro and departure",
+      "body": "Drive back to Paro along the river road and transfer to the airport for the departure flight."
+     }
+    ]
+   }
+  },
+  "llm_stub": [
+   {
+    "stage": "s1_flag_fix",
+    "content": {
+     "itineraries": "Day 1 — Arrival in Paro\nArrive at Paro airport and drive to the hotel. In the afternoon visit Rinpung Dzong and the National Museum, then walk the old market street.\n\nDay 2 — Taktsang Monastery hike\nHike to Taktsang Monastery, the Tiger's Nest, set on a cliff above the Paro valley. Lunch is at the cafeteria viewpoint before the walk back down.\n\nDay 3 — Dochula Pass and Punakha\nDrive over Dochula Pass to Punakha. Visit Punakha Dzong where two rivers meet and cross the suspension bridge before evening.\n\nDay 4 — Paro and departure\nDrive back to Paro along the river road and transfer to the airport for the departure flight."
+    }
+   }
+  ]
+ }
+]

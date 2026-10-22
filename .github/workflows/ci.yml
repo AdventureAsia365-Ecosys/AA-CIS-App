@@ -97,9 +97,19 @@ jobs:
             --cov=services \
             --cov=shared \
             --cov-report=term-missing \
-            --cov-fail-under=30
+            --cov-report=xml:coverage.xml
           pytest tests/acp/ -v \
             --tb=short
+
+      # AA-879: coverage ratchet (replaces --cov-fail-under=30; the real total was ~86%). Fails below the
+      # floor in .github/coverage-ratchet.json, or when a PR lowers that floor against the base tip (HEAD^1
+      # of the pull_request merge ref; on a push the base is the previous commit). Below the monthly goal
+      # only warns.
+      - name: Coverage ratchet
+        run: |
+          BASE_ARGS=()
+          if git rev-parse -q --verify HEAD^1 >/dev/null; then BASE_ARGS=(--base HEAD^1); fi
+          python3 .github/scripts/coverage_ratchet.py coverage.xml "${BASE_ARGS[@]}"
 
       # AA-925 (Q-2): every NEW Q0 case (tests/unit/quality/cases) must FAIL on the base-branch tip, and an
       # existing truth label may change only with the `q0-relabel` PR label (labels are read from the event:
@@ -207,24 +217,23 @@ jobs:
           docker image inspect aa-cis-api:ci-${{ github.sha }}
           echo "Image built successfully ✅"
 
-      # AA-177: container image scan (Trivy) + SBOM (syft) — scope item 1 + 3.
-      # STEP0 found 5 real, pre-existing vulnerabilities in requirements.txt via pip-audit
-      # this session (chromadb x2 with NO fix version yet, pytest/python-dotenv/langchain WITH
-      # fixes available) — could not verify the CONTAINER image's own real findings locally
-      # (no docker/trivy available in this environment to pre-test against). Rolling out in
-      # MONITOR MODE first (report-only, does not fail the build) rather than guessing a
-      # blocking gate that could break CI for every concurrent PR the moment this merges —
-      # matches this issue's own "tránh CI noise spam" principle: a scanner nobody has looked
-      # at real findings from yet should not silently start blocking every merge. Flipping to
-      # `exit-code: 1` for CRITICAL/HIGH (with `--ignore-unfixed`, per the issue's own severity-
-      # gate ask) is a real, deliberate follow-up once someone has reviewed one real report.
-      - name: Scan image for vulnerabilities (Trivy, report-only — see comment above)
+      # AA-879: the image scan is blocking (it was report-only since AA-177). It fails on any CRITICAL/HIGH
+      # finding that HAS a fix (`ignore-unfixed`): the fix is a dependency bump or a rebuilt base image.
+      # Reviewed report before the flip (main run 39633516311, 21/10/2026): 145 OS findings (debian 13),
+      # none with a fixed version; Python packages clean. An accepted fixable finding goes into .trivyignore
+      # with a reason and an `exp:` date (checked by the step below; at most 90 days ahead).
+      - name: Trivy ignore entries carry a reason and an expiry
+        run: python3 .github/scripts/check_trivyignore.py .trivyignore
+
+      - name: Scan image for vulnerabilities (Trivy, failing on fixable CRITICAL/HIGH)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: "aa-cis-api:ci-${{ github.sha }}"
           format: "table"
           severity: "CRITICAL,HIGH"
-          exit-code: "0"
+          ignore-unfixed: true
+          trivyignores: ".trivyignore"
+          exit-code: "1"
 
       # sbom-action auto-uploads its own GitHub Actions artifact when it detects it's running
       # in a GHA workflow (its documented default behavior) -- artifact-name below controls
@@ -308,7 +317,62 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit $STATUS
 
-      # tsc catches prop/type errors eslint misses (lesson: always type-check / build the frontend).
-      - name: Type-check
-        working-directory: portal
+  # AA-879 — type-check and production build of the admin app (frontend/). NEW job, meant to become a
+  # required check: tsc catches prop/type errors ESLint misses, and `next build` catches what only a build
+  # sees (server/client boundaries, route config, Turbopack). Builds without any secret or env var (the
+  # app reads its API URL and Cognito settings at runtime); Sentry source-map upload is skipped without
+  # SENTRY_AUTH_TOKEN. ESLint stays in the non-required "Frontend Lint" job (AA-601 legacy errors).
+  frontend-build:
+    name: Frontend Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check (tsc --noEmit)
         run: npx tsc --noEmit -p .
+
+      - name: Build (next build)
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: npm run build
+
+  # AA-879 — the same for the tenant portal (portal/, AA-885). Its tsc step moved here from "Portal Lint".
+  portal-build:
+    name: Portal Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: portal
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: portal/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check (tsc --noEmit)
+        run: npx tsc --noEmit -p .
+
+      - name: Build (next build)
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: npm run build

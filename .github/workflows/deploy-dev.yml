@@ -9,7 +9,8 @@ on:
       - 'worker/**'
       - 'Dockerfile'
       - 'requirements.txt'
-      - 'frontend/**'
+      # AA-879: no 'frontend/**' — the image holds no frontend file (see the Dockerfile COPY lines), so a
+      # frontend-only merge must not restart api/worker. The admin app deploys from vercel-deploy.yml.
   workflow_dispatch:
     inputs:
       override_running_jobs:
