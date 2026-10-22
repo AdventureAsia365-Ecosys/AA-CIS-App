@@ -77,6 +77,26 @@ X1_FORCE_RLS = ("gold_aa_internal.content_exports", "gold_aa_internal.published_
 # any other RLS table must meet 244's guard and the standing check in test_x1_cis_app_privileges.
 X1_CI_ONLY_LEGACY_RLS = ("acp_deliver.packets", "acp_deliver.pieces", "acp_shared.acp_v2_runs",
                          "acp_shared.acp_v2_slots", "acp_shared.content_metric_snapshot", "acp_shared.unknown_ledger")
+# RLS tables of migrations applied on Dev AFTER 244 (AA-859 wave 3, CIS 262: their own tenant_isolation and
+# <table>_cis_app_all policies). The replay applies them before the X1 tests apply 244, whose exact RLS-set guard and
+# "parity policy on each of the 16 tables" test know only the 244-time set: x1_244_ci_shape takes their RLS and their
+# cis_app policy off around 244 (the 262 state minus what 244 must not see), x1_244_ci_unshape puts both back.
+X1_POST_244_RLS = ("shared.tenant_brand_rules", "shared.tenant_seo_config")
+
+
+def _post_244_rls(cur, on):
+    for table in X1_POST_244_RLS:
+        cur.execute("SELECT to_regclass(%s) IS NOT NULL", (table,))
+        if not cur.fetchone()[0]:
+            continue
+        policy = f"{table.split('.')[1]}_cis_app_all"
+        cur.execute(f"DROP POLICY IF EXISTS {policy} ON {table}")
+        if on:
+            cur.execute(f"CREATE POLICY {policy} ON {table} AS PERMISSIVE FOR ALL TO cis_app "
+                        "USING (true) WITH CHECK (true)")
+        cur.execute(f"ALTER TABLE {table} {'ENABLE' if on else 'DISABLE'} ROW LEVEL SECURITY")
+
+
 _X1_STANDIN_MARK = "zz-ci-standin (AA-860, conftest x1_244_ci_shape)"
 
 
@@ -85,7 +105,8 @@ def x1_244_ci_shape(cur):
     the four empty CIS schemas and FORCE on content_exports / webhook_deliveries (008). Undone by
     x1_244_ci_unshape (lesson S237: a global stand-in changes other code): RLS off on the CI-only legacy
     tables X1_CI_ONLY_LEGACY_RLS (absent on Dev; 241's tests need their RLS back), the tenant_tour_versions
-    stand-in and an acp_output_rules stand-in, both with RLS on and no FORCE, as on Dev."""
+    stand-in and an acp_output_rules stand-in, both with RLS on and no FORCE, as on Dev; RLS off on the post-244
+    tables X1_POST_244_RLS (CIS 262) and their cis_app policy, which did not exist yet when 244 ran on Dev."""
     for schema in ("acp_gold_output", "acp_silver_s2", "acp_silver_s3", "acp_silver_s4"):
         cur.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
     cur.execute("ALTER TABLE gold_aa_internal.content_exports FORCE ROW LEVEL SECURITY; "
@@ -94,6 +115,7 @@ def x1_244_ci_shape(cur):
         cur.execute("SELECT to_regclass(%s) IS NOT NULL", (table,))
         if cur.fetchone()[0]:
             cur.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
+    _post_244_rls(cur, on=False)
     cur.execute(TTV_STANDIN_DDL)
     cur.execute("ALTER TABLE gold_aa_internal.tenant_tour_versions ENABLE ROW LEVEL SECURITY")
     cur.execute("SELECT to_regclass('acp_shared.acp_output_rules') IS NULL")
@@ -105,11 +127,13 @@ def x1_244_ci_shape(cur):
 
 def x1_244_ci_unshape(cur):
     """Undo the temporary part of x1_244_ci_shape: RLS back on the CI-only legacy tables (without a cis_app
-    policy: the standing check skips them), the two stand-ins dropped (only a stand-in this helper created)."""
+    policy: the standing check skips them) and on the post-244 tables (X1_POST_244_RLS, their 262 cis_app policy
+    recreated), the two stand-ins dropped (only a stand-in this helper created)."""
     for table in X1_CI_ONLY_LEGACY_RLS:
         cur.execute("SELECT to_regclass(%s) IS NOT NULL", (table,))
         if cur.fetchone()[0]:
             cur.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
+    _post_244_rls(cur, on=True)
     cur.execute("DROP TABLE IF EXISTS gold_aa_internal.tenant_tour_versions")
     cur.execute("SELECT obj_description('acp_shared.acp_output_rules'::regclass, 'pg_class') = %s "
                 "WHERE to_regclass('acp_shared.acp_output_rules') IS NOT NULL", (_X1_STANDIN_MARK,))
@@ -334,6 +358,14 @@ def _apply_schema(conn):
                 CREATE UNIQUE INDEX IF NOT EXISTS destinations_lower_name_uidx
                     ON shared.destinations (lower(name));
             """ + sql
+        if mf.startswith("262_"):
+            # AA-859 wave 3: CI's legacy app_user is a LOGIN role here (ci.yml creates it; Dev has no grant for it)
+            # and holds 005's grants on tenant_brand_rules. 262's guard 1 refuses a login role with privileges on
+            # a table it puts under RLS with no policy for that role (it would read 0 rows). Take them away first,
+            # as the post-replay block below does for tenant_integrations (237).
+            sql = ("DO $$ BEGIN IF to_regrole('app_user') IS NOT NULL THEN "
+                   "REVOKE ALL ON shared.tenant_brand_rules, shared.tenant_seo_config FROM app_user; "
+                   "END IF; END $$;\n") + sql
         if mf.startswith("229_"):
             # AA-817: 229 sets RLS + grants on gold_aa_internal.tenant_tour_versions, which only
             # migration 001 creates (skipped here), and its guard refuses a missing table. Apply it
@@ -499,6 +531,9 @@ def _apply_schema(conn):
     # and 237's guard 1 refuses any other grantee (with RLS on and a policy TO aa_app_user only, it would
     # read 0 rows). Keep the CI-only app_user off it so test_aa817_* can re-apply 237 per test.
     cur.execute("REVOKE ALL ON shared.tenant_integrations FROM app_user")
+    # AA-859 wave 3 (262): same for the two tables 262 puts under RLS, so test_aa817_* / test_aa859_migration_262
+    # can re-apply 262 (its guard 1 refuses a login role holding privileges there).
+    cur.execute("REVOKE ALL ON shared.tenant_brand_rules, shared.tenant_seo_config FROM app_user")
 
     # Seed pipeline_runs for both tenants (FK required by raw_tours.batch_id)
     # Must set RLS context + use BYPASSRLS or set app.tenant_id

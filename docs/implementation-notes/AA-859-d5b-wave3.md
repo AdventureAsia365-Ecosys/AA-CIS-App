@@ -53,3 +53,97 @@ Flag: `T2_VERSION_DETAIL_READS_FLAG` = `aa859:t2_version_detail_reads_pool`. No 
 - Ships ON (missing key). To ship it dark, `SET aa859:t2_version_detail_reads_pool false` before the deploy (the
   flag tool's ALLOWED set needs the key: `.tmp-session/aa859_wave3_flag.py` carries it).
 - Flip-verify: `.tmp-session/aa859_wave3_flip_verify.py t2_version_detail_reads` (not run by this lane).
+
+## Wave 3 — brand identity + publish (commit 2)
+
+Migration **262** (`api/migrations/262_tenant_brand_seo_rls.sql`; the plan's "242", renumbered: CIS is at 261).
+Flags: `BRAND_IDENTITY_FLAG` = `aa859:brand_identity_pool` (needs 262), `PUBLISH_FLAG` = `aa859:publish_pool`
+(no new grant).
+
+### Decisions
+- **One migration file, not two.** 262 covers both tables (same template, same route); 263 was not needed.
+- **Publish needs no migration.** Everything it touches already has RLS and the grants it uses (publish_log
+  S/I/U 229, content_piece / angle_gate_request 229, angle_gate_option S 241, tenant_integrations S 237). The
+  plan's D7 row "PUBLISH_FLAG — 242" is not true of the code; the flag is independent of 262.
+- **262 grants:** `tenant_brand_rules` SELECT + INSERT on the 16 columns the POST writes + UPDATE (is_active);
+  `tenant_seo_config` SELECT (the upsert's ON CONFLICT (tenant_id) needs SELECT on tenant_id) + INSERT
+  (tenant_id, target_market) + UPDATE (target_market, updated_at). tenant_id is never updatable, no DELETE, no
+  TRUNCATE. The file starts from `REVOKE ALL` so a re-run gives the exact set (a guard checks it).
+- **X1 parity policy in the same file** (`<table>_cis_app_all` TO cis_app USING (true) WITH CHECK (true)): the api
+  main pool, the worker (T2 / T8 / T9 read the brand rows; T2 / T7 read target_market) and ECS-exec scripts are
+  cis_app since X1 S18, not the owner; without it they would read 0 rows after the apply, silently. CI standing
+  check `test_standing_every_rls_table_has_a_cis_app_parity_policy` requires it.
+- **No behavioural aa_app_user guard in the file.** 237 / 241 switched to aa_app_user inside the migration; since
+  X1 the file runs as cis_owner (login db_migrator), the role lint allows `SET LOCAL ROLE` only to catalog_owner /
+  cis_owner / cis_app, and cis_owner may not join aa_app_user (no role DDL in cis/). Shape guards instead (policy
+  set and shape, exact privileges, the invariant), behaviour in CI (`test_aa817_rls_tenant_isolation`,
+  `test_aa859_migration_262`, `test_aa859_wave3_pool_routes`) and on Dev by the nightly isolation probe (its tenant
+  matrix discovers every RLS table, so the two tables are covered with no probe change).
+- **Guard 6 (cis_app parity by behaviour) only the DB Migrate way:** inside a DO block that runs when current_user is
+  cis_owner and the login is a member of cis_app; `SET LOCAL ROLE cis_app` and back with `SET LOCAL ROLE cis_owner`
+  (both allowlisted). In the CI replay (superuser, no 244 grants) it is skipped with a NOTICE (pinned by a test).
+  The file passes the Infra role lint (`run_migration.lint` / `role_lint`, run locally against the file).
+- **Guard 1 "other grantees":** refuses PUBLIC and any role that can log in or has members (it would read 0 rows),
+  besides the owner, aa_app_user and cis_app. A NOLOGIN role with no members is accepted: CI's legacy `app_user`
+  (005) holds grants on these tables and can open no session. Also refuses a dependent view owned by a role RLS
+  would filter.
+- **Brand identity: staff vs tenant.** A second dependency `_brand_caller_is_tenant` (True when a Bearer was
+  presented; `_resolve_brand_tenant_id` already refuses any non-tenant Bearer). Handlers check `is True`, so direct
+  calls that pass only `tenant_id` (existing tests, other code) get the Depends default and stay on the staff /
+  main-pool path; the request signature of the route is unchanged.
+- **Brand POST on the tenant pool:** acquire_scoped_conn's transaction is the save's transaction (no nested one);
+  advisory lock `pg_advisory_xact_lock(859, hashtext(<tenant> || ':brand_identity'))` before MAX + 1 (same class as
+  W6, different key text); a duplicate version (UNIQUE (tenant_id, brand_name, version), e.g. a concurrent staff
+  save on MAIN) is 409 `version_conflict`, never a 500. Flag off: the admin pool inside its own transaction, as
+  before (no lock, the old error behaviour).
+- **Publish blocks:** (1) piece + connection in one block (no external call between them; the 404 / 422 / 409
+  checks raise inside it), (2) `claim()` (its transaction becomes a savepoint, so a concurrent claim's
+  UniqueViolation rolls back only the claim and `claim()` still answers `in_progress`), (3) `finish()`. The
+  daily-limit override (`shared.tenants`) is read on MAIN **before** block 2 (it used to share the claim's
+  connection; same SQL, same order). Audit on MAIN after block 3. `channel_publish` now carries `used_tenant_pool`.
+
+### Changed
+- `api/migrations/262_tenant_brand_seo_rls.sql` (new).
+- `api/core/aa544_tenant_pool.py`: two constants + inventory; header list.
+- `api/routers/admin_pipeline.py`: `_brand_caller_is_tenant`, SQL constants (`_BRAND_*`), `_read_brand_rows`,
+  `_save_brand_rows`; GET / POST split into tenant (tenant pool) and staff (main pool) paths.
+- `api/routers/v1_publish.py`: `_PUBLISH_PIECE_SQL` / `_PUBLISH_PIECE_TENANT_COND` / `_PUBLISH_INTEGRATION_SQL`,
+  `_publishable_channel()` (the old inline checks, unchanged), three scoped blocks.
+- `tests/integration/conftest.py`: CI's legacy `app_user` is a LOGIN role (ci.yml creates it) holding 005's grants on
+  tenant_brand_rules, which 262's guard 1 refuses; the replay revokes them right before 262 and again after the
+  post-replay `GRANT ... TO app_user` (same as tenant_integrations for 237). Dev has no such grant.
+- `tests/integration/conftest.py`: `X1_POST_244_RLS` — `x1_244_ci_shape` takes RLS and the cis_app policy off the
+  two tables around the X1 tests' 244 apply (244's exact RLS-set guard and the "16 tables" test know only the
+  244-time set; on Dev 244 ran before 262), `x1_244_ci_unshape` puts both back.
+- `tests/integration/test_aa817_rls_tenant_isolation.py`: the two tables in `TENANT_TABLES` and
+  `COLUMN_WRITE_TABLES`, seeded per tenant, 262 re-applied in the fixture, `ALL_RLS_TABLES` 18, the delete test
+  parametrised over a new `DELETE_TABLES` (only tenant_integrations has DELETE), new tests: the brand POST
+  statements as the tenant role, writes stay in the own tenant, columns outside the grant refused.
+- New: `tests/integration/test_aa859_migration_262.py`, `tests/integration/test_aa859_wave3_pool_routes.py`,
+  `tests/unit/test_aa859_brand_identity_pool.py`, `tests/unit/test_aa859_publish_pool.py`,
+  `tests/unit/test_aa859_reentrancy_wave3.py`.
+- `tests/unit/test_aa819_daily_publish_limit.py`: the publish-route fake sets an explicit OFF flag (S241 D-12).
+- `tests/unit/test_s241_tenant_flag_keys.py` (14 keys), `tests/unit/test_aa817_tenant_pool_fail_closed.py` (14).
+- `CONTEXT.md`: two route rows, MAIN exceptions, 262 rollback note.
+
+### Tradeoffs
+- Column grants on the brand INSERT (16 columns) make a later new brand column a 42501 on the tenant path until a
+  migration grants it. Accepted: same rule as 241 for tenant_integrations; the unit flag-ownership and the
+  integration POST test catch it in CI.
+- `REVOKE ALL` + re-grant on every run of 262 (instead of "GRANT if missing") so the guard can demand an exact set.
+- Publish takes one extra MAIN acquire (the limit read moved out of the claim connection) — a few ms.
+
+### Should know
+- **Order on Dev:** 262 must be applied (DB Migrate check → apply, Infra copy in `db/migrations/cis/`) before the
+  wave-3 deploy, or `aa859:brand_identity_pool` must be `SET false` before the deploy (missing key = ON). Without
+  262 the tenant brand page 500s (42501) with the flag ON. Publish does not depend on 262.
+- **Read-only preflight before the apply:** root `.tmp-session/aa859_262_preflight.py` (S3-mediated ECS exec, runs as
+  cis_app, read-only). Expected: both tables RLS off, owner cis_owner, grantees cis_app only, no policy, no
+  dependent view, invariant 0 rows.
+- **Not changed here, on purpose:** `tests/integration/rls_catalogue_rules.py` still allowlists the two tables for
+  rule a. After 262 that entry matches nothing (reported as stale, not fatal). Removing it changes a file the Infra
+  Copy Guard compares byte for byte, so it is a follow-up once both repos are on 262 (edit here, copy to Infra
+  `db/rls_catalogue_rules.py` in the same pair of PRs).
+- Flip-verify script (not run): root `.tmp-session/aa859_wave3_flip_verify.py brand_identity publish
+  t2_version_detail_reads`, flag tool `.tmp-session/aa859_wave3_flag.py` (the S240 tool with the three new keys).
+  The publish check uses 1 of tenant A's 20 daily publishes and the E2E WordPress test site, like W4's.
