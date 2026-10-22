@@ -1243,17 +1243,27 @@ Tenant routes moved off the main pool run on the **tenant pool** (`acquire_scope
 Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`) and sets
 `app.tenant_id` for the transaction; isolation is RLS, not the query's own `WHERE tenant_id`.
 
-- **RLS template** (229; also 237, 241, 262): `ENABLE ROW LEVEL SECURITY` without FORCE (the owner `cis_owner` stays exempt; the
+- **RLS template** (229; also 237, 241, 262, 265): `ENABLE ROW LEVEL SECURITY` without FORCE (the owner `cis_owner` stays exempt; the
   main pool and the worker log in as `cis_app` since X1 S18 and read through `<table>_cis_app_all`, CIS 244), policy `tenant_isolation` `FOR ALL TO aa_app_user`, USING and WITH CHECK on
   `NULLIF(current_setting('app.tenant_id', true), '')::uuid` (`''` = no rows, never an error). A table
   without a tenant column goes through its parent: `acp_shared.angle_gate_option` matches options of
-  `angle_gate_request` rows of the tenant (241).
-- **No privilege without RLS** (241): `aa_app_user` holds no privilege, table or column level, on any
-  relation without RLS. The one exception is the cross-app catalog contract: `SELECT` on the
-  `catalog.v_*` views owned by `catalog_owner` (225 / 228), which other apps read too. A new table the
-  tenant pool needs gets RLS and its grants in the same migration. Enforced by
-  `NO_PRIVILEGE_WITHOUT_RLS_SQL` (`tests/integration/_rls_fixture_helpers.py`), the same query as 241's
-  guard 4 and the AA-859 probe.
+  `angle_gate_request` rows of the tenant (241), `acp_shared.quarter_plan_version` versions of the tenant's
+  `quarter_plan` rows (265). `acp_deliver.tenant_tour_pages.tenant_id` is text: its policy compares text without a cast,
+  plus `aa_app_user_aa_master_read` (the AA master's public pages, 239 shape). `acp_contract.tour_atoms` (266) is
+  `FOR SELECT` only for the tenant role: `atoms_platform_read` (`owner_scope = 'platform'`) and `tenant_isolation`
+  (`owner_scope` = the GUC, text); `catalog_owner_read USING (true)` keeps the catalog views reading every atom (D9:
+  no live tenant atom on a live master tour, guarded at apply); TripPlanner holds no grant on it (CIS 254).
+- **No privilege without RLS** (241; v2 since 265): `aa_app_user` holds no privilege, table or column level, on any
+  relation without RLS. Two exceptions: the cross-app catalog contract, `SELECT` on the `catalog.v_*` views owned
+  by `catalog_owner` (225 / 228), which other apps read too; and the **platform read allowlist** (265,
+  `PLATFORM_READ_ALLOWLIST`): table-level `SELECT` (no column grant, nothing else) on `acp_contract.route`,
+  `atom_segment`, `atom_segment_member`, `atom_segment_alias`, `acp_shared.place_card`, `place_card_alias`,
+  `atom_place_card`, relations with no tenant column and no `owner_scope` (265 guards it), AA's shared derivation.
+  The `acp_contract` views (`v_active_tour_atoms`, `v_trip_registry`, owner rights) stay ungranted: tenant-pool
+  code reads atoms through the base table with the 203 rule inlined. A new table the tenant pool needs gets RLS
+  and its grants in the same migration. Enforced by `NO_PRIVILEGE_WITHOUT_RLS_SQL_V2`
+  (`tests/integration/_rls_fixture_helpers.py`), guard 5 of 265 / 266; v1 (`NO_PRIVILEGE_WITHOUT_RLS_SQL`, 241's
+  guard 4 and 262's guard 5, kept byte for byte) holds only before 265.
 - **Catalogue-wide RLS guard (X2):** `tests/integration/test_rls_catalogue_guard.py` runs the rules in
   `tests/integration/rls_catalogue_rules.py` on the replayed migrations in every PR's Integration Tests job.
   The rules: a `tenant_id` table needs RLS and an `app.tenant_id` policy; no policy `TO PUBLIC`; no
@@ -1302,18 +1312,35 @@ Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`
   | GET/POST `/v1/integrations/{wordpress,facebook}`, POST `.../test` (W9) | `aa859:integration_connect_pool` | Secrets Manager / remote HTTP hold no connection; the UPSERT writes only 241's column grants; needs 241 |
   | GET / POST `/admin/brand-identity` with a tenant Bearer (wave 3, S247) | `aa859:brand_identity_pool` | needs 262 (RLS on `tenant_brand_rules` / `tenant_seo_config`); POST = one transaction, `pg_advisory_xact_lock(859, hashtext(tenant:brand_identity))` + `MAX + 1`, UNIQUE backstop → 409 `version_conflict`; the X-Admin-Secret staff branch stays on MAIN and reads no flag; `check_saved_cta` on MAIN after commit |
   | POST `/v1/publish-log/{piece_id}/publish` (wave 3, S247) | `aa859:publish_pool` | three short blocks (piece + connection, `claim()` as a savepoint, `finish()`); Secrets Manager and the remote post hold no connection; daily-limit override read and audit row on MAIN; no new grant |
+  | GET `/v1/angle-gate/requests/{id}` and the choose / reopen response re-read (wave 4, S247) | `aa859:angle_gate_read_pool` | needs 265; request + options + Subject header in one block; the t8_angles job status (`generation_failed`) on MAIN after it, only for `pending_goal` without a goal; the re-read is its own sequential block, not under the decide flag |
+  | GET `/v1/slate` (wave 4) | `aa859:slate_reads_pool` | needs 265; enqueue (`request_slate_proposal`) and the tenant's channel config on MAIN first, last proposal on MAIN after; `POST /v1/slate/refresh` stays on MAIN |
+  | POST `/v1/subjects/{id}/pick`, `/cut` (wave 4) | `aa859:subject_decide_pool` | needs 265 + 266; one transaction, the Subject row locked `FOR UPDATE` (pick) / one conditional UPDATE (cut); members read on the base table with the 203 rule; the pick audit on MAIN after commit, best-effort (flag off: inside the transaction, AA-559) |
+  | GET `/v1/planning/trip-reallocation/suggest`, POST `.../confirm` (wave 4) | `aa859:trip_reallocation_pool` | needs 265 + 266; config on MAIN, one read block; confirm accept = one more transaction, `pg_advisory_xact_lock(859, hashtext(tenant:quarter_plan:year:quarter))`, save + approve together, UNIQUE backstop → 409 `version_conflict`; audit on MAIN after the blocks for accept and reject, best-effort (flag off: audit first, as before) |
+  | GET `/v1/marketplace` (wave 4) | `aa859:marketplace_pool` | needs 266; `posts_per_week` on MAIN first |
+  | GET `/v1/content-writing/reviews`, `/requests/{id}/review` (wave 4) | `aa859:reviews_pool` | needs 265 + 266; one block each, no MAIN read; the trip page is a LATERAL (own page, else the AA master's) |
 
   A 241 rollback must `SET ... false` the two "needs 241" flags first (and list them in
   `TENANT_POOL_FORCE_ADMIN_FLAGS`), as 241's rollback comment STEP 0 says; a 262 rollback the same for
-  `aa859:brand_identity_pool` (262's rollback comment STEP 0).
+  `aa859:brand_identity_pool` (262's rollback comment STEP 0); a 265 / 266 rollback the same for the wave-4 flags
+  that need it (their headers' STEP 0).
+
+  **Wave-4 behaviour changes** (S247): the pick and the trip-reallocation confirm write their audit row on MAIN after
+  the tenant transaction, best-effort, so a lost audit row no longer fails them (flag on only); confirm's save and
+  approve are one transaction (a crash between the two no longer leaves an orphan pending version); the pick locks
+  the Subject row, so a concurrent t7_slate proposal waits and then sees `picked`; the tenant trip query returns one
+  row per tour with the tenant's own trip page, else the master's (it used to repeat a tour once per tenant with a
+  page for it). The tenant route hub (`/v1/routes`, `/v1/hubs`, `/v1/route-picks`) is retired (0 callers, 0
+  requests in 30 days); `acp_contract.route_pick` stays, a Dead Table Registry candidate.
 - **MAIN exceptions** (code comment `# AA-859 MAIN exception: <reason>`): `write_audit_log`
   (`acp_shared.audit_log` has no RLS and is never granted; written after the tenant transaction
   commits, best-effort on the tenant path); enqueue-in-transaction routes (angle-gate goal, T2 rewrite /
   retry, content-writing write, slate refresh); `shared.job` status lookups (no tenant column); tenant
   self-config and usage reads (`/v1/quota`, `/v1/billing`, `shared.tenants` limits incl. publish's
-  `daily_publish_limit`) keyed on the JWT `sub`; the angle-gate `fetch_request` re-read (subject / segment /
-  route have no grant until wave 4); `check_saved_cta` → `notify_admins` after a brand save; staff branches
-  (`/admin/brand-identity` with X-Admin-Secret, `/v1/tours/{id}/full` with X-Admin-Secret).
+  `daily_publish_limit`) keyed on the JWT `sub`; the tenant's planning config (`shared.tenants` /
+  `acp_shared.tenant_config`, read first by the Slate and the trip-reallocation routes, D2) and the marketplace's
+  `posts_per_week`; the angle-gate job status (`shared.job`, only for `pending_goal` without a goal);
+  `check_saved_cta` → `notify_admins` after a brand save; staff branches (`/admin/brand-identity` with
+  X-Admin-Secret, `/v1/tours/{id}/full` with X-Admin-Secret).
 - **`/admin/atoms*` is staff only** (AA-859, S240): the AA-431 tenant-JWT branch was removed with no flag
   after 30 days of WAF logs showed 0 Bearer callers (1,041 calls, all `X-Admin-Secret`). A Bearer token
   gets 403 and logs `aa859_admin_atoms_tenant_refused`. No tenant route writes `acp_contract.tour_atoms`.
