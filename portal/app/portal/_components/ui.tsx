@@ -334,7 +334,7 @@ export function EmptyState({ icon, title, sub, action }: {
   icon: React.ReactNode; title: string; sub?: string; action?: React.ReactNode;
 }) {
   return (
-    <div style={{ textAlign: "center", padding: "60px 20px", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+    <div data-testid="portal-empty-state" style={{ textAlign: "center", padding: "60px 20px", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
       <div style={{ fontSize: 36 }}>{icon}</div>
       <div style={{ fontSize: 15, fontWeight: 600, color: T.ink }}>{title}</div>
       {sub && <div style={{ fontSize: 13, color: T.muted, maxWidth: 320, lineHeight: 1.5 }}>{sub}</div>}
@@ -360,6 +360,19 @@ export function Btn({ children, onClick, variant = "secondary", size = "md", dis
   };
   return (
     <button onClick={onClick} disabled={disabled} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, padding: pad[size], borderRadius: BTN_RADIUS, fontSize: fz[size], fontWeight: 600, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1, transition: "all 0.15s", fontFamily: sans, ...base[variant], ...(variant === "primary" && size !== "sm" ? BTN_PRIMARY_TEXT : {}), ...style }}>{children}</button>
+  );
+}
+
+/** AA-760 — an empty state's way forward: a page link that looks like the primary `Btn` (md). */
+export function CtaLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <Link href={href} data-testid="empty-state-cta" style={{
+      display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "8px 18px",
+      borderRadius: BTN_RADIUS, fontSize: 13, fontWeight: 600, fontFamily: sans, textDecoration: "none",
+      background: T.gold, color: T.onAccent, border: `1px solid ${T.gold}`, ...BTN_PRIMARY_TEXT,
+    }}>
+      {children}
+    </Link>
   );
 }
 

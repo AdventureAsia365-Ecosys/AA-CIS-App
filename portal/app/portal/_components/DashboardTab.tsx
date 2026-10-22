@@ -10,7 +10,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, FileText, Code2, Globe2, BookOpen, Sparkles, Clock, AlertTriangle, Check, X, RefreshCw } from "lucide-react";
 import {
   T, serif, mono, sans,
-  Card, CardHead, ProgressBar, PageHeader, TextLink,
+  Card, CardHead, CtaLink, ProgressBar, PageHeader, TextLink,
   fmtDateTime, fmtBillingMonth,
 } from "./ui";
 import { ActivityStateBadge } from "./workStatus";
@@ -195,8 +195,10 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
             <TextLink href="/portal/account/activity">View all →</TextLink>
           </div>
           {activity.length === 0 ? (
-            <div style={{ padding: "32px 0", textAlign: "center", color: T.muted2, fontSize: 13 }}>
+            // AA-760 — an empty feed offers its next step (was text only).
+            <div data-testid="dashboard-activity-empty" style={{ padding: "28px 0 24px", textAlign: "center", color: T.muted2, fontSize: 13, display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
               No activity yet — browse tours to rewrite your first one
+              <CtaLink href="/portal/tours">Browse tours</CtaLink>
             </div>
           ) : activity.slice(0, 5).map((a, i) => {
             // AA-760 — state from the version's job (shell activity view), not the row status.

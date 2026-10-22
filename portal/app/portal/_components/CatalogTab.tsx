@@ -18,7 +18,7 @@ import Link from "next/link";
 import { Download } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
-import { T, sans, Btn, parseContent } from "./ui";
+import { T, sans, Btn, CtaLink, parseContent } from "./ui";
 import {
   type ColumnDef,
   DataTable,
@@ -358,7 +358,8 @@ function CatalogInner() {
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
         <span style={{ fontSize: 15, fontWeight: 700, color: T.ink, fontFamily: sans }}>Your tours</span>
         {/* AA-760 — no count until the versions load ("0 tours" read as "you have no tours"). */}
-        {!isLoading && (
+        {/* AA-760 — and none when there is nothing yet (the empty state below says so). */}
+        {!isLoading && grouped.length > 0 && (
           <span style={{ fontSize: 12, color: T.muted2 }}>
             {visible.length < grouped.length ? `${visible.length} of ${grouped.length}` : `${grouped.length}`} {grouped.length === 1 ? "tour" : "tours"}
           </span>
@@ -382,6 +383,7 @@ function CatalogInner() {
         pageSize={25}
         emptyTitle="No rewrites yet"
         emptyDescription="Browse tours and rewrite your first one in your brand voice"
+        emptyAction={grouped.length === 0 ? <CtaLink href="/portal/tours">Browse tours</CtaLink> : undefined}
         onRowClick={openRow}
         bulkActions={({ selectedRows, clearSelection }) => (
           <>

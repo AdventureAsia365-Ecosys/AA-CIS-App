@@ -12,7 +12,8 @@ each request in its own task (a fresh copy of the server's context), so nothing 
 uvicorn's "Exception in ASGI application" traceback — logged in that task after the app raised — keeps the id.
 
 One ``request_completed`` line per request records method, path, route template, status, duration and, for
-``/v1/*`` tenant calls, ``tenant_id`` (``request.state.tenant_id``, set by the rate limiter) — never the query
+``/v1/*`` tenant calls, ``tenant_id`` (``request.state.tenant_id``, set by the rate limiter) and ``client`` (AA-760:
+``portal`` session or metered ``api`` call, ``request.state.tenant_client``) — never the query
 string, headers or body (DM-6.4). It replaces uvicorn's access log (shared/log_config.py). ``status`` is 500 when an
 exception went through (Starlette's ServerErrorMiddleware answers it outside this middleware); when no response
 was started and nothing was raised through it (client gone, task cancelled) ``status`` is null and
@@ -105,8 +106,12 @@ class RequestIdMiddleware:
                 "status": status,
                 "duration_ms": round((time.perf_counter() - started) * 1000, 1),
             }
-            if (tenant_id := (scope.get("state") or {}).get("tenant_id")) is not None:
+            state = scope.get("state") or {}
+            if (tenant_id := state.get("tenant_id")) is not None:
                 fields["tenant_id"] = tenant_id
+            # AA-760 — "portal" (a portal session, not metered) or "api" (metered in shared.tenant_api_usage).
+            if (client := state.get("tenant_client")) is not None:
+                fields["client"] = client
             if status is None:
                 fields["aborted"] = True
             log.info("request_completed", **fields)

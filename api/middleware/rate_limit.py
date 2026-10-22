@@ -2,7 +2,7 @@ import json, time, os, logging, uuid
 import structlog
 from fastapi import Request
 from fastapi.responses import JSONResponse
-from api.routers.auth import verify_jwt
+from api.routers.auth import is_portal_session, verify_jwt
 from api.core.secret_compare import secrets_equal
 from api.core.staff_credential import principal_verified
 from shared.services.billing_service import track_api_call
@@ -95,6 +95,12 @@ async def rate_limit_middleware(request: Request, call_next):
     # this binding.
     structlog.contextvars.bind_contextvars(tenant_id=str(tenant_id))
     request.state.tenant_id = str(tenant_id)
+    # AA-760 — a portal session (the portal's own page loads and its API playground) is rate-limited like any
+    # tenant call but NOT metered: shared.tenant_api_usage is the "API calls" count on the tenant's Billing page,
+    # which counts calls the tenant's own systems make. Every portal call stays in the log: the request-id
+    # middleware's `request_completed` line carries tenant_id + client (method, path, route, status, duration).
+    portal = is_portal_session(payload)
+    request.state.tenant_client = "portal" if portal else "api"
 
     # AA-432: revoke + real per-tenant rate limit. tenant_meta is None only when
     # BOTH the Redis cache and the DB are unreachable — fail OPEN in that case
@@ -127,12 +133,13 @@ async def rate_limit_middleware(request: Request, call_next):
 
     if count > rpm_limit:
         retry_after = 60 - int(time.time() % 60)
-        # Track 429
-        await track_api_call(
-            request.app.state.pool,
-            tenant_id, request.url.path,
-            request.method, 429
-        )
+        # Track 429 (machine calls only — AA-760)
+        if not portal:
+            await track_api_call(
+                request.app.state.pool,
+                tenant_id, request.url.path,
+                request.method, 429
+            )
         return JSONResponse(
             status_code=429,
             content={"detail": f"Rate limit exceeded. Plan: {plan_tier}, limit: {rpm_limit} RPM"},
@@ -144,13 +151,14 @@ async def rate_limit_middleware(request: Request, call_next):
     response = await call_next(request)
     response_ms = int((time.time() - start) * 1000)
 
-    # Track successful call
-    await track_api_call(
-        request.app.state.pool,
-        tenant_id, request.url.path,
-        request.method, response.status_code,
-        response_ms
-    )
+    # Track the call (machine calls only — AA-760: a portal session is not an API call)
+    if not portal:
+        await track_api_call(
+            request.app.state.pool,
+            tenant_id, request.url.path,
+            request.method, response.status_code,
+            response_ms
+        )
 
     response.headers["X-RateLimit-Limit"] = str(rpm_limit)
     response.headers["X-RateLimit-Remaining"] = str(max(0, rpm_limit - count))

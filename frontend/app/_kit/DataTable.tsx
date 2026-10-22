@@ -111,6 +111,8 @@ export type DataTableProps<T> = {
   // Empty state
   emptyTitle?: string;
   emptyDescription?: string;
+  /** AA-760 — the empty state's way forward (a link or button), shown under the description. */
+  emptyAction?: React.ReactNode;
 
   /** S243 — false: render every row, no page-size select or pager (the caller pages, e.g. keyset
    * "load older"). Ignored with `serverPagination`. Default true. */
@@ -176,6 +178,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
     csvFilename = "export",
     emptyTitle = "Nothing here yet",
     emptyDescription,
+    emptyAction,
     toolbarExtra,
     stickyHeader = true,
     maxBodyHeight,
@@ -541,7 +544,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
           </div>
         )
       ) : totalFiltered === 0 ? (
-        <EmptyState title={emptyTitle} description={emptyDescription} />
+        <EmptyState title={emptyTitle} description={emptyDescription} action={emptyAction} />
       ) : isPhone ? (
         // AA-752 — phone card mode (< 768px). First visible non-select column is the card title;
         // the remaining visible columns render as label/value rows. The selection checkbox (if on)
