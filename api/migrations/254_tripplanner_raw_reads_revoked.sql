@@ -23,13 +23,16 @@
 -- Order (AA-847 plan): apply AFTER TripPlanner slice 6c is deployed on both Lambdas (it stops reading raw_tours even
 -- with PLACES_SOURCE=legacy) and after the PLACES_SOURCE=cis flip and its post-flip burst. The PLACES_SOURCE=legacy
 -- rollback keeps working: the legacy readers read gold_aa_internal.published_tours (still granted), not raw_tours.
--- Undo: re-run 179 and 180 (both idempotent GRANTs).
+-- Undo: a NEW forward CIS migration (next free number) repeating the GRANTs of 179 (USAGE on silver_aa_internal +
+-- SELECT (tour_id, country) on raw_tours) and 180 (the tour_atoms column SELECT); 179/180 cannot be re-run, DB Migrate
+-- skips registered versions. Only needed if a TripPlanner build from before slice 6c is redeployed.
 --
 -- Locks. REVOKE takes a brief lock on the two tables' ACLs; lock_timeout 5s. Re-running is a no-op (REVOKE of a missing
 -- privilege does nothing; ON CONFLICT DO NOTHING).
 --
 -- X1. One BEGIN … COMMIT block, no role switch (role lint from 243). DB Migrate runs cis/ files as cis_owner, the owner
--- of both tables (245), so its REVOKE removes the grants whoever granted them. AA-CIS-Infra db/rls_catalogue_rules.py
+-- of both tables (245); 245's ALTER OWNER made cis_owner the grantor of the 179/180 grants, so its REVOKE removes them
+-- (the guard below is the backstop). AA-CIS-Infra db/rls_catalogue_rules.py
 -- and db/owners.yaml consumer_grants mark the two grants "revoked by CIS 254"; their allowlist entries become stale
 -- (reported, not fatal) once this is applied, and are removed in a later cleanup.
 --

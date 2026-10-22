@@ -266,7 +266,7 @@ def test_grants_policies_and_tripplanner_column_grant_unchanged(cur):  # name ke
     cur.execute("""SELECT has_column_privilege('tripplanner', 'silver_aa_internal.raw_tours', 'source_key', 'SELECT'),
                           has_column_privilege('tripplanner', 'silver_aa_internal.raw_tours', 'country', 'SELECT'),
                           has_column_privilege('tripplanner', 'silver_aa_internal.raw_tours', 'tour_id', 'SELECT')""")
-    # CIS 254 (applied before 258) revoked TripPlanner's grandfathered raw_tours column reads (CIS 179).
+    # CIS 254 (replayed before 258 in CI; applied after it on Dev) revoked TripPlanner's grandfathered raw_tours column reads (CIS 179).
     assert cur.fetchone() == (False, False, False)
     cur.execute("SELECT has_table_privilege('tripplanner', 'catalog.v_component_embedding', 'SELECT'), "
                 "has_table_privilege('booking', 'catalog.v_component_embedding', 'SELECT')")
