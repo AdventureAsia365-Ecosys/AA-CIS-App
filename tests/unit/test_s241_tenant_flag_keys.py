@@ -1,4 +1,5 @@
-"""S241 D-12 -- the tenant-pool flag keys the code reads are exactly the documented ones (20 after D5b, wave 3 and wave 4, S247).
+"""S241 D-12 -- the tenant-pool flag keys the code reads are exactly the documented ones (20 after D5b, wave 3 and
+wave 4, S247).
 
 Under D-12 a missing Redis key means ON (tenant pool). So a key nobody has seen before -- a new route's flag,
 a renamed constant, an ad hoc string at a call site -- runs on the tenant pool from its first deploy with no

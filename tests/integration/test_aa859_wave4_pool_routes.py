@@ -256,3 +256,44 @@ async def test_trip_page_is_own_over_master_one_row_per_tour(ctx):
             ours = [t for t in trips if t.id == ctx.tour]
             assert len(ours) == 1, (flag_on, tid, "one row per tour, no duplicate per tenant page")
             assert ours[0].trip_url == url, (flag_on, tid)
+
+
+# ── C9: the base-table member reads return what the v_active_tour_atoms reads returned ──────────────
+
+@pytest.mark.asyncio
+async def test_base_table_member_reads_match_the_view(ctx):
+    """subject_seed._MEMBERS_SQL and route_guard._TRIP_MEMBER_SQL inline the 203 rule instead of reading the view;
+    on the main pool (owner / cis_app: every row) the rows are the same, also for a deleted atom, an empty marker and
+    an atom on a tour without a live published row."""
+    from services.acp_shared import route_guard, subject_seed
+    conn = ctx.conn
+    dead_tour = await conn.fetchval("INSERT INTO silver_aa_internal.raw_tours (tenant_id, batch_id, src_name) "
+                                    "VALUES ($1::uuid, gen_random_uuid(), 'aa859w4-dead') RETURNING tour_id", MASTER)
+    extra = []
+    for tour, deleted, marker in ((ctx.tour, True, False), (ctx.tour, False, True), (dead_tour, False, False)):
+        atom = f"aa859w4-x-{uuid.uuid4().hex[:8]}"
+        await conn.execute("INSERT INTO acp_contract.tour_atoms (atom_id, tour_id, text, place, deleted, "
+                           "is_empty_marker) VALUES ($1, $2, 'x', 'p', $3, $4)", atom, tour, deleted, marker)
+        await conn.execute("INSERT INTO acp_contract.atom_segment_member (segment_id, atom_id) VALUES ($1, $2)",
+                           ctx.segment, atom)
+        extra.append(atom)
+    view_members = subject_seed._MEMBERS_SQL.replace(
+        "JOIN acp_contract.tour_atoms ta ON ta.atom_id = m.atom_id\n"
+        "    JOIN gold_aa_internal.published_tours pt\n"
+        "      ON pt.tour_id = ta.tour_id AND pt.master_status = 'active' AND pt.deleted_at IS NULL",
+        "JOIN acp_contract.v_active_tour_atoms ta ON ta.atom_id = m.atom_id")
+    assert view_members != subject_seed._MEMBERS_SQL
+    for tid in (ctx.a, ctx.b):
+        new = sorted(map(dict, await conn.fetch(subject_seed._MEMBERS_SQL, [ctx.segment], tid)), key=str)
+        old = sorted(map(dict, await conn.fetch(view_members, [ctx.segment], tid)), key=str)
+        assert new == old and {r["atom_id"] for r in new} & set(extra) == set()
+    view_trip = route_guard._TRIP_MEMBER_SQL.replace(
+        "JOIN acp_contract.tour_atoms ta ON ta.atom_id = m.atom_id\n"
+        "               JOIN gold_aa_internal.published_tours pt\n"
+        "                 ON pt.tour_id = ta.tour_id AND pt.master_status = 'active' AND pt.deleted_at IS NULL",
+        "JOIN acp_contract.v_active_tour_atoms ta ON ta.atom_id = m.atom_id")
+    assert view_trip != route_guard._TRIP_MEMBER_SQL
+    for tour in (ctx.tour, dead_tour):
+        args = ([ctx.segment], str(tour), ctx.a)
+        assert [dict(r) for r in await conn.fetch(route_guard._TRIP_MEMBER_SQL, *args)] == \
+            [dict(r) for r in await conn.fetch(view_trip, *args)]
