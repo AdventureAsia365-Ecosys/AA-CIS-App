@@ -35,9 +35,14 @@
 -- (MIG-9); apply with every job table idle (DM-11.4, DB Migrate checks it). No table rewrite.
 --
 -- Code: none needed. No writer sets a pointer to a missing row (export reads the id from quality_scores in the same
--- query). Readiness: no REQUIRED_CIS_SCHEMA bump (api/core/readiness.py), no code depends on 268.
+-- query). One behaviour change: a revalidation that deletes the version's score row between the export's SELECT and
+-- its INSERT (services/export/handler.py, two autocommit statements) now fails that export with a foreign key
+-- violation instead of storing a dangling id; the export can be run again. Readiness: no REQUIRED_CIS_SCHEMA bump
+-- (api/core/readiness.py), no code depends on 268.
 --
--- NUMBER: 268 (after 267, AA-779). Independent of 265 / 266 / 267.
+-- NUMBER: 268 (after 267, AA-779). The SQL does not depend on 265 / 266 / 267, but ORDER: apply only AFTER them. The
+-- readiness check compares max(version::int) of shared.schema_versions with REQUIRED_CIS_SCHEMA, so with 268 applied
+-- first, code that later needs 265, 266 or 267 would report ready while they are missing (same rule as 267).
 --
 -- Idempotent: step 1 changes nothing once there is no dangling pointer, the index is IF NOT EXISTS, the ADD is
 -- guarded by name (step 0 refuses a different constraint under that name), VALIDATE of a validated constraint is a
