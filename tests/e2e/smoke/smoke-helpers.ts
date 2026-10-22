@@ -7,6 +7,7 @@
 import { expect, type BrowserContext, type Page } from '@playwright/test';
 import fs from 'fs';
 import path from 'path';
+import { canSeePage } from '../../../frontend/lib/rbac';
 
 export const SMOKE_RESULTS_DIR = 'tests/e2e/results/smoke';
 // Auth storage state holds LIVE session cookies — keep it OUT of the results dir that CI uploads
@@ -29,9 +30,29 @@ export function smokeRole(): string {
   }
 }
 
-/** AA-878 — viewer mode: the smoke account is the read-only `viewer` (GitHub E2E_ADMIN_* switched to it). */
+/** AA-878 — viewer mode: the smoke session is the read-only `viewer` (since AA-816 S2 path: the Cognito E2E user on
+ * the fixed Preview host, where the API caps every session at viewer). */
 export function isViewerRun(): boolean {
   return smokeRole() === 'viewer';
+}
+
+/** The smoke session is a full admin (every page and admin-only check runs). Production staff runs sign in as the
+ * Cognito E2E user, a reviewer, so they are never admin runs. */
+export function isAdminRun(): boolean {
+  return smokeRole() === 'admin';
+}
+
+/** AA-816 S2 path — the two hosts that are Cognito callbacks (the only hosts a staff smoke can sign in on). */
+export const PROD_ORIGIN = 'https://aa-cis.lumiguides.it.com';
+export const PREVIEW_SIGNIN_ORIGIN = 'https://aa-cis-preview.lumiguides.it.com';
+
+/**
+ * May the smoke role open this page? Read from the frontend's own page matrix (frontend/lib/rbac.ts PAGE_RULES,
+ * dependency-free), so a non-admin run (viewer, reviewer, content) expects exactly what proxy.ts enforces. The
+ * viewer flags on the page list (`viewerRefused`) are kept and checked against this by ui-smoke.spec.ts.
+ */
+export function roleMaySeePage(role: string, pagePath: string): boolean {
+  return canSeePage(role, new URL(pagePath, 'https://smoke.invalid').pathname);
 }
 
 /** Where the proxy sends a staff role that may not open a page (frontend/lib/rbac.ts landingPage). */
