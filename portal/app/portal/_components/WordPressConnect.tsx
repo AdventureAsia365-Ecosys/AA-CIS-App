@@ -20,6 +20,7 @@ import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { T, sans, Card, CardHead, Btn } from "./ui";
 import { DisconnectConnection } from "./DisconnectConnection";
+import { formatDateTime } from "@/app/_kit/tokens";
 
 export interface WordPressStatus {
   connected: boolean;
@@ -41,8 +42,9 @@ export function useWordPressStatus() {
   return { status: q.data ?? null, loading: q.isLoading, refresh };
 }
 
+// AA-760 — the shared date-time format ("9 Oct 2026, 14:05"), was the browser locale.
 export function fmtDateTime(iso: string | null): string {
-  return iso ? new Date(iso).toLocaleString() : "—";
+  return formatDateTime(iso);
 }
 
 export const inputStyle: React.CSSProperties = {

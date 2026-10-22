@@ -20,7 +20,7 @@ import { PortalTopbar } from "./PortalTopbar";
 import { PortalBottomNav } from "./PortalBottomNav";
 import { PortalCommandPalette } from "./PortalCommandPalette";
 import { ROUTES } from "./portalNav";
-import { MY_VERSIONS_KEY, useBilling, useCatalogCount, usePoolTotal, useTenantMe } from "./useShellData";
+import { MY_VERSIONS_KEY, useActivityView, useBilling, useCatalog, usePoolTotal, useTenantMe } from "./useShellData";
 
 export function PortalShell({ children }: { children: React.ReactNode }) {
   return (
@@ -42,8 +42,9 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
 
   const { tenantName, planTier } = useTenantMe();
   const poolTotal = usePoolTotal();
-  const catTotal = useCatalogCount();
+  const { versions, count: catTotal } = useCatalog();
   const billing = useBilling();
+  const activity = useActivityView(billing, versions);
 
   // ⌘K / Ctrl K toggles the palette (modifier-gated, so typing in a field never triggers it).
   useEffect(() => {
@@ -76,8 +77,8 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
   }, [qc]);
 
   const value: PortalShellValue = useMemo(() => ({
-    tenantName, planTier, poolTotal, catTotal, billing, globalSearch, refreshCatalogCount, showToast,
-  }), [tenantName, planTier, poolTotal, catTotal, billing, globalSearch, refreshCatalogCount, showToast]);
+    tenantName, planTier, poolTotal, catTotal, billing, activity, globalSearch, refreshCatalogCount, showToast,
+  }), [tenantName, planTier, poolTotal, catTotal, billing, activity, globalSearch, refreshCatalogCount, showToast]);
 
   return (
     <PortalShellContext.Provider value={value}>
@@ -97,7 +98,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
           <PortalTopbar
             tenantName={tenantName}
             planTier={planTier}
-            activity={billing?.activity ?? []}
+            activity={activity}
             onOpenSearch={() => setPaletteOpen(true)}
             onOpenMenu={() => setDrawerOpen(true)}
           />

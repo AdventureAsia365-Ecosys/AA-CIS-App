@@ -91,6 +91,14 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     Shell data through react-query (`_shell/useShellData.ts`; the My Tours badge shares the page's
     `["my-versions"]` query). Toasts: kit `ToastProvider`. Responsive rules are CSS on `data-pshell`
     attributes in `portal/app/globals.css` (drawer < 900 px, bottom bar < 768 px), no className.
+  - **Portal work status (AA-760, `portal/app/portal/_components/workStatus.tsx`)**: one model for tenant-visible
+    work — `queued / writing / checking / done / failed` + `WorkStatusBadge` — read from what the API takes off
+    the job (tour version `status` + `job_status`, piece `ready_state`, the live snapshot's active step for
+    `checking`), never inferred from row flags. Browse Tours, My Tours, My Content, the Writer panel, the live
+    view, the dashboard feed, the Activity page and the bell all use it. Lists poll with react-query
+    `refetchInterval` only while a row is active and stop on terminal states (the AngleGate wizard and the
+    Slate refresh too — no `setInterval` left in the portal's data polling). The activity feed is joined to
+    the shared `["my-versions"]` query for its job state.
   - **Portal theme (AA-759)**: no longer pinned light. The root layout restores `cis_theme` / `cis_sidebar`
     before paint (same scripts as the admin; the portal origin has its own localStorage); the portal `T`
     tokens (`_components/ui.tsx`) read the `--aa-*` CSS variables like the kit `K`. `/tenant-login` and the
@@ -639,8 +647,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   Logged-in tests skip without the key. The preview needs `VERCEL_PORTAL_BYPASS_SECRET` (passed to the
   helpers as `VERCEL_AUTOMATION_BYPASS_SECRET`). Lint: `portal-lint` CI job (non-required); `tsc` + `next build` in the `portal-build` job (AA-879). e2e specs carry no hardcoded credentials (shared helper
   `tests/e2e/helpers/auth.ts` reads the env). ESLint enforces UI-kit conventions in
-  `frontend/eslint.config.mjs` (`frontend-lint` CI job, non-required) and `portal/eslint.config.mjs` (AA-759: `error`
-  for the portal shell and every portal route page, `warn` for the legacy `_components`).
+  `frontend/eslint.config.mjs` (`frontend-lint` CI job, non-required) and `portal/eslint.config.mjs` (AA-759/AA-760: `error`
+  for every portal file except the 3 legacy ones listed in `KIT_LEGACY_FILES`, which stay `warn` until migrated).
 - **Cognito E2E (AA-816 E1, `.github/workflows/e2e-cognito.yml`)**: `workflow_dispatch` on `main` only,
   GitHub environment `e2e`, OIDC role from secret `E2E_MAIL_ROLE_ARN` (Infra `aa-cis-dev-e2e-mail-reader`,
   read-only: List + Get on `s3://aa-cis-dev-e2e-mail-<acc2>/inbound/`, no delete; 1-day expiry). Playwright

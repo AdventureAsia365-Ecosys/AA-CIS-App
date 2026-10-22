@@ -62,6 +62,7 @@
 //     on a narrow screen.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Calendar, ChevronRight, Sparkles, X, Zap, AlertTriangle, ClipboardList, CheckCircle2 } from "lucide-react";
 import { T, serif, sans, mono, Card, CardHead, Badge, Btn, EmptyState, StickyBar } from "./ui";
 import { ToastProvider } from "@/app/_kit";
@@ -109,6 +110,7 @@ interface SlateResponse {
 }
 
 const SLATE_REFRESH_POLL_MS = 15_000;
+const SLATE_KEY = ["tenant-slate"] as const;
 
 // Order: 5 weekly-rhythm tabs first, then the 3 on-demand ones — matches the build prompt's own
 // "5 tab nhịp tuần + 3 tab theo yêu cầu" grouping. `group` drives the tab-strip divider + icon
@@ -152,9 +154,6 @@ export default function SlateTab({ channels, title = "Social Content" }: {
 
 function SlateTabInner({ channels, title }: { channels?: readonly string[]; title: string }) {
   const tabs = channels ? CHANNEL_TABS.filter(c => channels.includes(c.key)) : CHANNEL_TABS;
-  const [data, setData] = useState<SlateResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [activeChannel, setActiveChannel] = useState(() => tabs[0]?.key ?? "blog");
   const [panel, setPanel] = useState<WriterTarget | null>(null);
   const [known, setKnown] = useState<Record<string, WriterTarget>>({});
@@ -184,40 +183,38 @@ function SlateTabInner({ channels, title }: { channels?: readonly string[]; titl
 
   const writer: WriterControls = { openSubjectId: panel?.subjectId ?? null, known, open: openWriter };
 
-  const load = useCallback(() => {
-    setLoading(true);
-    setError(null);
-    fetch("/api/tenant/v1/slate")
-      .then(async r => (r.ok ? r.json() : Promise.reject(await r.json().catch(() => ({})))))
-      .then((d: SlateResponse) => setData(d))
-      .catch(e => setError(e.detail ?? "Couldn't load the Slate — try again."))
-      .finally(() => setLoading(false));
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  // AA-764 — GET /v1/slate only reads now; while a background proposal runs, re-read quietly
-  // (no skeleton) until it finishes so new topics appear on their own.
+  // AA-760 — the Slate is a react-query query (was a fetch in an effect + a setInterval while a
+  // background proposal ran). It re-reads quietly every 15 s only while `refresh.refreshing`
+  // (AA-764: GET /v1/slate only reads; new topics appear on their own when the job finishes) and
+  // stops once the proposal settled. Social Posts and Articles share the one cached answer.
+  const qc = useQueryClient();
+  const slateQ = useQuery({
+    queryKey: SLATE_KEY,
+    queryFn: async (): Promise<SlateResponse> => {
+      const r = await fetch("/api/tenant/v1/slate");
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}));
+        throw new Error(e.detail ?? "Couldn't load the Slate — try again.");
+      }
+      return r.json();
+    },
+    refetchInterval: (q) => (q.state.data?.refresh?.refreshing ? SLATE_REFRESH_POLL_MS : false),
+  });
+  const data = slateQ.data ?? null;
+  const loading = slateQ.isPending;
+  const error = slateQ.isError ? slateQ.error.message : null;
+  const load = useCallback(() => { qc.invalidateQueries({ queryKey: SLATE_KEY }); }, [qc]);
   const refreshing = !!data?.refresh?.refreshing;
-  useEffect(() => {
-    if (!refreshing) return;
-    const id = setInterval(() => {
-      fetch("/api/tenant/v1/slate")
-        .then(r => (r.ok ? r.json() : null))
-        .then((d: SlateResponse | null) => { if (d) setData(d); })
-        .catch(() => { /* transient — next tick */ });
-    }, SLATE_REFRESH_POLL_MS);
-    return () => clearInterval(id);
-  }, [refreshing]);
 
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const requestRefresh = useCallback(() => {
     setRefreshError(null);
     fetch("/api/tenant/v1/slate/refresh", { method: "POST" })
       .then(async r => (r.ok ? r.json() : Promise.reject(await r.json().catch(() => ({})))))
-      .then((d: { refresh: SlateResponse["refresh"] }) => setData(prev => (prev ? { ...prev, refresh: d.refresh } : prev)))
+      .then((d: { refresh: SlateResponse["refresh"] }) =>
+        qc.setQueryData<SlateResponse>(SLATE_KEY, prev => (prev ? { ...prev, refresh: d.refresh } : prev)))
       .catch(e => setRefreshError(e.detail ?? "Couldn't start a refresh — try again."));
-  }, []);
+  }, [qc]);
 
   const active = data?.channels[activeChannel];
 
@@ -333,7 +330,7 @@ function SlateTabInner({ channels, title }: { channels?: readonly string[]; titl
       {loading && <SkeletonPanel />}
 
       {error && !loading && (
-        <EmptyState icon={<AlertTriangle size={32} strokeWidth={1.5} color={T.gold} />} title="Couldn't load Social Content" sub={error}
+        <EmptyState icon={<AlertTriangle size={32} strokeWidth={1.5} color={T.gold} />} title={"Couldn’t load the topics"} sub={error}
           action={<Btn variant="secondary" onClick={load}>Try again</Btn>} />
       )}
 

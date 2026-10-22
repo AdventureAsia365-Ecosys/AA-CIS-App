@@ -5,15 +5,17 @@
 //      GET /v1/billing for the real tenant-scoped sibling)
 //      GET /api/tenant/v1/tours/pool?page_size=1 (for total count)
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, FileText, Code2, Globe2, BookOpen, Sparkles, Clock, AlertTriangle, Check, X, RefreshCw } from "lucide-react";
 import {
   T, serif, mono, sans,
-  Card, CardHead, Badge, ProgressBar, PageHeader, TextLink,
-  fmtDateTime, statusVariant, statusLabel,
+  Card, CardHead, ProgressBar, PageHeader, TextLink,
+  fmtDateTime,
 } from "./ui";
+import { ActivityStateBadge } from "./workStatus";
 import { usePortalShell } from "./PortalShellContext";
-import { useIsPhone } from "@/app/_kit";
+import { apiGet, useIsPhone } from "@/app/_kit";
 import GettingStarted from "./GettingStarted";
 import UsageSparkline, { type DailyPoint } from "./UsageSparkline";
 import { DashboardSkeleton } from "./Skeleton";
@@ -34,29 +36,35 @@ interface BillingData {
 // AA-430: was onTabChange(t: Tab) — portal is real routes now, so this just takes the
 // destination href directly (router.push in the page.tsx that renders this component).
 export default function DashboardTab({ onNavigate }: { onNavigate: (href: string) => void }) {
-  const [billing, setBilling] = useState<BillingData | null>(null);
-  const [pool, setPool]       = useState(0);
-  const [loading, setLoading] = useState(true);
   const [dismissAlert, setDismissAlert] = useState(false);
-  const [resetsAt, setResetsAt] = useState<string | null>(null);
-  const { tenantName, catTotal } = usePortalShell();
+  // AA-760 — billing, the pool total and the activity feed come from the shell's react-query
+  // queries (they were fetched a second time here, in an effect); only /v1/quota is page-local.
+  const { tenantName, catTotal, poolTotal: pool, activity } = usePortalShell();
+  // Same key + request as the shell's billing query (one cached answer); read here for its state.
+  const billingQ = useQuery({
+    queryKey: ["tenant-billing"],
+    queryFn: () => apiGet<BillingData>("/api/tenant/v1/billing"),
+  });
+  const quotaQ = useQuery({
+    queryKey: ["tenant-quota"],
+    queryFn: () => apiGet<{ resets_at?: string | null }>("/api/tenant/v1/quota"),
+  });
+  const resetsAt = quotaQ.data?.resets_at ?? null;
   const phone = useIsPhone(); // AA-836 — Recent Activity drops its short-date column on a phone
 
-  useEffect(() => {
-    Promise.all([
-      fetch("/api/tenant/v1/billing"),
-      fetch("/api/tenant/v1/tours/pool?page_size=1"),
-      fetch("/api/tenant/v1/quota"),
-    ]).then(async ([bRes, pRes, qRes]) => {
-      if (bRes.ok) setBilling(await bRes.json());
-      if (pRes.ok) { const d = await pRes.json(); setPool(d.pagination?.total ?? 0); }
-      if (qRes.ok) { const d = await qRes.json(); setResetsAt(d.resets_at ?? null); }
-    }).finally(() => setLoading(false));
-  }, []);
+  if (billingQ.isPending) return <DashboardSkeleton />;
+  if (billingQ.isError) {
+    return (
+      <div role="alert" style={{ padding: "28px 20px", textAlign: "center", color: T.muted, fontSize: 13 }}>
+        Couldn&rsquo;t load your dashboard.{" "}
+        <button onClick={() => billingQ.refetch()} style={{ background: "none", border: "none", color: T.goldDeep, fontWeight: 600, cursor: "pointer", fontFamily: sans, fontSize: 13 }}>
+          Try again
+        </button>
+      </div>
+    );
+  }
 
-  if (loading) return <DashboardSkeleton />;
-
-  const b = billing;
+  const b = billingQ.data;
   const toursUsed  = b?.tours_rewritten ?? 0;
   // AA-798 — no invented Growth plan (was 200 tours / 20,000 calls / "growth" when missing).
   const noPlan     = b?.plan_attached === false;
@@ -70,7 +78,6 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
   const planLabel  = noPlan || !planName ? "No plan attached" : planName.charAt(0).toUpperCase() + planName.slice(1);
   const fmtTotal   = (n: number | null) => (n == null ? "—" : n.toLocaleString());
   const month      = b?.billing_month ?? "—";
-  const activity   = b?.activity ?? [];
   const overage    = b?.overage_usd ?? 0;
   const rpm        = b?.rate_limit_rpm ?? null;
   // AA-636: was the literal "22 days". Quota resets on the 1st of next month (UTC) — the same
@@ -189,10 +196,11 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
               No activity yet — browse tours to rewrite your first one
             </div>
           ) : activity.slice(0, 5).map((a, i) => {
-            const v = statusVariant(a.status);
-            const iconBg   = a.status === "approved" ? T.greenSoft : a.status === "rejected" ? T.redSoft : T.goldTint;
-            const iconColor = a.status === "approved" ? T.green    : a.status === "rejected" ? T.red     : T.amber;
-            const Icon      = a.status === "approved" ? Check : a.status === "rejected" ? X : RefreshCw;
+            // AA-760 — state from the version's job (shell activity view), not the row status.
+            const bad       = a.state === "rejected" || a.state === "failed";
+            const iconBg    = a.state === "approved" ? T.greenSoft : bad ? T.redSoft : T.goldTint;
+            const iconColor = a.state === "approved" ? T.green    : bad ? T.red     : T.amber;
+            const Icon      = a.state === "approved" ? Check : bad ? X : RefreshCw;
             return (
               // AA-836 — title column can shrink (minmax(0, 1fr)) and the tour name is one line with
               // an ellipsis; on a phone the trailing short date goes (the full date/time is already
@@ -216,16 +224,16 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
                   {phone ? (
                     <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "4px 8px", marginTop: 4, minWidth: 0 }}>
                       <span style={{ fontSize: 11, color: T.muted, whiteSpace: "nowrap" }}>{fmtDateTime(a.created_at)}</span>
-                      <Badge variant={v}>{statusLabel(a.status)}</Badge>
+                      <ActivityStateBadge state={a.state} />
                     </div>
                   ) : (
                     <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>{fmtDateTime(a.created_at)}</div>
                   )}
                 </div>
-                {!phone && <Badge variant={v}>{statusLabel(a.status)}</Badge>}
+                {!phone && <ActivityStateBadge state={a.state} />}
                 {!phone && (
                   <div style={{ fontSize: 11, color: T.muted2, fontFamily: mono, whiteSpace: "nowrap" }}>
-                    {a.created_at ? new Date(a.created_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) : "—"}
+                    {a.created_at ? new Date(a.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "—"}
                   </div>
                 )}
               </div>
@@ -242,7 +250,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 }}>
           {[
             { icon: <Globe2 size={18} />, title: "Browse Tours",      sub: `${pool.toLocaleString()} published tours available`, href: "/portal/tours" }, // AA-576 Phần 3 (was "Browse Pool")
-            { icon: <BookOpen size={18} />, title: "My Catalog Tours",  sub: `${toursUsed} rewrites · approve, edit, export`,     href: "/portal/tours/mine" }, // AA-576 Phần 3 (was "My Catalog")
+            { icon: <BookOpen size={18} />, title: "My Tours",  sub: `${toursUsed} rewrites · approve, edit, export`,     href: "/portal/tours/mine" }, // AA-576 Phần 3 (was "My Catalog")
             { icon: <Sparkles size={18} />, title: "Brand Identity", sub: "Configure your content voice & style",               href: "/portal/brand" },
           ].map(a => (
             <ActionCard key={a.title} icon={a.icon} title={a.title} sub={a.sub} onClick={() => onNavigate(a.href)} />

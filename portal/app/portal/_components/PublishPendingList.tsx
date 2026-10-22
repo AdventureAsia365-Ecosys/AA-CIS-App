@@ -20,6 +20,7 @@ import { T, sans, Card, CardHead, Btn, Badge, EmptyState, StickyBar } from "./ui
 import { AiContentNotice } from "./AiContentNotice";
 import { stripMarkdown } from "./markdownText";
 import { PUBLISH_LOG_QUERY_KEY, channelName } from "./PublishedList";
+import { formatDate } from "@/app/_kit/tokens";
 
 interface PendingPiece {
   piece_id: string;
@@ -38,8 +39,9 @@ interface PublishResult {
   last_error: string | null;
 }
 
+// AA-760 — the shared date format ("9 Oct 2026"), was the browser locale ("10/20/2026").
 function fmtDate(iso: string | null): string {
-  return iso ? new Date(iso).toLocaleDateString() : "—";
+  return formatDate(iso);
 }
 
 export function PublishPendingList({ connected, reloadSignal = 0 }: {
