@@ -963,6 +963,8 @@ public site; no tenant-portal link until there is a real support view, since the
 session); deep links are built only there, never from a return URL, never with a
 token. New platform pages live under `/admin/platform/*` (backend `api/routers/admin_platform.py`).
 
+**Data model (AA-894 scope 2).** Developer › Data model `/admin/data-model` (admin only: PAGE_RULES, BFF `API_READ_RULES` "data-model", POLICY `GET /admin/data-model` = `ops.read`; next to API Docs, outside `/admin/platform/*` like it). Router `api/routers/admin_data_model.py`, service `api/services/data_model.py`: reads the ERD model `erd.json` (format 1) that the AA-CIS-Infra nightly DB Schema Dump writes to the bronze bucket at `data-model/erd/latest.json` (+ `previous.json`, the model before the last structural change; prefix `DATA_MODEL_S3_PREFIX`), returns it with a diff summary (tables / columns / keys / FKs added, removed, changed), cached in process 5 min (`?refresh=1` at most every 30 s). 404 when no model is published, 503 when storage fails. No DB query. This repo is public: it ships the reader and the renderer (`frontend/app/admin/data-model/`), never a table list; the names exist only in the S3 object and the admin-only response.
+
 **Platform apps, audit and cost (AA-884).** Router `api/routers/admin_platform_ops.py` (read only, admin-only POLICY
 entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
 - `GET /admin/platform/apps[/{app_id}]` (`ops.read`) — `api/services/platform_apps.py` `collect_apps()`: one card per

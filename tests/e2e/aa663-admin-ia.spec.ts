@@ -19,6 +19,7 @@ const NAV: { label: string; path: string }[] = [
   { label: 'External Spend', path: '/admin/llm-usage' },
   { label: 'Jev Decisions', path: '/admin/decisions' },
   { label: 'API Docs', path: '/admin/api-docs' },
+  { label: 'Data model', path: '/admin/data-model' },
   // CIS Content
   { label: 'Upload (S0)', path: '/admin/upload' },
   { label: 'Rewrite (S1)', path: '/admin/s1-rewrite' },

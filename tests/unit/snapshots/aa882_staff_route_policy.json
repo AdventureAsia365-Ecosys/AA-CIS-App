@@ -147,6 +147,10 @@
     "capability": null,
     "module": "api.routers.admin_dashboard"
   },
+  "GET /admin/data-model": {
+    "capability": "ops.read",
+    "module": "api.routers.admin_data_model"
+  },
   "GET /admin/decisions/claim-sample": {
     "capability": null,
     "module": "api.routers.admin_decisions"
