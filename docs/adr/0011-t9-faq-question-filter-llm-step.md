@@ -125,7 +125,8 @@ only, the same input production sends. Bars:
 - E2: flags at most 1 of the 25 unanimous "answers" pairs.
 - E3: no call or parse errors.
 
-The three 2-1 "partial" pairs are reported but are not in the bar. The prompt's examples are not checkpoint pairs.
+The three 2-1 "partial" pairs are reported but are not in the bar. The prompt has no example, place or question
+from the checkpoint pairs (since the S247 revision, no named example at all).
 
 The eval is **in-sample**, so passing it is weak evidence, as with the question filter's re-measure (decision 5).
 The examples are new, but the rules were written from the three failures: "asked about a country, answered with
@@ -141,12 +142,44 @@ asks for a figure or fact about the whole and the answer gives it only for one p
 a part that still answers what was asked about the whole is `ANSWERS`, with examples kept off the checkpoint
 pairs. Then re-run the eval.
 
-**Result: pending.** The orchestrator runs it in the CIS api container; fill it in here before `on`. 31 pairs is a
-small set, so `shadow` on new live blogs is the held-out check, as for the question filter.
+**First run (S247, in-sample): FAIL.** 8 calls, $0.015, no errors (E3 passed). E1: 2 of 3 caught; the missed
+one is the "What is <place> called in English?" pair, passed as `ANSWERS` because the answer explains the
+district/town usage (the model read explaining around the name as giving it). E2: 2 false flags in 25, both
+`WRONG_SUBJECT` and both because the model judged the pair against the BLOG's topic, not its own question: a
+country-level visa question in a blog about one waterfall ("the question asks about the falls"), and "the ethnic
+groups along this route" answered by naming the route's province and valley ("the route is the waterfall
+route"). The predicted "one part instead of the whole" risk did not show; the topic bleed was not predicted.
 
-The eval's $0.10 cap is a worst-case cap: each attempt (a retry too) is counted at the larger of its reported cost
-and its worst case (the whole `max_tokens` billed as output), so a reply that reports no cost cannot push the run
-past it. The typical estimate is about $0.013.
+**Prompt revision (S247, generic, no checkpoint or held-out example or place name):**
+
+- judge each pair only against its own question; the blog's topic, the other pairs and whether the question
+  suits the post do not matter;
+- a question about a country or region may be answered at that level; a question about "this route / this trip /
+  the area" is answered by naming the route's places;
+- `NON_ANSWER`: a question that asks for a specific datum (a name, a translation, a number, a date, a yes or no)
+  needs that datum stated, or a plain statement that it does not exist; explaining around it is `NON_ANSWER`;
+- `WRONG_SUBJECT`: another thing than the one named, or a question about a whole answered with a smaller place's
+  fact instead of the whole's.
+
+The named examples were removed, and the prompt got shorter. Every rule above was written from the in-sample
+failures, so a second in-sample pass is weaker evidence than the first. **The held-out set decides.** The next
+run evaluates both sets in one container run under the same $0.10 cap: the 31 checkpoint pairs, and 40 FAQ pairs
+from 12 older blog pieces that no rule was written from (`.tmp-session/aa779-heldout/heldout.json` in the root
+repo, read-only export, the checkpoint requests excluded; one call per piece as in production). The held-out set
+is labelled by a separate judge panel, and the eval is scored against it separately:
+
+- E1-held: flags at least 80% of the unanimous non-answers (n/a when there is none);
+- E2-held: the false-flag rate on the unanimous answers is at most 5%;
+- E3-held: no call or parse errors, no missing verdict.
+
+`on` needs E1–E3 and E1-held–E3-held to pass, plus a read of `shadow` verdicts on new blogs.
+
+The eval's $0.10 cap covers the whole run (both sets). An attempt (a retry too) is started only if its worst case
+(the whole `max_tokens` billed as output) still fits under the cap. A finished attempt is counted at the largest of
+its reported cost and its reported tokens priced at Haiku rates; a reply with no tokens and no cost, or a call that
+raised before a reply came back, is counted at its worst case. So a reply that reports no cost cannot push the run
+past the cap. (Counting every finished call at its worst case, as the first run did, would stop a 20-call run at
+about 11 calls.) The typical estimate is about $0.013 for the checkpoint set alone.
 
 ### Rollout: one flag drives both steps
 
@@ -155,9 +188,9 @@ for the question filter, so merging the answer fit starts its `shadow` calls on 
 the FAQ is unchanged). The risk is the other way: setting `on` for the question filter, which has passed its bar,
 also turns on answer-fit drops.
 
-**Do not set `on` until the E1–E3 result, and a read of `shadow` verdicts on new blogs, are written in this ADR.**
-If the question filter must go `on` first, the answer fit needs its own flag first (a code change); do not flip the
-shared flag to get it.
+**Do not set `on` until the E1–E3 and E1-held–E3-held results, and a read of `shadow` verdicts on new blogs,
+are written in this ADR.** If the question filter must go `on` first, the answer fit needs its own flag first (a
+code change); do not flip the shared flag to get it.
 
 ## Rollback
 

@@ -51,32 +51,29 @@ ANSWER_MAX = 1200       # chars of one answer sent to the model
 MAX_TOKENS = 1500       # ~30 output tokens per pair x 10 + the JSON envelope
 TIMEOUT_S = 60.0        # the whole step; on timeout the FAQ is unchanged
 
-# Examples are NOT pairs of the S247 checkpoint set (keep it that way, or the offline eval on those 31 pairs
-# stops being a fair test). Kept short: the system prompt is most of the input tokens.
+# Generic rules only: no example, place or question from the S247 checkpoint set or the held-out set (keep it
+# that way, or the offline eval stops being a fair test). Kept short: the system prompt is most of the input
+# tokens. Revised after the in-sample eval (ADR 0011): pairs judged against the blog topic, and a name question
+# answered by explaining around the name.
 SYSTEM_PROMPT = """You check the FAQ of one travel blog post. For each numbered pair (Q = question, A = answer) \
-decide whether the answer answers its question. Judge fit only: do not check whether facts are true, and do not \
-judge style, tone or length.
+decide whether the answer answers its own question. Judge each pair only against its own question: the blog's \
+topic, the other pairs and whether the question suits the post do not matter. Do not check whether facts are \
+true, and do not judge style, tone or length.
 
 Verdicts:
-- ANSWERS: the answer gives what the question asks, about the thing the question names. A short, general or \
-partial answer still ANSWERS ("What can you see at the market?" answered with what the market sells). A yes/no \
-question answered yes or no with a reason ANSWERS. An answer that says no exact figure exists but still gives \
-the asked kind of information about the asked subject ANSWERS.
-- NON_ANSWER: the answer is about the right subject but never gives what was asked. The question asks for a \
-name, a number, a date, a place, a reason, a way or a choice, and the answer talks around it (describes the \
-place, gives background, restates the question) without that information. Example: "How long is the Great Wall?" \
-answered only with when it was built and why it is famous.
-- WRONG_SUBJECT: the answer is about a different thing than the one the question names: another place, \
-building, institution, person or event; one part instead of the whole (asked about a country, answered with one \
-town in it; asked about a national park, answered with one village near it); or something with a similar name. \
-Example: "How tall is Mount Fuji?" answered with the height of a hotel at its foot. A generic reference ("the \
-museum", "the temple") that describes something other than what the question names is WRONG_SUBJECT.
+- ANSWERS: the answer gives what its question asks, about the thing the question names. A short, general or \
+partial answer still ANSWERS. A question about a country or region may be answered at that level. A question \
+about "this route", "this trip" or "the area" is answered by naming the route's places and saying what is there.
+- NON_ANSWER: the question asks for a specific datum (a name, a translation, a number, a date, a yes or no) and \
+the answer neither states it nor says plainly that it does not exist. Explaining around it (background, how a \
+word is used, what the place is like) is NON_ANSWER. So is an answer that stays on the subject but never \
+addresses what was asked.
+- WRONG_SUBJECT: the answer is about a different thing than the one the question names (another place, \
+building, institution, person or event, or something with a similar name), or it answers a question about a \
+whole (a country, a region, a park) with a smaller place's fact instead of the whole's.
 
-Rules:
-- Judge each pair on its own; the other pairs do not matter.
-- Use your general knowledge of well-known places and institutions to tell whether the answer describes the \
-thing the question names.
-- When unsure, choose ANSWERS: a pair is removed only on a clear failure.
+Use your general knowledge of well-known places and institutions to tell whether the answer describes the thing \
+the question names. When unsure, choose ANSWERS: a pair is removed only on a clear failure.
 
 Answer with JSON only: {"items": [{"n": <pair number>, "verdict": "ANSWERS"|"NON_ANSWER"|"WRONG_SUBJECT", \
 "reason": "<= 15 words"}]}, one entry per pair, in the given order."""

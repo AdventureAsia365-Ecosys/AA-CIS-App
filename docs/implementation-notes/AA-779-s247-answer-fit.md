@@ -117,3 +117,36 @@ see that the subject or the asked-for fact is wrong.
   is what the cap counted. The container loader stubs the new `quality_gates.drop_faq_pairs` when the deployed
   image lacks it (the eval only calls `check_answer_fit`).
 - Held pieces are checked too: a held piece still reaches the tenant (AA-770), so its FAQ ships the same way.
+
+## S247 eval round 1 (in-sample) and the prompt revision
+
+- **Result: FAIL** (`.tmp-session/aa779-fit-eval-score.json`, root repo; 8 calls, $0.0147, 0 errors). E1 2/3:
+  missed "What is Paro called in English?" (`ANSWERS`: "explains that Paro refers to district and town"). E2 2/25
+  false flags, both `WRONG_SUBJECT` and both judged against the BLOG topic, not the pair's own question: "Do I
+  need a visa to visit Laos?" ("question asks about Kuang Si Falls") and "What ethnic groups live in the villages
+  along this route?" ("answer discusses Phongsali Province and Nam Ou valley instead"). The predicted Review-fix-3
+  risk (the "one part instead of the whole" clause on the Khövsgöl ecology pair) did not show; the Paro miss was
+  predicted.
+- **Decision: revise the prompt generically, not with the Review-fix-3 text.** That fix targeted a failure that
+  did not happen. The new prompt (a) judges each pair only against its own question and says the blog topic, the
+  other pairs and the question's fit to the post do not matter; (b) lets a country/region question be answered
+  at that level; (c) says a "this route / this trip / the area" question is answered by naming the route's
+  places; (d) makes a question asking for a specific datum (name, translation, number, date, yes/no) need that
+  datum stated or a plain statement that it does not exist, explaining around it = `NON_ANSWER`; (e) keeps
+  `WRONG_SUBJECT` = another thing, or a whole answered with a smaller place's fact. The named examples (Great
+  Wall, Mount Fuji, a market) were removed: no example, place or question from the checkpoint or held-out sets.
+  The prompt is shorter (~1.6k chars). Output format, verdict names, parser and code are unchanged.
+- **Tradeoff: the in-sample eval is now even more in-sample.** Every new rule comes from the 3 round-1 errors,
+  so passing E1–E3 again shows only that the rules took. The decision rests on the held-out set: 40 FAQ pairs
+  from 12 older blog pieces (`.tmp-session/aa779-heldout/heldout.json`, read-only export, checkpoint requests
+  excluded), labelled by a separate panel the prompt author did not read.
+- **Eval script (root `.tmp-session/aa779-fit-eval.py`):** `--build --heldout <pairs.json>` adds one call per
+  held-out piece (grouped per `piece_id`, pairs in `n` order, as in production) after the 8 checkpoint calls, in
+  the same run under the same $0.10 cap. `--score <out> --heldout-labels <judges.json>` scores the held-out set
+  separately: E1-held flags >= 80% of unanimous non-answers (n/a when there is none), E2-held false-flag rate on
+  unanimous answers <= 5%, E3-held no errors / missing. Unanimous = every judge in the labels file, at least 2.
+- **Cap accounting changed so 20 calls fit.** Round 1 counted every finished call at its worst case (~$0.008),
+  which would stop a 20-call run at about 11 calls. Now an attempt still starts only if its worst case fits, but
+  a finished one is counted at max(reported cost, reported tokens priced at Haiku rates with every input token at
+  the 1.25x cache-write rate); no tokens and no cost, or a raise before any reply, counts the worst case. A
+  wrapper client keeps the last reply, so an unusable (billed) reply is counted by its tokens too.
