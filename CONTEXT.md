@@ -507,8 +507,9 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   geocoded destinations and the tour graph (stops, nodes, edges, legs, junctions) into the CIS-internal
   schema `geo`, keyed by `source_id` (catalog identity). Jobs (`services/jobs/place_*`,
   `tour_graph_job.py`; logic in `services/places/`): `place_extract` per tour (after A3 atomize,
-  set-active / restore, admin backfill `POST /admin/places/backfill`, ≤ 50 tours, dry-run cost
-  estimate, refused during a wave); `place_geocode` (debounced, the ONLY writer of
+  set-active / restore, admin backfill `POST /admin/places/backfill`, ≤ 50 tours of a country or an explicit
+  `tour_ids` list ≤ 100 (AA-847), dry-run cost estimate priced at each stage's live route and catalog price,
+  refused during a wave); `place_geocode` (debounced, the ONLY writer of
   `shared.destinations` coordinates) — the model proposes a point (`a3_place_locate`), **Geoapify**
   (OpenStreetMap data; S236 decision, all countries; `GEOCODER_PROVIDER` = `geoapify` default |
   `model_only` for tests / emergency; `mapbox_permanent` / `amazon_location` fail as not supported —
@@ -524,7 +525,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   "Powered by Geoapify" (link) + "© OpenStreetMap contributors"** — also kept per row in
   `geocoder_meta.attribution` (Geoapify storage terms). Hard country/bbox guard, transit-aware outlier
   rule → `suspect`; admin-fixed (`manual`) rows are never overwritten; `tour_graph_build` (debounced, versioned swap, current + 2
-  kept). Stages `a3_place_days` and `a3_place_locate` (Haiku 4.5, Sonnet fallback, migration 260), `a3_place_embed`
+  kept). Stages `a3_place_days` (Haiku 4.5, Sonnet fallback, migration 260), `a3_place_locate` (Sonnet, Haiku
+  fallback, migration 261: on Haiku its coarser points left most names `llm`), `a3_place_embed`
   (Cohere 1536-d). `shared.destinations` is unique on `(name_norm, country, locality_norm)` (same
   name in two countries = two places). Other apps will read it only through `catalog.*` views
   (migration 228, next slice); TripPlanner's own extraction is frozen.
