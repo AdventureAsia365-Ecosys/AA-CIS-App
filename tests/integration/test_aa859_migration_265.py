@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 from _rls_fixture_helpers import (  # noqa: E402
     NO_PRIVILEGE_WITHOUT_RLS_SQL, NO_PRIVILEGE_WITHOUT_RLS_SQL_V2, PLATFORM_READ_ALLOWLIST, migration_body,
+    platform_read_privileges, platform_read_v1_rows,
     migration_path, revoke_platform_reads,
 )
 
@@ -154,7 +155,7 @@ def test_tenant_role_privileges(cur):
         cur.execute("SELECT has_table_privilege(%s, %s, 'DELETE, TRUNCATE')", (TENANT_ROLE, t))
         assert not cur.fetchone()[0], t
     for rel in PLATFORM_READ_ALLOWLIST:
-        assert _privileges(cur, rel) == {"SELECT"}, rel
+        assert _privileges(cur, rel) == platform_read_privileges(rel), rel
     cur.execute("SELECT has_schema_privilege(%s, 'acp_contract', 'USAGE')", (TENANT_ROLE,))
     assert cur.fetchone()[0]
 
@@ -176,7 +177,7 @@ def test_committed_db_meets_invariant_v2_and_v1_only_misses_the_allowlist(cur):
     cur.execute(NO_PRIVILEGE_WITHOUT_RLS_SQL_V2)
     assert cur.fetchall() == []
     cur.execute(NO_PRIVILEGE_WITHOUT_RLS_SQL)
-    assert {(r[0], r[1], r[2]) for r in cur.fetchall()} <= {(rel, "SELECT", None) for rel in PLATFORM_READ_ALLOWLIST}
+    assert {(r[0], r[1], r[2]) for r in cur.fetchall()} <= platform_read_v1_rows()
 
 
 # ── cis_app parity ────────────────────────────────────────────────────────────
@@ -317,3 +318,38 @@ def test_guard_refuses_a_column_grant_on_a_relation_without_rls(cur):
 def test_guard_refuses_a_grant_on_an_acp_contract_view(cur):
     cur.execute(f"GRANT SELECT ON acp_contract.v_active_tour_atoms TO {TENANT_ROLE}")
     _refused(cur, "v_active_tour_atoms")
+
+
+# ── review S247 ───────────────────────────────────────────────────────────────
+
+def test_guard_refuses_a_column_only_grantee_that_would_read_zero_rows(cur):
+    """A login role holding only a column grant on one of the five would silently read 0 rows once RLS is on."""
+    cur.execute("CREATE ROLE zz265_col_login LOGIN")
+    cur.execute(f"GRANT SELECT (tenant_id) ON {YP} TO zz265_col_login")
+    _refused(cur, "zz265_col_login hold privileges")
+
+
+@pytest.mark.parametrize("grant", ["GRANT SELECT ON acp_contract.hub TO PUBLIC",
+                                   "GRANT UPDATE (route_id) ON acp_contract.route TO PUBLIC"])
+def test_guard_refuses_a_public_grant_in_the_newly_reachable_schema(cur, grant):
+    """265 gives the tenant role USAGE on acp_contract for the first time: a PUBLIC grant there (table or column, SELECT
+    included) on a relation without RLS would reach the tenant pool, and V2 only looks at aa_app_user's own grants."""
+    cur.execute(grant)
+    _refused(cur, "PUBLIC holds privileges on acp_contract relations without RLS")
+
+
+def test_guard_refuses_a_security_definer_function_in_acp_contract(cur):
+    cur.execute("CREATE FUNCTION acp_contract.zz265_secdef() RETURNS int LANGUAGE sql SECURITY DEFINER AS 'SELECT 1'")
+    _refused(cur, "SECURITY DEFINER functions in acp_contract: acp_contract.zz265_secdef")
+
+
+def test_tenant_role_reads_only_card_id_and_status_of_place_card(cur):
+    """The one tenant-pool statement (subject_seed._ALIAS_SQL) reads card_id and status; the staff columns stay out."""
+    cur.execute(f"SET LOCAL ROLE {TENANT_ROLE}")
+    cur.execute("SELECT count(*) FROM (SELECT card_id, status FROM acp_shared.place_card) x")
+    cur.execute("SAVEPOINT s")
+    with pytest.raises(psycopg2.errors.InsufficientPrivilege):
+        cur.execute("SELECT verified_by FROM acp_shared.place_card")
+    cur.execute("ROLLBACK TO SAVEPOINT s")
+    with pytest.raises(psycopg2.errors.InsufficientPrivilege):
+        cur.execute("SELECT * FROM acp_shared.place_card")

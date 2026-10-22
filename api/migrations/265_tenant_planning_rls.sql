@@ -38,11 +38,13 @@
 --        tenant_tour_pages:    SELECT                    (the trip page of the tenant trip query; writes stay on MAIN)
 --      plan_id / version_id / year_plan_id / subject_id / created_at are column defaults (092, 112, 133). tenant_id
 --      is never updatable; no DELETE, no TRUNCATE (which RLS does not filter).
---   5. GRANT USAGE ON SCHEMA acp_contract TO aa_app_user, and SELECT (table level, nothing else) on the platform read
---      allowlist: acp_contract.route, atom_segment, atom_segment_member, atom_segment_alias, acp_shared.place_card,
---      place_card_alias, atom_place_card. None has a tenant column or an owner_scope (guard 1): every row is AA's
---      shared, tenant-neutral derivation (ADR 0001 / 0003, CONTEXT.md cross-tenant table). hub, atom_ranking and
---      route_pick are not granted (the route hub is retired in the same wave). The acp_contract views
+--   5. GRANT USAGE ON SCHEMA acp_contract TO aa_app_user, and SELECT (nothing else) on the platform read allowlist:
+--      table level on acp_contract.route, atom_segment, atom_segment_member, atom_segment_alias,
+--      acp_shared.place_card_alias, atom_place_card; column level on acp_shared.place_card (card_id, status: the
+--      columns of the one tenant-pool statement, subject_seed._ALIAS_SQL; verified_by (a staff user id), cost_usd,
+--      naming_note and facts stay unreadable). None has a tenant column or an owner_scope (guard 1): every row is
+--      AA's shared, tenant-neutral derivation (ADR 0001 / 0003, CONTEXT.md cross-tenant table). hub, atom_ranking
+--      and route_pick are not granted (the route hub is retired in the same wave). The acp_contract views
 --      (v_active_tour_atoms, v_trip_registry: owner rights, RLS bypassed) stay revoked (guard 5).
 --   6. Register 265.
 --   Not here: acp_contract.tour_atoms is 266 (its own file: worker-hot, ACCESS EXCLUSIVE on ~32k rows read by every
@@ -58,20 +60,24 @@
 --   1. before: aa_app_user and cis_app exist; aa_app_user is not superuser / BYPASSRLS, has no members and is a member
 --      of no role; per table: it exists with the expected key column (tenant_id uuid NOT NULL; tenant_tour_pages:
 --      tenant_id text NOT NULL; quarter_plan_version: plan_id uuid NOT NULL), the runner owns it (or is superuser /
---      BYPASSRLS), it is not FORCEd, its policies are a subset of the ones this file manages, no PUBLIC grant, no other
---      grantee that could read it (a role that can log in or has members, other than the owner, aa_app_user and
---      cis_app), no dependent view owned by a role RLS would filter; every tenant_tour_pages.tenant_id is a canonical
---      lower-case uuid text (a text-compare policy silently matches nothing otherwise); the 7 platform relations
---      exist, have no RLS and neither a tenant_id nor an owner_scope column. Then lock the 5 tables (ACCESS EXCLUSIVE,
---      the lock ENABLE / CREATE POLICY take anyway) and count;
+--      BYPASSRLS), it is not FORCEd; then it is locked (ACCESS EXCLUSIVE, the lock ENABLE / CREATE POLICY take
+--      anyway, so no write slips in between the checks below and the apply); its policies are a subset of the ones
+--      this file manages, no PUBLIC grant, no other grantee (table or column level) that could read it (a role that
+--      can log in or has members, other than the owner, aa_app_user and cis_app), no dependent view owned by a role
+--      RLS would filter; every tenant_tour_pages.tenant_id is a canonical lower-case uuid text (a text-compare policy
+--      silently matches nothing otherwise); the 7 platform relations exist, have no RLS and neither a tenant_id nor
+--      an owner_scope column. Then count;
 --   2. after, as the runner: RLS is not active for it and it still counts every row under a foreign GUC;
 --   3. policy shape: exactly the managed set per table, each PERMISSIVE, its command, its role and its expression;
 --      RLS on, not FORCEd;
---   4. aa_app_user's exact privileges on the 5 tables (table and column level), exactly SELECT on the 7 relations,
---      USAGE on acp_contract;
+--   4. aa_app_user's exact privileges on the 5 tables (table and column level), exactly SELECT on the 6 table-level
+--      platform relations and SELECT (card_id), SELECT (status) on place_card, USAGE on acp_contract;
 --   5. the AA-859 invariant, version 2 (NO_PRIVILEGE_WITHOUT_RLS_SQL_V2 in tests/integration/_rls_fixture_helpers.py):
---      no aa_app_user privilege on any relation without RLS, the catalog contract and the table-level SELECT on the 7
---      platform relations excepted; and none on any view of acp_contract;
+--      no aa_app_user privilege on any relation without RLS, the catalog contract and the platform read allowlist
+--      excepted; none on any view of acp_contract; acp_contract is newly reachable by aa_app_user, so no PUBLIC grant
+--      (table or column level, any privilege) on a relation of acp_contract without RLS (241's PUBLIC check covered
+--      only the schemas the tenant role could already use, and V2 looks only at grants to aa_app_user), and no
+--      SECURITY DEFINER function in acp_contract that aa_app_user can execute (EXECUTE is PUBLIC by default);
 --   6. by behaviour, when the file runs the DB Migrate way (current_user cis_owner, login a member of cis_app):
 --      cis_app counts every row of the 5 tables without a GUC and under a foreign one (parity). Elsewhere (the CI
 --      replay as a superuser) a NOTICE says it was skipped.
@@ -115,7 +121,9 @@
 -- Rollback (through DB Migrate, Nghiệp approves). STEP 0: `SET aa859:slate_reads_pool false`, and the same for
 -- aa859:angle_gate_read_pool, aa859:subject_decide_pool, aa859:trip_reallocation_pool, aa859:reviews_pool (NOT DEL: a
 -- missing key means ON); list them in the api env var TENANT_POOL_FORCE_ADMIN_FLAGS so it survives a Redis restart;
--- confirm used_tenant_pool=False in Logs Insights. Then, per table t of the five:
+-- confirm used_tenant_pool=False in Logs Insights. The angle-gate choose / reopen re-read follows
+-- aa859:angle_gate_read_pool (on the decide's own connection while aa859:angle_gate_decide_pool is on too): taking
+-- choose / reopen fully off the tenant pool needs BOTH keys set false. Then, per table t of the five:
 --   BEGIN;
 --   REVOKE ALL ON <t> FROM aa_app_user;                                 -- also the column grants
 --   DROP POLICY IF EXISTS tenant_isolation ON <t>;
@@ -213,6 +221,9 @@ BEGIN
         IF forced THEN
             RAISE EXCEPTION 'migration 265: % has FORCE ROW LEVEL SECURITY: the owner would be filtered too', t;
         END IF;
+        -- Lock before the checks below (the lock ENABLE / CREATE POLICY take anyway): no write between a check
+        -- and the apply (review S247).
+        EXECUTE format('LOCK TABLE %s IN ACCESS EXCLUSIVE MODE', tbl);
         managed := ARRAY['tenant_isolation', tname || '_cis_app_all'];
         IF tname = 'tenant_tour_pages' THEN
             managed := managed || 'aa_app_user_aa_master_read'::text;
@@ -224,17 +235,20 @@ BEGIN
             RAISE EXCEPTION 'migration 265: % has policies % this file does not manage: a permissive one would OR '
                             'into the tenant''s view; a human must look', t, bad;
         END IF;
-        -- Every other role that can read the table would read 0 rows once RLS is on (no policy reaches it). A role
-        -- that cannot log in and has no members cannot open a session (CI's legacy app_user from 005).
-        SELECT string_agg(DISTINCT CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END, ', ')
+        -- Every other role that can read the table (table or column grant) would read 0 rows once RLS is on (no
+        -- policy reaches it). A role that cannot log in and has no members cannot open a session (CI's legacy
+        -- app_user from 005).
+        SELECT string_agg(DISTINCT CASE WHEN g.grantee = 0 THEN 'PUBLIC' ELSE g.grantee::regrole::text END, ', ')
           INTO bad
-          FROM pg_class c, aclexplode(c.relacl) a
-         WHERE c.oid = tbl
-           AND a.grantee <> c.relowner
-           AND a.grantee NOT IN (app, 'cis_app'::regrole)
-           AND (a.grantee = 0
-                OR EXISTS (SELECT 1 FROM pg_roles r WHERE r.oid = a.grantee AND r.rolcanlogin)
-                OR EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.roleid = a.grantee));
+          FROM (SELECT a.grantee FROM pg_class c, aclexplode(c.relacl) a WHERE c.oid = tbl
+                UNION
+                SELECT a.grantee FROM pg_attribute att, aclexplode(att.attacl) a
+                 WHERE att.attrelid = tbl AND att.attacl IS NOT NULL AND NOT att.attisdropped) g
+         WHERE g.grantee <> (SELECT relowner FROM pg_class WHERE oid = tbl)
+           AND g.grantee NOT IN (app, 'cis_app'::regrole)
+           AND (g.grantee = 0
+                OR EXISTS (SELECT 1 FROM pg_roles r WHERE r.oid = g.grantee AND r.rolcanlogin)
+                OR EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.roleid = g.grantee));
         IF bad IS NOT NULL THEN
             RAISE EXCEPTION 'migration 265: % hold privileges on %: with RLS on and no policy for them they would '
                             'read 0 rows', bad, t;
@@ -285,8 +299,7 @@ BEGIN
 
     FOREACH t IN ARRAY tables LOOP
         tbl := to_regclass(t);
-        EXECUTE format('LOCK TABLE %s IN ACCESS EXCLUSIVE MODE', tbl);
-        -- literal set_config names only (the X1 role lint refuses a computed one)
+        -- (locked in the first loop) literal set_config names only (the X1 role lint refuses a computed one)
         EXECUTE format('SELECT count(*) FROM %s', tbl) INTO n;
         IF t = 'acp_shared.subject' THEN
             PERFORM set_config('aa265.n_subject', n::text, true);
@@ -399,8 +412,10 @@ REVOKE ALL ON acp_contract.route, acp_contract.atom_segment, acp_contract.atom_s
               acp_contract.atom_segment_alias, acp_shared.place_card, acp_shared.place_card_alias,
               acp_shared.atom_place_card FROM aa_app_user;
 GRANT SELECT ON acp_contract.route, acp_contract.atom_segment, acp_contract.atom_segment_member,
-                acp_contract.atom_segment_alias, acp_shared.place_card, acp_shared.place_card_alias,
-                acp_shared.atom_place_card TO aa_app_user;
+                acp_contract.atom_segment_alias, acp_shared.place_card_alias, acp_shared.atom_place_card
+    TO aa_app_user;
+-- place_card: only the columns subject_seed._ALIAS_SQL reads (verified_by, cost_usd, naming_note, facts stay out)
+GRANT SELECT (card_id, status) ON acp_shared.place_card TO aa_app_user;
 
 -- ── Guards 2-5 ────────────────────────────────────────────────────────────────────────────────────
 DO $$
@@ -519,7 +534,8 @@ BEGIN
     END LOOP;
     PERFORM set_config('app.tenant_id', '', true);
 
-    -- 4b. exactly SELECT (table level, no column grant) on the platform relations, USAGE on acp_contract
+    -- 4b. exactly SELECT on the platform relations (table level; place_card: SELECT (card_id, status) only), USAGE
+    -- on acp_contract
     FOREACH t IN ARRAY platform LOOP
         SELECT array_agg(p ORDER BY p) INTO got FROM (
             SELECT a.privilege_type AS p FROM pg_class c, aclexplode(c.relacl) a
@@ -529,8 +545,10 @@ BEGIN
               FROM pg_attribute att, aclexplode(att.attacl) a
              WHERE att.attrelid = t::regclass AND att.attacl IS NOT NULL AND NOT att.attisdropped
                AND a.grantee = 'aa_app_user'::regrole) x;
-        IF got IS DISTINCT FROM ARRAY['SELECT'] THEN
-            RAISE EXCEPTION 'migration 265: aa_app_user holds % on platform relation % (expected {SELECT})', got, t;
+        expected := CASE WHEN t = 'acp_shared.place_card' THEN ARRAY['SELECT(card_id)', 'SELECT(status)']
+                         ELSE ARRAY['SELECT'] END;
+        IF got IS DISTINCT FROM expected THEN
+            RAISE EXCEPTION 'migration 265: aa_app_user holds % on platform relation % (expected %)', got, t, expected;
         END IF;
     END LOOP;
     IF NOT has_schema_privilege('aa_app_user', 'acp_contract', 'USAGE') THEN
@@ -553,7 +571,7 @@ SELECT c.oid::regclass::text AS rel, a.privilege_type, NULL::text AS column_name
             AND a.privilege_type = 'SELECT')
    AND NOT (ns.nspname || '.' || c.relname = ANY (ARRAY['acp_contract.route', 'acp_contract.atom_segment',
                                                         'acp_contract.atom_segment_member',
-                                                        'acp_contract.atom_segment_alias', 'acp_shared.place_card',
+                                                        'acp_contract.atom_segment_alias',
                                                         'acp_shared.place_card_alias', 'acp_shared.atom_place_card'])
             AND a.privilege_type = 'SELECT')
 UNION ALL
@@ -567,6 +585,9 @@ SELECT c.oid::regclass::text, a.privilege_type, att.attname::text
    AND ns.nspname NOT IN ('pg_catalog', 'information_schema')
    AND ns.nspname NOT LIKE 'pg_toast%'
    AND a.grantee = 'aa_app_user'::regrole
+   AND NOT (ns.nspname || '.' || c.relname = 'acp_shared.place_card'
+            AND att.attname IN ('card_id', 'status')
+            AND a.privilege_type = 'SELECT')
 ORDER BY 1, 3, 2
     ) v;
     IF bad IS NOT NULL THEN
@@ -581,6 +602,35 @@ ORDER BY 1, 3, 2
     IF bad IS NOT NULL THEN
         RAISE EXCEPTION 'migration 265: aa_app_user holds privileges on the acp_contract views % (owner rights, RLS '
                         'bypassed)', bad;
+    END IF;
+    -- acp_contract is reachable by aa_app_user for the first time (USAGE above). A PUBLIC grant on a relation
+    -- there without RLS now reaches the tenant pool, and V2 looks only at grants to aa_app_user: any privilege,
+    -- table or column level, SELECT included (241's queries, raised instead of a NOTICE: no such grant on Dev).
+    SELECT string_agg(DISTINCT format('%s %s', g.rel, g.priv), '; ') INTO bad
+      FROM (SELECT c.oid::regclass::text AS rel, a.privilege_type AS priv
+              FROM pg_class c, aclexplode(c.relacl) a
+             WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f') AND NOT c.relrowsecurity AND a.grantee = 0
+               AND c.relnamespace = 'acp_contract'::regnamespace
+            UNION ALL
+            SELECT c.oid::regclass::text, a.privilege_type || '(' || att.attname || ')'
+              FROM pg_class c JOIN pg_attribute att ON att.attrelid = c.oid AND att.attacl IS NOT NULL
+                                                    AND NOT att.attisdropped,
+                   aclexplode(att.attacl) a
+             WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f') AND NOT c.relrowsecurity AND a.grantee = 0
+               AND c.relnamespace = 'acp_contract'::regnamespace) g;
+    IF bad IS NOT NULL THEN
+        RAISE EXCEPTION 'migration 265: PUBLIC holds privileges on acp_contract relations without RLS, which the '
+                        'tenant pool now reaches: %', bad;
+    END IF;
+    -- A SECURITY DEFINER function runs with its owner's rights (RLS bypassed for the owner) and EXECUTE is PUBLIC
+    -- by default: with USAGE on the schema the tenant role could call it.
+    SELECT string_agg(p.oid::regprocedure::text, ', ') INTO bad
+      FROM pg_proc p
+     WHERE p.pronamespace = 'acp_contract'::regnamespace AND p.prosecdef
+       AND has_function_privilege('aa_app_user', p.oid, 'EXECUTE');
+    IF bad IS NOT NULL THEN
+        RAISE EXCEPTION 'migration 265: aa_app_user may execute SECURITY DEFINER functions in acp_contract: % '
+                        '(owner rights; REVOKE EXECUTE first)', bad;
     END IF;
 END $$;
 
@@ -629,7 +679,7 @@ VALUES ('265', now(),
     'with WITH CHECK, through quarter_plan for the versions, text compare + master read for the pages; the X1 parity '
     'policy TO cis_app); aa_app_user: the column grants of the pick / cut / trip-reallocation statements, SELECT on '
     'the pages, USAGE on acp_contract and SELECT on the platform read allowlist (route, atom_segment, '
-    'atom_segment_member, atom_segment_alias, place_card, place_card_alias, atom_place_card)')
+    'atom_segment_member, atom_segment_alias, place_card_alias, atom_place_card; place_card (card_id, status) only)')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

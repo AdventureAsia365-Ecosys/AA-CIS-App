@@ -60,7 +60,8 @@ import pytest
 sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER, TTV_STANDIN_DDL  # noqa: E402
 from _rls_fixture_helpers import (  # noqa: E402
-    NO_PRIVILEGE_WITHOUT_RLS_SQL_V2, PLATFORM_READ_ALLOWLIST, migration_body, undo_241_for_239_reapply,
+    NO_PRIVILEGE_WITHOUT_RLS_SQL_V2, PLATFORM_READ_ALLOWLIST, PLATFORM_READ_COLUMNS, migration_body,
+    undo_241_for_239_reapply,
 )
 
 TENANT_ROLE = "aa_app_user"
@@ -670,9 +671,16 @@ def test_tenant_role_has_no_privilege_on_any_relation_without_rls(cur):
     assert cur.fetchall() == []
     for rel in PLATFORM_READ_ALLOWLIST:        # the allowlist is used, and nothing beyond SELECT
         cur.execute("SELECT has_table_privilege(%s, %s, 'SELECT'), "
-                    "has_table_privilege(%s, %s, 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')",
-                    (TENANT_ROLE, rel, TENANT_ROLE, rel))
-        assert cur.fetchone() == (True, False), rel
+                    "has_table_privilege(%s, %s, 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER'), "
+                    "has_any_column_privilege(%s, %s, 'INSERT, UPDATE, REFERENCES')",
+                    (TENANT_ROLE, rel, TENANT_ROLE, rel, TENANT_ROLE, rel))
+        # place_card: column-level SELECT (card_id, status) only, not the staff columns (review S247)
+        assert cur.fetchone() == (rel not in PLATFORM_READ_COLUMNS, False, False), rel
+    for rel, cols in PLATFORM_READ_COLUMNS.items():
+        cur.execute("SELECT att.attname FROM pg_attribute att WHERE att.attrelid = %s::regclass AND att.attnum > 0 "
+                    "AND NOT att.attisdropped AND has_column_privilege(%s, att.attrelid, att.attnum, 'SELECT')",
+                    (rel, TENANT_ROLE))
+        assert sorted(r[0] for r in cur.fetchall()) == sorted(cols), rel
 
 
 def test_tenant_pool_still_reads_angle_gate_option(cur):

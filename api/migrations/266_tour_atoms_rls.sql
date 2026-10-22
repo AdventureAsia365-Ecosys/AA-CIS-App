@@ -39,14 +39,15 @@
 --
 -- Guards (RAISE rolls the whole file back; nothing changes):
 --   1. before: aa_app_user, cis_app and catalog_owner exist; aa_app_user is not superuser / BYPASSRLS, has no members
---      and is a member of no role; the runner owns the table (or is superuser / BYPASSRLS); it is not FORCEd; its
---      policies are a subset of the four this file manages; no PUBLIC grant; the grantees are a subset of {owner,
+--      and is a member of no role; the runner owns the table (or is superuser / BYPASSRLS); it is not FORCEd; then it
+--      is locked (ACCESS EXCLUSIVE, the lock ENABLE / CREATE POLICY take anyway: no write between the checks below and
+--      the apply); its policies are a subset of the four this file manages; no PUBLIC grant; the grantees are a subset of {owner,
 --      cis_app, catalog_owner, aa_app_user} (tripplanner holding any privilege: "apply CIS 254 first"; any other role
 --      that can log in or has members would read 0 rows); every dependent view is owned by a role that owns the table
 --      (or bypasses RLS) or by catalog_owner (which gets its policy here); every owner_scope is 'platform' or a
 --      canonical lower-case uuid; D9: no live (not deleted, not an empty marker) non-platform atom on a live master
 --      tour (P0 recorded 0; otherwise the catalog views already expose tenant atoms to every consumer: Q4, a root ADR,
---      not this file). Then lock (ACCESS EXCLUSIVE, the lock ENABLE / CREATE POLICY take anyway) and count; the DB
+--      not this file). Then count; the DB
 --      Migrate way only (current_user cis_owner), also count as catalog_owner (tour_atoms, catalog.v_tour_place,
 --      catalog.v_tour_component) and as cis_app;
 --   2. after, as the runner: RLS is not active for it and it still counts every row under a foreign GUC;
@@ -155,6 +156,9 @@ BEGIN
         RAISE EXCEPTION 'migration 266: acp_contract.tour_atoms has FORCE ROW LEVEL SECURITY: the owner (and its '
                         'views) would be filtered too';
     END IF;
+    -- Lock before the checks below (the lock ENABLE / CREATE POLICY take anyway): no atom written between the
+    -- owner_scope / D9 checks and the apply (review S247).
+    LOCK TABLE acp_contract.tour_atoms IN ACCESS EXCLUSIVE MODE;
     SELECT string_agg(polname::text, ', ') INTO bad
       FROM pg_policy
      WHERE polrelid = tbl
@@ -225,7 +229,6 @@ BEGIN
                         'them); AA-859 Q4 decides, not this file', n;
     END IF;
 
-    LOCK TABLE acp_contract.tour_atoms IN ACCESS EXCLUSIVE MODE;
     SELECT count(*) INTO n FROM acp_contract.tour_atoms;
     PERFORM set_config('aa266.n_tour_atoms', n::text, true);
 
@@ -365,7 +368,7 @@ SELECT c.oid::regclass::text AS rel, a.privilege_type, NULL::text AS column_name
             AND a.privilege_type = 'SELECT')
    AND NOT (ns.nspname || '.' || c.relname = ANY (ARRAY['acp_contract.route', 'acp_contract.atom_segment',
                                                         'acp_contract.atom_segment_member',
-                                                        'acp_contract.atom_segment_alias', 'acp_shared.place_card',
+                                                        'acp_contract.atom_segment_alias',
                                                         'acp_shared.place_card_alias', 'acp_shared.atom_place_card'])
             AND a.privilege_type = 'SELECT')
 UNION ALL
@@ -379,6 +382,9 @@ SELECT c.oid::regclass::text, a.privilege_type, att.attname::text
    AND ns.nspname NOT IN ('pg_catalog', 'information_schema')
    AND ns.nspname NOT LIKE 'pg_toast%'
    AND a.grantee = 'aa_app_user'::regrole
+   AND NOT (ns.nspname || '.' || c.relname = 'acp_shared.place_card'
+            AND att.attname IN ('card_id', 'status')
+            AND a.privilege_type = 'SELECT')
 ORDER BY 1, 3, 2
     ) v;
     IF bad IS NOT NULL THEN
