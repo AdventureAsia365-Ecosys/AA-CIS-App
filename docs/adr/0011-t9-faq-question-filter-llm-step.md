@@ -1,6 +1,6 @@
 # T9 blog FAQ: LLM steps filter the real search questions and check the answers fit, behind a flag (AA-779)
 
-- **Status:** Proposed (S247).
+- **Status:** Accepted (22/10/2026, S247, Nghiệp). `on` follows the rollout rule below: a read of new-blog shadow verdicts first.
 - **Builds on:** ADR 0005 (model catalog), ADR 0006 (stage routes), ADR 0008 (validate stages may use any
   vendor). No ecosystem contract changes: the stage is a CIS row in `shared.llm_role_config`, read only by CIS.
 
