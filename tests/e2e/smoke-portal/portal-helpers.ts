@@ -83,7 +83,7 @@ export async function waitForPortalData(page: Page): Promise<void> {
  * fullPage stopped at 900 px. For the desktop capture the viewport is made as tall as main's content
  * (capped), so the whole page is in the shot.
  */
-async function fitViewportToMain(page: Page, width: number, minHeight: number): Promise<void> {
+export async function fitViewportToMain(page: Page, width: number, minHeight: number): Promise<void> {
   const contentHeight = await page.evaluate(() => {
     const main = document.querySelector<HTMLElement>('[data-pshell="main"]');
     if (!main) return 0;

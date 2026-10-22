@@ -14,7 +14,7 @@
 import hashlib
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Literal, Optional
 
 import asyncpg
 import bcrypt
@@ -22,6 +22,7 @@ import jwt  # PyJWT
 from fastapi import APIRouter, Depends, HTTPException, Request, Security, status
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
+from pydantic.json_schema import SkipJsonSchema
 from api.core.secret_compare import secrets_equal
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -40,11 +41,22 @@ if not JWT_SECRET:
 JWT_ALG      = "HS256"
 JWT_EXPIRY_H = 24
 
+# AA-760 — the tenant portal's own sign-in (portal/app/api/auth/tenant-login) asks for a token with
+# client="portal". The claim marks a portal SESSION: api/middleware/rate_limit.py still rate-limits it but
+# does not meter it as an API call (shared.tenant_api_usage = the "API calls" on the tenant's Billing page).
+# A token minted without it (any machine caller of POST /auth/tenant-login, and every token minted before
+# AA-760) is metered, as before. Same API key either way: the claim is signed, so it cannot be added to an
+# existing token, but a caller holding the key could ask for it. API calls carry no charge (overage is per
+# rewrite, v_tenant_monthly_usage) and the RPM limit applies to both, so that only lowers a displayed count.
+PORTAL_CLIENT = "portal"
+
 
 # ── Models ────────────────────────────────────────────────────────────────────
 
 class TenantLoginRequest(BaseModel):
     api_key: str
+    # AA-760 — set only by the portal's sign-in BFF (see PORTAL_CLIENT); left out of the public schema.
+    client: SkipJsonSchema[Optional[Literal["portal"]]] = None
 
 
 class TenantLoginResponse(BaseModel):
@@ -61,7 +73,7 @@ def _hash_api_key(raw_key: str) -> str:
     return hashlib.sha256(raw_key.encode()).hexdigest()
 
 
-def _create_jwt(tenant_id: str, name: str, plan_tier: str) -> str:
+def _create_jwt(tenant_id: str, name: str, plan_tier: str, client: Optional[str] = None) -> str:
     payload = {
         "sub":       tenant_id,
         "name":      name,
@@ -70,7 +82,15 @@ def _create_jwt(tenant_id: str, name: str, plan_tier: str) -> str:
         "iat":       datetime.now(timezone.utc),
         "exp":       datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRY_H),
     }
+    # AA-760 — only the one known value is ever written; anything else mints a plain (metered) token.
+    if client == PORTAL_CLIENT:
+        payload["client"] = PORTAL_CLIENT
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
+
+
+def is_portal_session(payload: dict) -> bool:
+    """AA-760 — True for a verified tenant JWT minted by the portal's sign-in (claim client="portal")."""
+    return payload.get("client") == PORTAL_CLIENT
 
 
 def verify_jwt(token: str) -> dict:
