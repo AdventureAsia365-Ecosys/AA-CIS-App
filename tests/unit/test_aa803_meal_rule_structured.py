@@ -177,7 +177,7 @@ def test_a_one_day_tour_is_left_to_jev():
 
 def test_only_the_claims_the_rule_does_not_clear_go_to_jev():
     tour = _tour(LIST_DAYS)
-    itin = _itin(4, {2: "Lunch is served at a noodle shop near the lake.",
+    itin = _itin(4, {2: "Lunch is served near Hoan Kiem Lake.",
                      3: "A seafood feast is served on board after kayaking among the karsts."})
     with patch.object(g, "judge_units", side_effect=_jev_off) as m:
         codes = ba.pre_audit_checks({"name": "A", "itineraries": itin}, tour)
@@ -724,14 +724,8 @@ def test_the_scoped_list_guards_hold_without_the_variant_check():
 @pytest.mark.parametrize("itineraries", [
     # control: the same tour with no trap clears
     "Day 1: Hanoi - Arrive.\nDay 2: Hue - Citadel. Meals: B, L, D\nDay 3: Hoi An - Old town.",
-    # another day's own scoped statement or own list is that day's fact, not a remark about Day 2
-    "Day 1: Hanoi - Arrive. There are no meals included today.\nDay 2: Hue - Citadel. Meals: B, L, D\n"
-    "Day 3: Hoi An - Old town.",
+    # another day's own list is that day's fact, not a remark about Day 2
     "Day 1: Hanoi - Arrive. Meals: None\nDay 2: Hue - Citadel. Meals: B, L, D\nDay 3: Hoi An - Old town.",
-    "Day 1: Hanoi - Arrive. Lunch can be bought on the train.\nDay 2: Hue - Citadel. Meals: B, L, D\n"
-    "Day 3: Hoi An - Old town.",
-    "Day 1: Hanoi - Arrive.\nDay 2: Hue - Citadel. Meals: B, L, D\n"
-    "Day 3: Hoi An - Old town. A riverside picnic and an optional short hike end the day.",
     # the plain section headings of the structured layouts do not scope the list; narrative audience words far
     # from the list do not either
     "Day 1: Hanoi - Arrive.\nDay 2: Hue - Citadel. Check into your cabin.\n\nAccommodation:\n• Hotel (1 night)\n"
@@ -770,3 +764,190 @@ def test_a_tour_wide_note_in_another_day_stops_the_inclusion_path():
     tour = _tour(["Arrive. Note: lunches are at your own expense throughout the trip.", "Hue citadel walk.",
                   "Cruise.", "Depart."], inclusions="All meals")
     assert _fires(tour, _itin(4, {2: LUNCH}, titles={2: "Hue citadel"}))
+
+
+# ── 9. second independent review of part B (S247, at f1ea929c) ─────────────────────────────────────────────
+# Finding 1: the day-list path never read INCLUSIONS (Jev's unit_source does). Finding 2: a neighbouring day's
+# sentence about the meal with a weak cue and no tour-wide / remark marker passed (Jev sees days d-1..d+1).
+# Finding 3: a claim sentence that pairs a sourced meal with something else ("..., followed by a hotpot") or adds
+# an invented detail ("a Michelin-starred restaurant") was cleared whole without Jev.
+
+HUE3 = "Day 1: Hanoi - Arrive.\nDay 2: Hue - Citadel. Meals: B, L, D\nDay 3: Hoi An - Old town."
+
+
+def _hue5(note_day=None, note=""):
+    """A 5-day source; Day 2 (Hue) has ``Meals: B, L, D``; ``note`` is appended to day ``note_day``
+    (``note_day=6``: after the last day)."""
+    days = {1: "Hanoi - Arrive.", 2: "Hue - Citadel. Meals: B, L, D", 3: "Hoi An - Old town.",
+            4: "Saigon - Markets.", 5: "Mekong Delta - Boats."}
+    lines = [f"Day {n}: {t}" + (f" {note}" if n == note_day else "") for n, t in days.items()]
+    if note_day == 6:
+        lines.append(note)
+    return "\n".join(lines)
+
+
+def _hue_itin_with(sentence, n_days=3):
+    """Output days 1..n_days; Day 2 (Hue Citadel) holds ``sentence`` (as its title line when it is one)."""
+    titles = {1: "Hanoi", 2: "Hue Citadel", 3: "Hoi An", 4: "Saigon", 5: "Mekong Delta"}
+    title_claim = sentence.startswith("Day 2 ")
+    return "\n\n".join((sentence if d == 2 and title_claim else f"Day {d} — {titles[d]}") + "\n"
+                       + (sentence if d == 2 and not title_claim else "Time to look around.")
+                       for d in range(1, n_days + 1))
+
+
+INCLUSION_PROBES = {
+    "combined-incl-excl-field": "Included: hotels, guide, meals as per itinerary\nNot included: lunches, drinks, tips",
+    "as-per-itinerary-except": "Meals as per itinerary, except lunch on Day 2 which is at own expense",
+    "payable-on-board": "Meals as indicated (B/L/D). Lunch on the cruise is payable on board.",
+    "excluded-item-in-a-list": ["Hotels", "Guide", "EXCLUDED: lunch on cruise days"],
+    "cabin-scoped-meals": "Meals as listed in the itinerary for Superior cabins; Standard cabin guests receive "
+                          "breakfast only",
+    # own variants: a "Not included:" heading with the meal on its own line, a weak cue, an audience word
+    "not-included-heading-own-line": "Included:\n- Hotels\n- Meals as per itinerary\nNot included:\n- Lunches\n- Tips",
+    "weak-cue-in-inclusions": "Meals as per itinerary; lunch may be a packed lunch",
+    "audience-in-inclusions": "Meals as per itinerary for trekkers",
+}
+
+
+@pytest.mark.parametrize("case_id", sorted(INCLUSION_PROBES))
+def test_inclusions_doubt_stops_the_day_list_path(case_id):
+    tour = _raw_tour(HUE3, inclusions=INCLUSION_PROBES[case_id])
+    cleared, reason = mc.claim_sourced(_claim(LUNCH, 2), tour, _hue_itin())
+    assert not cleared and reason in ("excluded", "inclusions_doubt"), (case_id, reason)
+    assert _fires(tour, _hue_itin()), case_id
+
+
+@pytest.mark.parametrize("inclusions", ["", "Included: hotels, guide, meals as per itinerary",
+                                        "Hotels, guide, entrance fees, meals as indicated (B/L/D)",
+                                        "Not included: drinks, tips"])
+def test_plain_inclusions_leave_the_day_list_readable(inclusions):
+    tour = _raw_tour(HUE3, inclusions=inclusions)
+    assert mc.claim_sourced(_claim(LUNCH, 2), tour, _hue_itin()) == (True, "day_list")
+
+
+def test_inclusions_excluded_section_reads_like_exclusions():
+    assert mc.inclusions_excluded("Included: guide\nNot included: lunches, drinks") == frozenset({"L"})
+    assert mc.inclusions_excluded("Included: guide\nExcluded:\n- Meals\n- Tips") == mc.ALL
+    assert mc.inclusions_excluded("Included: guide, all meals") == frozenset()
+
+
+NEIGHBOUR_PROBES = {
+    # the review's probes, 3-day tour, claim on Day 2 (Day 1 and the text after Day 3 are both in Jev's window)
+    "d1-charged-separately": (1, "Lunch on the junk is charged separately."),
+    "d1-guests-pay": (1, "Guests pay for lunch on the junk."),
+    "d1-self-funded": (1, "Lunch on the cruise is self-funded."),
+    "after-low-season-not-served": (4, "In the low season (May to September) lunch is not served on board."),
+    "after-no-lunch-during-tet": (4, "No lunch on the cruise during Tet."),
+    "after-private-tours-extra": (4, "On private tours, lunch is extra."),
+    "after-solo-travellers-extra": (4, "For solo travellers lunch is extra."),
+    "after-not-available-sundays": (4, "Lunch on the junk is not available on Sundays."),
+    # own variants: a neighbour that only talks about the meal, with no cue at all, or restricts another meal
+    "d3-plain-mention": (3, "Lunch is at a street stall in Hoi An."),
+    "d1-meals-generic": (1, "Meals on the train are simple."),
+    "d3-replaced": (3, "Lunch may be replaced by a snack box."),
+    "d1-only-breakfast": (1, "Only breakfast is provided in the towns."),
+    "d3-a-la-carte": (3, "Lunch on the boat is a la carte."),
+    "d1-cancelled": (1, "Lunch on the junk is cancelled in bad weather."),
+}
+
+
+def _neighbour_tour(where, note):
+    lines = HUE3.split("\n")
+    if where == 4:
+        lines.append(note)
+    else:
+        lines[where - 1] += f" {note}"
+    return _raw_tour("\n".join(lines))
+
+
+@pytest.mark.parametrize("case_id", sorted(NEIGHBOUR_PROBES))
+def test_a_neighbouring_day_that_talks_about_the_meal_stops_the_clear(case_id):
+    tour = _neighbour_tour(*NEIGHBOUR_PROBES[case_id])
+    assert mc.claim_sourced(_claim(LUNCH, 2), tour, _hue_itin()) == (False, "source_itinerary_doubt"), case_id
+    assert _fires(tour, _hue_itin()), case_id
+
+
+@pytest.mark.parametrize("day1", ["Meal plan: full board on trek days, breakfast only in towns.",
+                                  "Only breakfast is provided in the towns."])
+def test_a_neighbouring_day_stops_the_inclusion_path(day1):
+    tour = _tour([f"Arrive. {day1}", "Hue citadel walk.", "Cruise.", "Depart."], inclusions="Full board")
+    assert _fires(tour, _itin(4, {2: LUNCH}, titles={2: "Hue citadel"}))
+    tour = _tour(["Arrive.", "Hue citadel walk.", "Cruise.", "Depart."], inclusions="Full board")
+    assert not _fires(tour, _itin(4, {2: LUNCH}, titles={2: "Hue citadel"}))
+
+
+@pytest.mark.parametrize("note", ["There are no meals included today.", "Lunch can be bought on the train.",
+                                  "A riverside picnic and an optional short hike end the day.",
+                                  "Lunch is at a street stall."])
+def test_a_day_further_away_keeps_the_reach_gate(note):
+    """Days outside Jev's window (d-1..d+1) keep the reach gate: a sentence scoped to its own day does not reach
+    the claim; the same sentence next to the claimed day does stop it."""
+    assert mc.claim_sourced(_claim(LUNCH, 2), _raw_tour(_hue5(4, note)), _hue_itin_with(LUNCH, 5)) == \
+        (True, "day_list")
+    assert mc.claim_sourced(_claim(LUNCH, 2), _raw_tour(_hue5(3, note)), _hue_itin_with(LUNCH, 5)) == \
+        (False, "source_itinerary_doubt")
+
+
+@pytest.mark.parametrize("note", ["Note: lunch on the cruise is replaced by a snack.",
+                                  "Note: lunch is cancelled during Tet.", "Please note lunch is served à la carte.",
+                                  "Important: lunch is charged on board.", "Note: lunch only on trek days.",
+                                  "Note: lunch is not available on Sundays."])
+def test_new_negation_cues_reach_from_a_day_further_away(note):
+    for where in (5, 6):
+        tour = _raw_tour(_hue5(where, note))
+        assert mc.claim_sourced(_claim(LUNCH, 2), tour, _hue_itin_with(LUNCH, 5)) == \
+            (False, "source_itinerary_doubt"), (note, where)
+
+
+EXTRA_PROBES = {
+    # Day 2 says "Meals: B": the sentence implies an unsourced dinner beside the sourced breakfast
+    "tasting-menu-on-deck": ("B", "Breakfast is included, and a tasting menu awaits on deck at night."),
+    "followed-by-hotpot": ("B", "Breakfast is included, followed by a hotpot on deck at sunset."),
+    "seafood-spread-at-sunset": ("B", "Breakfast is served at the hotel; at sunset a seafood spread is laid out on "
+                                      "deck."),
+    # Day 2 says "Meals: B, L, D": the meal is sourced, the detail is invented
+    "michelin-starred": ("B, L, D", "Dinner is served at a Michelin-starred restaurant in town."),
+    "wine-pairing": ("B, L, D", "Lunch with a wine pairing is served on the sundeck."),
+    "private-chef": ("B, L, D", "Dinner is prepared by a private chef at the villa."),
+    # own variants
+    "and-a-cooking-class": ("B, L, D", "Lunch is included and a cooking class follows."),
+    "noodle-shop": ("B, L, D", "Lunch is served at a noodle shop."),
+    "sundeck-venue": ("B, L, D", "Dinner is served on the sundeck."),
+    "title-with-a-food-noun": ("B, L, D", "Day 2 — Hue Street Food Night (B, L, D)"),
+}
+
+
+def _extra_tour(meals):
+    return _raw_tour(f"Day 1: Hanoi - Arrive.\nDay 2: Hue - Citadel. Meals: {meals}\nDay 3: Hoi An - Old town.")
+
+
+@pytest.mark.parametrize("case_id", sorted(EXTRA_PROBES))
+def test_a_claim_sentence_with_more_than_the_claim_goes_to_jev(case_id):
+    meals, sentence = EXTRA_PROBES[case_id]
+    tour = _extra_tour(meals)
+    itin = _hue_itin_with(sentence)
+    cleared, reason = mc.claim_sourced(_claim(sentence, 2), tour, itin)
+    assert not cleared, case_id
+    assert reason.startswith("output_"), (case_id, reason)
+    assert _fires(tour, itin), case_id
+
+
+@pytest.mark.parametrize("meals,sentence", [
+    ("B, L, D", "Lunch is served at a local restaurant."),
+    ("B, L, D", "Lunch is included."),
+    ("B, L, D", "Breakfast, lunch and dinner are included."),
+    ("B, L, D", "Dinner is served at the hotel in Hue."),
+    ("B, L, D", "Lunch is served near the Citadel."),
+    ("B", "Breakfast is served at the hotel."),
+    ("B, L, D", "Day 2 — Hue Citadel (B, L, D)"),
+])
+def test_a_bare_meal_claim_still_clears(meals, sentence):
+    tour = _extra_tour(meals)
+    assert mc.claim_sourced(_claim(sentence, 2), tour, _hue_itin_with(sentence)) == (True, "day_list")
+
+
+def test_output_extra_reads_words_against_the_source_day():
+    assert mc.output_extra("Dinner is served on the sundeck.", "Cruise. Relax on the sundeck. Meals: B, L, D") is None
+    assert mc.output_extra("Dinner is served on the sundeck.", "Cruise. Meals: B, L, D") == "word_not_in_source_day"
+    assert mc.output_extra("Breakfast is included, and lunch.", "Meals: B, L") == "second_clause"
+    assert mc.output_extra("A hotpot dinner is served.", "Hotpot night. Meals: D") == "food_noun"

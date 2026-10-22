@@ -24,14 +24,14 @@ def _itin(day2, day3="Cruise among the karsts."):
 
 
 def test_a_jev_waived_version_the_rule_clears_needs_jev_no_more():
-    r = rp.classify_version(_row(_itin("Lunch is served at a riverside restaurant.")), ba, g, mc)
+    r = rp.classify_version(_row(_itin("Lunch is served on the boat.")), ba, g, mc)
     assert r["waived_by_stored_code"] and r["rule_clears_all"] and not r["still_needs_jev"]
     assert r["old_units"] == 1 and r["old_units_cleared"] == 1 and r["jev_units"] == 0
     assert not r["fires_jev_off"] and r["fires_jev_off_old"]
 
 
 def test_a_jev_waived_version_the_rule_does_not_clear_still_needs_jev():
-    r = rp.classify_version(_row(_itin("Dinner is served at a riverside restaurant.")), ba, g, mc)
+    r = rp.classify_version(_row(_itin("Dinner is served on the boat.")), ba, g, mc)
     assert r["waived_by_stored_code"] and r["still_needs_jev"] and r["jev_units"] == 1
     assert r["verdicts"][0]["reason"] == "not_in_day_list"
 
@@ -44,8 +44,8 @@ def test_a_stored_code_or_a_rewritten_itinerary_is_not_a_waiver():
 
 
 def test_aggregate_shares_and_bar():
-    rows = [_row(_itin("Lunch is served at a riverside restaurant."), tour_id="a"),
-            _row(_itin("Dinner is served at a riverside restaurant."), tour_id="b"),
+    rows = [_row(_itin("Lunch is served on the boat."), tour_id="a"),
+            _row(_itin("Dinner is served on the boat."), tour_id="b"),
             _row(_itin("Walk on."), tour_id="c")]
     t = rp.aggregate([rp.classify_version(r, ba, g, mc) for r in rows], flag_fix_cost=0.01)
     assert t["tours"] == 3 and t["tours_waived_by_stored_code"] == 2 and t["tours_still_needing_jev"] == 1

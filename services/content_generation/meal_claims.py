@@ -21,13 +21,22 @@ A claim is cleared only when every meal it names is covered and nothing in sight
 - **Output sentence.** It names its meals in plain words or codes; a generic meal noun (meals, feast, picnic,
   barbecue, banquet, board, buffet) claims all three. It is not cleared when it holds a digit or a time word, a
   negation or an option ("not", "own", "optional", "or", "if", ...), or a reference to another or several days
-  ("tomorrow", "every", "daily", "next", "day", ...).
+  ("tomorrow", "every", "daily", "next", "day", ...). It must hold nothing but the claim (``output_extra``): no
+  food or drink noun outside B / L / D ("tasting menu", "hotpot", "wine pairing"), no second clause ("...,
+  followed by ...", "and a ..."), and every other word (outside function words, meal words, provision verbs and
+  "hotel" / "restaurant" / "local") in the matched source day: "Dinner is served at a Michelin-starred restaurant"
+  goes to Jev even on ``Meals: B, L, D``.
 - **Day matching.** The output days are exactly 1..N, the source has exactly one single-day "Day n" marker for
   each of 1..N in order, the tour's stated duration (when exact) is N, and the matched source day names no
   other day and no other night (an inline "Day 3", "the 2nd evening", "two nights", "next morning").
 - **The day's free text is silent on the meal.** Outside its pure lists, code brackets and bare time markers
   ("After breakfast,"), the source day may not name a claimed meal or meals in general: when the text talks about
   the meal, the text (not the list) would have to be read, so the claim goes to Jev.
+- **The days next to it are silent on the meal too.** Jev's per-unit source holds days d-1, d and d+1 (text after
+  the last marker sits in the last day), so the free text of the day before and the day after may not name a
+  claimed meal or meals in general, nor restrict any meal ("Only breakfast is provided in the towns").
+- **INCLUSIONS on both paths.** A "Not included:" / "Excluded:" section inside INCLUSIONS is read like EXCLUSIONS;
+  an INCLUSIONS sentence that names a meal with a cue or an audience / variant word stops the claim.
 - **Doubt in the source.** A strong cue anywhere in the source day (``own expense``, ``not included``,
   ``optional``, ``on request``, ``payable``, ``upgrade``, ``supplement``, ...), or a weak or soft cue (``no``,
   ``not``, ``except``, ``if``, ``or``, ``at leisure``, ``free time``, ...) in a sentence of that day that names a
@@ -113,6 +122,91 @@ def output_refused(sentence: str) -> bool:
     """True when the sentence carries something the rule never vouches for (see module docstring)."""
     text = _DAY_TITLE_PREFIX_RE.sub("", sentence or "", count=1)
     return bool(_OUT_REFUSE_RE.search(_LABEL_RE.sub(" ", text)))
+
+
+# A food or drink noun outside B / L / D names a meal (or a detail of one) the rule cannot read: "a tasting menu
+# awaits on deck", "followed by a hotpot", "a seafood spread", "lunch with a wine pairing".
+_FOOD_RE = re.compile(
+    r"\b(?:menus?|hot\s*pots?|spreads?|tastings?|courses?|cuisines?|dish(?:es)?|delicac\w+|specialit\w+|specialt\w+"
+    r"|fare|platters?|snacks?|drinks?|beverages?|wines?|beers?|cocktails?|sake|seafood|desserts?|appeti[sz]ers?"
+    r"|canap\w+|refreshments?|teas?|coffees?|foods?|fondue|sushi|pho|noodles?|curr(?:y|ies)|rice|soups?|grill\w*"
+    r"|roast\w*|feast\w*|banquets?|buffets?|barbecues?|bbqs?|picnics?|carte|degustation|pairings?|chefs?|cooks?"
+    r"|cooking|tapas|dim\s+sum|street\s+food|kitchen)\b",
+    re.IGNORECASE)
+# A second clause: the sentence says something beside the meal claim ("Breakfast is included, and a ...",
+# "..., followed by ...", "...; at sunset ..."). Meal-word lists ("breakfast, lunch and dinner") are collapsed first.
+_SECOND_CLAUSE_RE = re.compile(
+    r"[,;:()\[\]]|\s[–—-]\s|\bfollowed\s+by\b|\band\s+(?:a|an|the|some|then|later|you|we|guests|your)\b|\bthen\b"
+    r"|\bplus\b|\bas\s+well\s+as\b|\b(?:along|together)\s+with\b",
+    re.IGNORECASE)
+_MEAL_NOUN = r"(?:breakfast|brunch|lunch|dinner|supper)(?:e?s)?"
+_MEAL_LIST_RE = re.compile(rf"\b{_MEAL_NOUN}(?:\s*(?:,|&|/|\band\b)\s*{_MEAL_NOUN})+", re.IGNORECASE)
+# Words a bare meal claim is made of: function words, the meal words and provision verbs, and the generic venue
+# words "hotel", "restaurant" and "local" (the existing day-list layouts never name them; "Lunch is served at a
+# local restaurant" is the claim itself). Every other word must appear in the matched source day.
+_CLAIM_STOP = frozenset("""
+    the and for with at on in of to by from into onto upon near beside inside outside around along our your you
+    their its this that these there here are was were will been being has have had get gets got also all who which
+    whom whose where when then than its it's each any one ones is be an a as so very just again too
+    breakfast breakfasts brunch brunches lunch lunches luncheon lunchtime dinner dinners supper suppers meal meals
+    included include includes including inclusive provided provide provides served serve serves arranged offered
+    supplied prepared hosted covered enjoy enjoyed enjoys taken eaten eat
+    hotel hotels restaurant restaurants local today day morning afternoon evening midday time
+""".split())
+
+
+def _norm_word(w: str) -> str:
+    w = w.lower().strip("'’")
+    if w.endswith(("'s", "’s")):
+        w = w[:-2]
+    if w.endswith("ies") and len(w) > 4:
+        return w[:-3] + "y"
+    if w.endswith("es") and len(w) > 4 and w[-3] in "sxz":
+        return w[:-2]
+    if w.endswith("s") and len(w) > 3 and not w.endswith("ss"):
+        return w[:-1]
+    return w
+
+
+def _word_set(text: str) -> set[str]:
+    return {_norm_word(w) for w in re.findall(r"[A-Za-z][A-Za-z'’]*", text or "")}
+
+
+def _bare_claim_text(sentence: str) -> str:
+    """The claim sentence without its day-title prefix, its ``Meals:`` lists and its pure code brackets."""
+    text = _DAY_TITLE_PREFIX_RE.sub("", sentence or "", count=1)
+    for m in reversed(list(_LABEL_RE.finditer(text))):
+        rest = text[m.end():]
+        tail = _list_tail(rest)
+        if _pure_list(tail) is not None:
+            text = text[: m.start()] + " " + rest[rest.find(tail) + len(tail):]
+    return _BRACKET_RE.sub(lambda m: " " if _pure_codes(m.group(1)) else m.group(0), text)
+
+
+def output_extra(sentence: str, block: str) -> Optional[str]:
+    """Why the claim sentence holds more than the meal claim, else None. A sentence is cleared only when it is
+    nothing but the claim: no food noun outside B / L / D, no second clause, and every other word in the matched
+    source day ``block``. A day-title line ("Day 3 — Hue (B, L)") keeps its title words: only its food nouns
+    count. Anything else ("Dinner is served at a Michelin-starred restaurant", "Breakfast is included, followed
+    by a hotpot on deck") goes back to Jev."""
+    from .grounding import _DAY_TITLE_RE
+
+    plain = _bare_claim_text(sentence)
+    if _FOOD_RE.search(plain):
+        return "food_noun"
+    if _DAY_TITLE_RE.match(sentence or ""):
+        return None
+    collapsed = _MEAL_LIST_RE.sub(" meals ", plain).strip().rstrip(".!")
+    if _SECOND_CLAUSE_RE.search(collapsed):
+        return "second_clause"
+    source = _word_set(block)
+    for w in re.findall(r"[A-Za-z][A-Za-z'’]*", collapsed):
+        n = _norm_word(w)
+        if len(n) < 3 or n in _CLAIM_STOP or w.lower() in _CLAIM_STOP:
+            continue
+        if n not in source:
+            return "word_not_in_source_day"
+    return None
 
 
 # ── structured source lists ───────────────────────────────────────────────────────────────────────────────
@@ -318,9 +412,13 @@ _NEG_CUE_RE = re.compile(
     r"\b(?:no|not|never|none|nor|neither|without|except\w*|excluding|unless|if|may|might|could|can|cannot|should"
     r"|option\w*|choos\w*|choice|alternative\w*|depend\w*|subject|vary|varies|own|self|yourself|yourselves"
     r"|independent\w*|separate\w*|pay|paid|purchase|buy|bought|cost|price|charge|extra|cash|bring|carry|pack"
-    r"|responsib\w*|account|budget|bill|settle\w*|tba|tbc)\b|\w+n['’]t\b|\bup\s+to\s+you\b|\b(?:by|on)\s+you\b"
+    r"|responsib\w*|account|budget|bill|settle\w*|tba|tbc|served|serving|available|unavailable|replac\w*"
+    r"|cancel\w*|charged?|charges|carte|only|just|limited|seasonal\w*|season|closed|instead|unless|depending)\b"
+    r"|\w+n['’]t\b|\bup\s+to\s+you\b|\b(?:by|on)\s+you\b|\ba\s+la\b|\bà\s+la\b"
     r"|\bto\s+be\s+(?:confirmed|advised|decided|arranged)\b",
     re.IGNORECASE)
+# "Only breakfast is provided in the towns", "breakfast only": a restriction on one meal speaks for the others.
+_ONLY_RE = re.compile(r"\b(?:only|just|solely|exclusively)\b", re.IGNORECASE)
 
 
 def _sentence_meals(sentence: str) -> frozenset[str]:
@@ -339,6 +437,26 @@ def _sentence_meals(sentence: str) -> frozenset[str]:
     return ALL if reaches else frozenset()
 
 
+def adjacent_day_doubt(blocks: dict[int, str], day: int, meals: frozenset[str]) -> bool:
+    """True when the day before or after the matched day talks about a claimed meal (or meals in general) in its
+    free text, or restricts any meal ("Only breakfast is provided in the towns"). Jev's per-unit source
+    (``grounding.unit_source``) holds days d-1, d and d+1, and any text after the last marker sits in the last day's
+    block, so the rule asks of those days the same silence it asks of the matched day (``narrative_names``):
+    "Lunch on the junk is charged separately.", "In the low season lunch is not served on board." or "For solo
+    travellers lunch is extra." there refuses the clear whatever its cue or reach. Pure lists and code brackets
+    of those days are their own facts ("Meals: None") and bare time markers ("After lunch,") do not count."""
+    for n in (day - 1, day + 1):
+        block = blocks.get(n)
+        if not block:
+            continue
+        if narrative_names(block, meals):
+            return True
+        for s in _SENTENCE_SPLIT_RE.split(_narrative(block)):
+            if _MEAL_MENTION_RE.search(_TIME_MARKER_RE.sub(" ", s)) and _ONLY_RE.search(s):
+                return True
+    return False
+
+
 def itinerary_doubt(blocks: dict[int, str], day: int, meals: frozenset[str]) -> bool:
     """True when a sentence of the source itinerary outside the matched day (any other day's block, which also
     holds any text after the last marker) names a claimed meal and casts doubt on it, so it may reach the claimed
@@ -346,12 +464,20 @@ def itinerary_doubt(blocks: dict[int, str], day: int, meals: frozenset[str]) -> 
     departures lunch is not included." after the last day. Jev's per-unit source holds that text too, so the
     rule may not clear what Jev could refuse. Doubt: a strong cue, or a negation-type cue in a remark; reach: a
     tour-wide word or another-day reference (always), else not when the sentence is scoped to its own day. Other
-    days' pure lists and code brackets are their own structured facts ("Meals: None"), not remarks."""
+    days' pure lists and code brackets are their own structured facts ("Meals: None"), not remarks. The two days
+    next to the matched one must also be silent on the meal (``adjacent_day_doubt``); this reach test is for the
+    days further away, which Jev does not see either. A sentence that restricts a meal ("only", "just") names all
+    three."""
+    if adjacent_day_doubt(blocks, day, meals):
+        return True
     for n, block in blocks.items():
         if n == day:
             continue                                     # the matched day: day_doubt, stricter
         for s in _SENTENCE_SPLIT_RE.split(_narrative(block)):
-            if not _sentence_meals(s) & meals:
+            named = _sentence_meals(s)
+            if named and _ONLY_RE.search(s):
+                named = ALL
+            if not named & meals:
                 continue
             strong = bool(_STRONG_CUE_RE.search(s))
             if not strong and not _NEG_CUE_RE.search(s):
@@ -571,6 +697,36 @@ def _meal_sentence_doubt(text: str) -> bool:
     return False
 
 
+# A "Not included:" / "Excluded:" section inside INCLUSIONS (a combined incl / excl field, common in scraped data):
+# everything after it is read like EXCLUSIONS.
+_INCL_EXCL_SECTION_RE = re.compile(
+    r"\b(?:not\s+(?:included|covered|inclusive)|non[\s-]+inclu\w*|excluded|exclusions?|excludes|excluding"
+    r"|does\s+not\s+include|do\s+not\s+include|price\s+does\s+not|n\.\s?i\.)", re.IGNORECASE)
+
+
+def inclusions_doubt(inclusions: str) -> Optional[str]:
+    """Why INCLUSIONS cast doubt on the meals of every day, else None. Read on BOTH paths (Jev's per-unit source
+    holds INCLUSIONS): a sentence or item that names a meal with a strong or weak cue ("Meals as per itinerary,
+    except lunch on Day 2 which is at own expense", "Lunch on the cruise is payable on board.") or with an
+    audience / variant word ("Meals as listed for Superior cabins; Standard cabin guests receive breakfast only").
+    A "Not included:" section is returned separately by ``inclusions_excluded``."""
+    text = inclusions or ""
+    for s in _SENTENCE_SPLIT_RE.split(text):
+        if not _MEAL_MENTION_RE.search(_TIME_MARKER_RE.sub(" ", s)):
+            continue
+        if _STRONG_CUE_RE.search(s) or _WEAK_CUE_RE.search(s):
+            return "cue"
+        if _AUDIENCE_RE.search(s) or _VARIANT_RE.search(s):
+            return "audience_or_variant"
+    return None
+
+
+def inclusions_excluded(inclusions: str) -> frozenset[str]:
+    """Meals a "Not included:" / "Excluded:" section inside INCLUSIONS rules out (all of the text after it)."""
+    m = _INCL_EXCL_SECTION_RE.search(inclusions or "")
+    return exclusion_blocks((inclusions or "")[m.end():]) if m else frozenset()
+
+
 # ── the rule ────────────────────────────────────────────────────────────────────────────────────────────────
 
 def _as_text(value) -> str:
@@ -587,7 +743,8 @@ def claim_sourced(claim: dict, tour: dict, itin_text: str) -> tuple[bool, str]:
     if output_refused(sentence):
         return False, "output_refused"
     meals = claimed_meals(sentence)
-    if meals & exclusion_blocks(_as_text(tour.get("exclusions"))):
+    inclusions = _as_text(tour.get("inclusions"))
+    if meals & (exclusion_blocks(_as_text(tour.get("exclusions"))) | inclusions_excluded(inclusions)):
         return False, "excluded"
     out_days = output_day_numbers([claim], itin_text)
     day = claim.get("day")
@@ -611,23 +768,29 @@ def claim_sourced(claim: dict, tour: dict, itin_text: str) -> tuple[bool, str]:
         return False, "output_day_not_the_source_day"
     if _meal_sentence_doubt(" \n".join(_as_text(tour.get(f)) for f in ("summary", "description", "price"))):
         return False, "tour_text_doubt"
+    if inclusions_doubt(inclusions):
+        return False, "inclusions_doubt"
     lists, impure = day_lists(block)
     if impure:
         return False, "source_list_unreadable"
     if lists:
         if any(lst != lists[0] for lst in lists):
             return False, "source_lists_disagree"
-        return (True, "day_list") if meals <= lists[0] else (False, "not_in_day_list")
+        if not meals <= lists[0]:
+            return False, "not_in_day_list"
+        extra = output_extra(sentence, block)
+        return (False, f"output_{extra}") if extra else (True, "day_list")
     if day in (out_days[0], out_days[-1]):
         return False, "first_or_last_day"
     other = " \n".join(_as_text(tour.get(f)) for f in ("summary", "description", "price"))
     if _MEAL_MENTION_RE.search(_TIME_MARKER_RE.sub(" ", other)):
         return False, "tour_text_names_meals"             # "Meals are provided on trek days" scopes INCLUSIONS
-    covered = inclusion_meals(_as_text(tour.get("inclusions")))
+    covered = inclusion_meals(inclusions)
     if not meals <= covered:
         return False, "not_in_inclusions"
     for other in blocks.values():
         other_lists, other_impure = day_lists(other)
         if other_impure or any(not meals <= lst for lst in other_lists):
             return False, "a_day_list_lacks_the_meal"
-    return True, "inclusions"
+    extra = output_extra(sentence, block)
+    return (False, f"output_{extra}") if extra else (True, "inclusions")

@@ -1733,8 +1733,9 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   Meal / clock logistics (`brand_audit_node.meal_time_claims_supported`, code `ITINERARY_MEAL_TIME_INVENTED`):
   a clock time must be in the source; a meal-inclusion claim (plural, future and generic forms, short sentences and
   day-title lines included, AA-803) is cleared in code only on structured evidence (`meal_claims`: a pure same-day
-  `Meals:` / B-L-D code list, or an unscoped every-day INCLUSIONS item such as "All meals" or "Daily breakfast"),
-  otherwise only by an enforced Jev accept on `a1_claim_supported`; anything else keeps the code (flag_fix).
+  `Meals:` / B-L-D code list, or an unscoped every-day INCLUSIONS item such as "All meals" or "Daily breakfast";
+  the sentence must hold nothing but the claim, and no text Jev would see — the day itself, the days next to it,
+  INCLUSIONS, SUMMARY / DESCRIPTION / PRICE — may talk about the meal), otherwise only by an enforced Jev accept on `a1_claim_supported`; anything else keeps the code (flag_fix).
   Ground truth for the Jev Question (AA-845): in the Review Queue drawer ("Source check") a reviewer
   marks single sentences unsupported (`decision_log.outcome` truth=false for that sentence only); a
   Review approve stamps truth=true on the rest, a Review reject stamps nothing (it judges the whole
