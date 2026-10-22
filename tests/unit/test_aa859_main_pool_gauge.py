@@ -122,8 +122,16 @@ import asyncpg  # noqa: E402
 
 
 def _unopened_pool(max_size=5):
-    """A real asyncpg.Pool object that never connects (not awaited, so no _initialize)."""
-    return asyncpg.create_pool("postgresql://x:y@127.0.0.1:1/z", min_size=0, max_size=max_size)
+    """A real asyncpg.Pool object that never connects (not awaited, so no _initialize).
+
+    It gets its own event loop: asyncpg.Pool() otherwise calls asyncio.get_event_loop(), which raises once an
+    earlier test in the same CI run has closed the default loop. Nothing here runs on that loop.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+    return asyncpg.create_pool("postgresql://x:y@127.0.0.1:1/z", min_size=0, max_size=max_size, loop=loop)
 
 
 @pytest.fixture(autouse=True)
