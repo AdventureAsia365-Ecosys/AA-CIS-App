@@ -1,4 +1,4 @@
-"""S241 D-12 -- the tenant-pool flag keys the code reads are exactly the documented 11.
+"""S241 D-12 -- the tenant-pool flag keys the code reads are exactly the documented ones (12 after D5b, S247).
 
 Under D-12 a missing Redis key means ON (tenant pool). So a key nobody has seen before -- a new route's flag,
 a renamed constant, an ad hoc string at a call site -- runs on the tenant pool from its first deploy with no
@@ -33,6 +33,7 @@ DOCUMENTED_FLAG_KEYS = frozenset({
     "aa859:unpublish_pool",                  # W4 DELETE /v1/publish-log/{id}
     "aa859:t2_version_reads_pool",           # W5 GET /v1/tours/pool, /my-versions, /versions/{id}
     "aa859:integration_connect_pool",        # W9 GET/POST /v1/integrations/{wordpress,facebook}, POST .../test
+    "aa859:t2_version_detail_reads_pool",    # D5b GET /v1/tours/{id}/full (tenant), /{id}, /versions/{id}/export-docx
 })
 
 # The flag reader's entry points and the position of their flag-key argument.
@@ -87,8 +88,8 @@ def _call_site_keys():
     return keys, unresolved, sites
 
 
-def test_documented_list_has_eleven_keys_and_matches_the_module_inventory():
-    assert len(DOCUMENTED_FLAG_KEYS) == 11
+def test_documented_list_matches_the_module_inventory():
+    assert len(DOCUMENTED_FLAG_KEYS) == 12
     assert set(tp.ALL_TENANT_POOL_FLAGS) == DOCUMENTED_FLAG_KEYS
 
 

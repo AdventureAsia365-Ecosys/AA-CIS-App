@@ -4,7 +4,9 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import Optional
 from pydantic import BaseModel as _BM
 import asyncpg
-from api.core.aa544_tenant_pool import T2_VERSION_READS_FLAG, T2_VERSION_WRITE_FLAG, acquire_scoped_conn
+from api.core.aa544_tenant_pool import (
+    T2_VERSION_DETAIL_READS_FLAG, T2_VERSION_READS_FLAG, T2_VERSION_WRITE_FLAG, acquire_scoped_conn,
+)
 from api.routers.auth import verify_tenant_jwt
 from api.core.secret_compare import secrets_equal
 from api.routers.admin import PLAN_LIMITS
@@ -56,7 +58,7 @@ def get_pool(request: Request):
 # the tenant's own tenant_tour_versions rows (229 RLS) and the AA master rows of published_tours /
 # raw_tours (239 aa_app_user_aa_master_read). Flag off: the admin pool and the pre-AA-859 SQL, unchanged.
 # Each request logs one `aa859_t2_version_read route=... used_tenant_pool=...` line. /{id}/full (tenant
-# branch), /{id} and /versions/{id}/export-docx are still on the admin pool (D5b follow-up).
+# branch), /{id} and /versions/{id}/export-docx follow in D5b, behind their own flag (see _TOUR_VIA_VERSION_SQL).
 _AA_MASTER_TENANT = "00000000-0000-0000-0000-000000000001"
 
 
@@ -673,6 +675,56 @@ async def retry_rewrite(version_id: str, request: Request, tenant=Depends(get_te
     return {"version_id": version_id, "status": "pending", "job_id": str(row["job_id"])}
 
 
+# ── AA-859 D5b: T2 detail reads on the tenant pool (T2_VERSION_DETAIL_READS_FLAG) ─────────────────
+# GET /v1/tours/{id}/full (tenant-JWT branch only), GET /v1/tours/{id} and GET /v1/tours/versions/{id}/export-docx,
+# one acquire_scoped_conn block per request, fail closed. aa_app_user reads the tour through the caller's own
+# tenant_tour_versions rows (229 RLS) and the AA master rows of published_tours / raw_tours / seo_context (239
+# aa_app_user_aa_master_read). Flag off: the admin pool and the pre-AA-859 SQL text, unchanged. Its own flag,
+# not T2_VERSION_READS_FLAG (that one is ON since S240: a route added under it would move with no flip of its
+# own, and reverting one would revert the other). One `aa859_t2_version_detail_read route=full|tour|export_docx
+# used_tenant_pool=...` line per request. The /full admin branch (X-Admin-Secret) never reads the flag: staff are
+# outside the tenant boundary (plan D2), it stays on the admin pool. SQL in module constants so tests can mutate
+# the tenant conditions.
+_TOUR_VIA_VERSION_TENANT_COND = "ttv.tenant_id = $2::uuid"
+_TOUR_VIA_VERSION_SQL = """
+            SELECT pt.* FROM gold_aa_internal.published_tours pt
+            JOIN gold_aa_internal.tenant_tour_versions ttv
+                ON ttv.published_tour_id = pt.id
+            WHERE pt.id = $1::uuid AND {tenant_cond}
+            LIMIT 1
+        """
+_TOUR_RAW_SQL = """
+            SELECT * FROM silver_aa_internal.raw_tours
+            WHERE tour_id = $1::uuid
+        """
+_TOUR_SEO_SQL = """
+            SELECT top_keywords, keyword_search, keyword_ideas, fetched_at
+            FROM silver_aa_internal.seo_context
+            WHERE tour_id = $1::uuid
+            ORDER BY fetched_at DESC LIMIT 1
+        """
+
+
+def _log_t2_detail_read(route: str, tenant_id, used_tenant_pool: bool, **extra) -> None:
+    logger.info("aa859_t2_version_detail_read", route=route, tenant_id=str(tenant_id),
+                used_tenant_pool=used_tenant_pool, **extra)
+
+
+def _safe_row(row):
+    from uuid import UUID
+    from decimal import Decimal
+    if not row: return {}
+    d = dict(row)
+    for k, v in d.items():
+        if isinstance(v, UUID):
+            d[k] = str(v)
+        elif isinstance(v, Decimal):
+            d[k] = float(v)
+        elif hasattr(v, 'isoformat'):
+            d[k] = v.isoformat()
+    return d
+
+
 @router.get("/{tour_id}/full")
 async def get_tour_full(
     tour_id: str,
@@ -695,85 +747,63 @@ async def get_tour_full(
     else:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
-    pool = request.app.state.pool
-    async with pool.acquire() as conn:
-        if is_admin:
+    if is_admin:
+        # AA-859 MAIN exception (plan D2): the staff review path is outside the tenant boundary.
+        pool = request.app.state.pool
+        async with pool.acquire() as conn:
             # Admin review path reads the shared aa_internal reference pool directly
             # (published_tours.tenant_id sentinel) — unchanged, not a per-tenant lookup.
             pt = await conn.fetchrow("""
                 SELECT * FROM gold_aa_internal.published_tours
                 WHERE id = $1::uuid AND tenant_id = $2::uuid
             """, tour_id, tenant_id)
-        else:
-            # Real tenant JWT: scope through tenant_tour_versions (AA-582 fix), same
-            # pattern as v1_marketplace.py — published_tours.tenant_id is always the
-            # aa_internal sentinel and was never a valid per-tenant filter.
-            pt = await conn.fetchrow("""
-                SELECT pt.* FROM gold_aa_internal.published_tours pt
-                JOIN gold_aa_internal.tenant_tour_versions ttv
-                    ON ttv.published_tour_id = pt.id
-                WHERE pt.id = $1::uuid AND ttv.tenant_id = $2::uuid
-                LIMIT 1
-            """, tour_id, tenant_id)
-        if not pt:
-            raise HTTPException(status_code=404, detail="Tour not found")
-
-        raw = await conn.fetchrow("""
-            SELECT * FROM silver_aa_internal.raw_tours
-            WHERE tour_id = $1::uuid
-        """, pt["tour_id"])
-
-        # AA-796 — generated_content (A1 writer output incl. metadata llm_cost/model) and its
-        # quality_scores row are admin review data; the tenant-JWT branch never reads them.
-        gen = qs = None
-        if is_admin:
+            if not pt:
+                raise HTTPException(status_code=404, detail="Tour not found")
+            raw = await conn.fetchrow(_TOUR_RAW_SQL, pt["tour_id"])
+            # AA-796 — generated_content (A1 writer output incl. metadata llm_cost/model) and its
+            # quality_scores row are admin review data; the tenant-JWT branch never reads them.
             gen = await conn.fetchrow("""
                 SELECT * FROM silver_aa_internal.generated_content
                 WHERE tour_id = $1::uuid
                 ORDER BY version_num DESC LIMIT 1
             """, pt["tour_id"])
-
             qs = await conn.fetchrow("""
                 SELECT * FROM silver_aa_internal.quality_scores
                 WHERE generated_content_id = $1::uuid
                 ORDER BY evaluated_at DESC LIMIT 1
             """, gen["id"]) if gen else None
-
-        sc = await conn.fetchrow("""
-            SELECT top_keywords, keyword_search, keyword_ideas, fetched_at
-            FROM silver_aa_internal.seo_context
-            WHERE tour_id = $1::uuid
-            ORDER BY fetched_at DESC LIMIT 1
-        """, pt["tour_id"])
-
-    def safe(row):
-        from uuid import UUID
-        from decimal import Decimal
-        if not row: return {}
-        d = dict(row)
-        for k, v in d.items():
-            if isinstance(v, UUID):
-                d[k] = str(v)
-            elif isinstance(v, Decimal):
-                d[k] = float(v)
-            elif hasattr(v, 'isoformat'):
-                d[k] = v.isoformat()
-        return d
-
-    if is_admin:  # admin tour-full/[id] review panel — unchanged
+            sc = await conn.fetchrow(_TOUR_SEO_SQL, pt["tour_id"])
+        # admin tour-full/[id] review panel — unchanged
         return {
-            "published": safe(pt),
-            "raw": safe(raw),
-            "generated": safe(gen),
-            "quality": safe(qs),
-            "seo": safe(sc),
+            "published": _safe_row(pt),
+            "raw": _safe_row(raw),
+            "generated": _safe_row(gen),
+            "quality": _safe_row(qs),
+            "seo": _safe_row(sc),
         }
+
+    # Real tenant JWT: scope through tenant_tour_versions (AA-582 fix), same pattern as v1_marketplace.py —
+    # published_tours.tenant_id is always the aa_internal sentinel and was never a valid per-tenant filter.
+    # AA-859 D5b: on the tenant pool behind its flag.
+    raw = sc = None
+    async with acquire_scoped_conn(
+        request, tenant_id, T2_VERSION_DETAIL_READS_FLAG, fail_closed=True,
+    ) as (conn, used_tenant_pool):
+        pt = await conn.fetchrow(_TOUR_VIA_VERSION_SQL.format(tenant_cond=_TOUR_VIA_VERSION_TENANT_COND),
+                                 tour_id, tenant_id)
+        if pt:
+            raw = await conn.fetchrow(_TOUR_RAW_SQL, pt["tour_id"])
+            sc = await conn.fetchrow(_TOUR_SEO_SQL, pt["tour_id"])
+    _log_t2_detail_read("full", tenant_id, used_tenant_pool, found=pt is not None)
+    if not pt:
+        raise HTTPException(status_code=404, detail="Tour not found")
+
     # AA-796 — tenant JWT (reachable through the generic /api/tenant/[...path] proxy): content
     # only, no A1 score / review state / writer output.
     return {
-        "published": safe(project_tour(pt)),
-        "raw": safe(project_raw(raw) if raw else None),
-        "seo": safe(sc),
+        "published": _safe_row(project_tour(pt)),
+        "raw": _safe_row(project_raw(raw) if raw else None),
+        "seo": _safe_row(sc),
     }
 
 
@@ -790,18 +820,16 @@ async def get_tour(
     tenant=Depends(get_tenant),
 ):
     tenant_id = tenant["sub"]
-    pool = request.app.state.pool
 
-    async with pool.acquire() as conn:
-        # AA-582 fix: scope through tenant_tour_versions (v1_marketplace.py pattern) —
-        # published_tours.tenant_id is always the aa_internal sentinel, never per-tenant.
-        row = await conn.fetchrow("""
-            SELECT pt.* FROM gold_aa_internal.published_tours pt
-            JOIN gold_aa_internal.tenant_tour_versions ttv
-                ON ttv.published_tour_id = pt.id
-            WHERE pt.id = $1::uuid AND ttv.tenant_id = $2::uuid
-            LIMIT 1
-        """, tour_id, tenant_id)
+    # AA-582 fix: scope through tenant_tour_versions (v1_marketplace.py pattern) —
+    # published_tours.tenant_id is always the aa_internal sentinel, never per-tenant.
+    # AA-859 D5b: on the tenant pool behind T2_VERSION_DETAIL_READS_FLAG (same SQL as /full's tenant branch).
+    async with acquire_scoped_conn(
+        request, tenant_id, T2_VERSION_DETAIL_READS_FLAG, fail_closed=True,
+    ) as (conn, used_tenant_pool):
+        row = await conn.fetchrow(_TOUR_VIA_VERSION_SQL.format(tenant_cond=_TOUR_VIA_VERSION_TENANT_COND),
+                                  tour_id, tenant_id)
+    _log_t2_detail_read("tour", tenant_id, used_tenant_pool, found=row is not None)
 
     if not row:
         raise HTTPException(status_code=404, detail="Tour not found")
@@ -881,6 +909,19 @@ async def get_version(
 # generated_content there vs gold_aa_internal.tenant_tour_versions here) and the tenant version
 # has no SEO/score/judge fields to render at all (AA-566 Phần B.5 — those are being dropped from
 # the tenant-facing drawer for the same reason: internal jargon, not tenant content).
+_EXPORT_VERSION_TENANT_COND = "ttv.tenant_id = $2::uuid"
+_EXPORT_VERSION_SQL = """
+            SELECT ttv.version_number, ttv.rewritten_content, ttv.rewrite_language,
+                   pt.tour_id, pt.aa_name, pt.aa_subtitle, pt.aa_summary, pt.aa_highlights,
+                   pt.aa_itineraries,
+                   rt.country, rt.duration, rt.inclusions, rt.exclusions
+            FROM gold_aa_internal.tenant_tour_versions ttv
+            JOIN gold_aa_internal.published_tours pt ON pt.id = ttv.published_tour_id
+            LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
+            WHERE ttv.id = $1::uuid AND {tenant_cond}
+        """
+
+
 @router.get("/versions/{version_id}/export-docx")
 async def export_version_docx(
     version_id: str,
@@ -891,23 +932,22 @@ async def export_version_docx(
     tenant_id = tenant["sub"]
     pool = request.app.state.pool
 
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow("""
-            SELECT ttv.version_number, ttv.rewritten_content, ttv.rewrite_language,
-                   pt.tour_id, pt.aa_name, pt.aa_subtitle, pt.aa_summary, pt.aa_highlights,
-                   pt.aa_itineraries,
-                   rt.country, rt.duration, rt.inclusions, rt.exclusions
-            FROM gold_aa_internal.tenant_tour_versions ttv
-            JOIN gold_aa_internal.published_tours pt ON pt.id = ttv.published_tour_id
-            LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
-            WHERE ttv.id = $1::uuid AND ttv.tenant_id = $2::uuid
-        """, version_id, tenant_id)
+    # AA-859 D5b: on the tenant pool behind T2_VERSION_DETAIL_READS_FLAG (229 on tenant_tour_versions, 239
+    # master read on published_tours / raw_tours).
+    async with acquire_scoped_conn(
+        request, tenant_id, T2_VERSION_DETAIL_READS_FLAG, fail_closed=True,
+    ) as (conn, used_tenant_pool):
+        row = await conn.fetchrow(_EXPORT_VERSION_SQL.format(tenant_cond=_EXPORT_VERSION_TENANT_COND),
+                                  version_id, tenant_id)
+    _log_t2_detail_read("export_docx", tenant_id, used_tenant_pool, found=row is not None)
     if not row:
         raise HTTPException(status_code=404, detail="Version not found")
 
     # AA-802 — record the download so the admin Content Quality drawer can tell an admin that the
     # tenant already holds a copy older than a later admin correction. Admin-only row (tenants never
     # read audit_log). Best-effort, like the T9 export audit: a lost row must not fail the download.
+    # AA-859 MAIN exception: audit_log has no RLS and no aa_app_user grant; written on the admin pool after
+    # the tenant block released its connection.
     try:
         import uuid as _uuid
         await write_audit_log(

@@ -1290,7 +1290,8 @@ Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`
   | PATCH `/v1/content-writing/pieces/{id}` (W2) | `aa859:piece_edit_pool` | audit after commit on MAIN |
   | POST `/v1/angle-gate/requests/{id}/choose`, `/reopen` (W3) | `aa859:angle_gate_decide_pool` | one transaction, request locked first (same order as the T8 worker); response re-read on MAIN; needs 241 |
   | DELETE `/v1/publish-log/{id}` (W4, unpublish) | `aa859:unpublish_pool` | three short blocks; Secrets Manager and the remote delete hold no connection |
-  | GET `/v1/tours/pool`, `/my-versions`, `/versions/{id}` (W5a) | `aa859:t2_version_reads_pool` | job status from a second MAIN query keyed by job ids returned through RLS; `/{id}/full` tenant branch, `/{id}`, `/versions/{id}/export-docx` still on MAIN (D5b) |
+  | GET `/v1/tours/pool`, `/my-versions`, `/versions/{id}` (W5a) | `aa859:t2_version_reads_pool` | job status from a second MAIN query keyed by job ids returned through RLS |
+  | GET `/v1/tours/{id}/full` (tenant-JWT branch), `/{id}`, `/versions/{id}/export-docx` (D5b, S247) | `aa859:t2_version_detail_reads_pool` | own flag (not W5a's); the `/full` staff branch (X-Admin-Secret) stays on MAIN and reads no flag; export-docx audit on MAIN after the block; a master tour's raw / seo fields show only when those rows are the AA master tenant's (239), as in W5a |
   | PATCH `/v1/tours/versions/{id}` (W6) | `aa859:t2_version_write_pool` | `pg_advisory_xact_lock(859, hashtext(tenant:published_tour))` + `MAX + 1`; UNIQUE backstop → 409 `version_conflict` |
   | GET/POST `/v1/integrations/{wordpress,facebook}`, POST `.../test` (W9) | `aa859:integration_connect_pool` | Secrets Manager / remote HTTP hold no connection; the UPSERT writes only 241's column grants; needs 241 |
 

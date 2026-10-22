@@ -21,6 +21,9 @@ since AA-817 PR-A, S239; each logs `used_tenant_pool` per request):
     W5a GET /v1/tours/pool, /my-versions, /versions/{id} (T2_VERSION_READS_FLAG); W6 PATCH
     /v1/tours/versions/{id} (T2_VERSION_WRITE_FLAG); W9 GET/POST /v1/integrations/{wordpress,facebook}
     and POST .../test (INTEGRATION_CONNECT_FLAG, needs 241).
+  - AA-859 D5b (S247): GET /v1/tours/{id}/full (tenant-JWT branch), GET /v1/tours/{id} and
+    GET /v1/tours/versions/{id}/export-docx (T2_VERSION_DETAIL_READS_FLAG; its own flag, so reverting it
+    never reverts W5a).
 
 Design (matches AA-544's approved 2-pool split): Admin (/admin/*) keeps app.state.pool unchanged,
 always. That pool logs in as the CIS runtime role: aa_cis_admin today (owner, so exempt on the ENABLE-only
@@ -89,6 +92,9 @@ ANGLE_GATE_DECIDE_FLAG = "aa859:angle_gate_decide_pool"      # W3 angle-gate cho
 UNPUBLISH_FLAG = "aa859:unpublish_pool"                      # W4 unpublish; no 241
 T2_VERSION_READS_FLAG = "aa859:t2_version_reads_pool"        # W5 T2 version reads (job status on MAIN); no 241
 INTEGRATION_CONNECT_FLAG = "aa859:integration_connect_pool"  # W9 integration GET / POST / test; needs 241
+# AA-859 D5b (S247): the three T2 detail reads W5a left on MAIN. Own flag, not T2_VERSION_READS_FLAG: that one
+# is verified and ON, so a route added under it would move with no flip of its own (review of PR-D5a).
+T2_VERSION_DETAIL_READS_FLAG = "aa859:t2_version_detail_reads_pool"  # D5b /{id}/full, /{id}, export-docx; no 241
 
 # Every flag above. A new *_FLAG constant must be added here too (a unit test checks it), and to the
 # ALLOWED set of the flag tooling (root docs/audits/2026-10-16-S240-aa859/aa859_flag.py), so it can be
@@ -96,7 +102,7 @@ INTEGRATION_CONNECT_FLAG = "aa859:integration_connect_pool"  # W9 integration GE
 ALL_TENANT_POOL_FLAGS = frozenset({
     STAGE1_PUBLISH_PENDING_FLAG, STAGE5_GET_PIECE_FLAG, PUBLISH_LOG_LIST_FLAG, INTEGRATION_DISCONNECT_FLAG,
     CONTENT_PIECE_READS_FLAG, PIECE_EDIT_FLAG, T2_VERSION_WRITE_FLAG, ANGLE_GATE_DECIDE_FLAG, UNPUBLISH_FLAG,
-    T2_VERSION_READS_FLAG, INTEGRATION_CONNECT_FLAG,
+    T2_VERSION_READS_FLAG, INTEGRATION_CONNECT_FLAG, T2_VERSION_DETAIL_READS_FLAG,
 })
 
 # S241 D-12: the explicit values that turn a route's flag OFF (admin pool), compared after strip +

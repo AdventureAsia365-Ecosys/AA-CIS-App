@@ -331,7 +331,7 @@ def test_every_flag_constant_is_in_the_inventory():
     cannot ship without tooling to SET it false."""
     constants = {v for k, v in vars(tp).items() if k.endswith("_FLAG") and isinstance(v, str)}
     assert constants == set(tp.ALL_TENANT_POOL_FLAGS)
-    assert len(constants) == 11
+    assert len(constants) == 12  # 11 (S241) + D5b (S247)
 
 
 def _piece_row():
