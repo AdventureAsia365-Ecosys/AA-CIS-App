@@ -10,7 +10,8 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:e2e:smoke": "playwright test --project=smoke"
+    "test:e2e:smoke": "playwright test --project=smoke-public --project=smoke",
+    "test:e2e:smoke-public": "playwright test --project=smoke-public"
   },
   "keywords": [],
   "author": "",
