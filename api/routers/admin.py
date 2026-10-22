@@ -1342,13 +1342,13 @@ async def generate_api_key(
 # brand in BrandTab → /brand-identity (sanitized in-process, shared/validators/prompt_sanitize.py).
 
 
-# ── POST /admin/tenants/{id}/offboard — GDPR offboard ────────────────────────
+# ── POST /admin/tenants/{id}/offboard — tenant offboarding (soft) ───────────
 
 class OffboardRequest(BaseModel):
     reason: str
 
 
-@router.post("/tenants/{tenant_id}/offboard", summary="GDPR offboarding — cancel tenant + revoke key")
+@router.post("/tenants/{tenant_id}/offboard", summary="Tenant offboarding — cancel tenant + revoke key (soft)")
 async def offboard_tenant(
     tenant_id: str,
     body: OffboardRequest,
@@ -1358,18 +1358,19 @@ async def offboard_tenant(
     x_admin_role: Optional[str] = Header(None),
 ):
     """
-    GDPR offboarding: cancel tenant, revoke API key, log for data deletion. PRD v1.0 §3.2.
+    Tenant offboarding: cancel tenant, revoke API key, write the audit row. PRD v1.0 §3.2.
     Soft state only (AA-797, Nghiệp 14/10/2026): no tenant data or setting is deleted or
     overwritten (brand rules, planning config, T2 versions, content, markets, plan_id, users), so
     POST /tenants/{id}/restore brings the tenant back whole. PATCH / generate-key on an
     offboarded tenant return 409. The tenant's QUEUED jobs are cancelled (running ones finish).
     The Jev allow-list row is removed (AA-741) but snapshotted into the audit row so restore can
-    put it back. GDPR data deletion is a separate follow-up, not automated here.
+    put it back. Tenant data erasure is a separate step (AA-839: after offboarding plus a retention
+    window, with explicit approval, per the data-erasure runbook), not automated here.
     """
     verify_admin_secret(x_admin_secret)
     _require_tenant_admin(x_admin_role)
     if not body.reason.strip():
-        raise HTTPException(status_code=400, detail="reason is required for GDPR audit trail")
+        raise HTTPException(status_code=400, detail="reason is required for the offboarding audit trail")
 
     try:
         UUID(tenant_id)

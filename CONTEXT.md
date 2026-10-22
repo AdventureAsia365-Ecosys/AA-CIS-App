@@ -1109,8 +1109,9 @@ A tenant (`shared.tenants`) is in one of three states, derived from two columns
 PATCH and generate-key on an offboarded tenant return 409. `POST /admin/tenants/{id}/restore`
 (Nghiệp, 14/10/2026) brings it back whole: it clears the offboard markers, sets `is_active`,
 re-adds the snapshotted Jev allow-list row and issues a **new** API key (the old one stays
-revoked); plan and settings are unchanged, and cancelled jobs are listed, not re-enqueued. GDPR
-data deletion is not automated (follow-up).
+revoked); plan and settings are unchanged, and cancelled jobs are listed, not re-enqueued. Tenant
+data erasure is not automated (AA-839: a separate step after offboarding plus a retention window, with
+explicit approval).
 
 Every admin write to a tenant (create, plan, status, key, brand identity, config, offboard,
 restore) is admin-role only. The BFF enforces this through `lib/rbac.ts` `API_WRITE_RULES`, and the

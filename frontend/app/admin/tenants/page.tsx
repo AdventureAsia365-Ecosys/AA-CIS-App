@@ -929,7 +929,7 @@ async function errorDetail(res: Response, fallback: string): Promise<string> {
   return typeof body?.detail === "string" ? body.detail : fallback;
 }
 
-// AA-797 — Offboard needs a reason (GDPR audit trail): the key is revoked and queued jobs are
+// AA-797 — Offboard needs a reason (offboarding audit trail): the key is revoked and queued jobs are
 // cancelled. Data and settings are kept, so Restore can bring the tenant back.
 function OffboardModal({ tenant, onClose, onDone }: {
   tenant: Tenant; onClose: () => void; onDone: () => void;
