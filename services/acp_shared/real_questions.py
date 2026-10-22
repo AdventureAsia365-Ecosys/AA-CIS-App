@@ -73,8 +73,11 @@ _ENGLISH_OPENERS = frozenset("""what where when why how who whom whose which is 
 should would will shall may might has have had am isn aren wasn don doesn didn
 """.split())
 # Words of a German / French / Dutch question that an English one does not use ('Was ist …?').
-_FOREIGN_WORDS = frozenset("""ist sind und der das het een wat hoe waar est sont les une quel quelle quels pour wie
-kann nicht mit ein eine zum zur dans avec welke kunnen moet gibt kostet bedeutet heisst
+# Not 'wat' (S247): it is the Thai / Lao / Khmer word for a temple ('Are there landmines near Angkor
+# Wat?', 'Is Wat Pho worth visiting?'); a Dutch question starting 'Wat …' already fails the opener
+# check, and 'moeite' / 'waard' / 'bezoeken' catch the ones that start with 'Is …'.
+_FOREIGN_WORDS = frozenset("""ist sind und der das het een hoe waar est sont les une quel quelle quels pour wie
+kann nicht mit ein eine zum zur dans avec welke kunnen moet gibt kostet bedeutet heisst moeite waard bezoeken
 """.split())
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
@@ -97,6 +100,28 @@ _WORD_SENSE_RE = re.compile(
 # rhyme, slur) only count right next to one of the piece's own place names (see `_name_word_cue`):
 # on their own they also fire on real traveller questions ('How do you say hello in Mongolian?',
 # 'What is the Mongolian word for hello?', 'Is English translation available on Mongolia tours?').
+
+# Local words for a KIND of landmark (temple, fortress, stupa, shrine …) that also make up place names
+# ('Kyichu Lhakhang', 'Chorten Kora', 'Punakha Dzong', 'Wat Pho'). What one is or means is background a
+# traveller asks ('What is a lhakhang?', 'What does the word "Chorten" mean?'; S247, AA-779 eval panel
+# KEEP), not a place NAME used as a word, so a meaning cue on such a question does not drop it.
+_LANDMARK_KINDS = frozenset("""
+lhakhang lhakhangs chorten chortens dzong dzongs goemba gompa gonpa stupa stupas chedi chaitya dagoba
+wat wats vihara wihan ubosot prang prasat pagoda pagodas zedi paya kyaung khiid ovoo ger torii jinja
+mandir ghat ghats madrasa madrassa madrasah caravanserai hutong
+""".split())
+# Cues that stay off-meaning even on a landmark kind: insult / slang, another word, spelling, saying it.
+_KIND_WORD_JUNK_RE = re.compile(
+    r"\b(?:slang|insult(?:s|ing)?|swear|curse|bad\s+word|idiots?|imbecile|stupid|slur|derogatory|offensive|rude"
+    r"|synonyms?|antonyms?|another\s+word|words?\s+for|rhymes?|spell(?:ed|ing)?|spelt|pronounce[ds]?"
+    r"|pronunciation|how\s+do\s+you\s+say)\b")
+
+
+def _asks_landmark_kind(q: str) -> bool:
+    """The folded question `q` names a landmark kind and carries no junk word cue: a meaning cue on it
+    ('What does dzong mean?', 'What is the meaning of Punakha Dzong?') asks about the landmark."""
+    return bool(set(_TOKEN_RE.findall(q)) & _LANDMARK_KINDS) and not _KIND_WORD_JUNK_RE.search(q)
+
 
 # Languages a 'What is <name> in <language>?' question asks a translation into.
 _LANGUAGES = (
@@ -198,13 +223,19 @@ def is_off_meaning(question: str, names: Iterable[str] = (), lowercase_names: It
     single-word place names (`single_word_places`; default none). It fires only when such a name
     is written lowercase (never capitalised, never first), the question names no other place word
     of `names`/`lowercase_names` and no country of `countries` (folded country names), and has no
-    travel word. The autocomplete tier passes none: its text is all lowercase."""
+    travel word. The autocomplete tier passes none: its text is all lowercase.
+
+    A landmark kind (`_LANDMARK_KINDS`: 'lhakhang', 'chorten', 'dzong', 'wat' …) is never read as a
+    name, and a meaning cue on a question that names one stays ('What is a lhakhang?', 'What does the
+    word "Chorten" mean?') unless it also has a junk cue (slang, another word, spelling)."""
     q = fold(question)
-    if _WORD_SENSE_RE.search(q):
+    kind_question = _asks_landmark_kind(q)
+    if _WORD_SENSE_RE.search(q) and not kind_question:
         return True
     q_words = set(_TOKEN_RE.findall(q))
-    names = {n for n in names if n and n not in _COMMON_ENGLISH}
-    lower_ok = {n for n in lowercase_names if n and _single_word(n)}
+    # A landmark kind ('lhakhang' of Kyichu Lhakhang) is never read as the place name used as a word.
+    names = {n for n in names if n and n not in _COMMON_ENGLISH and n not in _LANDMARK_KINDS}
+    lower_ok = {n for n in lowercase_names if n and _single_word(n) and n not in _LANDMARK_KINDS}
     country_words = {w for c in countries for w in _TOKEN_RE.findall(fold(c))}
     for name in lower_ok:
         if (_lowercase_only_use(question, name)
