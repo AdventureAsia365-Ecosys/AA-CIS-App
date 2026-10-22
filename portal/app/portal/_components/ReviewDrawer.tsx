@@ -62,7 +62,7 @@ export function ReviewDrawer({
         </div>
       ) : item.ready_state === "not_ready" && !item.content_text ? (
         <div style={{ padding: "14px 16px", borderRadius: 10, border: `1px solid ${T.line}`, background: T.bg, fontSize: 13, color: T.muted, lineHeight: 1.5 }}>
-          Writing this piece didn&rsquo;t finish. Write it again from Social Content.
+          Writing this piece didn&rsquo;t finish. Write it again from Social Posts or Articles.
         </div>
       ) : (
         <div

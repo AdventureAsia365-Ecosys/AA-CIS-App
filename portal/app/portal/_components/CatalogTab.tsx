@@ -20,16 +20,15 @@ import { useCallback, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { T, sans, Btn, parseContent } from "./ui";
 import {
-  Badge,
   type ColumnDef,
   DataTable,
   Drawer,
-  StatusBadge,
   ToastProvider,
   useToast,
 } from "@/app/_kit";
 import { CatalogDrawer } from "./CatalogDrawer";
 import { TourRewritePanel, watchTourRewrite, type TourRewriteTarget } from "./TourRewritePanel";
+import { WorkStatusBadge, activePollInterval, latestVersionByTour, tourWorkStatus } from "./workStatus";
 import { useWriteWatcher } from "./WriterPanel";
 import { forgetLiveSnapshot } from "./LiveWriter";
 import { AiContentNotice } from "./AiContentNotice";
@@ -102,22 +101,15 @@ function CatalogInner() {
   const { data: list = [], isLoading } = useQuery({
     queryKey: ["my-versions"],
     queryFn: fetchMyVersions,
-    refetchInterval: (query) => {
-      const rows = query.state.data ?? [];
-      return rows.some(isAiWriting) ? 5000 : false;
-    },
+    // AA-760 — shared work-status model (same predicate as Browse Tours and the sidebar badge).
+    refetchInterval: (query) => activePollInterval((query.state.data ?? []).map(tourWorkStatus)),
   });
 
   // One row per tour: highest version_number per published_tour_id (unchanged).
-  const grouped = useMemo(() => {
-    const byTour = new Map<string, Version>();
-    for (const v of list) {
-      if (!v.published_tour_id) continue;
-      const cur = byTour.get(v.published_tour_id);
-      if (!cur || v.version_number > cur.version_number) byTour.set(v.published_tour_id, v);
-    }
-    return [...byTour.values()].sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
-  }, [list]);
+  const grouped = useMemo(
+    () => [...latestVersionByTour(list).values()].sort((a, b) => (a.created_at < b.created_at ? 1 : -1)),
+    [list],
+  );
 
   const visible = useMemo(
     () => (tourIdFilter ? grouped.filter((g) => g.tour_id === tourIdFilter) : grouped),
@@ -304,12 +296,7 @@ function CatalogInner() {
         id: "state",
         header: "Status",
         enableSorting: false,
-        cell: (c) => {
-          const v = c.row.original;
-          if (isAiWriting(v)) return <StatusBadge status={v.job_status === "queued" ? "queued" : "running"} label={v.job_status === "queued" ? "Queued" : "Writing"} />;
-          if (isRewriteFailed(v)) return <StatusBadge status="failed" label="Writing failed" />;
-          return <Badge tone="success">Ready</Badge>;
-        },
+        cell: (c) => <WorkStatusBadge status={tourWorkStatus(c.row.original)} />,
       },
       {
         id: "actions",
@@ -368,7 +355,7 @@ function CatalogInner() {
       )}
 
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-        <span style={{ fontSize: 15, fontWeight: 700, color: T.ink, fontFamily: sans }}>My Catalog Tours</span>
+        <span style={{ fontSize: 15, fontWeight: 700, color: T.ink, fontFamily: sans }}>Your tours</span>
         <span style={{ fontSize: 12, color: T.muted2 }}>
           {visible.length < grouped.length ? `${visible.length} of ${grouped.length}` : `${grouped.length}`} tours
         </span>

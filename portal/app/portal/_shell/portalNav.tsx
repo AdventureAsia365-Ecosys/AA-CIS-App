@@ -40,6 +40,8 @@ export interface NavEntry {
   also?: string[];
   /** Which shell count to show next to the label. */
   count?: "pool" | "catalog";
+  /** Titled in the topbar but not offered by ⌘K (a page that needs a deep-link parameter). */
+  paletteHidden?: boolean;
 }
 
 export interface NavGroup {
@@ -78,7 +80,7 @@ export const NAV_GROUPS: NavGroup[] = [
 /** Pages reachable by link only (not in the sidebar) — still titled and searchable. */
 const EXTRA_PAGES: NavEntry[] = [
   { href: ROUTES.publish, label: "Publish", icon: <Eye size={16} />, keywords: "publish wordpress facebook unpublish" },
-  { href: ROUTES.createWrite, label: "Write Content", icon: <Share2 size={16} />, keywords: "write angle goal" },
+  { href: ROUTES.createWrite, label: "Write Content", icon: <Share2 size={16} />, paletteHidden: true },
   { href: ROUTES.helpFacebook, label: "Connect your Facebook Page", icon: <Plug size={16} />, keywords: "help facebook guide token" },
 ];
 

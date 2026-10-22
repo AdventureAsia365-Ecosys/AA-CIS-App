@@ -4,6 +4,7 @@
 // AA-759 — the values now come from react-query in the PortalShell (`_shell/useShellData.ts`), not
 // from raw fetches on mount; the shape pages read is unchanged.
 import { createContext, useContext } from "react";
+import type { ActivityState } from "./workStatus";
 
 /** One row of `/v1/billing` `activity` (the bell, the Activity page, the dashboard feed). */
 export interface ShellActivity {
@@ -15,6 +16,9 @@ export interface ShellActivity {
   created_at: string;
 }
 
+/** AA-760 — an activity row with its state read from the job (null until the versions load). */
+export type ShellActivityView = ShellActivity & { state: ActivityState | null };
+
 /** `/v1/billing` as the shell holds it; pages read the fields they need. */
 export type ShellBilling = { activity?: ShellActivity[] } & Record<string, unknown>;
 
@@ -24,6 +28,8 @@ export interface PortalShellValue {
   poolTotal: number;
   catTotal: number;
   billing: ShellBilling | null;
+  /** AA-760 — `billing.activity` joined to the job state (dashboard feed, Activity page, bell). */
+  activity: ShellActivityView[];
   globalSearch: string;
   /** Re-read the tenant's tour versions (the My Tours count and page share one query). */
   refreshCatalogCount: () => void;

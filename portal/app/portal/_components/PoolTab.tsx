@@ -1,17 +1,39 @@
 "use client";
-// portal/app/portal/_components/PoolTab.tsx
+// portal/app/portal/_components/PoolTab.tsx — Browse Tours (T1).
 // API: GET /api/tenant/v1/tours/pool?page=N&page_size=20&search=X&country=Y
 //      POST /api/tenant/v1/tours/pool/{id}/rewrite
+//
+// AA-760 — the "Writing…" bug. The row badge used to be inferred on the client from
+// `already_rewritten` minus a set built from `my-versions?page_size=100` (status/edit_source only,
+// job ignored, no polling): a failed / cancelled / budget-stopped rewrite, or a tour past the first
+// 100 versions, showed "Writing…" forever. Now:
+//   - the pool list and the tenant's versions are react-query queries (no fetch in an effect);
+//   - the versions query is the SAME one My Tours and the sidebar badge read (["my-versions"]), and
+//     it polls every 5 s only while a rewrite is queued/writing, stopping on terminal states;
+//   - each row's status comes from the shared work-status model (workStatus.tsx) on the tour's
+//     latest version — job_status included — so failed reads "Writing failed", never "Writing…".
+//     A tour the server marks `already_rewritten` but not in the loaded versions page (only
+//     finished ones can be: the list is newest first, an active rewrite is always on page 1) reads
+//     "In My Tours".
 
-import { useState, useEffect, useCallback } from "react";
+import { useMemo, useState } from "react";
+import Link from "next/link";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiGet } from "@/app/_kit";
 import { ListSkeleton } from "./Skeleton";
-import { Search, ChevronRight, X, RotateCcw, Globe2, MapPin, Clock, Wallet, PenLine } from "lucide-react";
+import { Search, ChevronRight, X, Globe2, MapPin, Clock, Wallet } from "lucide-react";
 import {
-  T, serif, mono, sans,
-  Card, Badge, Btn, LoadingScreen, EmptyState,
-  parseHighlights, fmtDate, statusVariant,
+  T, mono, sans,
+  Btn, EmptyState,
+  parseHighlights, fmtDate,
 } from "./ui";
 import { PoolFilters, type PoolFiltersState } from "./PoolFilters";
+import { ROUTES } from "../_shell/portalNav";
+import { MY_VERSIONS_KEY } from "../_shell/useShellData";
+import { fetchMyVersions } from "./catalogApi";
+import {
+  WorkStatusBadge, activePollInterval, latestVersionByTour, tourWorkStatus, type WorkStatus,
+} from "./workStatus";
 
 // AA-566 Phần D — the Rewrite Config tab (language/SEO mode/brand rules) is removed per
 // Nghiệp's decision (b): the external bulk "Rewrite N" bar already covers triggering a rewrite,
@@ -32,72 +54,70 @@ interface PoolTour {
   already_rewritten: boolean;
 }
 
+interface PoolResponse {
+  data?: PoolTour[];
+  pagination?: { total?: number };
+  countries?: string[];
+}
+
 const PAGE_SIZE = 20;
+const MY_TOURS_HREF = ROUTES.myTours;
 
+/** The tenant-facing state of one Browse Tours row (null = never rewritten). */
+type RowStatus = WorkStatus | null;
+
+/** `externalSearch` (the topbar / ⌘K search) seeds the box; the page remounts this component with
+ *  `key={globalSearch}` when it changes, so no effect syncs it (React Compiler safe). */
 export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewriteDone: () => void; externalSearch?: string }) {
-  const [tours, setTours]     = useState<PoolTour[]>([]);
-  const [total, setTotal]     = useState(0);
-  const [countries, setCountries] = useState<string[]>([]);
+  const qc = useQueryClient();
   const [page, setPage]       = useState(1);
-  const [search, setSearch]   = useState("");
-
-  // Sync external search (from topbar)
-  useEffect(() => { if (externalSearch !== undefined) { setSearch(externalSearch); setPage(1); } }, [externalSearch]);
+  const [search, setSearch]   = useState(externalSearch);
   const [country, setCountry] = useState("");
   const [poolFilters, setPoolFilters] = useState<PoolFiltersState>({ duration: "all" });
-  const [inCatalogSet, setInCatalogSet] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<PoolTour | null>(null);
   const [checked, setChecked]   = useState<Set<string>>(new Set());
   const [expandItin, setExpandItin] = useState(false);
   const [rewrit, setRewrit]   = useState(false);
 
-  const fetchPool = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params = new URLSearchParams({ page: String(page), page_size: String(PAGE_SIZE) });
-      if (search)  params.set("search", search);
-      if (country) params.set("country", country);
-      if (poolFilters.duration !== "all") {
-        if (poolFilters.duration === "8+") {
-          params.set("duration_min", "8");
-        } else {
-          const [min, max] = poolFilters.duration.split("-");
-          params.set("duration_min", min);
-          params.set("duration_max", max);
-        }
+  const params = useMemo(() => {
+    const p = new URLSearchParams({ page: String(page), page_size: String(PAGE_SIZE) });
+    if (search)  p.set("search", search);
+    if (country) p.set("country", country);
+    if (poolFilters.duration !== "all") {
+      if (poolFilters.duration === "8+") {
+        p.set("duration_min", "8");
+      } else {
+        const [min, max] = poolFilters.duration.split("-");
+        p.set("duration_min", min);
+        p.set("duration_max", max);
       }
-
-      const [poolRes, versionsRes] = await Promise.allSettled([
-        fetch(`/api/tenant/v1/tours/pool?${params}`),
-        fetch("/api/tenant/v1/tours/my-versions?page_size=100"),
-      ]);
-
-      if (poolRes.status === "fulfilled" && poolRes.value.ok) {
-        const d = await poolRes.value.json();
-        setTours(d.data ?? []);
-        setTotal(d.pagination?.total ?? 0);
-        if (d.countries?.length) setCountries(d.countries);
-      }
-
-      if (versionsRes.status === "fulfilled" && versionsRes.value.ok) {
-        const vd = await versionsRes.value.json();
-        const versions: { published_tour_id?: string; status: string; edit_source: string }[] = vd.data ?? [];
-        // AA-565 — My Catalog no longer has a manual "Add to Catalog" approval step, so
-        // status never reaches 'approved' anymore. "In My Catalog" now means "has a finished
-        // rewrite" — any version that isn't still being AI-written. (Kept edit_source==
-        // 'tenant_edit' rows in this set too: those never leave 'pending' by design, see
-        // CatalogTab.tsx's isAiWriting() comment, but they ARE finished content.)
-        setInCatalogSet(new Set(
-          versions
-            .filter(v => v.published_tour_id && !(v.status === "pending" && v.edit_source === "ai_generated"))
-            .map(v => v.published_tour_id as string)
-        ));
-      }
-    } finally { setLoading(false); }
+    }
+    return p.toString();
   }, [page, search, country, poolFilters]);
 
-  useEffect(() => { fetchPool(); }, [fetchPool]);
+  const poolQ = useQuery({
+    queryKey: ["tour-pool", params],
+    queryFn: () => apiGet<PoolResponse>(`/api/tenant/v1/tours/pool?${params}`),
+    placeholderData: keepPreviousData,
+  });
+  const tours = poolQ.data?.data ?? [];
+  const total = poolQ.data?.pagination?.total ?? 0;
+  const loading = poolQ.isPending;
+
+  const countries = poolQ.data?.countries ?? [];
+
+  // Same query as My Tours + the sidebar badge; polls only while a rewrite is still running.
+  const versionsQ = useQuery({
+    queryKey: MY_VERSIONS_KEY,
+    queryFn: fetchMyVersions,
+    refetchInterval: (q) => activePollInterval((q.state.data ?? []).map(tourWorkStatus)),
+  });
+  const latest = useMemo(() => latestVersionByTour(versionsQ.data ?? []), [versionsQ.data]);
+  const rowStatus = (t: PoolTour): RowStatus => {
+    const v = latest.get(t.id);
+    if (v) return tourWorkStatus(v);
+    return t.already_rewritten ? "done" : null;
+  };
 
   async function doRewrite(ids: string[]) {
     setRewrit(true);
@@ -111,6 +131,7 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
       }
       setSelected(null);
       setChecked(new Set());
+      qc.invalidateQueries({ queryKey: ["tour-pool"] });
       onRewriteDone();
     } finally { setRewrit(false); }
   }
@@ -123,8 +144,9 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
       {/* LEFT — list */}
       <div>
         {/* Filter bar */}
-        <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
-          <div style={{ position: "relative", flex: 1 }}>
+        {/* AA-760 audit — wraps on a phone (the search box was squeezed to ~70 px at 390 px). */}
+        <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+          <div style={{ position: "relative", flex: "1 1 220px", minWidth: 0 }}>
             <Search size={13} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: T.muted2 }} />
             <input value={search}
               onChange={e => { setSearch(e.target.value); setPage(1); }}
@@ -166,7 +188,11 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
         )}
 
         {/* Tour list */}
-        {loading ? <ListSkeleton rows={8} label="Loading tours" /> : tours.length === 0 ? (
+        {loading ? <ListSkeleton rows={8} label="Loading tours" /> : poolQ.isError && tours.length === 0 ? (
+          <EmptyState icon={<Globe2 size={32} strokeWidth={1.5} color={T.gold} />} title="Couldn't load tours"
+            sub="Something went wrong on our side — try again."
+            action={<Btn variant="secondary" onClick={() => poolQ.refetch()}>Try again</Btn>} />
+        ) : tours.length === 0 ? (
           <EmptyState icon={<Globe2 size={32} strokeWidth={1.5} color={T.gold} />} title="No tours found" sub="Try adjusting your search or filters" />
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -175,9 +201,9 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
               const isChecked = checked.has(t.id);
               return (
                 <TourRow key={t.id} tour={t} index={(page - 1) * PAGE_SIZE + i + 1} isActive={isActive} isChecked={isChecked}
-                  inCatalogSet={inCatalogSet}
+                  status={rowStatus(t)}
                   onSelect={() => { setSelected(isActive ? null : t); setExpandItin(false); }}
-                  onCheck={() => setChecked(prev => { const s = new Set(prev); s.has(t.id) ? s.delete(t.id) : s.add(t.id); return s; })}
+                  onCheck={() => setChecked(prev => { const s = new Set(prev); if (s.has(t.id)) s.delete(t.id); else s.add(t.id); return s; })}
                 />
               );
             })}
@@ -217,15 +243,14 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
                   </button>
                 </div>
               </div>
-              {inCatalogSet.has(selected.id) ? (
-                <span style={{ marginTop: 8, display: "inline-block", fontSize: 11, padding: "2px 8px", background: T.greenSoft, color: T.green, borderRadius: 20, fontWeight: 600 }}>
-                  ✓ In My Catalog Tours
-                </span>
-              ) : selected.already_rewritten ? (
-                <span style={{ marginTop: 8, display: "inline-block", fontSize: 11, padding: "2px 8px", background: T.goldTint, color: T.amber, borderRadius: 20, fontWeight: 600 }}>
-                  <PenLine size={11} style={{ verticalAlign: -1 }} /> Writing…
-                </span>
-              ) : null}
+              <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <RowStatusBadge status={rowStatus(selected)} />
+                {rowStatus(selected) === "failed" && (
+                  <Link href={MY_TOURS_HREF} style={{ fontSize: 12, color: T.goldDeep, fontWeight: 600, textDecoration: "none" }}>
+                    Retry in My Tours →
+                  </Link>
+                )}
+              </div>
             </div>
           </div>
 
@@ -243,9 +268,9 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
 
 // ── Tour row ──────────────────────────────────────────────────────────────────
 
-function TourRow({ tour, index, isActive, isChecked, inCatalogSet, onSelect, onCheck }: {
+function TourRow({ tour, index, isActive, isChecked, status, onSelect, onCheck }: {
   tour: PoolTour; index: number; isActive: boolean; isChecked: boolean;
-  inCatalogSet: Set<string>;
+  status: RowStatus;
   onSelect: () => void; onCheck: () => void;
 }) {
   const kws = (() => { try { const v = JSON.parse(JSON.parse(tour.seo_keywords_used)); return Array.isArray(v) ? v.slice(0, 3) : []; } catch { return []; } })();
@@ -263,11 +288,7 @@ function TourRow({ tour, index, isActive, isChecked, inCatalogSet, onSelect, onC
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
             <span style={{ fontSize: 13, fontWeight: 600, color: T.ink }}>{tour.aa_name}</span>
-            {inCatalogSet.has(tour.id) ? (
-              <span style={{ fontSize: 10, padding: "1px 6px", background: T.greenSoft, color: T.green, borderRadius: 20, fontWeight: 600, flexShrink: 0 }}>✓ In My Catalog Tours</span>
-            ) : tour.already_rewritten ? (
-              <span style={{ fontSize: 10, padding: "1px 6px", background: T.goldTint, color: T.amber, borderRadius: 20, fontWeight: 600, flexShrink: 0 }}><PenLine size={11} style={{ verticalAlign: -1 }} /> Writing…</span>
-            ) : null}
+            <RowStatusBadge status={status} />
           </div>
           {tour.aa_subtitle && (
             <div style={{ fontSize: 12, color: T.muted, lineHeight: 1.4, marginBottom: 6 }}>
@@ -284,6 +305,20 @@ function TourRow({ tour, index, isActive, isChecked, inCatalogSet, onSelect, onC
       </div>
     </div>
   );
+}
+
+/** A Browse Tours row's status: "In My Tours" once a finished version exists, the shared work-status
+ *  badge while a rewrite is queued / writing, "Writing failed" (Retry lives in My Tours). */
+function RowStatusBadge({ status }: { status: RowStatus }) {
+  if (!status) return null;
+  if (status === "done") {
+    return (
+      <span style={{ fontSize: 10.5, padding: "1px 8px", background: T.greenSoft, color: T.green, borderRadius: 20, fontWeight: 600, flexShrink: 0, whiteSpace: "nowrap" }}>
+        ✓ In My Tours
+      </span>
+    );
+  }
+  return <span style={{ flexShrink: 0 }}><WorkStatusBadge status={status} /></span>;
 }
 
 function Tag({ children, icon, gold = false }: { children: React.ReactNode; icon?: React.ReactNode; gold?: boolean }) {

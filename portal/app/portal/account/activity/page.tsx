@@ -7,6 +7,7 @@ import { ActivityLogTab } from "../../_components/PlaceholderTabs";
 import { usePortalShell } from "../../_components/PortalShellContext";
 
 export default function ActivityPage() {
-  const { billing } = usePortalShell();
-  return <ActivityLogTab activity={billing?.activity ?? []} />;
+  // AA-760 — the shell's activity view (each row's state read from its version's job).
+  const { activity } = usePortalShell();
+  return <ActivityLogTab activity={activity} />;
 }

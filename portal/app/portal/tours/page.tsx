@@ -21,7 +21,8 @@ export default function BrowseToursPage() {
     <>
       <PageHeader title="Browse Tours"
         description="Published Adventure Asia tours. Pick one and rewrite it in your brand voice — it lands in My Tours." />
-      <PoolTab onRewriteDone={handleRewriteDone} externalSearch={globalSearch} />
+      {/* AA-760 — remount on a new topbar / ⌘K search instead of syncing it in an effect. */}
+      <PoolTab key={globalSearch} onRewriteDone={handleRewriteDone} externalSearch={globalSearch} />
     </>
   );
 }

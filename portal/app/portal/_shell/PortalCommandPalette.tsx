@@ -72,6 +72,7 @@ function Palette({ onClose, onSearchTours }: { onClose: () => void; onSearchTour
 
   const groups = useMemo(() => {
     const pages: Row[] = allEntries()
+      .filter((e) => !e.paletteHidden)
       .filter((e) => !needle || e.label.toLowerCase().includes(needle) || (e.keywords ?? "").includes(needle))
       .map((e) => ({ kind: "page", key: `page:${e.href}`, label: e.label, icon: e.icon, href: e.href }));
 
