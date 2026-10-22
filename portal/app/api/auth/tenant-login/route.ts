@@ -38,7 +38,9 @@ export async function POST(req: NextRequest) {
     const res = await fetch(`${API_URL}/auth/tenant-login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ api_key: apiKey }),
+      // AA-760 — client "portal": the token is a portal session, rate-limited but not metered as an API call
+      // (the Billing page's "API calls" count the tenant's own systems only; api/routers/auth.py PORTAL_CLIENT).
+      body: JSON.stringify({ api_key: apiKey, client: "portal" }),
       signal: AbortSignal.timeout(5000),
     });
 

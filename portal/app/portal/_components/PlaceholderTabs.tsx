@@ -236,6 +236,11 @@ export function BillingTab({ billing }: { billing: ShellBilling | null }) {
             </div>
           ))}
         </div>
+        {/* AA-760 — what "API calls" counts (api/middleware/rate_limit.py): a portal session is not metered. */}
+        <p data-testid="billing-api-calls-note" style={{ fontSize: 11.5, color: T.muted, lineHeight: 1.5, margin: "14px 0 0" }}>
+          API calls are the requests your own systems send to the API with a token from your API key. Using this
+          portal, including the API playground, is not counted; it does share your rate limit.
+        </p>
       </Card>
 
       {/* Plan comparison — from shared.membership_plans via /v1/billing */}

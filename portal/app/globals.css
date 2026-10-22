@@ -67,7 +67,7 @@
   --aa-ink3:          #3A4453;
   --aa-body:          #33363D;
   --aa-muted:         #6B7380;
-  --aa-muted2:        #9099A6;
+  --aa-muted2:        #626A78;   /* AA-760: was #9099A6 (2.9:1 on card, 2.7:1 on bg) → 5.4:1 card, 5.0:1 bg, 4.6:1 line2 */
   --aa-bg:            #F8F6F2;
   --aa-card:          #FFFFFF;
   --aa-line:          #E9E4DB;

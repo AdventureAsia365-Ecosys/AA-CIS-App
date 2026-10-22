@@ -344,7 +344,7 @@ async def tenant_login(
     if not row:
         await login_throttle.record_failure(request, "tenant")
         raise HTTPException(status_code=401, detail="Invalid API key")
-    token = _create_jwt(row["tenant_id"], row["name"], row["plan_tier"])
+    token = _create_jwt(row["tenant_id"], row["name"], row["plan_tier"], client=body.client)
 
     # AA-559 — semantic tenant-activity log. Best-effort/swallowed (unlike every other new call
     # site this issue adds): login has no pre-existing DB write of its own to be atomic with, and
@@ -353,7 +353,9 @@ async def tenant_login(
         await write_audit_log(
             db, tenant_id=row["tenant_id"], actor=f"tenant:{row['tenant_id']}",
             action=TenantAuditAction.TENANT_LOGIN, resource_type="tenant",
-            resource_id=row["tenant_id"], details={"login_method": "api_key"},
+            resource_id=row["tenant_id"],
+            # AA-760 — a portal sign-in says so (its token is a portal session, not metered as API calls).
+            details={"login_method": "api_key", **({"client": body.client} if body.client else {})},
         )
     except Exception as exc:
         logger.error("tenant_login_audit_log_failed", tenant_id=row["tenant_id"], error=str(exc))
