@@ -50,8 +50,8 @@ from services.acp_content_writing.quality_gates import (
     keyword_covered, title_taken,
 )
 from services.acp_content_writing.facts import fetch_facts_for_writing, format_facts_block
-from services.acp_content_writing import (authenticity, faq_filter, hygiene, sentence_repair, text_integrity,
-                                          trip_facts)
+from services.acp_content_writing import (authenticity, faq_answer_fit, faq_filter, hygiene, sentence_repair,
+                                          text_integrity, trip_facts)
 from services.acp_content_writing.generate import (SEO_FIT_STAGE, SentenceRepairError, fit_seo_fields,
                                                    repair_sentences, rewrite_with_feedback, write_content, write_faq)
 from services.acp_content_writing.quality_gates import (CHEAP_REPAIR_GATES, F13_REPEAT_GATE, F14_GATE, F19_GATE,
@@ -1111,6 +1111,27 @@ def _real_pairs_first(pairs: list[tuple[str, str]], real_pool: list[dict]) -> li
     return [p for p, t in zip(pairs, tags) if t] + [p for p, t in zip(pairs, tags) if not t]
 
 
+async def _apply_faq_answer_fit(content_text: str, flags: list[dict], *, context: dict, piece_id=None,
+                                request_id=None) -> tuple[str, list[dict], float]:
+    """S247 (AA-779) — the answer-fit step on the final blog text (faq_answer_fit.apply_answer_fit). Stores its
+    record in context["faq_answer_fit"] (writer_input, admin-only) and adds what `on` dropped to the admin-only
+    F7_faq_autofix flag (a new entry, or the attempt's existing one). Returns (text, flags, cost)."""
+    content_text, record = await faq_answer_fit.apply_answer_fit(
+        content_text, context=context, piece_id=piece_id, request_id=request_id)
+    if not record:
+        return content_text, flags, 0.0
+    context["faq_answer_fit"] = record
+    lines = faq_answer_fit.fit_log_lines(record)
+    if lines:
+        entry = next((f for f in flags if f.get("gate") == "F7_faq_autofix"), None)
+        if entry is None:
+            flags = flags + [{"gate": "F7_faq_autofix", "passed": False, "blocking": False, "repairable": False,
+                              "violations": lines}]
+        else:
+            entry["violations"] = list(entry.get("violations") or []) + lines
+    return content_text, flags, float(record.get("cost_usd") or 0.0)
+
+
 def real_first_faq(content_text: str, context: dict) -> tuple[str, list[str]]:
     """S245 r7 (AA-779) — deterministic, every blog attempt after the FAQ contract: real-question
     pairs first (real_first_pairs: a reorder; no writer pair is dropped unless the FAQ is over
@@ -2123,6 +2144,14 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
         flags = deep_strip_citation_tags(flags)
         if held_reason:
             held_reason = strip_citation_tags(held_reason)
+        # S247 (AA-779, ADR 0011) — behind T9_FAQ_LLM_FILTER (default off) one t9_faq_answer_fit call checks
+        # that each final FAQ answer answers its question; `on` drops the ones that do not (never a hold, never
+        # a regeneration), `shadow` only records. After the tag strip (the model reads clean text), before the
+        # final integrity pass (it reads the result).
+        if channel == "blog":
+            content_text, flags, fit_cost = await _apply_faq_answer_fit(
+                content_text, flags, context=context, piece_id=piece_id, request_id=request_id)
+            total_cost += fit_cost
         # S234 round 4 (r3 panel §4 fix 1) — the very last step before the piece is stored, after every
         # repair, revert and the tag strip: fail closed — a duplicate, a second CTA or a fragment the
         # pass cannot remove holds the piece (r3 #19 was approved with three visible duplicates).
@@ -2253,6 +2282,8 @@ def writer_input_snapshot(context: dict) -> dict:
            if context.get("channel") == "blog" and "real_questions" in context else {}),
         # S247 (AA-779, ADR 0011) — the LLM question filter's mode, verdicts and fallback; absent when it is off.
         **({"faq_filter": context["faq_filter"]} if context.get("faq_filter") else {}),
+        # S247 (AA-779, ADR 0011) — the answer-fit step's mode, verdicts, drops and fallback; absent when it is off.
+        **({"faq_answer_fit": context["faq_answer_fit"]} if context.get("faq_answer_fit") else {}),
     }
 
 

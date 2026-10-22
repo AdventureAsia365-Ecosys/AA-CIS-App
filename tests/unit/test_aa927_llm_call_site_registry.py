@@ -52,6 +52,8 @@ LOGGED_CALL_SITES: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
         "services/acp_content_writing/generate.py", "write_faq"),
     ("services/acp_content_writing/faq_filter.py", "llm_filter_questions"): _self(
         "services/acp_content_writing/faq_filter.py", "llm_filter_questions"),
+    ("services/acp_content_writing/faq_answer_fit.py", "_fit_call"): _self(
+        "services/acp_content_writing/faq_answer_fit.py", "_fit_call"),
     ("services/acp_content_writing/quality_gates.py", "_gate_brand_voice"): (_F9_LOG, _F9_FAIL),
     ("services/acp_produce/judge_client.py", "invoke_judge"): (_F9_LOG, _F9_FAIL),
     ("services/acp_contract/a3_atomize.py", "_atomize_whole_tour_legacy"): _self(

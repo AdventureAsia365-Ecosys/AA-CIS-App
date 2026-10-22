@@ -1545,6 +1545,45 @@ def faq_pairs(content_text: str) -> list[tuple[str, str]]:
     return out
 
 
+def drop_faq_pairs(content_text: str, drop: set[int]) -> tuple[str, list[int]]:
+    """AA-779 (S247) — the text without the FAQ pairs numbered in `drop` (1-based, faq_pairs order); every other
+    part of the text stays verbatim and in place. A dropped pair's whole block goes (its question, its answer and
+    any further paragraph under it), the way drop_unanswerable_faq cuts blocks — NOT replace_faq_section, which
+    rebuilds the FAQ from first paragraphs and moves every other paragraph above "## FAQ" (S247 review: a dropped
+    wrong-subject answer's second paragraph landed in the body). One exception: the LAST block runs to the end of
+    the text, and prose there may be a CTA written after the FAQ, so a last pair holding more than one paragraph
+    is kept rather than guessed at. "## FAQ" goes when no pair is left. Returns (text, the numbers in `drop` that
+    were kept for that reason)."""
+    body = content_text or ""
+    if not drop or "## FAQ" not in body:
+        return body, []
+    pre, _, faq = body.partition("## FAQ")
+    numbered = [m for m in _FAQ_PAIR_RE.finditer(faq) if _FAQ_QA_RE.match(m.group(0).strip())]
+    cuts, skipped = [], []
+    for n, m in enumerate(numbered, 1):
+        if n not in drop:
+            continue
+        paragraphs = [p for p in re.split(r"\n\s*\n", m.group(0).strip()) if p.strip()]
+        if m.end() == len(faq) and len(paragraphs) > 1:
+            skipped.append(n)
+            continue
+        end = m.end()
+        while end < len(faq) and faq[end].isspace():  # the blank line after the block goes with it
+            end += 1
+        cuts.append((m.start(), end))
+    if not cuts:
+        return body, skipped
+    out, pos = [], 0
+    for start, end in cuts:
+        out.append(faq[pos:start])
+        pos = end
+    out.append(faq[pos:])
+    rest = "".join(out)
+    if not _FAQ_PAIR_RE.search(rest):
+        return pre.rstrip() + "\n", skipped
+    return (pre + "## FAQ" + rest).rstrip() + "\n", skipped
+
+
 def _same_question(a: tuple[str, str], b: tuple[str, str]) -> bool:
     qa, qb = set(content_words(a[0])), set(content_words(b[0]))
     if qa and qa == qb:
