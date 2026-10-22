@@ -431,6 +431,61 @@ async def test_confirm_unique_violation_is_a_version_conflict_and_still_audits()
 
 
 @pytest.mark.asyncio
+async def test_confirm_lock_timeout_is_plan_busy_and_still_audits():
+    """Review S247: the advisory lock waiting past the tenant pool's lock_timeout is a retryable 409, not a 500."""
+    request, events = _request(tp.TRIP_REALLOCATION_FLAG)
+    with capture_logs() as logs, pytest.raises(tr.PlanBusyError):
+        await _confirm(request, events, save_error=asyncpg.LockNotAvailableError("lock timeout"))
+    assert events[-1] == "audit@main:False"
+    assert _lines(logs, "aa859_trip_reallocation_lock_timeout")
+
+
+@pytest.mark.asyncio
+async def test_confirm_save_block_logs_its_pool():
+    request, events = _request(tp.TRIP_REALLOCATION_FLAG)
+    with capture_logs() as logs:
+        await _confirm(request, events)
+    lines = _lines(logs, "aa859_trip_reallocation_save")
+    assert len(lines) == 1 and lines[0]["used_tenant_pool"] is True
+
+
+@pytest.mark.asyncio
+async def test_confirm_save_block_on_main_gets_its_own_transaction():
+    """Defence in depth (review S247): should the save block ever get a main-pool connection after a tenant-pool
+    read block, the advisory xact lock and save + approve still run in one transaction on it."""
+    from contextlib import asynccontextmanager
+    request, events = _request(tp.TRIP_REALLOCATION_FLAG)
+    tenant_conn, main_conn = request.app.state.tenant_pool.conn, request.app.state.pool.conn
+    calls = []
+
+    @asynccontextmanager
+    async def _scoped(req, tenant_id, flag_key, fail_closed=True):
+        calls.append(flag_key)
+        yield (tenant_conn, True) if len(calls) == 1 else (main_conn, False)
+    with patch.object(tp, "acquire_scoped_conn", new=_scoped):
+        out = await _confirm(request, events)
+    assert out["accepted"] is True and len(calls) == 2
+    main_conn.transaction.assert_called_once()
+    assert "save@main" in events and "approve@main" in events
+    assert "pg_advisory_xact_lock" in main_conn.execute.await_args_list[0].args[0]
+
+
+@pytest.mark.parametrize("call,step", [(v1_planning.post_pick_subject, "pick_subject_on"),
+                                       (v1_planning.post_cut_subject, "cut_subject_on")])
+@pytest.mark.asyncio
+async def test_subject_lock_timeout_is_a_retryable_409(call, step):
+    """Review S247: pick's FOR UPDATE (or cut's UPDATE) behind a long t7_slate transaction hits lock_timeout."""
+    request, events = _request(tp.SUBJECT_DECIDE_FLAG)
+    with patch.object(v1_planning, step, new=AsyncMock(side_effect=asyncpg.LockNotAvailableError("lock timeout"))), \
+            patch.object(v1_planning, "write_pick_audit", new=AsyncMock()) as audit, capture_logs() as logs:
+        with pytest.raises(HTTPException) as exc:
+            await call(SUBJECT_ID, request, tenant={"sub": TENANT_ID})
+    assert exc.value.status_code == 409 and exc.value.detail == v1_planning.SUBJECT_BUSY_DETAIL
+    audit.assert_not_called()
+    assert _lines(logs, "aa859_subject_lock_timeout")
+
+
+@pytest.mark.asyncio
 async def test_confirm_audit_failure_still_answers():
     request, events = _request(tp.TRIP_REALLOCATION_FLAG)
     with capture_logs() as logs:

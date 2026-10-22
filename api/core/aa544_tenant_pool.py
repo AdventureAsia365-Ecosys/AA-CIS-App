@@ -272,6 +272,13 @@ async def _flag_enabled(request: Request, flag_key: str) -> bool:
     return decision
 
 
+async def tenant_flag_enabled(request: Request, flag_key: str) -> bool:
+    """The same fail-closed, per-request-cached decision acquire_scoped_conn takes for `flag_key` (see
+    _flag_enabled). For a route already inside a tenant block that must decide whether a SECOND flag's
+    statements may run on that same connection (AA-859 wave 4: the angle-gate choose / reopen re-read)."""
+    return await _flag_enabled(request, flag_key)
+
+
 async def _read_flag(request: Request, flag_key: str) -> bool:
     """One Redis read of `flag_key`, decoded per D-12 (see _flag_enabled)."""
     redis = getattr(request.app.state, "redis", None)

@@ -110,3 +110,12 @@ def test_alias_cards_without_a_transaction_take_no_savepoint():
     mock.fetch = AsyncMock(return_value=[])
     assert asyncio.run(subject_seed.load_alias_cards(mock, ["Hoan Kiem Lake"])) == {}
     mock.transaction.assert_not_called()
+
+
+def test_approved_plan_join_stays_inside_its_own_plan():
+    """Review S247: the tenant role may write quarter_plan.current_version_id and FK checks bypass RLS; the join
+    also requires the version to belong to the same plan row (defence in depth on the main pool)."""
+    import inspect
+    assert "qpv.plan_id = qp.plan_id" in quarter._APPROVED_PLAN_SQL
+    src = inspect.getsource(quarter.fetch_current_version_no)
+    assert "qpv.plan_id = qp.plan_id" in src

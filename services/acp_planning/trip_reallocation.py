@@ -22,6 +22,7 @@ reallocation becomes a normal new quarter_plan_version, not a special kind of ob
 from __future__ import annotations
 
 import json
+from contextlib import nullcontext
 from uuid import UUID
 
 import asyncpg
@@ -43,6 +44,12 @@ logger = structlog.get_logger()
 
 class VersionConflictError(Exception):
     """AA-859 wave 4 — another confirm saved the same version number of this quarter first."""
+
+
+class PlanBusyError(Exception):
+    """AA-859 wave 4 — the quarter's advisory lock (or a plan row lock) was not granted within the tenant pool's
+    lock_timeout (5 s): another confirm or an admin approve of the same quarter is running. The router answers
+    409; nothing was saved."""
 
 
 async def suggest_trip_reallocation(tenant_id: UUID, year: int, quarter: int, pool) -> dict:
@@ -183,7 +190,8 @@ async def confirm_trip_reallocation_scoped(
     request, tenant_id: UUID, year: int, quarter: int, accept: bool, actor: str,
 ) -> dict:
     """POST /v1/planning/trip-reallocation/confirm (AA-859 wave 4). Raises VersionConflictError when another
-    confirm saved the same version number first (the router answers 409)."""
+    confirm saved the same version number first, PlanBusyError when the quarter's lock was not granted within
+    lock_timeout (the router answers 409 for both)."""
     from api.core.aa544_tenant_pool import TRIP_REALLOCATION_FLAG, acquire_scoped_conn
     pool = request.app.state.pool
     suggestion, used_tenant_pool = await _scoped_suggestion(
@@ -207,14 +215,26 @@ async def confirm_trip_reallocation_scoped(
         try:
             async with acquire_scoped_conn(
                 request, str(tenant_id), TRIP_REALLOCATION_FLAG, fail_closed=True,
-            ) as (conn, _):
-                await conn.execute(_QUARTER_LOCK_SQL, f"{tenant_id}:quarter_plan:{year}:{quarter}")
-                # "override": quarter_plan_version.source allows only 'standard' / 'override' (migration 092)
-                version_id = await save_quarter_plan_version_on(conn, plan, source="override")
-                await approve_quarter_plan_version_on(conn, version_id, f"tenant:{tenant_id}")
+            ) as (conn, used):
+                logger.info("aa859_trip_reallocation_save", tenant_id=str(tenant_id), year=year, quarter=quarter,
+                            used_tenant_pool=used)
+                # The flag decision is cached per request, so `used` matches the read block above; if it ever
+                # did not, the main-pool connection gets its own transaction: the advisory xact lock and the
+                # save + approve atomicity need one.
+                async with (nullcontext() if used else conn.transaction()):
+                    await conn.execute(_QUARTER_LOCK_SQL, f"{tenant_id}:quarter_plan:{year}:{quarter}")
+                    # "override": quarter_plan_version.source allows only 'standard' / 'override' (migration 092)
+                    version_id = await save_quarter_plan_version_on(conn, plan, source="override")
+                    await approve_quarter_plan_version_on(conn, version_id, f"tenant:{tenant_id}")
         except asyncpg.UniqueViolationError as exc:
             raise VersionConflictError(
                 f"another confirm saved a version of {year}-Q{quarter} at the same time — reload and confirm again"
+            ) from exc
+        except asyncpg.LockNotAvailableError as exc:
+            logger.warning("aa859_trip_reallocation_lock_timeout", tenant_id=str(tenant_id), year=year,
+                           quarter=quarter)
+            raise PlanBusyError(
+                f"the {year}-Q{quarter} plan is being updated by another request — try again in a moment"
             ) from exc
         applied = True
         return {"accepted": True, "version_id": str(version_id), "suggestion": suggestion}
@@ -229,4 +249,4 @@ async def confirm_trip_reallocation_scoped(
 
 
 __all__ = ["suggest_trip_reallocation", "confirm_trip_reallocation", "suggest_trip_reallocation_scoped",
-           "confirm_trip_reallocation_scoped", "VersionConflictError"]
+           "confirm_trip_reallocation_scoped", "VersionConflictError", "PlanBusyError"]

@@ -88,4 +88,19 @@ class TestTripReallocationEndpoints:
                 await v1_planning.post_trip_reallocation_confirm(body, _make_request(MagicMock()),
                                                                  tenant={"sub": TENANT_ID})
         assert exc.value.status_code == 409
-        assert exc.value.detail["code"] == "version_conflict"
+        assert isinstance(exc.value.detail, str) and exc.value.detail.startswith("version_conflict")
+
+    @pytest.mark.asyncio
+    async def test_confirm_plan_busy_is_409(self):
+        """AA-859 wave 4 — the quarter's lock not granted within lock_timeout: retryable, never a 500."""
+        from fastapi import HTTPException
+        from services.acp_planning.trip_reallocation import PlanBusyError
+        with patch(
+            "api.routers.v1_planning.confirm_trip_reallocation_scoped",
+            new=AsyncMock(side_effect=PlanBusyError("busy")),
+        ):
+            body = v1_planning.TripReallocationConfirmRequest(year=2026, quarter=1, accept=True)
+            with pytest.raises(HTTPException) as exc:
+                await v1_planning.post_trip_reallocation_confirm(body, _make_request(MagicMock()),
+                                                                 tenant={"sub": TENANT_ID})
+        assert exc.value.status_code == 409 and exc.value.detail.startswith("plan_busy")

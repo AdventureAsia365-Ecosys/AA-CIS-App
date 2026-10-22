@@ -1,10 +1,10 @@
 """AA-859 W3 (PR-D3) — reentrancy entries for POST /v1/angle-gate/requests/{id}/choose and /reopen.
 
 Same guard as test_aa859_tenant_pool_reentrancy.py (its stub pool raises on a second tenant acquire by a task
-that already holds one): each decision takes one tenant connection and releases it; only then does the response
-re-read (AA-859 wave 4: its own block behind ANGLE_GATE_READ_FLAG, ON here like every flag) take a second one,
-sequentially, never nested (fetch_request_on stubbed; the job-status step a pass-through, the shared `_request`
-makes any main-pool acquire fail).
+that already holds one): each decision takes one tenant connection and releases it. AA-859 wave 4: with
+ANGLE_GATE_READ_FLAG ON too (like every flag here) the response re-read runs on that same connection, so the
+handler takes exactly one tenant connection, never a second (fetch_request_on stubbed; the job-status step a
+pass-through, the shared `_request` makes any main-pool acquire fail).
 """
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -46,8 +46,8 @@ async def _reopen(request):
 
 
 HANDLERS = [
-    pytest.param(_choose, "pending_choice", 2, id="POST /v1/angle-gate/requests/{id}/choose"),
-    pytest.param(_reopen, "approved", 2, id="POST /v1/angle-gate/requests/{id}/reopen"),
+    pytest.param(_choose, "pending_choice", 1, id="POST /v1/angle-gate/requests/{id}/choose"),
+    pytest.param(_reopen, "approved", 1, id="POST /v1/angle-gate/requests/{id}/reopen"),
 ]
 
 

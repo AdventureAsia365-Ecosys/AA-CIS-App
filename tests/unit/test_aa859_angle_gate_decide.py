@@ -3,8 +3,9 @@
 The AA-817 fail-closed matrix for these two routes (same cases as test_aa817_fail_closed_routes.py, own fakes
 because the decision reads through fetchval and re-reads on the main pool after commit):
   * flag on: the tenant pool, GUC set LOCAL, every decision statement on that one connection, one log event
-    with used_tenant_pool=True, then (AA-859 wave 4) the response re-read in a second, sequential block behind
-    ANGLE_GATE_READ_FLAG (here in the same state as the decide flag), only after the decide block was released;
+    with used_tenant_pool=True, then (AA-859 wave 4) with ANGLE_GATE_READ_FLAG on too the response re-read on the
+    SAME connection inside the same transaction (no second acquire that could 503 after a saved choice); in a
+    mixed flag state the re-read is a second, sequential block, only after the decide block was released;
   * flag off: the main pool with the route's own transaction, used_tenant_pool=False;
   * flag on + no tenant pool / GUC not applied / no tenant connection: 503, the main pool is never touched
     and nothing is re-read;
@@ -139,7 +140,7 @@ ROUTES = [
 
 @pytest.mark.parametrize("call,status,decision_sql,event", ROUTES)
 @pytest.mark.asyncio
-async def test_flag_on_decides_on_tenant_pool_then_rereads_on_main(call, status, decision_sql, event):
+async def test_flag_on_decides_and_rereads_on_one_tenant_connection(call, status, decision_sql, event):
     events = []
     tenant = _DecideConn(status=status)
     request = _request(flag=True, tenant_conn=tenant, events=events)
@@ -148,20 +149,66 @@ async def test_flag_on_decides_on_tenant_pool_then_rereads_on_main(call, status,
     assert result["status"] == "re-read"
     assert tenant.sql == decision_sql, "every decision statement ran on the one tenant connection, in order"
     assert request.app.state.tenant_pool.acquire.call_args.kwargs == {"timeout": tp.TENANT_POOL_ACQUIRE_TIMEOUT_S}
-    # acquire_scoped_conn's own (GUC LOCAL), once per block (decide, then the re-read); the route opens none
-    assert tenant.transaction.call_count == 2
+    # one acquire, one transaction (acquire_scoped_conn's own, GUC LOCAL): decide + re-read; the route opens none
+    request.app.state.tenant_pool.acquire.assert_called_once()
+    assert tenant.transaction.call_count == 1
     assert tenant.tx.__aexit__.call_args[0][0] is None, "the tenant transaction committed"
-    assert events == ["tenant_released", "fetch_request", "tenant_released"], \
-        "re-read only after the decide connection is back, in its own block"
-    assert fetch.call_args[0][1:] == (TENANT_ID, REQUEST_ID)
+    assert events == ["fetch_request", "tenant_released"], "the re-read runs before the decide connection is back"
+    assert fetch.call_args[0] == (tenant, TENANT_ID, REQUEST_ID), "re-read on the decide's own connection"
     request.app.state.pool.acquire.assert_not_called()  # the job-status step is stubbed; nothing else uses MAIN
     lines = [entry for entry in logs if entry["event"] == event]
     assert len(lines) == 1 and lines[0]["used_tenant_pool"] is True
     assert lines[0]["request_id"] == str(REQUEST_ID) and lines[0]["tenant_id"] == str(TENANT_ID)
     timing = [entry for entry in logs if entry["event"] == "aa859_tenant_pool_timing"]
-    assert [t["flag_key"] for t in timing] == [FLAG, READ_FLAG]
+    assert [t["flag_key"] for t in timing] == [FLAG]
     reread = [entry for entry in logs if entry["event"] == "aa859_angle_gate_reread"]
-    assert len(reread) == 1 and reread[0]["used_tenant_pool"] is True
+    assert len(reread) == 1 and reread[0]["used_tenant_pool"] is True and reread[0]["same_conn"] is True
+
+
+@pytest.mark.parametrize("call,status,decision_sql,event", ROUTES)
+@pytest.mark.asyncio
+async def test_saved_decision_never_waits_on_a_second_tenant_acquire(call, status, decision_sql, event):
+    """Review S247: a second acquire for the re-read could time out (max 2 per task, 5 s) and answer 503 for a
+    choice already saved (the portal's retry then gets 409). With both flags on there is no second acquire: a
+    pool whose next acquire fails does not change the answer."""
+    tenant = _DecideConn(status=status)
+    request = _request(flag=True, tenant_conn=tenant)
+    first = request.app.state.tenant_pool.acquire.return_value
+    request.app.state.tenant_pool.acquire = MagicMock(
+        side_effect=[first, _ctx(enter_error=asyncio.TimeoutError())])
+    with capture_logs() as logs, _reread(_fetch_request_stub()):
+        result = await call(request)
+    assert result["status"] == "re-read"
+    assert request.app.state.tenant_pool.acquire.call_count == 1
+    assert tenant.tx.__aexit__.call_args[0][0] is None, "the decision committed"
+    assert not [entry for entry in logs if entry["event"] == "aa817_tenant_pool_unavailable"]
+
+
+@pytest.mark.asyncio
+async def test_reread_error_rolls_the_decision_back():
+    """Decide and re-read share one transaction: a failing re-read never leaves a saved choice behind an error."""
+    tenant = _DecideConn(status="pending_choice")
+    request = _request(flag=True, tenant_conn=tenant)
+    stub = AsyncMock(side_effect=asyncpg.QueryCanceledError("statement timeout"))
+    with _reread(stub), pytest.raises(asyncpg.QueryCanceledError):
+        await _choose(request)
+    assert issubclass(tenant.tx.__aexit__.call_args[0][0], asyncpg.QueryCanceledError)
+
+
+@pytest.mark.asyncio
+async def test_decide_flag_off_read_flag_on_rereads_in_its_own_tenant_block():
+    """Mixed state (decide reverted, read on): the decision on MAIN in its own transaction, then the re-read on
+    the tenant pool in a separate block."""
+    events = []
+    main = _DecideConn(status="pending_choice")
+    request = _request(flag=True, main_conn=main, events=events)
+    request.app.state.redis.get = AsyncMock(side_effect=lambda key: "true" if key == READ_FLAG else "false")
+    with capture_logs() as logs, _reread(_fetch_request_stub(events)):
+        await _choose(request)
+    main.transaction.assert_called_once()
+    assert events == ["main_released", "fetch_request", "tenant_released"]
+    assert [e["used_tenant_pool"] for e in logs if e["event"] == "aa859_angle_gate_choose"] == [False]
+    assert [e["used_tenant_pool"] for e in logs if e["event"] == "aa859_angle_gate_reread"] == [True]
 
 
 @pytest.mark.parametrize("call,status,decision_sql,event", ROUTES)
@@ -236,8 +283,8 @@ async def test_redis_error_keeps_tenant_pool_loudly(call, status, decision_sql, 
     request.app.state.redis.get = AsyncMock(side_effect=ConnectionError("redis down"))
     with capture_logs() as logs, _reread(_fetch_request_stub()):
         await call(request)
-    # the decide block and (AA-859 wave 4) the re-read block, both on the tenant pool: both flags read as ON
-    assert request.app.state.tenant_pool.acquire.call_count == 2
+    # both flags read as ON: the decide and (AA-859 wave 4) the re-read on one tenant connection
+    assert request.app.state.tenant_pool.acquire.call_count == 1
     request.app.state.pool.acquire.assert_not_called()
     failed = [entry for entry in logs if entry["event"] == "aa817_tenant_flag_read_failed"]
     assert failed and failed[0]["flag_key"] == FLAG and failed[0]["log_level"] == "error"

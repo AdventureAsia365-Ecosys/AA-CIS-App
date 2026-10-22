@@ -395,10 +395,14 @@ _CURRENT_VERSION_SQL = """
 _APPROVED_PLAN_SQL = """
     SELECT qpv.payload, qpv.approved_by
     FROM acp_shared.quarter_plan qp
-    JOIN acp_shared.quarter_plan_version qpv ON qpv.version_id = qp.current_version_id
+    JOIN acp_shared.quarter_plan_version qpv
+      ON qpv.version_id = qp.current_version_id AND qpv.plan_id = qp.plan_id
     WHERE qp.tenant_id = $1 AND qp.year = $2 AND qp.quarter = $3
       AND qpv.approval_status = 'approved'
 """
+# AA-859 wave 4 (review S247): `qpv.plan_id = qp.plan_id` is defence in depth. The tenant role may set
+# quarter_plan.current_version_id (migration 265 grant) and an FK check bypasses RLS, so without it a pointer to
+# another tenant's version would be followed on the main pool (no code path writes such a pointer).
 
 
 async def save_quarter_plan_version(plan: QuarterPlan, pool, source: str = "standard") -> UUID:
@@ -499,7 +503,8 @@ async def fetch_current_version_no(
             """
             SELECT qpv.version_no
             FROM acp_shared.quarter_plan qp
-            JOIN acp_shared.quarter_plan_version qpv ON qpv.version_id = qp.current_version_id
+            JOIN acp_shared.quarter_plan_version qpv
+              ON qpv.version_id = qp.current_version_id AND qpv.plan_id = qp.plan_id
             WHERE qp.tenant_id = $1 AND qp.year = $2 AND qp.quarter = $3
               AND qpv.approval_status = 'approved'
             """,

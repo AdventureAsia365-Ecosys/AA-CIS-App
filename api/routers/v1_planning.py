@@ -47,13 +47,15 @@ from contextlib import nullcontext
 from uuid import UUID
 
 import structlog
+import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from api.core.aa544_tenant_pool import SLATE_READS_FLAG, SUBJECT_DECIDE_FLAG, acquire_scoped_conn
 from api.routers.v1_tours import get_tenant
 from services.acp_planning.tenant_config import TenantNotFoundError, fetch_tenant_planning_config
-from services.acp_planning.trip_reallocation import (VersionConflictError, confirm_trip_reallocation_scoped,
+from services.acp_planning.trip_reallocation import (PlanBusyError, VersionConflictError,
+                                                     confirm_trip_reallocation_scoped,
                                                      suggest_trip_reallocation_scoped)
 from services.acp_shared.slate import (SubjectNotEligibleError, SubjectNotFoundError,
                                         cut_subject_on, enabled_channels, fetch_slate_on, last_proposal,
@@ -62,6 +64,10 @@ from services.acp_shared.slate import (SubjectNotEligibleError, SubjectNotFoundE
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/v1/planning", tags=["tenant-planning"])
+
+# AA-859 wave 4 — the tenant pool's lock_timeout (5 s) on pick's Subject row lock (behind a long t7_slate proposal
+# transaction) or cut's conditional UPDATE: a retryable 409, never a 500. One string shape, as VERSION_CONFLICT_DETAIL.
+SUBJECT_BUSY_DETAIL = "subject_busy: the Slate is updating, retry in a moment"
 
 # AA-511 — the Slate (Weekly Slots' replacement, docs/claude_audit/
 # AA-511-step0-slate-investigation.md). A SEPARATE router in this same file, under a bare `/v1`
@@ -146,6 +152,10 @@ async def post_pick_subject(
         raise HTTPException(status_code=404, detail=f"No subject {subject_id} for this tenant")
     except SubjectNotEligibleError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+    except asyncpg.LockNotAvailableError as exc:
+        logger.warning("aa859_subject_lock_timeout", tenant_id=str(tenant_id), subject_id=str(subject_id),
+                       action="pick")
+        raise HTTPException(status_code=409, detail=SUBJECT_BUSY_DETAIL) from exc
     if used_tenant_pool:
         # AA-859 MAIN exception: acp_shared.audit_log has no RLS and no tenant-role grant; written after the
         # tenant transaction committed. Best-effort: the pick is saved, a lost audit row must not make it a 500.
@@ -179,6 +189,10 @@ async def post_cut_subject(
         raise HTTPException(status_code=404, detail=f"No subject {subject_id} for this tenant")
     except SubjectNotEligibleError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+    except asyncpg.LockNotAvailableError as exc:
+        logger.warning("aa859_subject_lock_timeout", tenant_id=str(tenant_id), subject_id=str(subject_id),
+                       action="cut")
+        raise HTTPException(status_code=409, detail=SUBJECT_BUSY_DETAIL) from exc
     return result
 
 
@@ -220,7 +234,10 @@ async def post_trip_reallocation_confirm(
             request, tenant_id, body.year, body.quarter, body.accept, actor=f"tenant:{tenant_id}",
         )
     except VersionConflictError as exc:
-        raise HTTPException(status_code=409, detail={"code": "version_conflict", "message": str(exc)})
+        # one 409 shape across the tenant routes: a string with a stable prefix (VERSION_CONFLICT_DETAIL in v1_tours)
+        raise HTTPException(status_code=409, detail=f"version_conflict: {exc}") from exc
+    except PlanBusyError as exc:
+        raise HTTPException(status_code=409, detail=f"plan_busy: {exc}") from exc
 
 
 __all__ = ["router", "slate_router"]
