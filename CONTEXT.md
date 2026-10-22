@@ -1256,9 +1256,12 @@ Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`
 - **No privilege without RLS** (241; v2 since 265): `aa_app_user` holds no privilege, table or column level, on any
   relation without RLS. Two exceptions: the cross-app catalog contract, `SELECT` on the `catalog.v_*` views owned
   by `catalog_owner` (225 / 228), which other apps read too; and the **platform read allowlist** (265,
-  `PLATFORM_READ_ALLOWLIST`): table-level `SELECT` (no column grant, nothing else) on `acp_contract.route`,
-  `atom_segment`, `atom_segment_member`, `atom_segment_alias`, `acp_shared.place_card`, `place_card_alias`,
-  `atom_place_card`, relations with no tenant column and no `owner_scope` (265 guards it), AA's shared derivation.
+  `PLATFORM_READ_ALLOWLIST`): `SELECT` only, table level on `acp_contract.route`, `atom_segment`,
+  `atom_segment_member`, `atom_segment_alias`, `acp_shared.place_card_alias`, `atom_place_card`, and column level
+  on `acp_shared.place_card` (`card_id`, `status`: the staff `verified_by`, `cost_usd`, `naming_note` and `facts`
+  stay unreadable), relations with no tenant column and no `owner_scope` (265 guards it), AA's shared derivation.
+  `acp_contract` became reachable by the tenant role in 265, which therefore refuses any PUBLIC grant on a relation
+  there without RLS and any SECURITY DEFINER function there the tenant role can execute.
   The `acp_contract` views (`v_active_tour_atoms`, `v_trip_registry`, owner rights) stay ungranted: tenant-pool
   code reads atoms through the base table with the 203 rule inlined. A new table the tenant pool needs gets RLS
   and its grants in the same migration. Enforced by `NO_PRIVILEGE_WITHOUT_RLS_SQL_V2`
@@ -1304,7 +1307,7 @@ Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`
   | DELETE `/v1/integrations/{wordpress,facebook}` | `aa544:integration_disconnect_pool` | two short transactions around the Secrets Manager tombstone; a double click is 200/200 (`aa859_integration_disconnect_raced`) |
   | GET `/v1/content-writing/requests/{id}/latest-piece` | `aa817:content_piece_reads_pool` | |
   | PATCH `/v1/content-writing/pieces/{id}` (W2) | `aa859:piece_edit_pool` | audit after commit on MAIN |
-  | POST `/v1/angle-gate/requests/{id}/choose`, `/reopen` (W3) | `aa859:angle_gate_decide_pool` | one transaction, request locked first (same order as the T8 worker); response re-read on MAIN; needs 241 |
+  | POST `/v1/angle-gate/requests/{id}/choose`, `/reopen` (W3) | `aa859:angle_gate_decide_pool` | one transaction, request locked first (same order as the T8 worker); the response re-read follows `aa859:angle_gate_read_pool` (both on: same connection, same transaction); needs 241 |
   | DELETE `/v1/publish-log/{id}` (W4, unpublish) | `aa859:unpublish_pool` | three short blocks; Secrets Manager and the remote delete hold no connection |
   | GET `/v1/tours/pool`, `/my-versions`, `/versions/{id}` (W5a) | `aa859:t2_version_reads_pool` | job status from a second MAIN query keyed by job ids returned through RLS |
   | GET `/v1/tours/{id}/full` (tenant-JWT branch), `/{id}`, `/versions/{id}/export-docx` (D5b, S247) | `aa859:t2_version_detail_reads_pool` | own flag (not W5a's); the `/full` staff branch (X-Admin-Secret) stays on MAIN and reads no flag; export-docx audit on MAIN after the block; a master tour's raw / seo fields show only when those rows are the AA master tenant's (239), as in W5a |
@@ -1312,10 +1315,10 @@ Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`
   | GET/POST `/v1/integrations/{wordpress,facebook}`, POST `.../test` (W9) | `aa859:integration_connect_pool` | Secrets Manager / remote HTTP hold no connection; the UPSERT writes only 241's column grants; needs 241 |
   | GET / POST `/admin/brand-identity` with a tenant Bearer (wave 3, S247) | `aa859:brand_identity_pool` | needs 262 (RLS on `tenant_brand_rules` / `tenant_seo_config`); POST = one transaction, `pg_advisory_xact_lock(859, hashtext(tenant:brand_identity))` + `MAX + 1`, UNIQUE backstop → 409 `version_conflict`; the X-Admin-Secret staff branch stays on MAIN and reads no flag; `check_saved_cta` on MAIN after commit |
   | POST `/v1/publish-log/{piece_id}/publish` (wave 3, S247) | `aa859:publish_pool` | three short blocks (piece + connection, `claim()` as a savepoint, `finish()`); Secrets Manager and the remote post hold no connection; daily-limit override read and audit row on MAIN; no new grant |
-  | GET `/v1/angle-gate/requests/{id}` and the choose / reopen response re-read (wave 4, S247) | `aa859:angle_gate_read_pool` | needs 265; request + options + Subject header in one block; the t8_angles job status (`generation_failed`) on MAIN after it, only for `pending_goal` without a goal; the re-read is its own sequential block, not under the decide flag |
+  | GET `/v1/angle-gate/requests/{id}` and the choose / reopen response re-read (wave 4, S247) | `aa859:angle_gate_read_pool` | needs 265; request + options + Subject header in one block; the t8_angles job status (`generation_failed`) on MAIN after it, only for `pending_goal` without a goal; with the decide flag on too the choose / reopen re-read runs on the decide's own connection inside its transaction (no second acquire that could 503 after a saved choice), otherwise its own sequential block. Choose / reopen fully off the tenant pool = BOTH keys false |
   | GET `/v1/slate` (wave 4) | `aa859:slate_reads_pool` | needs 265; enqueue (`request_slate_proposal`) and the tenant's channel config on MAIN first, last proposal on MAIN after; `POST /v1/slate/refresh` stays on MAIN |
-  | POST `/v1/subjects/{id}/pick`, `/cut` (wave 4) | `aa859:subject_decide_pool` | needs 265 + 266; one transaction, the Subject row locked `FOR UPDATE` (pick) / one conditional UPDATE (cut); members read on the base table with the 203 rule; the pick audit on MAIN after commit, best-effort (flag off: inside the transaction, AA-559) |
-  | GET `/v1/planning/trip-reallocation/suggest`, POST `.../confirm` (wave 4) | `aa859:trip_reallocation_pool` | needs 265 + 266; config on MAIN, one read block; confirm accept = one more transaction, `pg_advisory_xact_lock(859, hashtext(tenant:quarter_plan:year:quarter))`, save + approve together, UNIQUE backstop → 409 `version_conflict`; audit on MAIN after the blocks for accept and reject, best-effort (flag off: audit first, as before) |
+  | POST `/v1/subjects/{id}/pick`, `/cut` (wave 4) | `aa859:subject_decide_pool` | needs 265 + 266; one transaction, the Subject row locked `FOR UPDATE` (pick) / one conditional UPDATE (cut); members read on the base table with the 203 rule; the pick audit on MAIN after commit, best-effort (flag off: inside the transaction, AA-559); a lock wait past the tenant pool's `lock_timeout` → 409 `subject_busy` |
+  | GET `/v1/planning/trip-reallocation/suggest`, POST `.../confirm` (wave 4) | `aa859:trip_reallocation_pool` | needs 265 + 266; config on MAIN, one read block; confirm accept = one more transaction, `pg_advisory_xact_lock(859, hashtext(tenant:quarter_plan:year:quarter))`, save + approve together, UNIQUE backstop → 409 `version_conflict`, lock wait past `lock_timeout` → 409 `plan_busy`; audit on MAIN after the blocks for accept and reject, best-effort (flag off: audit first, as before) |
   | GET `/v1/marketplace` (wave 4) | `aa859:marketplace_pool` | needs 266; `posts_per_week` on MAIN first |
   | GET `/v1/content-writing/reviews`, `/requests/{id}/review` (wave 4) | `aa859:reviews_pool` | needs 265 + 266; one block each, no MAIN read; the trip page is a LATERAL (own page, else the AA master's) |
 
