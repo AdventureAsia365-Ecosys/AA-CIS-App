@@ -1,8 +1,8 @@
 "use client";
 // portal/app/portal/_components/WordPressConnect.tsx — AA-457 [T11 PR1]
 //
-// Shared between /portal/t11-publish (inline first-run form when not connected) and
-// /portal/t11-publish/connection (manage/change credentials + re-test) — Option 3+2 from
+// Shared between /portal/content/publish (inline first-run form when not connected) and
+// /portal/account/integrations (manage/change credentials + re-test) — Option 3+2 from
 // AA-456's STEP0 report §9: an inline connect flow for the common first-time case, backed by a
 // real standalone page for later edits, sharing one form component rather than building the
 // credentials UI twice.
@@ -165,7 +165,7 @@ export function WordPressConnectForm({ onConnected }: { onConnected?: () => void
 }
 
 /** Read-only connection summary + re-test action, used on the manage-connection page and
- * (once connected) at the top of /portal/t11-publish. */
+ * (once connected) at the top of /portal/content/publish. */
 export function WordPressStatusCard({ status, onRetest, onDisconnected }: {
   status: WordPressStatus; onRetest: () => void;
   /** AA-815 — when given, the card shows a Disconnect action (confirm step) and calls this after. */

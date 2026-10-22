@@ -32,11 +32,11 @@
 // (<SlateTab/> itself calls GET /v1/slate + POST /v1/subjects/{id}/pick — see that file.)
 
 import { useState, useCallback } from "react";
-import { T, serif, mono, Card, CardHead, Badge, Btn } from "./ui";
+import { T, mono, Card, CardHead, Badge, Btn } from "./ui";
 // AA-511 — the Slate replaces SlotPickerPanel.tsx (Weekly Slots) on this render path. The old
 // component/file is deliberately left in place, unused, per the epic's own "giữ code cũ, chỉ
 // ngưng dùng, không xoá" rule — see docs/claude_audit/AA-511-step0-slate-investigation.md.
-import SlateTab from "./SlateTab";
+import SlateTab, { ARTICLE_CHANNELS, SOCIAL_CHANNELS } from "./SlateTab";
 
 // AA-519 Việc 3 — the old Quarter Plan preview/trip-table/finalize/history UI that used to render
 // ABOVE <SlateTab/> on this page is REMOVED here (not hidden — Nghiệp's explicit call, "đã thay
@@ -85,29 +85,22 @@ const now = new Date();
 const DEFAULT_YEAR = now.getFullYear();
 const DEFAULT_QUARTER = Math.floor(now.getMonth() / 3) + 1;
 
-export default function PlanningTab() {
+// AA-759 — one Slate, two Create pages: "social" (every Channel but blog, plus the trip-reallocation
+// card — it is about the weekly social rhythm) and "article" (the blog Channel). The page title is
+// the route's kit PageHeader now, so this component no longer renders its own h2.
+export default function PlanningTab({ kind = "social" }: { kind?: "social" | "article" }) {
+  const article = kind === "article";
   return (
     <div>
-      <div style={{ marginBottom: 22 }}>
-        {/* AA-564 4.1 — renamed "Slate" -> "Social Content" here (Tenant Portal only; Admin's
-            /admin/atom-curation page still calls this section "05 · Slate", AA-563/564 Group 2). */}
-        <h2 style={{ fontFamily: serif, fontSize: 22, fontWeight: 500, color: T.ink, margin: "0 0 6px", letterSpacing: "-0.01em" }}>
-          Social Content
-        </h2>
-        <p style={{ fontSize: 13, color: T.muted, lineHeight: 1.6, margin: 0 }}>
-          Channel-scoped content picks, ranked by score and cleared against each channel&rsquo;s
-          bar — pick one below to start writing.
-        </p>
-      </div>
+      <SlateTab
+        channels={article ? ARTICLE_CHANNELS : SOCIAL_CHANNELS}
+        title={article ? "Article topics" : "Social topics"}
+      />
 
-      <SlateTab />
-
-      <ReallocationSection defaultYear={DEFAULT_YEAR} defaultQuarter={DEFAULT_QUARTER} />
+      {!article && <ReallocationSection defaultYear={DEFAULT_YEAR} defaultQuarter={DEFAULT_QUARTER} />}
     </div>
   );
 }
-
-// ---------------------------------------------------------------- trip reallocation (round 6)
 
 function ReallocationSection({ defaultYear, defaultQuarter }: { defaultYear: number; defaultQuarter: number }) {
   const nextQuarter = defaultQuarter === 4 ? 1 : defaultQuarter + 1;

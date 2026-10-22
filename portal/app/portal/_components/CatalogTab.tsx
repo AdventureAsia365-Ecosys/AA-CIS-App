@@ -361,7 +361,7 @@ function CatalogInner() {
           <span style={{ fontSize: 12, color: T.amber }}>
             Showing versions for: <strong>{visible[0]?.aa_name ?? "this tour"}</strong>
           </span>
-          <Link href="/portal/t4-pool" style={{ fontSize: 12, color: T.amber, fontWeight: 600, textDecoration: "none" }}>
+          <Link href="/portal/tours/mine" style={{ fontSize: 12, color: T.amber, fontWeight: 600, textDecoration: "none" }}>
             Clear filter ×
           </Link>
         </div>

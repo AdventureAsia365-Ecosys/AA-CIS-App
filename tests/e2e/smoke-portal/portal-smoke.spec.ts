@@ -3,7 +3,7 @@
 // portal became its own app). For each page, logged in as the test tenant (storage state from
 // auth.setup.ts), the shared runPageCheck asserts: OK navigation, no failing same-origin /api/ call,
 // no console error, not blank. The portal adds a 390px no-sideways-scroll check and screenshots at
-// 1440 and 390 (light; the portal stays light).
+// 1440 and 390, light and dark (AA-759: the portal follows the theme now).
 //
 // "Not blank": pages built on the kit show a DataTable row or the kit empty state; the others pass
 // on their page title (`main :is(h1, h2)`; every portal page renders one). Data errors on those pages
@@ -24,20 +24,23 @@ ensurePortalResultsDir();
 // Page title: PageHeader renders an h1; the older tabs (Brand Identity, Social Content, Marketplace) an h2.
 const RENDERED = 'main :is(h1, h2)';
 
-// Add a page = add one line here (the portal Sidebar + the deep-link-only pages).
+// Add a page = add one line here (the portal nav + the deep-link-only pages). AA-759: new paths, no
+// T-number slugs (the old ones answer 308 — aa885-portal-host.spec.ts checks each).
 const PORTAL_PAGES: PageSpec[] = [
   { id: 'dashboard', label: 'Dashboard', path: '/portal/dashboard', readySelector: RENDERED },
-  { id: 't1-rewrite', label: 'Browse Tours', path: '/portal/t1-rewrite', readySelector: RENDERED },
-  { id: 't4-pool', label: 'My Catalog Tours', path: '/portal/t4-pool', readySelector: RENDERED },
-  { id: 't0-brand', label: 'Brand Identity', path: '/portal/t0-brand', readySelector: RENDERED },
-  { id: 't7-planning', label: 'Social Content', path: '/portal/t7-planning', readySelector: RENDERED },
-  { id: 't10-review', label: 'My Content', path: '/portal/t10-review', readySelector: RENDERED },
-  { id: 't11-publish', label: 'Publish', path: '/portal/t11-publish', readySelector: RENDERED },
-  { id: 'marketplace', label: 'Marketplace', path: '/portal/marketplace', readySelector: RENDERED },
-  { id: 'api', label: 'API Access', path: '/portal/api', readySelector: RENDERED },
-  { id: 'activity', label: 'Activity Log', path: '/portal/activity', readySelector: RENDERED },
-  { id: 'billing', label: 'Billing', path: '/portal/billing', readySelector: RENDERED },
-  { id: 'settings', label: 'Settings', path: '/portal/settings', readySelector: RENDERED },
+  { id: 'tours', label: 'Browse Tours', path: '/portal/tours', readySelector: RENDERED },
+  { id: 'tours-mine', label: 'My Tours', path: '/portal/tours/mine', readySelector: RENDERED },
+  { id: 'tours-marketplace', label: 'Marketplace', path: '/portal/tours/marketplace', readySelector: RENDERED },
+  { id: 'brand', label: 'Brand Identity', path: '/portal/brand', readySelector: RENDERED },
+  { id: 'create-social', label: 'Social Posts', path: '/portal/create/social', readySelector: RENDERED },
+  { id: 'create-article', label: 'Articles', path: '/portal/create/article', readySelector: RENDERED },
+  { id: 'content', label: 'My Content', path: '/portal/content', readySelector: RENDERED },
+  { id: 'content-publish', label: 'Publish', path: '/portal/content/publish', readySelector: RENDERED },
+  { id: 'account-billing', label: 'Billing', path: '/portal/account/billing', readySelector: RENDERED },
+  { id: 'account-activity', label: 'Activity', path: '/portal/account/activity', readySelector: RENDERED },
+  { id: 'account-settings', label: 'Team & Settings', path: '/portal/account/settings', readySelector: RENDERED },
+  { id: 'account-api', label: 'API', path: '/portal/account/api', readySelector: RENDERED },
+  { id: 'account-integrations', label: 'Integrations', path: '/portal/account/integrations', readySelector: RENDERED },
   { id: 'help-facebook', label: 'Connect your Facebook Page', path: '/portal/help/facebook', readySelector: RENDERED },
 ];
 
@@ -69,10 +72,8 @@ test.describe('UI smoke — portal pages', () => {
       const crumb = page.getByTestId('topbar-breadcrumb');
       const title = page.getByTestId('topbar-breadcrumb-title');
       await expect(title).toHaveText('Connect your Facebook Page', { timeout: 15000 });
-      // The title is already in the SSR HTML, but the portal shell only switches to its mobile
-      // layout (hamburger, 16px padding, no search box) after hydration, when its matchMedia
-      // effect sets narrow=true. Wait for the hamburger so we measure the 390px layout, not the
-      // desktop one squeezed into 390px.
+      // AA-759 — the shell's phone layout is CSS now (no hydration switch); waiting for the
+      // hamburger still guards against measuring before the styles applied.
       await expect(page.getByRole('button', { name: 'Open menu' })).toBeVisible({ timeout: 15000 });
 
       const m = await page.evaluate(() => {

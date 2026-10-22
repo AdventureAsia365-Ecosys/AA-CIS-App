@@ -278,7 +278,7 @@ export default function BrandTab() {
 
         {/* Active version indicator */}
         {data?.configured && data?.version && (
-          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", marginBottom: 22, background: "#F0FDF4", border: "1px solid #86EFAC", borderRadius: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", marginBottom: 22, background: "var(--aa-green-bg2)", border: "1px solid var(--aa-green-border)", borderRadius: 8 }}>
             <span style={{ width: 8, height: 8, borderRadius: "50%", background: T.green, flexShrink: 0 }} />
             <span style={{ fontSize: 12.5, color: T.green, fontWeight: 600 }}>Active — Version {data.version}</span>
             {data.updated_at && <span style={{ fontSize: 11, color: T.muted, marginLeft: "auto" }}>Last updated {fmtDate(data.updated_at)}</span>}
@@ -287,7 +287,7 @@ export default function BrandTab() {
 
         {/* Viewing old version banner */}
         {viewingV !== null && (
-          <div style={{ padding: "10px 14px", marginBottom: 18, background: T.amberSoft, border: `1px solid #F1DDB4`, borderRadius: 8, display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ padding: "10px 14px", marginBottom: 18, background: T.amberSoft, border: `1px solid ${T.goldSoft}`, borderRadius: 8, display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ fontSize: 13, color: T.amber }}>Viewing v{viewingV} — unsaved changes</span>
             <button onClick={() => { load(); setViewingV(null); }} style={{ marginLeft: "auto", fontSize: 12, color: T.amber, background: "none", border: "none", cursor: "pointer", fontFamily: sans, fontWeight: 600 }}>← Back to active</button>
           </div>
@@ -392,7 +392,7 @@ export default function BrandTab() {
         </div>
 
         {briefNotes.length > 0 && (
-          <div role="status" style={{ padding: "12px 14px", marginBottom: 16, background: T.amberSoft, border: "1px solid #F1DDB4", borderRadius: 8 }}>
+          <div role="status" style={{ padding: "12px 14px", marginBottom: 16, background: T.amberSoft, border: `1px solid ${T.goldSoft}`, borderRadius: 8 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: T.amber, marginBottom: 6 }}>Check before saving</div>
             <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: T.body, lineHeight: 1.6 }}>
               {briefNotes.map(n => <li key={n}>{n}</li>)}
@@ -426,7 +426,7 @@ export default function BrandTab() {
           </div>
           <div style={{ padding: 14, maxHeight: "70vh", overflowY: "auto" }}>
             {data.history.map(h => (
-              <div key={h.version} style={{ borderRadius: 8, marginBottom: 10, background: h.is_active ? "#F0FDF4" : T.bg, border: `1px solid ${h.is_active ? "#86EFAC" : T.line}`, overflow: "hidden" }}>
+              <div key={h.version} style={{ borderRadius: 8, marginBottom: 10, background: h.is_active ? "var(--aa-green-bg2)" : T.bg, border: `1px solid ${h.is_active ? "var(--aa-green-border)" : T.line}`, overflow: "hidden" }}>
                 <div style={{ padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div>
                     <span style={{ fontSize: 14, fontWeight: 700, color: h.is_active ? T.green : T.ink }}>v{h.version}</span>

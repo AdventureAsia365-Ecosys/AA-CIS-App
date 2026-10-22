@@ -4,12 +4,12 @@
 //
 // AA-564 Nhóm 4.2 (2026-09-08) — extracted out of AngleGateTab.tsx (which is now a thin wrapper,
 // see that file) so SlateTab.tsx can render this SAME wizard embedded inline under a Subject row
-// (accordion, one row expanded at a time) instead of only as the standalone /portal/t8-angle-gate
+// (accordion, one row expanded at a time) instead of only as the standalone /portal/create/write
 // page. Two behavior differences from the original, both gated on `embedded`:
 //   - `requestId` is a prop instead of read from useSearchParams() directly (the standalone page
 //     wrapper still reads the query param — see AngleGateTab.tsx — and passes it down).
 //   - `reset()` ("Start over") called `onReset?.()` to collapse the row instead of
-//     `router.push("/portal/t8-angle-gate")` when embedded (AA-668 removed both: the Writer panel
+//     `router.push("/portal/create/write")` when embedded (AA-668 removed both: the Writer panel
 //     has no "Start over", closing the panel is the way out).
 // Everything else (the full state machine, every fetch call, every card) is unchanged from the
 // pre-4.2 AngleGateTab.tsx — this is a mechanical extraction, not a rewrite.
@@ -36,7 +36,7 @@
 //
 // Full workflow:
 //   1. Slate (SlateTab.tsx) picks a Subject -> creates the request (subject_id + channel already
-//      set) -> either navigates to /portal/t8-angle-gate?resume_request_id= (standalone) or, as
+//      set) -> either navigates to /portal/create/write?resume_request_id= (standalone) or, as
 //      of AA-564 4.2, expands this wizard inline under the Subject row (embedded).
 //   2. Tenant picks a Goal from the 8-value list.
 //   3. Backend auto-applies fixed brand audience + formula, generates 3 angles, recommends one.
@@ -198,7 +198,7 @@ function AngleRankingBadges({ angle, paaTotal }: { angle: AngleOption; paaTotal:
       </span>
       <span
         title={angle.violations.join("; ") || "No avoid-list phrases matched"}
-        style={{ fontSize: 11.5, fontFamily: sans, color: n > 0 ? "#8A5A16" : T.muted }}
+        style={{ fontSize: 11.5, fontFamily: sans, color: n > 0 ? T.goldDeep : T.muted }}
       >
         {n > 0 ? `⚠ ${n} avoid-list hit${n === 1 ? "" : "s"}` : "0 avoid-list violations"}
       </span>
@@ -252,7 +252,7 @@ function WriteDonePopup({ onClose, onOpenInMyContent }: {
       onClick={onClose}
     >
       <div
-        style={{ background: "#fff", borderRadius: 12, padding: "28px 26px", maxWidth: 360, width: "90%", boxShadow: "0 12px 40px rgba(0,0,0,0.25)", textAlign: "center", fontFamily: sans }}
+        style={{ background: T.card, borderRadius: 12, padding: "28px 26px", maxWidth: 360, width: "90%", boxShadow: "0 12px 40px rgba(0,0,0,0.25)", textAlign: "center", fontFamily: sans }}
         onClick={e => e.stopPropagation()}
       >
         <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
@@ -564,7 +564,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
     setPiece(null); setWriteError(null); setNeedsCtaInput(false); setCtaInput("");
     setPollTimedOut(false); setReopenError(null); setShowDonePopup(false); setWriteCtaWarning(null);
     resolvedWriteStepFor.current = null;
-    router.push("/portal/t8-angle-gate");
+    router.push("/portal/create/write");
   }, [req, stopPolling, router]);
 
   if (initialLoading) return <LoadingScreen message="Loading…" />;
@@ -612,7 +612,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
           <CardHead title="Pick a Subject to start" />
           <EmptyState icon={<Compass size={32} strokeWidth={1.5} color={T.gold} />} title="Nothing to write yet"
             sub="Every new piece starts from a Subject you pick in Social Content now." // AA-576 (was "Write Content always starts from there now" — stale after that nav item was removed)
-            action={<Btn variant="primary" onClick={() => router.push("/portal/t7-planning")}>Go to Social Content</Btn>} />
+            action={<Btn variant="primary" onClick={() => router.push("/portal/create/social")}>Go to Social Content</Btn>} />
         </Card>
       )}
 
@@ -632,7 +632,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
                     textAlign: "left", padding: "10px 14px", borderRadius: 8,
                     cursor: generating ? "default" : "pointer", minWidth: 0,
                     border: `1px solid ${on ? T.gold : T.line}`, borderWidth: on ? 2 : 1,
-                    background: on ? T.goldTint : "#fff", fontFamily: sans,
+                    background: on ? T.goldTint : T.card, fontFamily: sans,
                   }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: T.ink }}>{g.name}</div>
                   <div style={{ fontSize: 11.5, color: T.muted, marginTop: 2, lineHeight: 1.45 }}>{g.description}</div>
@@ -673,7 +673,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
                     textAlign: "left", width: "100%", boxSizing: "border-box",
                     padding: "14px 16px", borderRadius: 10, position: "relative", fontFamily: sans,
                     border: `1px solid ${a.chosen ? T.green : a.recommended ? T.goldSoft : T.line}`,
-                    background: a.chosen ? T.greenSoft : a.recommended ? T.goldTint : "#fff",
+                    background: a.chosen ? T.greenSoft : a.recommended ? T.goldTint : T.card,
                   }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
                     <span style={{ fontFamily: serif, fontSize: 15, fontWeight: 600, color: T.ink }}>{a.name}</span>
@@ -765,14 +765,14 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
               <div style={{ fontSize: 12.5, color: T.body, lineHeight: 1.5 }}>
                 This piece needs a call to action before it can be written — what should the
                 reader do next?{" "}
-                <Link href="/portal/t0-brand" style={{ color: T.gold, fontWeight: 600 }}>
+                <Link href="/portal/brand" style={{ color: T.gold, fontWeight: 600 }}>
                   Set a default call to action in Brand Identity
                 </Link>{" "}
                 so you aren&rsquo;t asked again.
               </div>
               <input value={ctaInput} onChange={e => setCtaInput(e.target.value)}
                 placeholder="e.g. Book a consultation, Read the full guide…"
-                style={{ padding: "9px 12px", background: "#fff", border: `1px solid ${T.line}`, borderRadius: 8, color: T.body, fontSize: 13, fontFamily: sans }} />
+                style={{ padding: "9px 12px", background: T.card, border: `1px solid ${T.line}`, borderRadius: 8, color: T.body, fontSize: 13, fontFamily: sans }} />
               <CtaReviewNotice warning={liveCtaWarning} />
               <div>
                 <Btn variant="primary" disabled={!ctaInput.trim()}
@@ -814,7 +814,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
               <CheckCircle2 size={14} color={T.green} />
               Content ready.{" "}
               <a
-                onClick={() => router.push(`/portal/t10-review?piece=${piece.piece_id}`)}
+                onClick={() => router.push(`/portal/content?piece=${piece.piece_id}`)}
                 style={{ color: T.gold, fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}
               >
                 View, edit, or export it in My Content
@@ -827,7 +827,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
       {showDonePopup && piece && (
         <WriteDonePopup
           onClose={() => setShowDonePopup(false)}
-          onOpenInMyContent={() => router.push(`/portal/t10-review?piece=${piece.piece_id}`)}
+          onOpenInMyContent={() => router.push(`/portal/content?piece=${piece.piece_id}`)}
         />
       )}
     </div>
