@@ -45,10 +45,11 @@ Errors are :class:`StaffAuthError` with the HTTP status to answer: 401 bad token
 ``last_login_at`` is bookkeeping: a failed write is logged (``staff_identity_touch_failed``) and never turns a
 successful sign-in into an error.
 
-``LEGACY_ADMIN_LOGIN_ENABLED`` (default true, :func:`legacy_login_enabled`) gates only the HS256 path of
-``/auth/verify-admin`` (decision D3); ``/auth/admin-login`` and ``/auth/booking-token`` stay for Booking.
-Only an explicit ``0``/``false``/``no``/``off`` switches it off, so a typo or empty value keeps the rollback
-path open.
+``LEGACY_ADMIN_LOGIN_ENABLED`` (:func:`legacy_login_enabled`) gates only the HS256 path of ``/auth/verify-admin``
+(decision D3); ``/auth/admin-login`` and ``/auth/booking-token`` stay for Booking (they never call it). **AA-816 S2:
+off by default on the API.** Only an explicit ``1``/``true``/``yes``/``on`` turns the HS256 path back on (the
+rollback: that value on the api task definition, or a revert); unset, empty or a typo keeps it off (fail closed).
+The BFF parses the same name the same way (``frontend/lib/staffSession.ts``).
 """
 from __future__ import annotations
 
@@ -72,7 +73,8 @@ AUTH_LEGACY = "legacy"
 AUTH_OTHER = "other"          # a JWT with an iss that is not the WORKFORCE issuer (token_kind only)
 AUTH_MALFORMED = "malformed"
 
-_LEGACY_OFF_VALUES = frozenset({"0", "false", "no", "off"})
+# AA-816 S2: the legacy HS256 session path is off unless one of these is set explicitly (rollback only).
+_LEGACY_ON_VALUES = frozenset({"1", "true", "yes", "on"})
 
 # AA-911 D-1: the role of every session from the Preview-only client (staff_authz.READ_ONLY_ROLES), like the C9
 # Preview credential (api/core/staff_credential.PREVIEW_ROLE).
@@ -140,11 +142,11 @@ class StaffIdentity:
 
 def legacy_login_enabled() -> bool:
     """D3: the legacy CIS password session (HS256 path of /auth/verify-admin; the UI login reads the same
-    name in the BFF and must parse it the same way). Default true; only an explicit 0/false/no/off turns it
-    off, so unset, empty or a typo keeps the rollback path. Read per call so a task-definition change needs
-    no code change."""
+    name in the BFF and must parse it the same way). AA-816 S2: default OFF; only an explicit 1/true/yes/on
+    (case and spaces ignored) turns it back on, so unset, empty or a typo keeps HS256 sessions refused. Read per
+    call so a task-definition change is the whole rollback (no code change)."""
     value = os.environ.get("LEGACY_ADMIN_LOGIN_ENABLED", "").strip().lower()
-    return value not in _LEGACY_OFF_VALUES
+    return value in _LEGACY_ON_VALUES
 
 
 def token_kind(token: Any) -> str:

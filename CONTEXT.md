@@ -645,8 +645,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   mobile 390, light + dark) upload as an artifact (the public run also uploads the HTML report; the signed-in run
   never does: a `fill` step would name the code) and link from one PR comment each. Secret:
   `VERCEL_AUTOMATION_BYPASS_SECRET` (preview SSO bypass), sent only to the BASE_URL origin (origin-scoped route),
-  never to a third-party host. The `E2E_ADMIN_*` password secrets are no longer passed (the smoke setup keeps a
-  legacy password mode for local runs until S2). The admin suite also checks that the old portal URLs answer 308
+  never to a third-party host. The `E2E_ADMIN_*` password secrets are no longer passed, and since S2 the smoke setup
+  has no password mode (locally, run `--project=smoke-public`; agents have no mailbox access). The admin suite also checks that the old portal URLs answer 308
   to the portal host (`aa885-portal-redirect.spec.ts`). Not a required check.
 - **Portal UI smoke (AA-885, `.github/workflows/ui-smoke-portal.yml`)**: Playwright project
   `smoke-portal` (`tests/e2e/smoke-portal/`) against a portal preview: host checks without a session
@@ -812,8 +812,8 @@ lives in `shared.staff_app_grant (admin_user_id, app, role)` (`app` = `booking`,
   cognito-breakglass}`, `app/api/auth/refresh`) runs authorization code + PKCE (state + nonce in the 5-minute
   `cis_oauth_tx` cookie) with a confidential client. Redirect URIs come from a fixed allow-list
   (`aa-cis.lumiguides.it.com`, localhost in development; a Vercel preview build only the fixed Preview host,
-  below); any other host (a per-deployment `*.vercel.app` preview URL) gets `cognito_host` and only the password
-  form. Domain, issuer and client ids are code constants with `COGNITO_*` env overrides; the two production client
+  below); any other host (a per-deployment `*.vercel.app` preview URL) gets `cognito_host` and no sign-in at all (the
+  password form is off since AA-816 S2). Domain, issuer and client ids are code constants with `COGNITO_*` env overrides; the two production client
   secrets are set in Vercel (Production only), the Preview-only client secret on the Preview target only.
 - Cookies: `cis_admin_token` holds the Cognito **access** token (15 min; the cookie lives for the refresh window
   so `proxy.ts` can see it expired), `cis_staff_rt` the refresh token (httpOnly, `path=/api/auth`, 12 h,
@@ -862,13 +862,18 @@ AA-Booking) + `api/core/identity_config.py` (CIS surface) + `api/core/staff_iden
   `details.auth = preview`. The Vercel Preview BFF holds this value; the main `ADMIN_SECRET` stays with the
   Production BFF (legacy sessions), the CI deploy gate/smoke and the ops-probe Lambda.
 
-**Legacy password login (until the cutover).** `/auth/admin-login` (HS256 JWT signed with `JWT_SECRET`) stays.
-`LEGACY_ADMIN_LOGIN_ENABLED` (default on; only `0` / `false` / `no` / `off` switch it off, same parsing in the
-API and the BFF) gates **only** the CIS UI password form + BFF `/api/auth/login` (404 when off) and the HS256
-path of `/auth/verify-admin`. `/auth/admin-login` and `/auth/booking-token` stay on for AA-Booking until its
-Phase 2. Per-deployment preview URLs (`*.vercel.app`, not Cognito callbacks) still need the flag on for the
-legacy viewer smoke; the fixed Preview host `aa-cis-preview.lumiguides.it.com` (below) never offers the password
-form (`/login` hides it, BFF `/api/auth/login` answers 404 there).
+**Legacy password login (off since AA-816 S2, kept as the rollback).** `/auth/admin-login` (HS256 JWT signed with
+`JWT_SECRET`) still answers. `LEGACY_ADMIN_LOGIN_ENABLED` gates **only** the CIS UI password form + BFF
+`/api/auth/login` (404 when off) and the HS256 path of `/auth/verify-admin` (401 "Password sessions are switched
+off; sign in again" when off). **Since S2 it is off by default in both the API and the BFF**: only an explicit
+`1` / `true` / `yes` / `on` (case and spaces ignored, same parsing in `api/core/staff_identity.py` and
+`frontend/lib/staffSession.ts`, a test keeps the two lists equal) turns it back on; unset, empty or a typo keeps it
+off. The deployed API task definition does not set it, so every HS256 staff session is refused on every host,
+Preview included; staff sign in with Cognito only. Rollback: revert the S2 commit, or set the flag on the api task
+definition (AA-CIS-Infra, hand edit) and on the Vercel target. `/auth/admin-login` and `/auth/booking-token` are not
+gated and never call `/auth/verify-admin`: AA-Booking's legacy staff path (admin-login → booking-token) keeps working
+until the bridge is retired (AA-911 P6b). The fixed Preview host `aa-cis-preview.lumiguides.it.com` (below) never
+offers the password form (`/login` hides it, BFF `/api/auth/login` answers 404 there).
 
 **Preview staff sign-in (AA-911 D-1, AA-816 P6a, root ADR 0006a A11).** `aa-cis-preview.lumiguides.it.com` is a
 Vercel domain of `aa-cis-frontend` and the only callback / sign-out URL of the Preview-only WORKFORCE client
@@ -890,7 +895,7 @@ cap holds only while the Vercel Preview `ADMIN_SECRET` is the C9 Preview credent
 the main secret with a forged `x-admin-role` would pass on a path without a Bearer. Preview builds send
 `X-Robots-Tag: noindex, nofollow`. Every BFF route that attaches `X-Admin-Secret` calls `requireAdmin()` first
 (audited 21/10/2026). UI smoke keeps the per-deployment URL. Runbook: root
-`docs/ops/runbooks/preview-staff-sign-in.md`. For an HS256 session
+`docs/ops/runbooks/preview-staff-sign-in.md`. For an HS256 session (rollback only, since S2)
 `/auth/verify-admin` re-reads `shared.admin_users` (cached 60 s), so a deactivation or demotion lands within
 ~6 min (BFF verify cache 5 min + 60 s). Cutover preconditions (ADR 0006): every active row has an email and a
 `cognito_sub` from that person's own sign-in, managed-login break-glass tested; the secret check is
@@ -1074,7 +1079,8 @@ fetched about once a day.
 | AA-Booking token `POST /auth/booking-token` | ✓ | ✓ | ✓ | 403 | — |
 | `/api/tenant/*`, `/api/tenant/me`, `/api/playground/proxy` — **portal app** BFF, tenant JWT only | — | — | — | — | ✓ |
 
-**Read-only `viewer` (AA-878).** The role behind the UI-smoke E2E account (`e2e-claude-code-viewer`, a legacy
+**Read-only `viewer` (AA-878).** The role of every Preview-host Cognito session (AA-911 D-1) and, until AA-816 S2,
+of the UI-smoke E2E account (`e2e-claude-code-viewer`, a legacy
 password row; password only in Secrets Manager `aa-cis/dev/e2e-test-viewer`; created in S242 with the legacy
 row script, retired at AA-816 D1 — a password change for a legacy test row is now a reviewed DB Migrate
 `run-script`). Capabilities `content.read` only. It is refused on
