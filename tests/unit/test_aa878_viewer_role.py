@@ -206,9 +206,11 @@ def _viewer_row():
             "display_name": None}
 
 
-def test_verify_admin_accepts_a_viewer(pool_client):
+def test_verify_admin_accepts_a_viewer(pool_client, monkeypatch):
     from api.routers.auth import _create_admin_jwt
 
+    # AA-816 S2: the legacy HS256 path is the rollback only (off by default); this covers it when switched on.
+    monkeypatch.setenv("LEGACY_ADMIN_LOGIN_ENABLED", "true")
     c = pool_client(_viewer_row())
     token = _create_admin_jwt(ADMIN_ID, "e2e-claude-code-viewer", VIEWER)
     res = c.post("/auth/verify-admin", json={"token": token})

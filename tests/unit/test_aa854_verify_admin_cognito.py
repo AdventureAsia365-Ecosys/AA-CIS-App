@@ -2,10 +2,10 @@
 
 The path is chosen by the unverified `iss`: Cognito tokens go through the C2 verifier and
 api/core/staff_identity.py, legacy HS256 tokens (no `iss`) keep the old path behind
-LEGACY_ADMIN_LOGIN_ENABLED (default true). Covers: role from the highest cis-* group, booking-only groups
-403, inactive / unknown 401, first sign-in binds by email exactly once, role drift logged (not denied),
-last_login_at, the (iss, sub) cache, refused clients / token kinds, 503 when the verifier, the JWKS or the
-directory is unavailable, and the legacy flag.
+LEGACY_ADMIN_LOGIN_ENABLED (default OFF since AA-816 S2; on only when set explicitly). Covers: role from the
+highest cis-* group, booking-only groups 403, inactive / unknown 401, first sign-in binds by email exactly
+once, role drift logged (not denied), last_login_at, the (iss, sub) cache, refused clients / token kinds, 503
+when the verifier, the JWKS or the directory is unavailable, and the legacy flag.
 """
 from __future__ import annotations
 
@@ -226,7 +226,18 @@ def legacy(issuer):
     app.dependency_overrides.pop(get_pool, None)
 
 
-def test_legacy_token_unchanged_by_default_and_reports_auth_legacy(legacy):
+def test_legacy_token_refused_by_default_since_s2(legacy):
+    """AA-816 S2: with the flag unset, an HS256 staff session is refused (fail closed)."""
+    uid = legacy.add(role="admin", email=None, display_name=None, username="u-admin")
+    res = _verify(TestClient(app), _create_admin_jwt(uid, "u-admin", "admin"))
+    assert res.status_code == 401
+    assert res.json()["detail"] == "Password sessions are switched off; sign in again"
+
+
+@pytest.mark.parametrize("value", ["true", "1", "yes", "on", "TRUE", " On "])
+def test_legacy_flag_explicitly_on_accepts_hs256_and_reports_auth_legacy(legacy, monkeypatch, value):
+    """The rollback: an explicit on value brings the HS256 path back unchanged."""
+    monkeypatch.setenv("LEGACY_ADMIN_LOGIN_ENABLED", value)
     uid = legacy.add(role="content", email=None, display_name=None, username="u-content")
     res = _verify(TestClient(app), _create_admin_jwt(uid, "u-content", "content"))
     assert res.status_code == 200, res.text
@@ -234,9 +245,13 @@ def test_legacy_token_unchanged_by_default_and_reports_auth_legacy(legacy):
                           "email": None, "display_name": None, "auth": "legacy"}
 
 
-@pytest.mark.parametrize("value", ["false", "0", "no", "off"])
+@pytest.mark.parametrize("value", [None, "false", "0", "no", "off", "", "  ", "ture", "enabled"])
 def test_legacy_flag_off_refuses_hs256_but_not_cognito(legacy, issuer, monkeypatch, value):
-    monkeypatch.setenv("LEGACY_ADMIN_LOGIN_ENABLED", value)
+    """Unset, an explicit off value, empty or a typo: HS256 refused (S2 fail closed); Cognito unaffected."""
+    if value is None:
+        monkeypatch.delenv("LEGACY_ADMIN_LOGIN_ENABLED", raising=False)
+    else:
+        monkeypatch.setenv("LEGACY_ADMIN_LOGIN_ENABLED", value)
     uid = legacy.add(role="admin")
     client = TestClient(app)
     res = _verify(client, _create_admin_jwt(uid, "staff-1", "admin"))
@@ -247,14 +262,6 @@ def test_legacy_flag_off_refuses_hs256_but_not_cognito(legacy, issuer, monkeypat
     directory.add(iss=ISS, sub=SUB)
     app.dependency_overrides[get_pool] = lambda: directory
     assert _verify(client, issuer.token()).status_code == 200
-
-
-@pytest.mark.parametrize("value", ["true", "1", "yes", "TRUE", "", "  ", "on", "ture", "enabled"])
-def test_legacy_flag_stays_on_unless_explicitly_off(legacy, monkeypatch, value):
-    """Only 0/false/no/off switch the rollback path off; empty or a typo keeps it (review finding 4)."""
-    monkeypatch.setenv("LEGACY_ADMIN_LOGIN_ENABLED", value)
-    uid = legacy.add(role="admin")
-    assert _verify(TestClient(app), _create_admin_jwt(uid, "staff-1", "admin")).status_code == 200
 
 
 def test_token_kind_picks_the_path_by_iss():

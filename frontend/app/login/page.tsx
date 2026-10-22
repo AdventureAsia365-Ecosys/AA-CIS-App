@@ -1,7 +1,7 @@
 // frontend/app/login/page.tsx
 // AA-816 (C4) — staff login page. A server component so it can read two server-only facts and pass
 // them to the client form:
-//   - LEGACY_ADMIN_LOGIN_ENABLED (default on): whether the username/password form is shown at all;
+//   - LEGACY_ADMIN_LOGIN_ENABLED (default OFF since AA-816 S2): whether the username/password form is shown at all;
 //   - whether Cognito sign-in works on THIS host: only allowlisted hosts (production, localhost in
 //     development) have registered callback URLs, and the client secret must be configured. On a
 //     Vercel preview the company-email button is shown disabled with a note. AA-911: the fixed Preview host

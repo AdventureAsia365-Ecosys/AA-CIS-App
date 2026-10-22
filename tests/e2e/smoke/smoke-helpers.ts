@@ -15,9 +15,10 @@ export const SMOKE_RESULTS_DIR = 'tests/e2e/results/smoke';
 export const AUTH_DIR = 'tests/e2e/.auth';
 export const ADMIN_STATE = path.join(AUTH_DIR, 'admin-state.json');
 export const TENANT_STATE = path.join(AUTH_DIR, 'tenant-state.json');
-// AA-878 — the staff role the smoke account logged in with, as the server answered the login (POST
-// /api/auth/login → { role }, the DB role). Written by auth.setup.ts next to the storage state (same
-// lifetime: deleted by the workflow, never uploaded). Read at RUN time (setup runs after test collection).
+// AA-878 — the staff role of the smoke session, as the server verified it (since AA-816 S2: the cis_role cookie the
+// BFF writes from the /auth/verify-admin answer at the end of the Cognito sign-in). Written by auth.setup.ts next to
+// the storage state (same lifetime: deleted by the workflow, never uploaded). Read at RUN time (setup runs after
+// test collection).
 export const ROLE_FILE = path.join(AUTH_DIR, 'admin-role.json');
 
 /** The smoke account's role ('admin' unless the setup recorded another). */

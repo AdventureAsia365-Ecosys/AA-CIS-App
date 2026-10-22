@@ -50,7 +50,10 @@ def pool():
 
 
 @pytest.fixture
-def client(pool):
+def client(pool, monkeypatch):
+    # AA-816 S2: the HS256 path of /auth/verify-admin is off by default; these tests cover its rollback behaviour
+    # (LEGACY_ADMIN_LOGIN_ENABLED=true on the api task definition). The default is covered in test_aa816_s2_*.
+    monkeypatch.setenv("LEGACY_ADMIN_LOGIN_ENABLED", "true")
     return TestClient(app)
 
 
