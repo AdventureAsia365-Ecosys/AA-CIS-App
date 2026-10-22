@@ -183,6 +183,7 @@ def _publish_pool(*fetchrow_returns, fetchval):
     pool.acquire = MagicMock(return_value=ctx)
     req = MagicMock()
     req.app.state.pool = pool
+    req.app.state.redis.get = AsyncMock(return_value="false")  # S241 D-12: explicit OFF (AA-859 wave 3 PUBLISH_FLAG)
     return req, conn
 
 

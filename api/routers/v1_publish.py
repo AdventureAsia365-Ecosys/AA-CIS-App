@@ -53,7 +53,7 @@ from botocore.exceptions import ClientError
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from api.core.aa544_tenant_pool import (
-    PUBLISH_LOG_LIST_FLAG, STAGE1_PUBLISH_PENDING_FLAG, UNPUBLISH_FLAG, acquire_scoped_conn,
+    PUBLISH_FLAG, PUBLISH_LOG_LIST_FLAG, STAGE1_PUBLISH_PENDING_FLAG, UNPUBLISH_FLAG, acquire_scoped_conn,
 )
 from api.routers.v1_integrations import is_tombstoned_secret, reconnect_detail
 from api.routers.v1_tours import get_tenant
@@ -431,6 +431,67 @@ async def _call_adapter(channel: str, creds: dict, piece, key: str) -> tuple:
     return str(result.post_id), result.post_url
 
 
+# AA-859 wave 3: POST /v1/publish-log/{piece_id}/publish on the tenant pool behind PUBLISH_FLAG (fail closed).
+# Three short blocks, never one held across Secrets Manager or the channel's HTTP call: (1) the piece and its
+# channel's connection (content_piece / angle_gate_request / angle_gate_option 229 + 241, tenant_integrations 237);
+# (2) claim() (publish_log 229; its own transaction becomes a savepoint inside the scoped one, so a concurrent
+# claim's UniqueViolation still rolls back only the claim); (3) finish(). The daily-limit override is read on MAIN
+# before the claim and the audit row written on MAIN after finish() (plan D2). Flag off: the same statements on
+# the admin pool. SQL in module constants so tests can forget the tenant condition.
+_PUBLISH_PIECE_TENANT_COND = "cp.tenant_id = $2::uuid"
+_PUBLISH_PIECE_SQL = """
+            SELECT cp.piece_id, cp.content_text, cp.status, cp.slug, cp.seo_title, cp.meta_description,
+                   COALESCE(cp.channel, agr.channel) AS channel, ago.name AS angle_name,
+                   EXISTS (SELECT 1 FROM acp_shared.content_piece newer
+                           WHERE newer.angle_gate_request_id = cp.angle_gate_request_id
+                             AND newer.tenant_id = cp.tenant_id
+                             AND newer.created_at > cp.created_at) AS superseded
+            FROM acp_shared.content_piece cp
+            JOIN acp_shared.angle_gate_request agr ON agr.request_id = cp.angle_gate_request_id
+            LEFT JOIN acp_shared.angle_gate_option ago
+                ON ago.option_id = cp.angle_gate_option_id
+                OR (cp.angle_gate_option_id IS NULL AND ago.request_id = agr.request_id
+                    AND ago.chosen = true)
+            WHERE cp.piece_id = $1::uuid AND {tenant_cond}
+            """
+_PUBLISH_INTEGRATION_SQL = ("SELECT secret_key FROM shared.tenant_integrations "
+                            "WHERE tenant_id = $1::uuid AND integration_type = $2")
+
+
+def _publishable_channel(piece) -> str:
+    """The checks between reading the piece and its connection: raises the route's 404 / 422 / 409, returns the
+    piece's channel."""
+    if not piece:
+        raise HTTPException(status_code=404, detail="Content piece not found")
+    # AA-613 — publish gate under the 3-tier severity model: only 'approved' pieces publish.
+    # A warn-only piece (off-brand voice / framework miss) already finalized as 'approved', so it
+    # publishes fine. A 'held' piece = unresolved product-truth after ≤2 retries (grounding,
+    # banned, missing CTA, FACT_CHECK, cannibalization) — it is fully visible to the tenant in My
+    # Content and editable, but must NOT be published until the tenant edits it (which re-opens it
+    # for a fresh write) or an admin clears it. 422 (not 404) here because the tenant DOES own this
+    # piece and the reason is actionable — no existence leak (ownership already confirmed above).
+    # AA-770 (S233) — the tenant always receives the content: a 'held' piece (a gate verdict, now
+    # an admin-only quality label) publishes like an approved one. Only a piece with no content
+    # yet ('processing') or a failed write is refused.
+    if piece["status"] not in ("approved", "held"):
+        raise HTTPException(
+            status_code=422,
+            detail="This piece isn't written yet — try again once it shows as Ready.",
+        )
+    # AA-802 (S238) — only a request's latest piece is publishable (the /pending rule above). An
+    # older version (earlier attempt, a re-write after a reopen) is refused even when the caller
+    # still holds its piece_id from a stale page. 409: the tenant owns it, a newer version exists.
+    if piece.get("superseded"):
+        raise HTTPException(
+            status_code=409,
+            detail="A newer version of this content exists — reload and publish that one.",
+        )
+    channel = piece["channel"]
+    if channel not in _SUPPORTED_CHANNELS:
+        raise HTTPException(status_code=404, detail=f"Publishing to '{channel}' is not yet supported")
+    return channel
+
+
 @router.post("/{piece_id}/publish")
 async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
     """AA-458 — the real publish endpoint. No AA pre-gate (ADR-2026-038 §0.2, same principle
@@ -460,61 +521,14 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
     pool = request.app.state.pool
     tenant_id = tenant["sub"]
 
-    async with pool.acquire() as conn:
-        piece = await conn.fetchrow(
-            """
-            SELECT cp.piece_id, cp.content_text, cp.status, cp.slug, cp.seo_title, cp.meta_description,
-                   COALESCE(cp.channel, agr.channel) AS channel, ago.name AS angle_name,
-                   EXISTS (SELECT 1 FROM acp_shared.content_piece newer
-                           WHERE newer.angle_gate_request_id = cp.angle_gate_request_id
-                             AND newer.tenant_id = cp.tenant_id
-                             AND newer.created_at > cp.created_at) AS superseded
-            FROM acp_shared.content_piece cp
-            JOIN acp_shared.angle_gate_request agr ON agr.request_id = cp.angle_gate_request_id
-            LEFT JOIN acp_shared.angle_gate_option ago
-                ON ago.option_id = cp.angle_gate_option_id
-                OR (cp.angle_gate_option_id IS NULL AND ago.request_id = agr.request_id
-                    AND ago.chosen = true)
-            WHERE cp.piece_id = $1::uuid AND cp.tenant_id = $2::uuid
-            """,
-            piece_id, tenant_id,
-        )
-
-    if not piece:
-        raise HTTPException(status_code=404, detail="Content piece not found")
-    # AA-613 — publish gate under the 3-tier severity model: only 'approved' pieces publish.
-    # A warn-only piece (off-brand voice / framework miss) already finalized as 'approved', so it
-    # publishes fine. A 'held' piece = unresolved product-truth after ≤2 retries (grounding,
-    # banned, missing CTA, FACT_CHECK, cannibalization) — it is fully visible to the tenant in My
-    # Content and editable, but must NOT be published until the tenant edits it (which re-opens it
-    # for a fresh write) or an admin clears it. 422 (not 404) here because the tenant DOES own this
-    # piece and the reason is actionable — no existence leak (ownership already confirmed above).
-    # AA-770 (S233) — the tenant always receives the content: a 'held' piece (a gate verdict, now
-    # an admin-only quality label) publishes like an approved one. Only a piece with no content
-    # yet ('processing') or a failed write is refused.
-    if piece["status"] not in ("approved", "held"):
-        raise HTTPException(
-            status_code=422,
-            detail="This piece isn't written yet — try again once it shows as Ready.",
-        )
-    # AA-802 (S238) — only a request's latest piece is publishable (the /pending rule above). An
-    # older version (earlier attempt, a re-write after a reopen) is refused even when the caller
-    # still holds its piece_id from a stale page. 409: the tenant owns it, a newer version exists.
-    if piece.get("superseded"):
-        raise HTTPException(
-            status_code=409,
-            detail="A newer version of this content exists — reload and publish that one.",
-        )
-    channel = piece["channel"]
-    if channel not in _SUPPORTED_CHANNELS:
-        raise HTTPException(status_code=404, detail=f"Publishing to '{channel}' is not yet supported")
-
-    async with pool.acquire() as conn:
-        integ = await conn.fetchrow(
-            "SELECT secret_key FROM shared.tenant_integrations "
-            "WHERE tenant_id = $1::uuid AND integration_type = $2",
-            tenant_id, _INTEGRATION_TYPE[channel],
-        )
+    # 1. the caller's piece (ownership + approval in one query; 404 covers "not yours" and "not found") and its
+    #    channel's connection
+    async with acquire_scoped_conn(request, tenant_id, PUBLISH_FLAG, fail_closed=True) as (conn, used_tenant_pool):
+        logger.info("aa859_publish", piece_id=str(piece_id), tenant_id=tenant_id, used_tenant_pool=used_tenant_pool)
+        piece = await conn.fetchrow(_PUBLISH_PIECE_SQL.format(tenant_cond=_PUBLISH_PIECE_TENANT_COND),
+                                    piece_id, tenant_id)
+        channel = _publishable_channel(piece)
+        integ = await conn.fetchrow(_PUBLISH_INTEGRATION_SQL, tenant_id, _INTEGRATION_TYPE[channel])
 
     if not integ or not integ["secret_key"]:
         raise HTTPException(status_code=422, detail=f"Connect {_connect_action_verb(channel)} to publish")
@@ -529,9 +543,13 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
         raise HTTPException(status_code=422, detail=reconnect_detail(_connect_action_verb(channel)))
 
     key = publish_key(piece_id, channel, piece["content_text"])
+    # AA-819 — the override read runs before claim()'s transaction (a missing column must not abort it).
+    # AA-859 MAIN exception (plan D2): shared.tenants has no RLS and no aa_app_user grant; one lookup keyed on the
+    # JWT `sub`, on the admin pool, before the tenant block.
     async with pool.acquire() as conn:
-        # AA-819 — the override read runs before claim()'s transaction (a missing column must not abort it)
         limit = await daily_limit.effective_limit(conn, tenant_id)
+    # 2. claim (a savepoint inside the scoped transaction on the tenant pool)
+    async with acquire_scoped_conn(request, tenant_id, PUBLISH_FLAG, fail_closed=True) as (conn, _):
         claimed = await claim(conn, piece_id=piece_id, tenant_id=tenant_id, channel=channel, key=key,
                               daily_limit=limit)
 
@@ -572,17 +590,19 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
         external_url = None
         error_msg = str(exc)[:500]
 
-    async with pool.acquire() as conn:
+    # 3. record the outcome (no connection was held across the remote call)
+    async with acquire_scoped_conn(request, tenant_id, PUBLISH_FLAG, fail_closed=True) as (conn, used_for_finish):
         row = await finish(conn, publish_id=claimed.publish_id, tenant_id=tenant_id, success=success,
                            external_id=external_id, external_url=external_url, error=error_msg)
 
     logger.info("channel_publish", tenant_id=tenant_id, piece_id=str(piece_id), channel=channel,
-                success=success, external_id=external_id, error=error_msg)
+                success=success, external_id=external_id, error=error_msg, used_tenant_pool=used_for_finish)
 
     # AA-613 — audit every publish attempt so admin monitor can count publishes per tenant/
     # channel/time (publish_log already records the row; this is the tenant-activity feed's own
     # semantic event, same as export's CONTENT_EXPORTED). Best-effort — a lost audit row must
     # never turn a real successful publish into an error the tenant sees.
+    # AA-859 MAIN exception: audit_log has no RLS and no aa_app_user grant; written after the tenant blocks.
     try:
         await write_audit_log(
             pool, tenant_id=str(tenant_id), actor=f"tenant:{tenant_id}",

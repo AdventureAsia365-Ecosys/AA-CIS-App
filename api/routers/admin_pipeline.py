@@ -15,6 +15,7 @@ import asyncpg
 import boto3 as _boto3
 import structlog
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, UploadFile
+from api.core.aa544_tenant_pool import BRAND_IDENTITY_FLAG, acquire_scoped_conn
 from api.core.error_ref import log_exception_ref, public_error
 from api.core.staff_authz import staff_policy_if_staff
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -4761,6 +4762,84 @@ def _resolve_brand_tenant_id(
     return _AA_INTERNAL_TENANT_ID
 
 
+def _brand_caller_is_tenant(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_brand_identity_bearer),
+) -> bool:
+    """AA-859 wave 3: True when the caller presented a Bearer. Any Bearer that is not a valid tenant token is
+    refused by _resolve_brand_tenant_id (401 / 403) in the same request, so True means "a verified tenant".
+    The handlers compare with `is True`: a direct call (tests, other code) passes nothing and gets this
+    function's Depends default, which is not True, so it keeps the staff / main-pool path."""
+    return credentials is not None
+
+
+# ── AA-859 wave 3: the tenant branch of /admin/brand-identity on the tenant pool (BRAND_IDENTITY_FLAG) ───────
+# A tenant Bearer runs GET / POST in one acquire_scoped_conn block, fail closed: aa_app_user reads and writes only
+# its own tenant_brand_rules / tenant_seo_config rows (CIS 262 RLS; grants SELECT, INSERT on the POST's columns,
+# UPDATE (is_active); seo config SELECT, INSERT / UPDATE (target_market, updated_at)). The POST takes an advisory
+# xact lock per tenant before MAX(version) + 1 (two-int form, class 859 as W6), so two saves cannot compute the
+# same version; a duplicate anyway (UNIQUE (tenant_id, brand_name, version), e.g. a concurrent staff save on MAIN)
+# is a 409, never a 500. Flag off: the admin pool and the pre-AA-859 statements. The X-Admin-Secret staff branch
+# (AA master brand) reads no flag and stays on the admin pool (plan D2). check_saved_cta -> notify_admins runs on
+# MAIN after the transaction (D2: platform notifications, best-effort). One `aa859_brand_identity route=get|post
+# used_tenant_pool=...` line per tenant request. SQL in module constants so tests can mutate the tenant condition.
+AA859_BRAND_LOCK_CLASS = 859
+BRAND_VERSION_CONFLICT_DETAIL = ("version_conflict: another save of this brand identity landed at the same time, "
+                                 "reload and retry")
+_BRAND_TENANT_COND = "tenant_id = $1"
+_BRAND_COLS = (
+    "system_prompt, style_guide, forbidden_words, version, updated_at, created_at, "
+    "COALESCE(brand_name, '') AS brand_name, COALESCE(brand_type, '') AS brand_type, "
+    "COALESCE(core_idea, '') AS core_idea, COALESCE(customer_segment, '') AS customer_segment, "
+    "COALESCE(customer_mindset, '') AS customer_mindset, "
+    "COALESCE(voice_examples, '[]'::jsonb) AS voice_examples, "
+    "COALESCE(good_examples, '') AS good_examples, "
+    "COALESCE(target_markets, ARRAY[]::text[]) AS target_markets, "
+    "COALESCE(default_cta, '') AS default_cta"
+)
+_BRAND_ACTIVE_SQL = f"""
+            SELECT {_BRAND_COLS}
+            FROM shared.tenant_brand_rules
+            WHERE {{tenant_cond}} AND is_active = true
+            ORDER BY version DESC LIMIT 1
+        """
+_BRAND_HISTORY_SQL = f"""
+            SELECT {_BRAND_COLS}, is_active
+            FROM shared.tenant_brand_rules WHERE {{tenant_cond}} ORDER BY version DESC
+        """
+_BRAND_LOCK_SQL = "SELECT pg_advisory_xact_lock($1::int, hashtext($2::text || ':brand_identity'))"
+_BRAND_MAX_VERSION_SQL = """
+            SELECT COALESCE(MAX(version), 0) FROM shared.tenant_brand_rules WHERE tenant_id = $1
+        """
+_BRAND_DEACTIVATE_SQL = "UPDATE shared.tenant_brand_rules SET is_active = false WHERE tenant_id = $1"
+_BRAND_INSERT_SQL = """
+            INSERT INTO shared.tenant_brand_rules
+                (tenant_id, system_prompt, style_guide, forbidden_words, version, is_active,
+                 updated_at, brand_name, brand_type, core_idea, customer_segment,
+                 customer_mindset, voice_examples, good_examples, target_markets, default_cta)
+            VALUES ($1, $2, $3, $4::jsonb, $5, true, NOW(), $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14)
+        """
+_BRAND_MARKETS_UPSERT_SQL = """
+                INSERT INTO shared.tenant_seo_config (tenant_id, target_market)
+                VALUES ($1::uuid, $2::jsonb)
+                ON CONFLICT (tenant_id) DO UPDATE
+                    SET target_market = EXCLUDED.target_market, updated_at = now()
+            """
+
+
+def _log_brand_identity(route: str, tenant_id, used_tenant_pool: bool, **extra) -> None:
+    logger.info("aa859_brand_identity", route=route, tenant_id=str(tenant_id), used_tenant_pool=used_tenant_pool,
+                **extra)
+
+
+async def _read_brand_rows(conn, tenant_id):
+    """(active row or None, history rows): the GET's two reads on `conn`; no history read without a row."""
+    row = await conn.fetchrow(_BRAND_ACTIVE_SQL.format(tenant_cond=_BRAND_TENANT_COND), tenant_id)
+    if not row:
+        return None, []
+    history_rows = await conn.fetch(_BRAND_HISTORY_SQL.format(tenant_cond=_BRAND_TENANT_COND), tenant_id)
+    return row, history_rows
+
+
 def _parse_brand_list(v):
     """Shared by GET /brand-identity and history rows — `voice_examples`/`target_markets` can
     come back as a JSON string (no jsonb codec on this connection) or already a list/None."""
@@ -4778,39 +4857,31 @@ def _parse_brand_list(v):
 
 @router.get("/brand-identity")
 async def get_brand_identity(
-    request: Request, tenant_id: str = Depends(_resolve_brand_tenant_id)
+    request: Request, tenant_id: str = Depends(_resolve_brand_tenant_id),
+    tenant_caller: bool = Depends(_brand_caller_is_tenant),
 ):
-    # AA-557 J.23 — full field set (see BrandIdentityUpdate's own comment for why).
-    _BRAND_COLS = (
-        "system_prompt, style_guide, forbidden_words, version, updated_at, created_at, "
-        "COALESCE(brand_name, '') AS brand_name, COALESCE(brand_type, '') AS brand_type, "
-        "COALESCE(core_idea, '') AS core_idea, COALESCE(customer_segment, '') AS customer_segment, "
-        "COALESCE(customer_mindset, '') AS customer_mindset, "
-        "COALESCE(voice_examples, '[]'::jsonb) AS voice_examples, "
-        "COALESCE(good_examples, '') AS good_examples, "
-        "COALESCE(target_markets, ARRAY[]::text[]) AS target_markets, "
-        "COALESCE(default_cta, '') AS default_cta"
-    )
-    pool = request.app.state.pool
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(f"""
-            SELECT {_BRAND_COLS}
-            FROM shared.tenant_brand_rules
-            WHERE tenant_id = $1 AND is_active = true
-            ORDER BY version DESC LIMIT 1
-        """, tenant_id)
-        if not row:
-            return {
-                "configured": False, "system_prompt": None, "style_guide": None,
-                "forbidden_words": [], "history": [], "brand_name": "", "brand_type": "",
-                "core_idea": "", "customer_segment": "", "customer_mindset": "",
-                "tone_of_voice": [], "good_examples": "", "target_markets": [],
-                "default_cta": "",
-            }
-        history_rows = await conn.fetch(f"""
-            SELECT {_BRAND_COLS}, is_active
-            FROM shared.tenant_brand_rules WHERE tenant_id = $1 ORDER BY version DESC
-        """, tenant_id)
+    # AA-557 J.23 — full field set (see BrandIdentityUpdate's own comment for why). Columns: _BRAND_COLS.
+    if tenant_caller is True:
+        # AA-859 wave 3: the tenant's own rows on the tenant pool (262 RLS) behind BRAND_IDENTITY_FLAG.
+        async with acquire_scoped_conn(
+            request, tenant_id, BRAND_IDENTITY_FLAG, fail_closed=True,
+        ) as (conn, used_tenant_pool):
+            row, history_rows = await _read_brand_rows(conn, tenant_id)
+        _log_brand_identity("get", tenant_id, used_tenant_pool, configured=row is not None)
+    else:
+        # AA-859 MAIN exception (plan D2): the X-Admin-Secret staff branch (AA master brand) is outside the
+        # tenant boundary.
+        pool = request.app.state.pool
+        async with pool.acquire() as conn:
+            row, history_rows = await _read_brand_rows(conn, tenant_id)
+    if not row:
+        return {
+            "configured": False, "system_prompt": None, "style_guide": None,
+            "forbidden_words": [], "history": [], "brand_name": "", "brand_type": "",
+            "core_idea": "", "customer_segment": "", "customer_mindset": "",
+            "tone_of_voice": [], "good_examples": "", "target_markets": [],
+            "default_cta": "",
+        }
 
     def parse_fw(fw):
         return _parse_brand_list(fw)
@@ -4852,6 +4923,7 @@ async def update_brand_identity(
     body: BrandIdentityUpdate,
     request: Request,
     tenant_id: str = Depends(_resolve_brand_tenant_id),
+    tenant_caller: bool = Depends(_brand_caller_is_tenant),
 ):
     import json as _json
     # AA-487: a direct prompt-injection surface (the DOCX brand-brief Lambda was retired in
@@ -4886,56 +4958,79 @@ async def update_brand_identity(
     market_json = target_market_json(target_markets)
 
     pool = request.app.state.pool
-    async with pool.acquire() as conn, conn.transaction():
-        # NOT scoped by brand_name — this tenant-facing endpoint keeps its pre-existing invariant
-        # (AA-424: exactly one active row per tenant_id at a time, regardless of brand_name) so a
-        # tenant editing their own brand_name mid-flow can't leave 2 simultaneously-active rows
-        # behind for GET to pick between non-deterministically. The admin-only `/admin/brands`
-        # CRUD (BrandCreateRequest, above) is the one genuinely multi-brand-per-tenant path.
-        current = await conn.fetchval("""
-            SELECT COALESCE(MAX(version), 0) FROM shared.tenant_brand_rules WHERE tenant_id = $1
-        """, tenant_id)
-        await conn.execute(
-            "UPDATE shared.tenant_brand_rules SET is_active = false WHERE tenant_id = $1", tenant_id
-        )
-        # AA-424 live-verify fix: brand_name is NOT NULL (migration 044) but this INSERT never
-        # set it -- 500s (NotNullViolationError) on every call, for every tenant, not just the
-        # ones this issue targets. Pre-existing bug, not introduced by this issue's auth rewire
-        # (found because this is the first time POST got exercised end-to-end against a real
-        # tenant_id here). 'default' matches the sentinel this same file already uses elsewhere
-        # for the single-brand-per-tenant case (_resolve_brand_rule, admin_pipeline.py:328).
-        # Positional order kept: ($1 tenant_id, $2 system_prompt, $3 style_guide, $4
-        # forbidden_words, $5 version) — tests/unit/test_aa487_brand_identity_sanitize.py asserts
-        # these exact `conn.execute.call_args` positions; new J.23 fields are appended after
-        # rather than interleaved, so that pre-existing sanitization contract stays byte-stable.
-        await conn.execute("""
-            INSERT INTO shared.tenant_brand_rules
-                (tenant_id, system_prompt, style_guide, forbidden_words, version, is_active,
-                 updated_at, brand_name, brand_type, core_idea, customer_segment,
-                 customer_mindset, voice_examples, good_examples, target_markets, default_cta)
-            VALUES ($1, $2, $3, $4::jsonb, $5, true, NOW(), $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14)
-        """, tenant_id, system_prompt, style_guide, _json.dumps(forbidden_words), current + 1,
-            brand_name, brand_type, core_idea, customer_segment, customer_mindset,
-            _json.dumps(tone_of_voice), good_examples, target_markets, default_cta)
-        if tenant_id != _AA_INTERNAL_TENANT_ID:
-            # aa_internal's markets stay owned by PATCH /admin/settings/seo (admin research).
-            await conn.execute("""
-                INSERT INTO shared.tenant_seo_config (tenant_id, target_market)
-                VALUES ($1::uuid, $2::jsonb)
-                ON CONFLICT (tenant_id) DO UPDATE
-                    SET target_market = EXCLUDED.target_market, updated_at = now()
-            """, tenant_id, _json.dumps(market_json))
+    args = (system_prompt, style_guide, _json.dumps(forbidden_words), brand_name, brand_type, core_idea,
+            customer_segment, customer_mindset, _json.dumps(tone_of_voice), good_examples, target_markets,
+            default_cta, _json.dumps(market_json))
+    if tenant_caller is True:
+        # AA-859 wave 3: one transaction on the tenant pool (262 RLS + grants) behind BRAND_IDENTITY_FLAG.
+        async with acquire_scoped_conn(
+            request, tenant_id, BRAND_IDENTITY_FLAG, fail_closed=True,
+        ) as (conn, used_tenant_pool):
+            _log_brand_identity("post", tenant_id, used_tenant_pool)
+            if used_tenant_pool:   # already inside acquire_scoped_conn's transaction
+                current = await _save_brand_rows(conn, tenant_id, *args, guarded=True)
+            else:                  # flag off: the admin pool, one transaction as before
+                async with conn.transaction():
+                    current = await _save_brand_rows(conn, tenant_id, *args, guarded=False)
+    else:
+        # AA-859 MAIN exception (plan D2): the X-Admin-Secret staff branch (AA master brand).
+        async with pool.acquire() as conn, conn.transaction():
+            current = await _save_brand_rows(conn, tenant_id, *args, guarded=False)
     out = {"status": "updated", "version": current + 1,
            "markets": {k: market_json[k] for k in ("countries", "unsupported", "unknown")}}
     # AA-819 follow-up (S237): a default CTA that claims reviews or ratings is saved as typed (F19
     # exempts the tenant's CTA line); the portal shows a warning and AA admins get one bell row.
     # aa_internal is AA's own brand (staff path), so it only gets the warning.
+    # AA-859 MAIN exception (plan D2): notify_admins writes platform notifications, after the tenant transaction.
     from services.acp_shared.cta_review_notice import WHERE_BRAND_DEFAULT, check_saved_cta
     warning = await check_saved_cta(pool, tenant_id, default_cta, WHERE_BRAND_DEFAULT,
                                     notify=tenant_id != _AA_INTERNAL_TENANT_ID)
     if warning:
         out["cta_warning"] = warning
     return out
+
+
+async def _save_brand_rows(conn, tenant_id, system_prompt, style_guide, forbidden_words_json, brand_name,
+                           brand_type, core_idea, customer_segment, customer_mindset, voice_examples_json,
+                           good_examples, target_markets, default_cta, market_json, *, guarded: bool) -> int:
+    """The POST's statements on `conn`, inside the caller's transaction; returns the previous MAX(version).
+    guarded=True (tenant pool): advisory lock first, a duplicate version is a 409. guarded=False (admin pool):
+    the pre-AA-859 statements, unchanged."""
+    if guarded:
+        await conn.execute(_BRAND_LOCK_SQL, AA859_BRAND_LOCK_CLASS, str(tenant_id))
+    # NOT scoped by brand_name — this tenant-facing endpoint keeps its pre-existing invariant
+    # (AA-424: exactly one active row per tenant_id at a time, regardless of brand_name) so a
+    # tenant editing their own brand_name mid-flow can't leave 2 simultaneously-active rows
+    # behind for GET to pick between non-deterministically. The admin-only `/admin/brands`
+    # CRUD (BrandCreateRequest, above) is the one genuinely multi-brand-per-tenant path.
+    current = await conn.fetchval(_BRAND_MAX_VERSION_SQL, tenant_id)
+    await conn.execute(_BRAND_DEACTIVATE_SQL, tenant_id)
+    # AA-424 live-verify fix: brand_name is NOT NULL (migration 044) but this INSERT never
+    # set it -- 500s (NotNullViolationError) on every call, for every tenant, not just the
+    # ones this issue targets. Pre-existing bug, not introduced by this issue's auth rewire
+    # (found because this is the first time POST got exercised end-to-end against a real
+    # tenant_id here). 'default' matches the sentinel this same file already uses elsewhere
+    # for the single-brand-per-tenant case (_resolve_brand_rule, admin_pipeline.py:328).
+    # Positional order kept: ($1 tenant_id, $2 system_prompt, $3 style_guide, $4
+    # forbidden_words, $5 version) — tests/unit/test_aa487_brand_identity_sanitize.py asserts
+    # these exact `conn.execute.call_args` positions; new J.23 fields are appended after
+    # rather than interleaved, so that pre-existing sanitization contract stays byte-stable.
+    insert_args = (tenant_id, system_prompt, style_guide, forbidden_words_json, current + 1,
+                   brand_name, brand_type, core_idea, customer_segment, customer_mindset,
+                   voice_examples_json, good_examples, target_markets, default_cta)
+    if guarded:
+        try:
+            await conn.execute(_BRAND_INSERT_SQL, *insert_args)
+        except asyncpg.UniqueViolationError as exc:
+            logger.warning("aa859_brand_identity_version_conflict", tenant_id=str(tenant_id), version=current + 1)
+            raise HTTPException(status_code=409, detail=BRAND_VERSION_CONFLICT_DETAIL) from exc
+    else:
+        await conn.execute(_BRAND_INSERT_SQL, *insert_args)
+    if tenant_id != _AA_INTERNAL_TENANT_ID:
+        # aa_internal's markets stay owned by PATCH /admin/settings/seo (admin research).
+        # AA-741 (S229): the form's markets are THE tenant markets; synced in the brand row's transaction.
+        await conn.execute(_BRAND_MARKETS_UPSERT_SQL, tenant_id, market_json)
+    return current
 
 
 _BRIEF_PARSE_MAX_BYTES = 5 * 1024 * 1024   # base64 adds ~33%; API Gateway caps a request at 10 MB
