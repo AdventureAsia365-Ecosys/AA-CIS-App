@@ -18,7 +18,7 @@ import {
   type ColumnDef,
   DataTable,
   Drawer,
-  StatusBadge,
+  formatDate,
   ToastProvider,
   useToast,
 } from "@/app/_kit";
@@ -31,12 +31,8 @@ import {
   savePieceText,
   type ReviewItem,
 } from "./reviewListApi";
+import { WORK_STATUS_LABEL, WorkStatusBadge, activePollInterval, pieceWorkStatus } from "./workStatus";
 
-const READY_STATUS: Record<string, string> = {
-  ready: "approved", // kit StatusBadge tone: success
-  in_progress: "running",
-  not_ready: "pending",
-};
 
 function ReviewListInner() {
   const toast = useToast();
@@ -55,7 +51,8 @@ function ReviewListInner() {
     queryFn: fetchReviews,
     refetchInterval: (query) => {
       const rows = query.state.data ?? [];
-      return rows.some((r) => r.ready_state === "in_progress") ? 5000 : false;
+      // AA-760 — shared work-status model: poll while a piece is writing, stop once all settled.
+      return activePollInterval(rows.map(pieceWorkStatus));
     },
   });
 
@@ -170,11 +167,7 @@ function ReviewListInner() {
         id: "status",
         accessorFn: (r) => r.ready_state,
         header: "Status",
-        cell: (c) => {
-          const rs = c.row.original.ready_state;
-          const label = rs === "ready" ? "Ready" : rs === "in_progress" ? "Writing…" : "Not ready";
-          return <StatusBadge status={READY_STATUS[rs] ?? "pending"} label={label} />;
-        },
+        cell: (c) => <WorkStatusBadge status={pieceWorkStatus(c.row.original)} />,
       },
       {
         id: "created",
@@ -182,7 +175,7 @@ function ReviewListInner() {
         header: "Created",
         cell: (c) => (
           <span style={{ color: T.muted, fontSize: 12 }}>
-            {c.row.original.created_at ? new Date(c.row.original.created_at).toLocaleDateString() : "—"}
+            {formatDate(c.row.original.created_at)}
           </span>
         ),
       },
@@ -222,8 +215,8 @@ function ReviewListInner() {
             <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={selectStyle}>
               <option value="all">All statuses</option>
               <option value="ready">Ready</option>
-              <option value="in_progress">Writing…</option>
-              <option value="not_ready">Not ready</option>
+              <option value="in_progress">{WORK_STATUS_LABEL.writing}</option>
+              <option value="not_ready">{WORK_STATUS_LABEL.failed}</option>
             </select>
             {goals.length > 0 && (
               <select value={goalFilter} onChange={(e) => setGoalFilter(e.target.value)} style={selectStyle}>

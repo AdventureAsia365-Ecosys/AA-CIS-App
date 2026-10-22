@@ -5,7 +5,8 @@ of its order (design §4.4, "cả chuỗi, đúng thứ tự sản xuất").
               text, so ``seed_generated_node`` runs exactly the generate post-processing (seo keywords,
               seo_meta fit, itinerary serialise, forbidden strip), then the real validate → judge →
               brand_audit → grounding → flag_fix → revalidate. Stubbed: the judge (pass), the brand audit
-              (from the case), Jev (``grounding.judge_units``, from the case), every model call
+              (from the case; ``brand_audit.pre_audit: true`` adds the real deterministic pre-audit codes),
+              Jev (``grounding.judge_units``, from the case), every model call
               (``LLMClient.generate`` answers ``case["llm_stub"]`` in order and records any call the case
               did not script) and the DB writers (``call_log.record_call``, lessons). No network.
 * ``t9``    — the real ``service.run_write_background(..., pool=MagicMock())`` the way
@@ -159,11 +160,23 @@ def _judge_pass(state: dict) -> dict:
 
 
 def _brand_audit(spec: Optional[dict]):
+    """The brand audit answers from the case (the LLM audit is never called). ``pre_audit: true`` also runs the
+    real deterministic pre-audit (``brand_audit_node.pre_audit_checks`` on the generated content and the tour, with
+    Jev as the case stubs it), adds its codes and derives the status from them the way the production node does
+    (``derive_status``; the case's ``status`` only breaks a tie toward the safer side). AA-803."""
     spec = spec or {}
 
     def node(state: dict) -> dict:
-        return {**state, "brand_audit_status": spec.get("status", "pass"),
-                "brand_audit_codes": list(spec.get("codes") or []),
+        codes = list(spec.get("codes") or [])
+        status = spec.get("status", "pass")
+        if spec.get("pre_audit"):
+            from services.content_generation import brand_audit_node as ba
+
+            pre = ba.pre_audit_checks(state.get("generated") or {}, state.get("tour"))
+            codes = list(dict.fromkeys(codes + pre))
+            status = ba.derive_status(codes, None, status)
+        return {**state, "brand_audit_status": status,
+                "brand_audit_codes": codes,
                 "brand_audit_issues": list(spec.get("issues") or []),
                 "brand_audit_fields": list(spec.get("fields") or [])}
 
@@ -224,6 +237,8 @@ def run_a1(case: dict, fixtures: Optional[dict] = None) -> dict:
         final = graph.build_graph_from_generated().invoke(a1_state(inp))
     observed = (set(final.get("failure_codes") or []) | signal_names(final.get("quality_shadow"))
                 | signal_names(final.get("degraded")))
+    if (inp.get("brand_audit") or {}).get("pre_audit"):
+        observed |= set(final.get("brand_audit_codes") or [])   # the real pre-audit codes (AA-803)
     return {"chain": "a1", "state": final, "generated": final.get("generated") or {},
             "observed": observed, "publishable": bool(_is_publishable(final)),
             "brand_audit_status": final.get("brand_audit_status"), "llm_unexpected": llm.unexpected,

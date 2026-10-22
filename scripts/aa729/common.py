@@ -23,7 +23,12 @@ from typing import Any, Iterable, Optional
 SCHEMA = "aa729-golden-set"
 SCORE_SCHEMA = "aa729-score"
 FIXTURE_VERSION = "1.0.0"
-STAGE = "adhoc_aa729"
+# The llm_call_log / decision_log stage every eval row is written under. AA-780 (S247): a rerun made for
+# another issue sets AA729_STAGE=adhoc_<issue> (e.g. adhoc_aa780) so its spend is traced to that issue; it is
+# inlined into SQL as a literal, so only adhoc_<lowercase/digits/_> is accepted.
+STAGE = os.environ.get("AA729_STAGE") or "adhoc_aa729"
+if not re.fullmatch(r"adhoc_[a-z0-9_]+", STAGE):
+    raise ValueError(f"AA729_STAGE must be adhoc_<issue>, got {STAGE!r}")
 DEFAULT_SEED = 729
 DEFAULT_CAP_USD = 15.0
 S3_PREFIX = "scripts/out/aa729"

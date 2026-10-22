@@ -25,9 +25,16 @@ const KIT_RESTRICTED_SYNTAX = [
 ];
 
 // Already on the kit and clean of all three patterns (moved from the admin list, AA-885).
-const KIT_CLEAN_FILES = [
-  "app/portal/_components/ReviewList.tsx",
-  "app/portal/_components/CatalogTab.tsx",
+// AA-759 — the kit rule now holds the whole portal shell (app/portal/_shell) and every route page
+// to `error`; the remaining legacy _components stay `warn` until AA-760 migrates them. The shell's
+// responsive CSS hooks are `data-pshell` attributes (globals.css), not classNames.
+// AA-760 — every portal file is now held to `error` except the three legacy files that still carry
+// one of the patterns (listed in KIT_LEGACY_FILES; remove a file from that list once it is migrated).
+const KIT_CLEAN_FILES = ["app/portal/**/*.tsx"];
+const KIT_LEGACY_FILES = [
+  "app/portal/_components/PlaceholderTabs.tsx", // plan-contact modal (hand-rolled role="dialog")
+  "app/portal/_components/Skeleton.tsx", // shimmer keyframes via a className
+  "app/portal/_components/SlateTab.tsx", // hidden-scrollbar tab strip via a className
 ];
 
 const eslintConfig = defineConfig([
@@ -50,6 +57,7 @@ const eslintConfig = defineConfig([
 
   {
     files: KIT_CLEAN_FILES,
+    ignores: KIT_LEGACY_FILES,
     rules: {
       "no-restricted-syntax": ["error", ...KIT_RESTRICTED_SYNTAX],
     },

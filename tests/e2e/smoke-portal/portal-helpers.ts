@@ -30,7 +30,7 @@ export function ensurePortalResultsDir(): void {
 
 /**
  * AA-885 / AA-605 — at 390px the portal must not scroll sideways (the sidebar is an off-canvas
- * drawer below 900px). Waits for the shell's mobile layout (the hamburger appears after hydration),
+ * drawer below 900px). Waits for the shell's mobile layout (the hamburger; CSS-driven since AA-759),
  * measures `documentElement.scrollWidth <= innerWidth` and lists the elements that stick out when it
  * fails (lesson S221: measure the offender, do not guess). Restores the desktop viewport after.
  */
@@ -65,17 +65,23 @@ export async function assertPortalNoOverflowAt390(page: Page, label: string): Pr
   await page.setViewportSize({ width: 1440, height: 900 });
 }
 
-/** Portal screenshots: desktop 1440 (full page) + phone 390 (first screen), light only — the
- * portal stays light by design (AA-601 part B). */
+/** Portal screenshots: desktop 1440 (full page) + phone 390 (first screen), in light and dark.
+ * AA-759: the portal follows the theme; with no stored choice it follows `prefers-color-scheme`,
+ * so emulating the colour scheme is enough (the page reloads so the pre-paint restore script runs). */
 export async function portalScreenshots(page: Page, slug: string): Promise<void> {
   ensurePortalResultsDir();
-  for (const vp of [
-    { name: 'desktop', width: 1440, height: 900, fullPage: true },
-    { name: 'mobile', width: 390, height: 844, fullPage: false },
-  ]) {
-    await page.setViewportSize({ width: vp.width, height: vp.height });
-    await page.waitForTimeout(300);
-    await page.screenshot({ path: path.join(PORTAL_RESULTS_DIR, `${slug}-${vp.name}.png`), fullPage: vp.fullPage });
+  for (const scheme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    if (scheme === 'dark') await page.reload({ waitUntil: 'domcontentloaded' });
+    for (const vp of [
+      { name: 'desktop', width: 1440, height: 900, fullPage: true },
+      { name: 'mobile', width: 390, height: 844, fullPage: false },
+    ]) {
+      await page.setViewportSize({ width: vp.width, height: vp.height });
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: path.join(PORTAL_RESULTS_DIR, `${slug}-${vp.name}-${scheme}.png`), fullPage: vp.fullPage });
+    }
   }
+  await page.emulateMedia({ colorScheme: 'light' });
   await page.setViewportSize({ width: 1440, height: 900 });
 }
