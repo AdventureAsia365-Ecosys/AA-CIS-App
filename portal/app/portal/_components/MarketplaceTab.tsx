@@ -25,7 +25,7 @@ import { useMemo } from "react";
 import { AlertTriangle, FolderOpen } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "@/app/_kit";
-import { T, sans, Card, Badge, EmptyState, fmtDuration, fmtUsd } from "./ui";
+import { T, sans, Card, Badge, CtaLink, EmptyState, fmtDuration, fmtUsd } from "./ui";
 import { ListSkeleton } from "./Skeleton";
 import { WorkStatusBadge, tourWorkStatus, type WorkStatus } from "./workStatus";
 import { useCatalog } from "../_shell/useShellData";
@@ -77,18 +77,23 @@ export default function MarketplaceTab() {
     );
   }
 
+  // AA-760 — an empty overview is the empty state alone, with its next step (no "Tours 0" stat above it).
+  const empty = data.tours.length === 0;
   return (
     <div>
-      <div style={{ display: "flex", gap: 22, marginBottom: 22, flexWrap: "wrap" }}>
-        <StatBlock label="Tours" value={data.total_tours} />
-        {data.posts_per_week != null && data.posts_per_week > 0 && (
-          <StatBlock label="Posts planned / week" value={data.posts_per_week} />
-        )}
-      </div>
+      {!empty && (
+        <div style={{ display: "flex", gap: 22, marginBottom: 22, flexWrap: "wrap" }}>
+          <StatBlock label="Tours" value={data.total_tours} />
+          {data.posts_per_week != null && data.posts_per_week > 0 && (
+            <StatBlock label="Posts planned / week" value={data.posts_per_week} />
+          )}
+        </div>
+      )}
 
-      {data.tours.length === 0 ? (
+      {empty ? (
         <EmptyState icon={<FolderOpen size={32} strokeWidth={1.5} color={T.gold} />} title="Nothing here yet"
-          sub="Once you rewrite your first tour from Browse Tours, it shows up here." />
+          sub="Once you rewrite your first tour from Browse Tours, it shows up here."
+          action={<CtaLink href="/portal/tours">Browse tours</CtaLink>} />
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {data.tours.map(t => {

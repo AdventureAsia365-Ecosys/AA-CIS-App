@@ -64,7 +64,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Calendar, ChevronRight, Sparkles, X, Zap, AlertTriangle, ClipboardList, CheckCircle2 } from "lucide-react";
-import { T, serif, sans, mono, Card, CardHead, Badge, Btn, EmptyState, StickyBar } from "./ui";
+import { T, serif, sans, mono, Card, CardHead, Badge, Btn, CtaLink, EmptyState, StickyBar } from "./ui";
 import { ToastProvider } from "@/app/_kit";
 import type { ContentPiece } from "./AngleGateWizard";
 import { WriterPanel, useWriteWatcher, watchPiece, type WriterTarget } from "./WriterPanel";
@@ -403,21 +403,26 @@ function ChannelPanel({ channel, postsPerWeek, onPicked, writer }: {
   const proposed = channel.subjects.filter(s => s.state === "proposed");
   const decided = channel.subjects.filter(s => s.state !== "proposed");
 
+  const never = channel.subjects.length === 0;
   return (
     <div>
-      <div style={{ fontSize: 12, color: T.muted, marginBottom: 14 }}>
-        <strong style={{ color: T.ink, fontFamily: mono }}>{channel.eligible_count}</strong> topic{channel.eligible_count === 1 ? "" : "s"} ready
-        {!channel.on_demand && (
-          <> · plan: <strong style={{ color: T.ink, fontFamily: mono }}>{postsPerWeek}</strong> posts/week</>
-        )}
-        {channel.on_demand && <> · written on demand</>}
-      </div>
+      {/* AA-760 — a Channel that never had a topic shows the empty state alone (no "0 topics ready"). */}
+      {!never && (
+        <div style={{ fontSize: 12, color: T.muted, marginBottom: 14 }}>
+          <strong style={{ color: T.ink, fontFamily: mono }}>{channel.eligible_count}</strong> topic{channel.eligible_count === 1 ? "" : "s"} ready
+          {!channel.on_demand && (
+            <> · plan: <strong style={{ color: T.ink, fontFamily: mono }}>{postsPerWeek}</strong> posts/week</>
+          )}
+          {channel.on_demand && <> · written on demand</>}
+        </div>
+      )}
 
-      {channel.subjects.length === 0 ? (
+      {never ? (
         // Never had any Subject at all. AA-760 — tenant words: no "atomize / rank / bar" (steps the
-        // tenant cannot run), and a way forward they can take.
+        // tenant cannot run), and a way forward they can take (Update topics sits in the bar above).
         <EmptyState icon={<ClipboardList size={32} strokeWidth={1.5} color={T.gold} />} title="Nothing here yet"
-          sub="We add topics here as your tours are written and updated. Rewrite a tour from Browse Tours, or press Update topics." />
+          sub="We add topics here as your tours are written and updated. Rewrite a tour from Browse Tours, or press Update topics."
+          action={<CtaLink href="/portal/tours">Browse tours</CtaLink>} />
       ) : proposed.length === 0 ? (
         // FE audit #3 — DIFFERENT message: this Channel has decided history, just nothing NEW
         // to pick right now. Conflating this with the "never had any Subject" case above was the
