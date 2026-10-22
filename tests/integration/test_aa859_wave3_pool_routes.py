@@ -67,6 +67,22 @@ async def ctx():
     tr = conn.transaction()
     await tr.start()
     try:
+        # Columns the queries read that the CI replay DB lacks, patched inside the rolled-back transaction so this
+        # file does not depend on running after test_aa802 / test_aa815 (which commit their ALTERs):
+        #   - tenant_brand_rules.created_at exists on Dev (db-schema-reference) but no tracked migration adds it
+        #     (001 is skipped in CI); _BRAND_COLS selects it. 262 grants SELECT at table level, so aa_app_user
+        #     reads the added column.
+        #   - content_piece columns from 124 (needs pgvector, absent in CI) that _piece() inserts and the publish
+        #     SQL reads (angle_gate_option_id, channel, slug, seo_title, meta_description, route_*).
+        await conn.execute("ALTER TABLE shared.tenant_brand_rules "
+                           "ADD COLUMN IF NOT EXISTS created_at timestamptz DEFAULT now()")
+        await conn.execute("""
+            ALTER TABLE acp_shared.content_piece
+                ADD COLUMN IF NOT EXISTS angle_gate_option_id uuid, ADD COLUMN IF NOT EXISTS channel text,
+                ADD COLUMN IF NOT EXISTS seo_title text, ADD COLUMN IF NOT EXISTS meta_description text,
+                ADD COLUMN IF NOT EXISTS slug text, ADD COLUMN IF NOT EXISTS route_hub_name text,
+                ADD COLUMN IF NOT EXISTS route_segment_count integer,
+                ADD COLUMN IF NOT EXISTS flags jsonb""")
         a, b, c = await _tenant(conn), await _tenant(conn), await _tenant(conn)
         await _brand(conn, a, 1, False, "a v1")
         await _brand(conn, a, 2, True, "a v2")

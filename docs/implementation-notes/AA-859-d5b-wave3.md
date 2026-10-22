@@ -134,12 +134,37 @@ Flags: `BRAND_IDENTITY_FLAG` = `aa859:brand_identity_pool` (needs 262), `PUBLISH
 - Publish takes one extra MAIN acquire (the limit read moved out of the claim connection) — a few ms.
 
 ### Should know
-- **Order on Dev:** 262 must be applied (DB Migrate check → apply, Infra copy in `db/migrations/cis/`) before the
-  wave-3 deploy, or `aa859:brand_identity_pool` must be `SET false` before the deploy (missing key = ON). Without
-  262 the tenant brand page 500s (42501) with the flag ON. Publish does not depend on 262.
+- **Order on Dev (corrected after review).** "Apply 262 before the deploy" cannot happen with this branch: the Infra
+  Copy Guard (`db/check_migration_copies.py`, flow D8) refuses the Infra copy of 262 until the file is on CIS
+  `main`, and merging this PR (it touches `api/**`) auto-runs Deploy Dev. So the wave-3 code always deploys before
+  262 can be applied, and `aa859:brand_identity_pool` is ON when its key is missing (S241 D-12): in that window the
+  tenant Brand page GET / POST would 500 (42501, no aa_app_user grant). Chosen order (option b, one PR):
+  1. Before merging the CIS PR: `aa859_wave3_flag.py off aa859:brand_identity_pool` (writes the explicit
+     `"false"`; root `.tmp-session/aa859_wave3_flag.py`, S3-mediated ECS exec), then `get` to read it back.
+  2. Merge the CIS PR → Deploy Dev (brand identity tenant branch on the admin pool, as before; publish and D5b ship
+     ON, neither needs 262).
+  3. Preflight `pre` (below) → `gate_262_ready` true.
+  4. Infra PR with the byte-identical copy `db/migrations/cis/262_tenant_brand_seo_rls.sql` → Copy Guard green →
+     merge → DB Migrate `check` → `apply`.
+  5. Preflight `post` → `post_262_ok` true; nightly isolation probe (or a manual run) covers the two tables.
+  6. Flip with `aa859_wave3_flag.py on aa859:brand_identity_pool`, then the flip-verify script.
+  Alternative (option a): split out a migration-only CIS PR (262, `test_aa859_migration_262.py`, the conftest
+  changes, the `test_aa817_rls_tenant_isolation.py` table changes), then Infra copy + apply, then the routes PR.
+  Not taken: it re-cuts a reviewed commit, and option b gives the same safety with one CIS PR.
+- Publish does not depend on 262 (its tables already carry RLS and the grants).
 - **Read-only preflight before the apply:** root `.tmp-session/aa859_262_preflight.py` (S3-mediated ECS exec, runs as
-  cis_app, read-only). Expected: both tables RLS off, owner cis_owner, grantees cis_app only, no policy, no
-  dependent view, invariant 0 rows.
+  cis_app, read-only, `ssl="require"`). Expected: both tables RLS off, owner cis_owner, grantees cis_app only, no
+  policy, no dependent view, invariant 0 rows. `job_busy` counts `shared.job` and `booking.job` (DB Migrate waits on
+  every job table, DM-11.4); cis_app may not read `booking.*`, in which case the booking count is `null`,
+  `booking_job_read_skipped` holds the error and the verdict lists it under `unchecked` (not as busy): DB Migrate's
+  own guard is then the authority for booking.job. The preflight counts every queued / running job; DB Migrate
+  exempts a few kinds, so the preflight can be stricter, never looser.
+- **CI column patches in `test_aa859_wave3_pool_routes.py`** (review fix): the CI replay DB lacks
+  `shared.tenant_brand_rules.created_at` (on Dev, added outside any tracked migration; 001 is skipped in CI) and the
+  migration-124 columns of `acp_shared.content_piece` (pgvector, absent in CI). The fixture adds them inside its
+  rolled-back transaction (same pattern as `test_aa859_piece_edit_pool.py` / `test_aa817_tenant_pool_routes.py`),
+  so the file passes alone and in any order, not only after test_aa802 / test_aa815 commit their ALTERs. 262 grants
+  SELECT on the table, so aa_app_user reads the added column.
 - **Not changed here, on purpose:** `tests/integration/rls_catalogue_rules.py` still allowlists the two tables for
   rule a. After 262 that entry matches nothing (reported as stale, not fatal). Removing it changes a file the Infra
   Copy Guard compares byte for byte, so it is a follow-up once both repos are on 262 (edit here, copy to Infra
