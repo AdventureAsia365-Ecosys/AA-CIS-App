@@ -224,3 +224,21 @@ see that the subject or the asked-for fact is wrong.
   commit), upload `.tmp-session/aa779-fit-eval.run.py`, dry run, `--run` in the CIS api container, download
   `s3://…/scripts/out/s247/aa779-fit-eval-r3.json`, `--score <file>` locally (held-out pairs + labels default to
   `.tmp-session/aa779-heldout/`), write the result and the chosen `FIT_MODE` into ADR 0011.
+
+### Review follow-up (S247, before round 3)
+
+- **Held-out overlap (should-fix, applied).** The build's overlap check compared only `piece_id#n` keys; 5 of the
+  40 held-out questions repeat a checkpoint question word for word (answers differ): "Does Mongolia have any
+  volcanoes?" x2, "Which country is Kuang Si Falls in?", "Why is Kuang Si Falls famous?", "Do I need a visa to
+  visit Laos?". All 5 are unanimous answers (5 of the 31 in the E2-held denominator). The scorer now marks those
+  rows (`checkpoint_question`), adds E1-held-indep / E2-held-indep bars with them left out, and the held-out set
+  passes only when both the full and the independent bars pass; `--build` prints the overlap. ADR 0011 no longer
+  says "no rule was written from" these pieces. Round 2 re-scored with the new bars: E1-held-indep 4/7 FAIL,
+  E2-held-indep 0/26 (the only held-out false flag was the repeated Laos visa question).
+- Nits applied: `FitOutcome.calls` counts only calls started (a queued pair cancelled at the deadline is not
+  counted; new test); the docstring + ADR say a pair still running past the deadline is billed and logged but not
+  in `cost_usd`, and that its non-daemon thread is unbounded across pieces; the eval adds `pair_ns` (the piece's
+  pair numbers for the pairs sent) to the quality signal, so an isolated retry's `pair_n` maps back. Not changed:
+  the metering wrapper counts one `generate()` reply, so a billed-unusable Sonnet attempt inside the LLMClient
+  legacy chain before a Haiku fallback is not seen; variant A is marked invalid on any model mismatch, so this
+  cannot pass a bar, only under-count by one attempt.

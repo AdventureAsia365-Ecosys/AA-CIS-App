@@ -471,6 +471,19 @@ def test_isolated_a_pair_past_the_deadline_is_kept():
     assert out.errors[0]["n"] == 3 and "TimeoutError" in out.errors[0]["error"]
 
 
+def test_isolated_calls_count_only_the_calls_started_before_the_deadline():
+    # one call at a time: pair 1 replies, pair 2 is still running at the deadline, pairs 3-4 are queued and
+    # cancelled, so they are never called and not counted.
+    client = _pair_client(delay={PAIRS[1][0]: 0.5})
+    import time
+    with patch.object(fit, "record_call_sync"):
+        out = fit.check_answer_fit(PAIRS, fit_mode="isolated", client=client, concurrency=1, deadline_s=0.2)
+        time.sleep(0.5)  # let the late call finish while record_call_sync is still patched
+    assert out.calls == 2 and client.generate.call_count == 2
+    assert [e["n"] for e in out.errors] == [2, 3, 4]
+    assert [v["verdict"] for v in out.verdicts] == ["ANSWERS", None, None, None]
+
+
 def test_isolated_calls_see_the_callers_contextvars():
     import contextvars
     var = contextvars.ContextVar("aa779_test_var", default=None)

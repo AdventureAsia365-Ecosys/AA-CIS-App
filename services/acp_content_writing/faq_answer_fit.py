@@ -119,9 +119,10 @@ class FitOutcome:
     verdicts: list = field(default_factory=list)  # [{n, q, verdict, reason}], pair order (isolated: + model;
     #                                               a failed pair: verdict None, + error)
     model: Optional[str] = None
-    cost_usd: float = 0.0
+    cost_usd: float = 0.0   # the replies read before returning; a pair past the deadline whose call still finishes
+    #                         in the background is billed (and writes its own llm_call_log row) but not counted here
     fit_mode: str = FIT_MODE_BATCHED
-    calls: int = 0
+    calls: int = 0          # calls started (isolated: a queued pair cancelled at the deadline is not counted)
     errors: list = field(default_factory=list)    # isolated: [{n, q, error}] for the pairs kept on a failure
 
 
@@ -258,8 +259,10 @@ def _check_isolated(sent: list, *, call: dict, quality_signal: dict, concurrency
         done, _pending = futures_wait(futures, timeout=deadline_s)
     finally:
         # never block on a slow pair past the deadline: queued pairs are cancelled, a running one finishes (and
-        # writes its own row) in the background, its verdict unused.
+        # writes its own row) in the background, its verdict unused. Those threads are not daemons and nothing
+        # bounds them across pieces (at most FIT_CONCURRENCY per piece; the batched to_thread path is the same).
         pool.shutdown(wait=False, cancel_futures=True)
+    started = sum(1 for f in futures if not f.cancelled())
     rows, errors, models, cost = [], [], [], 0.0
     for n, ((q, _a), fut) in enumerate(zip(sent, futures), 1):
         if fut not in done:
@@ -279,7 +282,7 @@ def _check_isolated(sent: list, *, call: dict, quality_signal: dict, concurrency
     if not models:
         raise FitAllPairsFailed(f"no pair got a verdict ({len(errors)} failed): {errors[0]['error']}")
     model = collections.Counter(models).most_common(1)[0][0]
-    return FitOutcome(verdicts=rows, model=model, cost_usd=cost, fit_mode=FIT_MODE_ISOLATED, calls=len(sent),
+    return FitOutcome(verdicts=rows, model=model, cost_usd=cost, fit_mode=FIT_MODE_ISOLATED, calls=started,
                       errors=errors)
 
 

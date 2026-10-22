@@ -168,9 +168,15 @@ route"). The predicted "one part instead of the whole" risk did not show; the to
 The named examples were removed, and the prompt got shorter. Every rule above was written from the in-sample
 failures, so a second in-sample pass is weaker evidence than the first. **The held-out set decides.** The next
 run evaluates both sets in one container run under the same $0.10 cap: the 31 checkpoint pairs, and 40 FAQ pairs
-from 12 older blog pieces that no rule was written from (`.tmp-session/aa779-heldout/heldout.json` in the root
-repo, read-only export, the checkpoint requests excluded; one call per piece as in production). The held-out set
-is labelled by a separate judge panel, and the eval is scored against it separately:
+from 12 older blog pieces outside the checkpoint (`.tmp-session/aa779-heldout/heldout.json` in the root
+repo, read-only export, the checkpoint requests excluded; one call per piece as in production). The set is not
+fully independent of the checkpoint: 5 of its 40 questions repeat a checkpoint question word for word with a
+different answer ("Does Mongolia have any volcanoes?" twice, and "Which country is Kuang Si Falls in?", "Why is
+Kuang Si Falls famous?", "Do I need a visa to visit Laos?" in one Laos piece). All 5 are unanimous answers, and
+the Laos visa question is the false flag the round-2 prompt revision targeted. So the held-out bars are also scored
+with those 5 pairs left out (`-indep`: E1-held-indep over the same 7 non-answers, E2-held-indep over 26 answers),
+and the held-out set passes only when both the full and the independent bars pass. The held-out set is labelled by
+a separate judge panel, and the eval is scored against it separately:
 
 - E1-held: flags at least 80% of the unanimous non-answers (n/a when there is none);
 - E2-held: the false-flag rate on the unanimous answers is at most 5%;
@@ -197,7 +203,8 @@ judges used `partial` and `off_subject`. Fixed: a pair is a unanimous non-answer
 Re-scored (`.tmp-session/aa779-fit-eval-score-r2-rescored.json`): E1-held 4/7 = 57% (FAIL, bar 80%), E2-held 1/31 =
 3.2% (pass), E3-held pass. The model caught both `off_subject` pairs and two of the five `partial` ones; the three
 misses are `partial` for at least two judges and `ANSWERS` for the model. The one held-out false flag is the same
-Laos visa question in another piece, again judged against the falls.
+Laos visa question in another piece, again judged against the falls; it is one of the 5 checkpoint questions, so
+the independent score is E1-held-indep 4/7 (FAIL), E2-held-indep 0/26 (pass).
 
 Known tension for round 3: five of the seven held-out non-answers are `partial` for the judges (the answer stays
 on the subject but leaves out what was asked), while the prompt says "a short, general or partial answer still
@@ -215,7 +222,10 @@ topic and marks a good pair as off-topic. Two ways out, measured in round 3 befo
   concurrently, at most `FIT_CONCURRENCY` (3) at a time, each in a copy of the caller's contextvars. Fail open per
   pair: a pair whose call raises, or that has no reply by `PAIR_DEADLINE_S` (50 s, inside the 60 s step timeout),
   is kept and listed in `pair_errors`; the other pairs still count. Only when no pair gets a verdict is the FAQ
-  unchanged with `fallback: true`.
+  unchanged with `fallback: true`. At the deadline the queued pairs are cancelled (never called, not in `calls`);
+  a pair whose call is still running finishes in the background in a non-daemon thread (at most `FIT_CONCURRENCY`
+  per piece, unbounded across pieces, as the batched `to_thread` call already is): it is billed and writes its own
+  `llm_call_log` row, but its cost is not in the record's `cost_usd`.
 - `batched` on a stronger model: the same single call on the Sonnet tier.
 
 The mode is a module constant, `faq_answer_fit.FIT_MODE`. Until the round-3 result is written here it stays:
@@ -237,7 +247,8 @@ the worst case of every attempt in flight and its own worst case (input at chars
 as output, at the variant's prices) still fit. Finished attempts are counted as in round 2, at the variant's prices.
 A variant whose replies came from another model than its tier (Sonnet falling back to Haiku) is marked invalid.
 Scored per variant and per set against the same bars: in-sample E1 3/3, E2 ≤ 1/25, E3 0 errors; held-out E1-held
-≥ 80% of the unanimous non-answers, E2-held ≤ 5%, E3-held 0 errors; split pairs reported separately.
+≥ 80% of the unanimous non-answers, E2-held ≤ 5%, E3-held 0 errors, and the same E1/E2 bars with the 5
+checkpoint-question pairs left out (`-indep`); split pairs reported separately.
 
 Choosing the production default from the result:
 
