@@ -317,13 +317,13 @@ def test_run_write_background_calls_the_step_after_the_tag_strip_and_before_fina
 
 # ---------------------------------------------------------------- gateway row
 
-def test_safe_default_and_migration_266_agree():
+def test_safe_default_and_migration_267_agree():
     cfg = SAFE_DEFAULTS["t9_faq_answer_fit"]
-    assert (cfg.role, cfg.provider, cfg.model_id, cfg.account_route) == ("validate", "claude", "haiku", "acc3")
+    assert (cfg.role, cfg.provider, cfg.model_id, cfg.account_route) == ("validate", "claude", "sonnet", "acc3")
     assert cfg.fallback_model_ids == () and cfg.shadow_model_id is None
     sql = (Path(__file__).resolve().parents[2] / "api" / "migrations" / "267_t9_faq_answer_fit_stage.sql").read_text()
-    assert ("('t9_faq_answer_fit', 'validate', 'claude', 'haiku', 'acc3', true, ARRAY[]::text[], NULL, 0,\n"
-            "     'migration-266-aa779')") in sql
+    assert ("('t9_faq_answer_fit', 'validate', 'claude', 'sonnet', 'acc3', true, ARRAY[]::text[], NULL, 0,\n"
+            "     'migration-267-aa779')") in sql
     assert "ON CONFLICT (stage) DO NOTHING" in sql and "VALUES ('267'" in sql
 
 
