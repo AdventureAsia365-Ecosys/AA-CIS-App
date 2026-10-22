@@ -562,6 +562,15 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
 - **Backend (ECS)**: shipped via CI; a new task definition rolls out on the `aa-cis-dev-api`
   service. This repo has **branch protection with 5 required CI jobs** — merge PRs with
   `gh pr merge --auto` (auto-merge once checks pass). Agents must not push to `main` directly.
+- **CI gate parity (AA-879)**: `ci.yml` also runs **Frontend Build** and **Portal Build** (`tsc --noEmit` +
+  `next build` of `frontend/` and `portal/`, no secret needed; meant to be required checks next to the 5).
+  The image scan in **Docker Build Check** is blocking: Trivy fails on any fixable CRITICAL/HIGH finding
+  (`ignore-unfixed`); an accepted one goes into `.trivyignore` with a `# reason` line and `exp:YYYY-MM-DD`
+  ≤ 90 days ahead (`.github/scripts/check_trivyignore.py`). **Unit Tests** enforces a coverage ratchet
+  (`.github/coverage-ratchet.json`, `.github/scripts/coverage_ratchet.py`): below `floor` fails, lowering
+  `floor` fails, below the monthly goal (+5 points a month up to `cap`) only warns. `deploy-dev.yml` does
+  not trigger on `frontend/**` (the image has no frontend file). Security headers on previews are checked
+  by the UI smoke specs (`aa876-security-headers.spec.ts`, `aa885-portal-host.spec.ts`).
 - **Public repo, no resource IDs (AA-902)**: the required **Lint** job runs
   `.github/scripts/check_resource_ids.py` over every tracked file and fails on an AWS account ID, an ARN
   with an account, an `<name>-<account>` resource name, a VPC resource ID or an API Gateway host (AWS
@@ -604,7 +613,7 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   `aa-cis/dev/e2e-tenant/<slug>` — re-copy after a key rotation) every portal page with the shared
   `runPageCheck` + a 390 px no-sideways-scroll check, screenshots 1440 + 390, and the host-only cookie check.
   Logged-in tests skip without the key. The preview needs `VERCEL_PORTAL_BYPASS_SECRET` (passed to the
-  helpers as `VERCEL_AUTOMATION_BYPASS_SECRET`). Lint: `portal-lint` CI job (non-required, + `tsc`). e2e specs carry no hardcoded credentials (shared helper
+  helpers as `VERCEL_AUTOMATION_BYPASS_SECRET`). Lint: `portal-lint` CI job (non-required); `tsc` + `next build` in the `portal-build` job (AA-879). e2e specs carry no hardcoded credentials (shared helper
   `tests/e2e/helpers/auth.ts` reads the env). ESLint enforces UI-kit conventions in
   `frontend/eslint.config.mjs` (`frontend-lint` CI job, non-required).
 - **Cognito E2E (AA-816 E1, `.github/workflows/e2e-cognito.yml`)**: `workflow_dispatch` on `main` only,
