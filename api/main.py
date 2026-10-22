@@ -67,12 +67,17 @@ from api.middleware.rate_limit import rate_limit_middleware
 from api.middleware.sentry_context import sentry_context_middleware
 from api.middleware.staff_bearer import StaffBearerMiddleware  # AA-816 C3
 from api.middleware.staff_audit import StaffAuditMiddleware  # AA-884
+from api.middleware.request_id import RequestIdMiddleware, unhandled_error_handler  # AA-871
 from api.core import readiness  # AA-884 — /health git_sha, /health/ready
 from api.core import staff_identity  # AA-816 C3
 from api.core import login_throttle  # AA-876
 from api.core.staff_authz import NO_BOOKING_ROLES  # AA-878
 from api.core.sentry import init_sentry
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
+from shared.log_config import configure_for_process  # AA-871
+
+# AA-871 — JSON lines (structlog + stdlib + uvicorn) with request_id / tenant_id / job ids; skipped under unit tests.
+configure_for_process("cis-api")
 
 logger = structlog.get_logger()
 pool: asyncpg.Pool = None
@@ -301,6 +306,11 @@ app.middleware("http")(rate_limit_middleware)
 app.add_middleware(StaffAuditMiddleware)
 app.add_middleware(StaffBearerMiddleware)
 app.middleware("http")(sentry_context_middleware)
+# AA-871 — registered LAST = outermost user middleware: every response (401/403/429 from the middlewares above
+# included) carries X-Request-ID and every log line of the request carries request_id. The unhandled 500 is
+# answered outside all user middleware, so its handler adds the header itself.
+app.add_exception_handler(Exception, unhandled_error_handler)
+app.add_middleware(RequestIdMiddleware)
 
 def get_pool() -> asyncpg.Pool:
     if not pool:

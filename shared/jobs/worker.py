@@ -192,6 +192,13 @@ class Worker:
 
     # ── one job ───────────────────────────────────────────────────────────────────────────────
     async def _execute(self, job: queue.Job) -> None:
+        # AA-871 — every log line written while this job runs (handler included: its task copies this context)
+        # carries job_id / job_kind. `_execute` runs in its own task (`_fill_slots`), so the binding never reaches
+        # another job; it is cleared when the job ends.
+        with structlog.contextvars.bound_contextvars(job_id=job.id, job_kind=job.kind):
+            await self._execute_job(job)
+
+    async def _execute_job(self, job: queue.Job) -> None:
         kind = kinds().get(job.kind)
         ctx = JobContext(self.pool, job, self.resources)
         log = logger.bind(job_id=job.id, kind=job.kind, attempt=job.attempt)

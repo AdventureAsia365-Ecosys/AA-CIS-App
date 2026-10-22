@@ -10,9 +10,12 @@ for local/dev.
 import asyncio
 
 from shared.jobs.worker import _main
+from shared.log_config import configure_for_process
 from shared.sentry_init import init_sentry
 
 if __name__ == "__main__":
+    # AA-871: JSON log lines (service=cis-worker); each job's lines carry job_id / job_kind.
+    configure_for_process("cis-worker")
     # AA-870: job errors logged at ERROR level reach Sentry (logging integration), tagged service=worker.
     init_sentry(service="worker")
     asyncio.run(_main())

@@ -1,4 +1,5 @@
 import json, time, os, logging, uuid
+import structlog
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from api.routers.auth import verify_jwt
@@ -87,6 +88,10 @@ async def rate_limit_middleware(request: Request, call_next):
 
     tenant_id = payload["sub"]
     plan_tier = payload.get("plan_tier", "starter")
+    # AA-871 — the verified tenant on every log line the route writes (call_next starts the route in a new task that
+    # copies this context). Never outlives the request: this dispatch runs in a per-request task, whose context the
+    # request-id middleware clears at the end.
+    structlog.contextvars.bind_contextvars(tenant_id=str(tenant_id))
 
     # AA-432: revoke + real per-tenant rate limit. tenant_meta is None only when
     # BOTH the Redis cache and the DB are unreachable — fail OPEN in that case
