@@ -36,7 +36,8 @@ import pytest
 sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 from _rls_fixture_helpers import (  # noqa: E402
-    NO_PRIVILEGE_WITHOUT_RLS_SQL, migration_body, migration_path, undo_241_for_239_reapply,
+    NO_PRIVILEGE_WITHOUT_RLS_SQL, NO_PRIVILEGE_WITHOUT_RLS_SQL_V2, migration_body, migration_path,
+    revoke_platform_reads, undo_241_for_239_reapply, undo_265_year_plan,
 )
 
 TENANT_ROLE = "aa_app_user"
@@ -63,11 +64,13 @@ def _connect():
 
 @pytest.fixture
 def cur():
-    """A rolled-back transaction with 241 re-applied."""
+    """A rolled-back transaction with 241 re-applied. AA-859 wave 4: year_plan first back to its pre-265 state
+    (no RLS), the relation without RLS these tests grant on and expect the loop to revoke."""
     conn = _connect()
     conn.autocommit = False
     c = conn.cursor()
     try:
+        undo_265_year_plan(c)
         c.execute(_body())
         yield c
     finally:
@@ -149,6 +152,7 @@ def _to_pre_241(c):
     """Back to Dev's state before 241: angle_gate_option without RLS / policy and with SELECT (239),
     tenant_integrations with SELECT + DELETE only (237), version not registered."""
     undo_241_for_239_reapply(c)
+    revoke_platform_reads(c)   # AA-859 wave 4: the 265 platform reads did not exist before 241
     c.execute(f"GRANT SELECT ON {OPTION} TO {TENANT_ROLE}")
     c.execute(f"REVOKE INSERT, UPDATE ON {INTEGRATIONS} FROM {TENANT_ROLE}")
     c.execute("DELETE FROM shared.schema_versions WHERE version = '241'")
@@ -190,7 +194,8 @@ def test_applied_by_conftest():
         c.execute("SELECT 1 FROM pg_policies WHERE schemaname = 'acp_shared' AND tablename = 'angle_gate_option' "
                   "AND policyname = 'tenant_isolation'")
         assert c.fetchone()
-        c.execute(NO_PRIVILEGE_WITHOUT_RLS_SQL)
+        # the committed DB is past 265: the invariant there is v2 (the platform read allowlist)
+        c.execute(NO_PRIVILEGE_WITHOUT_RLS_SQL_V2)
         assert c.fetchall() == []
         c.execute("SELECT count(*) FROM acp_shared.angle_gate_request WHERE atom_id = 'aa241-guard'")
         assert c.fetchone()[0] == 0

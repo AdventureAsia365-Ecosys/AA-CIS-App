@@ -83,6 +83,9 @@ _NULLIF_OPEN_RE = re.compile(r"NULLIF\s*\(\s*$", re.IGNORECASE)
 TENANT_POOL_ROLES = ("aa_app_user",)
 _CIS_ONLY = "platform table, cis_app only (no tenant-pool grant); tenant_id is filtered in code"
 _GRANDFATHERED_TP = "grandfathered TripPlanner read (owners.yaml consumer_grants), removed by X4"
+# AA-847: the raw_tours (179) and tour_atoms (180) reads are revoked by CIS 254; these entries go stale (reported,
+# not fatal) once 254 is applied, and are removed in a later cleanup.
+_REVOKED_254 = "grandfathered TripPlanner read, revoked by CIS 254 (AA-847)"
 ALLOWLIST: dict[str, dict[str, str]] = {
     "a": {
         "shared.tenants": "the tenant registry itself (tenant_id is its key); cis_app only, no tenant-pool grant",
@@ -95,22 +98,16 @@ ALLOWLIST: dict[str, dict[str, str]] = {
         "shared.jev_tenant_allowlist": f"Jev rollout switch per tenant (admin-managed); {_CIS_ONLY}",
         "shared.notifications": f"staff notifications; {_CIS_ONLY}",
         "shared.acp_runs": f"legacy ACP v1 run table (pre-AA-751); {_CIS_ONLY}",
-        "shared.tenant_brand_rules": f"tenant brand rules, admin + pipeline only; {_CIS_ONLY}",
         "shared.tenant_brand_rule_versions": f"history of tenant brand rules; {_CIS_ONLY}",
         "shared.tenant_brand_rules_deleted_aa404": f"AA-404 backup copy of deleted brand rules; {_CIS_ONLY}",
         "shared.tenant_export_config": f"tenant export settings, admin + pipeline only; {_CIS_ONLY}",
         "shared.tenant_rewrite_usage": f"rewrite quota counter; {_CIS_ONLY}",
-        "shared.tenant_seo_config": f"tenant SEO settings, admin + pipeline only; {_CIS_ONLY}",
         "shared.unmapped_market_requests": f"admin triage list of market requests; {_CIS_ONLY}",
         "acp_contract.route_pick": f"tenant route picks written by the T-pipeline jobs; {_CIS_ONLY}",
-        "acp_deliver.tenant_tour_pages": f"tenant page registry written by the publish job; {_CIS_ONLY}",
         "acp_shared.acp_output_rules": "RLS on with the X1 cis_app parity policy only (CIS 244); no tenant-pool grant",
         "acp_shared.acp_quota_ledger": f"tenant quota ledger; {_CIS_ONLY}",
         "acp_shared.audit_log": f"tenant action audit log; {_CIS_ONLY}",
         "acp_shared.debate_brand_fit_cache": f"pipeline cache keyed by tenant; {_CIS_ONLY}",
-        "acp_shared.quarter_plan": f"tenant content plan, pipeline + admin only; {_CIS_ONLY}",
-        "acp_shared.year_plan": f"tenant content plan, pipeline + admin only; {_CIS_ONLY}",
-        "acp_shared.subject": f"tenant subjects, pipeline + admin only; {_CIS_ONLY}",
         "acp_shared.tenant_atom_state": f"per-tenant atom state, pipeline only; {_CIS_ONLY}",
         "acp_shared.tenant_config": f"tenant settings, admin + pipeline only; {_CIS_ONLY}",
         "silver_aa_internal.raw_sources": f"source registry, admin + pipeline only; {_CIS_ONLY}",
@@ -145,11 +142,11 @@ ALLOWLIST: dict[str, dict[str, str]] = {
         "shared.destinations:tripplanner": f"CIS 201; {_GRANDFATHERED_TP}",
         "shared.v_destination_photos:tripplanner": f"CIS 201; {_GRANDFATHERED_TP}",
         "shared.v_tour_photos:tripplanner": f"CIS 201; {_GRANDFATHERED_TP}",
-        "silver_aa_internal:tripplanner": f"schema USAGE for the raw_tours columns; {_GRANDFATHERED_TP}",
-        "silver_aa_internal.raw_tours.tour_id:tripplanner": f"CIS 179; {_GRANDFATHERED_TP}",
-        "silver_aa_internal.raw_tours.country:tripplanner": f"CIS 179; {_GRANDFATHERED_TP}",
+        "silver_aa_internal:tripplanner": f"schema USAGE for the raw_tours columns; {_REVOKED_254}",
+        "silver_aa_internal.raw_tours.tour_id:tripplanner": f"CIS 179; {_REVOKED_254}",
+        "silver_aa_internal.raw_tours.country:tripplanner": f"CIS 179; {_REVOKED_254}",
         "acp_contract:tripplanner": f"schema USAGE for the atom columns; {_GRANDFATHERED_TP}",
-        "acp_contract.tour_atoms.*:tripplanner": f"column grants, CIS 180; {_GRANDFATHERED_TP}",
+        "acp_contract.tour_atoms.*:tripplanner": f"column grants, CIS 180; {_REVOKED_254}",
         "acp_contract.v_active_tour_atoms.*:tripplanner": f"column grants, CIS 216; {_GRANDFATHERED_TP}",
         "gold_aa_internal:tripplanner": f"schema USAGE for published_tours; {_GRANDFATHERED_TP}",
         "gold_aa_internal.published_tours:tripplanner": f"tenant RLS read; {_GRANDFATHERED_TP}",
@@ -167,7 +164,10 @@ ALLOWLIST: dict[str, dict[str, str]] = {
         "tripplanner:cis_app": "contract: schema USAGE for the CIS ops view (tp-015)",
         "tripplanner.v_ops_traffic_daily:cis_app": "contract: CIS ops dashboard (tp-015)",
     },
-    "t": {},
+    "t": {
+        "acp_contract.tour_atoms:catalog_owner_read": "catalog_owner views read every atom as before (CIS 266); D9 = 0 "
+                                                      "guarded",
+    },
 }
 
 

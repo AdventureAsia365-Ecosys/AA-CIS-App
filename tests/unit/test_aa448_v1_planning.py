@@ -50,7 +50,7 @@ class TestTripReallocationEndpoints:
     @pytest.mark.asyncio
     async def test_suggest_wires_through_to_service(self):
         with patch(
-            "api.routers.v1_planning.suggest_trip_reallocation",
+            "api.routers.v1_planning.suggest_trip_reallocation_scoped",
             new=AsyncMock(return_value={"added": [], "removed": []}),
         ) as mock_suggest:
             request = _make_request(MagicMock())
@@ -63,7 +63,7 @@ class TestTripReallocationEndpoints:
     @pytest.mark.asyncio
     async def test_confirm_wires_through_to_service(self):
         with patch(
-            "api.routers.v1_planning.confirm_trip_reallocation",
+            "api.routers.v1_planning.confirm_trip_reallocation_scoped",
             new=AsyncMock(return_value={"accepted": True}),
         ) as mock_confirm:
             body = v1_planning.TripReallocationConfirmRequest(year=2026, quarter=1, accept=True)
@@ -73,3 +73,34 @@ class TestTripReallocationEndpoints:
             )
             mock_confirm.assert_awaited_once()
             assert result == {"accepted": True}
+
+    @pytest.mark.asyncio
+    async def test_confirm_version_conflict_is_409(self):
+        """AA-859 wave 4 — a concurrent confirm that saved the same version number first."""
+        from fastapi import HTTPException
+        from services.acp_planning.trip_reallocation import VersionConflictError
+        with patch(
+            "api.routers.v1_planning.confirm_trip_reallocation_scoped",
+            new=AsyncMock(side_effect=VersionConflictError("raced")),
+        ):
+            body = v1_planning.TripReallocationConfirmRequest(year=2026, quarter=1, accept=True)
+            with pytest.raises(HTTPException) as exc:
+                await v1_planning.post_trip_reallocation_confirm(body, _make_request(MagicMock()),
+                                                                 tenant={"sub": TENANT_ID})
+        assert exc.value.status_code == 409
+        assert isinstance(exc.value.detail, str) and exc.value.detail.startswith("version_conflict")
+
+    @pytest.mark.asyncio
+    async def test_confirm_plan_busy_is_409(self):
+        """AA-859 wave 4 — the quarter's lock not granted within lock_timeout: retryable, never a 500."""
+        from fastapi import HTTPException
+        from services.acp_planning.trip_reallocation import PlanBusyError
+        with patch(
+            "api.routers.v1_planning.confirm_trip_reallocation_scoped",
+            new=AsyncMock(side_effect=PlanBusyError("busy")),
+        ):
+            body = v1_planning.TripReallocationConfirmRequest(year=2026, quarter=1, accept=True)
+            with pytest.raises(HTTPException) as exc:
+                await v1_planning.post_trip_reallocation_confirm(body, _make_request(MagicMock()),
+                                                                 tenant={"sub": TENANT_ID})
+        assert exc.value.status_code == 409 and exc.value.detail.startswith("plan_busy")

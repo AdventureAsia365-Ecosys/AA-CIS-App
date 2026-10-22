@@ -33,6 +33,8 @@ def _make_pool(conn):
 def _make_request(pool):
     request = MagicMock()
     request.app.state.pool = pool
+    # AA-859 wave 4: MARKETPLACE_FLAG explicitly OFF (S241 D-12: a missing key is ON), so the main pool
+    request.app.state.redis.get = AsyncMock(return_value="false")
     return request
 
 

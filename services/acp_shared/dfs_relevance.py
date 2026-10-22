@@ -108,7 +108,17 @@ async def fetch_dfs_relevance_by_tour(
     if not tour_ids:
         return {}
     async with pool.acquire() as conn:
-        rows = await conn.fetch(_SEO_CONTEXT_LATEST_QUERY, tour_ids)
+        return await fetch_dfs_relevance_by_tour_on(conn, tour_ids, thresholds)
+
+
+async def fetch_dfs_relevance_by_tour_on(
+    conn, tour_ids: list[UUID], thresholds: DfsRelevanceThresholds = _DEFAULT_THRESHOLDS,
+) -> dict[UUID, Relevance]:
+    """fetch_dfs_relevance_by_tour() on the caller's connection (AA-859 wave 4: the tenant pool reads the AA
+    master rows of seo_context, 239)."""
+    if not tour_ids:
+        return {}
+    rows = await conn.fetch(_SEO_CONTEXT_LATEST_QUERY, tour_ids)
     out: dict[UUID, Relevance] = {}
     for r in rows:
         ideas = r["keyword_ideas"]

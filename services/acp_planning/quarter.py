@@ -345,6 +345,66 @@ class QuarterPlanVersionNotPendingError(Exception):
     silently no-op (AA-320)."""
 
 
+# AA-859 wave 4 — the statements of save / approve / fetch-approved as module constants, run by the *_on()
+# functions on the caller's connection: the tenant pool's block behind TRIP_REALLOCATION_FLAG (RLS on year_plan /
+# quarter_plan / quarter_plan_version, migration 265; the tenant role holds exactly the column grants these
+# statements need) or the pool wrappers' own main-pool transaction.
+_YEAR_PLAN_UPSERT_SQL = """
+    INSERT INTO acp_shared.year_plan (tenant_id, year)
+    VALUES ($1, $2)
+    ON CONFLICT (tenant_id, year) DO NOTHING
+"""
+_YEAR_PLAN_ID_SQL = "SELECT year_plan_id FROM acp_shared.year_plan WHERE tenant_id = $1 AND year = $2"
+_QUARTER_PLAN_UPSERT_SQL = """
+    INSERT INTO acp_shared.quarter_plan (tenant_id, year, quarter, year_plan_id)
+    VALUES ($1, $2, $3, $4)
+    ON CONFLICT (tenant_id, year, quarter) DO UPDATE
+        SET year_plan_id = COALESCE(acp_shared.quarter_plan.year_plan_id, EXCLUDED.year_plan_id)
+"""
+_QUARTER_PLAN_ID_SQL = """
+    SELECT plan_id FROM acp_shared.quarter_plan
+    WHERE tenant_id = $1 AND year = $2 AND quarter = $3
+"""
+_NEXT_VERSION_NO_SQL = """
+    SELECT COALESCE(MAX(version_no), 0) + 1
+    FROM acp_shared.quarter_plan_version
+    WHERE plan_id = $1
+"""
+_VERSION_INSERT_SQL = """
+    INSERT INTO acp_shared.quarter_plan_version
+        (plan_id, version_no, payload, source, approval_status)
+    VALUES ($1, $2, $3::jsonb, $4, 'pending')
+    RETURNING version_id
+"""
+_VERSION_LOCK_SQL = """
+    SELECT plan_id, approval_status
+    FROM acp_shared.quarter_plan_version
+    WHERE version_id = $1
+    FOR UPDATE
+"""
+_VERSION_APPROVE_SQL = """
+    UPDATE acp_shared.quarter_plan_version
+    SET approval_status = 'approved', approved_by = $2, approved_at = now()
+    WHERE version_id = $1
+"""
+_CURRENT_VERSION_SQL = """
+    UPDATE acp_shared.quarter_plan
+    SET current_version_id = $2
+    WHERE plan_id = $1
+"""
+_APPROVED_PLAN_SQL = """
+    SELECT qpv.payload, qpv.approved_by
+    FROM acp_shared.quarter_plan qp
+    JOIN acp_shared.quarter_plan_version qpv
+      ON qpv.version_id = qp.current_version_id AND qpv.plan_id = qp.plan_id
+    WHERE qp.tenant_id = $1 AND qp.year = $2 AND qp.quarter = $3
+      AND qpv.approval_status = 'approved'
+"""
+# AA-859 wave 4 (review S247): `qpv.plan_id = qp.plan_id` is defence in depth. The tenant role may set
+# quarter_plan.current_version_id (migration 265 grant) and an FK check bypasses RLS, so without it a pointer to
+# another tenant's version would be followed on the main pool (no code path writes such a pointer).
+
+
 async def save_quarter_plan_version(plan: QuarterPlan, pool, source: str = "standard") -> UUID:
     """AA-320 Gate B persist — DB-backed counterpart to compute_quarter_plan().
     Creates acp_shared.quarter_plan on first call for (tenant_id, year, quarter),
@@ -360,55 +420,20 @@ async def save_quarter_plan_version(plan: QuarterPlan, pool, source: str = "stan
     caller, admin.py's create_quarter_plan, is retired by this same task; admin_atoms.py's
     preview-slotgrid never calls this function, it only reads). Purely additive — every other
     column/row this function already writes keeps its exact prior behavior."""
-    payload = json.dumps(plan.model_dump(mode="json"))
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await conn.execute(
-                """
-                INSERT INTO acp_shared.year_plan (tenant_id, year)
-                VALUES ($1, $2)
-                ON CONFLICT (tenant_id, year) DO NOTHING
-                """,
-                plan.tenant_id, plan.year,
-            )
-            year_plan_id = await conn.fetchval(
-                "SELECT year_plan_id FROM acp_shared.year_plan WHERE tenant_id = $1 AND year = $2",
-                plan.tenant_id, plan.year,
-            )
-            await conn.execute(
-                """
-                INSERT INTO acp_shared.quarter_plan (tenant_id, year, quarter, year_plan_id)
-                VALUES ($1, $2, $3, $4)
-                ON CONFLICT (tenant_id, year, quarter) DO UPDATE
-                    SET year_plan_id = COALESCE(acp_shared.quarter_plan.year_plan_id, EXCLUDED.year_plan_id)
-                """,
-                plan.tenant_id, plan.year, plan.quarter, year_plan_id,
-            )
-            plan_id = await conn.fetchval(
-                """
-                SELECT plan_id FROM acp_shared.quarter_plan
-                WHERE tenant_id = $1 AND year = $2 AND quarter = $3
-                """,
-                plan.tenant_id, plan.year, plan.quarter,
-            )
-            next_version_no = await conn.fetchval(
-                """
-                SELECT COALESCE(MAX(version_no), 0) + 1
-                FROM acp_shared.quarter_plan_version
-                WHERE plan_id = $1
-                """,
-                plan_id,
-            )
-            version_id = await conn.fetchval(
-                """
-                INSERT INTO acp_shared.quarter_plan_version
-                    (plan_id, version_no, payload, source, approval_status)
-                VALUES ($1, $2, $3::jsonb, $4, 'pending')
-                RETURNING version_id
-                """,
-                plan_id, next_version_no, payload, source,
-            )
-    return version_id
+            return await save_quarter_plan_version_on(conn, plan, source=source)
+
+
+async def save_quarter_plan_version_on(conn, plan: QuarterPlan, source: str = "standard") -> UUID:
+    """save_quarter_plan_version()'s statements on `conn`, inside the caller's transaction."""
+    payload = json.dumps(plan.model_dump(mode="json"))
+    await conn.execute(_YEAR_PLAN_UPSERT_SQL, plan.tenant_id, plan.year)
+    year_plan_id = await conn.fetchval(_YEAR_PLAN_ID_SQL, plan.tenant_id, plan.year)
+    await conn.execute(_QUARTER_PLAN_UPSERT_SQL, plan.tenant_id, plan.year, plan.quarter, year_plan_id)
+    plan_id = await conn.fetchval(_QUARTER_PLAN_ID_SQL, plan.tenant_id, plan.year, plan.quarter)
+    next_version_no = await conn.fetchval(_NEXT_VERSION_NO_SQL, plan_id)
+    return await conn.fetchval(_VERSION_INSERT_SQL, plan_id, next_version_no, payload, source)
 
 
 async def approve_quarter_plan_version(version_id: UUID, approved_by: str, pool) -> None:
@@ -420,39 +445,22 @@ async def approve_quarter_plan_version(version_id: UUID, approved_by: str, pool)
     believe an approval happened when it didn't."""
     async with pool.acquire() as conn:
         async with conn.transaction():
-            row = await conn.fetchrow(
-                """
-                SELECT plan_id, approval_status
-                FROM acp_shared.quarter_plan_version
-                WHERE version_id = $1
-                FOR UPDATE
-                """,
-                version_id,
-            )
-            if row is None:
-                raise QuarterPlanVersionNotFoundError(
-                    f"quarter_plan_version {version_id} not found")
-            if row["approval_status"] != "pending":
-                raise QuarterPlanVersionNotPendingError(
-                    f"quarter_plan_version {version_id} is '{row['approval_status']}', "
-                    "not 'pending' — cannot approve")
+            await approve_quarter_plan_version_on(conn, version_id, approved_by)
 
-            await conn.execute(
-                """
-                UPDATE acp_shared.quarter_plan_version
-                SET approval_status = 'approved', approved_by = $2, approved_at = now()
-                WHERE version_id = $1
-                """,
-                version_id, approved_by,
-            )
-            await conn.execute(
-                """
-                UPDATE acp_shared.quarter_plan
-                SET current_version_id = $2
-                WHERE plan_id = $1
-                """,
-                row["plan_id"], version_id,
-            )
+
+async def approve_quarter_plan_version_on(conn, version_id: UUID, approved_by: str) -> None:
+    """approve_quarter_plan_version()'s statements on `conn`, inside the caller's transaction (version row
+    locked FOR UPDATE, then approved, then the plan's pointer moved)."""
+    row = await conn.fetchrow(_VERSION_LOCK_SQL, version_id)
+    if row is None:
+        raise QuarterPlanVersionNotFoundError(
+            f"quarter_plan_version {version_id} not found")
+    if row["approval_status"] != "pending":
+        raise QuarterPlanVersionNotPendingError(
+            f"quarter_plan_version {version_id} is '{row['approval_status']}', "
+            "not 'pending' — cannot approve")
+    await conn.execute(_VERSION_APPROVE_SQL, version_id, approved_by)
+    await conn.execute(_CURRENT_VERSION_SQL, row["plan_id"], version_id)
 
 
 async def fetch_approved_quarter_plan(
@@ -464,16 +472,12 @@ async def fetch_approved_quarter_plan(
     AA-840). Returns None (never raises) when no plan or no
     approved version exists yet — the caller decides the error response."""
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            SELECT qpv.payload, qpv.approved_by
-            FROM acp_shared.quarter_plan qp
-            JOIN acp_shared.quarter_plan_version qpv ON qpv.version_id = qp.current_version_id
-            WHERE qp.tenant_id = $1 AND qp.year = $2 AND qp.quarter = $3
-              AND qpv.approval_status = 'approved'
-            """,
-            tenant_id, year, quarter,
-        )
+        return await fetch_approved_quarter_plan_on(conn, tenant_id, year, quarter)
+
+
+async def fetch_approved_quarter_plan_on(conn, tenant_id: UUID, year: int, quarter: int) -> Optional[QuarterPlan]:
+    """fetch_approved_quarter_plan() on the caller's connection."""
+    row = await conn.fetchrow(_APPROVED_PLAN_SQL, tenant_id, year, quarter)
     if row is None:
         return None
     payload = _parse_jsonb(row["payload"], {})
@@ -499,7 +503,8 @@ async def fetch_current_version_no(
             """
             SELECT qpv.version_no
             FROM acp_shared.quarter_plan qp
-            JOIN acp_shared.quarter_plan_version qpv ON qpv.version_id = qp.current_version_id
+            JOIN acp_shared.quarter_plan_version qpv
+              ON qpv.version_id = qp.current_version_id AND qpv.plan_id = qp.plan_id
             WHERE qp.tenant_id = $1 AND qp.year = $2 AND qp.quarter = $3
               AND qpv.approval_status = 'approved'
             """,
@@ -579,6 +584,7 @@ __all__ = [
     "compute_quarter_plan", "fetch_atoms_by_trip",
     "approve_quarter_plan", "save_quarter_plan_version",
     "approve_quarter_plan_version", "fetch_approved_quarter_plan",
+    "save_quarter_plan_version_on", "approve_quarter_plan_version_on", "fetch_approved_quarter_plan_on",
     "fetch_current_version_no", "fetch_quarter_plan_version",
     "fetch_quarter_plan_version_history",
     "QuarterPlanVersionNotFoundError", "QuarterPlanVersionNotPendingError",

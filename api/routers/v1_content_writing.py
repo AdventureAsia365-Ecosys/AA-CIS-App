@@ -243,7 +243,8 @@ async def get_latest_piece(request_id: UUID, request: Request, tenant=Depends(ge
 async def list_reviews(request: Request, tenant=Depends(get_tenant)):
     tenant_id = UUID(tenant["sub"])
     pool = request.app.state.pool
-    data = await service.fetch_review_list(tenant_id, pool)
+    # AA-859 wave 4: request= runs it on the tenant pool behind REVIEWS_FLAG (fail closed, 503)
+    data = await service.fetch_review_list(tenant_id, pool, request=request)
     return {"data": data, "total": len(data)}
 
 
@@ -256,7 +257,8 @@ async def get_review(request_id: UUID, request: Request, tenant=Depends(get_tena
     tenant_id = UUID(tenant["sub"])
     pool = request.app.state.pool
     try:
-        return await service.fetch_review(tenant_id, request_id, pool)
+        # AA-859 wave 4: request= runs it on the tenant pool behind REVIEWS_FLAG (fail closed, 503)
+        return await service.fetch_review(tenant_id, request_id, pool, request=request)
     except RequestNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except service.ContentWritingError as exc:

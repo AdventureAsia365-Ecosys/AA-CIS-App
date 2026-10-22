@@ -1,4 +1,5 @@
-"""S241 D-12 -- the tenant-pool flag keys the code reads are exactly the documented ones (14 after D5b and wave 3, S247).
+"""S241 D-12 -- the tenant-pool flag keys the code reads are exactly the documented ones (20 after D5b, wave 3 and
+wave 4, S247).
 
 Under D-12 a missing Redis key means ON (tenant pool). So a key nobody has seen before -- a new route's flag,
 a renamed constant, an ad hoc string at a call site -- runs on the tenant pool from its first deploy with no
@@ -36,6 +37,12 @@ DOCUMENTED_FLAG_KEYS = frozenset({
     "aa859:t2_version_detail_reads_pool",    # D5b GET /v1/tours/{id}/full (tenant), /{id}, /versions/{id}/export-docx
     "aa859:brand_identity_pool",             # wave 3 GET / POST /admin/brand-identity (tenant Bearer)
     "aa859:publish_pool",                    # wave 3 POST /v1/publish-log/{piece_id}/publish
+    "aa859:angle_gate_read_pool",            # wave 4 GET /v1/angle-gate/requests/{id} (+ choose/reopen re-read)
+    "aa859:slate_reads_pool",                # wave 4 GET /v1/slate
+    "aa859:subject_decide_pool",             # wave 4 POST /v1/subjects/{id}/pick, /cut
+    "aa859:trip_reallocation_pool",          # wave 4 GET .../trip-reallocation/suggest, POST .../confirm
+    "aa859:marketplace_pool",                # wave 4 GET /v1/marketplace
+    "aa859:reviews_pool",                    # wave 4 GET /v1/content-writing/reviews, .../requests/{id}/review
 })
 
 # The flag reader's entry points and the position of their flag-key argument.
@@ -91,7 +98,7 @@ def _call_site_keys():
 
 
 def test_documented_list_matches_the_module_inventory():
-    assert len(DOCUMENTED_FLAG_KEYS) == 14
+    assert len(DOCUMENTED_FLAG_KEYS) == 20
     assert set(tp.ALL_TENANT_POOL_FLAGS) == DOCUMENTED_FLAG_KEYS
 
 

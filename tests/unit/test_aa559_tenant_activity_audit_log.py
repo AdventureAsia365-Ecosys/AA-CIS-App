@@ -188,7 +188,7 @@ class TestPickSubjectAuditLog:
     async def test_not_eligible_subject_never_logs(self):
         conn = AsyncMock()
         conn.fetchrow.return_value = _subject_row(state="picked")
-        pool = _pool_with_conn(conn)
+        pool = _pool_with_conn(conn, with_transaction=True)   # AA-859 wave 4: the lock read runs in it
 
         with pytest.raises(slate.SubjectNotEligibleError):
             await slate.pick_subject(TENANT_ID, SUBJECT_ID, pool, selected_by=f"tenant:{TENANT_ID}")
@@ -197,7 +197,7 @@ class TestPickSubjectAuditLog:
     async def test_subject_not_found_never_logs(self):
         conn = AsyncMock()
         conn.fetchrow.return_value = None
-        pool = _pool_with_conn(conn)
+        pool = _pool_with_conn(conn, with_transaction=True)   # AA-859 wave 4: the lock read runs in it
 
         with pytest.raises(slate.SubjectNotFoundError):
             await slate.pick_subject(TENANT_ID, SUBJECT_ID, pool, selected_by=f"tenant:{TENANT_ID}")

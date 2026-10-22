@@ -751,7 +751,7 @@ class TestFetchRouteSegments:
     async def test_best_effort_skips_a_segment_rebuilt_away(self):
         """A Segment whose live representative atom is gone (rebuilt away since pick time) is
         silently skipped, not a hard failure — same "partial join degrades detail but doesn't
-        fail" precedent route_detection.py::create_route_pick() already sets."""
+        fail" precedent route_detection.py::create_route_pick() set (retired with the route hub, AA-859 wave 4)."""
         conn = AsyncMock()
         conn.fetchrow.side_effect = [None, {"atom_id": "atom_seg2", "text": "text2"}]
         pool = _make_pool(conn)

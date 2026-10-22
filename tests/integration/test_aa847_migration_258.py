@@ -256,7 +256,7 @@ def test_registered_rerunnable_and_owned(cur):
     assert "security_barrier=true" in cur.fetchone()[0]
 
 
-def test_grants_policies_and_tripplanner_column_grant_unchanged(cur):
+def test_grants_policies_and_tripplanner_column_grant_unchanged(cur):  # name kept for history; see CIS 254
     assert _privileges(cur) == cur.before["privileges"]
     assert cur.before["privileges"][1][:2] == (True, True)  # FORCE RLS: the plan checks below are not vacuous
     for role in ("aa_app_user", "tripplanner", "booking"):
@@ -266,7 +266,8 @@ def test_grants_policies_and_tripplanner_column_grant_unchanged(cur):
     cur.execute("""SELECT has_column_privilege('tripplanner', 'silver_aa_internal.raw_tours', 'source_key', 'SELECT'),
                           has_column_privilege('tripplanner', 'silver_aa_internal.raw_tours', 'country', 'SELECT'),
                           has_column_privilege('tripplanner', 'silver_aa_internal.raw_tours', 'tour_id', 'SELECT')""")
-    assert cur.fetchone() == (False, True, True)
+    # CIS 254 (replayed before 258 in CI; applied after it on Dev) revoked TripPlanner's grandfathered raw_tours column reads (CIS 179).
+    assert cur.fetchone() == (False, False, False)
     cur.execute("SELECT has_table_privilege('tripplanner', 'catalog.v_component_embedding', 'SELECT'), "
                 "has_table_privilege('booking', 'catalog.v_component_embedding', 'SELECT')")
     assert cur.fetchone() == (True, False)
