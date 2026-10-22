@@ -42,9 +42,9 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
 
   const { tenantName, planTier, status: tenantStatus } = useTenantMe();
   const poolTotal = usePoolTotal();
-  const { versions, count: catTotal } = useCatalog();
+  const { versions, count: catTotal, failed: versionsFailed } = useCatalog();
   const { billing, status: billingStatus, retry: retryBilling } = useBilling();
-  const activity = useActivityView(billing, versions);
+  const activity = useActivityView(billing, versions, versionsFailed);
 
   // ⌘K / Ctrl K toggles the palette (modifier-gated, so typing in a field never triggers it).
   useEffect(() => {

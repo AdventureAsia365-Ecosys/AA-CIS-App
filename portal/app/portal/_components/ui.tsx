@@ -4,7 +4,7 @@
 
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_MONO, FONT_SANS } from "@/app/_brand/tokens";
 import { formatDate, formatDateTime } from "@/app/_kit/tokens";
 import { SkeletonBar, SkeletonStyle } from "@/app/_kit/primitives";
@@ -376,7 +376,7 @@ export function Field({ label, value, onChange, rows = 3, placeholder = "", hint
   autoGrow?: boolean;
 }) {
   const shownRows = autoGrow ? Math.min(16, Math.max(rows, rowsFor(value))) : rows;
-  const id = `field-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+  const id = useId(); // unique per Field, even when two share a label
   return (
     <div style={{ marginBottom: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>

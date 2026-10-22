@@ -262,7 +262,7 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
               <span>
                 {data.refresh?.finished_at
                   ? <>Topics last updated {new Date(data.refresh.finished_at).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}.</>
-                  : <>Topics haven&rsquo;t been ranked yet.</>}
+                  : <>Topics haven&rsquo;t been prepared yet.</>}
                 {data.refresh?.status === "failed" && <> The last update didn&rsquo;t finish.</>}
               </span>
             )}
@@ -285,7 +285,7 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
             <span>
               Your configured market{data.unmatched_markets.length > 1 ? "s" : ""} (
               <strong>{data.unmatched_markets.join(", ")}</strong>) {data.unmatched_markets.length > 1 ? "aren't" : "isn't"} supported
-              for SEO research yet — the ranking data below is not specific to{" "}
+              for SEO research yet — the search data below is not specific to{" "}
               {data.unmatched_markets.length > 1 ? "those markets" : "that market"}. We&rsquo;ve
               recorded your request; reach out if you need this prioritized.
             </span>

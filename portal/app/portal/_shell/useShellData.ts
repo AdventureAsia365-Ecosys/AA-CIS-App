@@ -50,29 +50,32 @@ export function usePoolTotal(): number | null {
 }
 
 /** The tenant's versions (shared ["my-versions"] query, polled while a rewrite runs) + the count. */
-export function useCatalog(): { versions: Version[] | undefined; count: number } {
+export function useCatalog(): { versions: Version[] | undefined; count: number; failed: boolean } {
   // AA-760 — the badge was stale after a rewrite finished in the background (it only refreshed when
   // the My Tours page refetched). The shell's own observer now polls the shared query while any
   // version is queued / writing, and stops once all are terminal (shared work-status model).
-  const { data } = useQuery({
+  const { data, isError } = useQuery({
     queryKey: MY_VERSIONS_KEY,
     queryFn: fetchMyVersions,
     refetchInterval: (q) => activePollInterval((q.state.data ?? []).map(tourWorkStatus), 10_000),
   });
-  return { versions: data, count: data ? countUniqueTours(data) : 0 };
+  return { versions: data, count: data ? countUniqueTours(data) : 0, failed: isError && !data };
 }
 
 /** AA-760 — the activity feed with each row's state read from its version's job. */
-export function useActivityView(billing: ShellBilling | null, versions: Version[] | undefined): ShellActivityView[] {
+export function useActivityView(
+  billing: ShellBilling | null, versions: Version[] | undefined, versionsFailed = false,
+): ShellActivityView[] {
   return useMemo(() => {
     const byId = new Map((versions ?? []).map((v) => [v.id, v]));
     return (billing?.activity ?? []).map((a) => {
       const v = byId.get(a.id);
-      // Versions loaded but this one is not among them (deleted / archived): a settled row.
-      const state = versions && !v ? settledActivityState(a) : activityState(a, v);
+      // Versions loaded but this one is not among them (deleted / archived), or the versions query
+      // failed (the row would otherwise show "Loading status" for ever): a settled row.
+      const state = (versions && !v) || versionsFailed ? settledActivityState(a) : activityState(a, v);
       return { ...a, state, version_number: v?.version_number ?? null };
     });
-  }, [billing, versions]);
+  }, [billing, versions, versionsFailed]);
 }
 
 /** AA-760 — the billing record plus its load state: pages must tell "still loading" and "failed"

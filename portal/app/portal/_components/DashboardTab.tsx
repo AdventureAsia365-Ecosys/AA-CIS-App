@@ -129,7 +129,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
             </div>
           </div>
           <div style={{ display: "flex", gap: 22, marginTop: 22, paddingTop: 18, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-            {[["Tours/Mo", fmtTotal(toursTotal)], ["API Calls", fmtTotal(apiTotal)], ["Rate limit", rpm ? `${rpm.toLocaleString()} RPM` : "—"]].map(([l, v]) => (
+            {[["Rewrites/Mo", fmtTotal(toursTotal)], ["API Calls", fmtTotal(apiTotal)], ["Rate limit", rpm ? `${rpm.toLocaleString()} RPM` : "—"]].map(([l, v]) => (
               <div key={l}>
                 <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.12em", color: "rgba(255,255,255,0.45)", marginBottom: 4 }}>{l}</div>
                 <div style={{ fontSize: 12.5, fontWeight: 600, color: T.onSolid, fontVariantNumeric: "tabular-nums" }}>{v}</div>
@@ -145,7 +145,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
             {/* AA-760 — the quota counts rewrites (versions), not tours: "Tours rewritten 12" next to
                 "My Tours 3" read as two answers to one question. */}
             <QuotaRow icon={<FileText size={13} color={T.gold} />} label="Rewrites used" used={toursUsed} total={toursTotal} pct={toursPct} warn={toursPct >= 80}
-              note={catTotal > 0 ? `${toursUsed.toLocaleString()} rewrite${toursUsed === 1 ? "" : "s"} across ${catTotal.toLocaleString()} tour${catTotal === 1 ? "" : "s"}` : undefined} />
+              note={catTotal > 0 ? `${catTotal.toLocaleString()} tour${catTotal === 1 ? "" : "s"} in My Tours` : undefined} />
             <QuotaRow icon={<Code2 size={13} color={T.gold} />} label="API calls" used={apiUsed} total={apiTotal} pct={apiPct} warn={apiPct >= 80} />
           </div>
           {(b?.daily?.length ?? 0) >= 2 && (
@@ -289,7 +289,7 @@ function daysUntil(isoDate: string): number {
 
 function QuotaRow({ icon, label, used, total, pct, warn = false, note }: {
   icon: React.ReactNode; label: string; used: number; total: number | null; pct: number; warn?: boolean;
-  /** A muted line under the bar (e.g. "12 rewrites across 3 tours"). */
+  /** A muted line under the bar (e.g. "3 tours in My Tours"). */
   note?: string;
 }) {
   return (
