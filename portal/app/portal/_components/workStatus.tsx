@@ -15,7 +15,7 @@
 // (the AA-760 "Writing…" bug: Browse Tours read `already_rewritten` and showed "Writing…" forever
 // for a failed or truncated-list tour).
 
-import { StatusBadge } from "@/app/_kit";
+import { SkeletonBar, SkeletonStyle, StatusBadge } from "@/app/_kit";
 import { isAiWriting, isRewriteFailed, type Version } from "./catalogApi";
 
 export type WorkStatus = "queued" | "writing" | "checking" | "done" | "failed";
@@ -121,7 +121,25 @@ const ACTIVITY_BADGE: Record<ActivityState, string> = {
   failed: "failed", approved: "approved", rejected: "rejected", edited: "dismissed",
 };
 
+/** AA-760 — while the state is unknown (versions not loaded yet) a neutral placeholder pill, not
+ *  nothing (a row without a badge next to an amber icon read as "still running"). */
 export function ActivityStateBadge({ state }: { state: ActivityState | null }) {
-  if (!state) return null;
+  if (!state) {
+    return (
+      <span aria-label="Loading status" style={{ display: "inline-flex" }}>
+        <SkeletonStyle />
+        <SkeletonBar w={88} h={20} r={999} />
+      </span>
+    );
+  }
   return <StatusBadge status={ACTIVITY_BADGE[state]} label={ACTIVITY_LABEL[state]} />;
+}
+
+/** AA-760 — the state of an activity row whose version is not in the loaded ["my-versions"] list
+ *  (deleted or archived since): a finished row, never "unknown" forever. */
+export function settledActivityState(a: { status: string; edit_source: string }): ActivityState {
+  if (a.status === "approved") return "approved";
+  if (a.status === "rejected") return "rejected";
+  if (a.status === "failed") return "failed";
+  return a.edit_source === "ai_generated" ? "done" : "edited";
 }

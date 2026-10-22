@@ -1,24 +1,34 @@
 "use client";
-// portal/app/portal/_components/MarketplaceTab.tsx — AA-444 (Marketplace, tenant-facing)
+// portal/app/portal/_components/MarketplaceTab.tsx — AA-444 (Tour overview, tenant-facing; the nav
+// called it "Marketplace" until AA-760)
 //
-// Per ADR-2026-038 §0.3 (22/08/2026): Marketplace is NOT its own pipeline stage — it is a
-// read-only rollup of what T1-T4 (tenant_tour_versions) and T5-T6 (tour_atoms, owner_scope)
-// already produced for this tenant. No T-number route on purpose (see implementation notes).
+// Per ADR-2026-038 §0.3 (22/08/2026): this is NOT its own pipeline stage — it is a read-only rollup
+// of what T1-T4 (tenant_tour_versions) already produced for this tenant. No T-number route on
+// purpose (see implementation notes).
 //
 // API (via /api/tenant proxy -> Authorization: Bearer <cis_tenant_token> -> backend resolves
 // tenant_id from the JWT, api/routers/v1_marketplace.py — no tenant_id is ever sent by this
 // component):
 //   GET /api/tenant/v1/marketplace
 //
-// Deliberately no action buttons — the task's own framing (and the ADR's) is that selecting a
-// tour (T1) and curating atoms (T6) already have their own pages; this is a summary, not a
-// third place to mutate the same state. Styled off AtomsTab.tsx (T6) — same ui.tsx tokens,
-// same small-tool sizing (a tenant reviewing a handful of tours, not a staff catalog browser).
+// Deliberately no action buttons: selecting a tour (T1) has its own page; this is a summary.
+//
+// AA-760 (screenshot audit):
+//   - tenant sees content only: the atom count, "Total atoms" and the runway months (content-pipeline
+//     terms, always 0 for tenants) are not shown; the API still returns them for the admin views;
+//   - one status vocabulary with My Tours: the badge is the shared work status read from the same
+//     version in the ["my-versions"] query (job-backed), not the raw marketplace state — a version
+//     read "REJECTED" here and "READY" on My Tours;
+//   - kit PageHeader on the route page, skeleton while loading, "$1,225" prices, one duration format.
 
+import { useMemo } from "react";
 import { AlertTriangle, FolderOpen } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "@/app/_kit";
-import { T, serif, sans, mono, Card, Badge, LoadingScreen, EmptyState, statusVariant } from "./ui";
+import { T, sans, Card, Badge, EmptyState, fmtDuration, fmtUsd } from "./ui";
+import { ListSkeleton } from "./Skeleton";
+import { WorkStatusBadge, tourWorkStatus, type WorkStatus } from "./workStatus";
+import { useCatalog } from "../_shell/useShellData";
 
 interface MarketplaceTour {
   version_id: string;
@@ -29,10 +39,8 @@ interface MarketplaceTour {
   name: string;
   country: string | null;
   duration: string | null;
-  atom_count: number;
   price_usd: number | null;
   price_available: boolean;
-  runway_months: number | null;
 }
 
 interface MarketplaceResponse {
@@ -40,7 +48,14 @@ interface MarketplaceResponse {
   posts_per_week: number | null;
   tours: MarketplaceTour[];
   total_tours: number;
-  total_atoms: number;
+}
+
+/** The marketplace state (`tenant_version_state`) in work-status words, for a version not in
+ *  ["my-versions"] yet (the two lists are read separately). */
+function fromMarketplaceState(s: string): WorkStatus {
+  if (s === "writing") return "writing";
+  if (s === "failed") return "failed";
+  return "done";
 }
 
 export default function MarketplaceTab() {
@@ -49,12 +64,14 @@ export default function MarketplaceTab() {
     queryKey: ["tenant-marketplace"],
     queryFn: () => apiGet<MarketplaceResponse>("/api/tenant/v1/marketplace"),
   });
+  const { versions } = useCatalog();
+  const byVersion = useMemo(() => new Map((versions ?? []).map(v => [v.id, v])), [versions]);
 
-  if (isPending) return <LoadingScreen message="Loading your marketplace…" />;
+  if (isPending) return <ListSkeleton rows={4} label="Loading your tours" />;
 
   if (isError || !data) {
     return (
-      <EmptyState icon={<AlertTriangle size={32} strokeWidth={1.5} color={T.gold} />} title="Couldn't load your marketplace"
+      <EmptyState icon={<AlertTriangle size={32} strokeWidth={1.5} color={T.gold} />} title="Couldn't load your tours"
         sub="Something went wrong reaching your tour data."
         action={<button onClick={() => refetch()} style={{ background: "none", border: `1px solid ${T.line}`, borderRadius: 999, padding: "6px 14px", cursor: "pointer", fontSize: 12.5, color: T.ink3, fontFamily: sans }}>Try again</button>} />
     );
@@ -62,53 +79,43 @@ export default function MarketplaceTab() {
 
   return (
     <div>
-      <div style={{ marginBottom: 22 }}>
-        <h2 style={{ fontFamily: serif, fontSize: 22, fontWeight: 500, color: T.ink, margin: "0 0 6px", letterSpacing: "-0.01em" }}>
-          Marketplace
-        </h2>
-        <p style={{ fontSize: 13, color: T.muted, lineHeight: 1.6, margin: 0 }}>
-          Every tour you&rsquo;ve written, in one place — a read-only rollup of My Tours. To pick a
-          new tour, use Browse Tours.
-        </p>
-      </div>
-
       <div style={{ display: "flex", gap: 22, marginBottom: 22, flexWrap: "wrap" }}>
         <StatBlock label="Tours" value={data.total_tours} />
-        <StatBlock label="Total atoms" value={data.total_atoms} />
-        <StatBlock label="Posts / week" value={data.posts_per_week ?? "—"} />
+        {data.posts_per_week != null && data.posts_per_week > 0 && (
+          <StatBlock label="Posts planned / week" value={data.posts_per_week} />
+        )}
       </div>
 
       {data.tours.length === 0 ? (
         <EmptyState icon={<FolderOpen size={32} strokeWidth={1.5} color={T.gold} />} title="Nothing here yet"
-          sub="Once you write your first tour from Browse Tours, it'll show up here alongside its curated atoms." />
+          sub="Once you rewrite your first tour from Browse Tours, it shows up here." />
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {data.tours.map(t => (
-            <Card key={t.published_tour_id} style={{ padding: "14px 18px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
-                <div style={{ flex: 1, minWidth: 220 }}>
-                  <div style={{ fontSize: 11, color: T.muted2, marginBottom: 4, fontFamily: mono }}>
-                    {[t.country, t.duration].filter(Boolean).join(" · ") || "—"}
+          {data.tours.map(t => {
+            const v = byVersion.get(t.version_id);
+            const status = v ? tourWorkStatus(v) : fromMarketplaceState(t.status);
+            const meta = [t.country, fmtDuration(t.duration)].filter(Boolean).join(" · ");
+            return (
+              <Card key={t.published_tour_id} style={{ padding: "14px 18px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+                  <div style={{ flex: 1, minWidth: 220 }}>
+                    {meta && <div style={{ fontSize: 12, color: T.muted, marginBottom: 4, fontFamily: sans }}>{meta}</div>}
+                    <div style={{ fontSize: 14.5, fontWeight: 600, color: T.ink, lineHeight: 1.4 }}>{t.name}</div>
+                    <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                      <WorkStatusBadge status={status} />
+                      <Badge variant="info">v{t.version_number}</Badge>
+                    </div>
                   </div>
-                  <div style={{ fontSize: 14.5, fontWeight: 600, color: T.ink, lineHeight: 1.4 }}>{t.name}</div>
-                  <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                    <Badge variant={statusVariant(t.status)}>{t.status}</Badge>
-                    <Badge variant="info">v{t.version_number}</Badge>
-                  </div>
-                </div>
 
-                <div style={{ display: "flex", gap: 20, flexShrink: 0, textAlign: "right" }}>
-                  <Metric label="Atoms" value={t.atom_count} />
-                  <Metric label="Price"
-                    value={t.price_available && t.price_usd != null ? `$${t.price_usd.toFixed(0)}` : "—"}
-                    sub={t.price_available ? "estimated" : "on request"} />
-                  <Metric label="Runway"
-                    value={t.runway_months != null ? `${t.runway_months} mo` : "—"}
-                    sub={t.runway_months != null ? "at current cadence" : "n/a"} />
+                  <div style={{ flexShrink: 0, textAlign: "right" }}>
+                    <Metric label="Price"
+                      value={t.price_available && t.price_usd != null ? fmtUsd(t.price_usd) : "—"}
+                      sub={t.price_available ? "estimated" : "on request"} />
+                  </div>
                 </div>
-              </div>
-            </Card>
-          ))}
+              </Card>
+            );
+          })}
         </div>
       )}
     </div>
@@ -118,7 +125,7 @@ export default function MarketplaceTab() {
 function StatBlock({ label, value }: { label: string; value: number | string }) {
   return (
     <div style={{ minWidth: 100 }}>
-      <div style={{ fontSize: 10, color: T.muted2, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 3 }}>{label}</div>
+      <div style={{ fontSize: 11, fontWeight: 600, color: T.muted, textTransform: "uppercase", letterSpacing: "0.12em", marginBottom: 4 }}>{label}</div>
       <div style={{ fontFamily: sans, fontVariantNumeric: "tabular-nums", fontSize: 22, fontWeight: 600, color: T.ink }}>{value}</div>
     </div>
   );
@@ -127,9 +134,9 @@ function StatBlock({ label, value }: { label: string; value: number | string }) 
 function Metric({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
   return (
     <div style={{ minWidth: 78 }}>
-      <div style={{ fontSize: 10, color: T.muted2, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2, fontFamily: sans }}>{label}</div>
-      <div style={{ fontFamily: mono, fontSize: 14, fontWeight: 600, color: T.ink }}>{value}</div>
-      {sub && <div style={{ fontSize: 10.5, color: T.muted2, marginTop: 1 }}>{sub}</div>}
+      <div style={{ fontSize: 11, fontWeight: 600, color: T.muted, textTransform: "uppercase", letterSpacing: "0.12em", marginBottom: 2, fontFamily: sans }}>{label}</div>
+      <div style={{ fontFamily: sans, fontVariantNumeric: "tabular-nums", fontSize: 15, fontWeight: 600, color: T.ink }}>{value}</div>
+      {sub && <div style={{ fontSize: 11, color: T.muted, marginTop: 1 }}>{sub}</div>}
     </div>
   );
 }

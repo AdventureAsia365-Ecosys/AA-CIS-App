@@ -9,34 +9,44 @@
 //     and the page heading can never disagree, and a page refetch refreshes the badge;
 //   - billing + activity: GET /v1/billing (tenant-scoped, AA-496).
 
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "@/app/_kit";
 import { fetchMyVersions, type Version } from "../_components/catalogApi";
 import { countUniqueTours } from "../_components/ui";
-import { activePollInterval, activityState, tourWorkStatus } from "../_components/workStatus";
+import { activePollInterval, activityState, settledActivityState, tourWorkStatus } from "../_components/workStatus";
 import type { ShellActivityView, ShellBilling } from "../_components/PortalShellContext";
 
 export const MY_VERSIONS_KEY = ["my-versions"] as const;
 
 interface TenantMe { tenant_name?: string; plan_tier?: string }
 
-export function useTenantMe(): { tenantName: string; planTier: string } {
-  const { data } = useQuery({
+/** react-query's own status words: "pending" (no answer yet) | "error" | "success". */
+export type LoadStatus = "pending" | "error" | "success";
+
+/** AA-760 — the tenant name is "" while /api/tenant/me is loading (the shell shows a skeleton, not a
+ *  generic name); the "Partner" fallback is used only once the call has answered without a name. */
+export function useTenantMe(): { tenantName: string; planTier: string; status: LoadStatus } {
+  const { data, status } = useQuery({
     queryKey: ["tenant-me"],
     queryFn: () => apiGet<TenantMe>("/api/tenant/me"),
     staleTime: 5 * 60_000,
   });
-  return { tenantName: data?.tenant_name || "Partner", planTier: data?.plan_tier || "" };
+  return {
+    tenantName: data?.tenant_name || (status === "pending" ? "" : "Partner"),
+    planTier: data?.plan_tier || "",
+    status,
+  };
 }
 
-export function usePoolTotal(): number {
+/** The Browse Tours total; null until the pool answers (the sidebar shows no count, not 0). */
+export function usePoolTotal(): number | null {
   const { data } = useQuery({
     queryKey: ["pool-total"],
     queryFn: () => apiGet<{ pagination?: { total?: number } }>("/api/tenant/v1/tours/pool?page_size=1"),
     staleTime: 5 * 60_000,
   });
-  return data?.pagination?.total ?? 0;
+  return data ? (data.pagination?.total ?? 0) : null;
 }
 
 /** The tenant's versions (shared ["my-versions"] query, polled while a rewrite runs) + the count. */
@@ -56,14 +66,23 @@ export function useCatalog(): { versions: Version[] | undefined; count: number }
 export function useActivityView(billing: ShellBilling | null, versions: Version[] | undefined): ShellActivityView[] {
   return useMemo(() => {
     const byId = new Map((versions ?? []).map((v) => [v.id, v]));
-    return (billing?.activity ?? []).map((a) => ({ ...a, state: activityState(a, byId.get(a.id)) }));
+    return (billing?.activity ?? []).map((a) => {
+      const v = byId.get(a.id);
+      // Versions loaded but this one is not among them (deleted / archived): a settled row.
+      const state = versions && !v ? settledActivityState(a) : activityState(a, v);
+      return { ...a, state, version_number: v?.version_number ?? null };
+    });
   }, [billing, versions]);
 }
 
-export function useBilling(): ShellBilling | null {
-  const { data } = useQuery({
+/** AA-760 — the billing record plus its load state: pages must tell "still loading" and "failed"
+ *  apart from "no data" (Billing showed $0 / "Custom pricing", Activity "No activity yet" while the
+ *  call was still in flight). */
+export function useBilling(): { billing: ShellBilling | null; status: LoadStatus; retry: () => void } {
+  const { data, status, refetch } = useQuery({
     queryKey: ["tenant-billing"],
     queryFn: () => apiGet<ShellBilling>("/api/tenant/v1/billing"),
   });
-  return data ?? null;
+  const retry = useCallback(() => { void refetch(); }, [refetch]);
+  return { billing: data ?? null, status, retry };
 }

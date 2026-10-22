@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ChevronDown, LogOut, Menu, Monitor, Moon, Search, Settings, Sun, CreditCard } from "lucide-react";
-import { Breadcrumb, K, sans, serif, useThemeChoice, type ThemeChoice } from "@/app/_kit";
+import { Breadcrumb, K, SkeletonBar, SkeletonStyle, sans, serif, useThemeChoice, type ThemeChoice } from "@/app/_kit";
 import { PRIVACY_PATH, TERMS_PATH } from "@/lib/hosts";
 import NotificationsBell from "../_components/NotificationsBell";
 import type { ShellActivityView } from "../_components/PortalShellContext";
@@ -140,13 +140,25 @@ function AccountMenu({ tenantName, planTier }: { tenantName: string; planTier: s
           border: `1px solid ${K.line}`, background: K.card, cursor: "pointer", fontFamily: sans,
         }}
       >
-        <span aria-hidden style={{
-          width: 28, height: 28, borderRadius: "50%", background: K.accent, display: "grid", placeItems: "center",
-          color: "var(--aa-on-accent)", fontWeight: 700, fontSize: 11.5,
-        }}>{initials}</span>
-        <span data-pshell="account-name" style={{ fontSize: 13, fontWeight: 500, color: K.ink, maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {tenantName}
-        </span>
+        {/* AA-760 — while /api/tenant/me loads (tenantName ""), a skeleton pill instead of the generic
+            "P / Partner" that flashed a wrong identity. */}
+        {tenantName ? (
+          <>
+            <span aria-hidden style={{
+              width: 28, height: 28, borderRadius: "50%", background: K.accent, display: "grid", placeItems: "center",
+              color: "var(--aa-on-accent)", fontWeight: 700, fontSize: 11.5,
+            }}>{initials}</span>
+            <span data-pshell="account-name" style={{ fontSize: 13, fontWeight: 500, color: K.ink, maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {tenantName}
+            </span>
+          </>
+        ) : (
+          <>
+            <SkeletonStyle />
+            <SkeletonBar w={28} h={28} r={14} />
+            <span data-pshell="account-name"><SkeletonBar w={84} h={12} /></span>
+          </>
+        )}
         <ChevronDown size={14} style={{ color: K.muted2 }} />
       </button>
       {open && (
@@ -159,7 +171,7 @@ function AccountMenu({ tenantName, planTier }: { tenantName: string; planTier: s
             <div style={{ fontSize: 13, fontWeight: 600, color: K.ink, fontFamily: serif, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tenantName}</div>
             {plan && <div style={{ fontSize: 11, color: K.muted }}>{plan}</div>}
           </div>
-          <MenuLink href={ROUTES.settings} icon={<Settings size={15} />} label="Team & Settings" onClick={() => setOpen(false)} />
+          <MenuLink href={ROUTES.settings} icon={<Settings size={15} />} label="Account settings" onClick={() => setOpen(false)} />
           <MenuLink href={ROUTES.billing} icon={<CreditCard size={15} />} label="Billing" onClick={() => setOpen(false)} />
           <button role="menuitem" onClick={logout} style={menuRow}>
             <span style={{ color: K.muted2, display: "flex" }}><LogOut size={15} /></span>

@@ -121,7 +121,7 @@ export function WriterPanel({ target, onClose, onBackgroundPiece }: {
       open={target !== null}
       onClose={close}
       title={target?.title ?? ""}
-      context={target ? [{ label: "Writing for", value: channelName(target.channel) }, { value: target.kind }] : []}
+      context={target ? [{ label: "Writing for", value: channelName(target.channel) }, { value: target.kind === "Route" ? "Route" : "Moment" }] : []}
       footer={ready && target
         ? <ResultActions piece={piece} target={target} confirmPublish={confirmPublish} setConfirmPublish={setConfirmPublish} />
         : undefined}

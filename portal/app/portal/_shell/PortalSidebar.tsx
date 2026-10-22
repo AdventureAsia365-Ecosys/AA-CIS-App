@@ -18,7 +18,7 @@ import { NAV_GROUPS, ROUTES, navActive, type NavEntry } from "./portalNav";
 
 export function PortalSidebar({ drawerOpen, poolCount, catalogCount, onNavigate }: {
   drawerOpen: boolean;
-  poolCount: number;
+  poolCount: number | null;
   catalogCount: number;
   onNavigate: () => void;
 }) {
@@ -91,7 +91,7 @@ export function PortalSidebar({ drawerOpen, poolCount, catalogCount, onNavigate 
                   key={entry.href}
                   entry={entry}
                   active={navActive(entry, pathname)}
-                  count={entry.count ? counts[entry.count] : undefined}
+                  count={entry.count ? (counts[entry.count] ?? undefined) : undefined}
                   onClick={onNavigate}
                 />
               ))}

@@ -261,7 +261,7 @@ function CatalogInner() {
         const ws = XLSX.utils.json_to_sheet(rows, { header: headers });
         ws["!cols"] = [30, 30, 15, 12, 40, 50, 60, 60, 80, 15, 15].map((w) => ({ wch: w }));
         const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "My Catalog Tours");
+        XLSX.utils.book_append_sheet(wb, ws, "My Tours");
         XLSX.writeFile(wb, "my-catalog.xlsx");
       }
     } finally {
@@ -303,6 +303,7 @@ function CatalogInner() {
         header: "Actions",
         enableSorting: false,
         enableHiding: false,
+        meta: { hideLabelOnCard: true }, // AA-760 — no "ACTIONS" label row on the phone card
         cell: (c) => {
           const v = c.row.original;
           return (
@@ -356,9 +357,12 @@ function CatalogInner() {
 
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
         <span style={{ fontSize: 15, fontWeight: 700, color: T.ink, fontFamily: sans }}>Your tours</span>
-        <span style={{ fontSize: 12, color: T.muted2 }}>
-          {visible.length < grouped.length ? `${visible.length} of ${grouped.length}` : `${grouped.length}`} tours
-        </span>
+        {/* AA-760 — no count until the versions load ("0 tours" read as "you have no tours"). */}
+        {!isLoading && (
+          <span style={{ fontSize: 12, color: T.muted2 }}>
+            {visible.length < grouped.length ? `${visible.length} of ${grouped.length}` : `${grouped.length}`} {grouped.length === 1 ? "tour" : "tours"}
+          </span>
+        )}
       </div>
       {/* AA-819 — AUP notice for the CSV/XLSX/DOCX exports on this page. */}
       <AiContentNotice style={{ marginBottom: 12 }} />

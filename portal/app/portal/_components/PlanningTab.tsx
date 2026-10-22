@@ -95,6 +95,9 @@ export default function PlanningTab({ kind = "social" }: { kind?: "social" | "ar
       <SlateTab
         channels={article ? ARTICLE_CHANNELS : SOCIAL_CHANNELS}
         title={article ? "Article topics" : "Social topics"}
+        intro={article
+          ? "Blog topics people are searching for, best first. Pick one to start writing."
+          : "Topics from your tours that suit each social channel, best first. Pick one to start writing."}
       />
 
       {!article && <ReallocationSection defaultYear={DEFAULT_YEAR} defaultQuarter={DEFAULT_QUARTER} />}

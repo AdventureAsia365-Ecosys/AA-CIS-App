@@ -404,7 +404,7 @@ TOUR_STEPS = [
     ("check", "Checking facts, tone and SEO"),
     ("revise", "Revising what the checks flagged"),
     ("polish", "Polishing the details"),
-    ("save", "Saving to My Catalog Tours"),
+    ("save", "Saving to My Tours"),
 ]
 TOUR_STAGE_STEPS = {
     "s1_judge": "check", "s1_brand_audit": "check",

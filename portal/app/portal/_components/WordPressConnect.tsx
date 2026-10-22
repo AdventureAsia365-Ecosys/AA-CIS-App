@@ -117,18 +117,18 @@ export function WordPressConnectForm({ onConnected }: { onConnected?: () => void
       <p style={{ fontSize: 13, color: T.muted, marginTop: -8, marginBottom: 18, lineHeight: 1.5 }}>
         Publishing writes directly to your own WordPress site. You&rsquo;ll need your site URL and
         a WordPress <strong>Application Password</strong> — generate one under
-        Users&nbsp;→&nbsp;Profile&nbsp;→&nbsp;Application Passwords in your WordPress admin.
+        Users&nbsp;→ Profile&nbsp;→ Application Passwords in your WordPress admin.
       </p>
 
       <div style={{ marginBottom: 14 }}>
         <label style={labelStyle}>Site URL</label>
-        <input style={inputStyle} type="text" placeholder="https://yourblog.com"
+        <input style={inputStyle} type="text" placeholder="e.g. https://yourblog.com"
           value={siteUrl} onChange={e => setSiteUrl(e.target.value)} disabled={busy} />
       </div>
 
       <div style={{ marginBottom: 14 }}>
         <label style={labelStyle}>Username</label>
-        <input style={inputStyle} type="text" placeholder="your WordPress username"
+        <input style={inputStyle} type="text" placeholder="e.g. your WordPress username"
           value={username} onChange={e => setUsername(e.target.value)} disabled={busy} />
       </div>
 

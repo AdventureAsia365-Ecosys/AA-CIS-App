@@ -8,7 +8,7 @@ export default function CreateSocialPage() {
   return (
     <>
       <PageHeader title="Social Posts"
-        description="Ranked topics for your social Channels, each cleared against that Channel's bar. Pick one to start writing." />
+        description="Topics for your social channels, best first. Pick one to start writing." />
       <PlanningTab kind="social" />
     </>
   );
