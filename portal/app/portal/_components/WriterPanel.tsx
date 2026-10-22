@@ -144,7 +144,7 @@ function FinishedPiece({ piece }: { piece: ContentPiece }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 10, fontFamily: sans }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: T.body }}>
         <CheckCircle2 size={15} color={T.green} />
-        <span>Your post is ready and saved in <Link href={`/portal/t10-review?piece=${piece.piece_id}`} style={{ color: T.gold, fontWeight: 600 }}>My Content</Link>, where you can edit it.</span>
+        <span>Your post is ready and saved in <Link href={`/portal/content?piece=${piece.piece_id}`} style={{ color: T.gold, fontWeight: 600 }}>My Content</Link>, where you can edit it.</span>
       </div>
       <div
         data-testid="writer-panel-result"
@@ -208,7 +208,7 @@ function ResultActions({ piece, target, confirmPublish, setConfirmPublish }: {
             <Download size={12} /> Export HTML
           </Button>
         )}
-        <Button size="sm" variant="secondary" onClick={() => router.push(`/portal/t10-review?piece=${piece.piece_id}`)}>
+        <Button size="sm" variant="secondary" onClick={() => router.push(`/portal/content?piece=${piece.piece_id}`)}>
           <ExternalLink size={12} /> Open in My Content
         </Button>
         {PUBLISHABLE_CHANNELS.has(channel) && (

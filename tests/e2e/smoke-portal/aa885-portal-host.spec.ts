@@ -3,6 +3,7 @@
 // Unauthenticated checks run always (no tenant key needed); the cookie-scope check needs the
 // tenant storage state from auth.setup.ts.
 //   • /portal/* without a session → /tenant-login; / → the dashboard (then the gate);
+//   • AA-759: every old slug → 308 to its new path (query kept);
 //   • a forged tenant/staff cookie is refused by pages (→ /tenant-login) and by the BFF (401);
 //   • no admin page, admin BFF or staff login exists here (404);
 //   • every response carries the security headers;
@@ -25,6 +26,22 @@ async function apiContext(cookie?: string): Promise<APIRequestContext> {
 function pathOf(location: string): string {
   return new URL(location || '/', baseUrl()).pathname;
 }
+
+const OLD_SLUGS: [string, string][] = [
+  ['/portal/t1-rewrite', '/portal/tours'],
+  ['/portal/t4-pool', '/portal/tours/mine'],
+  ['/portal/marketplace', '/portal/tours/marketplace'],
+  ['/portal/t0-brand', '/portal/brand'],
+  ['/portal/t7-planning', '/portal/create/social'],
+  ['/portal/t8-angle-gate', '/portal/create/write'],
+  ['/portal/t10-review', '/portal/content'],
+  ['/portal/t11-publish', '/portal/content/publish'],
+  ['/portal/t11-publish/connection', '/portal/account/integrations'],
+  ['/portal/activity', '/portal/account/activity'],
+  ['/portal/billing', '/portal/account/billing'],
+  ['/portal/settings', '/portal/account/settings'],
+  ['/portal/api', '/portal/account/api'],
+];
 
 const FORGED: Record<string, string> = {
   'role cookie only (tenant)': 'cis_role=tenant',
@@ -56,6 +73,23 @@ test.describe('AA-885 — portal host', () => {
       await ctx.dispose();
     }
   });
+
+  // AA-759 — the old T-number (and flat utility) slugs answer 308 to the new path, before the page
+  // gate (next.config redirects run first), with the query string kept.
+  for (const [from, to] of OLD_SLUGS) {
+    test(`old slug ${from} → 308 ${to}`, async () => {
+      const ctx = await apiContext();
+      try {
+        const res = await ctx.get(`${from}?x=1`, { maxRedirects: 0, timeout: 15000 });
+        expect(res.status(), `GET ${from}`).toBe(308);
+        const loc = new URL(res.headers()['location'] ?? '/', baseUrl());
+        expect(loc.pathname).toBe(to);
+        expect(loc.search).toBe('?x=1');
+      } finally {
+        await ctx.dispose();
+      }
+    });
+  }
 
   for (const [label, cookie] of Object.entries(FORGED)) {
     test(`forged session is refused: ${label}`, async () => {

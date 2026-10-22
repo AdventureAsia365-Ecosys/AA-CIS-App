@@ -34,6 +34,12 @@ VENDORED = {
     "portal/app/_kit/DataTable.tsx": "frontend/app/_kit/DataTable.tsx",
     "portal/app/_kit/csv.ts": "frontend/app/_kit/csv.ts",
     "portal/app/_kit/savedViews.ts": "frontend/app/_kit/savedViews.ts",
+    # AA-759 — theme + sidebar-collapse stores for the PortalShell.
+    "portal/app/_kit/theme.ts": "frontend/app/_kit/theme.ts",
+    "portal/app/_kit/useTheme.ts": "frontend/app/_kit/useTheme.ts",
+    "portal/app/_kit/sidebarStore.ts": "frontend/app/_kit/sidebarStore.ts",
+    "portal/app/_kit/useSidebar.ts": "frontend/app/_kit/useSidebar.ts",
+    "portal/app/_kit/useHydrated.ts": "frontend/app/_kit/useHydrated.ts",
     "portal/app/_brand/tokens.ts": "frontend/app/_brand/tokens.ts",
     "portal/lib/bffPath.ts": "frontend/lib/bffPath.ts",
     "portal/lib/proxyResponse.ts": "frontend/lib/proxyResponse.ts",
@@ -117,6 +123,42 @@ def test_admin_redirects_old_portal_urls_with_308():
             + re.escape(dest) + r'`,\s*permanent:\s*true\s*\}'
         )
         assert re.search(pattern, cfg), f"next.config.ts: missing permanent redirect {source} → portal host {dest}"
+
+
+# AA-759 — every old T-number (and flat utility) slug answers 308 to its new path on the portal host.
+OLD_PORTAL_SLUGS = {
+    "/portal/t1-rewrite": "/portal/tours",
+    "/portal/t4-pool": "/portal/tours/mine",
+    "/portal/marketplace": "/portal/tours/marketplace",
+    "/portal/t0-brand": "/portal/brand",
+    "/portal/t7-planning": "/portal/create/social",
+    "/portal/t8-angle-gate": "/portal/create/write",
+    "/portal/t10-review": "/portal/content",
+    "/portal/t11-publish": "/portal/content/publish",
+    "/portal/t11-publish/connection": "/portal/account/integrations",
+    "/portal/activity": "/portal/account/activity",
+    "/portal/billing": "/portal/account/billing",
+    "/portal/settings": "/portal/account/settings",
+    "/portal/api": "/portal/account/api",
+}
+
+
+def test_portal_redirects_old_slugs_with_308():
+    cfg = (PORTAL / "next.config.ts").read_text()
+    assert "...OLD_SLUG_REDIRECTS.map((r) => ({ ...r, permanent: true }))" in cfg
+    for source, dest in OLD_PORTAL_SLUGS.items():
+        pattern = r'\{\s*source:\s*"' + re.escape(source) + r'",\s*destination:\s*"' + re.escape(dest) + r'"\s*\}'
+        assert re.search(pattern, cfg), f"portal/next.config.ts: missing 308 {source} -> {dest}"
+        # The new page exists and the old route folder is gone.
+        assert (PORTAL / "app" / dest.lstrip("/") / "page.tsx").is_file(), f"no page for {dest}"
+        assert not (PORTAL / "app" / source.lstrip("/") / "page.tsx").exists(), f"old page {source} still exists"
+
+
+def test_portal_nav_has_no_t_number_slug():
+    nav = (PORTAL / "app" / "portal" / "_shell" / "portalNav.tsx").read_text()
+    assert not re.search(r'"/portal/t\d+-', nav), "portalNav.tsx still links a T-number slug"
+    for dest in set(OLD_PORTAL_SLUGS.values()) - {"/portal/create/write"}:
+        assert f'"{dest}"' in nav, f"portalNav.tsx ROUTES misses {dest}"
 
 
 def test_admin_gate_and_rbac_no_longer_serve_the_portal():

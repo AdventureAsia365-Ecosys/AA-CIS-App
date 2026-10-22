@@ -134,7 +134,7 @@ export function BillingTab({ billing }: { billing: any }) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
           <div>
             <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.14em", color: "rgba(255,255,255,0.5)", marginBottom: 8 }}>Current plan</div>
-            <div style={{ fontSize: 32, fontWeight: 600, color: "#fff", letterSpacing: "-0.02em" }}>{noPlan ? "No plan attached" : titleCase(plan || "—")}</div>
+            <div style={{ fontSize: 32, fontWeight: 600, color: T.onSolid, letterSpacing: "-0.02em" }}>{noPlan ? "No plan attached" : titleCase(plan || "—")}</div>
             <div style={{ fontSize: 14, color: "rgba(255,255,255,0.65)", marginTop: 4 }}>
               {noPlan ? "Contact us to set up your plan." : price > 0 ? `$${price.toLocaleString()} / month · billed monthly` : "Custom pricing"}
             </div>
@@ -147,7 +147,7 @@ export function BillingTab({ billing }: { billing: any }) {
           {[["Tours / month", fmtQuota(toursTotal)], ["API calls / month", fmtQuota(apiTotal)], ["Rate limit", rpm ? `${rpm.toLocaleString()} RPM` : "—"]].map(([l, v]) => (
             <div key={l}>
               <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.1em", color: "rgba(255,255,255,0.45)", marginBottom: 4 }}>{l}</div>
-              <div style={{ fontSize: 14, fontWeight: 600, color: "#fff", fontVariantNumeric: "tabular-nums" }}>{v}</div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: T.onSolid, fontVariantNumeric: "tabular-nums" }}>{v}</div>
             </div>
           ))}
         </div>
@@ -179,7 +179,7 @@ export function BillingTab({ billing }: { billing: any }) {
             {plans.map(p => {
               const active = p.plan_name === plan;
               return (
-                <div key={p.plan_name} style={{ padding: 14, borderRadius: 10, border: `${active ? 2 : 1}px solid ${active ? T.gold : T.line}`, background: active ? "#FFFDF7" : T.bg, display: "flex", flexDirection: "column" }}>
+                <div key={p.plan_name} style={{ padding: 14, borderRadius: 10, border: `${active ? 2 : 1}px solid ${active ? T.gold : T.line}`, background: active ? T.goldTint : T.bg, display: "flex", flexDirection: "column" }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: active ? T.amber : T.ink, marginBottom: 4 }}>{titleCase(p.plan_name)}</div>
                   <div style={{ fontSize: 20, fontWeight: 600, color: T.ink, marginBottom: 10, fontVariantNumeric: "tabular-nums" }}>
                     {p.price_usd_monthly != null ? <>${p.price_usd_monthly.toLocaleString()}<span style={{ fontSize: 11, color: T.muted, fontWeight: 400 }}>/mo</span></> : "Custom"}
@@ -244,7 +244,7 @@ export function SettingsTab() {
         <Card>
           <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: T.muted, marginBottom: 6 }}>Account</div>
           <div style={row}>{label("Company", tenantName)}</div>
-          <div style={row}>{label("Plan", titleCase(planTier))}<a href="/portal/billing" style={{ fontSize: 12, color: T.ink3, fontWeight: 500, textDecoration: "none" }}>View billing →</a></div>
+          <div style={row}>{label("Plan", titleCase(planTier))}<a href="/portal/account/billing" style={{ fontSize: 12, color: T.ink3, fontWeight: 500, textDecoration: "none" }}>View billing →</a></div>
           <div style={last}>
             {label("Need to change something?", "Company name, contacts or a new API key")}
             <Btn size="sm" onClick={() => setContact(true)}><Mail size={13} /> Contact us</Btn>
@@ -255,7 +255,7 @@ export function SettingsTab() {
           <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: T.muted, marginBottom: 6 }}>API access</div>
           <div style={last}>
             {label("API key", "Shown once when it was issued. Use it to call the Adventure Asia API.")}
-            <a href="/portal/api" style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: T.ink3, fontWeight: 500, textDecoration: "none", whiteSpace: "nowrap" }}>
+            <a href="/portal/account/api" style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: T.ink3, fontWeight: 500, textDecoration: "none", whiteSpace: "nowrap" }}>
               <KeyRound size={13} /> API docs →
             </a>
           </div>

@@ -71,11 +71,30 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     roles (same list as `lib/rbac.ts` PAGE_RULES, enforced by `proxy.ts`). The legacy `(internal)` route group
     (`/upload`, `/review`, `/catalog`, `/brand`) is deleted; those URLs and `/admin/brand`
     redirect in `next.config.ts`.
-  - Portal pages (`portal/app/portal/*`): `dashboard`, `t0-brand`, `t1-rewrite`, `t4-pool` ("My Catalog Tours" /
-    `CatalogTab`, migrated to the UI kit + react-query, AA-662 PR 3), `t7-planning` (titled
-    "Social Content", renders the Slate), `t8-angle-gate` (T8+T9 wizard), `t10-review` (My
-    Content), `t11-publish`, `marketplace`, `billing`, `activity`, `settings`, `api`, `help/facebook`.
-    The portal works on phones (drawer below 900px, AA-605).
+  - Portal pages (`portal/app/portal/*`, AA-759 — no T-number slugs): `dashboard`; **Tours** —
+    `tours` (Browse Tours, T1), `tours/mine` (My Tours, T4 / `CatalogTab`, kit + react-query, AA-662 PR 3),
+    `tours/marketplace`; **Brand** — `brand` (T0); **Create** — `create/social` (Social Posts: the Slate on
+    every Channel but blog, + trip reallocation), `create/article` (Articles: the Slate on the blog
+    Channel), `create/write` (T8+T9 wizard, deep link only); **Content** — `content` (My Content, with a
+    Publish action), `content/publish` (T11); **Account** — `account/billing`, `account/activity`,
+    `account/settings` (Team & Settings), `account/api`, `account/integrations` (WordPress / Facebook
+    connections); `help/facebook`. Every old slug (`t0-brand`, `t1-rewrite`, `t4-pool`, `t7-planning`,
+    `t8-angle-gate`, `t10-review`, `t11-publish[/connection]`, `marketplace`, `activity`, `billing`,
+    `settings`, `api`) answers **308** to its new path (`portal/next.config.ts` `OLD_SLUG_REDIRECTS`, query
+    string kept). Route constants: `ROUTES` in `portal/app/portal/_shell/portalNav.tsx`.
+  - **PortalShell (AA-759, `portal/app/portal/_shell/`)**: the one portal shell, on the kit — sidebar grouped
+    by workflow (Tours → Brand → Create → Content → Account) with a collapse rail (`[` key), topbar
+    (breadcrumb, search pill, theme switch light → dark → system, notifications bell, account menu with the
+    Privacy / Terms links and Sign out), a real ⌘K palette on the kit `Modal` (Pages · My tours · My
+    content · Tours; tours from `GET /v1/tours/pool?search=`, the rest from the cached `my-versions` /
+    `content-reviews` queries) and a phone bottom bar (Dashboard · Tours · Create · Content · More).
+    Shell data through react-query (`_shell/useShellData.ts`; the My Tours badge shares the page's
+    `["my-versions"]` query). Toasts: kit `ToastProvider`. Responsive rules are CSS on `data-pshell`
+    attributes in `portal/app/globals.css` (drawer < 900 px, bottom bar < 768 px), no className.
+  - **Portal theme (AA-759)**: no longer pinned light. The root layout restores `cis_theme` / `cis_sidebar`
+    before paint (same scripts as the admin; the portal origin has its own localStorage); the portal `T`
+    tokens (`_components/ui.tsx`) read the `--aa-*` CSS variables like the kit `K`. `/tenant-login` and the
+    legal pages still pin `data-theme="light"`.
   - **Tenant portal app (AA-885)**: `portal/` is a second Next.js app (same Next/React versions, its own
     `package-lock.json`, dev port 3004). Paths keep the `/portal/*` prefix on the new host (`/` → `/portal/dashboard`);
     the admin host answers `/portal`, `/portal/*` and `/tenant-login` with **308** to the same path on
@@ -108,7 +127,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
       "Draft — pending legal review" banner, and both are `noindex`. The privacy notice describes portal
       data and links `https://adventure.asia/privacy-policy` as the company-wide policy (the AA-885 redirect
       is gone); the AI acceptable-use clause of the terms waits for AA-820. Factual sentences must match
-      the code; open legal points stay `[to be confirmed]`. Links in the sidebar and on `/tenant-login`.
+      the code; open legal points stay `[to be confirmed]`. Links in the portal account menu (AA-759; was the
+      sidebar footer) and on `/tenant-login`.
     - Staff have **no** access to the tenant portal (no staff session there; a support view is future
       work). Staff sign in on the admin host (the tenant-login "← Staff login" link).
     - **Vendored UI kit** (byte copies, guarded by `tests/unit/test_aa885_portal_split.py`): a change to
@@ -116,7 +136,9 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
       `portal/app/_kit/tokens.ts`, `portal/app/_kit/primitives.tsx`, `portal/app/_kit/Modal.tsx`,
       `portal/app/_kit/Drawer.tsx`, `portal/app/_kit/Toast.tsx`, `portal/app/_kit/api.ts`,
       `portal/app/_kit/useMediaQuery.ts`, `portal/app/_kit/Providers.tsx`, `portal/app/_kit/DataTable.tsx`,
-      `portal/app/_kit/csv.ts`, `portal/app/_kit/savedViews.ts`, `portal/app/_brand/tokens.ts`,
+      `portal/app/_kit/csv.ts`, `portal/app/_kit/savedViews.ts`, `portal/app/_kit/theme.ts`,
+      `portal/app/_kit/useTheme.ts`, `portal/app/_kit/sidebarStore.ts`, `portal/app/_kit/useSidebar.ts`,
+      `portal/app/_kit/useHydrated.ts` (AA-759), `portal/app/_brand/tokens.ts`,
       `portal/lib/bffPath.ts`, `portal/lib/proxyResponse.ts`, `portal/lib/sameOrigin.ts`,
       `portal/lib/crossSiteGuard.ts` (each copied from the same path under `frontend/`). `portal/app/_kit/index.ts` (barrel of just these), `portal/app/globals.css` and
       `portal/lib/auth-server.ts` are portal-owned.
@@ -608,14 +630,17 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   required check.
 - **Portal UI smoke (AA-885, `.github/workflows/ui-smoke-portal.yml`)**: Playwright project
   `smoke-portal` (`tests/e2e/smoke-portal/`) against a portal preview: host checks without a session
-  (redirects, forged cookies refused, no admin routes = 404, security headers, `/privacy` + `/terms` draft pages), and
+  (redirects, the AA-759 old-slug 308s, forged cookies refused, no admin routes = 404, security headers, `/privacy` +
+  `/terms` draft pages), and
   logged in as a test tenant (API key in `E2E_TENANT_API_KEY`, copied by hand from Secrets Manager
   `aa-cis/dev/e2e-tenant/<slug>` — re-copy after a key rotation) every portal page with the shared
-  `runPageCheck` + a 390 px no-sideways-scroll check, screenshots 1440 + 390, and the host-only cookie check.
+  `runPageCheck` + a 390 px no-sideways-scroll check, screenshots 1440 + 390 in light and dark (AA-759), and the
+  host-only cookie check.
   Logged-in tests skip without the key. The preview needs `VERCEL_PORTAL_BYPASS_SECRET` (passed to the
   helpers as `VERCEL_AUTOMATION_BYPASS_SECRET`). Lint: `portal-lint` CI job (non-required); `tsc` + `next build` in the `portal-build` job (AA-879). e2e specs carry no hardcoded credentials (shared helper
   `tests/e2e/helpers/auth.ts` reads the env). ESLint enforces UI-kit conventions in
-  `frontend/eslint.config.mjs` (`frontend-lint` CI job, non-required).
+  `frontend/eslint.config.mjs` (`frontend-lint` CI job, non-required) and `portal/eslint.config.mjs` (AA-759: `error`
+  for the portal shell and every portal route page, `warn` for the legacy `_components`).
 - **Cognito E2E (AA-816 E1, `.github/workflows/e2e-cognito.yml`)**: `workflow_dispatch` on `main` only,
   GitHub environment `e2e`, OIDC role from secret `E2E_MAIL_ROLE_ARN` (Infra `aa-cis-dev-e2e-mail-reader`,
   read-only: List + Get on `s3://aa-cis-dev-e2e-mail-<acc2>/inbound/`, no delete; 1-day expiry). Playwright
@@ -1814,7 +1839,7 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
 
 ### T-series, old (Tenant rewrite tour, T0-T4)
 
-- **T0 — Brand Identity**: tenant sets up their own brand voice/rules (`/portal/t0-brand`),
+- **T0 — Brand Identity**: tenant sets up their own brand voice/rules (`/portal/brand`, was `t0-brand`),
   incl. a Default Call to Action (`tenant_brand_rules.default_cta`, migration 220). The fields
   become the **brand pack** (`services/acp_shared/brand_pack.py`, AA-771) read by T8, T9 and the
   T10 judge — compiled deterministically at read time; a hand-written `system_prompt` still heads
@@ -1827,7 +1852,7 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     bell row per tenant + CTA text (`tenant.cta.review_claim`). Rule:
     `authenticity.cta_review_claims()`; writer: `services/acp_shared/cta_review_notice.py`.
 - **T1 — Tour Selection / Rewrite trigger**: tenant picks an A3 (Master Content) tour and fires
-  the rewrite (`/portal/t1-rewrite`, `PoolTab.tsx`'s "Rewrite" button).
+  the rewrite (`/portal/tours`, was `t1-rewrite`; `PoolTab.tsx`'s "Rewrite" button).
 - **T2 — Rewrite (execution)**: the LLM rewrite of the picked tour into the tenant's own brand
   voice. It has no dedicated UI route and runs as the durable `t2_rewrite` job on the worker (AA-652).
   - **Writer prompt (AA-792).** T2 has its own writer prompt: `prompts.T2_SYSTEM_PROMPT` plus a
@@ -1930,7 +1955,7 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   - **T2 judge tie-break.** Near the retry line it asks `a1_brand_fit` (stage `t2_judge_tiebreak`,
     shadow).
   - **Other tenants.** `skipped`; T3 is unchanged.
-- **T4 — Pool**: the tenant's own rewritten-tours pool (`/portal/t4-pool`) — a T3-approved tour
+- **T4 — Pool**: the tenant's own rewritten-tours pool (`/portal/tours/mine` "My Tours", was `t4-pool`) — a T3-approved tour
   here is what a tenant can build T7+ content from.
 
 ### T-series, new (per-tenant social content, ported from Ms. Thư's `aa-social-media`, T5-T11)
@@ -1954,11 +1979,11 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   UI (`/portal/t6-atoms`); removed at AA-527, replaced by the admin-only `/admin/atom-curation`
   page (platform-scope atoms only — this is exactly the page AA-527 built into the wrong role
   the first time, which is why this glossary exists).
-- **T7 — Slate** (`/portal/t7-planning`, titled "Social Content"): the tenant's ranked,
+- **T7 — Slate** (`/portal/create/social` "Social Posts" + `/portal/create/article` "Articles", was `t7-planning` "Social Content"): the tenant's ranked,
   per-Channel list of Subjects to pick from, read from the platform-wide Score/Route data (see
   Slate above). The older slot-grid UI on this page was removed (AA-519). Debate's brand-fit cut
   asks the Jev Question `t7_topic_fits_brand` before the Luna call on a cache miss (AA-700, shadow).
-- **T8 — Angle Gate**: Goal + Angle selection (`/portal/t8-angle-gate`, one continuous wizard
+- **T8 — Angle Gate**: Goal + Angle selection (`/portal/create/write`, was `t8-angle-gate`; one continuous wizard
   covering T8 and T9 together — no separate T9 route). Each PAA answer an Angle claims is checked
   with `t8_angle_answers` before the ranking (AA-700, shadow). S234 (AA-771): an Angle's
   `best_final_style` is shape + which seed details to lead with — never a voice, an opening line or an
@@ -1995,14 +2020,14 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   WORDS line built from the brand pack; an unsupported service-level claim is an `F17_trip_fact` finding.
   No Jev on T10: the AA-701 shadow questions were turned off in S234 (no signal) and their
   observer removed; migration 194's `t10_gates` question rows stay at `mode=off` as history.
-  `/portal/t10-review` is now **My Content** (AA-614): the tenant's pieces with no gate/held
+  `/portal/content` (was `t10-review`) is now **My Content** (AA-614): the tenant's pieces with no gate/held
   details, displayed text is copy-locked (select/copy/right-click blocked, with a "Use Export"
   hint; the edit textarea stays editable). AA-669 migrated it to the UI-kit DataTable
   (columns/filters by channel·status·goal/sort/saved views/CSV) with a right-side drawer for the
   piece (content + context + flags + inline edit + exports), and bulk actions (export selected,
   publish selected eligible pieces) via react-query.
 - **T11 — Publish / Export**: tenant-facing WordPress publish, blog Channel only today
-  (`/portal/t11-publish`); the other 7 Channels have no publish step built yet. Blog markdown is
+  (`/portal/content/publish`, was `t11-publish`); the other 7 Channels have no publish step built yet. Blog markdown is
   converted to an HTML fragment before it is sent to WordPress (AA-613 fixed raw `##`/`**`
   appearing on the site). Export has two modes: a full HTML document and a bare HTML fragment
   for pasting into a CMS. Every export and publish writes an audit row.

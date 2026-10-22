@@ -123,7 +123,7 @@ export function EndpointPanel({
         </div>
         <pre style={{
           margin: 0, padding: "12px 14px",
-          background: T.ink, borderRadius: 8,
+          background: T.darkPanel, borderRadius: 8,
           fontFamily: mono, fontSize: 11.5, color: "#A5D6A7",
           lineHeight: 1.7, overflowX: "auto", whiteSpace: "pre-wrap",
         }}>

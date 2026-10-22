@@ -46,7 +46,7 @@ export function ReviewDrawer({
             padding: "14px 16px",
             borderRadius: 10,
             border: `1px solid ${T.gold}`,
-            background: "#fff",
+            background: T.card,
             fontSize: 13.5,
             lineHeight: 1.6,
             color: T.body,
