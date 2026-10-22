@@ -49,7 +49,7 @@ def test_legal_pages_stay_outside_the_portal_gate() -> None:
 
 
 @pytest.mark.parametrize(
-    "rel", ["portal/app/tenant-login/page.tsx", "portal/app/portal/_components/Sidebar.tsx"]
+    "rel", ["portal/app/tenant-login/page.tsx", "portal/app/portal/_shell/PortalTopbar.tsx"]
 )
 def test_sign_in_form_and_sidebar_link_both_pages(rel: str) -> None:
     src = _read(rel)

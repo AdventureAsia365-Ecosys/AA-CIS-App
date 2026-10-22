@@ -66,6 +66,50 @@ def test_only_english_questions_count():
         assert not rq.looks_english(q), q
 
 
+# S247 (AA-779 eval, docs/audits/2026-10-21-S246-eval-panels/aa-779.md §5): 'wat' was a Dutch function
+# word, so every English question about a Thai / Lao / Cambodian temple was dropped as non-English.
+@pytest.mark.parametrize("q", ["Are there landmines near Angkor Wat?", "Is Wat Pho worth visiting?",
+                               "What is Wat Arun famous for?", "How old is Wat Phou?",
+                               "Can you visit Wat Xieng Thong at night?"])
+def test_temple_questions_with_wat_are_english(q):
+    assert rq.looks_english(q)
+
+
+@pytest.mark.parametrize("q", ["Wat is de beste tijd om Angkor Wat te bezoeken?", "Wat kost een visum voor Laos?",
+                               "Is Wat Pho de moeite waard?", "Hoe ver is Wat Arun van het centrum?"])
+def test_dutch_questions_stay_non_english(q):
+    assert not rq.looks_english(q)
+
+
+def test_merge_keeps_an_english_wat_question_from_a_market_tier():
+    out = rq.merge([(rq.SOURCE_PLACE, ["Are there landmines near Angkor Wat?", "Wat kost een visum?"])])
+    assert [r.question for r in out] == ["Are there landmines near Angkor Wat?"]
+
+
+# S247 (AA-779 eval): a question about what a kind of landmark is or means ('lhakhang', 'chorten', 'dzong')
+# is real background a traveller asks (panel KEEP aa779-011 / aa779-181); it is not a place NAME used as a word.
+BHUTAN_NAMES = ["kyichu", "lhakhang", "chorten", "kora", "jampa", "punakha", "dzong"]
+
+
+@pytest.mark.parametrize("q", ["What is a lhakhang?", 'What does the word "Chorten" mean?', "What does Chorten mean?",
+                               "What does dzong mean in English?", "What is the meaning of Punakha Dzong?",
+                               "What is a Buddhist chorten?", "What is Jampa lhakhang?", "What does Wat mean?"])
+def test_landmark_kind_meaning_questions_are_kept(q):
+    assert not rq.is_off_meaning(q, BHUTAN_NAMES + ["wat"])
+
+
+@pytest.mark.parametrize("q", ["What does Punakha mean?", "Is chorten a slang word?", "What's another word for dzong?",
+                               "How do you spell lhakhang?", "What is a moron?", "Is moron a bad word?"])
+def test_name_and_word_questions_next_to_landmark_kinds_stay_off_meaning(q):
+    assert rq.is_off_meaning(q, BHUTAN_NAMES + ["moron"])
+
+
+def test_merge_keeps_a_lhakhang_meaning_question():
+    tiers = [(rq.SOURCE_SEGMENT, ["What is a lhakhang?", "What is a moron?"])]
+    out = rq.merge(tiers, names=["kyichu", "lhakhang", "moron"])
+    assert [r.question for r in out] == ["What is a lhakhang?"]
+
+
 # ---------------------------------------------------------------- the chain
 
 def test_merge_keeps_tier_order_drops_duplicates_and_noise():

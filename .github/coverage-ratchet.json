@@ -1,0 +1,8 @@
+{
+  "_comment": "AA-879 coverage ratchet for the Unit Tests job (pytest --cov=services --cov=shared). 'floor' is the hard minimum (percent of lines); it may only go up, never down (checked against the base branch). 'goal' = 'baseline' (the measured total on 'set_on') + 'monthly_step' per whole month since 'set_on', capped at 'cap'; being below the goal only warns. Raise 'floor' in any PR once the measured total is at least floor + 1.",
+  "floor": 85,
+  "baseline": 85,
+  "set_on": "2026-10-22",
+  "monthly_step": 5,
+  "cap": 90
+}

@@ -650,6 +650,81 @@ def _enforce_authenticity(content_text: str, gate_ledger: list, flags: list, sta
     return cut_text, ledger, flags, status, held_reason, entry
 
 
+F15_STOCK_CUT_FLAG = "F15_stock_cut"
+
+
+def _cut_stock_lines(content_text: str, gate_ledger: list, flags: list, *, channel: str, spec=None,
+                     cta: Optional[str] = None, ignore: frozenset = frozenset(),
+                     moments: Optional[list] = None) -> tuple[str, list, list, Optional[dict]]:
+    """AA-780 (S246 panel) — after the last attempt, cut every sentence that still matches
+    channel_spec.STOCK_PATTERNS, in code (no LLM, no new gate). F15_voice blocks a stock line on attempt 1
+    only (one sentence repair); a stock line in a later attempt's text was a warn, so t9l-010 shipped
+    "That's the detail worth paying attention to …" (all 15 S246 posts reached attempt 2 or 3).
+    - Only a channel with a spec (LinkedIn): STOCK_PATTERNS is read only there (gate_voice).
+    - The cut is sentence_repair.delete_flagged: never the hook, never the CTA, no orphaned pronoun, and
+      kept only when the integrity check passes. A refused sentence stays, with its F15_voice warn.
+    - The cut is not made when the cut text would be under the post's word band or fail F4 (the r4 false
+      passes were too-short posts; a post already under the floor is never made shorter); the stock warn
+      then stays too.
+    - The re-run F4 / F14 results replace their ledger entries and warn flags (`_refresh_flags`); the
+      F15_voice entry keeps only the violations whose phrase is still in the text (passed when none is),
+      and the cut sentences are shown as a non-blocking `F15_stock_cut` flag. Status is never changed.
+    Returns (content_text, gate_ledger, flags, repair_log entry or None)."""
+    if spec is None:
+        return content_text, gate_ledger, flags, None
+    items = hygiene.stock_line_items(content_text)
+    if not items:
+        return content_text, gate_ledger, flags, None
+    cut = sentence_repair.delete_flagged(content_text, items, ignore=ignore, cta=cta, moments=moments)
+    from services.acp_content_writing.quality_gates import gate_extreme_length, gate_social_shape
+    refused = None
+    if cut is None:
+        refused = "no flagged sentence was safe to cut (hook, CTA, orphaned pronoun or integrity)"
+    else:
+        length, shape = gate_extreme_length(_plain(cut), channel), gate_social_shape(cut, spec)
+        if (any(" under the " in v for v in shape.get("violations") or []) or not length["passed"]
+                or shape.get("blocking")):
+            refused = "the cut would leave the post under its length band"
+    if refused:
+        entry = {"gate_targeted": F15_STOCK_CUT_FLAG, "repair_mode": "stock_cut_refused", "sentences_cut": 0,
+                 "violations": [f"stock line(s) kept: {refused} (AA-780)"], "repairable": False}
+        return content_text, gate_ledger, flags, entry
+    plain_after = _cut_key(cut)
+    gone = [it for it in items if _cut_key(it["sentence"]) not in plain_after]
+    if not gone:
+        return content_text, gate_ledger, flags, None
+    folded_after = " ".join(cut.split()).lower()
+
+    def still_there(v: str) -> bool:
+        # "stock phrase '<phrase>' — …: '<sentence>'" (gate_voice); other F15 findings are left as they are
+        if not v.startswith("stock phrase '"):
+            return True
+        return v[len("stock phrase '"):].split("' — ", 1)[0].lower() in folded_after
+
+    def trim_f15(g: dict) -> dict:
+        if g.get("gate") != "F15_voice" or g.get("passed"):
+            return g
+        left = [v for v in g.get("violations") or [] if still_there(v)]
+        if left == list(g.get("violations") or []):
+            return g
+        if left:
+            return {**g, "violations": left}
+        return {**g, "violations": [], "passed": True, "blocking": False}
+
+    fresh = {length["gate"]: length, shape["gate"]: shape}
+    ledger = [trim_f15(fresh.get(g["gate"], g)) for g in gate_ledger]
+    new_flags = [trim_f15(f) for f in _refresh_flags(flags, fresh)]
+    new_flags = [f for f in new_flags if not (f.get("gate") == "F15_voice" and f.get("passed"))]
+    note = [f"cut stock line '{it['phrase']}': '{it['sentence'][:200]}'" for it in gone]
+    new_flags.append({"gate": F15_STOCK_CUT_FLAG, "passed": False, "blocking": False, "repairable": False,
+                      "violations": note})
+    entry = {"gate_targeted": F15_STOCK_CUT_FLAG, "repair_mode": "stock_cut", "sentences_cut": len(gone),
+             "cut_sentences": [it["sentence"][:200] for it in gone],
+             "violations": [f"{len(gone)} stock-line sentence(s) cut in code after the last attempt (AA-780)"],
+             "repairable": False}
+    return cut, ledger, new_flags, entry
+
+
 async def _after_cut(content_text: str, tenant_id: Optional[str], embedding):
     """AA-786 review N1 — after the LinkedIn cut: the writer's summary may still state the cut claim, so
     it is cleared (a None summary is a normal soft-fail outcome, AA-498); the embedding is recomputed on
@@ -2006,6 +2081,16 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                             summary, embedding = await _after_cut(content_text, tenant_id, embedding)
                 status, held_reason, flags = _hold_or_ship(gate_ledger, flags)
                 break
+
+        # AA-780 (S246 panel) — a STOCK_PATTERNS line left in the final attempt's text (F15 blocks on
+        # attempt 1 only) is cut in code here, whatever the status; never the hook or the CTA.
+        content_text, gate_ledger, flags, stock_entry = _cut_stock_lines(
+            content_text, gate_ledger, flags, channel=channel, spec=spec, cta=cta, ignore=brand_ignore,
+            moments=hyg.moments)
+        if stock_entry:
+            repair_log.append({"attempt": attempt, **stock_entry})
+            if stock_entry["sentences_cut"]:
+                summary, embedding = await _after_cut(content_text, tenant_id, embedding)
 
         # AA-819 (AUP 2026-11) — a review / customer voice / independence claim the repair could not
         # remove is cut here, never shipped (a held piece still reaches the tenant, AA-770).

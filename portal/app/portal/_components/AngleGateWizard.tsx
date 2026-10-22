@@ -4,12 +4,12 @@
 //
 // AA-564 Nhóm 4.2 (2026-09-08) — extracted out of AngleGateTab.tsx (which is now a thin wrapper,
 // see that file) so SlateTab.tsx can render this SAME wizard embedded inline under a Subject row
-// (accordion, one row expanded at a time) instead of only as the standalone /portal/t8-angle-gate
+// (accordion, one row expanded at a time) instead of only as the standalone /portal/create/write
 // page. Two behavior differences from the original, both gated on `embedded`:
 //   - `requestId` is a prop instead of read from useSearchParams() directly (the standalone page
 //     wrapper still reads the query param — see AngleGateTab.tsx — and passes it down).
 //   - `reset()` ("Start over") called `onReset?.()` to collapse the row instead of
-//     `router.push("/portal/t8-angle-gate")` when embedded (AA-668 removed both: the Writer panel
+//     `router.push("/portal/create/write")` when embedded (AA-668 removed both: the Writer panel
 //     has no "Start over", closing the panel is the way out).
 // Everything else (the full state machine, every fetch call, every card) is unchanged from the
 // pre-4.2 AngleGateTab.tsx — this is a mechanical extraction, not a rewrite.
@@ -36,7 +36,7 @@
 //
 // Full workflow:
 //   1. Slate (SlateTab.tsx) picks a Subject -> creates the request (subject_id + channel already
-//      set) -> either navigates to /portal/t8-angle-gate?resume_request_id= (standalone) or, as
+//      set) -> either navigates to /portal/create/write?resume_request_id= (standalone) or, as
 //      of AA-564 4.2, expands this wizard inline under the Subject row (embedded).
 //   2. Tenant picks a Goal from the 8-value list.
 //   3. Backend auto-applies fixed brand audience + formula, generates 3 angles, recommends one.
@@ -64,6 +64,8 @@
 //                                                                     angle, or {piece: null}.
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Modal } from "@/app/_kit";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Sparkles, CheckCircle2, ChevronRight, RotateCcw, AlertTriangle, ExternalLink, Compass } from "lucide-react";
@@ -79,8 +81,14 @@ export function goalLabel(goals: { key: string; name: string }[], key: string | 
   return goals.find(g => g.key === key)?.name ?? humanizeKey(key);
 }
 
+// AA-760 — the piece and angle polls are react-query `refetchInterval`s (one request in flight at a
+// time, paused in a hidden tab) that stop on a terminal state. No hard ceiling any more: every
+// tenant write is a job (`t9_write` / `t8_angles`) that always ends, and a job that ends without
+// success marks the piece / request failed, so the poll always reaches a terminal state. After
+// SLOW_AFTER_MS the poll slows down and the card says it is taking longer than usual.
 const POLL_INTERVAL_MS = 3000;
-const POLL_CEILING_MS = 180_000;
+const SLOW_POLL_INTERVAL_MS = 15_000;
+const SLOW_AFTER_MS = 180_000;
 
 interface Goal {
   key: string;
@@ -198,7 +206,7 @@ function AngleRankingBadges({ angle, paaTotal }: { angle: AngleOption; paaTotal:
       </span>
       <span
         title={angle.violations.join("; ") || "No avoid-list phrases matched"}
-        style={{ fontSize: 11.5, fontFamily: sans, color: n > 0 ? "#8A5A16" : T.muted }}
+        style={{ fontSize: 11.5, fontFamily: sans, color: n > 0 ? T.goldDeep : T.muted }}
       >
         {n > 0 ? `⚠ ${n} avoid-list hit${n === 1 ? "" : "s"}` : "0 avoid-list violations"}
       </span>
@@ -246,17 +254,12 @@ function Stepper({ step, canChangeAngle, onChangeAngle }: {
 function WriteDonePopup({ onClose, onOpenInMyContent }: {
   onClose: () => void; onOpenInMyContent: () => void;
 }) {
+  // AA-760 audit — on the kit Modal (was a hand-rolled overlay: no Escape, no aria-modal).
   return (
-    <div
-      style={{ position: "fixed", inset: 0, background: "rgba(31,41,51,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}
-      onClick={onClose}
-    >
-      <div
-        style={{ background: "#fff", borderRadius: 12, padding: "28px 26px", maxWidth: 360, width: "90%", boxShadow: "0 12px 40px rgba(0,0,0,0.25)", textAlign: "center", fontFamily: sans }}
-        onClick={e => e.stopPropagation()}
-      >
+    <Modal open onClose={onClose} width={360}>
+      <div style={{ textAlign: "center", fontFamily: sans, padding: "10px 6px 4px" }}>
         <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
-          <CheckCircle2 size={36} color={T.green} />
+          <CheckCircle2 size={36} color={T.green} aria-hidden />
         </div>
         <div style={{ fontFamily: serif, fontSize: 17, fontWeight: 600, color: T.ink, marginBottom: 6 }}>
           Your content is ready
@@ -269,7 +272,7 @@ function WriteDonePopup({ onClose, onOpenInMyContent }: {
           <Btn variant="ghost" onClick={onClose}>Stay here</Btn>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -314,8 +317,9 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
   // warning: live while typing, then from the write response.
   const liveCtaWarning = useCtaReviewCheck(needsCtaInput ? ctaInput : "");
   const [writeCtaWarning, setWriteCtaWarning] = useState<CtaWarning>(null);
-  const [pollTimedOut, setPollTimedOut] = useState(false); // 180s poll ceiling hit, NOT a failure
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // AA-760 — the piece being polled (null = no poll) and when that poll started (for the slow note).
+  const [pollPieceId, setPollPieceId] = useState<string | null>(null);
+  const [pollStartedAt, setPollStartedAt] = useState(0);
 
   // AA-668 — false once this wizard unmounted (Writer panel closed). A fetch still in flight at
   // that moment must not start a poll interval nobody will ever clear (the unmount cleanup has
@@ -346,11 +350,10 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
   }, []);
 
   // AA-764 — POST .../goal returns 202 while a t8_angles job generates the angles; poll the
-  // request until it leaves `generating` (same 3 s interval / 180 s ceiling as the piece poll).
-  const anglePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const stopAnglePoll = useCallback(() => {
-    if (anglePollRef.current) { clearInterval(anglePollRef.current); anglePollRef.current = null; }
-  }, []);
+  // request until it leaves `generating`. AA-760: a react-query poll (was setInterval + an async
+  // callback, which could overlap requests and gave up after 180 s).
+  const [pollAnglesId, setPollAnglesId] = useState<string | null>(null);
+  const [anglesStartedAt, setAnglesStartedAt] = useState(0);
   const settleAngles = useCallback((d: AngleGateRequest) => {
     setReq(d);
     if (d.generating) return false;
@@ -360,24 +363,28 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
   }, []);
   const pollAngles = useCallback((requestId: string) => {
     if (!aliveRef.current) return; // unmounted — the t8_angles job finishes server-side anyway
-    stopAnglePoll();
     setGenerating(true);
-    const startTime = Date.now();
-    anglePollRef.current = setInterval(async () => {
-      if (Date.now() - startTime > POLL_CEILING_MS) {
-        stopAnglePoll();
-        setGenerating(false);
-        setError("Angles are taking longer than usual — refresh this page in a minute.");
-        return;
-      }
-      try {
-        const r = await fetch(`/api/tenant/v1/angle-gate/requests/${requestId}`);
-        if (!r.ok) return; // transient — the job keeps running either way
-        if (settleAngles(await r.json())) stopAnglePoll();
-      } catch { /* transient network error — keep polling */ }
-    }, POLL_INTERVAL_MS);
-  }, [stopAnglePoll, settleAngles]);
-  useEffect(() => stopAnglePoll, [stopAnglePoll]); // cleanup on unmount
+    setAnglesStartedAt(Date.now());
+    setPollAnglesId(requestId);
+  }, []);
+  useQuery({
+    queryKey: ["angle-gate-request-poll", pollAnglesId],
+    enabled: !!pollAnglesId,
+    gcTime: 0,
+    staleTime: 0,
+    queryFn: async () => {
+      const r = await fetch(`/api/tenant/v1/angle-gate/requests/${pollAnglesId}`);
+      if (!r.ok) throw new Error(`angle request ${r.status}`); // transient — the next tick retries
+      const d: AngleGateRequest = await r.json();
+      // The poll tick settles the wizard (an async callback, not an effect); a settled request
+      // ends the poll.
+      if (aliveRef.current && settleAngles(d)) setPollAnglesId(null);
+      return d;
+    },
+    refetchInterval: (q) => (q.state.data && !q.state.data.generating ? false
+      : Date.now() - anglesStartedAt > SLOW_AFTER_MS ? SLOW_POLL_INTERVAL_MS : POLL_INTERVAL_MS),
+    retry: false,
+  });
 
   // AA-497/AA-522 — load the resumed request. Loads straight into whatever card its real status
   // calls for (goal / angle-choice / write) — no separate "resume" branch needed, the per-status
@@ -391,7 +398,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
         // AA-764 — resumed while the angle job is still running: keep showing progress.
         if (d.generating) { if (d.goal) setSelectedGoal(d.goal); pollAngles(d.request_id); }
       })
-      .catch(e => setError(e.detail ?? "Couldn't load that request — try again from Social Content."))
+      .catch(e => setError(e.detail ?? "Couldn't load that request — try again from Social Posts."))
       .finally(() => setInitialLoading(false));
   }, [requestId, pollAngles]);
 
@@ -407,41 +414,42 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
       .catch(e => { setGenerating(false); setError(e.detail ?? "Couldn't generate angles — try again."); });
   }, [req, selectedGoal, settleAngles, pollAngles]);
 
-  const stopPolling = useCallback(() => {
-    if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
-  }, []);
+  const stopPolling = useCallback(() => setPollPieceId(null), []);
 
-  // AA-466 — single-piece poll for the 202 placeholder.
+  // AA-466 — single-piece poll for the 202 placeholder. AA-760: a react-query poll that stops on a
+  // terminal ready_state (was setInterval with a 180 s ceiling that showed "still working").
   const pollPiece = useCallback((pieceId: string) => {
     if (!aliveRef.current) return; // unmounted — see aliveRef; the t9_write job keeps running
-    stopPolling();
-    const startTime = Date.now();
-    pollingRef.current = setInterval(async () => {
-      if (Date.now() - startTime > POLL_CEILING_MS) {
-        stopPolling();
+    setPollStartedAt(Date.now());
+    setPollPieceId(pieceId);
+  }, []);
+  const pieceQuery = useQuery({
+    queryKey: ["angle-gate-piece-poll", pollPieceId],
+    enabled: !!pollPieceId,
+    gcTime: 0,
+    staleTime: 0,
+    queryFn: async () => {
+      const r = await fetch(`/api/tenant/v1/content-writing/pieces/${pollPieceId}`);
+      if (!r.ok) throw new Error(`piece ${r.status}`); // transient — the backend keeps working
+      const fresh: ContentPiece = await r.json();
+      if (fresh.ready_state !== "in_progress" && aliveRef.current) {
+        setPollPieceId(null);
+        setPiece(fresh);
         setWriting(false);
-        setPollTimedOut(true);
-        return;
+        // AA-569/AA-614 — the ONLY place this fires: a write that started THIS session just
+        // reached a terminal outcome. "ready" (approved OR held — both have real content to
+        // review) shows the done popup; "not_ready" (a hard failure) keeps its own inline retry
+        // state below instead — nothing to "review in My Content" for that case.
+        if (fresh.ready_state === "ready" && !embedded) setShowDonePopup(true);
       }
-      try {
-        const r = await fetch(`/api/tenant/v1/content-writing/pieces/${pieceId}`);
-        if (!r.ok) return; // transient — next tick may succeed, backend is still working either way
-        const fresh: ContentPiece = await r.json();
-        if (fresh.ready_state !== "in_progress") {
-          stopPolling();
-          setPiece(fresh);
-          setWriting(false);
-          // AA-569/AA-614 — the ONLY place this fires: a write that started THIS session just
-          // reached a terminal outcome. "ready" (approved OR held — both have real content to
-          // review) shows the done popup; "not_ready" (a hard failure) keeps its own inline retry
-          // state below instead — nothing to "review in My Content" for that case.
-          if (fresh.ready_state === "ready" && !embedded) setShowDonePopup(true);
-        }
-      } catch { /* transient network error — keep polling, don't surface as a failure */ }
-    }, POLL_INTERVAL_MS);
-  }, [stopPolling, embedded]);
-
-  useEffect(() => stopPolling, [stopPolling]); // cleanup on unmount
+      return fresh;
+    },
+    refetchInterval: (q) => (q.state.data && q.state.data.ready_state !== "in_progress" ? false
+      : Date.now() - pollStartedAt > SLOW_AFTER_MS ? SLOW_POLL_INTERVAL_MS : POLL_INTERVAL_MS),
+    retry: false,
+  });
+  // Taking longer than usual (still polling, slower): a note, never a failure.
+  const writingSlow = writing && !!pollPieceId && pieceQuery.dataUpdatedAt - pollStartedAt > SLOW_AFTER_MS;
 
   // AA-668 — keep the Writer panel's copy of the piece in step (finished view, background watch).
   useEffect(() => { onPieceChange?.(piece); }, [piece, onPieceChange]);
@@ -449,7 +457,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
   // AA-450 — `cta` only ever overrides a NULL angle_gate_request.cta. AA-466: POST returns 202 +
   // a 'processing' placeholder immediately — the real result comes from polling.
   const writeContent = useCallback((requestId: string, cta?: string) => {
-    setWriting(true); setWriteError(null); setNeedsCtaInput(false); setPollTimedOut(false);
+    setWriting(true); setWriteError(null); setNeedsCtaInput(false);
     setWriteCtaWarning(null);
     fetch(`/api/tenant/v1/content-writing/requests/${requestId}/write`, {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -545,7 +553,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
       .then(d => {
         setReq(d);
         stopPolling();
-        setPiece(null); setWriteError(null); setNeedsCtaInput(false); setPollTimedOut(false);
+        setPiece(null); setWriteError(null); setNeedsCtaInput(false);
         setShowDonePopup(false); setWriteCtaWarning(null);
         resolvedWriteStepFor.current = null; // AA-522 — force a fresh latest-piece check on re-choice
       })
@@ -562,9 +570,9 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
     stopPolling();
     setReq(null); setSelectedGoal(""); setError(null);
     setPiece(null); setWriteError(null); setNeedsCtaInput(false); setCtaInput("");
-    setPollTimedOut(false); setReopenError(null); setShowDonePopup(false); setWriteCtaWarning(null);
+    setReopenError(null); setShowDonePopup(false); setWriteCtaWarning(null);
     resolvedWriteStepFor.current = null;
-    router.push("/portal/t8-angle-gate");
+    router.push("/portal/create/write");
   }, [req, stopPolling, router]);
 
   if (initialLoading) return <LoadingScreen message="Loading…" />;
@@ -611,8 +619,8 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
         <Card>
           <CardHead title="Pick a Subject to start" />
           <EmptyState icon={<Compass size={32} strokeWidth={1.5} color={T.gold} />} title="Nothing to write yet"
-            sub="Every new piece starts from a Subject you pick in Social Content now." // AA-576 (was "Write Content always starts from there now" — stale after that nav item was removed)
-            action={<Btn variant="primary" onClick={() => router.push("/portal/t7-planning")}>Go to Social Content</Btn>} />
+            sub="Every new piece starts from a topic you pick in Social Posts or Articles." // AA-576 (was "Write Content always starts from there now" — stale after that nav item was removed)
+            action={<Btn variant="primary" onClick={() => router.push("/portal/create/social")}>Go to Social Posts</Btn>} />
         </Card>
       )}
 
@@ -632,7 +640,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
                     textAlign: "left", padding: "10px 14px", borderRadius: 8,
                     cursor: generating ? "default" : "pointer", minWidth: 0,
                     border: `1px solid ${on ? T.gold : T.line}`, borderWidth: on ? 2 : 1,
-                    background: on ? T.goldTint : "#fff", fontFamily: sans,
+                    background: on ? T.goldTint : T.card, fontFamily: sans,
                   }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: T.ink }}>{g.name}</div>
                   <div style={{ fontSize: 11.5, color: T.muted, marginTop: 2, lineHeight: 1.45 }}>{g.description}</div>
@@ -673,7 +681,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
                     textAlign: "left", width: "100%", boxSizing: "border-box",
                     padding: "14px 16px", borderRadius: 10, position: "relative", fontFamily: sans,
                     border: `1px solid ${a.chosen ? T.green : a.recommended ? T.goldSoft : T.line}`,
-                    background: a.chosen ? T.greenSoft : a.recommended ? T.goldTint : "#fff",
+                    background: a.chosen ? T.greenSoft : a.recommended ? T.goldTint : T.card,
                   }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
                     <span style={{ fontFamily: serif, fontSize: 15, fontWeight: 600, color: T.ink }}>{a.name}</span>
@@ -746,17 +754,10 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
             </div>
           ))}
 
-          {pollTimedOut && !writing && piece && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "9px 12px", background: T.goldTint, border: `1px solid ${T.gold}`, borderRadius: 8, marginBottom: 10 }}>
-              <div style={{ fontSize: 12.5, color: T.body, lineHeight: 1.5 }}>
-                Still working — this is taking longer than usual. Your content is still being
-                written in the background.
-              </div>
-              <div>
-                <Btn size="sm" variant="secondary" onClick={() => { setWriting(true); setPollTimedOut(false); pollPiece(piece.piece_id); }}>
-                  Check status
-                </Btn>
-              </div>
+          {writingSlow && (
+            <div role="status" style={{ padding: "9px 12px", background: T.goldTint, border: `1px solid ${T.gold}`, borderRadius: 8, marginBottom: 10, fontSize: 12.5, color: T.body, lineHeight: 1.5 }}>
+              Still writing — this one is taking longer than usual. It keeps running in the
+              background{embedded ? "; you can close this panel" : ""} and lands in My Content when it is done.
             </div>
           )}
 
@@ -765,14 +766,14 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
               <div style={{ fontSize: 12.5, color: T.body, lineHeight: 1.5 }}>
                 This piece needs a call to action before it can be written — what should the
                 reader do next?{" "}
-                <Link href="/portal/t0-brand" style={{ color: T.gold, fontWeight: 600 }}>
+                <Link href="/portal/brand" style={{ color: T.gold, fontWeight: 600 }}>
                   Set a default call to action in Brand Identity
                 </Link>{" "}
                 so you aren&rsquo;t asked again.
               </div>
               <input value={ctaInput} onChange={e => setCtaInput(e.target.value)}
                 placeholder="e.g. Book a consultation, Read the full guide…"
-                style={{ padding: "9px 12px", background: "#fff", border: `1px solid ${T.line}`, borderRadius: 8, color: T.body, fontSize: 13, fontFamily: sans }} />
+                style={{ padding: "9px 12px", background: T.card, border: `1px solid ${T.line}`, borderRadius: 8, color: T.body, fontSize: 13, fontFamily: sans }} />
               <CtaReviewNotice warning={liveCtaWarning} />
               <div>
                 <Btn variant="primary" disabled={!ctaInput.trim()}
@@ -814,7 +815,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
               <CheckCircle2 size={14} color={T.green} />
               Content ready.{" "}
               <a
-                onClick={() => router.push(`/portal/t10-review?piece=${piece.piece_id}`)}
+                onClick={() => router.push(`/portal/content?piece=${piece.piece_id}`)}
                 style={{ color: T.gold, fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}
               >
                 View, edit, or export it in My Content
@@ -827,7 +828,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
       {showDonePopup && piece && (
         <WriteDonePopup
           onClose={() => setShowDonePopup(false)}
-          onOpenInMyContent={() => router.push(`/portal/t10-review?piece=${piece.piece_id}`)}
+          onOpenInMyContent={() => router.push(`/portal/content?piece=${piece.piece_id}`)}
         />
       )}
     </div>

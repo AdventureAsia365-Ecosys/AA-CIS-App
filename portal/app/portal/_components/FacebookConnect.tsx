@@ -3,8 +3,8 @@
 //
 // Facebook Page connection for T11 (the backend side is AA-462: /v1/integrations/facebook).
 // Same shape as WordPressConnect.tsx — a status hook, a connect form that saves then tests, and a
-// status card with "Test connection" + Disconnect — used on /portal/t11-publish and
-// /portal/t11-publish/connection.
+// status card with "Test connection" + Disconnect — used on /portal/content/publish and
+// /portal/account/integrations.
 //
 // The backend takes a pasted Page ID + Page Access Token (no OAuth login flow): the tenant
 // creates the token in Meta's tools. The token never comes back to the browser; the API returns

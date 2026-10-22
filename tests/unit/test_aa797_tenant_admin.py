@@ -281,6 +281,24 @@ class TestOffboard:
         for table in ("brand_rules", "tenant_config", "tenant_tour_versions", "content_piece", "users"):
             assert not any(table in q for q in sqls)
 
+    @pytest.mark.asyncio
+    async def test_blank_reason_is_400_with_neutral_wording(self):
+        with pytest.raises(HTTPException) as e:
+            await admin.offboard_tenant(str(TENANT_ID), admin.OffboardRequest(reason="  "),
+                                        _request(_conn()), x_admin_secret=_SECRET, x_admin_role="admin")
+        assert e.value.status_code == 400
+        assert "GDPR" not in e.value.detail and "audit trail" in e.value.detail
+
+    def test_openapi_wording_has_no_gdpr_claim(self):
+        """AA-839: the endpoint is a soft, restorable offboarding, not a GDPR erasure; the published
+        schema (/admin/openapi.json, /admin/api-docs) must not say otherwise."""
+        from api import main
+
+        op = main.app.openapi()["paths"]["/admin/tenants/{tenant_id}/offboard"]["post"]
+        text = f"{op.get('summary', '')} {op.get('description', '')}"
+        assert "offboarding" in op["summary"].lower()
+        assert "gdpr" not in text.lower()
+
 
 class TestRestore:
     async def _restore(self, conn, role="admin", redis=None):

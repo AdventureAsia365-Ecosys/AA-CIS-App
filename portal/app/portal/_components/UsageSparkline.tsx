@@ -39,7 +39,7 @@ export default function UsageSparkline({ data, metric, label }: {
         <line x1="0" x2={W} y1={H - PAD_B} y2={H - PAD_B} stroke={T.line2} strokeWidth="1" vectorEffect="non-scaling-stroke" />
         <path d={area} fill={`url(#g${gid})`} stroke="none" />
         <path d={line} fill="none" stroke={T.gold} strokeWidth="1.75" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
-        <circle cx={x(last)} cy={y(vals[last])} r="3.2" fill={T.gold} stroke="#fff" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+        <circle cx={x(last)} cy={y(vals[last])} r="3.2" fill={T.gold} stroke={T.card} strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
       </svg>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: T.muted2, marginTop: 4 }}>
         <span>{fmtDay(data[0].day)}</span>
