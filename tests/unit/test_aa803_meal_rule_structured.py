@@ -633,3 +633,140 @@ def test_an_s247_second_round_probe_keeps_the_code(case_id):
 def test_a_time_marker_is_not_a_narrative_mention():
     tour, itin = _day2("After breakfast, walk around Hoan Kiem Lake.", LUNCH)
     assert not _fires(tour, itin)
+
+
+# ── 8. independent review of part B (S247): doubt in another day's block, a list scoped by the text above it ───
+
+def _hue_itin(n_days=3):
+    """Output days 1..n_days; Day 2 (Hue Citadel) claims lunch, as in the review probes."""
+    titles = {1: "Hanoi", 2: "Hue Citadel", 3: "Hoi An", 4: "Saigon"}
+    return "\n\n".join(f"Day {d} — {titles[d]}\n" + (LUNCH if d == 2 else "Time to look around.")
+                       for d in range(1, n_days + 1))
+
+
+REVIEW_PROBES = {
+    # Finding 1: the note sits in another day's block (Jev's unit_source holds the Day 1 text, so main refused it).
+    "note-in-day-1": "Day 1: Hanoi - Arrive. Note: lunches are at your own expense throughout the trip.\n"
+                     "Day 2: Hue - Citadel. Meals: B, L, D\nDay 3: Hoi An - Old town.",
+    "note-after-the-last-day": "Day 1: Hanoi - Arrive.\nDay 2: Hue - Citadel. Meals: B, L, D\n"
+                               "Day 3: Hoi An - Old town. Meals: B\n"
+                               "Important: on private departures lunch is not included.",
+    # Finding 2: the qualifier is on the line or in the sentence before the list.
+    "heading-line-above-the-list": "Day 1: Hanoi - Arrive.\nDay 2: Hue - Citadel.\nSuperior cabin guests:\n"
+                                   "Meals: B, L, D\nDay 3: Hoi An - Old town.",
+    "option-sentence-before-the-list": "Day 1: Hanoi - Arrive.\nDay 2: Hue - Citadel.\n"
+                                       "Option 1 - bike tour. Meals: B, L\nOption 2 - free day.\n"
+                                       "Day 3: Hoi An - Old town.",
+    "option-heading-on-the-list-line": "Day 1: Hanoi - Arrive.\nDay 2: Hue - Citadel.\n"
+                                       "Option A: kayak in Lan Ha. Meals: B, L, D\nOption B: stay in Hanoi.\n"
+                                       "Day 3: Hoi An - Old town.",
+    # Own variants of the same two classes (no variant word, so the narrower guards are what stops them).
+    "group-heading": "Day 1: Hanoi - Arrive.\nDay 2: Hue - Citadel.\nGroup A:\nMeals: B, L, D\n"
+                     "Day 3: Hoi An - Old town.",
+    "plain-heading": "Day 1: Hanoi - Arrive.\nDay 2: Hue - Citadel.\nFor the long route:\nWalk the walls.\n"
+                     "Meals: B, L, D\nDay 3: Hoi An - Old town.",
+    "audience-line-above": "Day 1: Hanoi - Arrive.\nDay 2: Hue - Citadel.\nGuests on the long trek.\n"
+                           "Meals: B, L, D\nDay 3: Hoi An - Old town.",
+    "audience-before-on-the-line": "Day 1: Hanoi - Arrive.\nDay 2: Hue - Citadel. Cabin class passengers. "
+                                   "Meals: B, L, D\nDay 3: Hoi An - Old town.",
+    "audience-before-a-code-bracket": "Day 1: Hanoi - Arrive.\nDay 2: Hue - Citadel.\nChildren under 12\n"
+                                      "Citadel walk (B, L, D)\nDay 3: Hoi An - Old town.",
+    "variant-word-in-the-day": "Day 1: Hanoi - Arrive.\nDay 2: Hue - Citadel. Premium package. Meals: B, L, D\n"
+                               "Day 3: Hoi An - Old town.",
+    "other-day-names-this-day": "Day 1: Hanoi - Arrive. Please note lunch on Day 2 may be a packed lunch.\n"
+                                "Day 2: Hue - Citadel. Meals: B, L, D\nDay 3: Hoi An - Old town.",
+    "other-day-following-days": "Day 1: Hanoi - Arrive. Lunch is not included today or on the following days.\n"
+                                "Day 2: Hue - Citadel. Meals: B, L, D\nDay 3: Hoi An - Old town.",
+    "other-day-plural-remark": "Day 1: Hanoi - Arrive. Lunches can be bought at the stalls.\n"
+                               "Day 2: Hue - Citadel. Meals: B, L, D\nDay 3: Hoi An - Old town.",
+    "other-day-departures": "Day 1: Hanoi - Arrive.\nDay 2: Hue - Citadel. Meals: B, L, D\n"
+                            "Day 3: Hoi An - Old town. On group departures, lunch may be replaced by a snack.",
+    "other-day-all-meals-own": "Day 1: Hanoi - Arrive. All meals other than breakfast are at your own expense.\n"
+                               "Day 2: Hue - Citadel. Meals: B, L, D\nDay 3: Hoi An - Old town.",
+    "other-day-strong-cue": "Day 1: Hanoi - Arrive.\nDay 2: Hue - Citadel. Meals: B, L, D\n"
+                            "Day 3: Hoi An - Old town. Lunch is at your own cost.",
+}
+
+
+# The guard each probe must be stopped by (so a later change cannot pass it through another, looser guard).
+REVIEW_REASON = {
+    "note-in-day-1": "source_itinerary_doubt", "note-after-the-last-day": "source_itinerary_doubt",
+    "heading-line-above-the-list": "source_day_has_variants", "option-sentence-before-the-list":
+    "source_day_has_variants", "option-heading-on-the-list-line": "source_day_has_variants",
+    "group-heading": "source_list_unreadable", "plain-heading": "source_list_unreadable",
+    "audience-line-above": "source_list_unreadable", "audience-before-on-the-line": "source_list_unreadable",
+    "audience-before-a-code-bracket": "source_list_unreadable", "variant-word-in-the-day": "source_day_has_variants",
+    "other-day-names-this-day": "source_itinerary_doubt", "other-day-following-days": "source_itinerary_doubt",
+    "other-day-plural-remark": "source_itinerary_doubt", "other-day-departures": "source_itinerary_doubt",
+    "other-day-all-meals-own": "source_itinerary_doubt", "other-day-strong-cue": "source_itinerary_doubt",
+}
+
+
+def test_every_review_probe_names_its_guard():
+    assert set(REVIEW_REASON) == set(REVIEW_PROBES)
+
+
+@pytest.mark.parametrize("case_id", sorted(REVIEW_PROBES))
+def test_a_review_probe_keeps_the_code(case_id):
+    tour = _raw_tour(REVIEW_PROBES[case_id])
+    assert mc.claim_sourced(_claim(LUNCH, 2), tour, _hue_itin()) == (False, REVIEW_REASON[case_id]), case_id
+    assert _fires(tour, _hue_itin()), case_id
+
+
+def test_the_scoped_list_guards_hold_without_the_variant_check():
+    """The heading / previous-line probes of the review also stop at day_lists alone (the variant check in
+    claim_sourced is a second, block-wide guard)."""
+    for case_id in ("heading-line-above-the-list", "option-sentence-before-the-list"):
+        block = mc.source_day_blocks(REVIEW_PROBES[case_id])[2]
+        assert mc.day_lists(block)[1] is True, case_id
+
+
+@pytest.mark.parametrize("itineraries", [
+    # control: the same tour with no trap clears
+    "Day 1: Hanoi - Arrive.\nDay 2: Hue - Citadel. Meals: B, L, D\nDay 3: Hoi An - Old town.",
+    # another day's own scoped statement or own list is that day's fact, not a remark about Day 2
+    "Day 1: Hanoi - Arrive. There are no meals included today.\nDay 2: Hue - Citadel. Meals: B, L, D\n"
+    "Day 3: Hoi An - Old town.",
+    "Day 1: Hanoi - Arrive. Meals: None\nDay 2: Hue - Citadel. Meals: B, L, D\nDay 3: Hoi An - Old town.",
+    "Day 1: Hanoi - Arrive. Lunch can be bought on the train.\nDay 2: Hue - Citadel. Meals: B, L, D\n"
+    "Day 3: Hoi An - Old town.",
+    "Day 1: Hanoi - Arrive.\nDay 2: Hue - Citadel. Meals: B, L, D\n"
+    "Day 3: Hoi An - Old town. A riverside picnic and an optional short hike end the day.",
+    # the plain section headings of the structured layouts do not scope the list; narrative audience words far
+    # from the list do not either
+    "Day 1: Hanoi - Arrive.\nDay 2: Hue - Citadel. Check into your cabin.\n\nAccommodation:\n• Hotel (1 night)\n"
+    "Included transportation and activities:\n• Support vehicle\nMeals Included:\n• Breakfast, Lunch\n"
+    "Day 3: Hoi An - Old town.",
+])
+def test_the_review_guards_leave_unscoped_lists_readable(itineraries):
+    tour = _raw_tour(itineraries)
+    assert mc.claim_sourced(_claim(LUNCH, 2), tour, _hue_itin()) == (True, "day_list")
+
+
+@pytest.mark.parametrize("block,impure", [
+    ("Citadel.\nSuperior cabin guests:\nMeals: B, L, D", True),
+    ("Citadel.\nGroup A:\nMeals: B, L, D", True),
+    ("Citadel.\nGuests on the long trek.\nMeals: B, L, D", True),
+    ("Citadel. Option 1 - bike tour. Meals: B, L", True),
+    ("Citadel.\nNote:\n(B, L)", True),
+    ("Citadel.\nAccommodation:\n• Hotel\nMeals Included:\n• Breakfast", False),
+    ("Citadel. Check into your cabin.\nWalk the walls.\nMeals: B, L", True),
+    ("Citadel.\nFor trekkers on the long route\n• Walk 10 km\nMeals: B, L, D", True),
+    ("Citadel. Check into your cabin.\n\nWalk the walls.\nMeals: B, L", False),
+])
+def test_day_lists_scoped_by_the_text_above(block, impure):
+    assert mc.day_lists(block)[1] is impure
+
+
+def test_an_inclusion_is_not_read_on_a_day_with_variants():
+    tour = _tour(["Arrive.", "Hue citadel. Option A: kayak. Option B: stay in town.", "Cruise.", "Depart."],
+                 inclusions="All meals")
+    assert _fires(tour, _itin(4, {2: LUNCH}, titles={2: "Hue citadel"}))
+    tour = _tour(["Arrive.", "Hue citadel walk.", "Cruise.", "Depart."], inclusions="All meals")
+    assert not _fires(tour, _itin(4, {2: LUNCH}, titles={2: "Hue citadel"}))
+
+
+def test_a_tour_wide_note_in_another_day_stops_the_inclusion_path():
+    tour = _tour(["Arrive. Note: lunches are at your own expense throughout the trip.", "Hue citadel walk.",
+                  "Cruise.", "Depart."], inclusions="All meals")
+    assert _fires(tour, _itin(4, {2: LUNCH}, titles={2: "Hue citadel"}))

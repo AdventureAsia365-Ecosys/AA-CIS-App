@@ -31,7 +31,11 @@ A claim is cleared only when every meal it names is covered and nothing in sight
 - **Doubt in the source.** A strong cue anywhere in the source day (``own expense``, ``not included``,
   ``optional``, ``on request``, ``payable``, ``upgrade``, ``supplement``, ...), or a weak or soft cue (``no``,
   ``not``, ``except``, ``if``, ``or``, ``at leisure``, ``free time``, ...) in a sentence of that day that names a
-  meal. A meal named in EXCLUSIONS (any generic meal word there blocks all three). For the INCLUSIONS path:
+  meal. A sentence of ANY other source day (or after the last day) that names a claimed meal with a strong cue,
+  or with a negation-type cue and a tour-wide or remark marker ("Note: lunches are at your own expense throughout
+  the trip."). A day that names a variant (option, package, premium, ...), or a list with a non-section heading or
+  an audience word (guests, cabin, group, ...) above it in its paragraph: the list may hold for one option only.
+  A meal named in EXCLUSIONS (any generic meal word there blocks all three). For the INCLUSIONS path:
   another INCLUSIONS item that names the same meal, a source meal list on any day that lacks it, a layout that can
   hide a scope (plain multi-line text, an indented sub-list, a colon heading, a dash), an exception or scope word
   anywhere in INCLUSIONS, or any meal word in SUMMARY / DESCRIPTION / PRICE.
@@ -161,14 +165,53 @@ def _pure_codes(text: str) -> Optional[frozenset[str]]:
     return meals or None
 
 
+# A list may belong to one option, cabin, class or group only. The ``_LABEL_START_OK`` test sees only the character
+# before "Meals:"; a qualifier on the line before or in the sentence before is in another sentence and raises no
+# meal-sentence doubt. Three guards, each making the day's lists unreadable:
+# - a variant word anywhere in the day ("Option 1 - bike tour. Meals: B, L", "Option A: kayak ...", "premium");
+_VARIANT_RE = re.compile(
+    r"\b(?:options?|optional\w*|packages?|premium|superior|deluxe|luxury|versions?|variants?|tiers?|categor\w+"
+    r"|choices?|choose)\b",
+    re.IGNORECASE)
+# - an audience or class word in the list's paragraph before it, or on the non-empty line above it ("Guests on the
+#   long trek.\nMeals: B, L"); in an earlier paragraph these words are narrative ("check into your cabin",
+#   "charms every traveler");
+_AUDIENCE_RE = re.compile(
+    r"\b(?:cabins?|class(?:es)?|standard|guests?|groups?|travell?ers?|clients?|participants?|passengers?|members?"
+    r"|children|kids|adults?|vegetarians?|trekkers?|hikers?|walkers?|riders?|cyclists?|bikers?|divers?|climbers?"
+    r"|students?|seniors?|couples?|famil(?:y|ies)|singles?|solo|those|whoever|anyone)\b",
+    re.IGNORECASE)
+# - a heading line (ending with a colon) above the list that is not one of the plain section headings of the
+#   structured layouts ("Accommodation:", "Included activities:", "Transportation:"): "Superior cabin guests:",
+#   "Group A:", "Note:".
+_SECTION_HEADING_RE = re.compile(
+    r"^\W*(?:(?:hotel\s+)?accommodations?|included(?:\s+(?:transport(?:ation)?|activities|and|&|,|\s)+)?"
+    r"|transport(?:ation)?|activities|overnight|lodging|highlights?)\s*:$",
+    re.IGNORECASE)
+
+
+def _list_scoped(block: str, pos: int) -> bool:
+    """True when the text above the list at ``pos`` may scope it: a non-section heading line anywhere before it, or
+    an audience / class word in the list's paragraph before it (text since the last blank line) or on the non-empty
+    line above it."""
+    head = block[:pos]
+    lines = head.split("\n")
+    if any(ln.strip().endswith(":") and not _SECTION_HEADING_RE.match(ln.strip()) for ln in lines[:-1]):
+        return True
+    paragraph = re.split(r"\n[ \t]*\n", head)[-1]
+    above = [ln for ln in lines[:-1] if ln.strip()][-1:]
+    return bool(_AUDIENCE_RE.search(paragraph) or any(_AUDIENCE_RE.search(ln) for ln in above))
+
+
 def day_lists(block: str) -> tuple[list[frozenset[str]], bool]:
-    """(the pure meal lists of a source day block, whether it holds a meal list that is NOT pure)."""
+    """(the pure meal lists of a source day block, whether it holds a meal list that is NOT pure or that the block
+    may scope: see ``_VARIANT_RE`` / ``_list_scoped``)."""
     lists: list[frozenset[str]] = []
     impure = False
     for m in _LABEL_RE.finditer(block):
         before = block[: m.start()].rstrip(" \t")
         listed = _pure_list(_list_tail(block[m.end():]))
-        if listed is None or (before and before[-1] not in _LABEL_START_OK):
+        if listed is None or (before and before[-1] not in _LABEL_START_OK) or _list_scoped(block, m.start()):
             impure = True
         else:
             lists.append(listed)
@@ -178,7 +221,12 @@ def day_lists(block: str) -> tuple[list[frozenset[str]], bool]:
             continue                                     # "(Meals: B, D)": read by the label loop above
         codes = _pure_codes(inner)
         if codes:
-            lists.append(codes)
+            if _list_scoped(block, m.start()):
+                impure = True
+            else:
+                lists.append(codes)
+    if (lists or impure) and _VARIANT_RE.search(block):
+        impure = True
     return lists, impure
 
 
@@ -249,6 +297,71 @@ def day_doubt(block: str) -> bool:
         # "After breakfast, you can ..." names the meal only as a time marker; the cue is about something else.
         if _MEAL_MENTION_RE.search(_TIME_MARKER_RE.sub(" ", s)) and _WEAK_CUE_RE.search(s):
             return True
+    return False
+
+
+# Another day's sentence reaches the claimed day when it is tour-wide (a tour-wide word, a reference to another day)
+# or reads as a general remark (a note word, a plural meal noun: "Lunches can be bought at stalls."). A sentence
+# scoped to its own day ("There are no meals included today") does not, unless it is also tour-wide.
+_TOURWIDE_RE = re.compile(
+    r"\b(?:throughout|every|each|daily|always|whole|entire|tour|trip|journey|programme|program|itinerary"
+    r"|departures?|holiday|days|nights|remaining|general\w*|usually|unless|except\w*)\b|\brest\s+of\b"
+    r"|\ball\s+(?:the\s+)?(?:meals?|breakfasts?|lunch\w*|dinners?|suppers?|days?|nights?|tours?|trips?|times?)\b",
+    re.IGNORECASE)
+_REMARK_RE = re.compile(
+    r"\b(?:note|nb|n\.b|important|please|remarks?|attention|reminder)\b|\b(?:breakfasts|lunches|dinners|suppers)\b",
+    re.IGNORECASE)
+_SAME_DAY_RE = re.compile(r"\b(?:today|tonight|this\s+(?:day|morning|afternoon|evening|night))\b", re.IGNORECASE)
+# Weak cues that turn a remark against a meal (negation, option, payment, self-arranging); the wider _WEAK_CUE_RE
+# words ("or", "places", "find", "like", "guests") are narrative in other days' text.
+_NEG_CUE_RE = re.compile(
+    r"\b(?:no|not|never|none|nor|neither|without|except\w*|excluding|unless|if|may|might|could|can|cannot|should"
+    r"|option\w*|choos\w*|choice|alternative\w*|depend\w*|subject|vary|varies|own|self|yourself|yourselves"
+    r"|independent\w*|separate\w*|pay|paid|purchase|buy|bought|cost|price|charge|extra|cash|bring|carry|pack"
+    r"|responsib\w*|account|budget|bill|settle\w*|tba|tbc)\b|\w+n['’]t\b|\bup\s+to\s+you\b|\b(?:by|on)\s+you\b"
+    r"|\bto\s+be\s+(?:confirmed|advised|decided|arranged)\b",
+    re.IGNORECASE)
+
+
+def _sentence_meals(sentence: str) -> frozenset[str]:
+    """The meals another day's sentence names, outside bare time markers ("After breakfast,"). ``meals`` / ``food`` /
+    ``dining`` / ``full board`` name all three; a one-off meal word (picnic, feast, banquet, barbecue, buffet, eat,
+    dine) names all three only in a tour-wide sentence or a remark (otherwise it is that day's own meal)."""
+    text = _TIME_MARKER_RE.sub(" ", sentence or "")
+    if not _MEAL_MENTION_RE.search(text):
+        return frozenset()
+    if re.search(r"\b(?:meals?|food|dining)\b|\b(?:full|half)[\s-]+board\b", text, re.IGNORECASE):
+        return ALL
+    named = frozenset(_tokens(text))
+    if named:
+        return named
+    reaches = _TOURWIDE_RE.search(text) or _REMARK_RE.search(text) or _OTHER_DAY_RE.search(text)
+    return ALL if reaches else frozenset()
+
+
+def itinerary_doubt(blocks: dict[int, str], day: int, meals: frozenset[str]) -> bool:
+    """True when a sentence of the source itinerary outside the matched day (any other day's block, which also
+    holds any text after the last marker) names a claimed meal and casts doubt on it, so it may reach the claimed
+    day: "Note: lunches are at your own expense throughout the trip." on Day 1, or "Important: on private
+    departures lunch is not included." after the last day. Jev's per-unit source holds that text too, so the
+    rule may not clear what Jev could refuse. Doubt: a strong cue, or a negation-type cue in a remark; reach: a
+    tour-wide word or another-day reference (always), else not when the sentence is scoped to its own day. Other
+    days' pure lists and code brackets are their own structured facts ("Meals: None"), not remarks."""
+    for n, block in blocks.items():
+        if n == day:
+            continue                                     # the matched day: day_doubt, stricter
+        for s in _SENTENCE_SPLIT_RE.split(_narrative(block)):
+            if not _sentence_meals(s) & meals:
+                continue
+            strong = bool(_STRONG_CUE_RE.search(s))
+            if not strong and not _NEG_CUE_RE.search(s):
+                continue
+            if _TOURWIDE_RE.search(s) or _OTHER_DAY_RE.search(s):
+                return True
+            if _SAME_DAY_RE.search(s):
+                continue
+            if strong or _REMARK_RE.search(s):
+                return True
     return False
 
 
@@ -488,6 +601,10 @@ def claim_sourced(claim: dict, tour: dict, itin_text: str) -> tuple[bool, str]:
         return False, "source_day_names_another_day"
     if day_doubt(block):
         return False, "source_day_doubt"
+    if itinerary_doubt(blocks, day, meals):
+        return False, "source_itinerary_doubt"
+    if _VARIANT_RE.search(block):
+        return False, "source_day_has_variants"           # a list or an inclusion may hold for one option only
     if narrative_names(block, meals):
         return False, "source_day_text_names_the_meal"
     if not days_aligned(output_day_text(itin_text, day), block):
