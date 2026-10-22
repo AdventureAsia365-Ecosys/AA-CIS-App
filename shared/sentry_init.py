@@ -7,10 +7,18 @@ Privacy (AA-870, S241 review P0-6): `send_default_pii=False`, no request bodies,
 request headers reduced to an allowlist, so admin secrets, partner keys and session tokens in
 custom headers (`x-admin-secret`, `x-api-key`, `x-tripplanner-key`, ...) never leave the task.
 Breadcrumbs keep the AA-712 redaction of key-like URL query parameters.
+
+Log-line events (AA-871): structlog lines reach the logging integration through stdlib (shared/log_config.py), so an
+``error`` / ``exception`` line is a Sentry event. ``before_send`` titles it with the event name (fields in ``extra``)
+and caps it at THROTTLE_MAX events per (logger, event) per THROTTLE_WINDOW_S in each process.
 """
+import json
 import logging
 import os
 import re
+import threading
+import time
+from collections import deque
 
 import boto3
 import sentry_sdk
@@ -63,8 +71,76 @@ def before_breadcrumb(crumb, hint):
     return crumb
 
 
+# AA-871 — structlog lines reach Sentry through stdlib (shared/log_config.py), so ``record.msg`` is structlog's
+# event dict. Fields that duplicate the event's own timestamp / level / logger / release / environment are not copied
+# into ``extra``.
+_DUPLICATE_FIELDS = frozenset({
+    "event", "timestamp", "level", "logger", "exc_info", "stack_info", "service", "environment", "git_sha",
+})
+_EXTRA_STR_MAX = 2000
+
+# AA-871 — per-process cap on log-line events: at most THROTTLE_MAX events per (logger, event name) in
+# THROTTLE_WINDOW_S. Some error lines fire once per request / tour / LLM call during an outage and would burn the
+# Sentry quota; the first few carry the signal. Dropped events are only counted (``throttled_events``), never sent.
+THROTTLE_MAX = 5
+THROTTLE_WINDOW_S = 600.0
+_THROTTLE_KEYS_MAX = 2000
+_throttle: dict = {}
+_throttle_lock = threading.Lock()
+throttled_events = 0
+
+
+def _throttled(key, now: float | None = None) -> bool:
+    global throttled_events
+    now = time.monotonic() if now is None else now
+    with _throttle_lock:
+        if len(_throttle) > _THROTTLE_KEYS_MAX:  # forget keys whose window has passed (bounded memory)
+            for k in [k for k, q in _throttle.items() if not q or now - q[-1] >= THROTTLE_WINDOW_S]:
+                del _throttle[k]
+        q = _throttle.setdefault(key, deque())
+        while q and now - q[0] >= THROTTLE_WINDOW_S:
+            q.popleft()
+        if len(q) >= THROTTLE_MAX:
+            throttled_events += 1
+            return True
+        q.append(now)
+        return False
+
+
+def _json_safe(value):
+    """``extra`` is added after the SDK serialized the event, so it must already be JSON-friendly."""
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return value[:_EXTRA_STR_MAX]
+    try:
+        return json.loads(json.dumps(value, default=str))
+    except Exception:
+        return str(value)[:_EXTRA_STR_MAX]
+
+
+def _shape_log_event(event, record) -> None:
+    """A structlog line: the event name is the message (Sentry title / grouping), the other fields go to ``extra``.
+    Without this the title is ``str(event_dict)`` — a new issue for every distinct value."""
+    fields = record.msg
+    name = str(fields.get("event") or record.name)
+    event["logentry"] = {"message": name, "formatted": name}
+    extra = event.get("extra") if isinstance(event.get("extra"), dict) else {}
+    for k, v in fields.items():
+        if k not in _DUPLICATE_FIELDS and not str(k).startswith("_"):
+            extra[str(k)] = _json_safe(v)
+    event["extra"] = extra
+
+
+def _log_event_key(record) -> tuple:
+    msg = record.msg
+    name = msg.get("event") if isinstance(msg, dict) else msg
+    return (record.name, str(name))
+
+
 def before_send(event, hint):
-    """Drop request bodies, cookies and non-allowlisted headers; redact key-like query strings."""
+    """Drop request bodies, cookies and non-allowlisted headers; redact key-like query strings.
+    AA-871: shape and throttle events made from log lines (``hint["log_record"]``)."""
     request = event.get("request")
     if isinstance(request, dict):
         request.pop("data", None)
@@ -75,6 +151,15 @@ def before_send(event, hint):
         for field in ("url", "query_string"):
             if field in request:
                 request[field] = _redact(request[field])
+    record = (hint or {}).get("log_record")
+    if record is not None:
+        try:
+            if _throttled(_log_event_key(record)):
+                return None
+            if isinstance(record.msg, dict):
+                _shape_log_event(event, record)
+        except Exception:  # never lose the event over its shaping (an exception here would drop it)
+            logger.debug("sentry_log_event_shape_failed", exc_info=True)
     return event
 
 
@@ -91,8 +176,13 @@ def init_sentry(service: str = "api") -> None:
     integrations = []
     if service == "api":
         from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.logging import ignore_logger
         from sentry_sdk.integrations.starlette import StarletteIntegration
         integrations = [StarletteIntegration(), FastApiIntegration()]
+        # AA-871 — uvicorn logs "Exception in ASGI application" for every unhandled 500; the ASGI integration already
+        # captures that exception (with the request_id tag), so the log line would be a second event for the same
+        # error.
+        ignore_logger("uvicorn.error")
     sentry_sdk.init(
         dsn=dsn,
         integrations=integrations,

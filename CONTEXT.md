@@ -763,6 +763,17 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   migration in `shared.schema_versions` is ≥ `api/core/readiness.py` `REQUIRED_CIS_SCHEMA` (bump it in the PR whose
   code needs a newer migration). Deploy Dev's smoke asserts both, and that a live worker reports the same SHA
   (`shared.job_worker.git_sha`, written at worker start).
+- **Logs are JSON with request / job ids (AA-871)**: `shared/log_config.py` (called once by `api.main` and
+  `python -m worker`, not under unit tests) renders structlog, stdlib and uvicorn lines as one JSON object each on
+  `/ecs/aa-cis-dev` (`service` = `cis-api` | `cis-worker`, `git_sha`, `environment`). The outermost API middleware
+  `api/middleware/request_id.py` accepts a well-formed `X-Request-ID` (else generates one), returns it on every
+  response, binds `request_id` for the request and writes one `request_completed` line (method, path, route, status,
+  duration; never query string, headers or body) in place of uvicorn's access log. `/v1/*` lines also carry the
+  verified `tenant_id` (rate limiter); worker lines carry `job_id` / `job_kind`. Find a request with Logs Insights:
+  `fields @timestamp, event, level | filter request_id = "<id>" | sort @timestamp`. Keep event names stable: Infra
+  metric filters match them as substrings.
+  An explicit `request_id=` on a log call (the T8/T9 angle-gate / content-writing request) is logged as
+  `acp_request_id`, so the HTTP `request_id` stays on the line; use `acp_request_id` for the domain id.
 - **Definition of "done" for a backend issue** (program rule): merge + green CI is not enough.
   Also verify (a) Dev deploy **rollout COMPLETED** (ECS running the new taskDef, old deployment
   drained) and (b) the **live endpoint** (curl → HTTP 200 + correct shape). Only then is it Done.
