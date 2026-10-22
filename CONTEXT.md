@@ -763,6 +763,12 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   migration in `shared.schema_versions` is ≥ `api/core/readiness.py` `REQUIRED_CIS_SCHEMA` (bump it in the PR whose
   code needs a newer migration). Deploy Dev's smoke asserts both, and that a live worker reports the same SHA
   (`shared.job_worker.git_sha`, written at worker start).
+- **Release version (AA-891)**: release-please (manifest mode, `release-please-config.json`,
+  `.release-please-manifest.json`, workflow `release-please.yml` with the CI bot GitHub App token) keeps one release PR
+  open on `main`; merging it bumps the manifest, `CHANGELOG.md` and `api/version.py` (the only copy in code: FastAPI app
+  version and `/health` `version`) and tags `vX.Y.Z`. Never edit the version by hand. A release-only merge does not
+  deploy (`!api/version.py` in Deploy Dev's paths); the next code merge ships it, and the smoke asserts `/health`
+  `version` equals the deployed commit's manifest.
 - **Logs are JSON with request / job ids (AA-871)**: `shared/log_config.py` (called once by `api.main` and
   `python -m worker`, not under unit tests) renders structlog, stdlib and uvicorn lines as one JSON object each on
   `/ecs/aa-cis-dev` (`service` = `cis-api` | `cis-worker`, `git_sha`, `environment`). The outermost API middleware
