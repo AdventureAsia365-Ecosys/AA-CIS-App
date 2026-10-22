@@ -34,7 +34,7 @@ HANDLER_NAME = "aa-json"
 # credential lookups). Before AA-871 nothing printed stdlib INFO at all (no root handler), so keeping them at WARNING
 # keeps their volume as it was.
 QUIET_LOGGERS = (
-    "httpx", "httpcore", "botocore", "boto3", "s3transfer", "urllib3", "openai", "anthropic", "langfuse",
+    "httpx", "httpx2", "httpcore", "botocore", "boto3", "s3transfer", "urllib3", "openai", "anthropic", "langfuse",
     "google", "googleapiclient", "asyncio",
 )
 
