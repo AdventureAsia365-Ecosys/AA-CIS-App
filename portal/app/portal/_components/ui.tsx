@@ -5,19 +5,29 @@
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { BRAND, BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_MONO, FONT_SANS } from "@/app/_brand/tokens";
+import { BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_MONO, FONT_SANS } from "@/app/_brand/tokens";
+import { formatDate, formatDateTime } from "@/app/_kit/tokens";
 
 // ─── Tokens ───────────────────────────────────────────────────────────────────
-// Key names unchanged (hundreds of call sites); values come from BRAND. red = danger only
-// (AA-605: #B14A3B -> brand #C20101, same value as admin's A.red).
+// Key names unchanged (hundreds of call sites). AA-759: the values are the `--aa-*` CSS variables
+// (app/globals.css, light = the BRAND hex these keys held before, dark = the admin dark palette), the
+// same move AA-601 part B made for the admin `A`. One <html data-theme> switch recolours every
+// portal page. A `var()` cannot take a hex alpha suffix — use the kit `alpha(color, pct)`.
+// red = danger only (AA-605: #B14A3B -> brand #C20101, same value as admin's A.red).
 export const T = {
-  gold: BRAND.accent, goldDeep: BRAND.accentDeep, goldSoft: BRAND.accentSoft, goldTint: BRAND.accentTint,
-  ink: BRAND.ink, ink2: BRAND.ink2, ink3: BRAND.ink3,
-  body: BRAND.body, muted: BRAND.muted, muted2: BRAND.muted2,
-  bg: BRAND.bg, card: BRAND.card, line: BRAND.line, line2: BRAND.line2,
-  green: BRAND.success, greenSoft: BRAND.successSoft,
-  red: BRAND.danger, redSoft: BRAND.dangerSoft, redBorder: BRAND.dangerBorder,
-  amber: "#B5791F", amberSoft: "#FBEFD6",
+  gold: "var(--aa-accent)", goldDeep: "var(--aa-accent-deep)", goldSoft: "var(--aa-accent-soft)", goldTint: "var(--aa-accent-tint)",
+  ink: "var(--aa-ink)", ink2: "var(--aa-ink2)", ink3: "var(--aa-ink3)",
+  body: "var(--aa-body)", muted: "var(--aa-muted)", muted2: "var(--aa-muted2)",
+  bg: "var(--aa-bg)", card: "var(--aa-card)", line: "var(--aa-line)", line2: "var(--aa-line2)",
+  green: "var(--aa-green)", greenSoft: "var(--aa-green-soft)",
+  red: "var(--aa-red)", redSoft: "var(--aa-red-soft)", redBorder: "var(--aa-red-border)",
+  amber: "var(--aa-kit-amber)", amberSoft: "var(--aa-kit-amber-soft)",
+  /** White text/icon on a solid coloured surface, in both themes. */
+  onSolid: "var(--aa-on-solid)",
+  /** Text on the gold primary button (white in light, dark in dark — readable on the brighter gold). */
+  onAccent: "var(--aa-on-accent)",
+  /** A surface that stays dark in both themes (the sidebar navy) — for the `dark` Card. */
+  darkPanel: "var(--aa-side-bg)", darkPanel2: "var(--aa-side-panel)",
 } as const;
 
 // `serif` keeps its name; it is now the brand display face (titles only — numbers use `sans`).
@@ -56,18 +66,14 @@ export function countUniqueTours(list: { published_tour_id?: string | null }[]):
   return new Set(list.filter(v => v.published_tour_id).map(v => v.published_tour_id)).size;
 }
 
+// AA-759 — one date format with the admin (kit formatDate / formatDateTime: "9 Oct 2026",
+// "9 Oct 2026, 14:05"; was "09 Oct 2026" / "09 Oct, 14:05" here). Names kept for the call sites.
 export function fmtDate(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+  return formatDate(iso);
 }
 
 export function fmtDateTime(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "—";
-  return d.toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  return formatDateTime(iso);
 }
 
 // ─── Status helpers ───────────────────────────────────────────────────────────
@@ -77,9 +83,9 @@ const BADGE_MAP: Record<BadgeVariant, { bg: string; color: string; dot: string }
   success: { bg: T.greenSoft, color: T.green, dot: T.green },
   warning: { bg: T.amberSoft, color: T.amber, dot: T.gold },
   error:   { bg: T.redSoft, color: T.red, dot: T.red },
-  info:    { bg: "#E8EEF4", color: "#3A4F66", dot: "#5C7895" },
+  info:    { bg: "var(--aa-info-soft)", color: "var(--aa-info)", dot: "var(--aa-blue)" },
   gold:    { bg: T.goldTint, color: T.goldDeep, dot: T.gold },
-  default: { bg: "#F0EBE0", color: "#6B7380", dot: "#9099A6" },
+  default: { bg: T.line2, color: T.muted, dot: T.muted2 },
 };
 
 // AA-638 — tenant-facing label for a tour-version status (the raw values are internal enums,
@@ -110,8 +116,8 @@ export function Card({ children, style = {}, dark = false }: {
 }) {
   return (
     <div style={{
-      background: dark ? `linear-gradient(160deg,${T.ink} 0%,${T.ink2} 100%)` : T.card,
-      border: `1px solid ${dark ? T.ink2 : T.line}`,
+      background: dark ? `linear-gradient(160deg,${T.darkPanel} 0%,${T.darkPanel2} 100%)` : T.card,
+      border: `1px solid ${dark ? T.darkPanel2 : T.line}`,
       borderRadius: 12, padding: "22px 22px 20px", position: "relative",
       ...style,
     }}>{children}</div>
@@ -265,7 +271,7 @@ export function Badge({ children, variant = "default", icon }: {
 export function ProgressBar({ pct, warn = false }: { pct: number; warn?: boolean }) {
   return (
     <div style={{ height: 7, background: T.line2, borderRadius: 999, overflow: "hidden" }}>
-      <div style={{ height: "100%", width: `${Math.min(100, Math.max(0, pct))}%`, borderRadius: 999, transition: "width 0.5s ease", background: warn ? `linear-gradient(90deg,${T.amber},${T.red})` : `linear-gradient(90deg,${T.gold},#C9851F)` }} />
+      <div style={{ height: "100%", width: `${Math.min(100, Math.max(0, pct))}%`, borderRadius: 999, transition: "width 0.5s ease", background: warn ? `linear-gradient(90deg,${T.amber},${T.red})` : `linear-gradient(90deg,${T.gold},${T.goldDeep})` }} />
     </div>
   );
 }
@@ -305,7 +311,7 @@ export function Btn({ children, onClick, variant = "secondary", size = "md", dis
   const pad: Record<BtnSize, string> = { sm: "5px 12px", md: "8px 18px", lg: "11px 24px" };
   const fz:  Record<BtnSize, number> = { sm: 11, md: 13, lg: 14 };
   const base: Record<BtnVariant, React.CSSProperties> = {
-    primary:   { background: T.gold,    color: "#fff", border: `1px solid ${T.gold}` },
+    primary:   { background: T.gold,    color: T.onAccent, border: `1px solid ${T.gold}` },
     secondary: { background: T.card,    color: T.ink3, border: `1px solid ${T.line}` },
     ghost:     { background: "transparent", color: T.muted, border: `1px solid ${T.line}` },
     danger:    { background: T.redSoft, color: T.red,  border: `1px solid ${T.redBorder}` },

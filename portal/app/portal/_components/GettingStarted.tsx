@@ -33,10 +33,10 @@ export default function GettingStarted({ catalogCount }: { catalogCount: number 
       const reviewList = reviews?.data;
       const postsDone = Array.isArray(reviewList) && reviewList.length > 0;
       setItems([
-        { key: "brand", title: "Set up your brand voice", sub: "Tell us how you sound so every rewrite matches it.", href: "/portal/t0-brand", cta: "Open Brand Identity", done: brandDone },
-        { key: "tour", title: "Rewrite your first tour", sub: "Pick a published tour and make it yours.", href: "/portal/t1-rewrite", cta: "Browse tours", done: catalogCount > 0 },
-        { key: "post", title: "Write your first social post", sub: "Turn a tour into a ready-to-publish post.", href: "/portal/t7-planning", cta: "Open Social Content", done: postsDone },
-        { key: "wp", title: "Connect WordPress", sub: "Publish blog posts to your site in one click.", href: "/portal/t11-publish", cta: "Connect", done: !!wp?.connected },
+        { key: "brand", title: "Set up your brand voice", sub: "Tell us how you sound so every rewrite matches it.", href: "/portal/brand", cta: "Open Brand Identity", done: brandDone },
+        { key: "tour", title: "Rewrite your first tour", sub: "Pick a published tour and make it yours.", href: "/portal/tours", cta: "Browse tours", done: catalogCount > 0 },
+        { key: "post", title: "Write your first social post", sub: "Turn a tour into a ready-to-publish post.", href: "/portal/create/social", cta: "Open Social Content", done: postsDone },
+        { key: "wp", title: "Connect WordPress", sub: "Publish blog posts to your site in one click.", href: "/portal/content/publish", cta: "Connect", done: !!wp?.connected },
       ]);
     });
   }, [catalogCount]);
@@ -74,7 +74,7 @@ export default function GettingStarted({ catalogCount }: { catalogCount: number 
                 width: 20, height: 20, borderRadius: "50%", display: "grid", placeItems: "center",
                 background: i.done ? T.green : "transparent", border: i.done ? "none" : `1.5px solid ${isNext ? T.gold : T.line}`,
               }}>
-                {i.done && <Check size={12} color="#fff" strokeWidth={3} />}
+                {i.done && <Check size={12} color={T.onSolid} strokeWidth={3} />}
               </span>
               <span style={{ minWidth: 0 }}>
                 <span style={{ display: "block", fontSize: 13, fontWeight: 600, color: i.done ? T.muted : T.ink, textDecoration: i.done ? "line-through" : "none" }}>{i.title}</span>

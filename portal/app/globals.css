@@ -9,8 +9,10 @@
    theme switch recolours every admin page and every kit component used on the
    admin surface.
 
-   `BRAND` (_brand/tokens.ts) stays hex — the login pages and the tenant portal
-   `T` object read it unchanged, so they are unaffected by the admin theme.
+   `BRAND` (_brand/tokens.ts) stays hex — the login and legal pages read it
+   unchanged (they pin data-theme="light"). AA-759: the portal `T` object
+   (app/portal/_components/ui.tsx) now reads these variables too, so the portal
+   follows the theme like the admin.
 
    Resolution order (handled by layout.tsx's restore script + AdminSidebar
    toggle; localStorage key `cis_theme`):
@@ -293,14 +295,14 @@ body {
 
 /* AA-601 part B (feedback 2) — tell the UA which colour scheme is active so native widgets
    (dropdown popups, date pickers, scrollbars, form-control chrome) render for the right theme.
-   Scoped to the data-theme element: the portal + login pin data-theme="light", so they stay light. */
+   Scoped to the data-theme element: the login + legal pages pin data-theme="light", so they stay light. */
 [data-theme="light"] { color-scheme: light; }
 [data-theme="dark"]  { color-scheme: dark; }
 
 /* AA-601 part B (feedback 2) — themed baseline for admin form controls under the dark theme. Inline
    styles still win where a component sets them (those were converted to tokens), but this catches
    controls that rely on UA defaults so none render as a white box with invisible light text. Scoped
-   to [data-theme="dark"] (admin only — portal/login are pinned light). */
+   to [data-theme="dark"] (the portal pages since AA-759; login/legal are pinned light). */
 [data-theme="dark"] input,
 [data-theme="dark"] select,
 [data-theme="dark"] textarea {
@@ -495,3 +497,86 @@ body {
   .aa-page-header--stack > .aa-page-header-actions { justify-content: flex-start; }
 }
 
+
+/* ──────────────────────────────────────────────────────────────────────────
+   AA-759 — portal shell (app/portal/_shell). The shell sets no width/position/
+   padding inline for the parts below, so these rules always win. Hooks are
+   `data-pshell="…"` attributes (no className — the kit ESLint rule) plus the
+   <html data-sidebar> attribute the root layout restores before paint.
+     ≥ 900 px  sidebar in the row, 236 px, or a 68 px icon rail when collapsed
+     < 900 px  sidebar = off-canvas drawer (☰ in the topbar), always full width
+     < 768 px  + fixed bottom bar, search pill → icon, account name hidden
+   ────────────────────────────────────────────────────────────────────────── */
+[data-pshell="sidebar"] {
+  width: 236px;
+  height: 100vh;
+  padding: 22px 14px 24px;
+  box-sizing: border-box;
+  transition: width .18s ease;
+}
+[data-pshell="topbar"] { padding: 0 24px; gap: 14px; }
+[data-pshell="main"] { padding: 28px 36px 56px; }
+[data-pshell="menu-btn"],
+[data-pshell="search-icon"],
+[data-pshell="spacer"],
+[data-pshell="bottom-nav"],
+[data-pshell-dot] { display: none; }
+[data-pshell="backdrop"] {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+@media (min-width: 900px) {
+  [data-pshell="backdrop"] { display: none; }
+  html[data-sidebar="collapsed"] [data-pshell="sidebar"] { width: 68px; padding: 22px 10px 24px; }
+  html[data-sidebar="collapsed"] [data-pshell="sidebar"] [data-pshell-label] { display: none; }
+  html[data-sidebar="collapsed"] [data-pshell="sidebar"] [data-pshell-dot] { display: block; }
+  html[data-sidebar="collapsed"] [data-pshell="sidebar"] [data-pshell-row] { justify-content: center; }
+}
+
+@media (max-width: 899px) {
+  [data-pshell="sidebar"] {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    height: 100dvh;
+    width: 264px;
+    z-index: 1000;
+    transform: translateX(-100%);
+    visibility: hidden; /* a closed drawer is not in the tab order */
+    transition: transform .22s ease, visibility .22s ease;
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
+  }
+  [data-pshell="sidebar"][data-open="true"] { transform: translateX(0); visibility: visible; }
+  [data-pshell="collapse-btn"] { display: none !important; }
+  [data-pshell="menu-btn"] { display: inline-flex; }
+  [data-pshell="topbar"] { padding: 0 12px; gap: 8px; }
+  [data-pshell="main"] { padding: 20px 16px 40px; }
+}
+
+@media (max-width: 767px) {
+  [data-pshell="bottom-nav"] {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 900;
+    height: 60px;
+    background: var(--aa-card);
+    border-top: 1px solid var(--aa-line);
+    box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.08);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  [data-pshell="main"] { padding: 20px 16px 84px; }
+  [data-pshell="topbar"] { padding: 0 8px; gap: 4px; }
+  [data-pshell="search-pill"],
+  [data-pshell="account-name"] { display: none !important; }
+  [data-pshell="search-icon"] { display: inline-flex; }
+  [data-pshell="spacer"] { display: block; }
+  /* The crumb root ("Tours /") is dropped on a phone; the page title keeps the room. */
+  [data-pshell="topbar"] [data-testid="topbar-breadcrumb"] > span:nth-child(-n+2) { display: none; }
+}

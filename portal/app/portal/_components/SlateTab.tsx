@@ -13,7 +13,7 @@
 // `services/acp_shared/slate.py::_clears_bar()`) and a "Chọn viết" button that posts the pick.
 //
 // AA-564 Nhóm 4.2 (2026-09-08) — pick() used to navigate to the standalone T8 route
-// (`/portal/t8-angle-gate?resume_request_id=`). It now expands `AngleGateWizard` INLINE under
+// (`/portal/create/write?resume_request_id=`). It now expands `AngleGateWizard` INLINE under
 // the same Subject row instead (accordion — an `expanded` state held at most one
 // {subjectId, requestId} at a time, shared by both `proposed.map()` and `DecidedList` via the
 // same `SubjectRow` so the wizard stays open across the row moving from one list to the other
@@ -133,20 +133,29 @@ interface WriterControls {
   open: (t: WriterTarget) => void;
 }
 
+/** AA-759 — the Channels a Create page shows: Articles = blog, Social = every other Channel. */
+export const ARTICLE_CHANNELS: readonly string[] = ["blog"];
+export const SOCIAL_CHANNELS: readonly string[] = CHANNEL_TABS.map(c => c.key).filter(k => !ARTICLE_CHANNELS.includes(k));
+
 // The kit toast needs a provider; the Slate is the only toast user on this page.
-export default function SlateTab() {
+export default function SlateTab({ channels, title = "Social Content" }: {
+  /** AA-759 — the Channel tabs to show (default: all 8). */
+  channels?: readonly string[];
+  title?: string;
+}) {
   return (
     <ToastProvider>
-      <SlateTabInner />
+      <SlateTabInner channels={channels} title={title} />
     </ToastProvider>
   );
 }
 
-function SlateTabInner() {
+function SlateTabInner({ channels, title }: { channels?: readonly string[]; title: string }) {
+  const tabs = channels ? CHANNEL_TABS.filter(c => channels.includes(c.key)) : CHANNEL_TABS;
   const [data, setData] = useState<SlateResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeChannel, setActiveChannel] = useState("blog");
+  const [activeChannel, setActiveChannel] = useState(() => tabs[0]?.key ?? "blog");
   const [panel, setPanel] = useState<WriterTarget | null>(null);
   const [known, setKnown] = useState<Record<string, WriterTarget>>({});
   const { watch, unwatch } = useWriteWatcher();
@@ -236,7 +245,7 @@ function SlateTabInner() {
         {/* AA-564 4.1 — Tenant-facing label renamed "Slate" -> "Social Content"; the component/file
             name (SlateTab.tsx, internal-only) is unchanged, matching CONTEXT.md's own Subject/Slate
             terminology used everywhere else in the codebase. */}
-        <CardHead title="Social Content" />
+        <CardHead title={title} />
         <p style={{ fontSize: 12.5, color: T.muted, lineHeight: 1.6, margin: "0 0 14px" }}>
           Every moment that has cleared its Channel&rsquo;s bar — search-led Channels need
           measured demand and questions to answer; attention-led Channels need enough of the
@@ -270,7 +279,7 @@ function SlateTabInner() {
             tenant whose declared markets aren't supported yet. */}
         {data && data.unmatched_markets && data.unmatched_markets.length > 0 && (
           <div style={{
-            marginBottom: 14, padding: "10px 12px", background: "#fff8e6",
+            marginBottom: 14, padding: "10px 12px", background: T.goldTint,
             border: `1px solid ${T.gold}`, borderRadius: 8,
             fontSize: 12, color: T.ink, display: "flex", alignItems: "flex-start", gap: 8,
           }}>
@@ -289,8 +298,8 @@ function SlateTabInner() {
           display: "flex", gap: 4, alignItems: "center", overflowX: "auto", flexWrap: "nowrap",
           borderBottom: `1px solid ${T.line2}`, paddingBottom: 2,
         }}>
-          {CHANNEL_TABS.map(({ key, label, group }, i) => {
-            const showDivider = i > 0 && CHANNEL_TABS[i - 1].group !== group;
+          {tabs.map(({ key, label, group }, i) => {
+            const showDivider = i > 0 && tabs[i - 1].group !== group;
             const count = data?.channels[key]?.eligible_count ?? null;
             const isActive = activeChannel === key;
             const Icon = group === "weekly" ? Calendar : Zap;
@@ -358,7 +367,7 @@ function SkeletonRow() {
   return (
     <div style={{
       display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
-      padding: "12px 14px", borderRadius: 10, border: `1px solid ${T.line}`, background: "#fff",
+      padding: "12px 14px", borderRadius: 10, border: `1px solid ${T.line}`, background: T.card,
     }}>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
         <SkeletonBlock width="55%" height={14} />
@@ -534,7 +543,7 @@ function SubjectRow({ subject, onPicked, writer }: {
 
   return (
     <div style={{
-      borderRadius: 10, border: `1px solid ${isExpanded ? T.gold : T.line}`, background: "#fff",
+      borderRadius: 10, border: `1px solid ${isExpanded ? T.gold : T.line}`, background: T.card,
       overflow: "hidden",
     }}>
       <div style={{

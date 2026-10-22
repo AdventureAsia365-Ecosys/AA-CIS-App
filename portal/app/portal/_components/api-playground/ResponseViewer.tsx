@@ -56,7 +56,7 @@ export function ResponseViewer({ response, example, loading }: ResponseViewerPro
 }
 
 const container: React.CSSProperties = {
-  background: T.ink,
+  background: T.darkPanel,
   borderRadius: 8,
   padding: "14px 16px",
   minHeight: 120,

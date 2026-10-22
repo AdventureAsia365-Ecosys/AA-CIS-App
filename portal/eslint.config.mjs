@@ -25,9 +25,16 @@ const KIT_RESTRICTED_SYNTAX = [
 ];
 
 // Already on the kit and clean of all three patterns (moved from the admin list, AA-885).
+// AA-759 — the kit rule now holds the whole portal shell (app/portal/_shell) and every route page
+// to `error`; the remaining legacy _components stay `warn` until AA-760 migrates them. The shell's
+// responsive CSS hooks are `data-pshell` attributes (globals.css), not classNames.
 const KIT_CLEAN_FILES = [
+  "app/portal/_shell/**/*.tsx",
+  "app/portal/**/page.tsx",
+  "app/portal/layout.tsx",
   "app/portal/_components/ReviewList.tsx",
   "app/portal/_components/CatalogTab.tsx",
+  "app/portal/_components/NotificationsBell.tsx",
 ];
 
 const eslintConfig = defineConfig([

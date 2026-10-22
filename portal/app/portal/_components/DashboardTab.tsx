@@ -86,11 +86,11 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
 
       {/* Usage alert — AA-636: was "> 30%" with a hardcoded "Growth plan = 300 RPM" for every plan */}
       {!dismissAlert && (apiPct >= 80 || toursPct >= 80) && (
-        <div role="status" style={{ background: T.amberSoft, border: `1px solid #F1DDB4`, borderLeft: `4px solid ${T.amber}`, borderRadius: "0 8px 8px 0", padding: "11px 16px", marginBottom: 20, display: "flex", alignItems: "center", gap: 12 }}>
+        <div role="status" style={{ background: T.amberSoft, border: `1px solid ${T.goldSoft}`, borderLeft: `4px solid ${T.amber}`, borderRadius: "0 8px 8px 0", padding: "11px 16px", marginBottom: 20, display: "flex", alignItems: "center", gap: 12 }}>
           <AlertTriangle size={16} color={T.amber} style={{ flexShrink: 0 }} />
-          <div style={{ flex: 1, fontSize: 13, color: "#78350F", lineHeight: 1.5 }}>
+          <div style={{ flex: 1, fontSize: 13, color: "var(--aa-amber-deep)", lineHeight: 1.5 }}>
             <strong>You have used {Math.max(apiPct, toursPct).toFixed(0)}% of this month&rsquo;s {apiPct >= toursPct ? "API calls" : "tour rewrites"}.</strong>{" "}
-            Usage resets in {resetDays} {resetDays === 1 ? "day" : "days"}. <TextLink href="/portal/billing">Compare plans →</TextLink>
+            Usage resets in {resetDays} {resetDays === 1 ? "day" : "days"}. <TextLink href="/portal/account/billing">Compare plans →</TextLink>
           </div>
           <button onClick={() => setDismissAlert(true)} aria-label="Dismiss" style={{ background: "none", border: "none", color: T.amber, cursor: "pointer", padding: 0, display: "flex" }}><X size={16} /></button>
         </div>
@@ -102,7 +102,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
         {/* Membership — dark */}
         <Card dark>
           <CardHead title="Membership Status" light action={
-            <button onClick={() => onNavigate("/portal/billing")} style={{ background: T.gold, color: T.ink, border: 0, fontWeight: 700, fontSize: 12, padding: "7px 14px", borderRadius: 6, cursor: "pointer", fontFamily: sans }}>
+            <button onClick={() => onNavigate("/portal/account/billing")} style={{ background: T.gold, color: "var(--aa-side-bg)", border: 0, fontWeight: 700, fontSize: 12, padding: "7px 14px", borderRadius: 6, cursor: "pointer", fontFamily: sans }}>
               Upgrade →
             </button>
           } />
@@ -113,11 +113,11 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
             </span>
           </div>
           <div style={{ marginTop: 16 }}>
-            <div style={{ fontFamily: serif, fontSize: 36, fontWeight: 500, letterSpacing: "-0.02em", color: "#fff", lineHeight: 1 }}>
+            <div style={{ fontFamily: serif, fontSize: 36, fontWeight: 500, letterSpacing: "-0.02em", color: T.onSolid, lineHeight: 1 }}>
               {planLabel}
             </div>
             <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginTop: 8, color: "rgba(255,255,255,0.65)" }}>
-              <span style={{ fontSize: 22, fontWeight: 600, color: "#fff", letterSpacing: "-0.01em" }}>${price.toLocaleString()}</span>
+              <span style={{ fontSize: 22, fontWeight: 600, color: T.onSolid, letterSpacing: "-0.01em" }}>${price.toLocaleString()}</span>
               <span style={{ fontSize: 12 }}>/ month · billed monthly</span>
             </div>
           </div>
@@ -125,7 +125,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
             {[["Tours/Mo", fmtTotal(toursTotal)], ["API Calls", fmtTotal(apiTotal)], ["Rate limit", rpm ? `${rpm.toLocaleString()} RPM` : "—"]].map(([l, v]) => (
               <div key={l}>
                 <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.12em", color: "rgba(255,255,255,0.45)", marginBottom: 4 }}>{l}</div>
-                <div style={{ fontSize: 12.5, fontWeight: 600, color: "#fff", fontVariantNumeric: "tabular-nums" }}>{v}</div>
+                <div style={{ fontSize: 12.5, fontWeight: 600, color: T.onSolid, fontVariantNumeric: "tabular-nums" }}>{v}</div>
               </div>
             ))}
           </div>
@@ -133,7 +133,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
 
         {/* Quota */}
         <Card>
-          <CardHead title="Quota Usage" action={<TextLink href="/portal/billing">Details →</TextLink>} />
+          <CardHead title="Quota Usage" action={<TextLink href="/portal/account/billing">Details →</TextLink>} />
           <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
             <QuotaRow icon={<FileText size={13} color={T.gold} />} label="Tours rewritten" used={toursUsed} total={toursTotal} pct={toursPct} warn={toursPct >= 80} />
             <QuotaRow icon={<Code2 size={13} color={T.gold} />} label="API calls" used={apiUsed} total={apiTotal} pct={apiPct} warn={apiPct >= 80} />
@@ -158,7 +158,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
         {/* This month — AA-636: was "LLM Cost $0.0000" + "~$0.018/tour · Bedrock" (internal
             cost / model names). Tenants see what they pay for: plan fee, usage, any overage. */}
         <Card>
-          <CardHead title={`This Month · ${month}`} action={<TextLink href="/portal/billing">View billing →</TextLink>} />
+          <CardHead title={`This Month · ${month}`} action={<TextLink href="/portal/account/billing">View billing →</TextLink>} />
           <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
             <div>
               <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.12em", color: T.muted, marginBottom: 6, fontWeight: 600 }}>Amount due</div>
@@ -182,7 +182,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
         <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: "22px 22px 8px" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
             <span style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: T.muted }}>Recent Activity</span>
-            <TextLink href="/portal/activity">View all →</TextLink>
+            <TextLink href="/portal/account/activity">View all →</TextLink>
           </div>
           {activity.length === 0 ? (
             <div style={{ padding: "32px 0", textAlign: "center", color: T.muted2, fontSize: 13 }}>
@@ -241,9 +241,9 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 }}>
           {[
-            { icon: <Globe2 size={18} />, title: "Browse Tours",      sub: `${pool.toLocaleString()} published tours available`, href: "/portal/t1-rewrite" }, // AA-576 Phần 3 (was "Browse Pool")
-            { icon: <BookOpen size={18} />, title: "My Catalog Tours",  sub: `${toursUsed} rewrites · approve, edit, export`,     href: "/portal/t4-pool" }, // AA-576 Phần 3 (was "My Catalog")
-            { icon: <Sparkles size={18} />, title: "Brand Identity", sub: "Configure your content voice & style",               href: "/portal/t0-brand" },
+            { icon: <Globe2 size={18} />, title: "Browse Tours",      sub: `${pool.toLocaleString()} published tours available`, href: "/portal/tours" }, // AA-576 Phần 3 (was "Browse Pool")
+            { icon: <BookOpen size={18} />, title: "My Catalog Tours",  sub: `${toursUsed} rewrites · approve, edit, export`,     href: "/portal/tours/mine" }, // AA-576 Phần 3 (was "My Catalog")
+            { icon: <Sparkles size={18} />, title: "Brand Identity", sub: "Configure your content voice & style",               href: "/portal/brand" },
           ].map(a => (
             <ActionCard key={a.title} icon={a.icon} title={a.title} sub={a.sub} onClick={() => onNavigate(a.href)} />
           ))}
@@ -297,7 +297,7 @@ function SpendTile({ label, value, sub, warn = false }: {
   label: string; value: string; sub?: string; warn?: boolean;
 }) {
   return (
-    <div style={{ background: warn ? T.amberSoft : "#FBF9F4", border: `1px solid ${warn ? "#F1DDB4" : T.line2}`, borderRadius: 8, padding: "12px 14px" }}>
+    <div style={{ background: warn ? T.amberSoft : T.bg, border: `1px solid ${warn ? T.goldSoft : T.line2}`, borderRadius: 8, padding: "12px 14px" }}>
       <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.1em", color: T.muted, fontWeight: 600, marginBottom: 5 }}>{label}</div>
       <div style={{ fontSize: 16, fontWeight: 600, color: T.ink, fontVariantNumeric: "tabular-nums" }}>{value}</div>
       {sub && <div style={{ fontSize: 11, color: T.muted2, marginTop: 4 }}>{sub}</div>}
@@ -320,7 +320,7 @@ function ActionCard({ icon, title, sub, onClick }: {
         boxShadow: hov ? "0 4px 12px -6px rgba(219,150,40,0.35)" : "none",
         transition: "all .15s",
       }}>
-      <div style={{ width: 40, height: 40, borderRadius: 9, background: T.ink, color: T.gold, display: "grid", placeItems: "center", flexShrink: 0 }}>
+      <div style={{ width: 40, height: 40, borderRadius: 9, background: T.darkPanel, color: T.gold, display: "grid", placeItems: "center", flexShrink: 0 }}>
         {icon}
       </div>
       <div style={{ flex: 1 }}>
