@@ -13,7 +13,8 @@
 //   - CSV export of the current (filtered) rows
 //
 // Column meta (S243): `meta: { align: "right" }` right-aligns a column's header AND cells (numbers),
-// so a header sits over its right-aligned values. `paginate={false}` shows every row and no pager,
+// so a header sits over its right-aligned values. AA-760: `meta: { hideLabelOnCard: true }` drops the
+// column's label row label in phone card mode (an actions column: the button says what it does). `paginate={false}` shows every row and no pager,
 // for a page that loads more rows itself (keyset "load older") — one paging mechanism, not two.
 //
 // Client-side by default (filter/sort/paginate the rows it is given). AA-739: pass
@@ -48,7 +49,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { downloadCsv, toCsv } from "./csv";
 import { K, RADIUS, sans } from "./tokens";
-import { EmptyState, TableSkeleton } from "./primitives";
+import { EmptyState, SkeletonBar, SkeletonStyle, TableSkeleton } from "./primitives";
 import { useIsPhone } from "./useMediaQuery";
 import {
   deleteView,
@@ -374,7 +375,8 @@ export function DataTable<T>(props: DataTableProps<T>) {
         }}
       >
         {searchable && (
-          <div style={{ position: "relative" }}>
+          // AA-760 — full width on a phone (it stopped at ~313 px and left a ragged gap).
+          <div style={{ position: "relative", ...(isPhone ? { flex: "1 1 100%", minWidth: 0 } : {}) }}>
             <Search
               size={14}
               style={{
@@ -396,7 +398,9 @@ export function DataTable<T>(props: DataTableProps<T>) {
                 fontSize: 13,
                 fontFamily: sans,
                 color: K.ink,
-                minWidth: 220,
+                minWidth: isPhone ? 0 : 220,
+                width: isPhone ? "100%" : undefined,
+                boxSizing: "border-box",
                 outline: "none",
               }}
             />
@@ -519,9 +523,23 @@ export function DataTable<T>(props: DataTableProps<T>) {
           />
         </div>
       ) : loading ? (
-        <div style={{ padding: 16 }}>
-          <TableSkeleton rows={6} cols={Math.min(allColumns.length, 5)} />
-        </div>
+        isPhone ? (
+          // AA-760 — card-shaped on a phone, like the loaded view (a table grid made the layout jump).
+          <div aria-busy="true" aria-label="Loading" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <SkeletonStyle />
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} style={{ border: `1px solid ${K.line}`, borderRadius: RADIUS.lg, background: K.card, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
+                <SkeletonBar w={`${70 - i * 8}%`} h={14} />
+                <SkeletonBar w="45%" h={11} />
+                <SkeletonBar w="30%" h={11} />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div aria-busy="true" aria-label="Loading" style={{ padding: 16 }}>
+            <TableSkeleton rows={6} cols={Math.min(allColumns.length, 5)} />
+          </div>
+        )
       ) : totalFiltered === 0 ? (
         <EmptyState title={emptyTitle} description={emptyDescription} />
       ) : isPhone ? (
@@ -570,6 +588,13 @@ export function DataTable<T>(props: DataTableProps<T>) {
                     {restCells.map((cell) => {
                       const header = cell.column.columnDef.header;
                       const label = typeof header === "string" ? header : cell.column.id;
+                      if (hideLabelOnCard(cell.column.columnDef)) {
+                        return (
+                          <div key={cell.id} style={{ display: "flex", justifyContent: "flex-end" }}>
+                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                          </div>
+                        );
+                      }
                       return (
                         <div
                           key={cell.id}
@@ -748,6 +773,11 @@ export function DataTable<T>(props: DataTableProps<T>) {
       )}
     </div>
   );
+}
+
+/** AA-760 — `meta: { hideLabelOnCard: true }`: phone card mode shows the cell without its label. */
+function hideLabelOnCard(def: { meta?: unknown }): boolean {
+  return (def.meta as { hideLabelOnCard?: boolean } | undefined)?.hideLabelOnCard === true;
 }
 
 /** `meta: { align: "right" }` on a column definition → "right"; anything else → "left". */

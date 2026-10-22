@@ -56,7 +56,9 @@ export const NAV_GROUPS: NavGroup[] = [
   { label: "Tours", items: [
     { href: ROUTES.tours, label: "Browse Tours", icon: <Globe2 size={16} />, keywords: "pool rewrite published search", count: "pool" },
     { href: ROUTES.myTours, label: "My Tours", icon: <BookOpen size={16} />, keywords: "catalog versions rewritten export", count: "catalog" },
-    { href: ROUTES.marketplace, label: "Marketplace", icon: <Store size={16} />, keywords: "marketplace price runway" },
+    // AA-760 — "Marketplace" read as a place to find or buy tours; the page is an overview of the
+    // tenant's own written tours (price, status). Route unchanged (bookmarks keep working).
+    { href: ROUTES.marketplace, label: "Tour overview", icon: <Store size={16} />, keywords: "marketplace overview portfolio price summary" },
   ] },
   { label: "Brand", items: [
     { href: ROUTES.brand, label: "Brand Identity", icon: <Sparkles size={16} />, keywords: "brand voice tone cta rules" },
@@ -71,7 +73,7 @@ export const NAV_GROUPS: NavGroup[] = [
   { label: "Account", items: [
     { href: ROUTES.billing, label: "Billing", icon: <CreditCard size={16} />, keywords: "plan invoice upgrade quota" },
     { href: ROUTES.activity, label: "Activity", icon: <Activity size={16} />, keywords: "history log" },
-    { href: ROUTES.settings, label: "Team & Settings", icon: <Settings size={16} />, keywords: "account team sign out profile" },
+    { href: ROUTES.settings, label: "Account settings", icon: <Settings size={16} />, keywords: "account team sign out profile" },
     { href: ROUTES.api, label: "API", icon: <Code2 size={16} />, keywords: "api key docs developer playground" },
     { href: ROUTES.integrations, label: "Integrations", icon: <Plug size={16} />, keywords: "wordpress facebook connect channel connection" },
   ] },
@@ -102,10 +104,12 @@ export function pageTitle(pathname: string): string {
   return owner?.label ?? "";
 }
 
-/** Topbar crumb root: the nav group of the page ("Workspace" outside the nav). */
+/** Topbar crumb root: the nav group of the page ("Help" for the help pages, "Workspace" otherwise
+ *  outside the nav). */
 export function pageGroup(pathname: string): string {
   const g = NAV_GROUPS.find((grp) => grp.items.some((e) => navActive(e, pathname)));
-  return g && g.label !== "Overview" ? g.label : "Workspace";
+  if (g && g.label !== "Overview") return g.label;
+  return pathname.startsWith("/portal/help/") ? "Help" : "Workspace";
 }
 
 /** Phone bottom bar: the 4 daily destinations; "More" opens the drawer with everything. */

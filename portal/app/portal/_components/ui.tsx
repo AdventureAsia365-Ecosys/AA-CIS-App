@@ -4,9 +4,10 @@
 
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_MONO, FONT_SANS } from "@/app/_brand/tokens";
 import { formatDate, formatDateTime } from "@/app/_kit/tokens";
+import { SkeletonBar, SkeletonStyle } from "@/app/_kit/primitives";
 
 // ─── Tokens ───────────────────────────────────────────────────────────────────
 // Key names unchanged (hundreds of call sites). AA-759: the values are the `--aa-*` CSS variables
@@ -24,7 +25,7 @@ export const T = {
   amber: "var(--aa-kit-amber)", amberSoft: "var(--aa-kit-amber-soft)",
   /** White text/icon on a solid coloured surface, in both themes. */
   onSolid: "var(--aa-on-solid)",
-  /** Text on the gold primary button (white in light, dark in dark — readable on the brighter gold). */
+  /** Text on the gold primary button (dark ink in both themes since AA-760: white on gold was 2.5:1). */
   onAccent: "var(--aa-on-accent)",
   /** A surface that stays dark in both themes (the sidebar navy) — for the `dark` Card. */
   darkPanel: "var(--aa-side-bg)", darkPanel2: "var(--aa-side-panel)",
@@ -76,6 +77,31 @@ export function fmtDateTime(iso: string | null | undefined): string {
   return formatDateTime(iso);
 }
 
+/** AA-760 — a billing month key ("2026-10") for people: "October 2026". Anything else passes through. */
+export function fmtBillingMonth(month: string | null | undefined): string {
+  if (!month) return "—";
+  const m = /^(\d{4})-(\d{2})$/.exec(month);
+  if (!m) return month;
+  return new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, 1))
+    .toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+}
+
+/** AA-760 — a tour duration for people, one casing everywhere ("14 DAYS" / "7 days" → "14 days" /
+ *  "7 days"; "15 DAYS 14 NIGHTS" → "15 days"). A string with no leading number is only lower-cased. */
+export function fmtDuration(raw: string | null | undefined): string {
+  if (!raw) return "";
+  const m = /(\d+)\s*(day|night)/i.exec(raw);
+  if (!m) return raw.trim().toLowerCase();
+  const n = Number(m[1]);
+  const unit = m[2].toLowerCase();
+  return `${n} ${unit}${n === 1 ? "" : "s"}`;
+}
+
+/** AA-760 — whole US dollars with a thousands separator ("$1,225"). */
+export function fmtUsd(n: number): string {
+  return n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+}
+
 // ─── Status helpers ───────────────────────────────────────────────────────────
 export type BadgeVariant = "success" | "warning" | "error" | "info" | "gold" | "default";
 
@@ -85,7 +111,8 @@ const BADGE_MAP: Record<BadgeVariant, { bg: string; color: string; dot: string }
   error:   { bg: T.redSoft, color: T.red, dot: T.red },
   info:    { bg: "var(--aa-info-soft)", color: "var(--aa-info)", dot: "var(--aa-blue)" },
   gold:    { bg: T.goldTint, color: T.goldDeep, dot: T.gold },
-  default: { bg: T.line2, color: T.muted, dot: T.muted2 },
+  // AA-760 — ink3, not muted: muted on line2 was 4.0:1 in light (8.3:1 now; 7.7:1 in dark).
+  default: { bg: T.line2, color: T.ink3, dot: T.muted2 },
 };
 
 // AA-638 — tenant-facing label for a tour-version status (the raw values are internal enums,
@@ -106,6 +133,7 @@ export function statusVariant(s: string): BadgeVariant {
   if (s === "approved") return "success";
   if (s === "rejected") return "error";
   if (s === "pending") return "warning";
+  if (s === "ready" || s === "done") return "success"; // AA-760 — was grey on one page, green on another
   return "default";
 }
 
@@ -282,9 +310,23 @@ export function Spinner({ size = 16 }: { size?: number }) {
 
 export function LoadingScreen({ message = "Loading..." }: { message?: string }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 400, gap: 12 }}>
+    <div role="status" aria-busy="true" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 400, gap: 12 }}>
       <Spinner size={22} /><span style={{ fontSize: 13, color: T.muted }}>{message}</span>
     </div>
+  );
+}
+
+/** AA-760 — a card-shaped placeholder while one section's data loads (a connection card, a plan
+ *  card), so the page around it renders at once instead of behind a full-page spinner. */
+export function CardSkeleton({ lines = 3, label = "Loading" }: { lines?: number; label?: string }) {
+  return (
+    <Card>
+      <div aria-busy="true" aria-label={label} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <SkeletonStyle />
+        <SkeletonBar w={140} h={11} />
+        {Array.from({ length: lines }).map((_, i) => <SkeletonBar key={i} w={`${90 - i * 18}%`} h={13} />)}
+      </div>
+    </Card>
   );
 }
 
@@ -321,18 +363,31 @@ export function Btn({ children, onClick, variant = "secondary", size = "md", dis
   );
 }
 
-export function Field({ label, value, onChange, rows = 3, placeholder = "", hint, hintColor }: {
+/** Rows a text needs at ~44 characters a line (a phone-width textarea), plus its own line breaks. */
+function rowsFor(text: string): number {
+  return text.split("\n").reduce((n, line) => n + Math.max(1, Math.ceil(line.length / 44)), 0);
+}
+
+export function Field({ label, value, onChange, rows = 3, placeholder = "", hint, hintColor, autoGrow = false }: {
   label: string; value: string; onChange: (v: string) => void;
   rows?: number; placeholder?: string; hint?: string; hintColor?: string;
+  /** AA-760 — grow with the text (CSS `field-sizing: content`, and enough `rows` where that is not
+   *  supported), so a saved answer is never cut mid-line; `rows` stays the minimum (capped at 16). */
+  autoGrow?: boolean;
 }) {
+  const shownRows = autoGrow ? Math.min(16, Math.max(rows, rowsFor(value))) : rows;
+  const id = useId(); // unique per Field, even when two share a label
   return (
     <div style={{ marginBottom: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-        <label style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: T.muted }}>{label}</label>
+        <label htmlFor={id} style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: T.muted }}>{label}</label>
         {hint && <span style={{ fontSize: 11, color: hintColor ?? T.muted2 }}>{hint}</span>}
       </div>
-      <textarea value={value} onChange={e => onChange(e.target.value)} rows={rows} placeholder={placeholder}
-        style={{ width: "100%", padding: "10px 12px", background: T.bg, border: `1px solid ${T.line}`, borderRadius: 8, color: T.body, fontSize: 13, resize: "vertical", outline: "none", lineHeight: 1.6, fontFamily: sans, boxSizing: "border-box" }} />
+      <textarea id={id} value={value} onChange={e => onChange(e.target.value)} rows={shownRows} placeholder={placeholder}
+        style={{
+          width: "100%", padding: "10px 12px", background: T.bg, border: `1px solid ${T.line}`, borderRadius: 8, color: T.body, fontSize: 13, resize: "vertical", outline: "none", lineHeight: 1.6, fontFamily: sans, boxSizing: "border-box",
+          ...(autoGrow ? { fieldSizing: "content", minHeight: `calc(${rows} * 1.6em + 22px)`, maxHeight: "60vh" } as React.CSSProperties : {}),
+        }} />
     </div>
   );
 }

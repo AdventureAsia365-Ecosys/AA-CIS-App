@@ -40,11 +40,11 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [globalSearch, setGlobalSearch] = useState("");
 
-  const { tenantName, planTier } = useTenantMe();
+  const { tenantName, planTier, status: tenantStatus } = useTenantMe();
   const poolTotal = usePoolTotal();
-  const { versions, count: catTotal } = useCatalog();
-  const billing = useBilling();
-  const activity = useActivityView(billing, versions);
+  const { versions, count: catTotal, failed: versionsFailed } = useCatalog();
+  const { billing, status: billingStatus, retry: retryBilling } = useBilling();
+  const activity = useActivityView(billing, versions, versionsFailed);
 
   // ⌘K / Ctrl K toggles the palette (modifier-gated, so typing in a field never triggers it).
   useEffect(() => {
@@ -77,8 +77,10 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
   }, [qc]);
 
   const value: PortalShellValue = useMemo(() => ({
-    tenantName, planTier, poolTotal, catTotal, billing, activity, globalSearch, refreshCatalogCount, showToast,
-  }), [tenantName, planTier, poolTotal, catTotal, billing, activity, globalSearch, refreshCatalogCount, showToast]);
+    tenantName, planTier, tenantStatus, poolTotal, catTotal, billing, billingStatus, retryBilling, activity,
+    globalSearch, refreshCatalogCount, showToast,
+  }), [tenantName, planTier, tenantStatus, poolTotal, catTotal, billing, billingStatus, retryBilling, activity,
+    globalSearch, refreshCatalogCount, showToast]);
 
   return (
     <PortalShellContext.Provider value={value}>

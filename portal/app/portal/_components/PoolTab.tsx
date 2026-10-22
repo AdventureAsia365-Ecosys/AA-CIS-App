@@ -12,9 +12,9 @@
 //     it polls every 5 s only while a rewrite is queued/writing, stopping on terminal states;
 //   - each row's status comes from the shared work-status model (workStatus.tsx) on the tour's
 //     latest version — job_status included — so failed reads "Writing failed", never "Writing…".
-//     A tour the server marks `already_rewritten` but not in the loaded versions page (only
-//     finished ones can be: the list is newest first, an active rewrite is always on page 1) reads
-//     "In My Tours".
+//     A tour the server marks `already_rewritten` but with no version in the loaded list (a version
+//     created after the last fetch) reads "In My Tours". The list holds every version since AA-760
+//     (fetchMyVersions reads all pages).
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
@@ -25,7 +25,7 @@ import { Search, ChevronRight, X, Globe2, MapPin, Clock, Wallet } from "lucide-r
 import {
   T, mono, sans,
   Btn, EmptyState,
-  parseHighlights, fmtDate,
+  parseHighlights, fmtDate, fmtDuration,
 } from "./ui";
 import { PoolFilters, type PoolFiltersState } from "./PoolFilters";
 import { ROUTES } from "../_shell/portalNav";
@@ -155,7 +155,7 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
           </div>
           <select value={country} onChange={e => { setCountry(e.target.value); setPage(1); }}
             style={{ padding: "9px 12px", background: T.card, border: `1px solid ${T.line}`, borderRadius: 8, color: T.body, fontSize: 13, fontFamily: sans, cursor: "pointer" }}>
-            <option value="">All Countries</option>
+            <option value="">All countries</option>
             {countries.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
           <PoolFilters
@@ -233,13 +233,13 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
                   <div style={{ fontSize: 15, fontWeight: 700, color: T.ink, marginBottom: 4, lineHeight: 1.3 }}>{selected.aa_name}</div>
                   <div style={{ fontSize: 12, color: T.muted, display: "flex", gap: 10, flexWrap: "wrap" }}>
                     {selected.country && <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><MapPin size={12} /> {selected.country}</span>}
-                    {selected.duration && <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Clock size={12} /> {selected.duration}</span>}
+                    {selected.duration && <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Clock size={12} /> {fmtDuration(selected.duration)}</span>}
                     {selected.price_raw && <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Wallet size={12} /> {selected.price_raw}</span>}
                   </div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", cursor: "pointer", color: T.muted2, padding: 2 }}>
-                    <X size={16} />
+                  <button onClick={() => setSelected(null)} aria-label="Close tour details" title="Close" style={{ background: "none", border: "none", cursor: "pointer", color: T.muted2, padding: 2 }}>
+                    <X size={16} aria-hidden />
                   </button>
                 </div>
               </div>
@@ -297,7 +297,7 @@ function TourRow({ tour, index, isActive, isChecked, status, onSelect, onCheck }
           )}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             {tour.country && <Tag icon={<Globe2 size={10} />}>{tour.country}</Tag>}
-            {tour.duration && <Tag>{tour.duration}</Tag>}
+            {tour.duration && <Tag>{fmtDuration(tour.duration)}</Tag>}
             {kws.map((k: string) => <Tag key={k} gold>{k}</Tag>)}
           </div>
         </div>
@@ -326,8 +326,9 @@ function Tag({ children, icon, gold = false }: { children: React.ReactNode; icon
     <span style={{
       display: "inline-flex", alignItems: "center", gap: 3,
       fontSize: 11, padding: "1px 8px", borderRadius: 20,
+      // AA-760 — ink3 on line2 (8.3:1 light / 7.7:1 dark); muted read dim on the dark chip.
       background: gold ? "rgba(219,150,40,0.09)" : T.line2,
-      color: gold ? T.amber : T.muted,
+      color: gold ? T.amber : T.ink3,
     }}>
       {icon}{children}
     </span>

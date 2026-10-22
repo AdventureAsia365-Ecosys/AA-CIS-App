@@ -565,7 +565,7 @@ _MY_VERSIONS_ROWS_SQL = """
     LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
     {job_join}
     {where}
-    ORDER BY ttv.created_at DESC
+    ORDER BY ttv.created_at DESC, ttv.id DESC
     LIMIT ${limit} OFFSET ${offset}
 """
 _MY_VERSIONS_JOB_JOINED = {"job_col": "j.status AS job_status", "job_join": _JOB_JOIN}

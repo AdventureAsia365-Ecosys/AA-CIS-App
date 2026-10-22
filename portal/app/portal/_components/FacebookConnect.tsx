@@ -163,7 +163,7 @@ export function FacebookConnectForm({ onConnected }: { onConnected?: () => void 
 
       <div style={{ marginBottom: 18 }}>
         <label style={labelStyle}>Page Access Token</label>
-        <input style={inputStyle} type="password" placeholder="EAAB…" autoComplete="off"
+        <input style={inputStyle} type="password" placeholder="e.g. EAAB…" autoComplete="off"
           value={token} onChange={e => setToken(e.target.value)} disabled={busy} />
       </div>
 
