@@ -134,3 +134,44 @@ def test_bff_parses_the_flag_with_the_same_on_values():
     assert "!" not in body.split("return", 1)[1].split("[", 1)[0]  # an allow-list, not a deny-list
     bff = {v.strip().strip('"\'') for v in values.group(1).split(",")}
     assert bff == set(staff_identity._LEGACY_ON_VALUES)
+
+
+# ── Malformed bodies: a client error (401), never a 500 (S248 live probe: an empty POST answered 500) ──────────
+
+@pytest.mark.parametrize("route", ["/auth/verify-admin", "/auth/verify-tenant"])
+@pytest.mark.parametrize("kwargs", [
+    {},                                                                  # no body at all
+    {"content": b"not json", "headers": {"content-type": "application/json"}},
+    {"content": b"\xff\xfe", "headers": {"content-type": "application/json"}},  # not UTF-8
+    {"json": [1, 2]},                                                    # JSON, not an object
+    {"json": "token"},
+    {"json": None},
+])
+def test_verify_routes_answer_401_for_a_body_that_is_not_a_json_object(legacy_unset, route, kwargs):
+    app.dependency_overrides[get_pool] = lambda: _Pool(None)
+    res = TestClient(app, raise_server_exceptions=False).post(route, **kwargs)
+    assert res.status_code == 401, res.text
+    assert res.json()["detail"] == "Invalid token"
+
+
+@pytest.mark.parametrize("route", ["/auth/verify-admin", "/auth/verify-tenant"])
+@pytest.mark.parametrize("token", [123, None, ["a.b.c"], {"t": 1}])
+def test_verify_routes_answer_401_for_a_token_that_is_not_a_string(legacy_unset, route, token):
+    app.dependency_overrides[get_pool] = lambda: _Pool(None)
+    res = TestClient(app, raise_server_exceptions=False).post(route, json={"token": token})
+    assert res.status_code == 401, res.text
+
+
+def test_verify_tenant_refuses_a_staff_token_with_403_not_500(legacy_unset):
+    """Staff HS256 tokens share JWT_SECRET but carry no name / plan_tier: verify-tenant used to raise a KeyError."""
+    staff = main_mod._create_admin_jwt(ADMIN_ID, USERNAME, "admin")
+    res = TestClient(app, raise_server_exceptions=False).post("/auth/verify-tenant", json={"token": staff})
+    assert res.status_code == 403, res.text
+    assert res.json()["detail"] == "Tenant token required"
+
+
+def test_verify_tenant_still_accepts_a_tenant_token(legacy_unset):
+    token = main_mod._create_jwt("tenant-s2", "Tenant S2", "starter")
+    res = TestClient(app).post("/auth/verify-tenant", json={"token": token})
+    assert res.status_code == 200, res.text
+    assert res.json() == {"valid": True, "tenant_id": "tenant-s2", "name": "Tenant S2", "plan_tier": "starter"}
