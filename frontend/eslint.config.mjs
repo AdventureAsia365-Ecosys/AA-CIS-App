@@ -43,6 +43,7 @@ const KIT_CLEAN_FILES = [
   "app/admin/_components/SettingsKitTab.tsx",
   "app/admin/_components/AdminLiveWriter.tsx",
   "app/admin/api-docs/page.tsx", // AA-577 follow-up — built on the kit from the start
+  "app/admin/data-model/page.tsx", // AA-894 — built on the kit from the start
 ];
 
 const eslintConfig = defineConfig([

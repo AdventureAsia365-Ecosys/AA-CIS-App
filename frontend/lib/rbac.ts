@@ -64,6 +64,7 @@ export const PAGE_RULES: PageRule[] = [
   { prefix: "/admin/platform-stats", roles: ["admin"] },    // AA-560
   { prefix: "/admin/content-quality", roles: ["admin"] },   // AA-769
   { prefix: "/admin/api-docs", roles: ["admin"] },          // AA-577 follow-up — OpenAPI reader
+  { prefix: "/admin/data-model", roles: ["admin"] },        // AA-894 — live ERD from the nightly schema dump
   // AA-883 — Platform pages (staff directory first). Matches /admin/platform and /admin/platform/…
   // only, never /admin/platform-stats (pageRule compares prefix or prefix + "/").
   { prefix: "/admin/platform", roles: ["admin"] },
@@ -128,6 +129,9 @@ export const API_READ_RULES: { prefix: string; roles: StaffRole[] }[] = [
   // AA-883 — backend /admin/platform/* (staff directory): admin only, re-checked by the backend
   // (staff_policy, capability staff.read). Matches "platform" and "platform/…", not "platform-stats".
   { prefix: "platform", roles: ["admin"] },
+  // AA-894 — backend /admin/data-model (the live ERD of every schema, PII tags included): admin only, re-checked by
+  // the backend (staff_policy, capability ops.read).
+  { prefix: "data-model", roles: ["admin"] },
 ];
 
 /** May `role` call backend /admin/{path} at all (any method)? (path without the leading slash) */

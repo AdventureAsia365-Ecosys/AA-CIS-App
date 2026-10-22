@@ -339,6 +339,10 @@ POLICY: dict[tuple[str, str], str] = {
     ("POST", "/admin/platform/alert-recipients/test-email"): ALERTS_WRITE,
     ("DELETE", "/admin/platform/alert-recipients/{recipient_id}"): ALERTS_WRITE,
     ("POST", "/admin/platform/alert-recipients/{recipient_id}/resend"): ALERTS_WRITE,
+
+    # ── admin_data_model (AA-894 scope 2) — Developer › Data model: the live ERD from the nightly schema dump
+    # (every schema of the shared RDS, PII tags included), admin only.
+    ("GET", "/admin/data-model"): OPS_READ,
 }
 
 # POLICY entries whose route is not on main yet. (method, route) -> the change that adds it. The

@@ -16,7 +16,7 @@
 import {
   Gauge, Users, Upload, Wand2, ClipboardList, Library, Settings, Wallet, UserCog, Radio,
   Puzzle, ListChecks, Scale, Search, Image as ImageIcon, BookOpen, BarChart3, ShieldCheck,
-  Boxes, ScrollText, ChartPie, BellRing, MapPin,
+  Boxes, ScrollText, ChartPie, BellRing, MapPin, Network,
 } from "lucide-react";
 import { canSeePage } from "@/lib/rbac";
 
@@ -73,6 +73,7 @@ export const NAV_GROUPS: NavGroup[] = [
   ] },
   { label: "Developer", section: "platform", items: [
     { href: "/admin/api-docs", icon: <BookOpen size={16} />, label: "API Docs" },  // AA-577 follow-up
+    { href: "/admin/data-model", icon: <Network size={16} />, label: "Data model" },  // AA-894 — live ERD
   ] },
   // ── CIS Content ──
   { label: "Pipeline", section: "cis", items: [

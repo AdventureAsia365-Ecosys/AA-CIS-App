@@ -53,6 +53,7 @@ SAMPLES = [
     ("admin_platform_ops", "GET", "/admin/platform/cost", None),
     ("admin_alert_recipients", "GET", "/admin/platform/alert-recipients", None),      # AA-913
     ("admin_alert_recipients", "POST", "/admin/platform/alert-recipients/refresh", None),
+    ("admin_data_model", "GET", "/admin/data-model", None),      # AA-894
     ("v1_trip_page", "POST", "/admin/trip-pages/{tour_id}/publish", None),
     ("v1_pipeline", "POST", "/v1/pipeline/review-queue/{review_id}/approve", {}),
     ("v1_rules", "PATCH", "/v1/rules/{rule_id}", {"is_active": False}),
