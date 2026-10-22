@@ -1,7 +1,10 @@
 """AA-712 — place pipeline admin API (behind the admin BFF, admin secret).
 
-  POST /admin/places/backfill  {country?, limit ≤ 50, only_stale, dry_run, force}
+  POST /admin/places/backfill  {country?, limit ≤ 50, tour_ids? (≤ 100), only_stale, dry_run, force}
        dry_run (default true): the tours it would take + expected calls and cost, no call made.
+       tour_ids (AA-847): exactly these tours (live tour id or source id; e.g. the coverage gate's missing list)
+       instead of country / limit (422 with country); ids not live, or fresh under only_stale, come back in
+       `skipped`. The estimate prices each model stage at its live route (shared.llm_model_catalog).
        real run: one place_extract job per tour (background kind, cap 1). 409 while a wave runs
        (s1_rewrite / a3_atomize / recompute queued or running) or a previous backfill batch still
        has queued jobs; 409 when the expected geocoder cost exceeds the per-backfill cap ($50).
@@ -48,7 +51,7 @@ from typing import Optional
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from api.core.staff_authz import staff_policy
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from api.routers.admin import verify_admin_secret
 
@@ -66,12 +69,31 @@ router = APIRouter(prefix="/admin/places", tags=["admin-places"], dependencies=[
 class BackfillRequest(BaseModel):
     country: Optional[str] = None
     limit: int = Field(20, ge=1, le=50)
+    tour_ids: Optional[list[str]] = Field(None, min_length=1, max_length=100)
     only_stale: bool = True
     dry_run: bool = True
     force: bool = False
 
+    @field_validator("tour_ids")
+    @classmethod
+    def _uuid_ids(cls, v):
+        if v is None:
+            return v
+        from services.places.backfill import normalize_tour_ids
+        try:
+            return normalize_tour_ids(v)
+        except (ValueError, TypeError):
+            raise ValueError("tour_ids must be tour or source ids (uuid)")
 
-@router.post("/backfill", summary="AA-712 — backfill place_extract for ≤ 50 live tours (dry run by default)")
+    @model_validator(mode="after")
+    def _one_selector(self):
+        if self.tour_ids and self.country:
+            raise ValueError("give tour_ids or country, not both")
+        return self
+
+
+@router.post("/backfill", summary="AA-712 — backfill place_extract for ≤ 50 live tours or ≤ 100 listed tours "
+                                  "(dry run by default)")
 async def backfill(body: BackfillRequest, request: Request, x_admin_secret: str = Header(None),
                    x_admin_user_id: Optional[str] = Header(None)):
     verify_admin_secret(x_admin_secret)
@@ -83,10 +105,15 @@ async def backfill(body: BackfillRequest, request: Request, x_admin_secret: str 
     geocoder = get_geocoder()
     async with pool.acquire() as conn:
         busy = await bf.wave_busy(conn)
-        tours = await bf.plan(conn, country=body.country, limit=body.limit, only_stale=body.only_stale)
+        skipped = None
+        if body.tour_ids:
+            tours, skipped = await bf.plan_ids(conn, body.tour_ids, only_stale=body.only_stale)
+        else:
+            tours = await bf.plan(conn, country=body.country, limit=body.limit, only_stale=body.only_stale)
         est = await bf.estimate(conn, tours, geocoder.cost_per_request, geocoder.calls_external)
     out = {"dry_run": body.dry_run, "country": body.country, "only_stale": body.only_stale,
            "geocoder": geocoder.name, "busy": busy, "estimate": est,
+           **({"requested": len(body.tour_ids), "skipped": skipped} if body.tour_ids else {}),
            "tours": [{"tour_id": t["tour_id"], "source_id": t["source_id"], "country": t.get("country"),
                       "name": t.get("aa_name"), "built": t.get("build") is not None} for t in tours]}
     if body.dry_run:
@@ -110,7 +137,7 @@ async def backfill(body: BackfillRequest, request: Request, x_admin_secret: str 
             force=body.force)
         jobs.append({"tour_id": t["tour_id"], "job_id": job_id, "created": created})
     logger.info("places_backfill_enqueued", batch=batch, tours=len(jobs), country=body.country,
-                expected_cost_usd=est["expected_cost_usd"])
+                listed=len(body.tour_ids) if body.tour_ids else None, expected_cost_usd=est["expected_cost_usd"])
     return {**out, "batch": batch, "enqueued": sum(1 for j in jobs if j["created"]), "jobs": jobs}
 
 
