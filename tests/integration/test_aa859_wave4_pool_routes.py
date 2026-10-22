@@ -7,7 +7,10 @@
     cards in a savepoint, tenant tours, state flip, request insert) run as aa_app_user; another tenant's Subject is a
     404, a second pick a 409; the audit row goes to MAIN after the tenant block.
   - cut: the conditional UPDATE; another tenant's Subject is a 404.
-  - trip-reallocation confirm accept=true: save + approve in one tenant transaction under 265's column grants.
+  - pick: a Subject on a Segment whose only member is another tenant's own atom has no seed (409), also with the
+    owner_scope filter gone (review S247).
+  - trip-reallocation confirm accept=true: save + approve in one tenant transaction under 265's column grants; and
+    the forgotten WHERE of _APPROVED_PLAN_SQL / _QUARTER_PLAN_ID_SQL at route level (review S247).
   - the tenant trip query's LATERAL trip page: the caller's own page over the master's, one row per tour, on both pools.
 
 Same harness as test_aa859_t2_version_reads_pool.py (D5a): the "tenant pool" is the test connection with SET LOCAL
@@ -240,6 +243,68 @@ async def test_confirm_accept_saves_and_approves_on_the_tenant_pool(ctx):
     audits = await ctx.conn.fetch("SELECT details FROM acp_shared.audit_log WHERE action = "
                                   "'trip_reallocation_suggestion' AND tenant_id = $1 ORDER BY created_at", ctx.a)
     assert [json.loads(r["details"])["applied"] for r in audits][-2:] == [True, True]
+
+
+@pytest.mark.parametrize("forget_owner_scope", [False, True])
+@pytest.mark.asyncio
+async def test_pick_never_seeds_from_another_tenants_atom(ctx, monkeypatch, forget_owner_scope):
+    """Review S247: tenant B's Subject on a Segment whose only member is tenant A's own atom has no seed for B: 409 on
+    the tenant pool, also with the owner_scope filter of the member reads gone (RLS on tour_atoms, 266, holds it). With
+    that filter gone the admin pool seeds B's pick from A's atom (so the check can fail)."""
+    from services.acp_shared import route_guard, subject_seed
+    seg = f"aa859w4-own-{uuid.uuid4().hex[:8]}"
+    await ctx.conn.execute("INSERT INTO acp_contract.atom_segment (segment_id, canonical_place, canonical_action) "
+                           "SELECT $1, canonical_place, canonical_action FROM acp_contract.atom_segment "
+                           "WHERE segment_id = $2", seg, ctx.segment)
+    await ctx.conn.execute("INSERT INTO acp_contract.atom_segment_member (segment_id, atom_id) VALUES ($1, $2)",
+                           seg, ctx.atom_a)
+    subject_b = await _subject(ctx.conn, ctx.b, seg)
+    if forget_owner_scope:
+        _forget(monkeypatch, subject_seed, "_MEMBERS_SQL", "AND ta.owner_scope IN ('platform', $2::text)",
+                "AND $2::text IS NOT NULL")
+        _forget(monkeypatch, route_guard, "_TRIP_MEMBER_SQL", "AND ta.owner_scope IN ('platform', $3::text)",
+                "AND $3::text IS NOT NULL")
+    with pytest.raises(HTTPException) as exc:
+        await v1_planning.post_pick_subject(subject_b, _request(ctx.conn, True), tenant={"sub": ctx.b})
+    assert exc.value.status_code == 409, "no seed for B on the tenant pool"
+    assert await ctx.conn.fetchval("SELECT state FROM acp_shared.subject WHERE subject_id = $1", subject_b) \
+        == "proposed"
+    if forget_owner_scope:
+        out = await v1_planning.post_pick_subject(subject_b, _request(ctx.conn, False), tenant={"sub": ctx.b})
+        assert out["atom_id"] == ctx.atom_a, "sanity: the admin pool seeds from A's atom once the filter is gone"
+
+
+@pytest.mark.asyncio
+async def test_trip_reallocation_rls_holds_when_the_where_is_forgotten(ctx, monkeypatch):
+    """Review S247: route-level forgotten WHERE for _APPROVED_PLAN_SQL (suggest / confirm read) and
+    _QUARTER_PLAN_ID_SQL (confirm save). A approves 2031-Q4 first; B, with both tenant conditions gone, sees no
+    existing plan and saves onto its own plan row on the tenant pool; the admin pool shows B A's plan."""
+    from services.acp_planning import quarter
+    a, b = uuid.UUID(ctx.a), uuid.UUID(ctx.b)
+    own = await trip_reallocation.confirm_trip_reallocation_scoped(_request(ctx.conn, True), a, 2031, 4, True,
+                                                                   actor=f"tenant:{a}")
+    plan_a = await ctx.conn.fetchval("SELECT plan_id FROM acp_shared.quarter_plan_version WHERE version_id = $1",
+                                     uuid.UUID(own["version_id"]))
+    _forget(monkeypatch, quarter, "_APPROVED_PLAN_SQL", "WHERE qp.tenant_id = $1 AND", "WHERE $1::uuid IS NOT NULL AND")
+    _forget(monkeypatch, quarter, "_QUARTER_PLAN_ID_SQL", "WHERE tenant_id = $1 AND",
+            "WHERE $1::uuid IS NOT NULL AND")
+
+    on = await trip_reallocation.suggest_trip_reallocation_scoped(_request(ctx.conn, True), b, 2031, 4)
+    assert on["has_existing_plan"] is False, "B read A's approved plan on the tenant pool"
+    off = await trip_reallocation.suggest_trip_reallocation_scoped(_request(ctx.conn, False), b, 2031, 4)
+    assert off["has_existing_plan"] is True, "sanity: the admin pool is not filtered"
+
+    saved = await trip_reallocation.confirm_trip_reallocation_scoped(_request(ctx.conn, True), b, 2031, 4, True,
+                                                                     actor=f"tenant:{b}")
+    row = await ctx.conn.fetchrow(
+        "SELECT qp.plan_id, qp.tenant_id FROM acp_shared.quarter_plan_version qpv "
+        "JOIN acp_shared.quarter_plan qp ON qp.plan_id = qpv.plan_id WHERE qpv.version_id = $1",
+        uuid.UUID(saved["version_id"]))
+    assert row["tenant_id"] == b and row["plan_id"] != plan_a, "B's version landed on its own plan"
+    assert await ctx.conn.fetchval("SELECT count(*) FROM acp_shared.quarter_plan_version WHERE plan_id = $1",
+                                   plan_a) == 1, "A's plan untouched"
+    assert await ctx.conn.fetchval(quarter._QUARTER_PLAN_ID_SQL.replace("SELECT plan_id", "SELECT count(*)"),
+                                   b, 2031, 4) == 2, "sanity: without RLS the forgotten statement sees both plans"
 
 
 # ── the LATERAL trip page ─────────────────────────────────────────────────────
