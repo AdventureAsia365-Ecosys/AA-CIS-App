@@ -11,7 +11,7 @@ import { ArrowRight, FileText, Code2, Globe2, BookOpen, Sparkles, Clock, AlertTr
 import {
   T, serif, mono, sans,
   Card, CardHead, ProgressBar, PageHeader, TextLink,
-  fmtDateTime,
+  fmtDateTime, fmtBillingMonth,
 } from "./ui";
 import { ActivityStateBadge } from "./workStatus";
 import { usePortalShell } from "./PortalShellContext";
@@ -77,7 +77,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
   const planName   = b?.plan_tier ?? "";
   const planLabel  = noPlan || !planName ? "No plan attached" : planName.charAt(0).toUpperCase() + planName.slice(1);
   const fmtTotal   = (n: number | null) => (n == null ? "—" : n.toLocaleString());
-  const month      = b?.billing_month ?? "—";
+  const month      = fmtBillingMonth(b?.billing_month);
   const overage    = b?.overage_usd ?? 0;
   const rpm        = b?.rate_limit_rpm ?? null;
   // AA-636: was the literal "22 days". Quota resets on the 1st of next month (UTC) — the same
@@ -129,7 +129,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
             </div>
           </div>
           <div style={{ display: "flex", gap: 22, marginTop: 22, paddingTop: 18, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-            {[["Tours/Mo", fmtTotal(toursTotal)], ["API Calls", fmtTotal(apiTotal)], ["Rate limit", rpm ? `${rpm.toLocaleString()} RPM` : "—"]].map(([l, v]) => (
+            {[["Rewrites/Mo", fmtTotal(toursTotal)], ["API Calls", fmtTotal(apiTotal)], ["Rate limit", rpm ? `${rpm.toLocaleString()} RPM` : "—"]].map(([l, v]) => (
               <div key={l}>
                 <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.12em", color: "rgba(255,255,255,0.45)", marginBottom: 4 }}>{l}</div>
                 <div style={{ fontSize: 12.5, fontWeight: 600, color: T.onSolid, fontVariantNumeric: "tabular-nums" }}>{v}</div>
@@ -142,7 +142,10 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
         <Card>
           <CardHead title="Quota Usage" action={<TextLink href="/portal/account/billing">Details →</TextLink>} />
           <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-            <QuotaRow icon={<FileText size={13} color={T.gold} />} label="Tours rewritten" used={toursUsed} total={toursTotal} pct={toursPct} warn={toursPct >= 80} />
+            {/* AA-760 — the quota counts rewrites (versions), not tours: "Tours rewritten 12" next to
+                "My Tours 3" read as two answers to one question. */}
+            <QuotaRow icon={<FileText size={13} color={T.gold} />} label="Rewrites used" used={toursUsed} total={toursTotal} pct={toursPct} warn={toursPct >= 80}
+              note={catTotal > 0 ? `${catTotal.toLocaleString()} tour${catTotal === 1 ? "" : "s"} in My Tours` : undefined} />
             <QuotaRow icon={<Code2 size={13} color={T.gold} />} label="API calls" used={apiUsed} total={apiTotal} pct={apiPct} warn={apiPct >= 80} />
           </div>
           {(b?.daily?.length ?? 0) >= 2 && (
@@ -180,7 +183,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginTop: 18 }}>
             <SpendTile label="Plan fee" value={`$${price.toLocaleString()}`} sub={`${planLabel} · billed monthly`} />
-            <SpendTile label="Tours rewritten" value={`${toursUsed.toLocaleString()} / ${fmtTotal(toursTotal)}`}
+            <SpendTile label="Rewrites this month" value={`${toursUsed.toLocaleString()} / ${fmtTotal(toursTotal)}`}
               sub={overage > 0 ? `Overage $${overage.toLocaleString()}` : "No overage"} warn={overage > 0} />
           </div>
         </Card>
@@ -213,12 +216,14 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
                   <Icon size={15} strokeWidth={2.2} />
                 </div>
                 <div style={{ minWidth: 0 }}>
+                  {/* AA-760 — on desktop the name may wrap to 2 lines (was cut at ~28 characters), and
+                      the version number ("v3") tells repeat rows of one tour apart. */}
                   <div style={{ display: "flex", alignItems: "baseline", minWidth: 0, fontSize: 13, fontWeight: 500, color: T.ink, lineHeight: 1.3 }}>
-                    <strong title={a.tour_name || "Tour"} style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <strong title={a.tour_name || "Tour"} style={phone ? ONE_LINE : TWO_LINES}>
                       {a.tour_name || "Tour"}
                     </strong>
                     <span style={{ color: T.muted2, fontSize: 11, marginLeft: 6, fontWeight: 400, flexShrink: 0, whiteSpace: "nowrap" }}>
-                      · {a.edit_source === "ai_generated" ? "AI" : "Edited"}
+                      · {a.version_number != null ? `v${a.version_number} · ` : ""}{a.edit_source === "ai_generated" ? "AI" : "Edited"}
                     </span>
                   </div>
                   {phone ? (
@@ -249,7 +254,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 }}>
           {[
-            { icon: <Globe2 size={18} />, title: "Browse Tours",      sub: `${pool.toLocaleString()} published tours available`, href: "/portal/tours" }, // AA-576 Phần 3 (was "Browse Pool")
+            { icon: <Globe2 size={18} />, title: "Browse Tours",      sub: pool != null ? `${pool.toLocaleString()} published tours available` : "Published Adventure Asia tours", href: "/portal/tours" }, // AA-576 Phần 3 (was "Browse Pool")
             { icon: <BookOpen size={18} />, title: "My Tours",  sub: `${toursUsed} rewrites · approve, edit, export`,     href: "/portal/tours/mine" }, // AA-576 Phần 3 (was "My Catalog")
             { icon: <Sparkles size={18} />, title: "Brand Identity", sub: "Configure your content voice & style",               href: "/portal/brand" },
           ].map(a => (
@@ -262,6 +267,11 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
+
+const ONE_LINE: React.CSSProperties = { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
+const TWO_LINES: React.CSSProperties = {
+  minWidth: 0, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
+};
 
 function firstOfNextMonthUTC(): string {
   const now = new Date();
@@ -277,8 +287,10 @@ function daysUntil(isoDate: string): number {
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
-function QuotaRow({ icon, label, used, total, pct, warn = false }: {
+function QuotaRow({ icon, label, used, total, pct, warn = false, note }: {
   icon: React.ReactNode; label: string; used: number; total: number | null; pct: number; warn?: boolean;
+  /** A muted line under the bar (e.g. "3 tours in My Tours"). */
+  note?: string;
 }) {
   return (
     <div>
@@ -297,6 +309,7 @@ function QuotaRow({ icon, label, used, total, pct, warn = false }: {
           {warn ? "Approaching your limit" : total == null ? "No plan attached" : `${Math.max(total - used, 0).toLocaleString()} remaining`}
         </span>
       </div>
+      {note && <div style={{ fontSize: 11, color: T.muted, marginTop: 4 }}>{note}</div>}
     </div>
   );
 }

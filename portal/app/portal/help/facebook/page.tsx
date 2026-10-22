@@ -124,11 +124,13 @@ const PROBLEMS: { title: string; cause: React.ReactNode; fix: React.ReactNode }[
 export default function FacebookGuidePage() {
   return (
     <div style={{ maxWidth: 760 }}>
-      <Link href="/portal/content/publish" style={{
+      {/* AA-760 — back to Integrations: that page holds the Page ID + token form this guide ends in
+          (Publish is not a sidebar item, so "Back to Publish" named a place the tenant could not find). */}
+      <Link href="/portal/account/integrations" style={{
         display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 600,
         color: T.muted, textDecoration: "none", marginBottom: 16, fontFamily: sans,
       }}>
-        <ArrowLeft size={13} /> Back to Publish
+        <ArrowLeft size={13} /> Back to Integrations
       </Link>
 
       <PageHeader

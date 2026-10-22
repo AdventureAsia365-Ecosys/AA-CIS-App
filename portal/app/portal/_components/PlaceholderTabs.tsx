@@ -10,8 +10,9 @@
 // no tenant self-service endpoint exists for them.
 
 import { useState } from "react";
-import { Check, X, RefreshCw, Mail, ExternalLink, KeyRound, LogOut } from "lucide-react";
-import { T, sans, Card, PageHeader, Btn, fmtDateTime } from "./ui";
+import { Check, X, RefreshCw, Mail, ExternalLink, KeyRound, LogOut, Clock, AlertTriangle } from "lucide-react";
+import { SkeletonBar, SkeletonStyle, useIsPhone } from "@/app/_kit";
+import { T, sans, Card, CardSkeleton, PageHeader, Btn, fmtDateTime, fmtBillingMonth } from "./ui";
 import { usePortalShell, type ShellActivityView, type ShellBilling } from "./PortalShellContext";
 import { ActivityStateBadge } from "./workStatus";
 import { SUPPORT_EMAIL, SITE_URL } from "@/app/_brand/tokens";
@@ -19,37 +20,79 @@ import { SUPPORT_EMAIL, SITE_URL } from "@/app/_brand/tokens";
 
 const titleCase = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
+// AA-760 — "Couldn't load …" + Retry, shared by the Activity and Billing pages (a failed /v1/billing
+// call used to read as "No activity yet" / "$0 · Custom pricing").
+function LoadError({ what, onRetry }: { what: string; onRetry: () => void }) {
+  return (
+    <Card>
+      <div role="alert" style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", fontSize: 13, color: T.ink }}>
+        <AlertTriangle size={16} color={T.red} style={{ flexShrink: 0 }} />
+        <span style={{ flex: 1, minWidth: 180 }}>Couldn&rsquo;t load {what}. Check your connection and try again.</span>
+        <Btn size="sm" onClick={onRetry} style={{ whiteSpace: "nowrap" }}>Try again</Btn>
+      </div>
+    </Card>
+  );
+}
+
 // ─── Activity Log ─────────────────────────────────────────────────────────────
 export function ActivityLogTab({ activity }: { activity: ShellActivityView[] }) {
-  const { tenantName } = usePortalShell();
+  const { tenantName, billingStatus, retryBilling } = usePortalShell();
+  const phone = useIsPhone();
   // AA-760 — icon + badge from the job-backed state (ShellActivityView.state), not the row status.
+  // An unknown state (versions still loading) gets a neutral icon, not the amber "running" one.
   const sc = (s: ShellActivityView["state"]) =>
+    s === null ? { bg: T.line2, color: T.muted2, Icon: Clock } :
     s === "approved" ? { bg: T.greenSoft, color: T.green, Icon: Check } :
     s === "rejected" || s === "failed" ? { bg: T.redSoft, color: T.red, Icon: X } :
     { bg: T.amberSoft, color: T.amber, Icon: RefreshCw };
 
   return (
     <div style={{ maxWidth: 760 }}>
-      <PageHeader title="Activity Log" sub={`Recent rewrite and catalog actions for ${tenantName}.`} />
-      {activity.length === 0 ? (
+      <PageHeader title="Activity Log" sub={`Recent rewrite and catalog actions${tenantName ? ` for ${tenantName}` : ""}.`} />
+      {/* AA-760 — the empty state only once /v1/billing answered: while it loads, skeleton rows; on
+          failure, an error with Retry (a tenant with history was told "No activity yet"). */}
+      {billingStatus === "pending" ? (
+        <Card style={{ padding: 0, overflow: "hidden" }}>
+          <div aria-busy="true" aria-label="Loading activity">
+            <SkeletonStyle />
+            {[0, 1, 2, 3, 4].map(i => (
+              <div key={i} style={{ display: "grid", gridTemplateColumns: "36px minmax(0,1fr)", alignItems: "center", gap: 14, padding: "14px 20px", borderBottom: i < 4 ? `1px solid ${T.line2}` : "none" }}>
+                <SkeletonBar w={36} h={36} r={8} />
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <SkeletonBar w={`${60 - i * 6}%`} h={13} />
+                  <SkeletonBar w="35%" h={10} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : billingStatus === "error" ? (
+        <LoadError what="your activity" onRetry={retryBilling} />
+      ) : activity.length === 0 ? (
         <Card><div style={{ textAlign: "center", padding: 40, color: T.muted2, fontSize: 13 }}>No activity yet. Rewrite a tour and it will show up here.</div></Card>
       ) : (
         <Card style={{ padding: 0, overflow: "hidden" }}>
           {activity.map((a, i) => {
             const s = sc(a.state);
+            // AA-760 — on a phone the badge moves under the meta line and the name may wrap to 2
+            // lines (the badge column squeezed every name to 12–15 characters at 390 px).
             return (
-              <div key={a.id} style={{ display: "grid", gridTemplateColumns: "36px minmax(0,1fr) auto", alignItems: "center", gap: 14, padding: "14px 20px", borderBottom: i < activity.length - 1 ? `1px solid ${T.line2}` : "none" }}>
+              <div key={a.id} style={{ display: "grid", gridTemplateColumns: phone ? "36px minmax(0,1fr)" : "36px minmax(0,1fr) auto", alignItems: phone ? "start" : "center", gap: phone ? 12 : 14, padding: phone ? "14px 16px" : "14px 20px", borderBottom: i < activity.length - 1 ? `1px solid ${T.line2}` : "none" }}>
                 <div style={{ width: 36, height: 36, borderRadius: 8, background: s.bg, color: s.color, display: "grid", placeItems: "center" }}>
                   <s.Icon size={15} strokeWidth={2.2} />
                 </div>
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 500, color: T.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.tour_name || "Tour"}</div>
+                  <div title={a.tour_name || "Tour"} style={{ fontSize: 13, fontWeight: 500, color: T.ink, overflow: "hidden", ...(phone
+                    ? { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const }
+                    : { textOverflow: "ellipsis", whiteSpace: "nowrap" as const }) }}>{a.tour_name || "Tour"}</div>
                   <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>
+                    {a.version_number != null ? `v${a.version_number} · ` : ""}
                     {a.edit_source === "ai_generated" ? "AI rewrite" : "Edited by you"}
                     {a.country ? ` · ${a.country}` : ""} · {fmtDateTime(a.created_at)}
                   </div>
+                  {phone && <div style={{ marginTop: 6 }}><ActivityStateBadge state={a.state} /></div>}
                 </div>
-                <ActivityStateBadge state={a.state} />
+                {!phone && <ActivityStateBadge state={a.state} />}
               </div>
             );
           })}
@@ -105,8 +148,26 @@ type BillingRecord = Record<string, any>;
 
 export function BillingTab({ billing }: { billing: ShellBilling | null }) {
   const b: BillingRecord | null = billing;
-  const { tenantName } = usePortalShell();
+  const { tenantName, billingStatus, retryBilling } = usePortalShell();
   const [contactPlan, setContactPlan] = useState<string | null>(null);
+
+  // AA-760 — real figures only once /v1/billing answered: before that the page showed invented facts
+  // ("Custom pricing", "$0 · Plan fee, no overage"), and forever if the call failed.
+  if (billingStatus !== "success" || !b) {
+    return (
+      <div style={{ maxWidth: 760 }}>
+        <PageHeader title="Billing" sub="Your plan and usage for this billing period." />
+        {billingStatus === "error"
+          ? <LoadError what="your billing" onRetry={retryBilling} />
+          : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <CardSkeleton lines={3} label="Loading your plan" />
+              <CardSkeleton lines={2} label="Loading this period" />
+            </div>
+          )}
+      </div>
+    );
+  }
 
   // AA-798 — no "starter" fallback: a tenant without a plan sees "No plan attached", not a made-up one.
   const noPlan     = b?.plan_attached === false;
@@ -118,7 +179,7 @@ export function BillingTab({ billing }: { billing: ShellBilling | null }) {
   const apiTotal   = b?.api_calls_quota_monthly == null ? null : Number(b.api_calls_quota_monthly);
   const overage    = Number(b?.overage_usd ?? 0);
   const rpm        = b?.rate_limit_rpm as number | null | undefined;
-  const month      = b?.billing_month ?? "—";
+  const month      = fmtBillingMonth(b?.billing_month);
   const plans: Plan[] = b?.plans ?? [];
   const pct = (u: number, t: number | null) => (t != null && t > 0 ? Math.min(100, (u / t) * 100) : 0);
 
@@ -150,7 +211,7 @@ export function BillingTab({ billing }: { billing: ShellBilling | null }) {
           </Btn>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 16, marginTop: 20, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-          {[["Tours / month", fmtQuota(toursTotal)], ["API calls / month", fmtQuota(apiTotal)], ["Rate limit", rpm ? `${rpm.toLocaleString()} RPM` : "—"]].map(([l, v]) => (
+          {[["Rewrites / month", fmtQuota(toursTotal)], ["API calls / month", fmtQuota(apiTotal)], ["Rate limit", rpm ? `${rpm.toLocaleString()} RPM` : "—"]].map(([l, v]) => (
             <div key={l}>
               <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.1em", color: "rgba(255,255,255,0.45)", marginBottom: 4 }}>{l}</div>
               <div style={{ fontSize: 14, fontWeight: 600, color: T.onSolid, fontVariantNumeric: "tabular-nums" }}>{v}</div>
@@ -164,7 +225,7 @@ export function BillingTab({ billing }: { billing: ShellBilling | null }) {
         <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: T.muted, marginBottom: 16 }}>This period — {month}</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 16 }}>
           {[
-            { l: "Tours rewritten", v: `${toursUsed.toLocaleString()} / ${fmtQuota(toursTotal)}`, sub: `${pct(toursUsed, toursTotal).toFixed(0)}% used` },
+            { l: "Rewrites used", v: `${toursUsed.toLocaleString()} / ${fmtQuota(toursTotal)}`, sub: `${pct(toursUsed, toursTotal).toFixed(0)}% used` },
             { l: "API calls",       v: `${apiUsed.toLocaleString()} / ${fmtQuota(apiTotal)}`,     sub: `${pct(apiUsed, apiTotal).toFixed(0)}% used` },
             { l: "Amount due",      v: noPlan ? "—" : `$${(price + overage).toLocaleString(undefined, { maximumFractionDigits: 2 })}`, sub: noPlan ? "No plan attached" : overage > 0 ? `Includes $${overage.toLocaleString()} overage` : "Plan fee, no overage" },
           ].map(({ l, v, sub }) => (
@@ -190,7 +251,7 @@ export function BillingTab({ billing }: { billing: ShellBilling | null }) {
                   <div style={{ fontSize: 20, fontWeight: 600, color: T.ink, marginBottom: 10, fontVariantNumeric: "tabular-nums" }}>
                     {p.price_usd_monthly != null ? <>${p.price_usd_monthly.toLocaleString()}<span style={{ fontSize: 11, color: T.muted, fontWeight: 400 }}>/mo</span></> : "Custom"}
                   </div>
-                  {[`${fmtQuota(p.tours_quota_monthly)} tours / month`, `${fmtQuota(p.api_calls_quota_monthly)} API calls`, p.rate_limit_rpm ? `${p.rate_limit_rpm.toLocaleString()} RPM` : "Custom rate limit"].map(feat => (
+                  {[`${fmtQuota(p.tours_quota_monthly)} rewrites / month`, `${fmtQuota(p.api_calls_quota_monthly)} API calls`, p.rate_limit_rpm ? `${p.rate_limit_rpm.toLocaleString()} RPM` : "Custom rate limit"].map(feat => (
                     <div key={feat} style={{ fontSize: 11.5, color: T.muted, marginBottom: 4, display: "flex", gap: 6, alignItems: "center" }}>
                       <Check size={12} color={T.green} style={{ flexShrink: 0 }} />{feat}
                     </div>
@@ -212,7 +273,10 @@ export function BillingTab({ billing }: { billing: ShellBilling | null }) {
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
 export function SettingsTab() {
-  const { tenantName, planTier } = usePortalShell();
+  const { tenantName, planTier, tenantStatus } = usePortalShell();
+  // AA-760 — skeleton text until /api/tenant/me answers (was the generic "Partner" + a blank plan).
+  const loadingMe = tenantStatus === "pending";
+  const skel = (w: number) => <SkeletonBar w={w} h={11} style={{ marginTop: 4 }} />;
   const [contact, setContact] = useState(false);
 
   const row: React.CSSProperties = {
@@ -220,7 +284,7 @@ export function SettingsTab() {
     padding: "13px 0", borderBottom: `1px solid ${T.line2}`,
   };
   const last: React.CSSProperties = { ...row, borderBottom: "none" };
-  const label = (t: string, sub?: string) => (
+  const label = (t: string, sub?: React.ReactNode) => (
     <div style={{ minWidth: 0 }}>
       <div style={{ fontSize: 13, fontWeight: 500, color: T.ink }}>{t}</div>
       {sub && <div style={{ fontSize: 11.5, color: T.muted2, marginTop: 2 }}>{sub}</div>}
@@ -244,16 +308,18 @@ export function SettingsTab() {
         />
       )}
 
-      <PageHeader title="Team & Settings" sub={`Account details for ${tenantName}.`} />
+      <SkeletonStyle />
+      {/* AA-760 — "Account settings" (was "Team & Settings": there is no team section yet). */}
+      <PageHeader title="Account settings" sub={loadingMe ? "Your account details." : `Account details for ${tenantName}.`} />
 
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <Card>
           <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: T.muted, marginBottom: 6 }}>Account</div>
-          <div style={row}>{label("Company", tenantName)}</div>
-          <div style={row}>{label("Plan", titleCase(planTier))}<a href="/portal/account/billing" style={{ fontSize: 12, color: T.ink3, fontWeight: 500, textDecoration: "none" }}>View billing →</a></div>
+          <div style={row}>{label("Company", loadingMe ? skel(120) : tenantName)}</div>
+          <div style={row}>{label("Plan", loadingMe ? skel(70) : titleCase(planTier) || "No plan attached")}<a href="/portal/account/billing" style={{ fontSize: 12, color: T.ink3, fontWeight: 500, textDecoration: "none" }}>View billing →</a></div>
           <div style={last}>
             {label("Need to change something?", "Company name, contacts or a new API key")}
-            <Btn size="sm" onClick={() => setContact(true)}><Mail size={13} /> Contact us</Btn>
+            <Btn size="sm" onClick={() => setContact(true)} style={{ whiteSpace: "nowrap", flexShrink: 0 }}><Mail size={13} /> Contact us</Btn>
           </div>
         </Card>
 

@@ -163,7 +163,7 @@ function ContextSection({ item }: { item: ReviewItem }) {
 
       {item.atom && (
         <div style={{ padding: "10px 12px", borderRadius: 8, background: T.bg, fontSize: 12, lineHeight: 1.6, color: T.body }}>
-          <div style={{ fontWeight: 600, color: T.ink, marginBottom: 2 }}>Source atom</div>
+          <div style={{ fontWeight: 600, color: T.ink, marginBottom: 2 }}>Source fact</div>
           <div>{item.atom.text}</div>
           {(item.atom.activity_type || item.atom.emotional_hook || item.atom.season_note) && (
             <div style={{ marginTop: 4, fontSize: 11, color: T.muted2 }}>

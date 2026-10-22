@@ -229,6 +229,7 @@ async def test_tenant_pool_logs_one_timing_line(call, row, route):
 # ── flag off is the pre-AA-859 SQL ────────────────────────────────────────────
 
 # The inline SQL of v1_tours.py before AA-859 (b478a18b), for the flag-off path of the two job-joined reads.
+# AA-760: the flag-off SQL also breaks created_at ties on ttv.id (page boundaries never skip or repeat a version).
 _OLD_MY_VERSIONS_ROWS = """
     SELECT ttv.id, ttv.version_number, ttv.status, ttv.edit_source, ttv.rewrite_language, ttv.created_at,
            ttv.rewritten_content, pt.id AS published_tour_id, pt.tour_id, pt.aa_name, rt.country, rt.duration,
@@ -240,7 +241,7 @@ _OLD_MY_VERSIONS_ROWS = """
     LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
     LEFT JOIN shared.job j ON j.id = ttv.job_id
     WHERE ttv.tenant_id = $1::uuid
-    ORDER BY ttv.created_at DESC
+    ORDER BY ttv.created_at DESC, ttv.id DESC
     LIMIT $2 OFFSET $3
 """
 _OLD_VERSION = """

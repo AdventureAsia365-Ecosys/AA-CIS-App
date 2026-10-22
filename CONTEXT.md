@@ -73,11 +73,11 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     redirect in `next.config.ts`.
   - Portal pages (`portal/app/portal/*`, AA-759 — no T-number slugs): `dashboard`; **Tours** —
     `tours` (Browse Tours, T1), `tours/mine` (My Tours, T4 / `CatalogTab`, kit + react-query, AA-662 PR 3),
-    `tours/marketplace`; **Brand** — `brand` (T0); **Create** — `create/social` (Social Posts: the Slate on
+    `tours/marketplace` (Tour overview, AA-760: was labelled Marketplace); **Brand** — `brand` (T0); **Create** — `create/social` (Social Posts: the Slate on
     every Channel but blog, + trip reallocation), `create/article` (Articles: the Slate on the blog
     Channel), `create/write` (T8+T9 wizard, deep link only); **Content** — `content` (My Content, with a
     Publish action), `content/publish` (T11); **Account** — `account/billing`, `account/activity`,
-    `account/settings` (Team & Settings), `account/api`, `account/integrations` (WordPress / Facebook
+    `account/settings` (Account settings, AA-760), `account/api`, `account/integrations` (WordPress / Facebook
     connections); `help/facebook`. Every old slug (`t0-brand`, `t1-rewrite`, `t4-pool`, `t7-planning`,
     `t8-angle-gate`, `t10-review`, `t11-publish[/connection]`, `marketplace`, `activity`, `billing`,
     `settings`, `api`) answers **308** to its new path (`portal/next.config.ts` `OLD_SLUG_REDIRECTS`, query
