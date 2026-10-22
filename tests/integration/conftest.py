@@ -77,11 +77,15 @@ X1_FORCE_RLS = ("gold_aa_internal.content_exports", "gold_aa_internal.published_
 # any other RLS table must meet 244's guard and the standing check in test_x1_cis_app_privileges.
 X1_CI_ONLY_LEGACY_RLS = ("acp_deliver.packets", "acp_deliver.pieces", "acp_shared.acp_v2_runs",
                          "acp_shared.acp_v2_slots", "acp_shared.content_metric_snapshot", "acp_shared.unknown_ledger")
-# RLS tables of migrations applied on Dev AFTER 244 (AA-859 wave 3, CIS 262: their own tenant_isolation and
-# <table>_cis_app_all policies). The replay applies them before the X1 tests apply 244, whose exact RLS-set guard and
-# "parity policy on each of the 16 tables" test know only the 244-time set: x1_244_ci_shape takes their RLS and their
-# cis_app policy off around 244 (the 262 state minus what 244 must not see), x1_244_ci_unshape puts both back.
-X1_POST_244_RLS = ("shared.tenant_brand_rules", "shared.tenant_seo_config")
+# RLS tables of migrations applied on Dev AFTER 244 (AA-859 wave 3, CIS 262; wave 4, CIS 265 / 266: their own
+# tenant_isolation (and master-read / platform-read / catalog_owner_read) policies and <table>_cis_app_all). The replay
+# applies them before the X1 tests apply 244, whose exact RLS-set guard and "parity policy on each of the 16 tables"
+# test know only the 244-time set: x1_244_ci_shape takes their RLS and their cis_app policy off around 244 (the
+# 262 / 265 / 266 state minus what 244 must not see; the other policies stay, inert while RLS is off),
+# x1_244_ci_unshape puts both back.
+X1_POST_244_RLS = ("shared.tenant_brand_rules", "shared.tenant_seo_config",
+                   "acp_shared.subject", "acp_shared.quarter_plan", "acp_shared.quarter_plan_version",
+                   "acp_shared.year_plan", "acp_deliver.tenant_tour_pages", "acp_contract.tour_atoms")
 
 
 def _post_244_rls(cur, on):

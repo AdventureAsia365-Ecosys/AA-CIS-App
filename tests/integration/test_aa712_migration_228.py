@@ -20,6 +20,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(__file__))
 from conftest import BATCH_ID, DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
+from _rls_fixture_helpers import restore_266_catalog_owner_read  # noqa: E402
 
 MASTER_TENANT = "00000000-0000-0000-0000-000000000001"
 CONSUMERS = ("tripplanner", "booking")
@@ -95,6 +96,9 @@ def rds_like_228():
     try:
         c = runner.cursor()
         c.execute(open(MIGRATION_225, encoding="utf-8").read())
+        # AA-859 wave 4: DROP OWNED BY catalog_owner above also dropped 266's keep-alive policy on tour_atoms (its
+        # only role); 228's views read atoms as catalog_owner, so put it back (the Dev state) before 228 runs.
+        restore_266_catalog_owner_read(a)
         sql = open(MIGRATION_228, encoding="utf-8").read()
         c.execute(sql)            # raises on any error, incl. 228's own checks
         c.execute(sql)            # idempotent re-run
