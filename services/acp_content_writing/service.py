@@ -70,7 +70,7 @@ from services.acp_shared.real_questions import (SOURCE_WRITER, collect_real_ques
                                                 is_off_meaning, label_questions, missing_real_questions,
                                                 real_first_pairs, source_counts)
 from services.acp_shared.route_guard import request_route_segment_ids
-from services.acp_planning.tenant_pool import fetch_tenant_trips
+from services.acp_planning.tenant_pool import fetch_tenant_trips, fetch_tenant_trips_on
 from services.acp_produce.brand import fetch_brand_rubric_text
 from services.acp_content_writing.gate_eval import ledger_snapshot  # AA-791
 from services.quality import degraded  # AA-925
@@ -2641,7 +2641,7 @@ async def _fetch_atom_context(tenant_id: UUID, atom_id: str, pool) -> Optional[d
     return dict(row) if row else None
 
 
-async def fetch_review(tenant_id: UUID, request_id: UUID, pool) -> dict:
+async def fetch_review(tenant_id: UUID, request_id: UUID, pool, request: Optional[Request] = None) -> dict:
     """AA-501 — the tenant-facing pre-T11 review: full write context (atom/tour/goal/angle/
     DFS-PAA/channel) plus the latest content_piece for this request, WITHOUT any of T10's
     technical detail. This is deliberately STRICTER than GET .../pieces/{piece_id}
@@ -2655,17 +2655,48 @@ async def fetch_review(tenant_id: UUID, request_id: UUID, pool) -> dict:
 
     Raises angle_gate_service.RequestNotFoundError (request doesn't exist / isn't this tenant's,
     propagates from fetch_request() below) or ContentWritingError (request exists but T9 has
-    never written anything under it yet) — the router maps both to 404."""
-    req = await angle_gate_service.fetch_request(tenant_id, request_id, pool)
+    never written anything under it yet) — the router maps both to 404.
 
-    async with pool.acquire() as conn:
+    AA-859 wave 4 — when `request` is passed (the router does), every read runs in ONE acquire_scoped_conn
+    block behind REVIEWS_FLAG (fail closed): the request + options + Subject header (fetch_request_on), the
+    latest piece, the atom context and the tenant's trips, on the aa_app_user tenant pool with app.tenant_id
+    LOCAL (RLS 229 / 241 / 265 / 266 hold the boundary even if a WHERE were wrong). No main-pool read at all:
+    the review does not use the generation status. Flag off (or a direct caller with only `pool`): the
+    main pool, as before."""
+    if request is None:
+        req = await angle_gate_service.fetch_request(tenant_id, request_id, pool)
+        async with pool.acquire() as conn:
+            piece_row = await conn.fetchrow(_LATEST_PIECE_FOR_REQUEST_QUERY, request_id, tenant_id)
+        if piece_row is None:
+            raise _no_written_content(request_id)
+        atom_context = await _fetch_atom_context(tenant_id, req["atom_id"], pool)
+        trips = await fetch_tenant_trips(tenant_id, pool) if req["trip_id"] else []
+        return _review_dict(req, piece_row, atom_context, trips)
+
+    from api.core.aa544_tenant_pool import REVIEWS_FLAG, acquire_scoped_conn
+    async with acquire_scoped_conn(
+        request, str(tenant_id) if tenant_id else "", REVIEWS_FLAG, fail_closed=True,
+    ) as (conn, used_tenant_pool):
+        logger.info("aa859_review_detail", tenant_id=str(tenant_id), request_id=str(request_id),
+                    used_tenant_pool=used_tenant_pool)
+        req = await angle_gate_service.fetch_request_on(conn, tenant_id, request_id)
         piece_row = await conn.fetchrow(_LATEST_PIECE_FOR_REQUEST_QUERY, request_id, tenant_id)
-    if piece_row is None:
-        raise ContentWritingError(
-            f"request_id={request_id} has no written content yet — T9's write step hasn't run "
-            "for this request."
-        )
+        if piece_row is None:
+            raise _no_written_content(request_id)
+        atom_row = await conn.fetchrow(_ATOM_CONTEXT_QUERY, req["atom_id"], str(tenant_id))
+        trips = await fetch_tenant_trips_on(conn, tenant_id) if req["trip_id"] else []
+    return _review_dict(req, piece_row, dict(atom_row) if atom_row else None, trips)
 
+
+def _no_written_content(request_id: UUID) -> ContentWritingError:
+    return ContentWritingError(
+        f"request_id={request_id} has no written content yet — T9's write step hasn't run "
+        "for this request."
+    )
+
+
+def _review_dict(req: dict, piece_row, atom_context: Optional[dict], trips: list) -> dict:
+    """The tenant-facing review (AA-501) from the rows fetch_review() read, either pool."""
     # AA-469 Việc 4 — same COALESCE(cp.channel, agr.channel) every other real read site uses
     # (v1_publish.py, admin_a4.py's content-log): a piece's own channel is immutable once
     # written; the parent request's channel can move on to a different value before its NEXT
@@ -2682,11 +2713,8 @@ async def fetch_review(tenant_id: UUID, request_id: UUID, pool) -> dict:
     if angle is None:
         angle = next((a for a in req["angles"] if a["chosen"]), None)
 
-    atom_context = await _fetch_atom_context(tenant_id, req["atom_id"], pool)
-
     tour_context = None
     if req["trip_id"]:
-        trips = await fetch_tenant_trips(tenant_id, pool)
         trip = next((t for t in trips if str(t.id) == req["trip_id"]), None)
         if trip:
             tour_context = {"name": trip.name, "destination": trip.destination}
@@ -2774,19 +2802,31 @@ _TENANT_REVIEWS_QUERY = """
 # `owner_scope IN ('platform', $2)`.
 
 
-async def fetch_review_list(tenant_id: UUID, pool) -> list[dict]:
+async def fetch_review_list(tenant_id: UUID, pool, request: Optional[Request] = None) -> list[dict]:
     """AA-501 — GET /v1/content-writing/reviews. One call, one query (plus one
     fetch_tenant_trips() call, only when at least one row has a trip_id — never per-row) rather
     than N+1 calls into fetch_review() per request; the SQL is intentionally independent of
     fetch_review()'s own query (same precedent as admin_a4.py's content-log and v1_publish.py's
-    /pending each keeping their own SQL rather than sharing an abstraction)."""
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(_TENANT_REVIEWS_QUERY, tenant_id, str(tenant_id))
+    /pending each keeping their own SQL rather than sharing an abstraction).
 
+    AA-859 wave 4 — with `request` (the router), both reads run in one acquire_scoped_conn block behind
+    REVIEWS_FLAG (fail closed; content_piece / angle_gate_* RLS, tour_atoms 266, tenant_tour_pages 265)."""
     trips_by_id: dict[str, object] = {}
-    if any(r["trip_id"] for r in rows):
-        trips = await fetch_tenant_trips(tenant_id, pool)
-        trips_by_id = {str(t.id): t for t in trips}
+    if request is None:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(_TENANT_REVIEWS_QUERY, tenant_id, str(tenant_id))
+        if any(r["trip_id"] for r in rows):
+            trips = await fetch_tenant_trips(tenant_id, pool)
+            trips_by_id = {str(t.id): t for t in trips}
+    else:
+        from api.core.aa544_tenant_pool import REVIEWS_FLAG, acquire_scoped_conn
+        async with acquire_scoped_conn(
+            request, str(tenant_id) if tenant_id else "", REVIEWS_FLAG, fail_closed=True,
+        ) as (conn, used_tenant_pool):
+            logger.info("aa859_reviews_list", tenant_id=str(tenant_id), used_tenant_pool=used_tenant_pool)
+            rows = await conn.fetch(_TENANT_REVIEWS_QUERY, tenant_id, str(tenant_id))
+            if any(r["trip_id"] for r in rows):
+                trips_by_id = {str(t.id): t for t in await fetch_tenant_trips_on(conn, tenant_id)}
 
     items = []
     for r in rows:

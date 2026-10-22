@@ -20,8 +20,9 @@ REQUEST_ID = uuid.uuid4()
 
 
 def _make_request():
-    """AA-859 W3 — choose / reopen open a scoped connection (flag off here: Redis says nothing, so the main
-    pool with its own transaction) and re-read with service.fetch_request, which the tests below patch."""
+    """AA-859 W3 — choose / reopen open a scoped connection (flag off here: Redis says "false", so the main
+    pool with its own transaction) and re-read with service.fetch_request_on (AA-859 wave 4: the GET and the
+    re-read run it in a block behind ANGLE_GATE_READ_FLAG, off here too), which the tests below patch."""
     conn = MagicMock()
     conn.transaction = MagicMock(return_value=_async_cm(None))
     request = MagicMock()
@@ -85,7 +86,7 @@ class TestGetRequest:
     @pytest.mark.asyncio
     async def test_not_found_404(self):
         with patch.object(
-            v1_angle_gate.service, "fetch_request",
+            v1_angle_gate.service, "fetch_request_on",
             new=AsyncMock(side_effect=service.RequestNotFoundError("nope")),
         ):
             with pytest.raises(HTTPException) as exc:
@@ -99,13 +100,13 @@ class TestChoose:
         body = v1_angle_gate.ChooseBody(idx=1)
         request = _make_request()
         with patch.object(v1_angle_gate.service, "choose_angle", new=AsyncMock(return_value=None)) as choose, \
-             patch.object(v1_angle_gate.service, "fetch_request",
+             patch.object(v1_angle_gate.service, "fetch_request_on",
                           new=AsyncMock(return_value={"status": "approved"})) as fetch:
             result = await v1_angle_gate.choose(REQUEST_ID, body, request, tenant={"sub": TENANT_ID})
         assert result["status"] == "approved"
         conn, tenant_id, request_id, idx = choose.call_args[0]
         assert (str(tenant_id), request_id, idx) == (TENANT_ID, REQUEST_ID, 1)
-        assert fetch.call_args[0] == (uuid.UUID(TENANT_ID), REQUEST_ID, request.app.state.pool)
+        assert fetch.call_args[0][1:] == (uuid.UUID(TENANT_ID), REQUEST_ID)
 
     @pytest.mark.asyncio
     async def test_wrong_status_409(self):
@@ -113,7 +114,7 @@ class TestChoose:
         with patch.object(
             v1_angle_gate.service, "choose_angle",
             new=AsyncMock(side_effect=service.WrongStatusError("not ready")),
-        ), patch.object(v1_angle_gate.service, "fetch_request", new=AsyncMock()) as fetch:
+        ), patch.object(v1_angle_gate.service, "fetch_request_on", new=AsyncMock()) as fetch:
             with pytest.raises(HTTPException) as exc:
                 await v1_angle_gate.choose(REQUEST_ID, body, _make_request(), tenant={"sub": TENANT_ID})
         assert exc.value.status_code == 409
@@ -125,7 +126,7 @@ class TestChoose:
         with patch.object(
             v1_angle_gate.service, "choose_angle",
             new=AsyncMock(side_effect=service.RequestNotFoundError("nope")),
-        ), patch.object(v1_angle_gate.service, "fetch_request", new=AsyncMock()):
+        ), patch.object(v1_angle_gate.service, "fetch_request_on", new=AsyncMock()):
             with pytest.raises(HTTPException) as exc:
                 await v1_angle_gate.choose(REQUEST_ID, body, _make_request(), tenant={"sub": TENANT_ID})
         assert exc.value.status_code == 404
@@ -136,7 +137,7 @@ class TestChoose:
         with patch.object(
             v1_angle_gate.service, "choose_angle",
             new=AsyncMock(side_effect=service.AngleGateError("bad idx")),
-        ), patch.object(v1_angle_gate.service, "fetch_request", new=AsyncMock()):
+        ), patch.object(v1_angle_gate.service, "fetch_request_on", new=AsyncMock()):
             with pytest.raises(HTTPException) as exc:
                 await v1_angle_gate.choose(REQUEST_ID, body, _make_request(), tenant={"sub": TENANT_ID})
         assert exc.value.status_code == 422
@@ -149,20 +150,20 @@ class TestReopen:
     async def test_success(self):
         request = _make_request()
         with patch.object(v1_angle_gate.service, "reopen_request", new=AsyncMock(return_value=None)) as reopen, \
-             patch.object(v1_angle_gate.service, "fetch_request",
+             patch.object(v1_angle_gate.service, "fetch_request_on",
                           new=AsyncMock(return_value={"status": "reusable"})) as fetch:
             result = await v1_angle_gate.reopen(REQUEST_ID, request, tenant={"sub": TENANT_ID})
         assert result["status"] == "reusable"
         _, tenant_id, request_id = reopen.call_args[0]
         assert (str(tenant_id), request_id) == (TENANT_ID, REQUEST_ID)
-        assert fetch.call_args[0] == (uuid.UUID(TENANT_ID), REQUEST_ID, request.app.state.pool)
+        assert fetch.call_args[0][1:] == (uuid.UUID(TENANT_ID), REQUEST_ID)
 
     @pytest.mark.asyncio
     async def test_wrong_status_409(self):
         with patch.object(
             v1_angle_gate.service, "reopen_request",
             new=AsyncMock(side_effect=service.WrongStatusError("not approved")),
-        ), patch.object(v1_angle_gate.service, "fetch_request", new=AsyncMock()):
+        ), patch.object(v1_angle_gate.service, "fetch_request_on", new=AsyncMock()):
             with pytest.raises(HTTPException) as exc:
                 await v1_angle_gate.reopen(REQUEST_ID, _make_request(), tenant={"sub": TENANT_ID})
         assert exc.value.status_code == 409
@@ -172,7 +173,7 @@ class TestReopen:
         with patch.object(
             v1_angle_gate.service, "reopen_request",
             new=AsyncMock(side_effect=service.RequestNotFoundError("nope")),
-        ), patch.object(v1_angle_gate.service, "fetch_request", new=AsyncMock()):
+        ), patch.object(v1_angle_gate.service, "fetch_request_on", new=AsyncMock()):
             with pytest.raises(HTTPException) as exc:
                 await v1_angle_gate.reopen(REQUEST_ID, _make_request(), tenant={"sub": TENANT_ID})
         assert exc.value.status_code == 404

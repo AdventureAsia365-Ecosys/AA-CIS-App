@@ -27,6 +27,12 @@ since AA-817 PR-A, S239; each logs `used_tenant_pool` per request):
   - AA-859 wave 3 (S247): GET / POST /admin/brand-identity with a tenant Bearer (BRAND_IDENTITY_FLAG, needs
     262; the X-Admin-Secret staff branch stays on the admin pool) and POST /v1/publish-log/{piece_id}/publish
     (PUBLISH_FLAG; no new migration).
+  - AA-859 wave 4 (S247, migrations 265 + 266): GET /v1/angle-gate/requests/{id} and the choose / reopen re-read
+    (ANGLE_GATE_READ_FLAG), GET /v1/slate (SLATE_READS_FLAG), POST /v1/subjects/{id}/pick and /cut
+    (SUBJECT_DECIDE_FLAG), GET /v1/planning/trip-reallocation/suggest and POST .../confirm
+    (TRIP_REALLOCATION_FLAG), GET /v1/marketplace (MARKETPLACE_FLAG), GET /v1/content-writing/reviews and
+    .../requests/{id}/review (REVIEWS_FLAG). Each group has its own flag and needs 265 and / or 266 (see the
+    constants): `SET <key> false` on Dev before the deploy, flip after the apply.
 
 Design (matches AA-544's approved 2-pool split): Admin (/admin/*) keeps app.state.pool unchanged,
 always. That pool logs in as the CIS runtime role: aa_cis_admin today (owner, so exempt on the ENABLE-only
@@ -102,14 +108,24 @@ T2_VERSION_DETAIL_READS_FLAG = "aa859:t2_version_detail_reads_pool"  # D5b /{id}
 # tenant_seo_config: a 262 rollback must turn BRAND_IDENTITY_FLAG off first.
 BRAND_IDENTITY_FLAG = "aa859:brand_identity_pool"            # GET / POST /admin/brand-identity (tenant); needs 262
 PUBLISH_FLAG = "aa859:publish_pool"                          # POST /v1/publish-log/{piece_id}/publish; no new grant
+# AA-859 wave 4 (S247). "Needs 265" = RLS + grants on subject / quarter_plan / quarter_plan_version / year_plan /
+# tenant_tour_pages and the platform read allowlist (route, atom_segment*, place_card*, atom_place_card); "needs 266"
+# = RLS + SELECT on acp_contract.tour_atoms. A 265 / 266 rollback turns the flags that need it off first.
+ANGLE_GATE_READ_FLAG = "aa859:angle_gate_read_pool"          # GET angle-gate request + choose/reopen re-read; 265
+SLATE_READS_FLAG = "aa859:slate_reads_pool"                  # GET /v1/slate (subject list); needs 265
+SUBJECT_DECIDE_FLAG = "aa859:subject_decide_pool"            # POST /v1/subjects/{id}/pick, /cut; needs 265 + 266
+TRIP_REALLOCATION_FLAG = "aa859:trip_reallocation_pool"      # trip-reallocation suggest / confirm; needs 265 + 266
+MARKETPLACE_FLAG = "aa859:marketplace_pool"                  # GET /v1/marketplace; needs 266
+REVIEWS_FLAG = "aa859:reviews_pool"                          # GET content-writing reviews + review; needs 265 + 266
 
 # Every flag above. A new *_FLAG constant must be added here too (a unit test checks it), and to the
-# ALLOWED set of the flag tooling (root docs/audits/2026-10-16-S240-aa859/aa859_flag.py), so it can be
-# SET false on Dev.
+# ALLOWED set of the flag tooling (root docs/audits/2026-10-16-S240-aa859/aa859_flag.py, and its wave-3 / wave-4
+# copies aa859_wave3_flag.py / aa859_wave4_flag.py), so it can be SET false on Dev.
 ALL_TENANT_POOL_FLAGS = frozenset({
     STAGE1_PUBLISH_PENDING_FLAG, STAGE5_GET_PIECE_FLAG, PUBLISH_LOG_LIST_FLAG, INTEGRATION_DISCONNECT_FLAG,
     CONTENT_PIECE_READS_FLAG, PIECE_EDIT_FLAG, T2_VERSION_WRITE_FLAG, ANGLE_GATE_DECIDE_FLAG, UNPUBLISH_FLAG,
     T2_VERSION_READS_FLAG, INTEGRATION_CONNECT_FLAG, T2_VERSION_DETAIL_READS_FLAG, BRAND_IDENTITY_FLAG, PUBLISH_FLAG,
+    ANGLE_GATE_READ_FLAG, SLATE_READS_FLAG, SUBJECT_DECIDE_FLAG, TRIP_REALLOCATION_FLAG, MARKETPLACE_FLAG, REVIEWS_FLAG,
 })
 
 # S241 D-12: the explicit values that turn a route's flag OFF (admin pool), compared after strip +

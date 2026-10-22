@@ -98,20 +98,50 @@ async def _fetch_atom_for_tenant(tenant_id: UUID, atom_id: str, pool) -> dict:
     return {"atom_id": row["atom_id"], "trip_id": row["tour_id"], "text": seed or row["text"]}
 
 
-async def _fetch_request_row(tenant_id: UUID, request_id: UUID, pool):
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            SELECT request_id, tenant_id, atom_id, trip_id, channel, goal, cta, status,
-                   dfs_paa_snapshot, created_at, updated_at, route_segment_ids, subject_id
-            FROM acp_shared.angle_gate_request
-            WHERE request_id = $1 AND tenant_id = $2
-            """,
-            request_id, tenant_id,
-        )
+# AA-859 wave 4 — module level so the tests can mutate them (forgotten-WHERE check). Every statement keeps its own
+# tenant filter; on the tenant pool (ANGLE_GATE_READ_FLAG / REVIEWS_FLAG) RLS also holds the boundary: 229 on
+# angle_gate_request, 241 on angle_gate_option (through its parent), 265 on subject.
+_REQUEST_ROW_SQL = """
+    SELECT request_id, tenant_id, atom_id, trip_id, channel, goal, cta, status,
+           dfs_paa_snapshot, created_at, updated_at, route_segment_ids, subject_id
+    FROM acp_shared.angle_gate_request
+    WHERE request_id = $1 AND tenant_id = $2
+"""
+_OPTIONS_SQL = """
+    SELECT option_id, idx, name, why_it_works, formula_fit, best_final_style,
+           recommended, chosen, answers, violations
+    FROM acp_shared.angle_gate_option
+    WHERE request_id = $1
+    ORDER BY idx
+"""
+# AA-512 — fixed header data (Subject + Channel). atom_segment / route are platform tables (no tenant column;
+# 265 grants the tenant role SELECT on them, the platform read allowlist); the subject row is the tenant's own.
+_SUBJECT_HEADER_SQL = """
+    SELECT s.score, s.segment_id, asg.canonical_place, asg.canonical_action, r.hub_name
+    FROM acp_shared.subject s
+    LEFT JOIN acp_contract.atom_segment asg ON asg.segment_id = s.segment_id
+    LEFT JOIN acp_contract.route r ON r.route_id = s.route_id
+    WHERE s.subject_id = $1 AND s.tenant_id = $2
+"""
+# AA-764 — outcome of the latest angle-generation job (shared.job: no tenant column, main pool only).
+_LAST_GENERATION_SQL = """
+    SELECT status FROM shared.job
+    WHERE kind = $1 AND payload->>'request_id' = $2
+    ORDER BY created_at DESC LIMIT 1
+"""
+_GENERATION_FAILED_STATES = ("failed", "cancelled", "stopped_budget")
+
+
+async def _fetch_request_row_on(conn, tenant_id: UUID, request_id: UUID):
+    row = await conn.fetchrow(_REQUEST_ROW_SQL, request_id, tenant_id)
     if row is None:
         raise RequestNotFoundError(f"request_id={request_id} not found for this tenant")
     return row
+
+
+async def _fetch_request_row(tenant_id: UUID, request_id: UUID, pool):
+    async with pool.acquire() as conn:
+        return await _fetch_request_row_on(conn, tenant_id, request_id)
 
 
 async def set_goal_and_generate(tenant_id: UUID, request_id: UUID, goal_key: str, pool) -> dict:
@@ -481,51 +511,59 @@ async def choose_angle(conn, tenant_id: UUID, request_id: UUID, idx: int) -> Non
         )
 
 
-async def fetch_request(tenant_id: UUID, request_id: UUID, pool) -> dict:
-    req = await _fetch_request_row(tenant_id, request_id, pool)
+def needs_generation_status(result: dict) -> bool:
+    """AA-859 wave 4 — `generation_failed` depends on the latest t8_angles job only for a request that is
+    'pending_goal' with no goal (a failed generation cleared it); every other state needs no shared.job read."""
+    return result.get("status") == "pending_goal" and result.get("goal") is None
+
+
+async def generation_status(pool, request_id: UUID) -> str | None:
+    """AA-764 — the latest t8_angles job's status for this request. AA-859 MAIN exception: shared.job has no
+    tenant column and no tenant-role grant; the caller proved ownership on its own (tenant) connection first."""
     async with pool.acquire() as conn:
-        option_rows = await conn.fetch(
-            """
-            SELECT option_id, idx, name, why_it_works, formula_fit, best_final_style,
-                   recommended, chosen, answers, violations
-            FROM acp_shared.angle_gate_option
-            WHERE request_id = $1
-            ORDER BY idx
-            """,
-            request_id,
-        )
-        # AA-512 — fixed header data (Subject + Channel, "không sửa được ở đây"): joined live,
-        # same LEFT JOIN/stale-but-harmless convention services/acp_shared/slate.py::fetch_slate()
-        # already documents for a Segment/Route that's since been rebuilt away. NULL subject_id
-        # (the legacy atom-picker path) simply returns no row — every field below stays None.
-        subject_row = None
-        if req["subject_id"] is not None:
-            subject_row = await conn.fetchrow(
-                """
-                SELECT s.score, s.segment_id, asg.canonical_place, asg.canonical_action, r.hub_name
-                FROM acp_shared.subject s
-                LEFT JOIN acp_contract.atom_segment asg ON asg.segment_id = s.segment_id
-                LEFT JOIN acp_contract.route r ON r.route_id = s.route_id
-                WHERE s.subject_id = $1
-                """,
-                req["subject_id"],
-            )
-        # AA-857 — a Subject stored on an id that has since merged into another shows the live
-        # Segment's label, the same one the Slate showed when the tenant picked it.
-        subject_label = None
-        if subject_row is not None:
-            subject_label = (await live_segment_labels(conn, [subject_row["segment_id"]])).get(
-                subject_row["segment_id"])
-        # AA-764 — outcome of the latest angle-generation job, so the portal can tell
-        # "still generating" from "failed, choose again" without a tenant job endpoint.
-        last_generation = await conn.fetchval(
-            """
-            SELECT status FROM shared.job
-            WHERE kind = $1 AND payload->>'request_id' = $2
-            ORDER BY created_at DESC LIMIT 1
-            """,
-            T8_ANGLES_KIND, str(request_id),
-        )
+        return await conn.fetchval(_LAST_GENERATION_SQL, T8_ANGLES_KIND, str(request_id))
+
+
+async def with_generation_status(result: dict, pool) -> dict:
+    """Fill `generation_failed` from the job table, read only when it can matter (needs_generation_status)."""
+    if needs_generation_status(result):
+        result["generation_failed"] = await generation_status(pool, result["request_id"]) in \
+            _GENERATION_FAILED_STATES
+    return result
+
+
+async def fetch_request_on(conn, tenant_id: UUID, request_id: UUID) -> dict:
+    """The request, its options and its Subject header, all on `conn` (AA-859 wave 4: the tenant pool's one
+    connection behind ANGLE_GATE_READ_FLAG / REVIEWS_FLAG, or a main-pool connection). `generation_failed` is
+    False here; with_generation_status() fills it on the main pool when the request is in the one state where
+    it matters. Raises RequestNotFoundError when the request is not this tenant's."""
+    req = await _fetch_request_row_on(conn, tenant_id, request_id)
+    option_rows = await conn.fetch(_OPTIONS_SQL, request_id)
+    # AA-512 — fixed header data (Subject + Channel, "không sửa được ở đây"): joined live,
+    # same LEFT JOIN/stale-but-harmless convention services/acp_shared/slate.py::fetch_slate()
+    # already documents for a Segment/Route that's since been rebuilt away. NULL subject_id
+    # (the legacy atom-picker path) simply returns no row — every field below stays None.
+    subject_row = None
+    if req["subject_id"] is not None:
+        subject_row = await conn.fetchrow(_SUBJECT_HEADER_SQL, req["subject_id"], tenant_id)
+    # AA-857 — a Subject stored on an id that has since merged into another shows the live
+    # Segment's label, the same one the Slate showed when the tenant picked it.
+    subject_label = None
+    if subject_row is not None:
+        subject_label = (await live_segment_labels(conn, [subject_row["segment_id"]])).get(
+            subject_row["segment_id"])
+    return _request_dict(req, option_rows, subject_row, subject_label, last_generation=None)
+
+
+async def fetch_request(tenant_id: UUID, request_id: UUID, pool) -> dict:
+    """fetch_request_on() on one main-pool connection, then the job status (worker, content writing, the
+    flag-off route path)."""
+    async with pool.acquire() as conn:
+        result = await fetch_request_on(conn, tenant_id, request_id)
+    return await with_generation_status(result, pool)
+
+
+def _request_dict(req, option_rows, subject_row, subject_label, last_generation) -> dict:
     # AA-501 — dfs_paa_snapshot (migration 127) arrives as a raw JSON string (no jsonb codec
     # registered on this app's connections, same gap admin_a4.py's _parse_jsonb already works
     # around for gate_ledger/escalate_detail) — parse defensively, NULL stays None.
@@ -561,7 +599,7 @@ async def fetch_request(tenant_id: UUID, request_id: UUID, pool) -> dict:
         "generating": req["status"] == "pending_goal" and req["goal"] is not None,
         "generation_failed": (
             req["status"] == "pending_goal" and req["goal"] is None
-            and last_generation in ("failed", "cancelled", "stopped_budget")
+            and last_generation in _GENERATION_FAILED_STATES
         ),
         "dfs_paa_snapshot": snapshot,
         "route_segment_ids": route_segment_ids,
@@ -584,5 +622,6 @@ async def fetch_request(tenant_id: UUID, request_id: UUID, pool) -> dict:
 __all__ = [
     "AngleGateError", "AtomNotFoundError", "RequestNotFoundError", "InvalidGoalError",
     "WrongStatusError", "set_goal_and_generate", "start_goal_generation", "clear_failed_generation",
-    "T8_ANGLES_KIND", "choose_angle", "reopen_request", "fetch_request",
+    "T8_ANGLES_KIND", "choose_angle", "reopen_request", "fetch_request", "fetch_request_on",
+    "generation_status", "needs_generation_status", "with_generation_status",
 ]

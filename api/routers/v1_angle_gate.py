@@ -28,7 +28,13 @@ Endpoint shape:
 
 AA-859 W3: .../choose and .../reopen run as one transaction (request row locked FOR UPDATE, then its
 options) on the aa_app_user tenant pool when the Redis flag `aa859:angle_gate_decide_pool` is on (fail
-closed), on the main pool otherwise; the response is re-read on the main pool after commit (see _decide).
+closed), on the main pool otherwise (see _decide).
+
+AA-859 wave 4: GET /requests/{id} and the response re-read after choose / reopen run on the tenant pool behind
+their own flag `aa859:angle_gate_read_pool` (ANGLE_GATE_READ_FLAG; needs migration 265: subject RLS and the
+platform read allowlist for atom_segment / route / atom_segment_alias): the request, its options and its
+Subject header in one block. The job status behind `generation_failed` (shared.job, no tenant column) is read
+on the main pool after the block, and only for a 'pending_goal' request without a goal.
 """
 from __future__ import annotations
 
@@ -39,7 +45,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from api.core.aa544_tenant_pool import ANGLE_GATE_DECIDE_FLAG, acquire_scoped_conn
+from api.core.aa544_tenant_pool import ANGLE_GATE_DECIDE_FLAG, ANGLE_GATE_READ_FLAG, acquire_scoped_conn
 from api.routers.v1_tours import get_tenant
 from services.acp_angle_gate import service
 from services.acp_angle_gate.goals import GOALS
@@ -83,12 +89,25 @@ async def set_goal(request_id: UUID, body: SetGoalBody, request: Request, tenant
         raise HTTPException(status_code=409, detail=str(exc))
 
 
+async def _read_request(request: Request, tenant_id: UUID, request_id: UUID, event: str) -> dict:
+    """AA-859 wave 4 — one block behind ANGLE_GATE_READ_FLAG (fail closed): request row (tenant-filtered, RLS
+    229), options (RLS 241 through the parent), Subject header (RLS 265 + the platform tables). Then, on MAIN,
+    the job status only when it can matter."""
+    async with acquire_scoped_conn(
+        request, str(tenant_id), ANGLE_GATE_READ_FLAG, fail_closed=True,
+    ) as (conn, used_tenant_pool):
+        logger.info(event, tenant_id=str(tenant_id), request_id=str(request_id), used_tenant_pool=used_tenant_pool)
+        result = await service.fetch_request_on(conn, tenant_id, request_id)
+    # AA-859 MAIN exception: shared.job (t8_angles status) has no tenant column and no tenant-role grant; the
+    # request was proven this tenant's inside the block above. Read after release, only for pending_goal + no goal.
+    return await service.with_generation_status(result, request.app.state.pool)
+
+
 @router.get("/requests/{request_id}", summary="Read a request + its angles (if generated)")
 async def get_request(request_id: UUID, request: Request, tenant=Depends(get_tenant)):
     tenant_id = UUID(tenant["sub"])
-    pool = request.app.state.pool
     try:
-        return await service.fetch_request(tenant_id, request_id, pool)
+        return await _read_request(request, tenant_id, request_id, "aa859_angle_gate_read")
     except service.RequestNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
@@ -104,10 +123,10 @@ async def _decide(request: Request, tenant_id: UUID, request_id: UUID, event: st
         logger.info(event, tenant_id=str(tenant_id), request_id=str(request_id), used_tenant_pool=used_tenant_pool)
         async with (nullcontext() if used_tenant_pool else conn.transaction()):
             await decide(conn)
-    # AA-859 MAIN exception: fetch_request reads subject / atom_segment / route (no tenant-role grant until
-    # wave 4's 243) and shared.job (no tenant column); ownership was proven inside the transaction above (the
-    # tenant-filtered, on the tenant pool RLS-filtered, request row). Read after commit, on the main pool.
-    return await service.fetch_request(tenant_id, request_id, request.app.state.pool)
+    # AA-859 wave 4 — the response re-read is a second, sequential block (the decide connection is released)
+    # behind ANGLE_GATE_READ_FLAG, not ANGLE_GATE_DECIDE_FLAG: that flag is verified ON, and moving a read under
+    # it would change it without a flip of its own (D5b lesson). Each flag reverts on its own.
+    return await _read_request(request, tenant_id, request_id, "aa859_angle_gate_reread")
 
 
 @router.post(

@@ -3,7 +3,8 @@
 The AA-817 fail-closed matrix for these two routes (same cases as test_aa817_fail_closed_routes.py, own fakes
 because the decision reads through fetchval and re-reads on the main pool after commit):
   * flag on: the tenant pool, GUC set LOCAL, every decision statement on that one connection, one log event
-    with used_tenant_pool=True, then fetch_request on the MAIN pool only after the tenant block was released;
+    with used_tenant_pool=True, then (AA-859 wave 4) the response re-read in a second, sequential block behind
+    ANGLE_GATE_READ_FLAG (here in the same state as the decide flag), only after the decide block was released;
   * flag off: the main pool with the route's own transaction, used_tenant_pool=False;
   * flag on + no tenant pool / GUC not applied / no tenant connection: 503, the main pool is never touched
     and nothing is re-read;
@@ -12,6 +13,7 @@ because the decision reads through fetchval and re-reads on the main pool after 
   * a malformed JWT sub fails at the route's UUID() parse before any pool is touched (old behaviour).
 """
 import asyncio
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -27,6 +29,7 @@ from services.acp_angle_gate import service
 TENANT_ID = uuid4()
 REQUEST_ID = uuid4()
 FLAG = tp.ANGLE_GATE_DECIDE_FLAG
+READ_FLAG = tp.ANGLE_GATE_READ_FLAG   # AA-859 wave 4: the re-read's own flag
 
 
 # ── fakes ─────────────────────────────────────────────────────────────────────
@@ -80,7 +83,8 @@ class _DecideConn:
 
 def _request(flag, tenant_conn=None, main_conn=None, tenant_pool=True, acquire_error=None, events=None):
     request = MagicMock()
-    request.app.state.redis.get = AsyncMock(side_effect=lambda key: "true" if flag and key == FLAG else "false")
+    request.app.state.redis.get = AsyncMock(
+        side_effect=lambda key: "true" if flag and key in (FLAG, READ_FLAG) else "false")
     main = MagicMock()
     main.acquire = MagicMock(return_value=_ctx(main_conn or _DecideConn(), events=events, name="main"))
     request.app.state.pool = main
@@ -95,11 +99,22 @@ def _request(flag, tenant_conn=None, main_conn=None, tenant_pool=True, acquire_e
 
 
 def _fetch_request_stub(events=None):
-    async def _fetch(tenant_id, request_id, pool):
+    """Stands in for service.fetch_request_on (the re-read's reads on the block's connection)."""
+    async def _fetch(conn, tenant_id, request_id):
         if events is not None:
             events.append("fetch_request")
-        return {"request_id": str(request_id), "tenant_id": str(tenant_id), "status": "re-read"}
+        return {"request_id": str(request_id), "tenant_id": str(tenant_id), "status": "re-read", "goal": "g"}
     return AsyncMock(side_effect=_fetch)
+
+
+@contextmanager
+def _reread(stub):
+    """Patch the wave-4 re-read: fetch_request_on stubbed, the job-status step a pass-through."""
+    async def _passthrough(result, pool):
+        return result
+    with patch.object(service, "fetch_request_on", new=stub), \
+            patch.object(service, "with_generation_status", new=AsyncMock(side_effect=_passthrough)):
+        yield stub
 
 
 async def _choose(request, sub=None, idx=1):
@@ -128,21 +143,25 @@ async def test_flag_on_decides_on_tenant_pool_then_rereads_on_main(call, status,
     events = []
     tenant = _DecideConn(status=status)
     request = _request(flag=True, tenant_conn=tenant, events=events)
-    with capture_logs() as logs, patch.object(service, "fetch_request", new=_fetch_request_stub(events)) as fetch:
+    with capture_logs() as logs, _reread(_fetch_request_stub(events)) as fetch:
         result = await call(request)
     assert result["status"] == "re-read"
     assert tenant.sql == decision_sql, "every decision statement ran on the one tenant connection, in order"
     assert request.app.state.tenant_pool.acquire.call_args.kwargs == {"timeout": tp.TENANT_POOL_ACQUIRE_TIMEOUT_S}
-    tenant.transaction.assert_called_once()  # acquire_scoped_conn's own (GUC LOCAL); the route opens none
+    # acquire_scoped_conn's own (GUC LOCAL), once per block (decide, then the re-read); the route opens none
+    assert tenant.transaction.call_count == 2
     assert tenant.tx.__aexit__.call_args[0][0] is None, "the tenant transaction committed"
-    assert events == ["tenant_released", "fetch_request"], "re-read only after the tenant connection is back"
-    assert fetch.call_args[0] == (TENANT_ID, REQUEST_ID, request.app.state.pool)
-    request.app.state.pool.acquire.assert_not_called()  # fetch_request is stubbed; nothing else uses MAIN
+    assert events == ["tenant_released", "fetch_request", "tenant_released"], \
+        "re-read only after the decide connection is back, in its own block"
+    assert fetch.call_args[0][1:] == (TENANT_ID, REQUEST_ID)
+    request.app.state.pool.acquire.assert_not_called()  # the job-status step is stubbed; nothing else uses MAIN
     lines = [entry for entry in logs if entry["event"] == event]
     assert len(lines) == 1 and lines[0]["used_tenant_pool"] is True
     assert lines[0]["request_id"] == str(REQUEST_ID) and lines[0]["tenant_id"] == str(TENANT_ID)
     timing = [entry for entry in logs if entry["event"] == "aa859_tenant_pool_timing"]
-    assert len(timing) == 1 and timing[0]["flag_key"] == FLAG
+    assert [t["flag_key"] for t in timing] == [FLAG, READ_FLAG]
+    reread = [entry for entry in logs if entry["event"] == "aa859_angle_gate_reread"]
+    assert len(reread) == 1 and reread[0]["used_tenant_pool"] is True
 
 
 @pytest.mark.parametrize("call,status,decision_sql,event", ROUTES)
@@ -150,7 +169,7 @@ async def test_flag_on_decides_on_tenant_pool_then_rereads_on_main(call, status,
 async def test_flag_off_decides_on_main_in_its_own_transaction(call, status, decision_sql, event):
     main = _DecideConn(status=status)
     request = _request(flag=False, main_conn=main)
-    with capture_logs() as logs, patch.object(service, "fetch_request", new=_fetch_request_stub()):
+    with capture_logs() as logs, _reread(_fetch_request_stub()):
         await call(request)
     request.app.state.tenant_pool.acquire.assert_not_called()
     assert main.sql == decision_sql
@@ -165,7 +184,7 @@ async def test_flag_off_decides_on_main_in_its_own_transaction(call, status, dec
 @pytest.mark.asyncio
 async def test_flag_on_without_tenant_pool_is_503(call, status, decision_sql, event):
     request = _request(flag=True, tenant_pool=False)
-    with patch.object(service, "fetch_request", new=_fetch_request_stub()) as fetch, \
+    with _reread(_fetch_request_stub()) as fetch, \
             pytest.raises(HTTPException) as exc:
         await call(request)
     assert exc.value.status_code == 503
@@ -178,7 +197,7 @@ async def test_flag_on_without_tenant_pool_is_503(call, status, decision_sql, ev
 async def test_flag_on_guc_not_applied_is_503(call, status, decision_sql, event):
     tenant = _DecideConn(status=status, guc_echo="")
     request = _request(flag=True, tenant_conn=tenant)
-    with patch.object(service, "fetch_request", new=_fetch_request_stub()) as fetch, \
+    with _reread(_fetch_request_stub()) as fetch, \
             pytest.raises(HTTPException) as exc:
         await call(request)
     assert exc.value.status_code == 503
@@ -198,7 +217,7 @@ async def test_flag_on_guc_not_applied_is_503(call, status, decision_sql, event)
 async def test_flag_on_no_tenant_connection_is_503_with_metric_event(call, status, decision_sql, event, error,
                                                                        reason):
     request = _request(flag=True, acquire_error=error)
-    with capture_logs() as logs, patch.object(service, "fetch_request", new=_fetch_request_stub()) as fetch, \
+    with capture_logs() as logs, _reread(_fetch_request_stub()) as fetch, \
             pytest.raises(HTTPException) as exc:
         await call(request)
     assert exc.value.status_code == 503
@@ -215,9 +234,11 @@ async def test_redis_error_keeps_tenant_pool_loudly(call, status, decision_sql, 
     tenant = _DecideConn(status=status)
     request = _request(flag=True, tenant_conn=tenant)
     request.app.state.redis.get = AsyncMock(side_effect=ConnectionError("redis down"))
-    with capture_logs() as logs, patch.object(service, "fetch_request", new=_fetch_request_stub()):
+    with capture_logs() as logs, _reread(_fetch_request_stub()):
         await call(request)
-    request.app.state.tenant_pool.acquire.assert_called_once()
+    # the decide block and (AA-859 wave 4) the re-read block, both on the tenant pool: both flags read as ON
+    assert request.app.state.tenant_pool.acquire.call_count == 2
+    request.app.state.pool.acquire.assert_not_called()
     failed = [entry for entry in logs if entry["event"] == "aa817_tenant_flag_read_failed"]
     assert failed and failed[0]["flag_key"] == FLAG and failed[0]["log_level"] == "error"
     assert failed[0]["fallback"] == "tenant_pool"
@@ -230,7 +251,7 @@ async def test_query_error_propagates_and_rolls_back(call, status, decision_sql,
     """A missing grant (e.g. a 241 rollback with the flag still on) shows as the Postgres error, not a 503."""
     tenant = _DecideConn(status=status, error=asyncpg.InsufficientPrivilegeError("permission denied"))
     request = _request(flag=True, tenant_conn=tenant)
-    with capture_logs() as logs, patch.object(service, "fetch_request", new=_fetch_request_stub()) as fetch, \
+    with capture_logs() as logs, _reread(_fetch_request_stub()) as fetch, \
             pytest.raises(asyncpg.InsufficientPrivilegeError):
         await call(request)
     assert not [entry for entry in logs if entry["event"] == "aa817_tenant_pool_unavailable"]
@@ -242,7 +263,7 @@ async def test_query_error_propagates_and_rolls_back(call, status, decision_sql,
 @pytest.mark.asyncio
 async def test_malformed_sub_fails_before_any_pool(call, status, decision_sql, event, bad_sub):
     request = _request(flag=True)
-    with patch.object(service, "fetch_request", new=_fetch_request_stub()), pytest.raises(ValueError):
+    with _reread(_fetch_request_stub()), pytest.raises(ValueError):
         await call(request, sub=bad_sub)
     request.app.state.tenant_pool.acquire.assert_not_called()
     request.app.state.pool.acquire.assert_not_called()
@@ -261,7 +282,7 @@ async def test_malformed_sub_fails_before_any_pool(call, status, decision_sql, e
 async def test_domain_error_rolls_back_the_tenant_transaction(call, conn_kwargs, status_code, error):
     tenant = _DecideConn(**conn_kwargs)
     request = _request(flag=True, tenant_conn=tenant)
-    with capture_logs() as logs, patch.object(service, "fetch_request", new=_fetch_request_stub()) as fetch, \
+    with capture_logs() as logs, _reread(_fetch_request_stub()) as fetch, \
             pytest.raises(HTTPException) as exc:
         await call(request)
     assert exc.value.status_code == status_code
@@ -276,7 +297,7 @@ async def test_domain_error_rolls_back_the_tenant_transaction(call, conn_kwargs,
 async def test_choose_bad_idx_is_422_before_any_option_sql():
     tenant = _DecideConn()
     request = _request(flag=True, tenant_conn=tenant)
-    with patch.object(service, "fetch_request", new=_fetch_request_stub()), pytest.raises(HTTPException) as exc:
+    with _reread(_fetch_request_stub()), pytest.raises(HTTPException) as exc:
         await _choose(request, idx=7)
     assert exc.value.status_code == 422
     assert tenant.sql == [service._CHOOSE_LOCK_SQL]
@@ -308,3 +329,18 @@ def test_option_write_touches_only_the_granted_column():
 
 def test_route_uses_its_own_flag():
     assert FLAG == "aa859:angle_gate_decide_pool"
+    assert READ_FLAG == "aa859:angle_gate_read_pool"
+
+
+@pytest.mark.asyncio
+async def test_reread_flag_off_keeps_the_decision_on_the_tenant_pool():
+    """Each flag reverts on its own: the re-read on MAIN (READ_FLAG false) does not move the decision."""
+    tenant = _DecideConn(status="pending_choice")
+    request = _request(flag=True, tenant_conn=tenant)
+    request.app.state.redis.get = AsyncMock(side_effect=lambda key: "true" if key == FLAG else "false")
+    with capture_logs() as logs, _reread(_fetch_request_stub()):
+        await _choose(request)
+    request.app.state.tenant_pool.acquire.assert_called_once()
+    request.app.state.pool.acquire.assert_called_once()
+    assert [e["used_tenant_pool"] for e in logs if e["event"] == "aa859_angle_gate_choose"] == [True]
+    assert [e["used_tenant_pool"] for e in logs if e["event"] == "aa859_angle_gate_reread"] == [False]
