@@ -17,6 +17,10 @@ One call per piece (all candidates in one numbered list) through the Model Gatew
 `t9_faq_filter`, role `validate` (ADR 0008: a classification nobody scores; a `judge` stage must be
 non-Anthropic), one `shared.llm_call_log` row per reply. Any error, unusable reply or timeout falls back to
 the deterministic list: the filter never blocks or fails T9.
+
+The model's KEEP list is post-filtered by the same deterministic gazetteer test paa_for_scope uses (a question
+naming a trip place this piece does not cover is dropped): the model sees at most OUTSIDE_MAX of the trip's other
+places, the gazetteer sees them all, and a false keep there would reach a customer-facing FAQ.
 """
 from __future__ import annotations
 
@@ -30,9 +34,9 @@ from typing import Optional, Sequence
 
 import structlog
 
-from services.acp_content_writing.hygiene import fold
+from services.acp_content_writing.hygiene import fold, names_place
 from services.acp_content_writing.quality_gates import PAA_MAX_QUESTIONS, normalize_paa_question, paa_for_scope
-from shared.llm_client.call_log import record_call_sync
+from shared.llm_client.call_log import record_call_sync, record_unusable_sync
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 
@@ -148,6 +152,7 @@ class FilterOutcome:
     verdicts: list = field(default_factory=list)  # [{q, label, reason_code, confidence, note}], candidate order
     model: Optional[str] = None
     cost_usd: float = 0.0
+    gazetteer_dropped: list = field(default_factory=list)  # model KEEPs the out-of-scope gazetteer test removed
 
 
 class FaqFilterReplyError(ValueError):
@@ -246,47 +251,52 @@ def parse_verdicts(content: str, n: int) -> list[dict]:
     return [by_n[k] for k in range(1, n + 1)]
 
 
-def llm_filter_questions(questions, scope: FaqScope, *, limit: int = PAA_MAX_QUESTIONS,
+def llm_filter_questions(questions, scope: FaqScope, *, out_of_scope=(), limit: int = PAA_MAX_QUESTIONS,
                          stage: str = FAQ_FILTER_STAGE, role: str = FAQ_FILTER_ROLE,
                          model_tier: Optional[str] = None, tenant_id=None, content_piece_id=None,
                          angle_gate_request_id=None, quality_signal: Optional[dict] = None,
                          client: Optional[LLMClient] = None) -> FilterOutcome:
-    """Sync. One gateway call for every candidate of `questions`; the KEEP ones in candidate order, at most
-    `limit`. Writes one llm_call_log row per reply (also an unusable one, `outcome: unusable`). Raises on a
-    gateway error or an unusable reply: the caller falls back. `stage` / `model_tier` are overridable for an
-    ad-hoc measurement (stage `adhoc_aa779`, no route row → `model_tier` names the model)."""
+    """Sync. One gateway call for every candidate of `questions`; the KEEP ones in candidate order, minus any
+    that names an `out_of_scope` gazetteer key (the paa_for_scope test), at most `limit`.
+
+    llm_call_log, AA-927 canonical shape: a usable reply writes one row with `json_parsed: true` (the stage's
+    ok-rate key); a billed reply that is unusable, or any raise after generate() returned, writes one
+    `billed_unusable` row (record_unusable_sync) and re-raises, so the caller falls back. A gateway error
+    raises before anything reached this function (the gateway logs its own billed failures). `stage` /
+    `model_tier` are overridable for an ad-hoc measurement (stage `adhoc_aa779`, no route row → `model_tier`
+    names the model); `out_of_scope=()` measures the classifier alone."""
     cands = candidate_questions(questions)
     if not cands:
         return FilterOutcome(kept=[])
     request = LLMRequest(system_prompt=SYSTEM_PROMPT, user_prompt=build_user_prompt(scope, cands),
                          max_tokens=MAX_TOKENS, temperature=0.0, stage=stage, model_tier=model_tier)
     resp = (client or LLMClient()).generate(request)
-    verdicts, error = None, None
+    ids = {"tenant_id": tenant_id, "content_piece_id": content_piece_id,
+           "angle_gate_request_id": angle_gate_request_id}
+    signal = {"issue": "AA-779", "n_questions": len(cands), **(quality_signal or {})}
     try:
         verdicts = parse_verdicts(resp.content, len(cands))
-    except FaqFilterReplyError as e:
-        error = str(e)
-    signal = {"issue": "AA-779", "n_questions": len(cands), **(quality_signal or {})}
-    if verdicts is None:
-        signal |= {"outcome": "unusable", "error": error[:200]}
-    else:
-        keeps = sum(1 for v in verdicts if v["label"] == KEEP)
-        signal |= {"outcome": "ok", "keep": keeps,
-                   "drop_reasons": dict(collections.Counter(v["reason_code"] for v in verdicts
-                                                            if v["label"] == DROP))}
+        rows = [{"q": q, **v} for q, v in zip(cands, verdicts)]
+        model_keep = [r["q"] for r in rows if r["label"] == KEEP]
+        gazetteer_dropped = [q for q in model_keep if any(names_place(q, g) for g in out_of_scope or ())]
+        kept = [q for q in model_keep if q not in gazetteer_dropped][:limit]
+        drop_reasons = dict(collections.Counter(v["reason_code"] for v in verdicts if v["label"] == DROP))
+        cost = float(resp.cost_usd or 0.0)
+    except Exception as e:
+        # AA-927: the reply was billed; its billed_unusable row (no ok-rate key) before the caller falls back.
+        record_unusable_sync(resp, stage=stage, role=role, error=e, quality_signal_extra=signal, **ids)
+        raise
     record_call_sync(
         stage=stage, role=role, model=resp.model_used,
         tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
-        cost_usd=resp.cost_usd, tenant_id=tenant_id, content_piece_id=content_piece_id,
-        angle_gate_request_id=angle_gate_request_id, quality_signal=signal,
+        cost_usd=resp.cost_usd, quality_signal=signal | {
+            "json_parsed": True, "keep": len(model_keep), "drop_reasons": drop_reasons,
+            "gazetteer_dropped": len(gazetteer_dropped)},
         stop_reason=getattr(resp, "stop_reason", None), account=getattr(resp, "satellite_account", None),
-        fallback_used=getattr(resp, "fallback_used", None), provider=getattr(resp, "provider", None),
+        fallback_used=getattr(resp, "fallback_used", None), provider=getattr(resp, "provider", None), **ids,
     )
-    if verdicts is None:
-        raise FaqFilterReplyError(error)
-    rows = [{"q": q, **v} for q, v in zip(cands, verdicts)]
-    kept = [r["q"] for r in rows if r["label"] == KEEP][:limit]
-    return FilterOutcome(kept=kept, verdicts=rows, model=resp.model_used, cost_usd=float(resp.cost_usd or 0.0))
+    return FilterOutcome(kept=kept, verdicts=rows, model=resp.model_used, cost_usd=cost,
+                         gazetteer_dropped=gazetteer_dropped)
 
 
 async def select_faq_questions(questions, *, own_seed: str, facts_text: Optional[str], out_of_scope,
@@ -303,7 +313,8 @@ async def select_faq_questions(questions, *, own_seed: str, facts_text: Optional
     scope = scope_from_context(context, own_seed, facts_text)
     try:
         outcome = await asyncio.wait_for(asyncio.to_thread(
-            llm_filter_questions, questions, scope, tenant_id=context.get("tenant_id"),
+            llm_filter_questions, questions, scope, out_of_scope=tuple(out_of_scope or ()),
+            tenant_id=context.get("tenant_id"),
             content_piece_id=str(piece_id) if piece_id else None,
             angle_gate_request_id=str(request_id) if request_id else None,
             quality_signal={"mode": mode}), timeout=TIMEOUT_S)
@@ -312,5 +323,6 @@ async def select_faq_questions(questions, *, own_seed: str, facts_text: Optional
                        request_id=str(request_id) if request_id else None)
         return deterministic, record | {"fallback": True, "error": f"{type(e).__name__}: {str(e)[:200]}"}
     record |= {"fallback": False, "model": outcome.model, "cost_usd": round(outcome.cost_usd, 6),
-               "llm_kept": outcome.kept, "verdicts": outcome.verdicts}
+               "llm_kept": outcome.kept, "gazetteer_dropped": outcome.gazetteer_dropped,
+               "verdicts": outcome.verdicts}
     return (outcome.kept if mode == MODE_ON else deterministic), record

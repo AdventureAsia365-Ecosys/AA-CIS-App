@@ -33,14 +33,17 @@ T9 has a standing rule: no new gates for 4 weeks.
    it only chooses which real questions the writer is given. The FAQ droppers after the writer are unchanged.
 2. **Model Gateway stage `t9_faq_filter`**, role `validate`, Claude `haiku` (the key the trial measured),
    account route `acc3`, no fallback model, no shadow (migration 264, `SAFE_DEFAULTS`). One call per blog piece
-   with every candidate question (at most 30) in one numbered list. Each reply writes a `shared.llm_call_log` row.
+   with every candidate question (at most 30) in one numbered list. Each reply writes one `shared.llm_call_log`
+   row in the AA-927 shape: `json_parsed: true` when usable, `billed_unusable: true` (no ok-rate key) when not.
    - `validate`, not `judge`: a judge must be non-Anthropic (ADR 0006 §5). This step writes no prose and nothing
      scores its output, which is the ADR 0008 case.
 3. **Flag `T9_FAQ_LLM_FILTER`** on the worker task definition. The default is `off`.
    - `off`: today's deterministic list and no model call.
    - `shadow`: the model runs and its verdicts are stored in `writer_input.faq_filter` (admin-only), but the writer
      still gets the deterministic list.
-   - `on`: the writer gets the model's KEEP list, in candidate order, capped at 6.
+   - `on`: the writer gets the model's KEEP list, in candidate order, minus any question that names a trip place
+     this piece does not cover (the deterministic gazetteer test of `paa_for_scope`), capped at 6. The model sees
+     at most 30 of those places; the gazetteer sees them all. The count is recorded as `gazetteer_dropped`.
 4. **Fallback.** On a gateway error, an unusable reply or a 60 s timeout, the writer gets the deterministic list.
    The step never fails T9.
 5. **Prompt.** The trial prompt, with calibration clauses folded into its rules for the over-drops the hand

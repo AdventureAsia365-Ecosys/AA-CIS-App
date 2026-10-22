@@ -1,8 +1,9 @@
 """AA-779 (S247, ADR 0011) — the optional LLM filter of the blog FAQ's real search questions (faq_filter.py).
 
 Flag off = the deterministic list and no model call; shadow = deterministic list + recorded verdicts; on = the
-model's KEEP list. Any gateway error, unusable reply or timeout falls back to the deterministic list. Every
-reply writes one llm_call_log row on stage t9_faq_filter, role validate.
+model's KEEP list minus the out-of-scope gazetteer test. Any gateway error, unusable reply or timeout falls back
+to the deterministic list. Every reply writes one llm_call_log row on stage t9_faq_filter, role validate: a
+usable one with `json_parsed`, an unusable one as `billed_unusable` (AA-927).
 """
 import asyncio
 import json
@@ -59,13 +60,13 @@ def _det():
     return qg.paa_for_scope(QUESTIONS, SEED, None, OUT_OF_SCOPE)
 
 
-def _select(mode, client=None, **kw):
+def _select(mode, client=None, with_unusable=False, **kw):
     with patch.object(ff, "LLMClient", return_value=client or _client(_reply(["KEEP", "KEEP", "DROP"]))), \
-            patch.object(ff, "record_call_sync") as rec:
+            patch.object(ff, "record_call_sync") as rec, patch.object(ff, "record_unusable_sync") as unusable:
         out = asyncio.run(ff.select_faq_questions(QUESTIONS, own_seed=SEED, facts_text=None,
                                                   out_of_scope=OUT_OF_SCOPE, context=CONTEXT,
                                                   piece_id="p-1", request_id="r-1", mode=mode, **kw))
-    return out, rec
+    return (out, rec, unusable) if with_unusable else (out, rec)
 
 
 # ---------------------------------------------------------------- flag
@@ -152,8 +153,9 @@ def test_call_log_row_has_stage_role_and_ids():
     assert kw["tokens_in"] == 900 and kw["tokens_out"] == 120 and kw["account"] == "acc3"
     assert kw["tenant_id"] == "t-1" and kw["content_piece_id"] == "p-1" and kw["angle_gate_request_id"] == "r-1"
     qs = kw["quality_signal"]
-    assert qs["issue"] == "AA-779" and qs["mode"] == "on" and qs["outcome"] == "ok"
+    assert qs["issue"] == "AA-779" and qs["mode"] == "on" and qs["json_parsed"] is True
     assert qs["n_questions"] == 3 and qs["keep"] == 2 and qs["drop_reasons"] == {"outside_piece_scope": 1}
+    assert qs["gazetteer_dropped"] == 0 and "billed_unusable" not in qs
 
 
 def test_adhoc_stage_and_model_override_for_a_measurement():
@@ -178,11 +180,76 @@ def test_gateway_error_falls_back_to_the_deterministic_list():
 def test_unusable_reply_is_logged_then_falls_back():
     bad = LLMResponse(content='{"items": [{"n": 1, "label": "KEEP"}]}', model_used="satellite-haiku-4-5",
                       provider="bedrock", cost_usd=0.001)
-    (kept, record), rec = _select("on", client=_client(bad))
-    assert kept == _det() and record["fallback"] is True
-    rec.assert_called_once()
-    qs = rec.call_args.kwargs["quality_signal"]
-    assert qs["outcome"] == "unusable" and "no verdict" in qs["error"]
+    (kept, record), rec, unusable = _select("on", client=_client(bad), with_unusable=True)
+    assert kept == _det() and record["fallback"] is True and "no verdict" in record["error"]
+    rec.assert_not_called()          # no ok row: the billed reply goes in as billed_unusable instead
+    unusable.assert_called_once()
+    args, kw = unusable.call_args
+    assert args[0] is bad and kw["stage"] == "t9_faq_filter" and kw["role"] == "validate"
+    assert "no verdict" in str(kw["error"])
+    assert kw["tenant_id"] == "t-1" and kw["content_piece_id"] == "p-1" and kw["angle_gate_request_id"] == "r-1"
+    assert kw["quality_signal_extra"]["issue"] == "AA-779" and kw["quality_signal_extra"]["mode"] == "on"
+
+
+def test_unusable_reply_row_is_billed_unusable_without_an_ok_rate_key():
+    """End to end through the real record_unusable_sync: the row record_calls gets is AA-927's shape."""
+    bad = LLMResponse(content="not json", model_used="satellite-haiku-4-5", provider="bedrock",
+                      input_tokens=800, output_tokens=5, cost_usd=0.001, satellite_account="acc3")
+    with patch("shared.llm_client.call_log.record_calls_sync") as calls, \
+            pytest.raises(ff.FaqFilterReplyError):
+        ff.llm_filter_questions(QUESTIONS, ff.scope_from_context(CONTEXT, SEED), client=_client(bad),
+                                tenant_id="t-1", content_piece_id="p-1", quality_signal={"mode": "on"})
+    (rows,), _ = calls.call_args
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["stage"] == "t9_faq_filter" and row["role"] == "validate" and row["cost_usd"] == 0.001
+    assert row["tenant_id"] == "t-1" and row["content_piece_id"] == "p-1"
+    qs = row["quality_signal"]
+    assert qs["billed_unusable"] is True and "no JSON" in qs["error"] and qs["issue"] == "AA-779"
+    from shared.llm_client.call_log import OK_RATE_KEYS
+    assert not set(qs) & set(OK_RATE_KEYS)
+
+
+def test_a_raise_after_the_reply_still_logs_the_billed_call():
+    """Not only FaqFilterReplyError: anything raised between generate() and the row write gets its row."""
+    with patch.object(ff, "names_place", side_effect=RuntimeError("boom")), \
+            patch.object(ff, "record_call_sync") as rec, patch.object(ff, "record_unusable_sync") as unusable, \
+            pytest.raises(RuntimeError, match="boom"):
+        ff.llm_filter_questions(QUESTIONS, ff.scope_from_context(CONTEXT, SEED), out_of_scope=OUT_OF_SCOPE,
+                                client=_client(_reply(["KEEP", "KEEP", "DROP"])))
+    rec.assert_not_called()
+    unusable.assert_called_once()
+
+
+# ---------------------------------------------------------------- gazetteer post-filter (on mode)
+
+def test_on_mode_drops_a_model_keep_that_names_an_out_of_scope_place():
+    """The model keeps all three; the third names Khatgal / the Gobi (trip places this moment does not cover):
+    the deterministic gazetteer test removes it, as paa_for_scope would."""
+    (kept, record), rec = _select("on", client=_client(_reply(["KEEP", "KEEP", "KEEP"])))
+    assert kept == ["How deep is lake khovsgol?", "Is Mongolia safe for tourists?"]
+    assert record["gazetteer_dropped"] == ["What is the best way to get from Khatgal to the Gobi desert?"]
+    assert record["llm_kept"] == kept
+    assert [v["label"] for v in record["verdicts"]] == ["KEEP", "KEEP", "KEEP"]   # the model's own verdicts
+    assert rec.call_args.kwargs["quality_signal"]["gazetteer_dropped"] == 1
+    assert rec.call_args.kwargs["quality_signal"]["keep"] == 3
+
+
+def test_cap_applies_after_the_gazetteer_drop():
+    qs = ["What is the best way to get from Khatgal to the Gobi desert?"] + \
+         [f"Question {i} about Lake Khövsgöl?" for i in range(10)]
+    with patch.object(ff, "record_call_sync"):
+        out = ff.llm_filter_questions(qs, ff.scope_from_context(CONTEXT, SEED), out_of_scope=OUT_OF_SCOPE,
+                                      client=_client(_reply(["KEEP"] * 11)))
+    assert out.kept == qs[1:1 + qg.PAA_MAX_QUESTIONS]
+    assert out.gazetteer_dropped == qs[:1]
+
+
+def test_no_out_of_scope_measures_the_classifier_alone():
+    with patch.object(ff, "record_call_sync"):
+        out = ff.llm_filter_questions(QUESTIONS, ff.scope_from_context(CONTEXT, SEED),
+                                      client=_client(_reply(["KEEP", "KEEP", "KEEP"])))
+    assert out.kept == CANDIDATES and out.gazetteer_dropped == []
 
 
 def test_timeout_falls_back(monkeypatch):

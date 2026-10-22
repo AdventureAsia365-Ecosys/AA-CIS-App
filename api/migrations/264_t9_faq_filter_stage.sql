@@ -14,6 +14,12 @@
 -- this row exists.
 -- Cost when the flag is on: ≈ $0.005 per blog at most (≤ 30 questions, ~1.5k tokens in, ≤ 1k out on Haiku 4.5).
 --
+-- ORDER: apply only AFTER 262 (AA-859, 262_tenant_brand_seo_rls.sql) and 263 (reserved, AA-859 lane). The readiness
+-- check (api/core/readiness.py, /health/ready, deploy smoke, Platform Apps) compares max(version::int) of
+-- shared.schema_versions with REQUIRED_CIS_SCHEMA: with 264 applied first, max = 264, and code that later needs 262
+-- or 263 would report ready while they are missing. The row is optional (SAFE_DEFAULTS mirrors it), so holding 264
+-- back costs nothing.
+--
 -- Idempotent: ON CONFLICT DO NOTHING (an admin change of the row is never overwritten). No deploy needed for the
 -- row itself: the gateway reads it per call (20 s cache). Locks: one INSERT.
 -- Rollback: DELETE FROM shared.llm_role_config WHERE stage = 't9_faq_filter';
