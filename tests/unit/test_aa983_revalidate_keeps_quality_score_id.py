@@ -166,3 +166,15 @@ def test_export_reads_the_versions_latest_score_row():
     sql = " ".join(conn.fetchrow.call_args[0][0].split())
     assert "LEFT JOIN LATERAL" in sql
     assert "ORDER BY q.evaluated_at DESC, q.id DESC LIMIT 1" in sql
+
+
+def test_backfill_summary_survives_an_ecs_exec_transcript():
+    from scripts import aa983_backfill_quality_score_id as backfill
+
+    out = {"mode": "dry_run", "counts": {"to_fix": 2, "stale_pointer": 0}}
+    transcript = ("\r\nStarting session with SessionId: ecs-execute-command-x\r\n"
+                  + backfill.render(out).replace("\n", "\r\n")
+                  + "\r\n\r\nExiting session with sessionId: ecs-execute-command-x.\r\n")
+    assert backfill.extract(transcript) == out
+    with pytest.raises(ValueError):
+        backfill.extract("Starting session ...\nAccessDeniedException\n")
