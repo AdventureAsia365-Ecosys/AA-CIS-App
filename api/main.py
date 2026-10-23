@@ -15,7 +15,7 @@ from typing import Optional
 import structlog
 
 from api.routers.auth import (
-    _hash_api_key, _create_jwt, verify_jwt,
+    _hash_api_key, _create_jwt, verify_jwt, verify_tenant_jwt,
     TenantLoginRequest, TenantLoginResponse,
     _verify_password, _create_admin_jwt,
     AdminLoginRequest, AdminLoginResponse, VerifyAdminResponse,
@@ -367,10 +367,27 @@ async def tenant_login(
         plan_tier=row["plan_tier"],
     )
 
+async def _session_token_from_body(request: Request) -> str:
+    """The ``token`` of a ``{"token": "..."}`` body (verify-tenant / verify-admin), or "" when it is missing or not
+    a string. A body that is not JSON or not an object is a client error: 401 "Invalid token", never a 500 from
+    ``request.json()`` / ``.get`` (AA-816 S2 live probe: an empty POST answered 500)."""
+    try:
+        body = await request.json()
+    except (ValueError, RecursionError):
+        # ValueError: JSONDecodeError (empty or not JSON) and UnicodeDecodeError. RecursionError: a deeply nested
+        # body such as b"[" * 100000 makes json.loads recurse past the limit (a RuntimeError, not a ValueError).
+        raise HTTPException(status_code=401, detail="Invalid token") from None
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=401, detail="Invalid token")
+    token = body.get("token", "")
+    return token if isinstance(token, str) else ""
+
+
 @app.post("/auth/verify-tenant", tags=["auth"])
 async def verify_tenant(request: Request):
-    body = await request.json()
-    payload = verify_jwt(body.get("token", ""))
+    # verify_tenant_jwt, not verify_jwt: staff HS256 tokens share JWT_SECRET but carry no name / plan_tier, so a
+    # staff token used to end in a KeyError (500); it is now refused with 403 "Tenant token required".
+    payload = verify_tenant_jwt(await _session_token_from_body(request))
     return {
         "valid": True,
         "tenant_id": payload["sub"],
@@ -458,13 +475,12 @@ async def verify_admin(request: Request, db: asyncpg.Pool = Depends(get_pool)):
       role = highest `cis-*` group (a difference with the DB role is logged as drift), last_login_at set
       (best effort).
     - Any other `iss` (EXTERNAL portal, Booking RS256): 401, never a staff session.
-    - Legacy HS256 token (no `iss`): unchanged, gated by LEGACY_ADMIN_LOGIN_ENABLED (default true). Re-reads
+    - Legacy HS256 token (no `iss`): gated by LEGACY_ADMIN_LOGIN_ENABLED (default OFF since AA-816 S2). Re-reads
       shared.admin_users (cached 60 s): 401 when the account is gone or inactive, and the role returned is the
       DB role, not the JWT claim, so the BFF forwards the current role (x-admin-role) and staff_policy
       enforces it within the cache TTLs, not at the 24 h token expiry.
     """
-    body = await request.json()
-    token = body.get("token", "")
+    token = await _session_token_from_body(request)
     kind = staff_identity.token_kind(token)
     if kind == staff_identity.AUTH_OTHER:
         # A JWT from another issuer (EXTERNAL portal, CIS-minted Booking RS256): never a CIS staff session.
