@@ -122,7 +122,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
       `cors_allow_origins()` in `api/main.py`: empty when `AWS_EXECUTION_ENV` is set, only `localhost:3000/3001`
       off ECS); a browser preflight from any origin gets no `Access-Control-Allow-Origin`.
     - Page gate `portal/proxy.ts` (Next 16 Proxy): `/tenant-login` public; `/portal/*` needs a token
-      `/auth/verify-tenant` accepts (cached ≤ 20 s, `portal/lib/auth-server.ts`); refused → cookies cleared,
+      `/auth/verify-tenant` accepts (tenant tokens only: `role = tenant`, a staff token gets 403; a body that is
+      not a JSON object gets 401, never 500; cached ≤ 20 s, `portal/lib/auth-server.ts`); refused → cookies cleared,
       back to `/tenant-login`; backend unreachable → fail closed outside development.
     - Security headers on every response (`portal/next.config.ts`): HSTS, `nosniff`, `Referrer-Policy`,
       `X-Frame-Options: DENY`, a minimal CSP (`frame-ancestors 'none'; base-uri 'self'; form-action 'self';
@@ -1649,6 +1650,17 @@ text. (B) is built: `services/acp_shared/question_topup.py` + `scripts/aa779_ser
 questions, query '<place> <country>', stored in `search_demand` (keyword `topup_keyword`, its own market
 `US-PAA2` apart from the Segment research cache, no volume; an empty row marks a place bought with no
 question) and read back as the `serp_topup` tier.
+S248 (AA-982) — **T9 drops place PAA that A3 Jev already rejected.** On a blog write, `start_write` runs the
+chain with `a3_filter=True`: the `place_paa` tier's questions are looked up in `shared.decision_log` under the
+subject keys A3 wrote (`atom_ranking.scope_subject_key` / `landing_subject_key`) through
+`decide.platform_verdicts()` (read-only: current wording hash, `NOT cached`, ≤ 180 days, platform tenant,
+Zone recomputed with today's floors, acts only on enforce-mode confident verdicts; no Jev call, no new gate,
+$0). A question goes when A3's own scope rule (`scope_dropped`) rejects it for the piece's country set or for a
+Segment set that contains every piece country, or when `a3_landing_belongs` rejects it for every moment of
+the piece (unless about_here accepts it for the piece). No verdict → kept. The dropped text cannot come back
+through a later tier; `segment_match` is never filtered (it passed the same gates). Counts go to the
+`t9_place_paa_a3_filter` log line (api, the write request) and `writer_input.a3_question_filter`. Kill switch: api env
+`T9_A3_PAA_FILTER=off` (default on). T8 angles do not use it yet.
 S235 (AA-786) — **F9 v1.1** (`F9_PROMPT_VERSION = "f9_v1.1"`): the judge reads the piece without
 citation tags (F1/F5 keep them) and, for blogs, the search title and meta description. New
 product-truth code **TEXT_INTEGRITY** quotes each broken sentence and goes to sentence repair, not a
@@ -1945,6 +1957,12 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   Content" once it lands here. Atomize (see Atom above) now fires automatically right after a
   tour is published here (AA-526, `services/export/handler.py::process_export()`), as a
   fire-and-forget background task, `owner_scope='platform'`.
+  - **Accepted score pointer** `published_tours.quality_score_id` (FK to `silver_aa_internal.quality_scores`,
+    ON DELETE SET NULL, CIS 268) = the published version's latest score row (`evaluated_at DESC, id DESC`).
+    Export sets it with that rule; a revalidation (`_revalidate_tour`, `revalidate` job) writes the new score
+    row, re-points the published tour and only then deletes the old rows, in one transaction (AA-983). The
+    published `quality_score` number stays as exported. Rows left NULL before AA-983:
+    `scripts/aa983_backfill_quality_score_id.py` (DRY RUN default, `--apply --expect N`).
   - The admin **Master Content** page reads `GET /admin/tenants/{aa_internal}/details`
     (`admin.py::get_tenant_details`, internal branch). AA-718 added server-side
     `page`/`page_size`/`sort`/`sort_dir`/`country`/`master_status`/`score`/`search` to it (the

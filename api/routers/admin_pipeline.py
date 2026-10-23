@@ -954,13 +954,23 @@ def _build_s1_progress_sink(redis, job_id: str):
         return None
 
 
+def _rowcount(status) -> int:
+    """Row count from an asyncpg command status ("UPDATE 3" -> 3); 0 when it is not one."""
+    try:
+        return int(str(status).rsplit(" ", 1)[-1])
+    except (TypeError, ValueError):
+        return 0
+
+
 # ── AA-234 Phần A: re-validate a human-edited generated_content version ────────
 async def _revalidate_tour(content_id: str) -> dict:
     """Re-validate a single human-edited generated_content version in place.
 
     Reads the edited content + its tour + seo_context (by tour_id, same keywords — NO
     DFS refetch) + brand rule, runs build_revalidation_graph, then overwrites the
-    version's quality_scores rows and sets generated_content.revalidate_passed.
+    version's quality_scores rows and sets generated_content.revalidate_passed. A published tour of
+    this version keeps pointing at the version's score: its quality_score_id moves to the new row
+    (AA-983), in the same transaction.
     """
     from services.content_generation.graph import build_revalidation_graph
 
@@ -1087,42 +1097,64 @@ async def _revalidate_tour(content_id: str) -> dict:
         _sub = result.get("sub_scores", {})
         _fc = result.get("failure_codes", [])
 
-        await conn.execute(
-            "DELETE FROM silver_aa_internal.quality_scores WHERE generated_content_id = $1::uuid",
-            content_id)
-        await conn.execute("""
-            INSERT INTO silver_aa_internal.quality_scores (
-                generated_content_id, tour_id, tenant_id,
-                score_overall, score_brand, score_seo, score_structure, score_quality,
-                passed_count, failed_count, failure_codes,
-                brand_audit_status, brand_audit_codes, brand_audit_issues,
-                brand_audit_fields, lessons_extracted, validator_fn_version, evaluated_at
-            ) VALUES (
-                $1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11::jsonb,
-                $12, $13::jsonb, $14::jsonb, $15::jsonb, $16::jsonb, 'v2-revalidate', NOW()
+        # AA-983: overwrite the version's score in ONE transaction, in this order:
+        #   1. INSERT the new score row (RETURNING its id),
+        #   2. re-point every published tour of this version at it,
+        #   3. DELETE the version's other (old) score rows.
+        # It used to DELETE first, then INSERT, as three autocommit statements: the DELETE fired the
+        # FK published_tours_quality_score_id_fkey (CIS 268, ON DELETE SET NULL) and the published
+        # tour was left with quality_score_id = NULL (before 268: a dangling id). With the pointer
+        # moved before the DELETE, the SET NULL never fires; the lock order (published_tours row,
+        # then the score row) is also the export upsert's, so the two cannot deadlock. The published
+        # `quality_score` number stays as exported (same rule as 268); only the pointer moves.
+        async with conn.transaction():
+            new_score_id = await conn.fetchval("""
+                INSERT INTO silver_aa_internal.quality_scores (
+                    generated_content_id, tour_id, tenant_id,
+                    score_overall, score_brand, score_seo, score_structure, score_quality,
+                    passed_count, failed_count, failure_codes,
+                    brand_audit_status, brand_audit_codes, brand_audit_issues,
+                    brand_audit_fields, lessons_extracted, validator_fn_version, evaluated_at
+                ) VALUES (
+                    $1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11::jsonb,
+                    $12, $13::jsonb, $14::jsonb, $15::jsonb, $16::jsonb, 'v2-revalidate', NOW()
+                )
+                RETURNING id
+            """,
+                content_id, str(gc["tour_id"]), tenant_uuid, q_score,
+                float(_sub.get("brand", 0.0)), float(_sub.get("seo", 0.0)),
+                float(_sub.get("structure", 0.0)), float(_sub.get("quality", 0.0)),
+                int(result.get("passed_count", 0)), int(result.get("failed_count", 0)),
+                json.dumps(_fc), result.get("brand_audit_status", ""),
+                json.dumps(result.get("brand_audit_codes", [])),
+                json.dumps(result.get("brand_audit_issues", [])),
+                json.dumps(result.get("brand_audit_fields", [])),
+                json.dumps(result.get("lessons_extracted", [])),
             )
-        """,
-            content_id, str(gc["tour_id"]), tenant_uuid, q_score,
-            float(_sub.get("brand", 0.0)), float(_sub.get("seo", 0.0)),
-            float(_sub.get("structure", 0.0)), float(_sub.get("quality", 0.0)),
-            int(result.get("passed_count", 0)), int(result.get("failed_count", 0)),
-            json.dumps(_fc), result.get("brand_audit_status", ""),
-            json.dumps(result.get("brand_audit_codes", [])),
-            json.dumps(result.get("brand_audit_issues", [])),
-            json.dumps(result.get("brand_audit_fields", [])),
-            json.dumps(result.get("lessons_extracted", [])),
-        )
-        await conn.execute(
-            "UPDATE silver_aa_internal.generated_content SET revalidate_passed = $1 WHERE id = $2::uuid",
-            passed, content_id)
+            repointed = await conn.execute("""
+                UPDATE gold_aa_internal.published_tours
+                SET quality_score_id = $1::uuid
+                WHERE generated_content_id = $2::uuid
+                  AND quality_score_id IS DISTINCT FROM $1::uuid
+            """, str(new_score_id), content_id)
+            await conn.execute("""
+                DELETE FROM silver_aa_internal.quality_scores
+                WHERE generated_content_id = $1::uuid AND id <> $2::uuid
+            """, content_id, str(new_score_id))
+            await conn.execute(
+                "UPDATE silver_aa_internal.generated_content SET revalidate_passed = $1 WHERE id = $2::uuid",
+                passed, content_id)
 
+        published_repointed = _rowcount(repointed)
         logger.info("revalidate_tour_done", content_id=content_id,
                     revalidate_passed=passed, quality_score=q_score,
+                    quality_score_id=str(new_score_id), published_repointed=published_repointed,
                     brand_audit_status=result.get("brand_audit_status", ""))
         return {
             "content_id": content_id, "revalidate_passed": passed,
             "quality_score": q_score, "brand_audit_status": result.get("brand_audit_status", ""),
             "failure_codes": _fc,
+            "quality_score_id": str(new_score_id), "published_repointed": published_repointed,
         }
     finally:
         await conn.close()

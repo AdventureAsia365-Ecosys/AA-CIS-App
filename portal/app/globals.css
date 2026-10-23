@@ -66,7 +66,7 @@
   --aa-ink2:          #2A333E;
   --aa-ink3:          #3A4453;
   --aa-body:          #33363D;
-  --aa-muted:         #6B7380;
+  --aa-muted:         #5A6270;   /* S248 AA-760: was #6B7380 (4.43:1 on bg, 4.02:1 on line2) → 6.2:1 card, 5.7:1 bg, 5.2:1 line2, 5.6:1 neutral-bg */
   --aa-muted2:        #626A78;   /* AA-760: was #9099A6 (2.9:1 on card, 2.7:1 on bg) → 5.4:1 card, 5.0:1 bg, 4.6:1 line2 */
   --aa-bg:            #F8F6F2;
   --aa-card:          #FFFFFF;
@@ -79,7 +79,7 @@
   /* neutral pill (gray) */
   --aa-neutral-bg:    #F3F4F6;
   --aa-neutral-fg:    #4B5563;
-  --aa-neutral-fg2:   #6B7280;   /* a lighter gray text used by some pills */
+  --aa-neutral-fg2:   #5F6673;   /* S248 AA-760: was #6B7280 (4.39:1 on neutral-bg) → 5.25:1; still lighter than neutral-fg */
   --aa-neutral-border:#E5E7EB;
   /* strong green text/border (status pills that used #16A34A / #047857 / #065F46 / #86EFAC / #BBF7D0 / #D1FAE5 / #F0FDF4) */
   --aa-green-strong:  #16A34A;
@@ -184,8 +184,8 @@
   --aa-ink2:          #D4DAE2;
   --aa-ink3:          #B8C0CC;
   --aa-body:          #D4DAE2;
-  --aa-muted:         #9099A6;
-  --aa-muted2:        #8A93A2;   /* AA-601 part B (feedback 1, item 3): ≥4.5:1 on card (5.2:1) and bg (6.0:1); was #717A88 (3.7:1) */
+  --aa-muted:         #A0A8B4;   /* S248 AA-760: was #9099A6 (4.3:1 on line) → 6.8:1 card, 5.9:1 line2, 5.5:1 neutral-bg, 5.2:1 line */
+  --aa-muted2:        #959EAC;   /* S248 AA-760: was #8A93A2 (4.29:1 on neutral-bg, 4.0:1 on line) → 6.0:1 card, 5.2:1 line2, 4.9:1 neutral-bg, 4.6:1 line; stays dimmer than muted */
   --aa-bg:            #0F141B;
   --aa-card:          #19212C;
   --aa-line:          #2A3542;

@@ -66,7 +66,8 @@ from services.acp_content_writing.quality_gates import (CHEAP_REPAIR_GATES, F13_
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from services.acp_shared.content_embedding import compute_embedding, embedding_to_pgvector_literal
 from services.acp_shared.piece_similarity import find_similar_pieces
-from services.acp_shared.real_questions import (SOURCE_WRITER, collect_real_questions, faq_sources,
+from services.acp_shared.real_questions import (SOURCE_PLACE, SOURCE_WRITER, a3_filter_enabled,
+                                                collect_real_questions, faq_sources,
                                                 is_off_meaning, label_questions, missing_real_questions,
                                                 real_first_pairs, source_counts)
 from services.acp_shared.route_guard import request_route_segment_ids
@@ -1435,10 +1436,21 @@ async def start_write(
     # each one's source for the admin record (writer_input), never for the tenant.
     tour_paa = snapshot_tour_paa(dfs_snapshot)
     real_questions: list[dict] = []
+    a3_stats: Optional[dict] = None
     if req["channel"] == "blog":
-        chain = await collect_real_questions(pool, atom_ids=scope_atoms, tour_paa=tour_paa[:PAA_RAW_MAX])
+        # AA-982 — drop the place_paa questions A3 Jev already rejected for this piece (stored verdicts,
+        # no new gate, no Jev call); kill switch T9_A3_PAA_FILTER=off. The counts go to the log and
+        # the admin record (writer_input.a3_question_filter).
+        a3_on = a3_filter_enabled()
+        a3_stats = {} if a3_on else None
+        chain = await collect_real_questions(pool, atom_ids=scope_atoms, tour_paa=tour_paa[:PAA_RAW_MAX],
+                                             a3_filter=a3_on, stats=a3_stats)
         real_questions = [r.as_dict() for r in chain]
         people_also_ask = [r.question for r in chain]
+        if a3_stats is not None:
+            a3_stats["place_paa_kept"] = sum(1 for r in chain if r.source == SOURCE_PLACE)
+            logger.info("t9_place_paa_a3_filter", piece_id=str(piece["piece_id"]), request_id=str(request_id),
+                        dropped=sum((a3_stats.get("a3_dropped") or {}).values()), **a3_stats)
     else:
         people_also_ask = tour_paa[:PAA_RAW_MAX]
 
@@ -1460,6 +1472,7 @@ async def start_write(
         "atom_id": req["atom_id"], "route_segments": route_segments, "keyword": keyword,
         "people_also_ask": people_also_ask,  # AA-779 — raw; the job keeps the in-scope ones
         "real_questions": real_questions,  # S245 (AA-779 2A) — [{q, source}], blog only; admin record
+        **({"a3_question_filter": a3_stats} if a3_stats is not None else {}),  # AA-982 — admin record
         "scope": scope,  # S233
         "trip_places": trip_places,  # S234 round 3 — the full trip's places outside the scope
         "tenant_id": str(tenant_id),  # AA-505 — attribution for llm_call_log
@@ -2280,6 +2293,9 @@ def writer_input_snapshot(context: dict) -> dict:
             "faq_questions": context.get("faq_questions") or [],
             **{k: context[k] for k in ("faq_pairs_before", "faq_pairs_after") if k in context}}
            if context.get("channel") == "blog" and "real_questions" in context else {}),
+        # AA-982 — how many place_paa questions the stored A3 verdicts dropped; absent when the switch is off.
+        **({"a3_question_filter": context["a3_question_filter"]}
+           if context.get("channel") == "blog" and context.get("a3_question_filter") is not None else {}),
         # S247 (AA-779, ADR 0011) — the LLM question filter's mode, verdicts and fallback; absent when it is off.
         **({"faq_filter": context["faq_filter"]} if context.get("faq_filter") else {}),
         # S247 (AA-779, ADR 0011) — the answer-fit step's mode, verdicts, drops and fallback; absent when it is off.

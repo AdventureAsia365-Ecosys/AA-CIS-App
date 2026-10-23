@@ -802,3 +802,49 @@ def decide_sync(stage: str, subject_key: str, state: Any, question_keys: list[st
     logger.warning("decide_sync_called_on_event_loop", stage=stage)
     return _counted(stage, Decision(verdicts={k: Verdict(k, "off", "error", error="decide_sync on event loop")
                                               for k in question_keys}))
+
+
+# ── AA-982 — read-only reuse of platform verdicts ─────────────────────────────────────────────
+
+_PLATFORM_VERDICTS_SQL = """
+    SELECT DISTINCT ON (l.subject_key, l.question_key) l.subject_key, l.question_key,
+           l.probability::float AS probability, l.choice, l.probabilities
+    FROM shared.decision_log l
+    JOIN unnest($2::text[], $3::text[]) AS w(question_key, question_hash)
+      ON w.question_key = l.question_key AND w.question_hash = l.question_hash
+    WHERE l.subject_key = ANY($1::text[])
+      AND (l.tenant_id IS NULL OR l.tenant_id = $4::uuid)
+      AND l.zone IN ('accept', 'grey', 'reject')
+      AND NOT l.cached
+      AND l.created_at > now() - make_interval(days => $5)
+    ORDER BY l.subject_key, l.question_key, l.created_at DESC
+"""
+
+
+async def platform_verdicts(conn, question_keys: list[str], subject_keys: list[str]) -> dict[tuple[str, str], Verdict]:
+    """AA-982 — the stored verdicts an A-series stage already got on PLATFORM content, read the way
+    the decide() cache reads them (current wording hash, `NOT cached`, ≤ CACHE_MAX_AGE_DAYS), with the
+    Zone recomputed from today's Floors and mode. Never calls TypeSafe and never writes, so it needs
+    no tenant guard: the subjects were judged as platform data (tenant NULL / aa_internal) and a
+    T-stage caller only reuses the outcome. Returns {(question_key, subject_key): Verdict}; a miss is
+    absent (the caller keeps its own rule). A question in mode `off` (or unknown) returns nothing.
+    Act only on `Verdict.enforced`."""
+    if not question_keys or not subject_keys:
+        return {}
+    await _load_config(conn)
+    questions = {k: _questions[k] for k in question_keys if k in _questions and _questions[k].mode != "off"}
+    if not questions:
+        return {}
+    rows = await conn.fetch(
+        _PLATFORM_VERDICTS_SQL, sorted(set(subject_keys)), list(questions),
+        [q.question_hash or "" for q in questions.values()], PLATFORM_TENANT_ID, CACHE_MAX_AGE_DAYS,
+    )
+    out: dict[tuple[str, str], Verdict] = {}
+    for r in rows:
+        q = questions.get(r["question_key"])
+        answer = cached_answer(q, dict(r)) if q else None
+        if answer is not None:
+            v = zone_for(q, answer)
+            v.cached = True
+            out[(q.key, r["subject_key"])] = v
+    return out

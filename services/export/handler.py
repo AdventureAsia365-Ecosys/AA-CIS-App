@@ -332,7 +332,15 @@ async def process_export(version_id: str) -> dict:
                    qs.score_overall AS quality_score
             FROM {silver}.generated_content gc
             JOIN {silver}.raw_tours rt ON rt.tour_id = gc.tour_id
-            LEFT JOIN {silver}.quality_scores qs ON qs.generated_content_id = gc.id
+            -- AA-983: the version's latest score row (same rule as the revalidation re-point and
+            -- CIS 268); a plain JOIN picked an arbitrary row when a version had more than one.
+            LEFT JOIN LATERAL (
+                SELECT q.id, q.score_overall
+                FROM {silver}.quality_scores q
+                WHERE q.generated_content_id = gc.id
+                ORDER BY q.evaluated_at DESC, q.id DESC
+                LIMIT 1
+            ) qs ON true
             WHERE gc.id = $1::uuid
               AND gc.status = 'approved'
         """, version_id)
