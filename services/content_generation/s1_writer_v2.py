@@ -264,8 +264,9 @@ _W_OUTPUT = """OUTPUT JSON:
 {
   "name": "tour name: destination + format, specific, no hype (e.g. \\"Trishuli River Rafting — 1 Day\\")",
   "subtitle": "one sentence of facts from the sheet: route, duration or the defining activity",
-  "summary": "one paragraph, at most 120 words: duration, start and end, main activity, then 2-3 named stops",
-  "highlights": ["3 to 6 concrete items from the sheet, each naming a place or an activity"],
+  "summary": "one paragraph, at most 120 words: duration, main activity, start and end only when the sheet"""\
+    """ states them, then up to 3 named stops",
+  "highlights": ["up to 6 concrete items from the sheet (fewer when it has fewer), each a place or an activity"],
   "itineraries": [{"day": 1, "title": "...", "body": "..."}, "... one object per day under DAYS TO WRITE"],
   "trip_type": "cultural|adventure|wellness|culinary|wildlife|trekking|festival|river_journey"
 }"""
@@ -312,7 +313,7 @@ _E_OUTPUT = """OUTPUT JSON:
   "name": "tour name: destination + format, specific, no hype",
   "subtitle": "one sentence of facts from the sheet",
   "hook": "one sentence, at most 30 words, on the tour's main draw as the source states it",
-  "highlights": ["3 to 5 concrete items from the sheet"],
+  "highlights": ["up to 5 concrete items from the sheet (fewer when the sheet has fewer)"],
   "days": [{"day": 1, "title": "...", "sentence": "..."}, "... one object per day under DAYS TO WRITE"],
   "trip_type": "cultural|adventure|wellness|culinary|wildlife|trekking|festival|river_journey"
 }"""
@@ -386,6 +387,17 @@ def at_a_glance(tour: dict, facts: dict) -> list[str]:
     return lines
 
 
+def drop_do_not_use(lines: list[str], facts: dict) -> list[str]:
+    """The verbatim source lines arm E copies, minus any that carries a DO NOT USE item (operator name, URL,
+    e-mail, phone): code copies them unseen, so code must keep the supplier out."""
+    bad = [fold_text(e["value"]) for e in facts.get("do_not_use") or [] if str(e.get("value") or "").strip()]
+    return [ln for ln in lines if not any(b and b in fold_text(ln) for b in bad)]
+
+
+def fold_text(text: str) -> str:
+    return " ".join(str(text or "").lower().split())
+
+
 def assemble_e_page(tour: dict, facts: dict, plan: dict, llm: dict) -> dict:
     """Arm E's page: model lines + code-built facts box, day fact lines and inclusion lists. `Day N —` headings are
     kept (TripPlanner `parse_days` splits on them)."""
@@ -398,21 +410,21 @@ def assemble_e_page(tour: dict, facts: dict, plan: dict, llm: dict) -> dict:
         got = by_day.get(d["day"], {})
         title = str(got.get("title") or "").strip() or f"Day {d['day']}"
         body = [str(got.get("sentence") or "").strip()]
-        body += source_fact_lines(d["source"]) if plan["mode"] == "source_days" else []
+        body += drop_do_not_use(source_fact_lines(d["source"]), facts) if plan["mode"] == "source_days" else []
         blocks.append({"day": d["day"], "title": title, "body": "\n".join(b for b in body if b)})
-    glance = at_a_glance(tour, facts)
+    glance = drop_do_not_use(at_a_glance(tour, facts), facts)
     summary = str(llm.get("hook") or "").strip()
     if glance:
         summary = (summary + "\n\n" if summary else "") + "At a glance\n" + "\n".join(f"- {g}" for g in glance)
-    inc = item_lines(field_text(tour.get("inclusions")))
-    exc = item_lines(field_text(tour.get("exclusions")))
+    inc = drop_do_not_use(item_lines(field_text(tour.get("inclusions"))), facts)
+    exc = drop_do_not_use(item_lines(field_text(tour.get("exclusions"))), facts)
     desc = []
     if inc:
         desc.append("Included:\n" + "\n".join(f"- {v}" for v in inc))
     if exc:
         desc.append("Not included:\n" + "\n".join(f"- {v}" for v in exc))
     return {"name": llm.get("name"), "subtitle": llm.get("subtitle"), "summary": summary,
-            "description": "\n\n".join(desc), "highlights": list(llm.get("highlights") or []),
+            "description": "\n\n".join(desc), "highlights": as_list(llm.get("highlights")),
             "itineraries": serialize_days(blocks), "trip_type": llm.get("trip_type")}
 
 
@@ -428,6 +440,17 @@ def aplus_days_block(plan: dict) -> str:
 
 
 # ------------------------------------------------------------------ page assembly (W, A+)
+
+def as_list(value) -> list:
+    """A model's list field as a list: a bare string is one item (list("abc") would be its characters)."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return [value]
+
 
 def serialize_days(items: list) -> str:
     """The canonical "Day N — Title\\nBody" string from the writer's itineraries array, in the array's order and
@@ -447,7 +470,7 @@ def assemble_page(writer: dict) -> dict:
     """W / A+ writer JSON → the generated_content page fields (no seo yet; the meta call adds them)."""
     itin = writer.get("itineraries")
     return {"name": writer.get("name"), "subtitle": writer.get("subtitle"), "summary": writer.get("summary"),
-            "description": writer.get("description") or "", "highlights": list(writer.get("highlights") or []),
+            "description": writer.get("description") or "", "highlights": as_list(writer.get("highlights")),
             "itineraries": serialize_days(itin) if isinstance(itin, list) else field_text(itin),
             "trip_type": writer.get("trip_type")}
 
@@ -504,7 +527,10 @@ def meta_user_prompt(page: dict, tour: dict, facts: dict, keywords: list[str]) -
     ])
 
 
-def meta_retry_prompt(previous: dict, problems: list[str]) -> str:
+def meta_retry_prompt(previous: Optional[dict], problems: list[str]) -> str:
+    if not previous:
+        return ("\n\nYOUR PREVIOUS ANSWER was not usable (" + "; ".join(problems) + "). Answer again with only the"
+                ' JSON object {"seo_title": "...", "seo_meta": "..."}.')
     meta = field_text(previous.get("seo_meta"))
     return (f"\n\nYOUR PREVIOUS ANSWER: {json.dumps(previous, ensure_ascii=False)}\n"
             f"Its seo_meta has {len(meta)} characters. Fix these problems and answer again with the full JSON:\n"
@@ -537,6 +563,11 @@ def meta_problems(meta_json: Optional[dict], tour: dict, facts: dict, forbidden:
     hits = sorted({w for w in forbidden if has_word(meta, w) or has_word(title, w)})
     if hits:
         out.append("forbidden words: " + ", ".join(hits))
+    names = sorted({e["value"] for e in facts.get("do_not_use") or [] if str(e.get("value") or "").strip()
+                    and fold_text(e["value"]) in fold_text(title + " " + meta)}
+                   | ({"Adventure Asia"} if "adventure asia" in fold_text(title + " " + meta) else set()))
+    if names:
+        out.append("names the operator, a brand or a contact (white-label page): " + ", ".join(names))
     for f in check_numbers(tour, {"seo_title": title, "seo_meta": meta}, facts):
         out.append(f"a number not in the source: {f['detail']}")
     return out

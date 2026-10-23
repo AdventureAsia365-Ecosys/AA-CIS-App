@@ -176,3 +176,66 @@ def test_truncation_check_accepts_list_items_and_fact_lines_but_not_cut_prose():
     assert check_truncation({"summary": "At a glance\n- Duration: 3 hours"}) == []
     cut = check_truncation({"summary": "The ride follows the river past the old"})
     assert [f["code"] for f in cut] == ["TEXT_TRUNCATED"]
+
+
+# ------------------------------------------------------------------ review round 1 (S248)
+
+def test_truncation_still_flags_cut_label_and_list_lines():
+    from services.quality.s1_checks import check_truncation
+    for cut in ("Distance: 12 km. Overnight: Phakding. Meals: breakfast and",
+                "Highlights include: the old town and the",
+                "- Visit the temple and the",
+                "- Bike, helmet,",
+                "Overnight: Phakding or"):
+        assert [f["code"] for f in check_truncation({"itineraries": "Day 1 — Paro\n" + cut})] == ["TEXT_TRUNCATED"], cut
+    assert check_truncation({"summary": "At a glance\n- Grade: A"}) == []
+    assert check_truncation({"itineraries": "Day 1 — Paro\nA walk.\nMeals: B, L, D"}) == []
+
+
+def test_w_and_e_prompts_do_not_ask_for_claims_the_sheet_may_lack():
+    facts = build_fact_table(MULTI)
+    plan = v2.day_plan(MULTI, facts)
+    w = v2.w_user_prompt(MULTI, facts, plan)
+    e = v2.e_user_prompt(MULTI, facts, plan)
+    assert "duration, start and end, main activity" not in w and "3 to 6" not in w and "3 to 5" not in e
+    assert "start and end only when the sheet states them" in w
+    assert "up to 6 concrete items from the sheet (fewer when it has fewer)" in w
+    assert "up to 5 concrete items from the sheet (fewer when the sheet has fewer)" in e
+
+
+def test_a_string_highlights_reply_is_one_item_not_characters():
+    assert v2.assemble_page({"highlights": "Beach at Chilaw"})["highlights"] == ["Beach at Chilaw"]
+    facts = build_fact_table(MULTI)
+    page = v2.assemble_e_page(MULTI, facts, v2.day_plan(MULTI, facts), {"highlights": "Road to Habarana"})
+    assert page["highlights"] == ["Road to Habarana"]
+    assert v2.assemble_page({"highlights": None})["highlights"] == []
+
+
+def test_e_page_drops_verbatim_lines_that_carry_do_not_use_items():
+    tour = {**MULTI, "itineraries": MULTI["itineraries"].replace(
+        "Overnight: Chilaw Beach Hotel", "Overnight: Chilaw Beach Hotel, call +94 77 123 4567"),
+        "inclusions": "Breakfast and dinner\nGuide from www.lankatrails.example\nAccommodation"}
+    facts = build_fact_table(tour)
+    assert {e["reason"] for e in facts["do_not_use"]} >= {"phone", "url"}
+    page = v2.assemble_e_page(tour, facts, v2.day_plan(tour, facts), {})
+    text = page["itineraries"] + page["description"] + page["summary"]
+    for e in facts["do_not_use"]:
+        assert e["value"] not in text, e["value"]
+    assert "- Breakfast and dinner" in page["description"]
+
+
+def test_meta_problems_flag_operator_and_brand_names():
+    facts = build_fact_table(MULTI)
+    good = {"seo_title": "Sri Lanka Island Loop: 4 Days",
+            "seo_meta": ("A four-day Sri Lanka road loop from Colombo to the coast at Chilaw and on to Habarana, with "
+                         "breakfast, dinner, accommodation and a guide included.")}
+    assert not any("names the operator" in p for p in v2.meta_problems(good, MULTI, facts, []))
+    branded = {**good, "seo_title": "Adventure Asia: Sri Lanka Loop"}
+    assert any("Adventure Asia" in p for p in v2.meta_problems(branded, MULTI, facts, []))
+    op = {**good, "seo_meta": good["seo_meta"].replace("Sri Lanka road loop", "Lanka Trails Ltd loop")}
+    assert any("Lanka Trails Ltd" in p for p in v2.meta_problems(op, MULTI, facts, []))
+
+
+def test_meta_retry_prompt_handles_a_missing_first_answer():
+    text = v2.meta_retry_prompt(None, ["the answer is not the JSON object asked for"])
+    assert "YOUR PREVIOUS ANSWER was not usable" in text and '"seo_meta"' in text
