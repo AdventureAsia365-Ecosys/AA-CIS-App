@@ -270,6 +270,11 @@ def _apply_schema(conn):
             IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'db_migrator') THEN
                 CREATE ROLE db_migrator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS CONNECTION LIMIT 5;
             END IF;
+            -- AA-932: the partner CRM owner role of the Infra role bootstrap rl-003 (NOLOGIN), which DB Migrate
+            -- applies before CIS 269 on Dev (269 grants it the registry rights its own crm- files need).
+            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'crm_owner') THEN
+                CREATE ROLE crm_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+            END IF;
         EXCEPTION WHEN insufficient_privilege THEN
             NULL;  -- a local non-superuser test DB; CI's postgres service user is a superuser
         END $$;
