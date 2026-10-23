@@ -1687,6 +1687,17 @@ text. (B) is built: `services/acp_shared/question_topup.py` + `scripts/aa779_ser
 questions, query '<place> <country>', stored in `search_demand` (keyword `topup_keyword`, its own market
 `US-PAA2` apart from the Segment research cache, no volume; an empty row marks a place bought with no
 question) and read back as the `serp_topup` tier.
+S248 (AA-982) — **T9 drops place PAA that A3 Jev already rejected.** On a blog write, `start_write` runs the
+chain with `a3_filter=True`: the `place_paa` tier's questions are looked up in `shared.decision_log` under the
+subject keys A3 wrote (`atom_ranking.scope_subject_key` / `landing_subject_key`) through
+`decide.platform_verdicts()` (read-only: current wording hash, `NOT cached`, ≤ 180 days, platform tenant,
+Zone recomputed with today's floors, acts only on enforce-mode confident verdicts; no Jev call, no new gate,
+$0). A question goes when A3's own scope rule (`scope_dropped`) rejects it for the piece's country set or for a
+Segment set that contains every piece country, or when `a3_landing_belongs` rejects it for every moment of
+the piece (unless about_here accepts it for the piece). No verdict → kept. The dropped text cannot come back
+through a later tier; `segment_match` is never filtered (it passed the same gates). Counts go to the
+`t9_place_paa_a3_filter` log line (api, the write request) and `writer_input.a3_question_filter`. Kill switch: api env
+`T9_A3_PAA_FILTER=off` (default on). T8 angles do not use it yet.
 S235 (AA-786) — **F9 v1.1** (`F9_PROMPT_VERSION = "f9_v1.1"`): the judge reads the piece without
 citation tags (F1/F5 keep them) and, for blogs, the search title and meta description. New
 product-truth code **TEXT_INTEGRITY** quotes each broken sentence and goes to sentence repair, not a
@@ -1933,6 +1944,17 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   and changes no score or verdict. A code moves to enforce (`DAY_ORACLE_MODES`) only after a precision read on
   stored tours (`scripts/aa925/day_oracle_report.py`, D5: ≥ 0.70 with the Wilson bound); an enforced code is an
   A1 hard code (`_HARD_BLOCK_CODES`, rewrite class) and stays shadow on a tenant rewrite (T2/T3).
+  A day list in the source ("Day 05 & 06", "Day 11, 12 & 13") is a range (S248). A meta ending in a two-word
+  capitalised place name ("…and Hoi An.") is not a weak ending (S248).
+- **S1 fact table + code checks** (S248, M2a S1-first step 1, Refs AA-645; offline only, not wired into the graph —
+  S1-first freezes new gates): `services/quality/s1_facts.build_fact_table(tour)` builds, by code, the per-tour fact
+  table the step-2 writer will read (duration kind, source days with their places, schedule lines, places, figures
+  with unit / noun, included / excluded / optional lines, conflicts, the "ask the supplier" missing list, do-not-use
+  operator names / contacts); every verbatim value points at its source field (`verify_pointers`).
+  `services/quality/s1_checks.run_checks(tour, page)` measures a written S1 page against it (day oracle, day-place
+  drift, cut / out-of-band meta, truncated body, novel figure, figure with the wrong unit, name not in source,
+  inclusion the source excludes). `scripts/s1_step01/fixture_report.py` runs both over the golden fixture or any
+  page set (A/B arms) and scores them against a ground-truth file; results with tour text go to the private root.
 - **Degraded detectors + repair contract** (AA-925, Q-2, design §4.3/§6.3; `services/quality/`, pure modules —
   gate runners are passed in, no writer module is imported):
   - `degraded[]` (`services/quality/degraded.py`) names every fail-open path that ran on an output: Jev
@@ -1972,6 +1994,12 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   Content" once it lands here. Atomize (see Atom above) now fires automatically right after a
   tour is published here (AA-526, `services/export/handler.py::process_export()`), as a
   fire-and-forget background task, `owner_scope='platform'`.
+  - **Accepted score pointer** `published_tours.quality_score_id` (FK to `silver_aa_internal.quality_scores`,
+    ON DELETE SET NULL, CIS 268) = the published version's latest score row (`evaluated_at DESC, id DESC`).
+    Export sets it with that rule; a revalidation (`_revalidate_tour`, `revalidate` job) writes the new score
+    row, re-points the published tour and only then deletes the old rows, in one transaction (AA-983). The
+    published `quality_score` number stays as exported. Rows left NULL before AA-983:
+    `scripts/aa983_backfill_quality_score_id.py` (DRY RUN default, `--apply --expect N`).
   - The admin **Master Content** page reads `GET /admin/tenants/{aa_internal}/details`
     (`admin.py::get_tenant_details`, internal branch). AA-718 added server-side
     `page`/`page_size`/`sort`/`sort_dir`/`country`/`master_status`/`score`/`search` to it (the

@@ -147,8 +147,20 @@ def source_day_markers(text: str) -> list[tuple[int, int, int]]:
             end = int(m.group(2))
             if first < end <= first + _MAX_RANGE_SPAN and not _RANGE_UNIT_RE.match(stripped[m.end(2):]):
                 last = end
+        else:
+            # S248 (S1-first step 1): a list of consecutive days ("Day 05 & 06:", "Day 11, 12 & 13:") is a range
+            # too; before, days 6, 12 and 13 of such a source read as missing and the oracle charged the writer
+            # with DAY_OUTPUT_EXTRA (golden s1-004).
+            lst = _DAY_LIST_RE.match(stripped[m.end(1):])
+            if lst and not _RANGE_UNIT_RE.match(stripped[m.end(1) + lst.end():]):
+                nums = [first] + [int(n) for n in re.findall(r"\d{1,3}", lst.group(0))]
+                if all(b == a + 1 for a, b in zip(nums, nums[1:])) and nums[-1] <= first + _MAX_RANGE_SPAN:
+                    last = nums[-1]
         out.append((first, last, idx))
     return out
+
+
+_DAY_LIST_RE = re.compile(r"(?:\s*(?:,|&|\band\b)\s*\d{1,3}\b)+", re.IGNORECASE)
 
 
 _SENT_END_RE = re.compile(r"(?<=[.!?])\s")

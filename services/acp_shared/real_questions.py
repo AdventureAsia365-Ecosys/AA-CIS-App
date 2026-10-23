@@ -29,15 +29,20 @@ it (the request snapshot the tenant API returns carries question texts only).
 from __future__ import annotations
 
 import json
+import os
 import re
 import unicodedata
 from dataclasses import dataclass
-from typing import Iterable, Optional, Protocol, Sequence
+from typing import Iterable, Mapping, Optional, Protocol, Sequence
 
 import structlog
 
 from services.acp_content_writing.hygiene import COMMON_CAPS, content_words
+from services.acp_contract.atom_ranking import (LANDING_Q, SCOPE_FOREIGN_Q, SCOPE_HERE_Q, country_scope,
+                                                landing_moment, landing_subject_key, scope_dropped,
+                                                scope_subject_key)
 from services.acp_contract.ranking_reference import PLACE_KINDS, keyword_words
+from shared.llm_client.decide import Decision, Verdict, platform_verdicts
 
 logger = structlog.get_logger()
 
@@ -276,13 +281,21 @@ ENGLISH_ONLY_SOURCES = frozenset({SOURCE_SEGMENT, SOURCE_PLACE, SOURCE_SERP_TOPU
 def merge(tiers: Sequence[tuple[str, Iterable]], per_source: int = PER_SOURCE_MAX,
           limit: int = CHAIN_MAX, names: Iterable[str] = (),
           english_only: frozenset = ENGLISH_ONLY_SOURCES, lowercase_names: Iterable[str] = (),
-          countries: Iterable[str] = ()) -> list[RealQuestion]:
+          countries: Iterable[str] = (), drop: Optional[Mapping[str, str]] = None,
+          stats: Optional[dict] = None) -> list[RealQuestion]:
     """The chain in tier order: cleaned (whitespace, 10–160 chars), English only for the
     `english_only` tiers, off-meaning questions out (word-sense cues, and a name of `names` — the
     piece's folded place words — used as a common noun: 'What is a moron?' for Mörön; the
     lowercase test with `lowercase_names` / `countries`, never on the all-lowercase autocomplete
     tier), a question already given by an earlier tier skipped, at most `per_source` from one tier
-    and `limit` in all."""
+    and `limit` in all.
+
+    AA-982 — `drop` ({question_key: reason}, from `a3_rejected`) removes a question A3 Jev already
+    rejected for this piece from every tier after `segment_match` (those landed through the same
+    gates, for their own Segment), so it cannot come back through a later tier either. A dropped
+    question does not use its tier's room: the next one takes its place. `stats["a3_dropped"]`
+    counts, per tier, the dropped questions met while that tier still had room (the ones that
+    would otherwise have reached the chain)."""
     names = tuple(names)
     lowercase_names = tuple(lowercase_names)
     countries = tuple(countries)
@@ -305,6 +318,11 @@ def merge(tiers: Sequence[tuple[str, Iterable]], per_source: int = PER_SOURCE_MA
             if key in seen:
                 continue
             seen.add(key)
+            if drop and source != SOURCE_SEGMENT and key in drop:
+                if stats is not None:
+                    dropped = stats.setdefault("a3_dropped", {})
+                    dropped[source] = dropped.get(source, 0) + 1
+                continue
             out.append(RealQuestion(q, source))
             taken += 1
     return out
@@ -496,11 +514,18 @@ async def resolve_scope(conn, atom_ids: Sequence[str], segment_ids: Sequence[str
 
 async def collect_real_questions(pool, *, atom_ids: Sequence[str], segment_ids: Sequence[str] = (),
                                  tour_paa: Iterable = (),
-                                 sources: Sequence[QuestionSource] = DB_SOURCES) -> list[RealQuestion]:
+                                 sources: Sequence[QuestionSource] = DB_SOURCES,
+                                 a3_filter: bool = False, stats: Optional[dict] = None) -> list[RealQuestion]:
     """The whole chain for one piece. Soft-fails per source (a failed read is logged and skipped;
-    the tour tier always remains), so writing never stops on it. $0: DB reads only."""
+    the tour tier always remains), so writing never stops on it. $0: DB reads only.
+
+    AA-982 — `a3_filter` (the T9 blog write) also drops the `A3_FILTER_SOURCES` questions A3 Jev
+    already rejected for this piece (`a3_rejected`: stored verdicts only, no Jev call). `stats`, when
+    given, receives the filter's counts for the caller's log / admin record; a failed lookup keeps
+    every question (fail open, like Jev itself) and records `a3_error`."""
     tiers: list[tuple[str, list]] = []
     scope: Optional[QuestionScope] = None
+    drop: dict[str, str] = {}
     try:
         async with pool.acquire() as conn:
             scope = await resolve_scope(conn, atom_ids, segment_ids)
@@ -509,12 +534,159 @@ async def collect_real_questions(pool, *, atom_ids: Sequence[str], segment_ids: 
                     tiers.append((source.name, await source.fetch(conn, scope)))
                 except Exception as e:  # noqa: BLE001 — a missing source never blocks the write
                     logger.warning("real_questions_source_failed", source=source.name, error=str(e)[:200])
+            if a3_filter:
+                try:
+                    drop = await a3_rejected(conn, scope, [q for name, qs in tiers if name in A3_FILTER_SOURCES
+                                                           for q in qs or []], stats=stats)
+                except Exception as e:  # noqa: BLE001 — a failed lookup keeps every question
+                    logger.warning("real_questions_a3_filter_failed", error=str(e)[:200])
+                    if stats is not None:
+                        stats["a3_error"] = str(e)[:200]
     except Exception as e:  # noqa: BLE001
         logger.warning("real_questions_scope_failed", error=str(e)[:200])
     tiers.append((SOURCE_TOUR, list(tour_paa or [])))
     # The place words also drop a question using a place name as a common noun: the place_paa tier
     # buys exactly those ('moron' for Mörön), and T8 shows the merged list to the tenant.
-    return merge(tiers, **(chain_filter_names(scope) if scope else {}))
+    if stats is not None and a3_filter:
+        stats.setdefault("a3_dropped", {})
+    return merge(tiers, **(chain_filter_names(scope) if scope else {}), drop=drop, stats=stats)
+
+
+# ---------------------------------------------------------------- A3 verdict reuse (AA-982)
+#
+# A3 (services/acp_contract/atom_ranking.py) asks two Jev questions about each PAA candidate of a
+# Segment before it may land: `a3_question_about_here` (with `a3_question_foreign`, one call per
+# (country set, question)) and `a3_landing_belongs` (per (moment, question)). Their verdicts sit in
+# `shared.decision_log` under platform subject keys. The `place_paa` tier reads the same
+# `search_demand` PAA, but nothing stopped a question A3 had already thrown out from reaching the
+# T9 writer (S247: 32 of 52 place_paa writer questions were about_here rejects). This reads those
+# verdicts back — no new gate, no Jev call, $0 — and drops a question only on what A3 itself would
+# act on (enforce mode, confident, today's floors):
+#   - about_here: `scope_dropped()` (A3's own rule) for the piece's own country set, or for the set
+#     of one of its Segments that contains every piece country (not about anywhere in a larger set
+#     ⇒ not about the piece's countries either; a smaller set's reject proves nothing);
+#   - landing: a reject for EVERY moment of the piece (a Route touching one moment the question
+#     does not belong to keeps it), unless about_here confidently accepts it for the piece.
+# A question with no verdict (A3 never shortlisted it) is kept: a miss never drops.
+
+A3_FILTER_SOURCES = frozenset({SOURCE_PLACE})
+A3_LOOKUP_MAX = 200            # place_paa questions looked up per piece (the tier is ranked; the rest are kept)
+A3_FILTER_ENV = "T9_A3_PAA_FILTER"
+A3_REASON_ABOUT_HERE = "about_here"
+A3_REASON_LANDING = "landing"
+A3_QUESTION_KEYS = [SCOPE_FOREIGN_Q, SCOPE_HERE_Q, LANDING_Q]
+
+
+def a3_filter_enabled() -> bool:
+    """The kill switch (api env `T9_A3_PAA_FILTER`: start_write runs in the write request): on unless
+    set to off / 0 / false / no."""
+    return os.environ.get(A3_FILTER_ENV, "").strip().lower() not in ("off", "0", "false", "no")
+
+
+@dataclass(frozen=True)
+class A3Segment:
+    """One Segment of the piece as A3 saw it: its moment and its tours' country set."""
+    moment: str
+    countries: tuple[str, ...]
+
+
+# The same Segment view A3's precompute_question_landings() reads (active atoms only), so the moment
+# and the country set match the subject keys it wrote.
+_A3_SEGMENTS_SQL = """
+    SELECT asg.segment_id, asg.canonical_place, asg.canonical_action,
+           array_remove(array_agg(DISTINCT rt.country), NULL) AS countries
+    FROM acp_contract.atom_segment asg
+    JOIN acp_contract.atom_segment_member asm ON asm.segment_id = asg.segment_id
+    JOIN acp_contract.v_active_tour_atoms ta ON ta.atom_id = asm.atom_id
+    LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = ta.tour_id
+    WHERE asg.segment_id = ANY($1::text[])
+    GROUP BY asg.segment_id, asg.canonical_place, asg.canonical_action
+"""
+
+
+async def load_a3_segments(conn, segment_ids: Sequence[str]) -> list[A3Segment]:
+    if not segment_ids:
+        return []
+    rows = await conn.fetch(_A3_SEGMENTS_SQL, list(segment_ids))
+    return [A3Segment(landing_moment(r["canonical_place"] or "", r["canonical_action"] or ""),
+                      tuple(sorted({c for c in (r["countries"] or []) if c})))
+            for r in rows]
+
+
+def a3_scopes(piece_countries: Iterable[str], segments: Sequence[A3Segment]) -> list[str]:
+    """The country-set strings whose about_here reject applies to the piece: its own set, and each
+    Segment set that contains every piece country. None when the piece has no known country."""
+    piece = {c for c in piece_countries if c}
+    if not piece:
+        return []
+    sets = {country_scope(piece)} | {country_scope(s.countries) for s in segments
+                                     if s.countries and piece <= set(s.countries)}
+    return sorted(sets)
+
+
+def a3_moments(segments: Sequence[A3Segment]) -> list[str]:
+    return sorted({s.moment for s in segments if s.moment})
+
+
+def a3_subject_keys(questions: Sequence[str], scopes: Sequence[str], moments: Sequence[str]) -> list[str]:
+    return ([scope_subject_key(sc, q) for q in questions for sc in scopes]
+            + [landing_subject_key(m, q) for q in questions for m in moments])
+
+
+def a3_rejections(questions: Sequence[str], piece_countries: Iterable[str], segments: Sequence[A3Segment],
+                  verdicts: Mapping[tuple[str, str], Verdict]) -> dict[str, str]:
+    """{raw question: reason} for the questions A3's stored verdicts reject for this piece (rules in
+    the block comment above). Pure; `verdicts` is `platform_verdicts()` output."""
+    piece = {c for c in piece_countries if c}
+    scopes = a3_scopes(piece, segments)
+    own_scope = country_scope(piece) if piece else None
+    moments = a3_moments(segments)
+    out: dict[str, str] = {}
+    for q in questions:
+        for sc in scopes:
+            key = scope_subject_key(sc, q)
+            dec = Decision(verdicts={k: v for k in (SCOPE_FOREIGN_Q, SCOPE_HERE_Q)
+                                     if (v := verdicts.get((k, key))) is not None})
+            if scope_dropped(dec):
+                out[q] = A3_REASON_ABOUT_HERE
+                break
+        if q in out or not moments:
+            continue
+        landing = [verdicts.get((LANDING_Q, landing_subject_key(m, q))) for m in moments]
+        if not all(v is not None and v.enforced and v.zone == "reject" for v in landing):
+            continue
+        own = verdicts.get((SCOPE_HERE_Q, scope_subject_key(own_scope, q))) if own_scope else None
+        if own is not None and own.enforced and own.zone == "accept":
+            continue  # about the piece's country: a practical question A3 landing alone must not drop
+        out[q] = A3_REASON_LANDING
+    return out
+
+
+async def a3_rejected(conn, scope: QuestionScope, questions: Sequence[str],
+                      stats: Optional[dict] = None) -> dict[str, str]:
+    """{question_key: reason} of the `questions` (raw tier text, as A3 stored it) that A3 Jev
+    already rejected for this piece. Reads only: `acp_contract` Segments + `shared.decision_log`."""
+    distinct = [q for q in dict.fromkeys(q for q in questions if isinstance(q, str) and q.strip())]
+    looked_up = distinct[:A3_LOOKUP_MAX]
+    segments = await load_a3_segments(conn, scope.segment_ids)
+    scopes, moments = a3_scopes(scope.countries, segments), a3_moments(segments)
+    keys = a3_subject_keys(looked_up, scopes, moments)
+    verdicts = await platform_verdicts(conn, A3_QUESTION_KEYS, keys) if keys else {}
+    rejected = a3_rejections(looked_up, scope.countries, segments, verdicts)
+    if stats is not None:
+        reasons: dict[str, int] = {}
+        for reason in rejected.values():
+            reasons[reason] = reasons.get(reason, 0) + 1
+        stats.update({
+            "a3_looked_up": len(looked_up), "a3_not_looked_up": len(distinct) - len(looked_up),
+            "a3_with_verdict": len({q for q in looked_up
+                                    if any((k, sk) in verdicts for k in A3_QUESTION_KEYS
+                                           for sk in a3_subject_keys([q], scopes, moments))}),
+            "a3_rejected": reasons, "a3_scopes": len(scopes), "a3_moments": len(moments),
+            # the scope the lookup used, so a later check can recompute it exactly (admin record)
+            "a3_countries": list(scope.countries), "a3_segment_ids": list(scope.segment_ids),
+        })
+    return {question_key(q): reason for q, reason in rejected.items()}
 
 
 # ---------------------------------------------------------------- admin record
@@ -656,6 +828,7 @@ __all__ = [
     "ENGLISH_ONLY_SOURCES", "merge", "looks_english", "is_off_meaning", "single_word_places",
     "chain_filter_names",
     "question_key",
+    "A3_FILTER_SOURCES", "A3_FILTER_ENV", "A3Segment", "a3_filter_enabled", "a3_rejections", "a3_rejected",
     "place_words", "rank_place_rows", "resolve_scope", "collect_real_questions", "label_questions", "source_counts",
     "faq_sources", "missing_real_questions", "real_first_pairs", "count_real", "piece_question_stats",
 ]
