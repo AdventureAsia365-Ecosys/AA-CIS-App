@@ -1649,6 +1649,17 @@ text. (B) is built: `services/acp_shared/question_topup.py` + `scripts/aa779_ser
 questions, query '<place> <country>', stored in `search_demand` (keyword `topup_keyword`, its own market
 `US-PAA2` apart from the Segment research cache, no volume; an empty row marks a place bought with no
 question) and read back as the `serp_topup` tier.
+S248 (AA-982) — **T9 drops place PAA that A3 Jev already rejected.** On a blog write, `start_write` runs the
+chain with `a3_filter=True`: the `place_paa` tier's questions are looked up in `shared.decision_log` under the
+subject keys A3 wrote (`atom_ranking.scope_subject_key` / `landing_subject_key`) through
+`decide.platform_verdicts()` (read-only: current wording hash, `NOT cached`, ≤ 180 days, platform tenant,
+Zone recomputed with today's floors, acts only on enforce-mode confident verdicts; no Jev call, no new gate,
+$0). A question goes when A3's own scope rule (`scope_dropped`) rejects it for the piece's country set or for a
+Segment set that contains every piece country, or when `a3_landing_belongs` rejects it for every moment of
+the piece (unless about_here accepts it for the piece). No verdict → kept. The dropped text cannot come back
+through a later tier; `segment_match` is never filtered (it passed the same gates). Counts go to the
+`t9_place_paa_a3_filter` log line (api, the write request) and `writer_input.a3_question_filter`. Kill switch: api env
+`T9_A3_PAA_FILTER=off` (default on). T8 angles do not use it yet.
 S235 (AA-786) — **F9 v1.1** (`F9_PROMPT_VERSION = "f9_v1.1"`): the judge reads the piece without
 citation tags (F1/F5 keep them) and, for blogs, the search title and meta description. New
 product-truth code **TEXT_INTEGRITY** quotes each broken sentence and goes to sentence repair, not a
