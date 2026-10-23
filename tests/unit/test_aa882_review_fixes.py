@@ -143,8 +143,9 @@ def test_search_runs_every_group_for_admin(recording):
 # ── The notification bell ────────────────────────────────────────────────────────────────────────
 
 def test_notification_scope_per_role():
-    assert notification_scope("admin") == "TRUE"
-    assert notification_scope(None) == "TRUE"          # the machine (holds the secret)
+    # AA-986 L3: every staff row (not "TRUE" any more: the tenant-only rows belong to the tenant's bell)
+    assert notification_scope("admin") == "NOT (target_roles <@ ARRAY['tenant']::text[])"
+    assert notification_scope(None) == notification_scope("admin")          # the machine (holds the secret)
     for role in ("reviewer", "content", "tenant", ""):
         scope = notification_scope(role)
         assert "NOT LIKE 'platform.%'" in scope
@@ -161,11 +162,12 @@ def test_reviewer_read_all_leaves_admin_alerts_unread(recording, role):
     assert bell and all(notification_scope(role) in sql for sql in bell)
 
 
-def test_admin_read_all_clears_everything(recording):
+def test_admin_read_all_clears_every_staff_row(recording):
     client, conn = recording("UPDATE 5")
     assert client.put("/admin/notifications/read-all", headers=_headers("admin")).status_code == 200
     (sql,) = _bell_sql(conn)
-    assert "platform." not in sql and sql.rstrip().endswith("AND TRUE")
+    # AA-986 L3: every row but the tenant-only ones (a tenant's warning stays unread for the tenant)
+    assert "platform." not in sql and sql.rstrip().endswith("AND NOT (target_roles <@ ARRAY['tenant']::text[])")
 
 
 @pytest.mark.parametrize("path", ["/admin/notifications", "/admin/notifications?unread_only=true",

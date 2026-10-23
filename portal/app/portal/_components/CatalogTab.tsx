@@ -29,6 +29,7 @@ import {
 import { CatalogDrawer } from "./CatalogDrawer";
 import { TourRewritePanel, watchTourRewrite, type TourRewriteTarget } from "./TourRewritePanel";
 import { WorkStatusBadge, activePollInterval, latestVersionByTour, tourWorkStatus } from "./workStatus";
+import { ServedBadge, plainError } from "./ServedBadge";
 import { useWriteWatcher } from "./WriterPanel";
 import { forgetLiveSnapshot } from "./LiveWriter";
 import { AiContentNotice } from "./AiContentNotice";
@@ -153,7 +154,7 @@ function CatalogInner() {
       setRetries((n) => n + 1);
       invalidate();
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Retry failed"),
+    onError: (e) => toast.error(plainError(e, "Retry failed")),
   });
 
   const saveM = useMutation({
@@ -182,7 +183,7 @@ function CatalogInner() {
       setRewrite({ versionId: r.version_id, publishedTourId: vars.publishedTourId, title: vars.title, language: vars.lang });
       invalidate();
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Rewrite request failed"),
+    onError: (e) => toast.error(plainError(e, "Rewrite request failed")),
   });
 
   // ── DOCX export (unchanged endpoint/trigger) ──
@@ -280,6 +281,8 @@ function CatalogInner() {
           return (
             <div>
               <div style={{ fontWeight: 600, color: T.ink }}>{v.aa_name || "Tour"}</div>
+              {/* AA-986 L3: persistent badge when AA no longer serves (or has paused) the tour */}
+              {v.served_notice && <div style={{ marginTop: 4 }}><ServedBadge fields={v} /></div>}
               {v.aa_subtitle && (
                 <div style={{ fontWeight: 400, fontSize: 11.5, color: T.muted, marginTop: 2 }}>{v.aa_subtitle}</div>
               )}

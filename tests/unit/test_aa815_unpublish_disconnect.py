@@ -337,7 +337,10 @@ async def test_list_publish_log_is_tenant_scoped_and_tenant_safe():
     row = result["data"][0]
     assert row["title"] == "Untitled" and row["status"] == "published"
     assert set(row) == {"publish_id", "piece_id", "title", "channel", "status", "external_url",
-                        "published_at", "unpublished_at"}  # no last_error / actor / key
+                        "published_at", "unpublished_at",  # no last_error / actor / key
+                        # AA-986 L3: the served state of the post's tour + the "remove or edit" flag
+                        "served_status", "served_reason", "discontinued_at", "served_notice",
+                        "live_post_of_discontinued_tour"}
 
 
 # ── v1_integrations disconnect ─────────────────────────────────────────────────

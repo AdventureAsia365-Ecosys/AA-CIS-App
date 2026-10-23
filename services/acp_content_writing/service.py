@@ -34,6 +34,8 @@ from uuid import UUID
 from services.acp_shared.writing_progress import progress_show, progress_step
 
 import structlog
+
+from shared import tour_liveness as _tl
 from fastapi import Request
 
 from services.acp_angle_gate import service as angle_gate_service
@@ -1327,6 +1329,11 @@ async def start_write(
     # 'reusable' — so this function never actually sees status='reusable' in practice, confirming
     # the design intent stated in AA-497's own task description.
     req = await angle_gate_service.fetch_request(tenant_id, request_id, pool)
+    # AA-986 L3 (ADR 0015 decision 5): no T9 write on a tour AA no longer serves or has paused. TourNotServedError
+    # -> 409 tour_discontinued / tour_paused (router), instead of the old 500 when the atom left the live view.
+    async with pool.acquire() as conn:
+        tour_of = (await _tl.request_tours(conn, tenant_id, [request_id])).get(str(request_id))
+        await _tl.ensure_served(conn, tour_of, "write new content")
     if req["status"] != "approved":
         raise RequestNotReadyError(
             f"request_id={request_id} is status={req['status']!r}, expected 'approved' — "
@@ -2574,15 +2581,26 @@ async def fetch_piece(tenant_id: UUID, piece_id: UUID, pool, request: Optional[R
             request, str(tenant_id) if tenant_id else "", STAGE5_GET_PIECE_FLAG, fail_closed=True,
         ) as (conn, used_tenant_pool):
             row = await conn.fetchrow(_FETCH_PIECE_QUERY, piece_id, tenant_id)
+            served = await _piece_served(conn, tenant_id, row)
         logger.info("aa544_stage5_fetch_piece", tenant_id=str(tenant_id), used_tenant_pool=used_tenant_pool)
     else:
         async with pool.acquire() as conn:
             row = await conn.fetchrow(_FETCH_PIECE_QUERY, piece_id, tenant_id)
+            served = await _piece_served(conn, tenant_id, row)
     if row is None:
         raise ContentWritingError(f"piece_id={piece_id} not found for this tenant")
     # AA-613 — tenant-safe projection: content + ready_state + flags only, never held_reason/
     # gate_ledger/repair_log/raw status. This is a tenant endpoint (GET/PATCH /v1/.../pieces/{id}).
-    return _tenant_safe_piece(row)
+    # AA-986 L3: plus the served fields of the piece's tour.
+    return _tl.with_served(_tenant_safe_piece(row), served)
+
+
+async def _piece_served(conn, tenant_id, row):
+    """AA-986 L3: the ServedState of a piece row's tour (None: no row, or no state)."""
+    if row is None:
+        return None
+    rid = str(row["angle_gate_request_id"])
+    return (await _tl.request_served_states(conn, tenant_id, [rid])).get(rid)
 
 
 # AA-859 W2 — module level so the tests can mutate it (forgotten-WHERE check). Ownership + status in the
@@ -2743,7 +2761,9 @@ async def fetch_review(tenant_id: UUID, request_id: UUID, pool, request: Optiona
             raise _no_written_content(request_id)
         atom_context = await _fetch_atom_context(tenant_id, req["atom_id"], pool)
         trips = await fetch_tenant_trips(tenant_id, pool) if req["trip_id"] else []
-        return _review_dict(req, piece_row, atom_context, trips)
+        async with pool.acquire() as conn:   # AA-986 L3: the served fields of the request's tour
+            served = (await _tl.request_served_states(conn, tenant_id, [str(request_id)])).get(str(request_id))
+        return _tl.with_served(_review_dict(req, piece_row, atom_context, trips), served)
 
     from api.core.aa544_tenant_pool import REVIEWS_FLAG, acquire_scoped_conn
     async with acquire_scoped_conn(
@@ -2757,7 +2777,8 @@ async def fetch_review(tenant_id: UUID, request_id: UUID, pool, request: Optiona
             raise _no_written_content(request_id)
         atom_row = await conn.fetchrow(_ATOM_CONTEXT_QUERY, req["atom_id"], str(tenant_id))
         trips = await fetch_tenant_trips_on(conn, tenant_id) if req["trip_id"] else []
-    return _review_dict(req, piece_row, dict(atom_row) if atom_row else None, trips)
+        served = (await _tl.request_served_states(conn, tenant_id, [str(request_id)])).get(str(request_id))
+    return _tl.with_served(_review_dict(req, piece_row, dict(atom_row) if atom_row else None, trips), served)
 
 
 def _no_written_content(request_id: UUID) -> ContentWritingError:
@@ -2887,6 +2908,7 @@ async def fetch_review_list(tenant_id: UUID, pool, request: Optional[Request] = 
     if request is None:
         async with pool.acquire() as conn:
             rows = await conn.fetch(_TENANT_REVIEWS_QUERY, tenant_id, str(tenant_id))
+            served = await _tl.request_served_states(conn, tenant_id, [str(r["angle_gate_request_id"]) for r in rows])
         if any(r["trip_id"] for r in rows):
             trips = await fetch_tenant_trips(tenant_id, pool)
             trips_by_id = {str(t.id): t for t in trips}
@@ -2899,6 +2921,7 @@ async def fetch_review_list(tenant_id: UUID, pool, request: Optional[Request] = 
             rows = await conn.fetch(_TENANT_REVIEWS_QUERY, tenant_id, str(tenant_id))
             if any(r["trip_id"] for r in rows):
                 trips_by_id = {str(t.id): t for t in await fetch_tenant_trips_on(conn, tenant_id)}
+            served = await _tl.request_served_states(conn, tenant_id, [str(r["angle_gate_request_id"]) for r in rows])
 
     items = []
     for r in rows:
@@ -2946,6 +2969,7 @@ async def fetch_review_list(tenant_id: UUID, pool, request: Optional[Request] = 
             "cta": r["cta"],
             "created_at": r["created_at"].isoformat(),
         })
+        _tl.with_served(items[-1], served.get(str(r["angle_gate_request_id"])))   # AA-986 L3
     return items
 
 

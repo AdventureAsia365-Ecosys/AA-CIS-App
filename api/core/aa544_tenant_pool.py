@@ -117,6 +117,9 @@ SUBJECT_DECIDE_FLAG = "aa859:subject_decide_pool"            # POST /v1/subjects
 TRIP_REALLOCATION_FLAG = "aa859:trip_reallocation_pool"      # trip-reallocation suggest / confirm; needs 265 + 266
 MARKETPLACE_FLAG = "aa859:marketplace_pool"                  # GET /v1/marketplace; needs 266
 REVIEWS_FLAG = "aa859:reviews_pool"                          # GET content-writing reviews + review; needs 265 + 266
+# AA-986 L3 (S248): the tenant's own tour notifications (GET /v1/notifications, mark read). Needs CIS 274 (RLS on
+# shared.notifications + aa_app_user SELECT / UPDATE (is_read)); a 274 rollback turns it off first.
+TENANT_NOTIFICATIONS_FLAG = "aa986:tenant_notifications_pool"  # GET /v1/notifications, POST .../read; needs 274
 
 # Every flag above. A new *_FLAG constant must be added here too (a unit test checks it), and to the
 # ALLOWED set of the flag tooling (root docs/audits/2026-10-16-S240-aa859/aa859_flag.py, and its wave-3 / wave-4
@@ -126,6 +129,7 @@ ALL_TENANT_POOL_FLAGS = frozenset({
     CONTENT_PIECE_READS_FLAG, PIECE_EDIT_FLAG, T2_VERSION_WRITE_FLAG, ANGLE_GATE_DECIDE_FLAG, UNPUBLISH_FLAG,
     T2_VERSION_READS_FLAG, INTEGRATION_CONNECT_FLAG, T2_VERSION_DETAIL_READS_FLAG, BRAND_IDENTITY_FLAG, PUBLISH_FLAG,
     ANGLE_GATE_READ_FLAG, SLATE_READS_FLAG, SUBJECT_DECIDE_FLAG, TRIP_REALLOCATION_FLAG, MARKETPLACE_FLAG, REVIEWS_FLAG,
+    TENANT_NOTIFICATIONS_FLAG,
 })
 
 # S241 D-12: the explicit values that turn a route's flag OFF (admin pool), compared after strip +

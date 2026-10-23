@@ -53,6 +53,13 @@ class Trip(BaseModel):
     lifecycle_stage: LifecycleStage = "active"
     trip_url: Optional[str] = None
     url_alive: Optional[bool] = None
+    # AA-986 L3 (root ADR 0015, Q9): whether AA serves the tour (gold_aa_internal.v_tour_liveness: served | paused |
+    # retired; None = no state). The planner skips a tour that is not served; lifecycle_stage is the sales phase.
+    served_state: Optional[str] = None
+
+    @property
+    def served(self) -> bool:
+        return self.served_state in (None, "served")
 
 
 class AtomRecord(BaseModel):
@@ -148,7 +155,10 @@ class QuarterPlan(BaseModel):
 def compute_trips_hash(trips: list[Trip]) -> str:
     """Deterministic fingerprint of (trip_id, period, lifecycle_stage) — a
     change to any of these on any trip means N4/N5/N6 are stale."""
-    payload = sorted((str(t.id), t.period or "", t.lifecycle_stage) for t in trips)
+    # AA-986 L3: a tour that stops being served also makes the plan stale; served tours keep their old 3-tuple, so
+    # the hash of every existing plan is unchanged until a tour leaves.
+    payload = sorted((str(t.id), t.period or "", t.lifecycle_stage) + (() if t.served else (t.served_state,))
+                     for t in trips)
     return hashlib.sha256(json.dumps(payload).encode()).hexdigest()
 
 

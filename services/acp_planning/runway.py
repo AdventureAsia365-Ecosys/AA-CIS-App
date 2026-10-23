@@ -163,8 +163,8 @@ def compute_runway_map(tenant_id: UUID, year: int, trips: list[Trip], markets: l
     unknowns: list[str] = []
     dests: dict[str, list[Trip]] = {}
     for t in trips:
-        if t.lifecycle_stage == "retired":
-            unknowns.append(f"Trip '{t.name}' is retired — excluded from runway map.")
+        if not t.served:   # AA-986 L3 (ADR 0015 Q9): the served state, not lifecycle_stage
+            unknowns.append(f"Trip '{t.name}' is no longer served by AA ({t.served_state}) — excluded from runway map.")
             continue
         if not t.period:
             unknowns.append(
@@ -203,6 +203,7 @@ def _row_to_trip(row) -> Trip:
         itinerary_source=row["itinerary_source"],
         lifecycle_stage=row["lifecycle_stage"] or "active",
         trip_url=row["trip_url"], url_alive=row["url_alive"],
+        served_state=row["served_state"] if "served_state" in row.keys() else None,   # AA-986 L3
     )
 
 

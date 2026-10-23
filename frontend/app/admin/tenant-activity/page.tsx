@@ -219,15 +219,27 @@ export default function ContentTracePage() {
   useEffect(() => { load(); }, [load]);
 
   // AA-560 — same confirm-dialog + re-fetch-after-success shape as the old a4-oversight page's
-  // handleForceUnpublish(). Destructive/irreversible from here (real, immediate publish-status
-  // change on the actual channel), hence the native confirm().
+  // handleForceUnpublish(). AA-986 L3 (ADR 0015 Q3): the backend changes AA's record only; the post stays live on
+  // the tenant's WordPress site / Facebook Page, and once the row is marked the portal no longer offers the tenant
+  // its one-click removal (they must delete it on the channel). A live post about a tour AA no longer serves is
+  // refused (409 tenant_removes_post): the tenant removes it from the portal. The label, the confirm text and the
+  // error line say exactly that.
   const handleForceUnpublish = useCallback(async (publishId: string) => {
-    if (!window.confirm("Force-unpublish this piece? This cannot be undone from here.")) return;
+    if (!window.confirm(
+      "Mark this post unpublished in AA's record? This does NOT remove it from the tenant's WordPress site or "
+      + "Facebook Page, and afterwards the tenant can no longer remove it from the portal: they must delete it "
+      + "on the channel directly.",
+    )) return;
     setUnpublishingId(publishId);
     setUnpublishError(null);
     try {
       const res = await fetch(`/api/admin/a4/publish-log/${publishId}/unpublish`, { method: "POST" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => null) as { detail?: unknown } | null;
+        const detail = typeof body?.detail === "string"
+          ? body.detail.replace(/^tenant_removes_post:\s*/, "") : "";
+        throw new Error(detail || `HTTP ${res.status}`);
+      }
       await load();
     } catch (e) {
       setUnpublishError(String(e instanceof Error ? e.message : e));
@@ -667,11 +679,12 @@ function ContentTraceAccordion({ row: p, onForceUnpublish, unpublishingId }: {
             disabled={unpublishingId === p.publish_id}
             style={{
               padding: "5px 10px", borderRadius: 6, border: `1px solid ${A.red}`,
+              // AA-986 L3: the record only, never the channel (see handleForceUnpublish)
               background: "transparent", color: A.red, fontSize: 11.5, cursor: "pointer",
               opacity: unpublishingId === p.publish_id ? 0.5 : 1,
             }}
           >
-            {unpublishingId === p.publish_id ? "Unpublishing…" : "Force unpublish"}
+            {unpublishingId === p.publish_id ? "Marking…" : "Mark unpublished in AA"}
           </button>
         )}
       </div>

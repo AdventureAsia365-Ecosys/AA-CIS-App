@@ -27,7 +27,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
+from api.routers._served import refuse_http
 from api.routers.v1_tours import get_tenant
+from shared.tour_liveness import TourNotServedError
 from services.acp_angle_gate.service import RequestNotFoundError
 from services.acp_content_writing import service
 from services.acp_content_writing.export import (
@@ -59,6 +61,8 @@ async def write(request_id: UUID, body: WriteBody, request: Request, tenant=Depe
     pool = request.app.state.pool
     try:
         started = await service.start_write(tenant_id, request_id, pool, cta_override=body.cta)
+    except TourNotServedError as exc:          # AA-986 L3: 409 tour_discontinued / tour_paused
+        raise refuse_http(exc) from exc
     except RequestNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except service.RequestNotReadyError as exc:
@@ -130,6 +134,7 @@ async def get_piece(piece_id: UUID, request: Request, tenant=Depends(get_tenant)
     tenant_id = UUID(tenant["sub"])
     pool = request.app.state.pool
     try:
+        # AA-986 L3: the piece carries the served fields of its tour (read in the same block)
         return await service.fetch_piece(tenant_id, piece_id, pool, request=request)
     except service.ContentWritingError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
@@ -244,7 +249,7 @@ async def list_reviews(request: Request, tenant=Depends(get_tenant)):
     tenant_id = UUID(tenant["sub"])
     pool = request.app.state.pool
     # AA-859 wave 4: request= runs it on the tenant pool behind REVIEWS_FLAG (fail closed, 503)
-    data = await service.fetch_review_list(tenant_id, pool, request=request)
+    data = await service.fetch_review_list(tenant_id, pool, request=request)   # AA-986 L3: + served fields
     return {"data": data, "total": len(data)}
 
 
@@ -258,7 +263,7 @@ async def get_review(request_id: UUID, request: Request, tenant=Depends(get_tena
     pool = request.app.state.pool
     try:
         # AA-859 wave 4: request= runs it on the tenant pool behind REVIEWS_FLAG (fail closed, 503)
-        return await service.fetch_review(tenant_id, request_id, pool, request=request)
+        return await service.fetch_review(tenant_id, request_id, pool, request=request)   # AA-986 L3: + served
     except RequestNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except service.ContentWritingError as exc:

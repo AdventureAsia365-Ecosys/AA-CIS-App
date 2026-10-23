@@ -25,9 +25,10 @@ import {
   useToast,
 } from "@/app/_kit";
 import { T, sans, Card, CardHead } from "./ui";
+import { ServedBadge, afterUnpublishSentence, type ServedFields } from "./ServedBadge";
 import { formatDate } from "@/app/_kit/tokens";
 
-export interface PublishedRow {
+export interface PublishedRow extends ServedFields {
   publish_id: string;
   piece_id: string;
   title: string;
@@ -36,6 +37,9 @@ export interface PublishedRow {
   external_url: string | null;
   published_at: string | null;
   unpublished_at: string | null;
+  /** AA-986 L3 (ADR 0015 Q3): a post still live about a tour AA no longer serves. AA never removes it on its own;
+   *  the tenant's one-click Unpublish below does (the real WordPress / Facebook removal). */
+  live_post_of_discontinued_tour?: boolean;
 }
 
 export const PUBLISH_LOG_QUERY_KEY = ["publish-log"] as const;
@@ -86,7 +90,20 @@ function PublishedListInner({ onUnpublished }: { onUnpublished?: () => void }) {
       {
         accessorKey: "title",
         header: "Title",
-        cell: (c) => <span style={{ fontWeight: 600, color: T.ink }}>{c.row.original.title}</span>,
+        cell: (c) => {
+          const r = c.row.original;
+          return (
+            <div>
+              <span style={{ fontWeight: 600, color: T.ink }}>{r.title}</span>
+              {r.served_notice && <div style={{ marginTop: 4 }}><ServedBadge fields={r} /></div>}
+              {r.live_post_of_discontinued_tour && (
+                <div style={{ marginTop: 4, fontSize: 11.5, color: T.red, fontWeight: 600 }}>
+                  Tour discontinued: remove or edit this post
+                </div>
+              )}
+            </div>
+          );
+        },
       },
       {
         accessorKey: "channel",
@@ -129,7 +146,7 @@ function PublishedListInner({ onUnpublished }: { onUnpublished?: () => void }) {
               )}
               {r.status === "published" && (
                 <button style={unpublishBtn} onClick={() => setConfirmRow(r)}>
-                  <Undo2 size={12} /> Unpublish
+                  <Undo2 size={12} /> {r.live_post_of_discontinued_tour ? "Remove post" : "Unpublish"}
                 </button>
               )}
             </div>
@@ -173,7 +190,7 @@ function PublishedListInner({ onUnpublished }: { onUnpublished?: () => void }) {
               {confirmRow.channel === "blog" ? " (moved to your WordPress trash)" : ""}.
             </p>
             <p style={{ margin: 0, color: T.muted }}>
-              The piece stays in My Content and goes back to Ready to Publish, so you can publish it again.
+              {afterUnpublishSentence(confirmRow)}
             </p>
           </div>
         ) : null}

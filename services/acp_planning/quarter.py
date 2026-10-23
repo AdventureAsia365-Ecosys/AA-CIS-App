@@ -184,7 +184,7 @@ def compute_quarter_plan(
 
     scored: list[tuple[float, Trip, bool, float, float, float, float, bool]] = []
     for t in trips:
-        if t.lifecycle_stage == "retired":
+        if not t.served:   # AA-986 L3 (ADR 0015 Q9): a tour AA no longer serves (or has paused) gets no slot
             continue
         atoms = atoms_by_trip.get(t.id, [])
         dest = t.destination or t.name

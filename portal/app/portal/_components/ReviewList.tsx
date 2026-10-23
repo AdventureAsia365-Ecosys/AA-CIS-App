@@ -13,6 +13,7 @@ import { useSearchParams } from "next/navigation";
 import { Download, Send } from "lucide-react";
 import { useMemo, useState } from "react";
 import { T, sans } from "./ui";
+import { ServedBadge, plainError } from "./ServedBadge";
 import {
   Badge,
   type ColumnDef,
@@ -125,7 +126,7 @@ function ReviewListInner() {
         await publishPiece(r.piece_id);
         ok += 1;
       } catch (e) {
-        failures.push(`${r.angle?.name || r.channel}: ${e instanceof Error ? e.message : "failed"}`);
+        failures.push(`${r.angle?.name || r.channel}: ${plainError(e, "failed")}`);
       }
     }
     invalidate();
@@ -151,6 +152,8 @@ function ReviewListInner() {
                   {tourLine(it.tour)}
                 </div>
               )}
+              {/* AA-986 L3: persistent badge when AA no longer serves (or has paused) the tour */}
+              {it.served_notice && <div style={{ marginTop: 4 }}><ServedBadge fields={it} /></div>}
             </div>
           );
         },

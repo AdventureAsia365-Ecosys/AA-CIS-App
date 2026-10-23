@@ -1880,10 +1880,17 @@ _NOTIF_CONTENT_SCOPE = (
 )
 
 
+# AA-986 L3: rows written only for tenants (tour.discontinued / tour.reinstated, target_roles {tenant}) belong to
+# the tenant's bell (GET /v1/notifications); the staff bell never shows, counts or clears them, so a staff "Mark all
+# read" cannot mark a tenant's warning read. Staff see the same change through the staff event (tour.source.* /
+# tour.master.*) and the lifecycle preview / record.
+_NOTIF_STAFF_ROWS = "NOT (target_roles <@ ARRAY['tenant']::text[])"
+
+
 def notification_scope(x_admin_role: Optional[str]) -> str:
     """SQL predicate on shared.notifications for the caller's role (a constant, never user input)."""
     if x_admin_role is None or has_perm(x_admin_role, OPS_READ):
-        return "TRUE"
+        return _NOTIF_STAFF_ROWS
     return _NOTIF_CONTENT_SCOPE
 
 

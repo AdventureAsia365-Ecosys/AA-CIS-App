@@ -78,6 +78,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from api.core.staff_authz import staff_policy
 
 from api.routers.admin import verify_admin_secret
+from shared import tour_liveness as _tl
 
 logger = structlog.get_logger()
 # AA-882 (GĐ3): staff_policy narrows every route listed in api/core/staff_authz.py POLICY by role.
@@ -522,7 +523,16 @@ async def force_unpublish(
     same `x-admin-user-id` header AA-232 already established (BFF forwards the verified JWT's
     `sub` claim) — tolerant of a missing/malformed header, same fallback shape
     admin_pipeline.py's reviewed_by handling already uses, so a legacy ADMIN_SECRET-only session
-    doesn't 500, it just records "admin:unknown"."""
+    doesn't 500, it just records "admin:unknown".
+
+    AA-986 L3 (root ADR 0015 decision 5, Q3): this changes AA's record only. It does NOT remove the post from the
+    tenant's WordPress site or Facebook Page (those are the tenant's; AA never unpublishes them on its own). The
+    answer says so (`channel_post_removed: false`, `note`), and the admin button is labelled "Mark unpublished in
+    AA". Once the row is marked, the tenant's portal no longer offers its one-click removal (DELETE
+    /v1/publish-log/{id} takes only 'published' rows), so the post must then be deleted on the channel directly;
+    the note says that too. A live post about a RETIRED tour is refused (409 tenant_removes_post): the tenant sees it
+    flagged "Tour discontinued: remove or edit this post" with a one-click "Remove post", and marking it here would
+    hide both while the post stays public."""
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
 
@@ -534,6 +544,17 @@ async def force_unpublish(
             admin_actor = "unknown"
 
     async with pool.acquire() as conn:
+        # AA-986 review: keep the tenant's flag + one-click removal of a live post about a retired tour (Q3)
+        if await conn.fetchval(_tl.LIVE_POST_TOUR_STATE_SQL, str(publish_id)) == "retired":
+            raise HTTPException(
+                status_code=409,
+                detail=(f"{_tl.TENANT_REMOVES_POST}: this live post is about a tour Adventure Asia no longer serves. "
+                        "The tenant sees it flagged in the portal (Publish, Published: \"Tour discontinued: remove or "
+                        "edit this post\") with a one-click Remove post that deletes it from WordPress / Facebook. "
+                        "Marking it unpublished here would hide that flag and button while the post stays live, so "
+                        "it is left to the tenant."),
+                headers={"X-Error-Code": _tl.TENANT_REMOVES_POST},
+            )
         row = await conn.fetchrow("""
             UPDATE acp_shared.publish_log
             SET status = 'unpublished', unpublished_at = now(), unpublished_by = $2
@@ -552,6 +573,9 @@ async def force_unpublish(
         "status": row["status"],
         "unpublished_at": row["unpublished_at"].isoformat() if row["unpublished_at"] else None,
         "unpublished_by": f"admin:{admin_actor}",
+        "channel_post_removed": False,
+        "note": ("Marked unpublished in AA's record only. The post is still live on the tenant's WordPress site / "
+                 "Facebook Page, and the portal can no longer remove it: the tenant must delete it there directly."),
     }
 
 

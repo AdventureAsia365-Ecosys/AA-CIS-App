@@ -844,7 +844,7 @@ write CIS schemas. Owners per schema: `AA-Ecosys/docs/database/schema-ownership.
 |---|---|---|---|
 | AA-TripPlanner-Web | the Model Gateway config `shared.llm_role_config` / `shared.llm_model_catalog`; all content through the `catalog.*` views (row below) | `shared.llm_call_log` (rows tagged `quality_signal.app = "tripplanner"`) | CIS migration 173 (gateway tables + log) to role `tripplanner`. The pilot's direct reads are revoked: 254 (AA-847) `raw_tours` (179) and `tour_atoms` (180); 270 (AA-712 X4) `gold_aa_internal.published_tours`, `shared.destinations` (201), the photo views `shared.v_destination_photos` / `v_tour_photos` (201), `acp_contract.v_active_tour_atoms` (216) and USAGE on `gold_aa_internal` / `acp_contract` |
 | AA-TripPlanner-Web | Model Gateway config `shared.llm_role_config`, `shared.llm_model_catalog` (stages `tp_*`) | — | CIS 173 |
-| AA-Booking, AA-TripPlanner-Web | **Catalog read model**, schema `catalog` (AA-679): `v_tour` (live AA tours, key `(source_system, source_id)` = `('cis', raw_tours.source_group_id)`, `content_hash`), `v_tour_day` (parsed canonical itinerary), `v_tour_place` (active-atom places + place card + destination lat/lng), `v_tour_photo`, `v_destination`, `v_destination_photo`. **Coordinates carry an attribution duty**: wherever a consumer shows `lat`/`lng` from these views (map pins, area circles), it must show "Powered by Geoapify" (link) + "© OpenStreetMap contributors" (AA-712, Geoapify Free-plan + ODbL terms); the place views of migration 228 expose `located_by` / `geo_precision` so a consumer draws `area` points as areas, not pins. Contract `AA-Ecosys/docs/contracts/catalog.tour.v1.json`. New consumers read only `catalog.*`; since CIS 270 TripPlanner does too (plus the Model Gateway). Events `catalog.tour.published/updated/trashed` (outbox) are the next AA-679 slice | its own `booking.*` | CIS 225 to roles `aa_app_user`, `tripplanner`, `booking` (unguarded). Views owned by NOLOGIN role `catalog_owner` (no BYPASSRLS, no members), which reads `published_tours` / `raw_tours` through RLS policy `catalog_owner_aa_master_read` (AA master tenant only); consumers need not set `app.tenant_id`. 225 also makes `tenant_isolation` on those two tables treat `app.tenant_id = ''` as no tenant (NULLIF) instead of raising |
+| AA-Booking, AA-TripPlanner-Web | **Catalog read model**, schema `catalog` (AA-679): `v_tour` (live AA tours, key `(source_system, source_id)` = `('cis', raw_tours.source_group_id)`, `content_hash`), `v_tour_day` (parsed canonical itinerary), `v_tour_place` (active-atom places + place card + destination lat/lng), `v_tour_photo`, `v_destination`, `v_destination_photo`. **Coordinates carry an attribution duty**: wherever a consumer shows `lat`/`lng` from these views (map pins, area circles), it must show "Powered by Geoapify" (link) + "© OpenStreetMap contributors" (AA-712, Geoapify Free-plan + ODbL terms); the place views of migration 228 expose `located_by` / `geo_precision` so a consumer draws `area` points as areas, not pins. Contract `AA-Ecosys/docs/contracts/catalog.tour.v1.json`; `catalog.tour.v1.3` (CIS 274, AA-986 L4) adds `v_tour_retired` (tombstone: retired / paused / restored per key, derived from the served state) and `v_tour_lifecycle_outbox` (served-state events, cursor `event_id`). New consumers read only `catalog.*`; since CIS 270 TripPlanner does too (plus the Model Gateway). Events `catalog.tour.published/updated/trashed` (outbox) are the next AA-679 slice | its own `booking.*` | CIS 225 to roles `aa_app_user`, `tripplanner`, `booking` (unguarded). Views owned by NOLOGIN role `catalog_owner` (no BYPASSRLS, no members), which reads `published_tours` / `raw_tours` through RLS policy `catalog_owner_aa_master_read` (AA master tenant only); consumers need not set `app.tenant_id`. 225 also makes `tenant_isolation` on those two tables treat `app.tenant_id = ''` as no tenant (NULLIF) instead of raising |
 | Ops-probe Lambda (AA-CIS-Infra) | `POST /admin/dfs-balance/check`, `/admin/jev-canary/check`, `/admin/jev/402-sweep`, `/admin/waves/check` daily | — | admin secret |
 
 CIS as a consumer (AA-858): the `/admin/overview` business view reads `booking.v_ops_funnel_daily`,
@@ -1199,7 +1199,8 @@ stay open to every staff role. Three open reads filter by role inside the handle
 otherwise; `GET /admin/search` returns tenants only with `tenant.read` and jobs only with `ops.read`;
 the notification bell (`/admin/notifications*`, one global list with one `is_read`) shows, counts and
 clears for a role without `ops.read` only the rows targeted at a content role, never a `platform.*` or
-`spend_budget_alert` row. The UI mirrors the capabilities in `lib/rbac.ts` `ROLE_PERMS` / `can()` (kept
+`spend_budget_alert` row; no staff role sees or clears the tenant-only rows (`target_roles` {tenant}: the tenant's
+bell, `GET /v1/notifications`, AA-986 L3). The UI mirrors the capabilities in `lib/rbac.ts` `ROLE_PERMS` / `can()` (kept
 equal by a test) to hide controls the backend would refuse. `tests/unit/test_aa882_route_policy.py` enforces it (every staff write
 has a policy, every staff router runs the policy, `/admin/platform/*` has no open read, snapshot
 `tests/unit/snapshots/aa882_staff_route_policy.json`). Behaviour change for reviewer/content: Master
@@ -1373,6 +1374,7 @@ Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`
   | GET `/v1/planning/trip-reallocation/suggest`, POST `.../confirm` (wave 4) | `aa859:trip_reallocation_pool` | needs 265 + 266; config on MAIN, one read block; confirm accept = one more transaction, `pg_advisory_xact_lock(859, hashtext(tenant:quarter_plan:year:quarter))`, save + approve together, UNIQUE backstop → 409 `version_conflict`, lock wait past `lock_timeout` → 409 `plan_busy`; audit on MAIN after the blocks for accept and reject, best-effort (flag off: audit first, as before) |
   | GET `/v1/marketplace` (wave 4) | `aa859:marketplace_pool` | needs 266; `posts_per_week` on MAIN first |
   | GET `/v1/content-writing/reviews`, `/requests/{id}/review` (wave 4) | `aa859:reviews_pool` | needs 265 + 266; one block each, no MAIN read; the trip page is a LATERAL (own page, else the AA master's) |
+  | GET `/v1/notifications`, POST `/v1/notifications/read-all`, `/{id}/read` (AA-986 L3) | `aa986:tenant_notifications_pool` | needs 274 (RLS on `shared.notifications`: own rows written for tenants only; SELECT + UPDATE (is_read)) |
 
   A 241 rollback must `SET ... false` the two "needs 241" flags first (and list them in
   `TENANT_POOL_FORCE_ADMIN_FLAGS`), as 241's rollback comment STEP 0 says; a 262 rollback the same for
@@ -1484,6 +1486,12 @@ key), dismisses pending reviews, cancels queued T2 / T8 / T9 jobs, writes `gold_
 (append-only) and notifies every tenant with a derivative (`tour.discontinued` / `tour.reinstated`). A unit guard
 (`tests/unit/test_aa986_l2_lifecycle_guard.py`) fails any other code that writes `source_status` / `master_status` /
 `deleted_at` or inserts into `raw_tours` / `published_tours`. Retiring a published tour needs `master.admin` (Q8).
+Tenants (L3): every tenant `/v1` row about a tour carries `served_status` / `served_reason` / `discontinued_at` /
+`served_notice` (`shared/tour_liveness.py` `ServedState`; the portal badge reads `served_notice`: discontinued,
+paused, or nothing for a supersede, Q2); new work on a non-served tour (rewrite, retry, T8 goal, T9 write, publish)
+answers 409 `tour_discontinued` / `tour_paused`; the tenant bell reads its own rows through `GET /v1/notifications`.
+Other apps (L4): `catalog.v_tour_retired` (tombstone) and `catalog.v_tour_lifecycle_outbox` (CIS 274, contract
+`catalog.tour.v1.3`); `/v1/trip/{id}` answers 410 for a retired tour and 301 for an older version of a served one.
 _Avoid_: "delete" for a published tour (it is retired and can be restored); `raw_tours.lifecycle_stage` as a
 deletion signal (it is the sales phase).
 

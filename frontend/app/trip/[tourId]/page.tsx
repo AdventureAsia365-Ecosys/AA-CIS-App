@@ -10,7 +10,7 @@
 // ADR-2026-030's own v_trip_registry view was designed around. Real per-tenant rewritten
 // versions are a separate, real follow-up, not built here.
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import { notFound, permanentRedirect } from "next/navigation";
 
 const API_URL = process.env.API_URL ?? "https://api-cis.lumiguides.it.com";
 
@@ -34,12 +34,23 @@ interface TripPageData {
   seo_meta: string | null;
 }
 
-async function fetchTrip(tourId: string): Promise<TripPageData | null> {
+// AA-986 L4 (root ADR 0015 Q5): the API answers 301 for an older version of a tour (same catalog key) and 410 for a
+// tour Adventure Asia no longer offers. The redirect is followed here (permanentRedirect: the browser and search
+// engines move to the current version's URL) instead of fetch silently rendering the new tour under the old URL.
+// A 410 renders the not-found page (Next.js has no 410 from a page); search engines drop it from the sitemap side.
+const UUID_RE = /\/v1\/trip\/([0-9a-fA-F-]{36})$/;
+
+async function fetchTrip(tourId: string): Promise<TripPageData | { movedTo: string } | null> {
   try {
     const res = await fetch(`${API_URL}/v1/trip/${tourId}`, {
       // Real per-tour content changes rarely — cache at the edge, revalidate hourly.
       next: { revalidate: 3600 },
+      redirect: "manual",
     });
+    if (res.status === 301 || res.status === 308) {
+      const m = (res.headers.get("location") ?? "").match(UUID_RE);
+      return m ? { movedTo: m[1] } : null;
+    }
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -52,7 +63,7 @@ export async function generateMetadata(
 ): Promise<Metadata> {
   const { tourId } = await params;
   const trip = await fetchTrip(tourId);
-  if (!trip) return { title: "Trip Not Found — Adventure Asia" };
+  if (!trip || "movedTo" in trip) return { title: "Trip Not Found — Adventure Asia" };
   return {
     title: trip.seo_title || trip.name || "Adventure Asia",
     description: trip.seo_meta || trip.summary || undefined,
@@ -69,8 +80,10 @@ function renderItineraryParagraphs(text: string) {
 
 export default async function TripPage({ params }: { params: Promise<{ tourId: string }> }) {
   const { tourId } = await params;
-  const trip = await fetchTrip(tourId);
-  if (!trip) notFound();
+  const found = await fetchTrip(tourId);
+  if (!found) notFound();
+  if ("movedTo" in found) permanentRedirect(`/trip/${found.movedTo}`);
+  const trip = found;
 
   return (
     <main style={{ background: T.paper, minHeight: "100vh", color: T.ink }}>

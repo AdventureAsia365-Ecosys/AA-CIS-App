@@ -167,10 +167,17 @@ class TestComputeRunwayMap:
         assert any("no PERIOD" in u for u in rm.unknowns)
 
     def test_retired_trip_excluded_and_logged(self):
-        t = _trip(lifecycle_stage="retired")
-        rm = compute_runway_map(TENANT, 2026, [t], markets=["US"])
-        assert rm.cells == []
-        assert any("retired" in u for u in rm.unknowns)
+        # AA-986 L3 (ADR 0015 Q9): a tour AA no longer serves (or has paused) is skipped, by its served state
+        for state in ("retired", "paused"):
+            t = _trip(served_state=state)
+            rm = compute_runway_map(TENANT, 2026, [t], markets=["US"])
+            assert rm.cells == []
+            assert any("no longer served" in u for u in rm.unknowns)
+
+    def test_sales_retired_stage_alone_is_not_a_deletion(self):
+        # Q9: lifecycle_stage is the sales phase (nothing writes it); a served tour stays in the runway
+        t = _trip(lifecycle_stage="retired", served_state="served")
+        assert compute_runway_map(TENANT, 2026, [t], markets=["US"]).cells
 
     def test_phasing_out_trip_still_included_in_runway(self):
         """phasing_out affects N6 allocation (current month only), not N4's

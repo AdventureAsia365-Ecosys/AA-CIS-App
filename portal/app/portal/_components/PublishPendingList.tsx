@@ -22,8 +22,11 @@ import { stripMarkdown } from "./markdownText";
 import { PUBLISH_LOG_QUERY_KEY, channelName } from "./PublishedList";
 import { channelName as channelLabel } from "./channelLabels";
 import { formatDate } from "@/app/_kit/tokens";
+import {
+  ServedBadge, plainError, publishClosedLabel, servedTitle, workClosed, type ServedFields,
+} from "./ServedBadge";
 
-interface PendingPiece {
+interface PendingPiece extends ServedFields {
   piece_id: string;
   title: string;
   content_preview: string;
@@ -88,7 +91,9 @@ export function PublishPendingList({ connected, reloadSignal = 0 }: {
       } else {
         setResults(prev => ({
           ...prev,
-          [pieceId]: { success: false, external_url: null, last_error: body.last_error || body.detail || "Publish failed." },
+          // AA-986 L3: a 409 tour_discontinued / tour_paused reads as its plain sentence
+          [pieceId]: { success: false, external_url: null,
+                       last_error: body.last_error || plainError(body.detail, "Publish failed.") },
         }));
       }
     } catch {
@@ -138,6 +143,8 @@ export function PublishPendingList({ connected, reloadSignal = 0 }: {
                 <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
                   <div style={{ minWidth: 0, flex: "1 1 320px" }}>
                     <div style={{ fontSize: 14, fontWeight: 600, color: T.ink, marginBottom: 3, overflowWrap: "anywhere" }}>{p.title}</div>
+                    {/* AA-986 L3: persistent badge; publishing is closed for a tour AA no longer serves */}
+                    {p.served_notice && <div style={{ marginBottom: 5 }}><ServedBadge fields={p} /></div>}
                     {/* AA-519 Việc 4 — Route-aware piece, distinct from a plain single-atom one. */}
                     {p.route_segment_count != null && (() => {
                       const r = routeLabel(p.route_hub_name);
@@ -163,7 +170,11 @@ export function PublishPendingList({ connected, reloadSignal = 0 }: {
                   </div>
                   {/* AA-760 — not connected: plain muted text at full opacity (a faded gold button was
                       white on gold at 50% opacity, well under 3:1). */}
-                  {channelConnected ? (
+                  {workClosed(p) ? (
+                    <span title={servedTitle(p)} style={{ flexShrink: 0, fontSize: 12, color: T.muted, alignSelf: "center", maxWidth: 220 }}>
+                      {publishClosedLabel(p)}
+                    </span>
+                  ) : channelConnected ? (
                     <Btn
                       size="sm" variant="primary"
                       onClick={() => handlePublish(p.piece_id)}
