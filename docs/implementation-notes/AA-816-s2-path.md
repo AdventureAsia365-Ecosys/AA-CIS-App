@@ -172,7 +172,9 @@ sessions are switched off").
 
 - **Bodies that are not a JSON object answer 401 "Invalid token".** `POST /auth/verify-admin` and
   `POST /auth/verify-tenant` with no body, a non-JSON body, non-UTF-8 bytes or a JSON array/string/null answered
-  500 (`request.json()` raised, or `.get` on a non-dict). One helper `_session_token_from_body` in `api/main.py`
+  500 (`request.json()` raised, or `.get` on a non-dict). A deeply nested body (`b"[" * 100000`, well inside
+  the API Gateway body limit) also answered 500: `json.loads` raises `RecursionError`, a `RuntimeError`, so the
+  helper catches `(ValueError, RecursionError)` (independent review, S248). One helper `_session_token_from_body` in `api/main.py`
   parses the body for both routes; a missing or non-string `token` becomes `""`, so the rest of each route is
   unchanged (verify-admin: malformed → legacy path → 401 while the flag is off; verify-tenant: `verify_jwt("")` →
   401 "Invalid token").

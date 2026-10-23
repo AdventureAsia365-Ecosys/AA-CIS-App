@@ -143,6 +143,7 @@ def test_bff_parses_the_flag_with_the_same_on_values():
     {},                                                                  # no body at all
     {"content": b"not json", "headers": {"content-type": "application/json"}},
     {"content": b"\xff\xfe", "headers": {"content-type": "application/json"}},  # not UTF-8
+    {"content": b"[" * 100000, "headers": {"content-type": "application/json"}},  # RecursionError in json.loads
     {"json": [1, 2]},                                                    # JSON, not an object
     {"json": "token"},
     {"json": None},

@@ -373,7 +373,9 @@ async def _session_token_from_body(request: Request) -> str:
     ``request.json()`` / ``.get`` (AA-816 S2 live probe: an empty POST answered 500)."""
     try:
         body = await request.json()
-    except ValueError:  # JSONDecodeError (empty or not JSON) and UnicodeDecodeError are ValueErrors
+    except (ValueError, RecursionError):
+        # ValueError: JSONDecodeError (empty or not JSON) and UnicodeDecodeError. RecursionError: a deeply nested
+        # body such as b"[" * 100000 makes json.loads recurse past the limit (a RuntimeError, not a ValueError).
         raise HTTPException(status_code=401, detail="Invalid token") from None
     if not isinstance(body, dict):
         raise HTTPException(status_code=401, detail="Invalid token")
