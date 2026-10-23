@@ -444,8 +444,11 @@ def test_t2_flag_fix_without_a_brand_name_stays_tenant_neutral():
 def test_a1_flag_fix_prompt_unchanged():
     _, request = _run_fix(_fix_state(is_tenant_rewrite=False))
     assert request.system_prompt == ff.FIX_SYSTEM
-    assert ff.FIX_SYSTEM.startswith("You are Adventure Asia's editorial fixer.")
-    assert request.user_prompt.startswith("Fix these fields for Adventure Asia brand standards.\n\nFIELDS TO FIX:")
+    # AA-645: the A1 fixer is neutral and white-label (no platform name on a page agencies resell).
+    assert ff.FIX_SYSTEM.startswith("You are the editorial fixer of a neutral, white-label tour catalogue")
+    assert "Adventure Asia" not in ff.FIX_SYSTEM
+    assert request.user_prompt.startswith(
+        "Fix these fields for the neutral white-label catalogue (no brand or operator names).\n\nFIELDS TO FIX:")
 
 
 def test_t2_meta_rerepair_uses_the_tenant_fix_system():
