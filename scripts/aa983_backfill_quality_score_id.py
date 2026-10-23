@@ -12,18 +12,21 @@ Default = DRY RUN: SELECT only. Prints a JSON summary:
   - `counts.to_fix`: published rows with NULL quality_score_id whose version has a score row (what --apply
     changes), listed in `to_fix` with each row's target score id; split into live and soft-deleted rows,
   - `counts.null_without_score`: NULL pointer and no score row for the version (left NULL, nothing to point at),
-  - `counts.stale_pointer`: pointer set, the version has a score row, but the pointer is not the latest one;
-    listed in `stale` (pointer row's version / evaluated_at / score vs the target's). Changed only with
+  - `counts.stale_pointer`: pointer set to an older score row OF THE SAME VERSION (not the latest one); listed in
+    `stale` (`pointer_same_version: true`, pointer evaluated_at / score vs the target's). Changed only with
     --include-stale,
+  - `counts.stale_other_version`: pointer set to a score row of ANOTHER version while this version has its own
+    score row; listed in `stale` (`pointer_same_version: false`), never changed: a different defect (no current
+    code path writes it), report it for a follow-up issue,
   - `counts.stale_no_target`: pointer set but the version has no score row (pointer names another version's
     row); listed in `stale`, never changed (nothing to point at),
   - `revalidate_candidate`: one live published tour whose pointer is already the latest row, with the admin
     revalidate path, for the live check of the fix (step 5 of the apply order).
 
 --apply --expect N [--include-stale]: in ONE transaction, UPDATE exactly the rows the dry run lists (to_fix, plus
-the `stale` rows that have a target with --include-stale; each only while its pointer is still what the dry run
-saw), refuse and ROLLBACK unless exactly N rows changed and 0 such rows remain, then COMMIT and re-count on a NEW
-connection. The restore list (published id + previous pointer) is printed and, with --restore-file, written there
+with --include-stale the `stale` rows counted in `stale_pointer`; each only while its pointer is still what the
+dry run saw), refuse and ROLLBACK unless exactly N rows changed and 0 such rows remain, then COMMIT and re-count on
+a NEW connection. The restore list (published id + previous pointer) is printed and, with --restore-file, written there
 before the UPDATE.
 
 --tour <tour_id>: the live check after a revalidation (SELECT only). Prints the published row's pointer, the
@@ -41,6 +44,8 @@ shared.job, policies USING (true)); ssl=require. ECS exec + S3 pattern, one line
   dry run: aws ecs execute-command --cluster aa-cis-dev-cluster --task $TASK_ARN --container api --interactive --command "sh -c 'curl -s \"$URL\" -o /tmp/b.py && python3 /tmp/b.py'" --profile aa365-admin --region us-west-1
   apply:   same command with 'python3 /tmp/b.py --apply --expect <N from the dry run> --restore-file /tmp/aa983_restore.json'
   check:   same command with 'python3 /tmp/b.py --tour <tour_id>'
+Output: the JSON summary between the lines AA983-JSON-BEGIN and AA983-JSON-END, so it can be cut out of an ECS exec
+session transcript (session-manager banners, CR line ends) mechanically.
 The script needs only asyncpg (no repo import), so it does not depend on the image carrying this change.
 """
 from __future__ import annotations
@@ -62,6 +67,8 @@ _TARGET = """
            pt.deleted_at IS NOT NULL AS soft_deleted,
            pt.quality_score AS published_score,
            pt.quality_score_id,
+           (SELECT q.generated_content_id FROM silver_aa_internal.quality_scores q
+            WHERE q.id = pt.quality_score_id) AS pointer_version,
            (SELECT q.id FROM silver_aa_internal.quality_scores q
             WHERE q.generated_content_id = pt.generated_content_id
             ORDER BY q.evaluated_at DESC, q.id DESC LIMIT 1) AS target_score_id,
@@ -93,7 +100,10 @@ SQL_COUNTS = f"""
     SELECT count(*) FILTER (WHERE quality_score_id IS NULL AND target_score_id IS NOT NULL) AS to_fix,
            count(*) FILTER (WHERE quality_score_id IS NULL AND target_score_id IS NULL)     AS null_without_score,
            count(*) FILTER (WHERE quality_score_id IS NOT NULL AND target_score_id IS NOT NULL
-                              AND quality_score_id <> target_score_id)                      AS stale_pointer,
+                              AND quality_score_id <> target_score_id
+                              AND pointer_version = generated_content_id)                   AS stale_pointer,
+           count(*) FILTER (WHERE quality_score_id IS NOT NULL AND target_score_id IS NOT NULL
+                              AND pointer_version IS DISTINCT FROM generated_content_id)    AS stale_other_version,
            count(*) FILTER (WHERE quality_score_id IS NOT NULL AND target_score_id IS NULL)  AS stale_no_target,
            count(*)                                                                          AS published_total
     FROM ({_TARGET}) t
@@ -158,7 +168,9 @@ async def _counts(conn: asyncpg.Connection) -> dict[str, int]:
 async def _planned(conn: asyncpg.Connection, include_stale: bool) -> list[dict[str, Any]]:
     rows = [_jsonable(dict(r)) for r in await conn.fetch(SQL_TO_FIX)]
     if include_stale:
-        rows += [_jsonable(dict(r)) for r in await conn.fetch(SQL_STALE) if r["target_score_id"] is not None]
+        # Same-version stale rows only: a pointer at another version's row is a different defect (report, no fix).
+        rows += [_jsonable(dict(r)) for r in await conn.fetch(SQL_STALE)
+                 if r["target_score_id"] is not None and r["pointer_same_version"]]
     return rows
 
 
@@ -224,6 +236,24 @@ async def check_tour(conn: asyncpg.Connection, tour_id: str) -> dict[str, Any]:
             "ok": pointer_is_latest and job_ok is not False}
 
 
+MARK_BEGIN, MARK_END = "AA983-JSON-BEGIN", "AA983-JSON-END"
+
+
+def render(out: dict[str, Any]) -> str:
+    """The printed summary: JSON between two marker lines (cut out of an ECS exec transcript by extract())."""
+    return f"{MARK_BEGIN}\n{json.dumps(out, indent=1, default=str)}\n{MARK_END}"
+
+
+def extract(transcript: str) -> dict[str, Any]:
+    """The JSON summary inside an ECS exec transcript (banners around it, CR line ends); ValueError if absent."""
+    lines = transcript.replace("\r", "").split("\n")
+    try:
+        start, end = lines.index(MARK_BEGIN), lines.index(MARK_END)
+    except ValueError:
+        raise ValueError("no AA983-JSON block in the transcript") from None
+    return json.loads("\n".join(lines[start + 1:end]))
+
+
 async def main(argv: list[str] | None = None) -> dict[str, Any]:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("--apply", action="store_true", help="write (default: DRY RUN, SELECT only)")
@@ -262,4 +292,8 @@ async def main(argv: list[str] | None = None) -> dict[str, Any]:
 
 
 if __name__ == "__main__":
-    print(json.dumps(asyncio.run(main(sys.argv[1:])), indent=1, default=str))
+    if len(sys.argv) == 3 and sys.argv[1] == "--extract":  # local: cut the JSON out of a saved transcript
+        with open(sys.argv[2], encoding="utf-8") as fh:
+            print(json.dumps(extract(fh.read()), indent=1))
+    else:
+        print(render(asyncio.run(main(sys.argv[1:]))))
