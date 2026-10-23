@@ -7,11 +7,15 @@ rewrite would trade the length for new invented claims (S233: a full rewrite fix
 
 `trim_to_band` runs on every blog attempt right before the gates (service.run_write_background, after every LLM
 step and deterministic fix of the attempt). When the tag-free text is over the band's maximum it drops whole
-paragraphs, lowest value first, until the text is under BLOG_TRIM_TARGET_CHARS:
+paragraphs, lowest value first. Two thresholds (S248 review round 2): an untagged paragraph (no citation tag,
+so no cited source fact) is dropped while the text is over BLOG_TRIM_TARGET_CHARS; a tagged one only while it is
+still over the band's maximum — a text the untagged drops bring inside the band keeps every cited paragraph.
 
 - droppable: a prose paragraph of a body section that is not the section's first paragraph (the one that
   introduces its moment), not in the FAQ, holding no CTA sentence, no list item or FAQ line, not a list lead-in
-  (ending on ':'), not the only paragraph that names one of the trip's moments, and not followed in its section
+  (ending on ':'), not the only paragraph that names one of the trip's moments, not the only body paragraph
+  that carries one of its citation ids (the trip's last stop, 'the National Institute for Zorig Chusum', is
+  cited once and named unlike its itinerary label — S248 review on 32789658), and not followed in its section
   by a paragraph that opens on a pronoun ('It…', 'This is…');
 - never the paragraph that says a moment's family access caveat: the trim runs after
   trip_facts.add_family_caveats, so a drop that makes trip_facts.missing_family_caveat report a moment it did
@@ -33,13 +37,12 @@ from typing import Optional
 from services.acp_content_writing.hygiene import (_HEADING_RE, _is_cta, dangling_opener, sentence_spans,
                                                   tidy_after_cut)
 from services.acp_content_writing.quality_gates import _length_bounds_for_channel, gate_complete
-from services.acp_shared.citation_tags import TAG, strip_citation_tags
+from services.acp_shared.citation_tags import TAG_RE, strip_citation_tags
 
 # 500 under the 13,000 gate maximum: room for the gate's own measure and nothing after the gates adds text.
 BLOG_TRIM_TARGET_CHARS = 12_500
 # What an over-long blog's full rewrite is told to reach (service._repair_feedback).
 REWRITE_TARGET_CHARS = 12_000
-_TAG_RE = re.compile(TAG)
 _LIST_LINE_RE = re.compile(r"^(?:[-*]\s|\d+[.)]\s)")
 
 
@@ -73,10 +76,28 @@ def _blocks(text: str, cta: Optional[str]) -> list[dict]:
                    or clean.endswith(":"))
         cta_here = any(_is_cta(sp["clean"], cta) for sp in sentence_spans(raw)) or bool(cta and cta in raw)
         out.append({"start": m.start(), "end": m.end(), "raw": raw, "clean": clean, "kind": "para",
-                    "faq": in_faq, "section": section, "pos": pos, "tags": len(_TAG_RE.findall(raw)),
+                    "faq": in_faq, "section": section, "pos": pos, "tags": len(TAG_RE.findall(raw)),
+                    "ids": _tag_ids(raw),
                     "droppable": not special and not cta_here and pos > 0})
         pos += 1
     return out
+
+
+def _tag_ids(raw: str) -> frozenset:
+    """The citation ids a paragraph carries ('[R:a1]', '[R:a1, a2]' → {'a1', 'a2'})."""
+    return frozenset(i for m in TAG_RE.finditer(raw) for i in re.split(r"[,;\s]+", m.group(1)) if i)
+
+
+def _sole_cited(block: dict, blocks: list[dict]) -> bool:
+    """Is `block` the only body paragraph (not the FAQ) carrying one of its citation ids? Dropping it would
+    drop that source fact from the piece."""
+    if not block["ids"]:
+        return False
+    others = set()
+    for b in blocks:
+        if b is not block and b["kind"] == "para" and not b["faq"]:
+            others |= b["ids"]
+    return bool(block["ids"] - others)
 
 
 def _sole_namer(block: dict, blocks: list[dict], moments: Optional[list]) -> bool:
@@ -128,9 +149,10 @@ def _caveat_misses(text: str, trip_ctx) -> frozenset:
 def trim_to_band(text: str, *, channel: Optional[str], cta: Optional[str] = None,
                  ignore: frozenset = frozenset(), moments: Optional[list] = None,
                  trip_ctx=None) -> tuple[str, list[str]]:
-    """(text, log): an over-long blog trimmed under BLOG_TRIM_TARGET_CHARS by dropping whole low-value
-    paragraphs (module docstring), or the text unchanged and [] — any other channel, a blog inside its band,
-    or one the safe drops cannot bring under the band's maximum. `trip_ctx` (trip_facts.TripFactContext) guards
+    """(text, log): an over-long blog trimmed into its band by dropping whole low-value paragraphs (untagged
+    ones down to BLOG_TRIM_TARGET_CHARS, tagged ones only while over the band's maximum — module docstring),
+    or the text unchanged and [] — any other channel, a blog inside its band, or one the safe drops cannot
+    bring under the band's maximum. `trip_ctx` (trip_facts.TripFactContext) guards
     the family access caveats."""
     if channel != "blog" or not text:
         return text, []
@@ -143,7 +165,9 @@ def trim_to_band(text: str, *, channel: Optional[str], cta: Optional[str] = None
     caveats_missing = _caveat_misses(cur, trip_ctx)
     while measure(cur) > BLOG_TRIM_TARGET_CHARS:
         blocks = _blocks(cur, cta)
-        cands = [b for b in blocks if b["droppable"] and b["clean"] not in skipped]
+        over_band = measure(cur) > hi
+        # an untagged paragraph down to the target; a tagged one only while still over the band (review round 2)
+        cands = [b for b in blocks if b["droppable"] and b["clean"] not in skipped and (over_band or not b["tags"])]
         if not cands:
             break
         sec_len: dict[int, int] = {}
@@ -152,7 +176,8 @@ def trim_to_band(text: str, *, channel: Optional[str], cta: Optional[str] = None
                 sec_len[b["section"]] = sec_len.get(b["section"], 0) + measure(b["raw"])
         b = min(cands, key=lambda c: (c["tags"] > 0, -sec_len[c["section"]], -c["pos"]))
         trial = tidy_after_cut(cur[:b["start"]] + cur[b["end"]:])
-        if (_sole_namer(b, blocks, moments) or _orphans_next(b, blocks) or measure(trial) < lo
+        if (_sole_namer(b, blocks, moments) or _sole_cited(b, blocks) or _orphans_next(b, blocks)
+                or measure(trial) < lo
                 or (gate_complete(cur)["passed"] and not gate_complete(trial)["passed"])
                 or _integrity(*_seam(b, blocks), ignore, cta, moments)
                 or _caveat_misses(trial, trip_ctx) - caveats_missing):

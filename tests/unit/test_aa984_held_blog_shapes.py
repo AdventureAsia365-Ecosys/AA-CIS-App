@@ -9,6 +9,7 @@
   CTA), and an over-max rewrite is told the target size.
 - 3712d4dd (atlas-hearth, 5 prose F9 claims): unchanged by this issue — its claims are prose plan() already
   locates; checked here so the heading path never swallows them."""
+import re
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -150,6 +151,70 @@ class TestHeadingClaim:
         assert entry["repair_mode"] == "truth_cut" and entry["headings_replaced"] == 1
         assert entry["sentences_cut"] == 0 and entry["replaced_headings"] == [RUINED]
         assert rest == [] and out.startswith("## A local Buddhist monastery\n") and RUINED not in out
+
+
+# ---------------------------------------------------------------- a QUESTION heading (S248 review round 2)
+
+QUESTION = "Why Does a Ruined Monastery Matter to Families?"
+F9_QUESTION = ('audit manual_check: FACT_CHECK_MANUAL_CHECK — unsupported claim(s): '
+               f'"{QUESTION}" (claims: a ruined monastery; source: no ruined monastery)')
+
+
+def _question_blog(filler_paragraphs: int = 0) -> str:
+    return _mong_blog(filler_paragraphs).replace(f"## {RUINED}", f"## {QUESTION}")
+
+
+class TestQuestionHeadingClaim:
+    """A question heading ends on '?', so locate_sentence finds it as a sentence. Before round 2 the span held the
+    '## ' marker and no heading flag: an empty repair deleted the heading line, a short reply without '?' was
+    reverted by the repair contract, and the truth cut skipped it (span kind 'heading') — the piece stayed held."""
+
+    def test_the_sentence_locator_finds_it_with_the_marker(self):
+        text = _question_blog()
+        span = sentence_repair.locate_sentence(text, QUESTION)
+        assert span is not None and text[span[0]:span[0] + 3] == "## "
+
+    def test_plan_gives_a_heading_item_after_the_marker(self):
+        text = _question_blog()
+        items = sentence_repair.plan(text, _ledger(F9_QUESTION))
+        assert items is not None and len(items) == 1 and items[0]["heading"] is True
+        assert text[items[0]["start"]:items[0]["end"]] == QUESTION
+        assert text[items[0]["start"] - 3:items[0]["start"]] == "## " and "HEADING" in items[0]["problem"]
+
+    def test_an_empty_reply_takes_the_place_name_never_deletes_the_heading(self):
+        text = _question_blog()
+        items = sentence_repair.plan(text, _ledger(F9_QUESTION))
+        out = sentence_repair.splice_checked(text, items, [""], cta=MONG_CTA, moments=MOMENTS)
+        assert out.startswith("## A local Buddhist monastery\n\nThe route north")
+        assert out.count("## ") == text.count("## ")
+
+    def test_a_short_reply_without_a_question_mark_is_not_reverted_by_the_contract(self):
+        text = _question_blog()
+        items = sentence_repair.plan(text, _ledger(F9_QUESTION))
+        out = sentence_repair.splice_checked(text, items, ["A Buddhist Monastery Near Bulgan"], cta=MONG_CTA,
+                                             moments=MOMENTS)
+        assert out.startswith("## A Buddhist Monastery Near Bulgan\n\nThe route north")
+        assert items[0].get("guard") != "contract"
+
+    def test_a_repeat_guard_reply_never_deletes_the_heading(self):
+        text = _question_blog()
+        items = sentence_repair.plan(text, _ledger(F9_QUESTION))
+        out = sentence_repair.splice(text, items, ["The route north opens at the Buddhist monastery near Bulgan"])
+        assert out.startswith("## The route north opens at the Buddhist monastery near Bulgan\n")
+
+    def test_the_truth_cut_replaces_the_question_heading(self):
+        text = _question_blog(filler_paragraphs=9)
+        items = sentence_repair.plan(text, _ledger(F9_QUESTION))
+        out = sentence_repair.delete_flagged(text, items, cta=MONG_CTA, moments=MOMENTS)
+        assert out is not None and out.startswith("## A local Buddhist monastery\n") and QUESTION not in out
+        cut, rest, entry = service._cut_blog_truth_items(text, items, cta=MONG_CTA, moments=MOMENTS)
+        assert entry["repair_mode"] == "truth_cut" and entry["headings_replaced"] == 1 and rest == []
+
+    def test_a_question_in_the_faq_stays_a_faq_question(self):
+        text = _question_blog()
+        assert sentence_repair.heading_text_at(text, (text.index("**Q: Is the monastery"), len(text))) is None
+        faq = text.index("## FAQ")
+        assert sentence_repair.heading_text_at(text, (faq, faq + 6)) is None
 
 
 # ---------------------------------------------------------------- 3712d4dd: prose claims are unchanged
@@ -364,6 +429,56 @@ class TestTrimToBand:
         out, log = length_trim.trim_to_band(text, channel="blog", cta=BHU_CTA, moments=ctx.moments, trip_ctx=ctx)
         assert log and length_trim.measure(out) <= length_trim.BLOG_TRIM_TARGET_CHARS
         assert caveat in out and trip_facts.missing_family_caveat(out, ctx.moments, ctx.audience, BHU_CTA) == []
+
+    @staticmethod
+    def _shared_ids_blog(sections: int, untagged: set, pad: str = "") -> str:
+        """Every tagged paragraph cites its section's id (shared with the section's first paragraph), so no
+        tagged paragraph is the sole carrier of a citation; `untagged` lists the (section, paragraph) pairs with
+        no tag."""
+        text = _bhutan_blog(sections=sections, paras=3, untagged_last=False)
+        for n in range(sections):
+            for p in range(3):
+                seed = 1000 + 50 * n + p
+                new = (_para(seed, True).replace(f"[R:b{seed}]", f"[R:s{n}]") if (n, p) not in untagged
+                       else _para(seed, False))
+                text = text.replace(_para(seed, True), new)
+        return text.replace("[R:b0].", f"[R:b0]. {pad}".rstrip(), 1)
+
+    def test_tagged_paragraphs_stay_once_untagged_drops_reach_the_band(self):
+        """S248 review round 2 (32789658 real text): untagged drops brought it to 12,613 — already inside the
+        13,000 band — and the trim went on dropping a tagged paragraph to reach 12,500. A tagged paragraph is
+        dropped only while the text is still over the band's maximum."""
+        untagged = {(5, 2), (6, 2)}
+        base = self._shared_ids_blog(7, untagged)
+        drop = sum(length_trim.measure(_para(1000 + 50 * n + p, False)) + 2 for n, p in untagged)
+        pad_len = 12_750 + drop - length_trim.measure(base)
+        pad = " ".join(_unique_sentences(pad_len // 60 + 1, seed=7000))[:pad_len].rsplit(" ", 1)[0] + "."
+        text = self._shared_ids_blog(7, untagged, pad)
+        assert length_trim.measure(text) > qg._BLOG_MAX_CHARS
+        out, log = length_trim.trim_to_band(text, channel="blog", cta=BHU_CTA)
+        assert length_trim.BLOG_TRIM_TARGET_CHARS < length_trim.measure(out) <= qg._BLOG_MAX_CHARS
+        dropped = [p for p in text.split("\n\n") if p not in out]
+        assert len(dropped) == 2 and all("[R:" not in p for p in dropped) and log
+        assert out.count("[R:") == text.count("[R:")
+
+    def test_the_only_paragraph_citing_a_source_stays(self):
+        """S248 review round 2: the trip's last stop ('the National Institute for Zorig Chusum') is cited by one
+        paragraph only and its itinerary label reads 'National School of Arts and Craft', so the sole-namer
+        guard misses it. A paragraph that is the only body carrier of one of its citation ids is never dropped."""
+        seed = ("National School of Arts and Craft — visit\nDay 6 of the trip\n"
+                "Source itinerary: Visit the National School of Arts and Craft.")
+        moments = trip_facts.parse_moments(seed)
+        zorig_seed = 1000 + 50 * 7 + 2  # the last paragraph of the last body section: the first pick
+        zorig = ("The final stop is the National Institute for Zorig Chusum [R:zorig]. "
+                 + _para(zorig_seed, False))
+        text = self._shared_ids_blog(8, set()).replace(
+            _para(zorig_seed, True).replace(f"[R:b{zorig_seed}]", "[R:s7]"), zorig)
+        assert zorig in text and length_trim.measure(text) > qg._BLOG_MAX_CHARS
+        out, log = length_trim.trim_to_band(text, channel="blog", cta=BHU_CTA, moments=moments)
+        assert log and length_trim.measure(out) <= qg._BLOG_MAX_CHARS
+        assert zorig in out and "[R:zorig]" in out
+        # every citation id the text had is still carried somewhere in the body
+        assert set(re.findall(r"\[R:([^\]]+)\]", out)) == set(re.findall(r"\[R:([^\]]+)\]", text))
 
     def test_the_cta_paragraph_and_lists_are_never_dropped(self):
         text = _bhutan_blog().replace("## Plan Your Private Journey Through Bhutan\n\n",
