@@ -160,6 +160,22 @@ def locate_heading(text: str, quote: str) -> Optional[tuple[int, int]]:
     return hits[0] if len(hits) == 1 else None
 
 
+def heading_text_at(text: str, span: tuple[int, int]) -> Optional[tuple[int, int]]:
+    """AA-984 (S248 review round 2) — the text span (after the '## ' marker) of the body heading a located
+    sentence span starts on, or None when it starts on no heading or on the FAQ heading. A question heading
+    ('## Why Does a Ruined Monastery Matter to Families?') ends on a sentence mark, so locate_sentence finds it
+    as a sentence — with the marker in its span and no heading flag, an empty repair or a repeat-guard cut
+    deleted the whole heading line and delete_flagged skipped it. plan() turns such a span into a heading item."""
+    sp = next((s for s in sentence_spans(text) if s["kind"] == "heading" and s["start"] <= span[0] < s["end"]),
+              None)
+    if sp is None or sp["in_faq"]:
+        return None
+    m = _HEADING_MARK_RE.match(sp["text"])
+    if not m or sp["start"] + m.end() >= sp["end"]:
+        return None
+    return sp["start"] + m.end(), sp["end"]
+
+
 def clean_heading(replacement: Optional[str]) -> str:
     """A repair reply as heading text: tag-free, one line, no '#' marker, bold or wrapping quotes, no end mark
     ('?' stays). "" when nothing heading-like is left or it is longer than HEADING_MAX_CHARS."""
@@ -340,7 +356,12 @@ def plan(content_text: str, gate_ledger: list[dict]) -> Optional[list[dict]]:
     for quote, problem, gate in items:
         span = locate_sentence(content_text, quote)
         heading = False
-        if span is None and gate == "F9_cta_fact":
+        if span is not None:
+            # AA-984 (review round 2) — a question heading is located as a sentence: re-span it as a heading
+            on_heading = heading_text_at(content_text, span)
+            if on_heading is not None:
+                span, heading = on_heading, True
+        elif gate == "F9_cta_fact":
             # AA-984 — an F9 claim on a section heading becomes a heading repair item
             span = locate_heading(content_text, quote)
             heading = span is not None
@@ -622,7 +643,13 @@ def splice_checked(content_text: str, items: list[dict], replacements: list[str]
     # AA-925 repair contract (invariants 3 and 5): a replacement that ends mid-sentence, is a cut-and-period of
     # its sentence, or breaks a tag / bold / bracket pair is not spliced (`"guard": "contract"`); the caller
     # counts these items as `degraded: repair_contract`.
-    items, replacements, _ = repair_contract.enforce_spans(items, replacements)
+    # AA-984 (review round 2) — a heading item's contract is clean_heading (no end mark, ≤ 90 chars), not the
+    # sentence contract: 'A Buddhist Monastery Near Bulgan' for a question heading does not end as a sentence.
+    heads = [(it, rep) for it, rep in zip(items, replacements) if it.get("heading")]
+    rest = [(it, rep) for it, rep in zip(items, replacements) if not it.get("heading")]
+    kept_items, kept_reps, _ = repair_contract.enforce_spans([p[0] for p in rest], [p[1] for p in rest])
+    items = [p[0] for p in heads] + kept_items
+    replacements = [p[1] for p in heads] + kept_reps
     if not items:
         return content_text
     out = splice(content_text, items, replacements, ignore=ignore)
