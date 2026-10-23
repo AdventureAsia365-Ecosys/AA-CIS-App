@@ -997,6 +997,11 @@ function MasterContentPageInner() {
           ...prev,
           [tourId]: (prev[tourId] ?? []).map(v => ({ ...v, is_current: v.version_num === versionNum })),
         }));
+        // AA-645: the promote republishes the version and queues its atomize (tour detail / atoms follow).
+        showToast(`v${versionNum} is now current — atoms are being rebuilt`);
+      } else {
+        const err = await r.json().catch(() => ({}));
+        alert(staffErrorMessage(r.status, err.detail, "Promote failed"));
       }
     } finally { setPromoting(null); }
   }

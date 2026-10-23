@@ -26,6 +26,13 @@ def test_classify_order():
     assert wr.classify(_t()) == "not_started"
 
 
+def test_published_in_wave_reads_updated_at_not_published_at():
+    """AA-645 d06: a re-publish keeps the first published_at, so the wave window must test updated_at (mig 273)."""
+    import re
+    m = re.search(r"coalesce\((.*?)\)\s+AS published_in_wave", wr.TOURS_SQL, re.S)
+    assert m and "pt.updated_at >= w.created_at" in m.group(1) and "pt.published_at" not in m.group(1)
+
+
 def test_build_report_columns_coverage_and_completeness():
     tours = [
         _t(tour_id="a", s1_status="succeeded", master_status="active", published_in_wave=True, atomized=True, jev=True),

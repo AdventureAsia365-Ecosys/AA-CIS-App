@@ -142,6 +142,7 @@ async def _rewrite_tour(
     generate_stage: str = "s1_generate",  # AA-620: "t2_generate" for tenant T2, "s1_generate" for A1
     feedback: str = "",  # AA-639: seeds generate_node's PREVIOUS ATTEMPT FEEDBACK (T3 repair rounds)
     previous_draft: Optional[dict] = None,  # AA-793: a T3 repair round revises this draft (T2 only)
+    tour_agency: Optional[dict] = None,  # AA-645: raw_tours group_size / best_time_to_go for the S1 writer v2 (A1)
 ) -> dict:
     """Rewrite single tour using LangGraph.
 
@@ -211,6 +212,8 @@ async def _rewrite_tour(
         }
         if previous_draft and is_tenant_rewrite:
             initial_state["previous_draft"] = previous_draft   # AA-793
+        if tour_agency and not is_tenant_rewrite:
+            initial_state["tour_agency"] = tour_agency         # AA-645 step 0 (S1 writer v2 fact sheet)
         # AA-606: seed Bedrock Batch attempt-1 output for build_graph_from_generated's seed node.
         if batch_text is not None:
             initial_state["batch_text"] = batch_text
@@ -298,6 +301,8 @@ async def _rewrite_tour(
             # AA-925: same strip class — validate's shadow findings and the fail-open paths that ran.
             "quality_shadow":      result.get("quality_shadow", []),
             "degraded":            result.get("degraded", []),
+            # AA-645 step 0: same strip class — "v2" when the S1 writer v2 wrote the kept draft.
+            "writer_version":      result.get("writer_version"),
             "status": "success" if result.get("generated") and len(result.get("generated", {})) > 0 else "failed",
         }
 

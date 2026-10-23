@@ -328,6 +328,11 @@ class ContentState(TypedDict):
     # (services/quality/degraded.py). Declared so LangGraph keeps them (AA-209 gotcha).
     quality_shadow:         list
     degraded:               list
+    # AA-645 step 0: "v2" when the draft came from the S1 writer v2 (s1_writer_v2_live, flag S1_WRITER_V2, A1 only);
+    # validate and the judge read it (report-only codes / brand-fit). tour_agency = raw_tours group_size /
+    # best_time_to_go, which only the v2 fact sheet reads. Declared so LangGraph keeps them (AA-209 gotcha).
+    writer_version:         Optional[str]
+    tour_agency:            Optional[dict]
 
 # code → (dimension, deduction)
 _FAILURE_MAP: dict[str, tuple[str, float]] = {
@@ -413,6 +418,11 @@ def generate_node(state: ContentState) -> ContentState:
     gen_stage = state.get("generate_stage") or "s1_generate"
     # AA-620: real tenant for a T2 rewrite, None for A1 admin (its s1_generate writes stay NULL).
     tenant_id = state.get("tenant_id")
+
+    # AA-645 step 0: the S1 writer v2 behind S1_WRITER_V2 (default off; A1 only, never T2 or a batch seed).
+    from . import s1_writer_v2_live
+    if s1_writer_v2_live.applies(state):
+        return _generate_node_v2(state, client)
 
     # AA-748: behind S1_STRUCTURED_FACTS (default OFF, tenant-flag override), extract per-day source
     # facts once (one s1_source_facts LLM call) and thread them into the writer prompt so numbers/
@@ -575,6 +585,33 @@ def generate_node(state: ContentState) -> ContentState:
                 "prompt_version": prompt_version,
                 "cost_usd": state.get("cost_usd", 0) + (resp.cost_usd if resp else 0),
                 "error": str(e)}
+
+def _generate_node_v2(state: ContentState, client: LLMClient) -> ContentState:
+    """AA-645 step 0 — one S1 writer v2 draft (s1_writer_v2_live.write: writer + meta + one meta retry, each logged).
+    No itinerary nudge and no seo_meta fit (v2 never cuts a meta; validate / flag_fix see what it wrote); the
+    deterministic forbidden strip runs as on the v1 path (AA-738)."""
+    from . import s1_writer_v2_live
+    out = s1_writer_v2_live.write(state, client)
+    generated = out["generated"]
+    if generated:
+        _apply_forbidden_strip(generated, state)
+    return {
+        **state,
+        "generated": generated,
+        "writer_version": s1_writer_v2_live.WRITER_VERSION,
+        "cost_usd": state.get("cost_usd", 0) + out["cost_usd"],
+        "model_used": out.get("model_used") or state.get("model_used", ""),
+        "is_branded": True,
+        "error": out["error"] if not generated else "",
+        "fallback_used": bool(out.get("fallback_used")),
+        "satellite_account": out.get("satellite_account"),
+        "prompt_version": out["prompt_version"],
+        "cache_read_tokens": state.get("cache_read_tokens", 0) + out["cache_read_tokens"],
+        "cache_write_tokens": state.get("cache_write_tokens", 0) + out["cache_write_tokens"],
+        "itinerary_day_ratios": [],
+        "itinerary_nudges_used": 0,
+    }
+
 
 # AA-251 (ADR-2026-021, hướng 4): generic tour-marketing filler that shouldn't count
 # toward a DFS_INTENT_UNDERUSED keyword match — a keyword matching only on "tours"
@@ -907,6 +944,11 @@ def validate_node(state: ContentState) -> ContentState:
         fired.append("META_INCOMPLETE_SENTENCE")
         score -= 1.0
 
+    # AA-645 step 0: a v2 draft's length-ratio and DFS-keyword codes are report-only (recorded in quality_shadow).
+    from .s1_writer_v2_live import is_v2 as _is_v2
+    _v2_draft = _is_v2(state)
+    _v2_report: list[dict] = []
+
     # ITINERARY_STRUCTURE_WEAK: must have day markers and be substantive
     itinerary = generated.get("itineraries", "") or ""
     has_day_marker = bool(re.search(r'\bday\s*[1-9one two three]\b', itinerary.lower()))
@@ -956,9 +998,15 @@ def validate_node(state: ContentState) -> ContentState:
                 f"day {d}: {gw} words vs source {sw} words (ratio {r})"
                 for d, gw, sw, r in _still_compressed
             )
-            issues.append(f"Itinerary still compressed/expanded vs source after nudge — {_detail}")
-            fired.append("ITINERARY_STILL_COMPRESSED")
-            score -= 1.5
+            if _v2_draft:
+                # AA-645 step 0: v2 has no per-day length target and no nudge ("length follows the source"), so
+                # the ratio is recorded, not scored.
+                _v2_report.append({"code": "ITINERARY_STILL_COMPRESSED", "detector": "s1_writer_v2",
+                                   "mode": "report", "detail": _detail})
+            else:
+                issues.append(f"Itinerary still compressed/expanded vs source after nudge — {_detail}")
+                fired.append("ITINERARY_STILL_COMPRESSED")
+                score -= 1.5
 
     # AA-925 (Q-2): the day oracle (struct.day_structure) on the written itinerary against the source, and the
     # S2 cut signature on the meta (struct.truncated). Shadow findings go to quality_shadow only (no score, no
@@ -1001,9 +1049,14 @@ def validate_node(state: ContentState) -> ContentState:
             (generated.get("seo_meta", "") or "")
         ).lower()
         if kw_texts and not _keyword_intent_matched(kw_texts, seo_field_text):
-            issues.append("SEO keywords not reflected in seo_title or seo_meta")
-            fired.append("DFS_INTENT_UNDERUSED")
-            score -= 1.0
+            if _v2_draft:
+                # AA-645 step 0: the v2 meta uses a source-covered keyword only when it fits (never forced, S233).
+                _v2_report.append({"code": "DFS_INTENT_UNDERUSED", "detector": "s1_writer_v2", "mode": "report",
+                                   "detail": "no DFS keyword in seo_title / seo_meta"})
+            else:
+                issues.append("SEO keywords not reflected in seo_title or seo_meta")
+                fired.append("DFS_INTENT_UNDERUSED")
+                score -= 1.0
 
     # Sub-score computation — each dimension starts at 10, deducts its own codes
     score = max(0.0, score)
@@ -1040,7 +1093,7 @@ def validate_node(state: ContentState) -> ContentState:
         "sub_scores":    sub_scores,
         "passed_count":  passed_count,
         "failed_count":  failed_count,
-        "quality_shadow": shadow,  # AA-925: recomputed on every validate (the latest content's findings)
+        "quality_shadow": shadow + _v2_report,  # AA-925: recomputed on every validate (the latest content's findings)
         # AA-925: the day check that could not run, for the latest content (replaced on every validate)
         "degraded": degraded.replace_detector(state.get("degraded"), day_oracle.DETECTOR, _day_degraded),
     }

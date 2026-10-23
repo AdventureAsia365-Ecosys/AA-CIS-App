@@ -480,7 +480,9 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
         showToast(`v${versionNum} is now the published version`, "success");
         setHistory(prev => prev.map(h => ({ ...h })));
       } else {
-        showToast("Promote failed", "error");
+        // AA-645: 409 = version not approved / source not live; the API says which.
+        const err = await r.json().catch(() => ({}));
+        showToast(typeof err.detail === "string" && err.detail ? err.detail : "Promote failed", "error");
       }
     } finally { setPromoting(false); }
   }

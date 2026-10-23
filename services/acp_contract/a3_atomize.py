@@ -102,7 +102,7 @@ def _strip_atom_action(action: str, words: list[str]) -> str:
 
 async def run_a3_atomize(
     tour_id: str, rewritten: dict, pool, country: str = "",
-    version_id: str | None = None,
+    version_id: str | None = None, force: bool = False,
 ) -> dict:
     """A3 atomize — decompose atoms from a published Master Content tour, owner_scope="platform".
     Reuses AA-299's proven prompt/parse pipeline (services/acp_shared/atom_extraction.py:
@@ -125,6 +125,13 @@ async def run_a3_atomize(
     - `_atomize_whole_tour_legacy()`: the pre-AA-508 behavior, byte-for-byte. Used when the
       itinerary isn't in canonical day format (parse_canonical_itinerary_days() returns {}) or
       `version_id` is omitted (defensive).
+
+    AA-645 step 0 — `force=True` (the admin promote of an older version) re-reads every day even when the version's
+    day fingerprints match, and the legacy path ignores its whole-tour hash skip: making a version current again must
+    bring back that version's atoms. Both paths now also retire atoms the new text no longer has: the per-day path
+    soft-deletes atoms on a day the itinerary no longer has (C6) and legacy rows with no day; the legacy path
+    soft-deletes the tour's earlier atoms after a successful read (L1: its ids are random, so nothing was ever
+    replaced).
     """
     row = {
         "id": tour_id,
@@ -143,16 +150,48 @@ async def run_a3_atomize(
     days = parse_canonical_itinerary_days(row["itinerary_source"])
     if not days or not version_id:
         return await _atomize_whole_tour_legacy(tour_id, row, source_hash, pool, country,
-                                                forbidden_words=forbidden_words)
+                                                forbidden_words=forbidden_words, force=force)
     return await _atomize_per_day(
         tour_id, version_id, row, days, source_hash, pool, country,
-        forbidden_words=forbidden_words,
+        forbidden_words=forbidden_words, force=force,
     )
+
+
+# AA-645 step 0 (C6) — atoms on a day the current itinerary no longer has (v2 rewrote 4 days into 1: days 2–4 kept
+# live atoms that TripPlanner tour detail, the Slate and T8 seeds still served), and legacy-path atoms with no day.
+_RETIRE_ORPHAN_DAYS_SQL = """
+    UPDATE acp_contract.tour_atoms SET deleted = true, updated_at = now()
+    WHERE tour_id = $1::uuid AND owner_scope = $2 AND NOT deleted
+      AND (itinerary_day IS NULL OR NOT (itinerary_day = ANY($3::smallint[])))
+"""
+
+# AA-645 step 0 (L1) — the legacy path inserts random ids, so after a successful read every earlier live atom of the
+# tour is replaced by this read's rows.
+_RETIRE_REPLACED_SQL = """
+    UPDATE acp_contract.tour_atoms SET deleted = true, updated_at = now()
+    WHERE tour_id = $1::uuid AND owner_scope = $2 AND NOT deleted AND NOT (atom_id = ANY($3::text[]))
+"""
+
+
+def _rowcount(status) -> int:
+    try:
+        return int(str(status).split()[-1])
+    except (ValueError, IndexError):
+        return 0
+
+
+async def _retire_orphan_days(pool, tour_id: str, day_numbers) -> int:
+    async with pool.acquire() as conn:
+        status = await conn.execute(_RETIRE_ORPHAN_DAYS_SQL, tour_id, OWNER_SCOPE, sorted(int(d) for d in day_numbers))
+    n = _rowcount(status)
+    if n:
+        logger.info("a3_atomize_orphan_days_retired", tour_id=tour_id, atoms=n, days=sorted(day_numbers))
+    return n
 
 
 async def _atomize_whole_tour_legacy(
     tour_id: str, row: dict, source_hash: str, pool, country: str,
-    forbidden_words: list[str] | None = None,
+    forbidden_words: list[str] | None = None, force: bool = False,
 ) -> dict:
     """Pre-AA-508 behavior, unchanged (see run_a3_atomize()'s own docstring for when this runs).
     Random atom_id, one LLM call for the whole itinerary, source_hash-over-the-whole-tour skip."""
@@ -163,7 +202,7 @@ async def _atomize_whole_tour_legacy(
                ORDER BY created_at DESC LIMIT 1""",
             tour_id, OWNER_SCOPE,
         )
-    if latest_hash is not None and latest_hash == source_hash:
+    if latest_hash is not None and latest_hash == source_hash and not force:
         logger.info("a3_atomize_skipped", tour_id=tour_id, owner_scope=OWNER_SCOPE,
                     reason="source unchanged (hash match)")
         return {"status": "skipped", "atom_count": 0}
@@ -199,10 +238,12 @@ async def _atomize_whole_tour_legacy(
     # distinctiveness value. The `country` param is retained for call-site compatibility but no
     # longer read here.
     inserted = 0
+    kept_ids: list[str] = []
     async with pool.acquire() as conn:
         if atoms:
             for atom in atoms:
                 atom_id = f"atom_{uuid.uuid4().hex[:10]}"
+                kept_ids.append(atom_id)
                 place = atom.get("place") or ""
                 action = _strip_atom_action(atom.get("action") or "", forbidden_words)   # S218 audit
                 text = _derive_atom_text(place, action)
@@ -222,6 +263,7 @@ async def _atomize_whole_tour_legacy(
                 inserted += 1
         else:
             marker_id = f"atom_marker_{uuid.uuid4().hex[:10]}"
+            kept_ids.append(marker_id)
             await conn.execute("""
                 INSERT INTO acp_contract.tour_atoms
                     (atom_id, tour_id, owner_scope, text, starred, deleted,
@@ -230,6 +272,10 @@ async def _atomize_whole_tour_legacy(
             """, marker_id, tour_id, OWNER_SCOPE,
                 "(zero-atom marker — no content, see is_empty_marker)",
                 False, False, True, 1.0, source_hash)
+        # AA-645 step 0 (L1): this read replaces every earlier live atom of the tour (random ids never upsert).
+        replaced = _rowcount(await conn.execute(_RETIRE_REPLACED_SQL, tour_id, OWNER_SCOPE, kept_ids))
+    if replaced:
+        logger.info("a3_atomize_legacy_replaced", tour_id=tour_id, atoms=replaced)
 
     logger.info("a3_atomize_done", tour_id=tour_id, owner_scope=OWNER_SCOPE, atom_count=inserted)
     # AA-505 — real, computed quality_signal: how many atoms this exact call actually produced
@@ -247,7 +293,7 @@ async def _atomize_whole_tour_legacy(
         account=llm_result.satellite_account, fallback_used=llm_result.fallback_used,
         provider=llm_result.provider,
     )
-    return {"status": "success", "atom_count": inserted}
+    return {"status": "success", "atom_count": inserted, "replaced_atoms_deleted": replaced}
 
 
 # AA-694 A3-1 — atoms are "verbatim-derived" by prompt only. The Jev Question a3_atom_in_text
@@ -294,6 +340,7 @@ async def ground_day_atoms(atoms: list[dict], day: dict, owner_scope: str, tour_
 async def _atomize_per_day(
     tour_id: str, version_id: str, row: dict, days: dict,
     source_hash: str, pool, country: str, forbidden_words: list[str] | None = None,
+    force: bool = False,
 ) -> dict:
     """AA-508 — one day at a time: fingerprint-gated skip (blocks the LLM call, not just logged
     after one), content-hash atom_id, real UPSERT. See atom_extraction.py::content_hash_atom_id()/
@@ -326,8 +373,12 @@ async def _atomize_per_day(
     for day_num in sorted(days):
         day = days[day_num]
         fp = _day_fingerprint(day["title"], day["body"], _a3_cfg.model_id)
-        if existing_fp.get(day_num) != fp:
+        if force or existing_fp.get(day_num) != fp:
             to_ask.append((day_num, day, fp))
+
+    # AA-645 step 0 (C6): whatever is read below, a day this itinerary does not have keeps no live atom. Cheap (one
+    # UPDATE), and done before the all-skipped return too.
+    orphans = await _retire_orphan_days(pool, tour_id, days.keys())
 
     if not to_ask:
         logger.info("a3_atomize_all_days_skipped", tour_id=tour_id, version_id=version_id,
@@ -335,6 +386,7 @@ async def _atomize_per_day(
         return {
             "status": "skipped", "atom_count": 0,
             "days_total": len(days), "days_read": 0, "days_skipped": len(days),
+            "orphan_atoms_deleted": orphans,
         }
 
     # AA-754 — distinctiveness scoring was removed end-to-end. Atoms no longer carry a
@@ -468,6 +520,7 @@ async def _atomize_per_day(
         "status": "failed" if days_failed else "success",
         "atom_count": inserted, "days_total": len(days),
         "days_read": days_read, "days_skipped": len(days) - len(to_ask),
+        "orphan_atoms_deleted": orphans,
     }
     if days_failed:
         result["error"] = (

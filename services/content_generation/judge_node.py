@@ -112,6 +112,17 @@ def t2_judge_score(result, gate: str | None = None, *, has_mission: bool = True)
 __all__ = ["judge_node", "_JUDGE_SEED", "_JUDGE_TEMPERATURE"]
 
 
+# AA-645 step 0 (d02): the gate label of an A1 verdict on a writer-v2 draft — brand fit computed and logged
+# (llm_call_log quality_signal, generated_content.metadata.judge), the score not min()'d into quality_score, no
+# tie-break, no feedback merged into the retry.
+A1_REPORT_ONLY_GATE = "brand_fit_report_only"
+
+
+def is_v2_draft(state: dict) -> bool:
+    from services.content_generation.s1_writer_v2_live import is_v2
+    return is_v2(state)
+
+
 def a1_judge_score(result) -> float:
     """AA-698: the A1 master rewrite is brand-neutral by design (AA-535) — distinctiveness from
     other brands and a brand's mission-hook are T2's job, not A1's. So for A1 the gate is brand fit
@@ -281,23 +292,25 @@ def judge_node(state: dict) -> dict:
         else:
             result = score_brand_fit(state, generated, mission_absent_cap=_MISSION_ABSENT_CAP,
                                      stage=stage_for(state, "s1_judge"))  # AA-763
-            gate = "brand_fit"
             judge_score = a1_judge_score(result)
+            # AA-645 step 0 (d02): a draft of the S1 writer v2 is judged and logged, never gated on brand fit.
+            gate = A1_REPORT_ONLY_GATE if is_v2_draft(state) else "brand_fit"
             mission_source = None
             repeat_mode = None
             anchors = False
+        report_only = gate == A1_REPORT_ONLY_GATE
         tiebreak = None
-        if in_tie_band(judge_score, validate_score):
+        if not report_only and in_tie_band(judge_score, validate_score):
             judge_score, tiebreak = _tie_break(state, generated, judge_score)   # AA-692 A1-4, AA-699 T2-1
 
         # Stack the brand gate on top of validate's structural gate — never let high brand-fit mask a
-        # structurally broken output, and vice-versa.
-        new_score = min(validate_score, judge_score)
+        # structurally broken output, and vice-versa. Report-only (v2): validate's score alone.
+        new_score = validate_score if report_only else min(validate_score, judge_score)
 
         # Merge judge feedback into the retry feedback only when we're below threshold (a retry will
         # actually fire). Preserve validate's feedback so Bedrock sees both signals.
         feedback = state.get("feedback", "") or ""
-        if new_score < _MIN_QUALITY and result.feedback:
+        if new_score < _MIN_QUALITY and result.feedback and not report_only:
             feedback = f"{feedback}; {result.feedback}".strip("; ") if feedback else result.feedback
 
         logger.info("judge_done", brand_fit=result.brand_fit_score,

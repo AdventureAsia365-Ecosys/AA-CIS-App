@@ -80,6 +80,9 @@ LOGGED_CALL_SITES: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
         "services/content_generation/flag_fix_node.py", "_rerepair_meta"),
     ("services/content_generation/flag_fix_node.py", "flag_fix_node"): _self(
         "services/content_generation/flag_fix_node.py", "flag_fix_node"),
+    # AA-645 step 0: the S1 writer v2 on the live A1 path (writer, meta, meta retry; flag S1_WRITER_V2).
+    ("services/content_generation/s1_writer_v2_live.py", "_call"): _self(
+        "services/content_generation/s1_writer_v2_live.py", "_call"),
     ("services/content_generation/graph.py", "generate_node"): _self(
         "services/content_generation/graph.py", "generate_node"),
     ("services/content_generation/grounding.py", "repair"): _self(

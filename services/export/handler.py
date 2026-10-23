@@ -50,6 +50,25 @@ async def tour_segment_ids(conn, tour_id: str) -> list[str]:
     return [r["segment_id"] for r in rows]
 
 
+async def clear_brand_fit_cache(db, segment_ids: list[str]) -> int:
+    """AA-645 step 0 (T13) — delete the T7 Debate brand-fit cache rows (every tenant, every brand_version) of these
+    Segments and of the Routes that pass through any of them. A Segment keeps its id when a tour is rewritten
+    (upsert + alias), so its cached score would otherwise stay the one computed on the old atom text. Returns the
+    number of rows deleted."""
+    if not segment_ids:
+        return 0
+    status = await db.execute("""
+        DELETE FROM acp_shared.debate_brand_fit_cache c
+        WHERE c.segment_id = ANY($1::text[])
+           OR c.route_id IN (SELECT r.route_id FROM acp_contract.route r
+                             WHERE r.ordered_segment_ids ?| $1::text[])
+    """, list(segment_ids))
+    try:
+        return int(str(status).split()[-1])
+    except (ValueError, IndexError):
+        return 0
+
+
 async def remove_tour_from_caches(conn, tour_id: str) -> dict:
     """AA-743 — a tour leaving the active set (inactive / trashed) drops out of what the tenant
     Slate reads right away, without a platform recompute: its current `atom_ranking` rows and its
@@ -133,7 +152,7 @@ async def recompute_segment_score_route(tour_id: str, pool, *, log_tour_id: str 
 
 
 async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str, version_id: str,
-                                      reraise: bool = False, progress=None) -> dict:
+                                      reraise: bool = False, progress=None, force: bool = False) -> dict:
     """AA-526 — the actual A3 atomize call, launched fire-and-forget from process_export() so a
     slow multi-day LLM atomize run (services.acp_contract.a3_atomize.run_a3_atomize(), up to
     one LLM call per itinerary day) never adds latency to — or risks an API Gateway
@@ -160,9 +179,12 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
         from services.acp_contract.a3_atomize import run_a3_atomize
         result = await run_a3_atomize(
             tour_id, rewritten, pool,
-            country=country, version_id=version_id,
+            country=country, version_id=version_id, force=force,
         )
         logger.info("a3_atomize_done", tour_id=tour_id, result=result)
+        outcome["atomize"] = {k: result.get(k) for k in ("status", "atom_count", "days_total", "days_read",
+                                                          "orphan_atoms_deleted", "replaced_atoms_deleted")
+                              if k in result}
 
         # AA-545 — Segment/Score/Route now DO run here, platform-wide, right after atomize.
         # AA-526's own note (kept below, historical) explains why this was blocked at the time:
@@ -191,6 +213,17 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
             # to the debounced platform `recompute` job below, not inline.
             await run_stages(["segment"], RecomputeScope(tour_id=tour_id), pool=pool)
             segment_ids = await tour_segment_ids(pool, tour_id)
+            # AA-645 step 0 (T13): the T7 Debate brand-fit cache scored these Segments (and the Routes through
+            # them) on their atoms' old text; drop those rows when this run changed the tour's atoms, so the
+            # next Slate re-judges them on the new text (lazy, cached again on first use).
+            # Best effort on its own: a failed DELETE must not stop the Score/Route recompute below.
+            if result.get("status") != "skipped" or result.get("orphan_atoms_deleted"):
+                try:
+                    outcome["brand_fit_cache_cleared"] = await clear_brand_fit_cache(pool, segment_ids)
+                except Exception as cache_exc:
+                    outcome["brand_fit_cache_cleared"] = (
+                        f"failed: {type(cache_exc).__name__}: {str(cache_exc)[:200]}")
+                    logger.warning("a3_brand_fit_cache_clear_failed", tour_id=tour_id, exc_info=True)
             job_id, created = await enqueue_recompute(
                 pool, scope="platform", reason=f"a3_atomize:{tour_id}", segment_ids=segment_ids,
                 debounce_s=WAVE_DEBOUNCE_S, created_by="a3_atomize")
@@ -320,7 +353,15 @@ async def mark_tour_rejected(conn, tour_id: str) -> None:
         await sync_batch_completion(conn, row["batch_id"])
 
 
-async def process_export(version_id: str) -> dict:
+async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomize_force: bool = False,
+                         atomize_created_by: str = "system:a3_publish") -> dict:
+    """Publish one approved version as the tour's Master Content and enqueue its A3 atomize.
+
+    AA-645 step 0 (C2): the admin "promote" (make an older version current again) publishes through here too, with
+    `atomize_dedupe=False` (the `a3_atomize:<version_id>` key of that version's first publish is spent) and
+    `atomize_force=True` (that version's day fingerprints still match, so a normal run would skip every day and the
+    atoms of the version being replaced would stay). Atom ids are content hashes, so re-reading the old text brings
+    the old atoms back and soft-deletes the others."""
     conn = await asyncpg.connect(get_database_url())
     tenant_slug = os.environ.get("TENANT_SLUG", "aa_internal")
     silver = f"silver_{tenant_slug}"
@@ -439,16 +480,17 @@ async def process_export(version_id: str) -> dict:
         # that Lambda has never been invoked — process_export runs in the ECS API.)
         try:
             from services.jobs.a3_atomize_job import enqueue_a3_atomize
-            await enqueue_a3_atomize(
+            atomize_job_id = await enqueue_a3_atomize(
                 conn, tour_id=str(tour_id), version_id=str(row["id"]),  # generated_content.id
                 country=row.get("country") or "",
                 rewritten={
                     "name": row.get("aa_name"), "summary": row.get("aa_summary"),
                     "highlights": row.get("aa_highlights"), "itineraries": row.get("aa_itineraries"),
                 },
-                created_by="system:a3_publish",
+                created_by=atomize_created_by, dedupe=atomize_dedupe, force=atomize_force,
             )
         except Exception as exc:
+            atomize_job_id = None
             logger.error("a3_atomize_enqueue_failed", tour_id=str(tour_id), error=str(exc))
 
         # 3c. AA-653 (S207) — the tour now has a live Master Content version, so any other
@@ -480,6 +522,8 @@ async def process_export(version_id: str) -> dict:
             "status":     "exported",
             "catalog_id": catalog_id,
             "version_id": version_id,
+            "tour_id":    str(tour_id),
+            "atomize_job_id": atomize_job_id,
         }
     finally:
         await conn.close()

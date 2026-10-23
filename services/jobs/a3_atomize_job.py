@@ -39,14 +39,18 @@ KIND = "a3_atomize"
 
 
 async def enqueue_a3_atomize(db, *, tour_id: str, version_id: str, country: str, rewritten: dict,
-                             created_by: str, dedupe: bool = True) -> str:
+                             created_by: str, dedupe: bool = True, force: bool = False) -> str:
     """`db` is a pool or a single connection. `dedupe=True` (publish path) keys the job on the
     content version, so publishing the same version twice does not atomize twice; the admin
-    trigger passes False because it exists to re-run tours that are still un-atomized."""
+    trigger passes False because it exists to re-run tours that are still un-atomized.
+    `force=True` (AA-645 step 0, the promote path) re-reads every day even when the version's day
+    fingerprints match: a version made current again must serve its own atoms, not the replaced one's."""
+    payload = {"tour_id": str(tour_id), "version_id": str(version_id), "country": country or "",
+               "rewritten": rewritten}
+    if force:
+        payload["force"] = True
     job_id, _ = await enqueue(
-        db, KIND,
-        {"tour_id": str(tour_id), "version_id": str(version_id), "country": country or "",
-         "rewritten": rewritten},
+        db, KIND, payload,
         idempotency_key=f"{KIND}:{version_id}" if dedupe else None, created_by=created_by,
     )
     return job_id
@@ -75,7 +79,7 @@ async def run(ctx: JobContext) -> Optional[dict]:
     def _in_own_loop() -> dict:
         return asyncio.run(_run_a3_atomize_background(
             tour_id=p["tour_id"], rewritten=p["rewritten"], country=p.get("country") or "",
-            version_id=p["version_id"], reraise=True, progress=_report,
+            version_id=p["version_id"], reraise=True, progress=_report, force=bool(p.get("force")),
         ))
 
     outcome = await asyncio.to_thread(_in_own_loop) or {}

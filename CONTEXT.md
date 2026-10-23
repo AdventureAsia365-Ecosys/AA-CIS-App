@@ -2000,6 +2000,28 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   (DAY_PLACE_MISMATCH, NAME_NOT_IN_SOURCE, NUMBER_NOUN_MISMATCH are report-only). The A1 flag-fix prompt and the A1
   brand-audit judge's user prompt are neutral white-label (no "Adventure Asia"); the judge's voice rubric
   (`AA_BRAND_IDENTITY_PROMPT`) is unchanged until the step-5 cleanup.
+- **S1 writer v2 on the live A1 path** (AA-645 step 0, S248; Nghiep d01 / d02): `S1_WRITER_V2` (env on the worker,
+  default OFF) makes `generate_node` write arm W through `services/content_generation/s1_writer_v2_live.py` — writer
+  + separate meta call + one meta retry on the `s1_generate` stage (the model is that stage's Model Gateway route:
+  W x Sonnet = a route change in Settings, no model id in code), each reply one `llm_call_log` row (role `writer`,
+  `quality_signal.writer_version = "v2"`). A1 admin rewrite only: never a T2 tenant rewrite (`is_tenant_rewrite`,
+  stage `t2_generate`), never the Bedrock Batch seed path. The draft carries `writer_version = "v2"` (graph state,
+  `generated_content.metadata.writer_version`): validate keeps ITINERARY_STILL_COMPRESSED and DFS_INTENT_UNDERUSED
+  report-only for it (in `quality_shadow`, detector `s1_writer_v2`: v2 has no length target and no nudge, and uses a
+  keyword only when it fits), and the A1 judge computes and logs brand fit but does not gate it (gate label
+  `brand_fit_report_only`: no min() into the score, no tie-break, no feedback into the retry). The same holds on a
+  reviewer edit / admin revalidate of a v2 version (`_revalidate_tour` seeds `writer_version` from the metadata).
+  When the AA voice-rubric LLM brand audit runs on a v2 draft (only when the judge did not), its voice codes and a
+  bare not-publish-ready verdict are report-only too (`quality_shadow`, detector `s1_writer_v2_brand_audit`); the
+  pre-audit codes, product-truth codes and a `manual_check` verdict still gate. Every other gate (validate,
+  grounding, flag_fix, revalidate, the day oracle) is unchanged. `raw_tours.group_size` /
+  `best_time_to_go` reach the v2 fact sheet as `tour_agency` (A1 only).
+- **Per-wave quality report** (AA-645 step 0, d13): `scripts/aa645/wave_report.py` (read-only, $0) compares, per
+  country, the version a rerun wave wrote with the version that was live before it: outcome (published / stayed v1 /
+  not published), the A/B code checks on both pages (gate pages = the serious-error proxy, gate codes, figure
+  coverage), stored validate codes, grounding still-unsupported, brand fit (report-only on v2), $ per tour, atoms after
+  the wave (published-not-atomized, live atoms on a day past the new day count), and the memo section 6 stop
+  conditions.
 - **Degraded detectors + repair contract** (AA-925, Q-2, design §4.3/§6.3; `services/quality/`, pure modules —
   gate runners are passed in, no writer module is imported):
   - `degraded[]` (`services/quality/degraded.py`) names every fail-open path that ran on an output: Jev
@@ -2039,6 +2061,25 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   Content" once it lands here. Atomize (see Atom above) now fires automatically right after a
   tour is published here (AA-526, `services/export/handler.py::process_export()`), as a
   fire-and-forget background task, `owner_scope='platform'`.
+  - **Publish dates** (AA-645 d06, CIS 273): `published_tours.published_at` is the FIRST publish — a new version of a
+    published tour (re-export, a rerun wave, a promote) keeps it, so the tenant Browse pool and TripPlanner's browse
+    order do not move; `published_tours.updated_at` records the last change, and `catalog.v_tour.updated_at` follows
+    it (`catalog._live_tour.master_updated_at`). Anything that means "changed recently / in this wave" reads
+    `updated_at`: the rerun-wave report (`services/waves/report.py`, `published_in_wave`), the admin library
+    `published_last_30d` / `stale_count` / `last_published` and the overview funnel `published_7d`.
+  - **Promote = per-tour rollback** (AA-645 step 0, C2): `POST /admin/tours/{id}/versions/{n}/promote` publishes an
+    `approved` version through `process_export` (every text / SEO field, the score pointer, the live-source rule) and
+    re-atomizes it with `dedupe=False` + `force=True` (the version's job key and day fingerprints are already spent);
+    atom ids are content hashes, so the old text brings the old atoms back. A version that is not `approved` → 409
+    (approve it in the Review Queue); a dead source → 409 `source_not_live`. The Master write is the tour lifecycle
+    service's `publish` (AA-986 L2, see Served state): it locks the source FOR SHARE and re-checks it, so a retire that
+    lands between promote's check and the publish is refused too (process_export's L1 refusal, 409). The publish-date
+    rule above is the ON CONFLICT branch of the repository insert that only that service runs.
+  - **Atomize retires what the new text no longer has** (AA-645 step 0): the per-day path soft-deletes live atoms on a
+    day the itinerary no longer has (and day-less legacy rows), also on an all-skipped run (C6); the legacy path (no
+    `Day N —` headers, random ids) soft-deletes the tour's earlier atoms after a good read (L1). An atomize that changed
+    atoms drops the T7 Debate brand-fit cache rows (`acp_shared.debate_brand_fit_cache`) of the tour's Segments and
+    the Routes through them (T13); the next Slate re-judges them.
   - **Accepted score pointer** `published_tours.quality_score_id` (FK to `silver_aa_internal.quality_scores`,
     ON DELETE SET NULL, CIS 268) = the published version's latest score row (`evaluated_at DESC, id DESC`).
     Export sets it with that rule; a revalidation (`_revalidate_tour`, `revalidate` job) writes the new score
