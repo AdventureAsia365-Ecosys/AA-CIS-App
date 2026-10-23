@@ -16,6 +16,11 @@
   and `facts` stay unreadable, review S247). Any other grant on them is still a violation. V1 stays byte for
   byte as it is: 241 and 262 carry it (their tests check that), and a DB that has 265 applied fails V1 by those
   8 rows by design.
+* `NO_PRIVILEGE_WITHOUT_RLS_SQL_V3` (AA-986 L2, migration 272): V2 plus one exception, table-level SELECT on
+  gold_aa_internal.v_tour_liveness (the served state of AA's catalog keys: no tenant rows; the tenant pool reads it
+  from slice L3). The same text is guard 4 of 272. V2 stays byte for byte (265 / 266 carry it); a DB with 272 applied
+  fails V2 by that one row by design (`revoke_tour_liveness_read` takes it away before a test re-applies 241 / 262 /
+  265 / 266).
 * `undo_241_for_239_reapply(cur)`: 239's guard 1 refuses RLS on angle_gate_option and year_plan (both were 239
   REVOKE tables, "with RLS a later wave owns its grants"). A fixture that re-applies 239 on the fully migrated CI
   DB first takes angle_gate_option back to its pre-241 state and year_plan to its pre-265 state
@@ -126,6 +131,54 @@ SELECT c.oid::regclass::text, a.privilege_type, att.attname::text
 ORDER BY 1, 3, 2"""
 
 
+# The same text is guard 4 of migration 272.
+NO_PRIVILEGE_WITHOUT_RLS_SQL_V3 = """\
+SELECT c.oid::regclass::text AS rel, a.privilege_type, NULL::text AS column_name
+  FROM pg_class c
+  JOIN pg_namespace ns ON ns.oid = c.relnamespace
+ CROSS JOIN LATERAL aclexplode(c.relacl) a
+ WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+   AND NOT c.relrowsecurity
+   AND ns.nspname NOT IN ('pg_catalog', 'information_schema')
+   AND ns.nspname NOT LIKE 'pg_toast%'
+   AND a.grantee = 'aa_app_user'::regrole
+   AND NOT (ns.nspname = 'catalog'
+            AND c.relowner IS NOT DISTINCT FROM to_regrole('catalog_owner')
+            AND a.privilege_type = 'SELECT')
+   AND NOT (ns.nspname || '.' || c.relname = ANY (ARRAY['acp_contract.route', 'acp_contract.atom_segment',
+                                                        'acp_contract.atom_segment_member',
+                                                        'acp_contract.atom_segment_alias',
+                                                        'acp_shared.place_card_alias', 'acp_shared.atom_place_card',
+                                                        'gold_aa_internal.v_tour_liveness'])
+            AND a.privilege_type = 'SELECT')
+UNION ALL
+SELECT c.oid::regclass::text, a.privilege_type, att.attname::text
+  FROM pg_class c
+  JOIN pg_namespace ns ON ns.oid = c.relnamespace
+  JOIN pg_attribute att ON att.attrelid = c.oid AND att.attacl IS NOT NULL AND NOT att.attisdropped
+ CROSS JOIN LATERAL aclexplode(att.attacl) a
+ WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+   AND NOT c.relrowsecurity
+   AND ns.nspname NOT IN ('pg_catalog', 'information_schema')
+   AND ns.nspname NOT LIKE 'pg_toast%'
+   AND a.grantee = 'aa_app_user'::regrole
+   AND NOT (ns.nspname || '.' || c.relname = 'acp_shared.place_card'
+            AND att.attname IN ('card_id', 'status')
+            AND a.privilege_type = 'SELECT')
+ORDER BY 1, 3, 2"""
+
+# AA-986 L2 (272): the one relation V3 adds to the tenant pool's allowlist.
+TOUR_LIVENESS_VIEW = "gold_aa_internal.v_tour_liveness"
+
+
+def revoke_tour_liveness_read(cur):
+    """aa_app_user's 272 SELECT on gold_aa_internal.v_tour_liveness revoked: the pre-272 state the V1 / V2 guards of
+    241 / 262 / 265 / 266 expect when a test re-applies them on the fully migrated DB. A no-op before 272."""
+    cur.execute("SELECT to_regclass(%s)", (TOUR_LIVENESS_VIEW,))
+    if cur.fetchone()[0] is not None:
+        cur.execute(f"REVOKE ALL ON {TOUR_LIVENESS_VIEW} FROM aa_app_user")
+
+
 def migration_path(n) -> str:
     """The one file `api/migrations/<n>_*.sql`."""
     matches = glob.glob(os.path.join(MIGRATIONS_DIR, f"{n}_*.sql"))
@@ -161,8 +214,10 @@ def undo_265_year_plan(cur):
 
 def revoke_platform_reads(cur):
     """aa_app_user's 265 SELECT on the platform read allowlist revoked, table and column level (REVOKE ALL on a
-    table also drops its column grants): the pre-265 state."""
+    table also drops its column grants): the pre-265 state. Also the later 272 read of v_tour_liveness (AA-986 L2),
+    which the V1 / V2 guards of 241 / 262 / 265 predate."""
     cur.execute(f"REVOKE ALL ON {', '.join(PLATFORM_READ_ALLOWLIST)} FROM aa_app_user")
+    revoke_tour_liveness_read(cur)
 
 
 def restore_266_catalog_owner_read(cur):

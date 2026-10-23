@@ -9,12 +9,14 @@ Payload (POST /admin/job-runner/erasure/run builds it; never an e-mail address):
 
 DRY RUN (SELECT only, one repeatable-read read-only transaction): rows per CIS table and action, blockers, the
 delete order, S3 objects and secrets of a tenant (best-effort), the per-app checklist and a `fingerprint` of the
-counts. A DRY RUN after an apply is the independent verification (every count 0).
+subject and the counts (plan.fingerprint v2: the tenant id, or the address hash with a per-DRY-RUN salt kept in
+`result.subject_salt` until the hash is stripped). A DRY RUN after an apply is the independent verification
+(every count 0).
 
 Apply (destructive-ops.md: DRY RUN -> approval -> snapshot -> transaction -> verify) runs only when ALL hold:
   - env ERASURE_APPLY_ENABLED is "true" (unset = off; it is off on every environment today),
   - dry_run_job_id is a succeeded data_erasure DRY RUN of the same subject, at most ERASURE_DRY_RUN_MAX_AGE_HOURS
-    old, whose fingerprint equals approved_fingerprint (the counts Nghiệp approved),
+    old, whose fingerprint (v2, bound to the subject) equals approved_fingerprint (what Nghiệp approved),
   - approved_by and snapshot_id (the manual RDS snapshot) are given,
   - tenant: offboarded (cancelled_at) at least ERASURE_TENANT_RETENTION_DAYS days ago, never the AA tenant,
   - inside the apply transaction: the recount gives the same fingerprint and no blocker; every statement touches
@@ -32,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -49,6 +52,7 @@ SUBJECTS = ("tenant", "traveller")
 MODES = ("dry_run", "apply")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+SALT_RE = re.compile(r"^[0-9a-f]{32}$")
 
 APPLY_FLAG = "ERASURE_APPLY_ENABLED"
 # Business values not set yet (Nghiệp sets the tenant retention window, AA-839): safe defaults, env-overridable.
@@ -85,6 +89,14 @@ def tenant_retention_days(env: Optional[dict] = None) -> int:
 
 def dry_run_max_age(env: Optional[dict] = None) -> timedelta:
     return timedelta(hours=max(1, _int_env("ERASURE_DRY_RUN_MAX_AGE_HOURS", DEFAULT_DRY_RUN_MAX_AGE_HOURS, env)))
+
+
+def subject_key(payload: dict, salt: Optional[str]) -> str:
+    """What the fingerprint binds besides the counts (AA-839 review): the tenant id, or the traveller key (the
+    address hash with the DRY RUN's salt, plan.traveller_key)."""
+    if payload["subject"] == "tenant":
+        return payload["tenant"]
+    return pl.traveller_key(payload["email_sha256"], salt or "")
 
 
 def validate_payload(payload: dict) -> dict:
@@ -148,6 +160,11 @@ def apply_refusals(payload: dict, dry_job: Optional[dict], tenant_row: Optional[
         finished = dry_job.get("finished_at")
         if finished is None or now - finished > dry_run_max_age(env):
             out.append(f"the DRY RUN is older than {dry_run_max_age(env)}; run a new one and approve it")
+        if res.get("fingerprint_version") != pl.FINGERPRINT_VERSION:
+            out.append("the DRY RUN predates the subject-bound fingerprint (AA-839); run a new DRY RUN and "
+                       "approve it")
+        elif payload.get("subject") == "traveller" and not SALT_RE.match(str(res.get("subject_salt") or "")):
+            out.append("the DRY RUN holds no subject salt (stripped or not a DRY RUN); run a new DRY RUN")
         if res.get("fingerprint") != str(payload.get("approved_fingerprint", "")).lower():
             out.append("approved_fingerprint differs from the DRY RUN's fingerprint")
         if res.get("blocked"):
@@ -347,12 +364,24 @@ async def run_erasure(ctx: JobContext, *, env: Optional[dict] = None, now: Optio
                 counted = await pl.count_traveller(conn, payload["email_sha256"], catalog.tables)
                 counted.setdefault("blockers", [])
         rows = counted["rows"]
-        fp = pl.fingerprint(subject, rows)
+        dry_job = await _dry_job(conn, payload["dry_run_job_id"]) if mode == "apply" else None
+        # a traveller DRY RUN draws the salt; a traveller apply reuses its DRY RUN's (apply_refusals refuses a
+        # missing one); a tenant fingerprint is keyed by the tenant id and takes no salt
+        salt = None
+        if subject == "traveller":
+            salt = (secrets.token_hex(16) if mode == "dry_run" else
+                    str(((dry_job or {}).get("result") or {}).get("subject_salt") or ""))
+        key = subject_key(payload, salt)
+        fp = pl.fingerprint(subject, key, rows)
         result: dict[str, Any] = {
-            "subject": subject, "mode": "dry_run", "fingerprint": fp, "totals": totals(rows), "rows": rows,
+            "subject": subject, "mode": "dry_run", "fingerprint": fp, "fingerprint_version": pl.FINGERPRINT_VERSION,
+            "totals": totals(rows), "rows": rows,
             "blockers": counted.get("blockers", []), "blocked": bool(counted.get("blockers")),
             "checklist": checklist(subject, payload.get("tenant")),
         }
+        if subject == "traveller" and mode == "dry_run" and not payload.get("verify"):
+            # kept only while the hash is kept: _strip_hash removes both (a verification run is never applied)
+            result["subject_salt"] = salt
         if subject == "tenant":
             result.update({
                 "tenant": payload["tenant"],
@@ -372,7 +401,6 @@ async def run_erasure(ctx: JobContext, *, env: Optional[dict] = None, now: Optio
             result["skipped_tables"] = counted.get("skipped", [])
             result["manual"] = [r for r in rows if r["action"] == "manual" and r["rows"]]
         now = now or datetime.now(timezone.utc)
-        dry_job = await _dry_job(conn, payload["dry_run_job_id"]) if mode == "apply" else None
         refusals = apply_refusals(payload, dry_job, tenant_row, now, env) if mode == "apply" else None
         result["apply"] = {
             "enabled": apply_enabled(env),
@@ -399,20 +427,23 @@ async def run_erasure(ctx: JobContext, *, env: Optional[dict] = None, now: Optio
             payload["dry_run_job_id"], ctx.job_id)
         if claimed is None:
             raise NonRetryable("apply refused: the DRY RUN was already used by another apply; run a new DRY RUN")
-        return await _apply(ctx, conn, payload, plan, catalog.tables, fp, result, env=env, now=now)
+        return await _apply(ctx, conn, payload, plan, catalog.tables, fp, key, result, env=env, now=now)
 
 
 async def _strip_hash(conn, job_ids: list[str], email_sha256: Optional[str], marker: str) -> None:
-    """Replaces the traveller hash in data_erasure job rows: the given ids, and every row holding that hash."""
+    """Replaces the traveller hash in data_erasure job rows: the given ids, and every row holding that hash. The
+    DRY RUN's subject salt goes with it, so the fingerprint left in the row cannot be tested against a guessed
+    address (AA-839 review)."""
     await conn.execute(
-        "UPDATE shared.job SET payload = jsonb_set(payload, '{email_sha256}', to_jsonb($2::text)) "
-        "WHERE kind = $4 AND payload ? 'email_sha256' "
+        "UPDATE shared.job SET payload = jsonb_set(payload, '{email_sha256}', to_jsonb($2::text)), "
+        "result = CASE WHEN jsonb_typeof(result) = 'object' THEN result - 'subject_salt' ELSE result END "
+        "WHERE kind = $4 AND jsonb_typeof(payload) = 'object' AND payload ? 'email_sha256' "
         "AND (id = ANY($1::uuid[]) OR ($3::text IS NOT NULL AND payload ->> 'email_sha256' = $3::text))",
         job_ids, marker, email_sha256, KIND)
 
 
-async def _apply(ctx: JobContext, conn, payload: dict, plan, tables: set[str], dry_fp: str, result: dict, *,
-                 env: Optional[dict] = None, now: Optional[datetime] = None) -> dict:
+async def _apply(ctx: JobContext, conn, payload: dict, plan, tables: set[str], dry_fp: str, key: str,
+                 result: dict, *, env: Optional[dict] = None, now: Optional[datetime] = None) -> dict:
     subject = payload["subject"]
     approved = str(payload["approved_fingerprint"]).lower()
     if dry_fp != approved:
@@ -435,7 +466,7 @@ async def _apply(ctx: JobContext, conn, payload: dict, plan, tables: set[str], d
             recount = await pl.count_tenant(conn, plan, payload["tenant"])
         else:
             recount = await pl.count_traveller(conn, payload["email_sha256"], tables)
-        if pl.fingerprint(subject, recount["rows"]) != approved or recount.get("blockers"):
+        if pl.fingerprint(subject, key, recount["rows"]) != approved or recount.get("blockers"):
             raise NonRetryable("the recount inside the apply transaction differs from the approved DRY RUN")
         expected = {(r["table"], r["action"]): int(r["rows"]) for r in recount["rows"]}
         if subject == "tenant":
