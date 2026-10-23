@@ -162,6 +162,8 @@ def score(units: list[dict], panel: dict[str, dict], baseline: Optional[str]) ->
             "figure_coverage_mean": round(sum(cov) / len(cov), 3) if cov else None,
             "calls_per_tour": round(sum(u.get("n_calls", 0) for u in paid) / len(paid), 2) if paid else 0,
             "usd_per_tour": round(sum(u.get("cost_usd", 0) for u in paid) / len(paid), 4) if paid else 0,
+            "retried": sum(1 for u in us if (u.get("attempt") or 1) > 1),
+            "retry_usd": round(sum(a.get("cost_usd") or 0 for u in us for a in u.get("prior_attempts") or []), 4),
         }
     _common_rates(groups, panel, table)
     if baseline:
@@ -226,29 +228,35 @@ def pick(table: dict, arm: str = "w") -> dict:
     writer errors, every sample of the arm completed and panel-scored); among them the lowest serious rate on the
     common tours; a cheaper model within the tie band (TIE_BAND relative, TIE_FLOOR absolute) of the best wins.
     No eligible row → pick None: the screen did not find a usable writer. Every row is listed in `rows`, an
-    excluded one with its reason."""
+    excluded one with its reason. A row whose units needed `--retry-errors` stays eligible (the retry succeeded)
+    but is named in `warnings`, and `pick_retried` shows it for the chosen row: a writer that needs retries is less
+    reliable than its final error count of 0 says."""
     caveat = "12 tours choose a writer, they do not prove one (q4-q8 §2.2 step 1); confirm in A/B run 1."
     arm_rows = {k: v for k, v in table.items() if k.startswith(arm + "|")}
     coverage = {k: {"units": v["units"], "errors": v["errors"], "panel_scored": v["panel_scored"],
                     "common_tours": v.get("common_tours"), "pages_with_gate_code": v["pages_with_gate_code"],
-                    "eligible": bool(v.get("eligible")), "excluded_reason": v.get("excluded_reason")}
+                    "eligible": bool(v.get("eligible")), "excluded_reason": v.get("excluded_reason"),
+                    "retried": v.get("retried", 0)}
                 for k, v in arm_rows.items()}
+    warnings = [f"{k}: {v['retried']} unit(s) needed a retry (--retry-errors) — the writer is less reliable than "
+                f"its error count shows" for k, v in sorted(coverage.items()) if v["retried"]]
     if not any(v.get("panel_scored") for v in arm_rows.values()):
         return {"pick": None, "gate_clean_pick": False, "why": "no panel-scored rows for arm " + arm,
-                "rows": coverage, "caveat": caveat}
+                "rows": coverage, "warnings": warnings, "caveat": caveat}
     clean = {k: v for k, v in arm_rows.items()
              if v.get("eligible") and v.get("serious_per_claim_common") is not None}
     if not clean:
         return {"pick": None, "gate_clean_pick": False,
                 "why": ("no eligible row of arm " + arm + " (zero gate pages, zero writer errors, every sample "
                         "completed and panel-scored); see rows[*].excluded_reason"),
-                "rows": coverage, "caveat": caveat}
+                "rows": coverage, "warnings": warnings, "caveat": caveat}
     best = min(v["serious_per_claim_common"] for v in clean.values())
     limit = max(best * (1 + TIE_BAND), best + TIE_FLOOR) + 1e-9
     near = {k: v for k, v in clean.items() if v["serious_per_claim_common"] <= limit}
     choice = min(near, key=lambda k: (near[k]["usd_per_tour"], near[k]["serious_per_claim_common"]))
     return {"pick": choice, "gate_clean_pick": True, "best_rate": best, "rate": "serious_per_claim_common",
-            "within_tie_band": sorted(near), "gate_clean": sorted(clean), "rows": coverage, "caveat": caveat}
+            "within_tie_band": sorted(near), "gate_clean": sorted(clean), "pick_retried": coverage[choice]["retried"],
+            "rows": coverage, "warnings": warnings, "caveat": caveat}
 
 
 def export_examples(units: list[dict], prefixes: list[str], arm: str, model: str) -> list[dict]:
@@ -294,8 +302,8 @@ def main(argv=None) -> int:
               f"rate={row['serious_per_claim_pooled']} common={row.get('serious_per_claim_common')}"
               f"/{row.get('common_tours')} "
               f"rank={row['rank_mean']} gates={row['pages_with_gate_code']} cov={row['figure_coverage_mean']} "
-              f"calls={row['calls_per_tour']} ${row['usd_per_tour']}" + (f" vs={row['vs_baseline']}"
-                                                                         if "vs_baseline" in row else ""))
+              f"calls={row['calls_per_tour']} ${row['usd_per_tour']} retried={row['retried']}"
+              + (f" vs={row['vs_baseline']}" if "vs_baseline" in row else ""))
     if args.pick:
         print("pick:", json.dumps(result["pick"]))
     return 0

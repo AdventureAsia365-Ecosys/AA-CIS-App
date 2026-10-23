@@ -415,3 +415,57 @@ def test_pick_is_none_with_the_reason_when_no_row_is_eligible():
     got = score_screen.pick(score_screen.score(units, _screen_panel(units, lambda u: 0), None))
     assert got["pick"] is None and got["gate_clean_pick"] is False and got["why"].startswith("no eligible row")
     assert got["rows"]["w|luna"]["excluded_reason"] == "1/2 samples of the arm completed and panel-scored"
+
+
+def test_retry_unit_keeps_the_attempt_history():
+    unit = {"key": "t1__w__x", "sample_id": "t1", "arm": "w", "model": "x"}
+    assert s1_screen.retry_unit(unit, None) is unit
+    first = {**unit, "error": "writer reply is not JSON", "n_calls": 1, "cost_usd": 0.02}
+    again = s1_screen.retry_unit(unit, first)
+    assert again["attempt"] == 2 and again["prior_attempts"] == [
+        {"error": "writer reply is not JSON", "n_calls": 1, "cost_usd": 0.02}]
+    third = s1_screen.retry_unit(unit, {**again, "error": "timeout", "n_calls": 1, "cost_usd": 0.03})
+    assert third["attempt"] == 3 and [a["error"] for a in third["prior_attempts"]] == [
+        "writer reply is not JSON", "timeout"]
+
+
+def test_retried_units_are_counted_and_warned_in_the_pick():
+    units = [_screen_unit("haiku", t) for t in "abc"] + [_screen_unit("sonnet", t, cost=0.08) for t in "abc"]
+    units[0].update(attempt=2, prior_attempts=[{"error": "boom", "n_calls": 1, "cost_usd": 0.004}])
+    table = score_screen.score(units, _screen_panel(units, lambda u: 1), None)
+    assert table["w|haiku"]["retried"] == 1 and table["w|haiku"]["retry_usd"] == 0.004
+    assert table["w|sonnet"]["retried"] == 0
+    got = score_screen.pick(table)
+    assert got["pick"] == "w|haiku" and got["pick_retried"] == 1 and got["rows"]["w|haiku"]["retried"] == 1
+    assert len(got["warnings"]) == 1 and got["warnings"][0].startswith("w|haiku: 1 unit(s) needed a retry")
+    assert s1_screen.summarize(units)["w|haiku"]["retried"] == 1
+
+
+def _retry_run(tmp_path, run_capped):
+    import uuid as _uuid
+    run_id = str(_uuid.uuid4())
+    key = s1_screen.safe_key("t1", "w", "x")
+    pages = tmp_path / run_id / "pages"
+    pages.mkdir(parents=True)
+    (pages / f"{key}.json").write_text(json.dumps(
+        {"key": key, "sample_id": "t1", "arm": "w", "model": "x", "error": "writer reply is not JSON",
+         "calls": [{"call": "write", "cost_usd": 0.02}], "n_calls": 1, "cost_usd": 0.02}))
+    with patch.object(s1_screen, "load_inputs", return_value=([SAMPLE], {})), \
+            patch.object(s1_screen, "run_capped", side_effect=run_capped), \
+            patch("shared.llm_client.client.LLMClient"), \
+            patch("shared.llm_client.call_log.wait_for_pending_writes"):
+        s1_screen.main(["--source", "db", "--out", str(tmp_path), "--run-id", run_id, "--resume", "--retry-errors",
+                        "--models", "x", "--arms", "w"])
+    return {u["key"]: u for u in json.loads((tmp_path / run_id / "pages.json").read_text())}[key]
+
+
+def test_retry_errors_run_records_the_attempt_and_keeps_the_errored_unit_when_skipped(tmp_path):
+    def ok(client, run_id, unit, sample, ctx, cap):
+        return {**unit, "calls": [], "n_calls": 2, "cost_usd": 0.03, "error": None, "output": {}, "findings": []}
+    got = _retry_run(tmp_path / "ok", ok)
+    assert got["error"] is None and got["attempt"] == 2 and got["prior_attempts"][0]["cost_usd"] == 0.02
+
+    def skipped(client, run_id, unit, sample, ctx, cap):
+        return {**unit, "error": "skipped_cost_cap", "calls": [], "n_calls": 0, "cost_usd": 0.0}
+    got = _retry_run(tmp_path / "skip", skipped)
+    assert got["error"] == "writer reply is not JSON" and "attempt" not in got

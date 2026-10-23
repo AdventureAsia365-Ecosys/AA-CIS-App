@@ -486,6 +486,8 @@ def summarize(units: list[dict]) -> dict:
             "calls_per_tour": round(sum(u["n_calls"] for u in paid) / len(paid), 2) if paid else 0,
             "usd_per_tour": round(sum(u["cost_usd"] for u in paid) / len(paid), 4) if paid else 0,
             "usd_total": round(sum(u["cost_usd"] for u in paid), 4),
+            "retried": sum(1 for u in us if (u.get("attempt") or 1) > 1),
+            "retry_usd": round(sum(a.get("cost_usd") or 0 for u in us for a in u.get("prior_attempts") or []), 4),
             "meta_first_try_ok": sum(1 for u in ok if u.get("meta_first_problems") == []),
             "meta_final_ok": sum(1 for u in ok if u.get("meta_final_problems") == []),
             "writer_stop_max_tokens": sum(1 for u in us for c in u["calls"]
@@ -571,6 +573,17 @@ class Sink:
         return found
 
 
+def retry_unit(unit: dict, prev: Optional[dict]) -> dict:
+    """`--retry-errors`: the new attempt of an errored unit carries its history, so a retry is not invisible —
+    `attempt` (1 = first try) and `prior_attempts` ([{error, n_calls, cost_usd}], oldest first; their $ is spent too).
+    The scorer counts retried units per arm × model and the pick warns on them."""
+    if not prev:
+        return unit
+    history = list(prev.get("prior_attempts") or []) + [
+        {"error": prev.get("error"), "n_calls": prev.get("n_calls", 0), "cost_usd": prev.get("cost_usd", 0.0)}]
+    return {**unit, "attempt": int(prev.get("attempt") or 1) + 1, "prior_attempts": history}
+
+
 def safe_key(*parts: str) -> str:
     return "__".join(re.sub(r"[^A-Za-z0-9.-]+", "-", p) for p in parts)
 
@@ -600,7 +613,8 @@ def parse_args(argv=None):
     ap.add_argument("--run-id")
     ap.add_argument("--resume", action="store_true", help="skip the units already written for --run-id")
     ap.add_argument("--retry-errors", action="store_true",
-                    help="with --resume, run again the written units that ended in an error (paid)")
+                    help="with --resume, run again the written units that ended in an error (paid); the new "
+                         "attempt keeps attempt/prior_attempts and the scorer warns on retried rows")
     ap.add_argument("--out", default="/tmp/aa645")
     ap.add_argument("--s3", action="store_true")
     ap.add_argument("--panel-include-stored", action="store_true")
@@ -628,9 +642,12 @@ def main(argv=None) -> int:
     sink.put("samples.json", [{"sample_id": s["sample_id"], "tour_id": s.get("tour_id"),
                                "name": s["tour"].get("name"), "duration": s["tour"].get("duration")} for s in samples])
     done = sink.existing() if args.resume else {}
+    prior = {}
     if args.retry_errors:
+        prior = {k: v for k, v in done.items() if v.get("error") is not None}
         done = {k: v for k, v in done.items() if v.get("error") is None}
-    units = [{"key": safe_key(s["sample_id"], a, m), "sample_id": s["sample_id"], "arm": a, "model": m}
+    units = [retry_unit({"key": safe_key(s["sample_id"], a, m), "sample_id": s["sample_id"], "arm": a, "model": m},
+                        prior.get(safe_key(s["sample_id"], a, m)))
              for s in samples for m in models for a in arms]
     todo = [u for u in units if u["key"] not in done]
     print(f"run={run_id} samples={len(samples)} units={len(units)} todo={len(todo)} cap=${args.max_cost_usd}",
@@ -660,6 +677,8 @@ def main(argv=None) -> int:
             r = fut.result()
             if r.get("error") == "skipped_cost_cap":
                 skipped.append(r["key"])
+                if r["key"] in prior:            # not retried after all: keep the errored unit in the run
+                    results[r["key"]] = prior[r["key"]]
                 continue
             results[r["key"]] = r
             sink.put(f"pages/{r['key']}.json", r)
