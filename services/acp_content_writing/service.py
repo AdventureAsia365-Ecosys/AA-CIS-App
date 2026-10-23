@@ -50,8 +50,8 @@ from services.acp_content_writing.quality_gates import (
     keyword_covered, title_taken,
 )
 from services.acp_content_writing.facts import fetch_facts_for_writing, format_facts_block
-from services.acp_content_writing import (authenticity, faq_answer_fit, faq_filter, hygiene, sentence_repair,
-                                          text_integrity, trip_facts)
+from services.acp_content_writing import (authenticity, faq_answer_fit, faq_filter, hygiene, length_trim,
+                                          sentence_repair, text_integrity, trip_facts)
 from services.acp_content_writing.generate import (SEO_FIT_STAGE, SentenceRepairError, fit_seo_fields,
                                                    repair_sentences, rewrite_with_feedback, write_content, write_faq)
 from services.acp_content_writing.quality_gates import (CHEAP_REPAIR_GATES, F13_REPEAT_GATE, F14_GATE, F19_GATE,
@@ -503,7 +503,9 @@ def _cut_blog_truth_items(content_text: str, items: list[dict], *, ignore: froze
         for it in items:
             if it in cut_items:
                 continue
-            span = sentence_repair.locate_sentence(cut, it["sentence"])
+            # AA-984 — a heading item left to repair is found again as a heading
+            locate = sentence_repair.locate_heading if it.get("heading") else sentence_repair.locate_sentence
+            span = locate(cut, it["sentence"])
             if span is None:
                 refusal = "a sentence left to repair could not be found after the cut"
                 break
@@ -511,9 +513,16 @@ def _cut_blog_truth_items(content_text: str, items: list[dict], *, ignore: froze
     if refusal is not None:
         return content_text, items, {"repair_mode": "truth_cut_refused", "sentences_cut": 0,
                                      "truth_cut_refused": refusal}
-    return cut, rest, {"repair_mode": "truth_cut", "sentences_cut": len(cut_items),
-                       "cut_sentences": [it["sentence"][:200] for it in cut_items],
-                       "cut_gates": sorted({g for it in cut_items for g in (it.get("gates") or [it.get("gate")])})}
+    # AA-984 — a flagged heading is never cut: delete_flagged gave it its section's place name
+    headings = [it for it in cut_items if it.get("heading")]
+    cut_items = [it for it in cut_items if not it.get("heading")]
+    entry = {"repair_mode": "truth_cut", "sentences_cut": len(cut_items),
+             "cut_sentences": [it["sentence"][:200] for it in cut_items],
+             "cut_gates": sorted({g for it in cut_items + headings for g in (it.get("gates") or [it.get("gate")])})}
+    if headings:
+        entry["headings_replaced"] = len(headings)
+        entry["replaced_headings"] = [it["sentence"][:200] for it in headings]
+    return cut, rest, entry
 
 
 def _is_floor_block(g: dict) -> bool:
@@ -1249,15 +1258,26 @@ async def _sibling_titles(tenant_id: Optional[str], channel: Optional[str], piec
         return []
 
 
-def _repair_feedback(gate_ledger: list[dict]) -> list[str]:
+def _repair_feedback(gate_ledger: list[dict], channel: Optional[str] = None) -> list[str]:
     """AA-768 — every failed BLOCKING gate's violations, each prefixed with its gate, for the
     rewrite. Before this only `first_failure` was sent, so a piece failing F1 + F4 + F3 + F9 got
-    one gate fixed per attempt and held on the rest (S231 pilot, atlas-hearth blog)."""
+    one gate fixed per attempt and held on the rest (S231 pilot, atlas-hearth blog).
+    AA-984 — a blog's over-max F4 violation also carries the size to reach; the target is the blog band's,
+    so another channel (max 6,000) never gets it (S248 review)."""
+    target = F4_OVER_MAX_TARGET if channel == "blog" else ""
     return [
-        f"{g['gate']}: {v}"
+        f"{g['gate']}: {v}" + (target if g["gate"] == "F4_extreme_length" and _F4_OVER_RE.search(v) else "")
         for g in gate_ledger if not g["passed"] and g.get("blocking", True)
         for v in g["violations"]
     ]
+
+
+# AA-984 — an over-long blog's rewrite is told the size to reach (the violation alone gave no number; S247 r9
+# 32789658 came back at 14,576 chars after its rewrite and was held). Under the trim target, so the rewrite
+# lands inside the band with room for the FAQ regeneration.
+_F4_OVER_RE = re.compile(r"far beyond")
+F4_OVER_MAX_TARGET = (f" — cut the piece to under {length_trim.REWRITE_TARGET_CHARS:,} characters: shorten the "
+                      "longest sections; keep every heading, the CTA and the FAQ")
 
 
 _SIBLING_OPENERS_QUERY = """
@@ -1984,7 +2004,12 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             # whitespace). What it cannot fix is F13_repeat in the gates below.
             content_text, tf_log = trip_facts.fix_trip_facts(content_text, trip_ctx)
             content_text, final_log, _ = text_integrity.final_pass(content_text, hyg)
-            first_line_log = first_line_log + tf_log + final_log
+            # AA-984 — an over-long blog is trimmed into its band here (whole low-value paragraphs, never a
+            # heading, the FAQ or the CTA), so it is never rewritten or held for length alone (S247 r9 32789658).
+            content_text, trim_log = length_trim.trim_to_band(content_text, channel=channel, cta=cta,
+                                                              ignore=brand_ignore, moments=hyg.moments,
+                                                              trip_ctx=trip_ctx)
+            first_line_log = first_line_log + tf_log + final_log + trim_log
             progress_step("check")  # AA-637 live view (no-op without a bound tracker)
             outcome = await asyncio.to_thread(
                 run_quality_gates, content_text=content_text, atom_text=grounding_text, cta=cta,
@@ -2019,7 +2044,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 "attempt": attempt, "gate_targeted": first_failure["gate"],
                 "violations": first_failure["violations"], "repairable": first_failure["repairable"],
                 # AA-768 — what the rewrite is actually told: every blocking failure, not one gate.
-                "feedback": _repair_feedback(gate_ledger),
+                "feedback": _repair_feedback(gate_ledger, channel),
                 # AA-791 — this attempt's whole ledger (trimmed), so every attempt's gates are kept.
                 "gate_ledger": ledger_snapshot(gate_ledger),
             })

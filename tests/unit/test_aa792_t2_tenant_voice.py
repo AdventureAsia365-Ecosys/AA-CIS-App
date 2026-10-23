@@ -290,7 +290,7 @@ def test_t2_audit_fallback_without_a_brand_makes_no_llm_call():
     assert out["brand_audit_codes"] == ["META_OPENER_ROBOTIC"] and out["brand_audit_status"] == "flagged"
 
 
-def test_a1_audit_fallback_still_uses_adventure_asia_standards():
+def test_a1_audit_fallback_keeps_the_voice_rubric_with_white_label_framing():
     from services.content_generation import brand_audit_node as ba
     state = {"tour": _TOUR,
              "generated": {"name": "Bhutan Trail Ride", "summary": "S", "seo_meta": "M", "itineraries": ""}}
@@ -299,7 +299,10 @@ def test_a1_audit_fallback_still_uses_adventure_asia_standards():
         ba.brand_audit_node(state)
     req = cls.return_value.generate.call_args.args[0]
     assert req.system_prompt.startswith(ba.AA_BRAND_IDENTITY_PROMPT)
-    assert "Review this tour against Adventure Asia brand standards." in req.user_prompt
+    # AA-645: the A1 judge is framed white-label, like the A1 fixer.
+    assert ("Review this tour against the editorial standard above, for a neutral white-label catalogue page that "
+            "agencies resell unchanged (no brand, operator or supplier name on the page).") in req.user_prompt
+    assert "Adventure Asia brand standards" not in req.user_prompt
     assert "2. Brand fit: calm, assured, selective, precise, private, no hype?" in req.user_prompt
 
 
@@ -444,8 +447,11 @@ def test_t2_flag_fix_without_a_brand_name_stays_tenant_neutral():
 def test_a1_flag_fix_prompt_unchanged():
     _, request = _run_fix(_fix_state(is_tenant_rewrite=False))
     assert request.system_prompt == ff.FIX_SYSTEM
-    assert ff.FIX_SYSTEM.startswith("You are Adventure Asia's editorial fixer.")
-    assert request.user_prompt.startswith("Fix these fields for Adventure Asia brand standards.\n\nFIELDS TO FIX:")
+    # AA-645: the A1 fixer is neutral and white-label (no platform name on a page agencies resell).
+    assert ff.FIX_SYSTEM.startswith("You are the editorial fixer of a neutral, white-label tour catalogue")
+    assert "Adventure Asia" not in ff.FIX_SYSTEM
+    assert request.user_prompt.startswith(
+        "Fix these fields for the neutral white-label catalogue (no brand or operator names).\n\nFIELDS TO FIX:")
 
 
 def test_t2_meta_rerepair_uses_the_tenant_fix_system():

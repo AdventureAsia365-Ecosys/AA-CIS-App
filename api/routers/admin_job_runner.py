@@ -13,6 +13,8 @@
   POST /admin/job-runner/retention/schedule  the daily ops scheduler enqueues every retention kind
   POST /admin/job-runner/staff-reconcile/schedule  the daily ops scheduler enqueues the staff directory
                                            reconcile (AA-816, report only)
+  GET  /admin/job-runner/erasure           erasure inventory and apply settings (AA-839)
+  POST /admin/job-runner/erasure/run       enqueue a data_erasure DRY RUN (default) or an approved apply (AA-839)
 
 Restricted results (AA-816 review M1): the job reads are open to every staff role, so a kind whose result
 holds data only some roles may see registers a (capability, redact) pair in _restricted_results(); callers
@@ -23,16 +25,16 @@ Not under /admin/jobs: that path serves the older shared.pipeline_jobs (AA-223, 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Callable, Optional
+from typing import Callable, Literal, Optional
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from api.core.staff_authz import has_perm, staff_policy
+from api.core.staff_authz import has_perm, request_staff_identity, staff_policy
 from api.routers.admin import verify_admin_secret
 from shared.jobs import queue
-from shared.jobs.registry import kinds, run_terminal_hook
+from shared.jobs.registry import get_kind, kinds, run_terminal_hook
 
 logger = structlog.get_logger()
 
@@ -60,9 +62,10 @@ def _iso(d: dict) -> dict:
 def _restricted_results() -> dict[str, tuple[str, Callable[[dict], dict]]]:
     """kind -> (capability needed for the full result, redact function). Imported lazily, like the
     retention_job routes below, so loading this router does not import the job modules."""
-    from services.jobs import staff_reconcile_job
+    from services.jobs import erasure_job, staff_reconcile_job
 
-    return {staff_reconcile_job.KIND: (staff_reconcile_job.RESULT_CAPABILITY, staff_reconcile_job.redact_job)}
+    return {staff_reconcile_job.KIND: (staff_reconcile_job.RESULT_CAPABILITY, staff_reconcile_job.redact_job),
+            erasure_job.KIND: (erasure_job.RESULT_CAPABILITY, erasure_job.redact_job)}
 
 
 def _caller_role(request: Request) -> Optional[str]:
@@ -225,6 +228,14 @@ async def cancel_job(job_id: str, request: Request, x_admin_secret: str = Header
 async def retry_job(job_id: str, request: Request, x_admin_secret: str = Header(None),
                     x_admin_user_id: Optional[str] = Header(None)):
     verify_admin_secret(x_admin_secret)
+    # AA-839: a kind may refuse a retry (a data_erasure apply is single use: approval, Cognito actor, DRY RUN)
+    from shared.jobs.worker import load_kinds
+    load_kinds()                         # registers every kind (as the ops metrics sampler does), idempotent
+    row = await queue.get(request.app.state.pool, job_id)
+    kind = get_kind(row["kind"]) if row else None
+    refusal = kind.retry_refusal(row) if kind is not None and kind.retry_refusal is not None else None
+    if refusal:
+        raise HTTPException(status_code=409, detail=refusal)
     if not await queue.retry(request.app.state.pool, job_id):
         raise HTTPException(status_code=409, detail="only failed, stopped_budget or cancelled jobs can be retried")
     logger.info("admin_job_retry", job_id=job_id, admin_user=x_admin_user_id)
@@ -330,3 +341,83 @@ async def staff_reconcile_schedule(request: Request, x_admin_secret: str = Heade
     job_id, created = await staff_reconcile_job.enqueue_scheduled(request.app.state.pool, day=day)
     logger.info("admin_staff_reconcile_scheduled", day=day, job_id=job_id, created=created)
     return {"day": day, "kind": staff_reconcile_job.KIND, "job_id": job_id, "created": created}
+
+
+# ── AA-839 — data erasure (services/jobs/erasure_job.py, runbook docs/legal/dsar-erasure-runbook.md) ──────────
+
+ERASURE_APPLY_NEEDS_COGNITO = "An erasure apply needs a company sign-in (Cognito); password sessions cannot"
+
+
+@router.get("/erasure", summary="AA-839 — erasure inventory and apply settings")
+async def erasure_status():
+    """What a tenant / traveller erasure covers in the CIS schemas, and whether an apply is possible here."""
+    from services.erasure import inventory as inv
+    from services.jobs import erasure_job as ej
+    return {
+        "kind": ej.KIND,
+        "apply_enabled": ej.apply_enabled(),
+        "tenant_retention_days": ej.tenant_retention_days(),
+        "dry_run_max_age_hours": int(ej.dry_run_max_age().total_seconds() // 3600),
+        "tenant_tables": [{"table": t.table, "action": t.action, "reason": t.reason} for t in inv.TENANT_TABLES],
+        "traveller_scans": [{"table": s.table, "column": s.column.removeprefix("t."), "action": s.action,
+                             "reason": s.reason} for s in inv.TRAVELLER_EXACT + inv.TRAVELLER_TEXT],
+        "tenant_checklist": ej.checklist("tenant", None),
+        "traveller_checklist": ej.checklist("traveller", None),
+    }
+
+
+class ErasureRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    subject: Literal["tenant", "traveller"]
+    tenant_id: Optional[str] = None
+    # sha256 hex of the trimmed, lowercased address (runbook section 2 step 2). Never the address.
+    email_sha256: Optional[str] = Field(None, max_length=64)
+    dry_run: bool = True
+    # traveller DRY RUN after an apply (runbook section 3): the job strips the hash from its own row when done
+    verify: bool = False
+    # apply only: the approved DRY RUN (destructive-ops.md)
+    dry_run_job_id: Optional[str] = None
+    approved_fingerprint: Optional[str] = Field(None, max_length=64)
+    approved_by: Optional[str] = Field(None, max_length=120)
+    snapshot_id: Optional[str] = Field(None, max_length=255)
+
+
+@router.post("/erasure/run", summary="AA-839 — enqueue a data erasure DRY RUN (default) or an approved apply")
+async def erasure_run(body: ErasureRunRequest, request: Request, x_admin_secret: str = Header(None),
+                      x_admin_user_id: Optional[str] = Header(None)):
+    """DRY RUN by default: counts per CIS table, blockers, the per-app checklist and a fingerprint. An apply needs
+    ERASURE_APPLY_ENABLED=true on the API and worker, a verified Cognito staff session, and the fingerprint of an
+    approved DRY RUN of the same subject; the job re-checks everything inside its transaction."""
+    verify_admin_secret(x_admin_secret)
+    from services.jobs import erasure_job as ej
+    from shared.jobs.registry import NonRetryable, enqueue
+    payload: dict = {"subject": body.subject, "mode": "dry_run" if body.dry_run else "apply"}
+    if body.tenant_id is not None:
+        payload["tenant"] = body.tenant_id
+    if body.email_sha256 is not None:
+        payload["email_sha256"] = body.email_sha256
+    if body.verify:
+        payload["verify"] = True
+    for k in ("dry_run_job_id", "approved_fingerprint", "approved_by", "snapshot_id"):
+        v = getattr(body, k)
+        if v is not None:
+            payload[k] = v
+    if body.dry_run and any(k in payload for k in ("dry_run_job_id", "approved_fingerprint", "snapshot_id")):
+        raise HTTPException(status_code=422, detail="approval fields belong to an apply (dry_run=false)")
+    try:
+        payload = ej.validate_payload(payload)
+    except NonRetryable as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    created_by = f"admin:{x_admin_user_id}" if x_admin_user_id else "admin"
+    if not body.dry_run:
+        if not ej.apply_enabled():
+            raise HTTPException(status_code=403, detail=f"erasure apply is off here ({ej.APPLY_FLAG} is not 'true')")
+        identity = request_staff_identity(request)
+        if identity is None or getattr(identity, "auth", None) != "cognito" or not getattr(identity, "admin_id", None):
+            raise HTTPException(status_code=403, detail=ERASURE_APPLY_NEEDS_COGNITO)
+        payload["actor"] = f"admin:{identity.admin_id}"
+        created_by = payload["actor"]
+    job_id, _ = await enqueue(request.app.state.pool, ej.KIND, payload, created_by=created_by)
+    logger.info("admin_erasure_run", subject=body.subject, mode=payload["mode"], job_id=job_id,
+                tenant=payload.get("tenant"), admin_user=x_admin_user_id)
+    return {"job_id": job_id, "kind": ej.KIND, "subject": body.subject, "mode": payload["mode"]}

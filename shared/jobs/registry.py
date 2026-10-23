@@ -41,6 +41,9 @@ class JobKind:
     # queued/running rows. Only for short, read-only, frequently re-scheduled kinds whose loss to a
     # deploy costs one sample at most. Unused since AA-751 (the RDS sample left the job runner).
     deploy_gate_exempt: bool = False
+    # AA-839: POST /admin/job-runner/jobs/{id}/retry asks this first; a message = refused (409). For kinds whose
+    # job must never run twice from the same payload (an approved, destructive apply).
+    retry_refusal: Optional[Callable[[dict], Optional[str]]] = None
 
 
 _KINDS: dict[str, JobKind] = {}
@@ -57,10 +60,11 @@ RETIRED_KINDS: dict[str, str] = {
 
 def job_kind(name: str, *, concurrency: int = 1, max_attempts: int = 3,
              on_terminal: Optional[Callable[[Any, dict], Awaitable[None]]] = None,
-             expected_seconds: int = 600, background: bool = False, deploy_gate_exempt: bool = False):
+             expected_seconds: int = 600, background: bool = False, deploy_gate_exempt: bool = False,
+             retry_refusal: Optional[Callable[[dict], Optional[str]]] = None):
     def deco(fn):
         _KINDS[name] = JobKind(name, fn, concurrency, max_attempts, on_terminal, expected_seconds, background,
-                               deploy_gate_exempt)
+                               deploy_gate_exempt, retry_refusal)
         return fn
     return deco
 

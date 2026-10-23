@@ -272,6 +272,26 @@ def test_apply_include_stale_repoints_stale_rows_and_records_the_previous_pointe
     assert rows[pt1] == older and rows[pt2] is None
 
 
+def test_pointer_at_another_versions_row_is_reported_and_never_changed(cur):
+    t1, c1 = _tour(cur)
+    own = _score(cur, t1, c1, "2026-10-02T00:00:00Z", 9.0)
+    t2, c2 = _tour(cur)
+    other = _score(cur, t2, c2)
+    pt1 = _publish(cur, t1, c1, other)                     # pointer names ANOTHER version's row
+
+    out = _script()
+    mine = _mine(out["stale"])
+    assert [(r["published_id"], r["quality_score_id"], r["target_score_id"], r["pointer_same_version"])
+            for r in mine] == [(pt1, other, own, False)]
+    assert out["counts"]["stale_other_version"] >= 1
+
+    n = out["counts"]["to_fix"] + out["counts"]["stale_pointer"]
+    applied = _script("--apply", "--include-stale", "--expect", str(n))
+    assert pt1 not in applied["restore_published_ids"]
+    assert _pointer(cur, pt1) == other                     # a different defect: reported, not re-pointed
+    assert applied["verify_after"]["stale_other_version"] >= 1
+
+
 def test_dry_run_offers_a_live_revalidate_candidate(cur):
     out = _script()
     cand = out["revalidate_candidate"]

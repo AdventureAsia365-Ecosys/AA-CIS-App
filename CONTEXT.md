@@ -325,7 +325,7 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     `s1_seo_prefetch`, `photo_sync`, `s1_rewrite`, `s1_batch_ingest`, `revalidate`, `recompute`,
     `place_cards_build`, `t7_slate`, `t8_angles`, and the place pipeline `place_extract`,
     `place_geocode`, `tour_graph_build` — AA-712, `place_shape`, `place_dedupe` — AA-847, the five `retention_*` kinds — AA-825,
-    `ops_alert_email` — AA-828). Every claim merges `progress.attempt_started_at` (AA-751, F18):
+    `ops_alert_email` — AA-828, `data_erasure` — AA-839). Every claim merges `progress.attempt_started_at` (AA-751, F18):
     `started_at` keeps the first attempt's start, so per-attempt age reads the progress key.
   - **Background kinds (AA-712)**: `@job_kind(..., background=True)` kinds never take the worker's
     last `BACKGROUND_RESERVE` (2) free slots (`Worker.claim_caps`), so a place-pipeline backlog cannot
@@ -354,6 +354,42 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     RUN). Every live run of a rolled-up kind stops with nothing deleted if a day/month older than the
     cutoff is still missing from the rollup, and every archive object is HEAD-verified (Content-MD5 on
     the PUT) before its batch is deleted.
+  - **Data erasure (AA-839, DM-6.7, runbook AA-Ecosys `docs/legal/dsar-erasure-runbook.md`)**: one background
+    kind `data_erasure` (`services/jobs/erasure_job.py`, concurrency 1, no retry) for a **tenant** (`tenant` =
+    tenant id) or a **traveller** (`email_sha256` = sha256 hex of the trimmed, lowercased address; the API
+    refuses anything else, so an address never reaches a payload or a log). `POST /admin/job-runner/erasure/run`
+    (admin, `tenant.write`) enqueues a **DRY RUN** by default: SELECT only, rows per CIS table and action,
+    blockers, the delete order, the tenant's S3 objects/secrets (best-effort) and the per-app checklist
+    (`booking.*`, `tripplanner.*`, `crm.*`, Cognito, mailbox, Sentry), plus a `fingerprint` of the counts.
+    Inventory: `services/erasure/inventory.py` — every CIS table with a tenant key has an action (`delete`,
+    `detach` = keep the cost row without the tenant link, `merge` = add into the NULL-tenant rollup row, `keep` =
+    the append-only `acp_shared.audit_log`). A tenant key is `tenant_id`, `tenant` (`shared.pipeline_jobs`),
+    `owner_scope` (`acp_contract.tour_atoms`: tenant-owned T5 atoms may sit on an AA master tour) or a "tenant"
+    soft key without an FK (`acp_contract.atomize_day_fingerprint.tenant_tour_version_id`); such entries carry
+    explicit predicates (`where_any`) and are deleted before the tables those predicates read. A tenant-key table
+    without an entry is reported `unregistered` and fails `tests/integration/test_aa839_erasure_job.py`. Rows
+    that reach a tenant only through foreign keys are found from `pg_constraint` at run time
+    (`services/erasure/plan.py`) and deleted children-first; a row of another tenant, a kept row, another
+    owner's row, or a row of the same table outside the erasure (self FK: `shared.job.parent_job_id`,
+    `tenant_tour_versions.parent_version_id`) pointing at an erased row is a blocker. Each check runs in a
+    savepoint, so an unreadable table is one blocker, not an aborted DRY RUN. S3 keys held by deleted rows
+    (`content_exports`, `webhook_deliveries`, `raw_sources`, `tenants`) outside `raw-inbox/<t>/` and
+    `brand-identity/<t>/` are listed in `s3_refs` (more than 200 per column blocks). CIS holds no
+    traveller data by design (only staff/alert e-mails are tagged in `shared`), so the traveller DRY RUN is a proof
+    of absence (exact hash on the tagged columns, hashed e-mail tokens in notification/job/audit text).
+    **Apply** is in the code but OFF: it needs `ERASURE_APPLY_ENABLED=true` (unset everywhere), a verified Cognito
+    staff session, a succeeded DRY RUN of the same subject <= `ERASURE_DRY_RUN_MAX_AGE_HOURS` (24) old whose
+    fingerprint is passed as `approved_fingerprint`, `approved_by`, `snapshot_id`, and for a tenant an offboard at
+    least `ERASURE_TENANT_RETENTION_DAYS` (default 30, Nghiệp sets it) ago. One transaction: recount = same
+    fingerprint, every statement touches exactly the approved rows, a recount finds 0, one `acp_shared.audit_log`
+    row (`tenant.erased` / `dsar.cis_erased`, counts only); for a traveller the hash is then stripped from every
+    `data_erasure` row holding it. Inside the transaction the tenant row is locked (`FOR UPDATE`) and its
+    offboarded state and retention window re-checked (a restore in between stops the apply). An apply claims its
+    DRY RUN (`result.used_by_apply`, single use) and is never retried: `POST /admin/job-runner/jobs/{id}/retry`
+    refuses it (409, `JobKind.retry_refusal`). A traveller job that fails or is cancelled has its hash replaced
+    (`on_terminal`); `verify: true` on a traveller DRY RUN (after an apply) strips its own hash; Sentry events of
+    this kind carry no frame locals (`shared/sentry_init.py` `SCRUB_LOCALS_KINDS`). Inventory and settings:
+    `GET /admin/job-runner/erasure`.
   - **Ops metrics sampler (AA-832, AA-751)**: `api/core/ops_metrics_sampler.py`, a background task of
     the **api** (not the worker) started in `api/main.py`'s lifespan after the main pool, cancelled
     before it closes, off when `ENVIRONMENT=test`, never raises. Every 300 s (first tick 30 s after
@@ -1219,8 +1255,9 @@ PATCH and generate-key on an offboarded tenant return 409. `POST /admin/tenants/
 (Nghiệp, 14/10/2026) brings it back whole: it clears the offboard markers, sets `is_active`,
 re-adds the snapshotted Jev allow-list row and issues a **new** API key (the old one stays
 revoked); plan and settings are unchanged, and cancelled jobs are listed, not re-enqueued. Tenant
-data erasure is not automated (AA-839: a separate step after offboarding plus a retention window, with
-explicit approval).
+data erasure is a separate step after offboarding plus a retention window, with explicit approval: the
+`data_erasure` job (AA-839, see the job runner section) — DRY RUN by default, apply OFF behind
+`ERASURE_APPLY_ENABLED`; after an apply the tenant cannot be restored.
 
 Every admin write to a tenant (create, plan, status, key, brand identity, config, offboard,
 restore) is admin-role only. The BFF enforces this through `lib/rbac.ts` `API_WRITE_RULES`, and the
@@ -1907,6 +1944,33 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   and changes no score or verdict. A code moves to enforce (`DAY_ORACLE_MODES`) only after a precision read on
   stored tours (`scripts/aa925/day_oracle_report.py`, D5: ≥ 0.70 with the Wilson bound); an enforced code is an
   A1 hard code (`_HARD_BLOCK_CODES`, rewrite class) and stays shadow on a tenant rewrite (T2/T3).
+  A day list in the source ("Day 05 & 06", "Day 11, 12 & 13") is a range (S248). A meta ending in a two-word
+  capitalised place name ("…and Hoi An.") is not a weak ending (S248).
+- **S1 fact table + code checks** (S248, M2a S1-first step 1, Refs AA-645; offline only, not wired into the graph —
+  S1-first freezes new gates): `services/quality/s1_facts.build_fact_table(tour)` builds, by code, the per-tour fact
+  table the step-2 writer will read (duration kind, source days with their places, schedule lines, places, figures
+  with unit / noun, included / excluded / optional lines, conflicts, the "ask the supplier" missing list, do-not-use
+  operator names / contacts); every verbatim value points at its source field (`verify_pointers`).
+  `services/quality/s1_checks.run_checks(tour, page)` measures a written S1 page against it (day oracle, day-place
+  drift, cut / out-of-band meta, truncated body, novel figure, figure with the wrong unit, name not in source,
+  inclusion the source excludes). `scripts/s1_step01/fixture_report.py` runs both over the golden fixture or any
+  page set (A/B arms) and scores them against a ground-truth file; results with tour text go to the private root.
+- **S1 writer v2 + A/B arms** (S248, M2a S1-first step 2, AA-645; offline only, the live graph does not import it
+  — step 4 wires the A/B winner behind a flag): `services/content_generation/s1_writer_v2.py` builds, purely, the
+  three arms the A/B compares — `aplus` (today's A1 writer prompt byte for byte + a code-built DAYS block), `w` (the
+  new writer: a code-built FACT SHEET from `build_fact_table` instead of the raw dump; no per-day length targets,
+  no nudge, no brand-differentiation block, no PAA; place background allowed, figures only from the sheet) and `e`
+  (a code-built short page: At a glance box, `Day N —` blocks with source fact lines, Included / Not included; the
+  model writes only name, subtitle, hook, highlights and one sentence a day). Every arm gets its SEO title + meta
+  from a separate, code-checked call with one retry and no cut — at most 3 calls a tour. The day plan is code: source
+  markers (ranges expanded) win over a disagreeing duration; a sub-day / one-day tour is one block.
+  `raw_tours.group_size` / `best_time_to_go` reach the writer (`with_agency_fields`). The paid harness is
+  `scripts/aa645/s1_screen.py` (LLMClient, `llm_call_log` stage `adhoc_aa645`, role `writer`; runs on the deployed
+  image via S3) and `scripts/aa645/score_screen.py` (panel rubric v1 + rank, code gates, $ per tour, the W pick,
+  paired Wilcoxon for the A/B runs); the gate codes are defined once in `scripts/aa645/gates.py`
+  (DAY_PLACE_MISMATCH, NAME_NOT_IN_SOURCE, NUMBER_NOUN_MISMATCH are report-only). The A1 flag-fix prompt and the A1
+  brand-audit judge's user prompt are neutral white-label (no "Adventure Asia"); the judge's voice rubric
+  (`AA_BRAND_IDENTITY_PROMPT`) is unchanged until the step-5 cleanup.
 - **Degraded detectors + repair contract** (AA-925, Q-2, design §4.3/§6.3; `services/quality/`, pure modules —
   gate runners are passed in, no writer module is imported):
   - `degraded[]` (`services/quality/degraded.py`) names every fail-open path that ran on an output: Jev

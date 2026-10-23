@@ -194,9 +194,15 @@ def _apply_seo_fit_before_llm(state: dict, content: dict, fix_keys: set) -> tupl
                         dropped_codes=sorted(c for c in field_codes if c in dropped_codes))
     return new_fix_keys, dropped_codes, changed
 
-FIX_SYSTEM = """You are Adventure Asia's editorial fixer.
+# AA-645 (S248, S1-first step 2): the A1 fixer is framed as the editor of a neutral white-label catalogue. It
+# used to be "Adventure Asia's editorial fixer … Adventure Asia brand standards": the S1 page is resold unchanged
+# by agencies (house-style audit S246 §4: 9 published S1 tours name Adventure Asia as the operator, 8 without the
+# name in their source), so no repair prompt may invite the platform's own name onto the page.
+FIX_SYSTEM = """You are the editorial fixer of a neutral, white-label tour catalogue that travel agencies
+resell unchanged.
 Fix ONLY the specified fields. Keep all other fields exactly as-is.
-Preserve all product facts. Return strict JSON only."""
+Preserve all product facts. Never add a brand, operator or supplier name, a web address or a call to action.
+Return strict JSON only."""
 
 # AA-792: a T2 tenant rewrite is written AS the client brand, so its repairs are framed with that
 # brand (name + the AA-771 brand block), never "Adventure Asia's editorial fixer". A1 keeps FIX_SYSTEM.
@@ -222,7 +228,7 @@ def fix_system_prompt(state: dict) -> str:
 
 def fix_user_prompt_head(state: dict) -> str:
     if not state.get("is_tenant_rewrite"):
-        return "Fix these fields for Adventure Asia brand standards."
+        return "Fix these fields for the neutral white-label catalogue (no brand or operator names)."
     return (f"Fix these fields for {_t2_brand_label(state)}'s brand standards (the CLIENT BRAND "
             "above), keeping the draft in that brand's voice.")
 

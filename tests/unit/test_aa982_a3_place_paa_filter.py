@@ -246,12 +246,12 @@ FAQ_TEXT = qg.replace_faq_section(
      ("What should families pack?", "Warm layers for the cold evenings.")])
 
 
-async def _writer_questions(chain):
+async def _writer_questions(chain, a3_record=None):
     ctx = {"atom_text": SEED, "goal": {"key": "promotion"}, "channel_style": {"channel": "blog"},
            "brand_audience": {}, "chosen": {}, "cta": "Ask Terra to plan this trip.", "destination": None,
            "trip_name": None, "brand_rubric_text": "", "channel": "blog", "atom_id": "a1",
            "people_also_ask": [r.question for r in chain], "real_questions": [r.as_dict() for r in chain],
-           "a3_question_filter": {"a3_dropped": {"place_paa": 1}}}
+           "a3_question_filter": a3_record or {"a3_dropped": {"place_paa": 1}}}
     row = {"piece_id": str(uuid.uuid4()), "attempt_number": 1, "status": "approved"}
     passed = {"passed": True, "gate_ledger": [], "first_failure": None, "flags": []}
     enforce = AsyncMock(side_effect=lambda t, **k: (t, 0.0, []))
@@ -343,24 +343,69 @@ async def test_start_write_kill_switch_leaves_the_chain_unfiltered(monkeypatch):
 
 # ---------------------------------------------------------------- the Dev check script
 
-@pytest.mark.asyncio
-async def test_check_script_flags_a_rejected_question_that_reached_the_writer():
+def _check_script():
     import importlib.util
     spec = importlib.util.spec_from_file_location("aa982_check", "scripts/aa982_place_paa_check.py")
     script = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(script)
+    return script
+
+
+async def _written_piece(chain):
+    """A piece row as the check script reads it: the writer_input the real T9 path stores
+    (writer_input_snapshot) and the chain the t9_write job payload carries (context.real_questions)."""
     record = {"a3_countries": ["Mongolia"], "a3_segment_ids": ["seg-lake"], "a3_dropped": {"place_paa": 1},
-              "place_paa_kept": 1}
-    row = {"piece_id": uuid.uuid4(), "status": "approved", "tour_id": uuid.uuid4(),
-           "created_at": datetime.now(timezone.utc), "writer_input": {
-               "a3_question_filter": record,
-               "real_questions": [{"q": ACCEPTED, "source": "place_paa"}],
-               "search_questions": [{"question": ACCEPTED, "source": "place_paa"}]}}
-    good = await script.check_piece(_Conn(place_qs=[], log=_log()), row, rq)
-    assert good["ok"] and good["dropped"] == 1 and good["rejected_to_writer"] == []
+              "place_paa_kept": sum(1 for r in chain if r.source == rq.SOURCE_PLACE)}  # as start_write counts it
+    _, writer_input = await _writer_questions(chain, a3_record=record)
+    return {"piece_id": uuid.uuid4(), "status": "approved", "tour_id": uuid.uuid4(),
+            "created_at": datetime.now(timezone.utc), "writer_input": writer_input,
+            "job_chain": [r.as_dict() for r in chain]}
+
+
+@pytest.mark.asyncio
+async def test_check_script_passes_on_the_writer_input_the_real_write_path_stores():
+    # Live S248: the script read writer_input.real_questions, which writer_input_snapshot never stores,
+    # so place_paa_in_chain was 0 on every piece and kept_count_matches failed on good writes.
+    script = _check_script()
+    chain = await _chain(_Conn(place_qs=[REJECTED, ACCEPTED, NO_VERDICT], log=_log()), a3_filter=True)
     dec._questions_loaded_at = 0.0
-    row["writer_input"]["search_questions"].append({"question": REJECTED, "source": "place_paa"})
-    bad = await script.check_piece(_Conn(place_qs=[], log=_log()), row, rq)
-    assert not bad["ok"] and bad["rejected_to_writer"] == [REJECTED]
-    row["writer_input"].pop("a3_question_filter")
-    assert not (await script.check_piece(_Conn(place_qs=[], log=_log()), row, rq))["ok"]
+    row = await _written_piece(chain)
+    assert "real_questions" not in row["writer_input"]
+    good = await script.check_piece(_Conn(place_qs=[], log=_log()), row, rq)
+    assert good["ok"], good
+    assert good["place_paa_in_writer_input"] == good["place_paa_in_chain"] == 2
+    assert good["kept_count_matches"] and good["writer_subset_of_chain"] and good["dropped"] == 1
+    # The writer gets fewer place questions than the chain kept (paa_for_scope): reported, not compared.
+    assert good["place_paa_to_writer"] <= good["place_paa_in_chain"]
+
+
+@pytest.mark.asyncio
+async def test_check_script_flags_a_rejected_question_a_count_gap_and_a_missing_chain():
+    script = _check_script()
+    chain = await _chain(_Conn(place_qs=[REJECTED, ACCEPTED], log=_log()), a3_filter=True)
+    dec._questions_loaded_at = 0.0
+    row = await _written_piece(chain)
+
+    leaked = {**row, "writer_input": {**row["writer_input"], "search_questions":
+                                      row["writer_input"]["search_questions"]
+                                      + [{"question": REJECTED, "source": "place_paa"}]}}
+    bad = await script.check_piece(_Conn(place_qs=[], log=_log()), leaked, rq)
+    assert not bad["ok"] and bad["rejected_to_writer"] == [REJECTED] and not bad["writer_subset_of_chain"]
+
+    dec._questions_loaded_at = 0.0
+    in_chain = {**row, "job_chain": row["job_chain"] + [{"q": REJECTED, "source": "place_paa"}]}
+    bad = await script.check_piece(_Conn(place_qs=[], log=_log()), in_chain, rq)
+    assert not bad["ok"] and bad["rejected_in_chain"] == [REJECTED] and not bad["kept_count_matches"]
+
+    dec._questions_loaded_at = 0.0
+    gap = {**row, "writer_input": {**row["writer_input"], "a3_question_filter":
+                                   {**row["writer_input"]["a3_question_filter"], "place_paa_kept": 5}}}
+    assert not (await script.check_piece(_Conn(place_qs=[], log=_log()), gap, rq))["kept_count_matches"]
+
+    dec._questions_loaded_at = 0.0
+    no_job = {**row, "job_chain": None}
+    out = await script.check_piece(_Conn(place_qs=[], log=_log()), no_job, rq)
+    assert not out["ok"] and not out["chain_texts_found"]
+
+    no_record = {**row, "writer_input": {k: v for k, v in row["writer_input"].items() if k != "a3_question_filter"}}
+    assert not (await script.check_piece(_Conn(place_qs=[], log=_log()), no_record, rq))["ok"]

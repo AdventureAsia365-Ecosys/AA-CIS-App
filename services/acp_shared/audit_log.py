@@ -95,6 +95,8 @@ class AdminTenantAuditAction:
     CONFIG_UPDATED = "tenant.config_updated"  # markets / channels / posts_per_week
     PLAN_ID_BACKFILL = "tenant.plan_id_backfill"  # S234 one-off data fix (script, not a route)
     RESTORED = "tenant.restored"  # offboarded -> active, new key (Nghiệp 14/10/2026)
+    # AA-839 — the data_erasure job erased an offboarded tenant (details: counts, approval, snapshot; no data)
+    ERASED = "tenant.erased"
 
 
 async def write_audit_log(
