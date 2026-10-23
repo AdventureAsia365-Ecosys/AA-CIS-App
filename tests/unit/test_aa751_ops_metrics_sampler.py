@@ -488,10 +488,14 @@ async def test_tripplanner_purge_sweep_runs_each_tick_and_its_failure_blocks_not
     pool.fetchval = AsyncMock(return_value=2)
     with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
         out = await sampler.sample_once(pool, StubCloudWatch(), kinds=KINDS)
+    pool.fetchval.assert_not_awaited()                    # kind not registered: no row a worker cannot run
+    with_kind = dict(KINDS, tripplanner_purge=K())
+    with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
+        out = await sampler.sample_once(pool, StubCloudWatch(), kinds=with_kind)
     assert "tripplanner_purge" in pool.fetchval.call_args[0][0] and out["tripplanner_purge_swept"] == 2
     pool.fetchval = AsyncMock(side_effect=RuntimeError("permission denied"))
     with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
-        out = await sampler.sample_once(pool, StubCloudWatch(), kinds=KINDS)
+        out = await sampler.sample_once(pool, StubCloudWatch(), kinds=with_kind)
     assert "permission denied" in out["tripplanner_purge_error"] and out["jobs_published"] == 2
 
 

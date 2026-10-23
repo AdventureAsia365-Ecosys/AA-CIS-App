@@ -181,11 +181,14 @@ async def _jobs_part(pool, client, kinds: dict, ts: datetime, out: dict) -> None
     out["jobs_published"] = 2
 
 
-async def _tripplanner_purge_part(pool, out: dict) -> None:
+async def _tripplanner_purge_part(pool, kinds: dict, out: dict) -> None:
     """AA-987: enqueue a TripPlanner purge for every recent lifecycle event that has no job yet (an after-commit
-    enqueue that was lost, a path that does not enqueue). One idempotent INSERT ... SELECT."""
-    from services.jobs.tripplanner_purge_job import sweep
+    enqueue that was lost, a path that does not enqueue). One idempotent INSERT ... SELECT. Only while the kind is
+    registered (a worker can run it), like the retired-kind rule the other way round."""
+    from services.jobs.tripplanner_purge_job import KIND, sweep
 
+    if KIND not in kinds:
+        return
     n = await sweep(pool)
     if n:
         out["tripplanner_purge_swept"] = n
@@ -240,7 +243,7 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
         out["retired_error"] = _err(e)
 
     try:
-        await asyncio.wait_for(_tripplanner_purge_part(pool, out), timeout=part_timeout_s)
+        await asyncio.wait_for(_tripplanner_purge_part(pool, kinds, out), timeout=part_timeout_s)
     except Exception as e:
         out["tripplanner_purge_error"] = _err(e)
 

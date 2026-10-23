@@ -304,11 +304,15 @@ def test_the_publish_of_process_export_notifies_tripplanner():
 @pytest.mark.asyncio
 async def test_the_ops_sampler_runs_the_sweep():
     from api.core import ops_metrics_sampler as sampler
+    kinds = {tp.KIND: get_kind(tp.KIND)}
     out = {}
     with patch("services.jobs.tripplanner_purge_job.sweep", AsyncMock(return_value=2)):
-        await sampler._tripplanner_purge_part(object(), out)
+        await sampler._tripplanner_purge_part(object(), kinds, out)
     assert out == {"tripplanner_purge_swept": 2}
     out = {}
     with patch("services.jobs.tripplanner_purge_job.sweep", AsyncMock(return_value=0)):
-        await sampler._tripplanner_purge_part(object(), out)
+        await sampler._tripplanner_purge_part(object(), kinds, out)
     assert out == {}
+    with patch("services.jobs.tripplanner_purge_job.sweep", AsyncMock(return_value=5)) as sw:
+        await sampler._tripplanner_purge_part(object(), {}, out)
+    sw.assert_not_awaited() and out == {}
