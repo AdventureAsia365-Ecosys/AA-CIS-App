@@ -96,6 +96,10 @@ const selectStyle: React.CSSProperties = {
   fontFamily: sans,
   cursor: "pointer",
   outline: "none",
+  // S248 AA-760 — a <select> sizes itself to its longest option ("7.0+ (held for another reason)",
+  // a long country facet); cap it to the row so it can never push the toolbar past a phone screen.
+  maxWidth: "100%",
+  minWidth: 0,
 };
 
 function ReviewQueueInner() {
@@ -465,7 +469,7 @@ function ReviewQueueInner() {
 
       {/* Legend */}
       {!isLoading && filtered.length > 0 && (
-        <div style={{ display: "flex", gap: 16, alignItems: "center", marginBottom: 12, fontSize: 11, color: A.muted }}>
+        <div style={{ display: "flex", flexWrap: "wrap", columnGap: 16, rowGap: 6, alignItems: "center", marginBottom: 12, fontSize: 11, color: A.muted }}>
           <span style={{ fontWeight: 600 }}>Reason colors:</span>
           {(["red", "amber", "gray"] as const).map((sev) => (
             <span key={sev} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
@@ -515,8 +519,11 @@ function ReviewQueueInner() {
         emptyDescription="Every tour has been reviewed."
         // AA-601 — the Tour column is capped (names ellipsize) so the 4-button Actions cell fits a
         // 1440px screen; narrower screens scroll the table inside its wrapper.
+        // S248 AA-760 — the filter group wraps: at 400 px the three selects + Refresh (~480 px) ran past
+        // the screen and were cut off by the scrolling <main>. The group may shrink (minWidth 0) so the
+        // kit toolbar can put it on its own line, then the selects wrap inside it.
         toolbarExtra={
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", minWidth: 0, maxWidth: "100%" }}>
             <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} style={selectStyle}>
               <option value="pending">Pending</option>
               <option value="approved">Approved</option>
