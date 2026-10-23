@@ -1934,6 +1934,12 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   Content" once it lands here. Atomize (see Atom above) now fires automatically right after a
   tour is published here (AA-526, `services/export/handler.py::process_export()`), as a
   fire-and-forget background task, `owner_scope='platform'`.
+  - **Accepted score pointer** `published_tours.quality_score_id` (FK to `silver_aa_internal.quality_scores`,
+    ON DELETE SET NULL, CIS 268) = the published version's latest score row (`evaluated_at DESC, id DESC`).
+    Export sets it with that rule; a revalidation (`_revalidate_tour`, `revalidate` job) writes the new score
+    row, re-points the published tour and only then deletes the old rows, in one transaction (AA-983). The
+    published `quality_score` number stays as exported. Rows left NULL before AA-983:
+    `scripts/aa983_backfill_quality_score_id.py` (DRY RUN default, `--apply --expect N`).
   - The admin **Master Content** page reads `GET /admin/tenants/{aa_internal}/details`
     (`admin.py::get_tenant_details`, internal branch). AA-718 added server-side
     `page`/`page_size`/`sort`/`sort_dir`/`country`/`master_status`/`score`/`search` to it (the
