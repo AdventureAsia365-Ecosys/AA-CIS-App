@@ -28,8 +28,8 @@ import pytest
 sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 from _rls_fixture_helpers import (  # noqa: E402
-    NO_PRIVILEGE_WITHOUT_RLS_SQL, NO_PRIVILEGE_WITHOUT_RLS_SQL_V2, migration_body, migration_path,
-    revoke_platform_reads,
+    NO_PRIVILEGE_WITHOUT_RLS_SQL, NO_PRIVILEGE_WITHOUT_RLS_SQL_V2, NO_PRIVILEGE_WITHOUT_RLS_SQL_V3, migration_body,
+    migration_path, revoke_platform_reads,
 )
 
 TENANT_ROLE = "aa_app_user"
@@ -140,8 +140,8 @@ def test_invariant_query_is_the_migration_guard():
 
 
 def test_committed_db_meets_the_invariant(cur):
-    # the committed DB is past 265: the invariant there is v2 (the platform read allowlist)
-    cur.execute(NO_PRIVILEGE_WITHOUT_RLS_SQL_V2)
+    # the committed DB is past 272: the invariant there is v3 (the platform read allowlist + v_tour_liveness)
+    cur.execute(NO_PRIVILEGE_WITHOUT_RLS_SQL_V3)
     assert cur.fetchall() == []
 
 
