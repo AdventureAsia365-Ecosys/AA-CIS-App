@@ -1,6 +1,7 @@
 """AA-986 L2: what the tour lifecycle service does after its transaction commits (ADR 0015 decision 2, last
-paragraph): recompute ranking / routes with the NEW state, follow the place graph, recheck the public trip pages of
-the tours whose state changed, and run the on_terminal hooks of the jobs it cancelled. Each step is best-effort: the
+paragraph): tell TripPlanner to purge its caches (AA-987), recompute ranking / routes with the NEW state, follow the
+place graph, recheck the public trip pages of the tours whose state changed, and run the on_terminal hooks of the
+jobs it cancelled. Each step is best-effort: the
 state change is already committed and must not fail because a queue insert did; every failure is logged (and visible
 in the job tables).
 
@@ -63,10 +64,26 @@ async def recheck_trip_pages(pool, tour_ids) -> None:
         _log.warning("aa986_trip_page_recheck_failed", tours=len(tour_ids), exc_info=True)
 
 
+async def notify_tripplanner(db, events, *, trigger: str = "after_commit") -> int:
+    """AA-987: one `tripplanner_purge` job per lifecycle event written, so the public TripPlanner site drops a
+    retired / paused tour (and shows a restored one) within a minute instead of its 30-min cache TTL. Best-effort:
+    the sweep in the ops sampler enqueues whatever is lost here. `db` = pool or connection (not in a transaction)."""
+    if not events:
+        return 0
+    try:
+        from services.jobs.tripplanner_purge_job import enqueue_for_events
+        return await enqueue_for_events(db, events, trigger=trigger)
+    except Exception:
+        _log.warning("aa987_tripplanner_purge_enqueue_failed", events=len(events), exc_info=True)
+        return 0
+
+
 async def run_after_commit(pool, outcome, recompute=None) -> None:
     """Post-commit work of one lifecycle outcome. `recompute` defaults to recompute_after_status_change (a caller may
     pass its own, e.g. a router's alias that tests patch)."""
     recompute = recompute or recompute_after_status_change
+    # AA-987 first: a TripPlanner purge is the one effect the public site waits on, and it never fails the caller.
+    await notify_tripplanner(pool, getattr(outcome, "events", None))
     for tour_id, new_status in outcome.recompute:
         await recompute(pool, tour_id, new_status)
     await recheck_trip_pages(pool, list(dict.fromkeys(t for t, _ in outcome.recompute)))

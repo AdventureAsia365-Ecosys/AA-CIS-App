@@ -1492,6 +1492,13 @@ paused, or nothing for a supersede, Q2); new work on a non-served tour (rewrite,
 answers 409 `tour_discontinued` / `tour_paused`; the tenant bell reads its own rows through `GET /v1/notifications`.
 Other apps (L4): `catalog.v_tour_retired` (tombstone) and `catalog.v_tour_lifecycle_outbox` (CIS 274, contract
 `catalog.tour.v1.3`); `/v1/trip/{id}` answers 410 for a retired tour and 301 for an older version of a served one.
+TripPlanner purge (AA-987): every lifecycle event gets one `tripplanner_purge` job (key
+`tripplanner_purge:<event idempotency_key>`, enqueued after commit by `run_after_commit` and by the publish of
+`process_export`, plus a sweep in the api ops sampler for any event without a job, last 2 h). The job re-reads the
+event from `gold_aa_internal.tour_lifecycle_event` and POSTs it, HMAC-signed (`X-AA-Signature: t=..,v1=..`, secret
+`aa-cis/<env>/tripplanner-revalidate-hmac`, same value as TripPlanner's Vercel env `CATALOG_REVALIDATE_SECRET`), to
+`TRIPPLANNER_REVALIDATE_URL` (default `https://aa-tripplanner.vercel.app/api/revalidate/catalog`), which purges the
+TripPlanner CDN / ISR caches. 4 attempts with backoff; not configured = succeeded `skipped: not_configured`.
 _Avoid_: "delete" for a published tour (it is retired and can be restored); `raw_tours.lifecycle_stage` as a
 deletion signal (it is the sales phase).
 

@@ -274,8 +274,9 @@ async def _write_event(conn, out: Outcome, event: str, reason: str, actor: str,
         VALUES ($1, $2::uuid, $3, $4, $5::uuid, $6, $7, $8::jsonb, $9)
     """, out.source_id, tour_id or out.tour_id, event, reason, replaced_by, out.action, actor,
         json.dumps(details), key)
+    # AA-987: the idempotency key names the outbox row; the post-commit TripPlanner purge job is keyed on it.
     out.events.append({"event": event, "reason": reason, "tour_id": tour_id or out.tour_id,
-                       "replaced_by_tour_id": replaced_by})
+                       "replaced_by_tour_id": replaced_by, "idempotency_key": key})
 
 
 async def _outstanding_warnings(conn, tour_ids: list[str]) -> list[tuple[str, str]]:
