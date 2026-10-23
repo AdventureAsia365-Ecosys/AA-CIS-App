@@ -21,11 +21,13 @@ Per arm × model (several passes are averaged page by page):
 
 `--baseline <arm|model>` adds the paired comparison every other arm × model makes against it on the same tours: the
 median per-tour difference in serious-error rate and the Wilcoxon signed-rank p (normal approximation, zero
-differences dropped) — the A/B run 1 / run 2 test. The screen's pick (`--pick`): among the gate-clean rows (zero gate
-pages AND zero writer errors) the lowest serious-error rate pooled over the tours EVERY row of the arm completed and
-the panel scored (`serious_per_claim_common`); a model within the tie band (10%, at least 0.005 absolute) of the
-best rate and cheaper per tour wins the tie (q4-q8: "hoà thì lấy model rẻ"). No gate-clean row → no pick
-(`gate_clean_pick: false`). 12 tours can pick the wrong model; the report says so.
+differences dropped) — the A/B run 1 / run 2 test. The screen's pick (`--pick`): only ELIGIBLE rows compete — zero
+gate pages, zero writer errors and EVERY sample of the arm completed and panel-scored (a model that errored
+everywhere or ran only in a short trial is excluded, with its reason in `rows`, and does not shrink the comparison
+set); among them the lowest serious-error rate pooled over the arm's tours (`serious_per_claim_common`); a model
+within the tie band (10%, at least 0.005 absolute) of the best rate and cheaper per tour wins the tie (q4-q8: "hoà
+thì lấy model rẻ"). No eligible row → no pick (`gate_clean_pick: false`). 12 tours can pick the wrong model; the
+report says so.
 
 `--export-examples <prefixes> --arm w --model <key>` writes the chosen pages as reference-example DRAFTS
 (`[{"tour_id", "page"}]`) for Nghiệp to edit; the file holds tour text, so it lives in the private root repo.
@@ -180,39 +182,67 @@ def score(units: list[dict], panel: dict[str, dict], baseline: Optional[str]) ->
 
 
 def _common_rates(groups: dict[str, list[dict]], panel: dict[str, dict], table: dict) -> None:
-    """Per arm: the tours every model row of that arm completed (no error) and the panel scored; each row gets its
-    serious-error rate pooled over exactly those tours, so rows are compared on the same pages (a model whose hard
-    tours failed is not rewarded with an easier set)."""
+    """Per arm: which rows are ELIGIBLE for the comparison, and each row's serious-error rate pooled over the common
+    tours of the eligible rows (so rows are compared on the same pages: a model whose hard tours failed is not
+    rewarded with an easier set).
+
+    A row is eligible only with zero gate pages, zero writer errors and EVERY sample of the arm (the union of the
+    arm's sample ids over all its rows) completed and panel-scored. The common set is computed over eligible rows
+    only, so it is the arm's full sample set; a row that errored everywhere or ran only in a 3-tour trial is excluded
+    with its reason (`excluded_reason`) instead of shrinking the set for everyone. No eligible row → common set empty
+    and every rate None. An ineligible row that still covers the common set gets its rate there for information."""
     by_arm: dict[str, dict[str, dict[str, dict]]] = defaultdict(dict)
+    arm_samples: dict[str, set] = defaultdict(set)
     for am, us in groups.items():
-        by_arm[am.split("|", 1)[0]][am] = {u["sample_id"]: panel[u["key"]] for u in us
-                                           if not u.get("error") and u["key"] in panel}
-    for rows in by_arm.values():
-        common = set.intersection(*(set(v) for v in rows.values())) if rows else set()
+        arm = am.split("|", 1)[0]
+        arm_samples[arm].update(u["sample_id"] for u in us)
+        by_arm[arm][am] = {u["sample_id"]: panel[u["key"]] for u in us
+                           if not u.get("error") and u["key"] in panel}
+    for arm, rows in by_arm.items():
+        need = arm_samples[arm]
         for am, scored in rows.items():
-            serious = sum(scored[s]["serious"] for s in common)
-            claims = sum(scored[s]["claims"] for s in common)
+            row = table[am]
+            reasons = []
+            if row["errors"]:
+                reasons.append(f"{row['errors']} writer error(s)")
+            if row["pages_with_gate_code"]:
+                reasons.append(f"{row['pages_with_gate_code']} page(s) with a gate code")
+            have = len(need & set(scored))
+            if have < len(need):
+                reasons.append(f"{have}/{len(need)} samples of the arm completed and panel-scored")
+            row["eligible"] = not reasons
+            row["excluded_reason"] = "; ".join(reasons) or None
+        common = set(need) if any(table[am]["eligible"] for am in rows) else set()
+        for am, scored in rows.items():
+            covers = bool(common) and common <= set(scored)
+            serious = sum(scored[s]["serious"] for s in common) if covers else 0
+            claims = sum(scored[s]["claims"] for s in common) if covers else 0
             table[am]["common_tours"] = len(common)
             table[am]["serious_per_claim_common"] = round(serious / claims, 4) if claims else None
 
 
 def pick(table: dict, arm: str = "w") -> dict:
-    """The screen's W choice among `arm|*` rows. Gate-clean = zero gate pages and zero writer errors; among them the
-    lowest serious rate on the common tours; a cheaper model within the tie band (TIE_BAND relative, TIE_FLOOR
-    absolute) of the best wins. No gate-clean row → pick None: the screen did not find a usable writer."""
-    rows = {k: v for k, v in table.items() if k.startswith(arm + "|") and v.get("serious_per_claim_common") is not None}
+    """The screen's W choice among `arm|*` rows. Only ELIGIBLE rows compete (`_common_rates`: zero gate pages, zero
+    writer errors, every sample of the arm completed and panel-scored); among them the lowest serious rate on the
+    common tours; a cheaper model within the tie band (TIE_BAND relative, TIE_FLOOR absolute) of the best wins.
+    No eligible row → pick None: the screen did not find a usable writer. Every row is listed in `rows`, an
+    excluded one with its reason."""
     caveat = "12 tours choose a writer, they do not prove one (q4-q8 §2.2 step 1); confirm in A/B run 1."
+    arm_rows = {k: v for k, v in table.items() if k.startswith(arm + "|")}
     coverage = {k: {"units": v["units"], "errors": v["errors"], "panel_scored": v["panel_scored"],
-                    "common_tours": v.get("common_tours"), "pages_with_gate_code": v["pages_with_gate_code"]}
-                for k, v in table.items() if k.startswith(arm + "|")}
-    if not rows:
+                    "common_tours": v.get("common_tours"), "pages_with_gate_code": v["pages_with_gate_code"],
+                    "eligible": bool(v.get("eligible")), "excluded_reason": v.get("excluded_reason")}
+                for k, v in arm_rows.items()}
+    if not any(v.get("panel_scored") for v in arm_rows.values()):
         return {"pick": None, "gate_clean_pick": False, "why": "no panel-scored rows for arm " + arm,
                 "rows": coverage, "caveat": caveat}
-    clean = {k: v for k, v in rows.items() if v["pages_with_gate_code"] == 0 and v["errors"] == 0}
+    clean = {k: v for k, v in arm_rows.items()
+             if v.get("eligible") and v.get("serious_per_claim_common") is not None}
     if not clean:
         return {"pick": None, "gate_clean_pick": False,
-                "why": "no row of arm " + arm + " has zero gate pages and zero writer errors", "rows": coverage,
-                "caveat": caveat}
+                "why": ("no eligible row of arm " + arm + " (zero gate pages, zero writer errors, every sample "
+                        "completed and panel-scored); see rows[*].excluded_reason"),
+                "rows": coverage, "caveat": caveat}
     best = min(v["serious_per_claim_common"] for v in clean.values())
     limit = max(best * (1 + TIE_BAND), best + TIE_FLOOR) + 1e-9
     near = {k: v for k, v in clean.items() if v["serious_per_claim_common"] <= limit}

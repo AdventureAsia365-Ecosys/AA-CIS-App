@@ -220,18 +220,20 @@ def test_pick_needs_zero_writer_errors_and_compares_on_common_tours():
     passes = [{"pages": [{"page_id": p, "checkable_claims": 20, "errors": [{"severity": "serious"}] * serious[k["key"]]}
                          for p, k in key.items() if k["key"] in serious]}]
     table = score_screen.score(units, score_screen.panel_by_unit(passes, key), None)
-    assert table["w|cheap"]["common_tours"] == 2 and table["w|dear"]["common_tours"] == 2
-    assert table["w|dear"]["serious_per_claim_common"] == 0.1 and table["w|cheap"]["serious_per_claim_common"] == 0.0
+    # the common set is the eligible rows' set (dear: all 3 tours); cheap does not cover it → no common rate
+    assert table["w|dear"]["common_tours"] == 3 and table["w|dear"]["serious_per_claim_common"] == round(4 / 60, 4)
+    assert table["w|cheap"]["serious_per_claim_common"] is None and table["w|cheap"]["eligible"] is False
     got = score_screen.pick(table)
     assert got["pick"] == "w|dear" and got["gate_clean"] == ["w|dear"]
     assert got["rows"]["w|cheap"]["errors"] == 1 and got["rows"]["w|cheap"]["panel_scored"] == 2
+    assert "1 writer error(s)" in got["rows"]["w|cheap"]["excluded_reason"]
 
 
 def test_tie_band_has_an_absolute_floor_when_the_best_rate_is_zero():
     table = {"w|dear": {"serious_per_claim_common": 0.0, "pages_with_gate_code": 0, "errors": 0, "usd_per_tour": 0.1,
-                        "units": 12, "panel_scored": 12, "common_tours": 12},
+                        "units": 12, "panel_scored": 12, "common_tours": 12, "eligible": True},
              "w|cheap": {"serious_per_claim_common": 0.004, "pages_with_gate_code": 0, "errors": 0,
-                         "usd_per_tour": 0.01, "units": 12, "panel_scored": 12, "common_tours": 12}}
+                         "usd_per_tour": 0.01, "units": 12, "panel_scored": 12, "common_tours": 12, "eligible": True}}
     assert score_screen.pick(table)["pick"] == "w|cheap"
     table["w|cheap"]["serious_per_claim_common"] = 0.006
     assert score_screen.pick(table)["pick"] == "w|dear"
@@ -366,3 +368,50 @@ def test_figure_coverage_ignores_day_headings():
     facts = build_fact_table({**TOUR, "itineraries": TOUR["itineraries"] + " 2 km walk."})
     assert s1_screen.figure_coverage(facts, {"itineraries": "Day 2 — Chilaw\nA walk."}) == 0.0
     assert s1_screen.figure_coverage(facts, {"itineraries": "Day 1 — Chilaw\nA 2 km walk."}) == 1.0
+
+
+# ------------------------------------------------------------------ review round 2 (S248)
+
+def _screen_unit(model, sid, err=None, cost=0.01):
+    return {"key": f"{sid}__w__{model}", "sample_id": sid, "arm": "w", "model": model, "error": err,
+            "findings": [], "n_calls": 2, "cost_usd": cost, "calls": []}
+
+
+def _screen_panel(units, serious):
+    return {u["key"]: {"serious": serious(u), "claims": 10, "verdicts": {}, "agency": {}, "rank": None}
+            for u in units if not u["error"]}
+
+
+def test_pick_excludes_a_model_that_errored_on_every_unit_without_hiding_the_others():
+    units = [_screen_unit("haiku", t) for t in "abc"] + [_screen_unit("luna", t, err="boom") for t in "abc"]
+    table = score_screen.score(units, _screen_panel(units, lambda u: 1), None)
+    assert table["w|haiku"]["common_tours"] == 3 and table["w|haiku"]["serious_per_claim_common"] == 0.1
+    got = score_screen.pick(table)
+    assert got["pick"] == "w|haiku" and got["gate_clean_pick"] is True
+    assert got["rows"]["w|luna"]["eligible"] is False
+    assert got["rows"]["w|luna"]["excluded_reason"] == "3 writer error(s); 0/3 samples of the arm completed and panel-scored"
+
+
+def test_pick_excludes_a_trial_only_model_instead_of_shrinking_the_common_set():
+    # luna ran only in the 3-tour trial (perfect there); haiku is bad on tours 3..11, sonnet steady everywhere.
+    # Intersecting over every row would compare on tours 0..2 only and pick haiku/luna; eligible rows → sonnet.
+    tours = [f"t{i:02d}" for i in range(12)]
+    cost = {"haiku": .01, "sonnet": .08, "luna": .005}
+    units = ([_screen_unit("haiku", t, cost=cost["haiku"]) for t in tours]
+             + [_screen_unit("sonnet", t, cost=cost["sonnet"]) for t in tours]
+             + [_screen_unit("luna", t, cost=cost["luna"]) for t in tours[:3]])
+    rates = {"haiku": lambda i: 0 if i < 3 else 3, "sonnet": lambda i: 1, "luna": lambda i: 0}
+    table = score_screen.score(units, _screen_panel(units, lambda u: rates[u["model"]](int(u["sample_id"][1:]))),
+                               None)
+    got = score_screen.pick(table)
+    assert got["pick"] == "w|sonnet" and got["best_rate"] == 0.1
+    assert {k: v["common_tours"] for k, v in got["rows"].items()} == {"w|haiku": 12, "w|luna": 12, "w|sonnet": 12}
+    assert got["rows"]["w|luna"]["excluded_reason"] == "3/12 samples of the arm completed and panel-scored"
+    assert got["rows"]["w|haiku"]["eligible"] is True and table["w|luna"]["serious_per_claim_common"] is None
+
+
+def test_pick_is_none_with_the_reason_when_no_row_is_eligible():
+    units = [_screen_unit("haiku", t, err="boom") for t in "ab"] + [_screen_unit("luna", t) for t in "a"]
+    got = score_screen.pick(score_screen.score(units, _screen_panel(units, lambda u: 0), None))
+    assert got["pick"] is None and got["gate_clean_pick"] is False and got["why"].startswith("no eligible row")
+    assert got["rows"]["w|luna"]["excluded_reason"] == "1/2 samples of the arm completed and panel-scored"
