@@ -81,8 +81,8 @@ was force-pushed away.
 The PR check runs on `pull_request_target`: GitHub always runs the base branch's copy of the workflow and the PR head
 is only read as data, so a PR cannot change the check that judges it. It also scans a squash preview of the PR (what
 the squash merge writes), and it fails when another workflow has a job named `gitleaks`. `.gitleaks.toml` carries a
-copy of the gitleaks v8.30.1 default rules without gitleaks' global path allowlist, so text files such as `.svg`,
-`go.sum` or `node_modules/` are scanned; a text file under a binary-format name (`.png`, `.pdf`, ...) needs the label.
+copy of the gitleaks v8.30.1 default rules and no path allowlist, so every file is scanned (`.svg`, `go.sum`,
+`node_modules/`, images, lock files); UTF-16 files are transcoded to UTF-8 and scanned too.
 Local commands are in the header of `secret-scan.yml`.
 
 ## Deploy
