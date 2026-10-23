@@ -24,7 +24,7 @@ import re
 from typing import Optional
 
 from services.acp_content_writing.hygiene import (
-    _FAQ_Q_LINE_RE, _SENTENCE_END_CHARS, _safe_to_delete, content_words, copies, expand_to_sentence,
+    _FAQ_Q_LINE_RE, _SENTENCE_END_CHARS, _safe_to_delete, content_words, copies, expand_to_sentence, fold,
     integrity_problems, is_sentence_end, near_duplicates, restates, sentence_spans, sentence_tail_end,
     tidy_after_cut,
 )
@@ -96,6 +96,122 @@ def locate_sentence(text: str, quote: str) -> Optional[tuple[int, int]]:
     if span is not None and span["kind"] != "faq_q":
         start = span["start"]
     return start, max(tail, end)
+
+
+# ── AA-984 — an F9 claim on a section heading ────────────────────────────────────────────────────
+# S247 r9 781b5de7: the judge flagged '## What a Ruined Monastery Tells Families About Mongolia'. The F9 gate
+# keeps it as a blocking body claim (the fold finds it in the body) but locate_sentence cannot locate a line
+# with no end mark, so plan() returned None and the piece was held at attempt 2 with no repair and no cut.
+# A heading item spans the heading TEXT after its '## ' marker (every splice keeps the marker), is repaired as
+# a heading, and is never deleted: an empty or unusable repair falls back to the section's place name.
+_HEADING_MARK_RE = re.compile(r"[ \t]*#{1,6}[ \t]+")
+_WORD_RE = re.compile(r"\w+")
+HEADING_MAX_CHARS = 90
+HEADING_PROBLEM = ("this line is a section HEADING, not a sentence: return a short heading (at most 8 words) "
+                   "that names the place or moment of its section, with no end mark and no claim the SOURCE "
+                   "does not state; never return \"\"")
+# A repaired heading ends on none of these ('?' stays: a question heading is a heading).
+_HEADING_END_MARKS = ".!;:,…"
+
+
+def _words(text: str) -> list[str]:
+    return _WORD_RE.findall(fold(text or ""))
+
+
+def _contains_run(big: list[str], small: list[str]) -> bool:
+    n = len(small)
+    return 0 < n <= len(big) and any(big[i:i + n] == small for i in range(len(big) - n + 1))
+
+
+def _heading_text_spans(text: str) -> list[tuple[int, int]]:
+    """(start, end) of the TEXT of every body heading (after its '#' marker), never the FAQ heading."""
+    out = []
+    for sp in sentence_spans(text):
+        if sp["kind"] != "heading" or sp["in_faq"]:
+            continue
+        m = _HEADING_MARK_RE.match(sp["text"])
+        if m and sp["start"] + m.end() < sp["end"]:
+            out.append((sp["start"] + m.end(), sp["end"]))
+    return out
+
+
+# AA-984 (S248 review) — how close a judge quote must be to a heading to be a claim ON it (locate_heading).
+HEADING_RUN_MIN_SHARE = 0.6
+HEADING_QUOTE_SLACK_WORDS = 2
+
+
+def locate_heading(text: str, quote: str) -> Optional[tuple[int, int]]:
+    """AA-984 — (start, end) of the text of the ONE body heading (never the FAQ heading) a judge quote names:
+    the same words; a run of ≥ 3 of the heading's words covering ≥ HEADING_RUN_MIN_SHARE of them; or the whole
+    heading (≥ 3 words) inside a quote at most HEADING_QUOTE_SLACK_WORDS longer (a '##', a tag). A longer
+    quote that contains a heading is a prose claim that paraphrases it, and a short fragment ('for curious
+    children') may sit in any sentence — neither is a heading claim (S248 review), so plan() skips them as
+    before. The span starts after the '## ' marker. None when no heading or more than one heading matches."""
+    q = _words(strip_citation_tags(_clean_quote(quote), " "))
+    if len(q) < 2:
+        return None
+    hits = []
+    for start, end in _heading_text_spans(text):
+        h = _words(strip_citation_tags(text[start:end], " "))
+        if (h == q
+                or (len(q) >= 3 and len(q) >= HEADING_RUN_MIN_SHARE * len(h) and _contains_run(h, q))
+                or (len(h) >= 3 and len(q) <= len(h) + HEADING_QUOTE_SLACK_WORDS and _contains_run(q, h))):
+            hits.append((start, end))
+    return hits[0] if len(hits) == 1 else None
+
+
+def clean_heading(replacement: Optional[str]) -> str:
+    """A repair reply as heading text: tag-free, one line, no '#' marker, bold or wrapping quotes, no end mark
+    ('?' stays). "" when nothing heading-like is left or it is longer than HEADING_MAX_CHARS."""
+    s = " ".join(strip_citation_tags(replacement or "", " ").split())
+    s = re.sub(r"^#{1,6}\s*", "", s).strip().strip("*\"'“”‘’ ").rstrip(_HEADING_END_MARKS + " ").strip()
+    if not re.search(r"[^\W\d_]{3,}", s) or len(s) > HEADING_MAX_CHARS:
+        return ""
+    return s
+
+
+def heading_fallback(content_text: str, item: dict, moments: Optional[list]) -> Optional[str]:
+    """AA-984 — the deterministic replacement of a flagged heading: the itinerary label of the moment its
+    section names most (ties → the first named), e.g. 'A local Buddhist monastery'. None without moments,
+    when the section names no moment, or when another heading already reads the same."""
+    if not moments:
+        return None
+    from services.acp_content_writing.trip_facts import moments_named  # lazy, like _integrity
+    spans = sentence_spans(content_text)
+    k = next((n for n, sp in enumerate(spans)
+              if sp["kind"] == "heading" and sp["start"] <= item["start"] < sp["end"]), None)
+    if k is None:
+        return None
+    counts: dict[int, int] = {}
+    first: dict[int, int] = {}
+    body: list[str] = []
+    for n, sp in enumerate(spans[k + 1:]):
+        if sp["kind"] == "heading" or sp["in_faq"]:
+            break
+        if sp["kind"] not in ("prose", "bullet"):
+            continue
+        body.append(sp["clean"])
+        for m in moments_named(sp["clean"], moments):
+            i = moments.index(m)
+            counts[i] = counts.get(i, 0) + 1
+            first.setdefault(i, n)
+    if not counts:
+        # no identifying word of any moment (a generic label 'a local Buddhist monastery' is told as 'the
+        # Buddhist monastery'): the moment at least half of whose label words the section uses
+        have = set(content_words(" ".join(body)))
+        for i, m in enumerate(moments):
+            label = set(content_words(m.name))
+            if label and 2 * len(label & have) >= len(label):
+                counts[i], first[i] = len(label & have), i
+    if not counts:
+        return None
+    best = min(counts, key=lambda i: (-counts[i], first[i]))
+    name = clean_heading(moments[best].name)
+    if not name:
+        return None
+    name = name[0].upper() + name[1:]
+    taken = {" ".join(_words(content_text[s:e])) for s, e in _heading_text_spans(content_text)}
+    return None if " ".join(_words(name)) in taken else name
 
 
 def _fuzzy_locate(text: str, quote: str) -> Optional[tuple[int, int]]:
@@ -223,11 +339,22 @@ def plan(content_text: str, gate_ledger: list[dict]) -> Optional[list[dict]]:
     out: list[dict] = []
     for quote, problem, gate in items:
         span = locate_sentence(content_text, quote)
+        heading = False
+        if span is None and gate == "F9_cta_fact":
+            # AA-984 — an F9 claim on a section heading becomes a heading repair item
+            span = locate_heading(content_text, quote)
+            heading = span is not None
         if span is None:
             if gate == "F9_cta_fact":
                 continue  # S234 round 3 — a judge quote that matches no sentence; the others are still fixed
             return None
         hit = next((o for o in out if not (span[1] <= o["start"] or span[0] >= o["end"])), None)
+        if heading:
+            if hit is None:
+                out.append({"start": span[0], "end": span[1], "sentence": _span_text(content_text, span),
+                            "problem": f"{problem}; {HEADING_PROBLEM}", "gate": gate, "gates": [gate],
+                            "heading": True})
+            continue
         if hit is not None:
             _merge_item(content_text, out, hit, span, problem, gate)
             continue
@@ -260,8 +387,8 @@ def _merge_item(content_text: str, out: list[dict], hit: dict, span: tuple[int, 
     comes second (F17 timing / pace findings and F1 come before it), leaving a cuttable item on the hazard
     sentence. And the union never widens into the piece's first prose sentence (the hook) when `hit` did
     not already hold it: a judge quote over 'hook + S2' joined to an S2 item made the item uncuttable."""
-    if _adds_sentence(hit) or "add ONE" in (problem or ""):
-        return
+    if _adds_sentence(hit) or "add ONE" in (problem or "") or hit.get("heading"):
+        return  # AA-984 — a heading item is never merged with a sentence finding
     start, end = min(hit["start"], span[0]), max(hit["end"], span[1])
     hook = _hook_span(content_text)
     if hook is not None and start < hook[1] <= hit["start"]:
@@ -272,7 +399,7 @@ def _merge_item(content_text: str, out: list[dict], hit: dict, span: tuple[int, 
         more = [o for o in out if o is not hit and o not in folded and not (end <= o["start"] or start >= o["end"])]
         if not more:
             break
-        if any(_adds_sentence(o) for o in more):
+        if any(_adds_sentence(o) or o.get("heading") for o in more):
             return
         folded += more
         start, end = min([start] + [o["start"] for o in more]), max([end] + [o["end"] for o in more])
@@ -348,6 +475,15 @@ def splice(content_text: str, items: list[dict], replacements: list[str], *,
     text = content_text
     for item, new in sorted(zip(items, replacements), key=lambda p: p[0]["start"], reverse=True):
         original = text[item["start"]:item["end"]]
+        if item.get("heading"):
+            # AA-984 — a heading is rewritten as a heading (its '## ' marker sits before the span) and never
+            # deleted: an empty or unusable reply takes the item's place-name fallback, else the heading stays
+            new = clean_heading(new) or clean_heading(item.get("fallback"))
+            if not new:
+                item["guard"] = "heading_kept"
+            elif new != original.strip():
+                text = text[:item["start"]] + new + text[item["end"]:]
+            continue
         tags = trailing_tags(original)  # AA-912: one backward pass (the regex search was O(n^2))
         new = (new or "").strip()
         if new and guard_repeats and _adds_sentence(item):
@@ -461,14 +597,24 @@ def splice_checked(content_text: str, items: list[dict], replacements: list[str]
     item keeps its sentence (`"guard": "hazard_kept"`), so the hazard is never lost to a repair."""
     pairs = []
     for it, rep in zip(items, replacements):
-        if _keeps_hazard(it) and not (rep or "").strip():
+        if it.get("heading"):
+            # AA-984 — the heading text this item will get: the cleaned reply, else the place-name fallback
+            fixed = clean_heading(rep)
+            if not fixed:
+                fixed = heading_fallback(content_text, it, moments) or ""
+                it["fallback_used"] = bool(fixed)
+            if not fixed:
+                it["guard"] = "heading_kept"
+                continue
+            pairs.append((it, fixed))
+        elif _keeps_hazard(it) and not (rep or "").strip():
             it["guard"] = "hazard_kept"
         else:
             pairs.append((it, rep))
-    if len(pairs) < len(items):
-        if not pairs:
-            return content_text
-        items, replacements = [p[0] for p in pairs], [p[1] for p in pairs]
+    if not pairs:
+        return content_text
+    # AA-984 — always from `pairs`: a heading item's replacement is its cleaned reply or its fallback
+    items, replacements = [p[0] for p in pairs], [p[1] for p in pairs]
     if trip_ctx is not None or source is not None:
         items, replacements = _drop_new_specifics(items, replacements, trip_ctx, source)
         if not items:
@@ -519,13 +665,23 @@ def delete_flagged(content_text: str, items: list[dict], *, ignore: frozenset = 
 
     AA-777 (r7 review) — an item can span several sentences (a merged plan() item, a two-sentence judge
     quote): EVERY sentence inside it is checked (hook, CTA, FAQ question, heading), and the orphaned-pronoun
-    test reads the first sentence AFTER the item, not the item's own second sentence."""
+    test reads the first sentence AFTER the item, not the item's own second sentence.
+
+    AA-984 — a heading item (plan(): an F9 claim on a section heading) is never cut: with `moments` it is
+    replaced by its section's place name (heading_fallback), else it stays."""
     from services.acp_content_writing.hygiene import _is_cta
     spans = sentence_spans(content_text)
     prose = [sp for sp in spans if sp["kind"] in ("prose", "bullet", "faq_a")]
     first = prose[0]["start"] if prose else -1
     cut_items, reps = [], []
     for item in items:
+        if item.get("heading"):
+            # AA-984 — a flagged heading is never cut: it takes its section's place name, or stays
+            fallback = heading_fallback(content_text, item, moments)
+            if fallback:
+                cut_items.append(dict(item, fallback=fallback))
+                reps.append(fallback)
+            continue
         if keeps_sentence(item.get("problem")):
             continue
         ks = [n for n, sp in enumerate(spans) if sp["start"] < item["end"] and item["start"] < sp["end"]]
@@ -713,7 +869,8 @@ def check_replacement(replacement: str, grounding: str, brand_pack: Optional[dic
     return out
 
 
-__all__ = ["is_sentence_end", "sentence_tail_end", "locate_sentence", "neighbours", "plan", "repeats_neighbour",
+__all__ = ["is_sentence_end", "sentence_tail_end", "locate_sentence", "locate_heading", "clean_heading",
+           "heading_fallback", "neighbours", "plan", "repeats_neighbour",
            "splice", "splice_checked", "drop_new_duplicates", "delete_flagged", "OWNED_ELSEWHERE", "expand_to_sentence",
            "resolve_span", "tidy_after_cut", "apply_edit", "sanitize_replacement",
            "check_replacement"]
