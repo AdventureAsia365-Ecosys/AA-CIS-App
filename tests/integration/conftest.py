@@ -367,6 +367,13 @@ def _apply_schema(conn):
                 CREATE UNIQUE INDEX IF NOT EXISTS destinations_lower_name_uidx
                     ON shared.destinations (lower(name));
             """ + sql
+        if mf.startswith("273_"):
+            # AA-645 d06: 273's catalog part needs 253-258 (skipped here) and the catalog recipe. Replay only its
+            # part 1, the published_tours.updated_at column the publish code writes; not registered, so
+            # test_aa645_migration_273 can apply the whole file the DB Migrate way.
+            part1 = sql.split("-- ── 1. The column")[1].split("GRANT CREATE ON SCHEMA catalog")[0]
+            part1 = part1.split("\n", 1)[1]
+            sql = "BEGIN;\n" + part1 + "COMMIT;\n"
         if mf.startswith("262_"):
             # AA-859 wave 3: CI's legacy app_user is a LOGIN role here (ci.yml creates it; Dev has no grant for it)
             # and holds 005's grants on tenant_brand_rules. 262's guard 1 refuses a login role with privileges on
