@@ -187,6 +187,12 @@ def check_meta(output: dict) -> list[dict]:
     return out
 
 
+# AA-645: a list item ("- Bike, helmet") or a code-built fact line ("Meals: B, L", "Overnight: Phakding") is a
+# complete unit without a full stop — the short page (arm E) ends its fields with them. A cut prose sentence does not
+# take this shape.
+_LIST_OR_LABEL_LINE_RE = re.compile(r"^(?:[-•*]\s+\S|[A-Z][A-Za-z ]{1,30}:\s+\S)")
+
+
 def check_truncation(output: dict) -> list[dict]:
     out = []
     for f in ("summary", "description", "itineraries"):
@@ -194,7 +200,8 @@ def check_truncation(output: dict) -> list[dict]:
         if not text:
             continue
         last = text.splitlines()[-1].strip()
-        if _DAY_TITLE_RE.match(last) or last.endswith(_TERMINAL) or last[-1:].isdigit():
+        if (_DAY_TITLE_RE.match(last) or last.endswith(_TERMINAL) or last[-1:].isdigit()
+                or _LIST_OR_LABEL_LINE_RE.match(last)):
             continue
         out.append(_finding(TEXT_TRUNCATED, CLASS_TRUNC, f, last[-120:], "ends without terminal punctuation"))
     return out

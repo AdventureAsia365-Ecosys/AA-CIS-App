@@ -1918,6 +1918,19 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   drift, cut / out-of-band meta, truncated body, novel figure, figure with the wrong unit, name not in source,
   inclusion the source excludes). `scripts/s1_step01/fixture_report.py` runs both over the golden fixture or any
   page set (A/B arms) and scores them against a ground-truth file; results with tour text go to the private root.
+- **S1 writer v2 + A/B arms** (S248, M2a S1-first step 2, AA-645; offline only, the live graph does not import it
+  — step 4 wires the A/B winner behind a flag): `services/content_generation/s1_writer_v2.py` builds, purely, the
+  three arms the A/B compares — `aplus` (today's A1 writer prompt byte for byte + a code-built DAYS block), `w` (the
+  new writer: a code-built FACT SHEET from `build_fact_table` instead of the raw dump; no per-day length targets,
+  no nudge, no brand-differentiation block, no PAA; place background allowed, figures only from the sheet) and `e`
+  (a code-built short page: At a glance box, `Day N —` blocks with source fact lines, Included / Not included; the
+  model writes only name, subtitle, hook, highlights and one sentence a day). Every arm gets its SEO title + meta
+  from a separate, code-checked call with one retry and no cut — at most 3 calls a tour. The day plan is code: source
+  markers (ranges expanded) win over a disagreeing duration; a sub-day / one-day tour is one block.
+  `raw_tours.group_size` / `best_time_to_go` reach the writer (`with_agency_fields`). The paid harness is
+  `scripts/aa645/s1_screen.py` (LLMClient, `llm_call_log` stage `adhoc_aa645`, role `writer`; runs on the deployed
+  image via S3) and `scripts/aa645/score_screen.py` (panel rubric v1 + rank, code gates, $ per tour, the W pick,
+  paired Wilcoxon for the A/B runs). The A1 flag-fix prompt is neutral white-label (no "Adventure Asia").
 - **Degraded detectors + repair contract** (AA-925, Q-2, design §4.3/§6.3; `services/quality/`, pure modules —
   gate runners are passed in, no writer module is imported):
   - `degraded[]` (`services/quality/degraded.py`) names every fail-open path that ran on an output: Jev
