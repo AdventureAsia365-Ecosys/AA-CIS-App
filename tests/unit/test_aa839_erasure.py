@@ -714,4 +714,8 @@ async def test_fp_strip_hash_drops_the_salt_too():
     pool = _Pool()
     await ej._strip_hash(pool, [TID], H, ej.STRIPPED)
     ((sql, args),) = pool.executed
-    assert "result = result - 'subject_salt'" in sql and args[2] == H
+    assert args[2] == H
+    # the key is removed only from an object result (a scalar or array result would make `-` remove an element
+    # or raise), and only object payloads are rewritten
+    assert "CASE WHEN jsonb_typeof(result) = 'object' THEN result - 'subject_salt' ELSE result END" in sql
+    assert "jsonb_typeof(payload) = 'object'" in sql

@@ -365,9 +365,12 @@ async def run_erasure(ctx: JobContext, *, env: Optional[dict] = None, now: Optio
                 counted.setdefault("blockers", [])
         rows = counted["rows"]
         dry_job = await _dry_job(conn, payload["dry_run_job_id"]) if mode == "apply" else None
-        # a DRY RUN draws the traveller salt; an apply reuses its DRY RUN's (apply_refusals refuses a missing one)
-        salt = (secrets.token_hex(16) if mode == "dry_run" else
-                str(((dry_job or {}).get("result") or {}).get("subject_salt") or ""))
+        # a traveller DRY RUN draws the salt; a traveller apply reuses its DRY RUN's (apply_refusals refuses a
+        # missing one); a tenant fingerprint is keyed by the tenant id and takes no salt
+        salt = None
+        if subject == "traveller":
+            salt = (secrets.token_hex(16) if mode == "dry_run" else
+                    str(((dry_job or {}).get("result") or {}).get("subject_salt") or ""))
         key = subject_key(payload, salt)
         fp = pl.fingerprint(subject, key, rows)
         result: dict[str, Any] = {
@@ -433,8 +436,8 @@ async def _strip_hash(conn, job_ids: list[str], email_sha256: Optional[str], mar
     address (AA-839 review)."""
     await conn.execute(
         "UPDATE shared.job SET payload = jsonb_set(payload, '{email_sha256}', to_jsonb($2::text)), "
-        "result = result - 'subject_salt' "
-        "WHERE kind = $4 AND payload ? 'email_sha256' "
+        "result = CASE WHEN jsonb_typeof(result) = 'object' THEN result - 'subject_salt' ELSE result END "
+        "WHERE kind = $4 AND jsonb_typeof(payload) = 'object' AND payload ? 'email_sha256' "
         "AND (id = ANY($1::uuid[]) OR ($3::text IS NOT NULL AND payload ->> 'email_sha256' = $3::text))",
         job_ids, marker, email_sha256, KIND)
 

@@ -536,6 +536,12 @@ async def test_traveller_dry_run_then_apply(pool):
     assert all(r["rows"] == 0 for r in again["rows"]) and again["hash_stripped"] is True
     assert await admin.fetchval("SELECT payload ->> 'email_sha256' FROM shared.job WHERE id = $1::uuid",
                                 ver_id) == ej.STRIPPED_VERIFY
+    # ... and no salt either: neither in what it returns nor in its stored row (the worker writes the result after
+    # the strip, so a salt in the result would outlive the hash and make the fingerprint testable again)
+    assert "subject_salt" not in again
+    assert await admin.fetchval("SELECT result ? 'subject_salt' FROM shared.job WHERE id = $1::uuid", ver_id) is False
+    assert await admin.fetchval("SELECT count(*) FROM shared.job WHERE kind = $1 AND payload ->> 'email_sha256' "
+                                "LIKE 'stripped%' AND result ? 'subject_salt'", ej.KIND) == 0
 
 
 @pytest.mark.asyncio
@@ -553,19 +559,60 @@ async def test_a_failed_traveller_job_keeps_no_hash(pool):
 
 
 @pytest.mark.asyncio
-async def test_same_counts_for_two_tenants_give_two_fingerprints(pool):
+async def test_same_counts_for_two_tenants_give_two_fingerprints(pool, monkeypatch):
     """AA-839 review: the fingerprint names the subject. Two bare offboarded tenants have identical counts; an
-    approval of tenant A's fingerprint does not apply tenant B (v1 fingerprints were equal here)."""
+    approval of tenant A's fingerprint does not apply tenant B (v1 fingerprints were equal here). A tenant DRY RUN
+    draws no salt (only a traveller fingerprint needs one)."""
+    def no_salt(*_a, **_k):
+        raise AssertionError("a tenant DRY RUN must not draw a salt")
+    monkeypatch.setattr(ej.secrets, "token_hex", no_salt)
     a, b = await _tenant(pool, offboarded_days=40), await _tenant(pool, offboarded_days=40)
     _, dry_a = await _run(pool, {"subject": "tenant", "tenant": a})
     dry_b_id, dry_b = await _run(pool, {"subject": "tenant", "tenant": b})
     assert _rows(dry_a) == _rows(dry_b) and dry_a["fingerprint"] != dry_b["fingerprint"]
+    # a tenant fingerprint is keyed by the tenant id alone: no salt is drawn or stored
+    assert "subject_salt" not in dry_a and "subject_salt" not in dry_b
+    assert dry_b["fingerprint"] == pl.fingerprint("tenant", b, dry_b["rows"])
+    admin, _ = pool
+    assert await admin.fetchval("SELECT result ? 'subject_salt' FROM shared.job WHERE id = $1::uuid",
+                                dry_b_id) is False
     with pytest.raises(NonRetryable, match="approved_fingerprint differs"):
         await _run(pool, {"subject": "tenant", "tenant": b, "mode": "apply", "dry_run_job_id": dry_b_id,
                           "approved_fingerprint": dry_a["fingerprint"], "approved_by": "N", "snapshot_id": "s"},
                    env=dict(ON, ERASURE_TENANT_RETENTION_DAYS="0"))
-    admin, _ = pool
     assert await admin.fetchval("SELECT count(*) FROM shared.tenants WHERE tenant_id = $1::uuid", b) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_v1_dry_run_is_refused_and_not_claimed(pool):
+    """AA-839 review: a DRY RUN made before fingerprint v2 (no fingerprint_version) cannot be applied, and the
+    refusal happens before the claim, so the DRY RUN row carries no used_by_apply."""
+    admin, _ = pool
+    tid = await _tenant(pool, offboarded_days=40)
+    dry_id, dry = await _run(pool, {"subject": "tenant", "tenant": tid})
+    await admin.execute("UPDATE shared.job SET result = result - 'fingerprint_version' WHERE id = $1::uuid", dry_id)
+    with pytest.raises(NonRetryable, match="predates the subject-bound fingerprint"):
+        await _run(pool, {"subject": "tenant", "tenant": tid, "mode": "apply", "dry_run_job_id": dry_id,
+                          "approved_fingerprint": dry["fingerprint"], "approved_by": "N", "snapshot_id": "s"},
+                   env=dict(ON, ERASURE_TENANT_RETENTION_DAYS="0"))
+    assert await admin.fetchval("SELECT result ? 'used_by_apply' FROM shared.job WHERE id = $1::uuid",
+                                dry_id) is False
+    assert await admin.fetchval("SELECT count(*) FROM shared.tenants WHERE tenant_id = $1::uuid", tid) == 1
+
+
+@pytest.mark.asyncio
+async def test_strip_hash_leaves_a_non_object_result_alone(pool):
+    """AA-839 review: `jsonb - key` raises on a scalar; the strip must not fail (and so must not leave the hash)
+    on a job row whose result is not an object."""
+    admin, app = pool
+    h = hashlib.sha256(f"s{uuid.uuid4().hex}@example.com".encode()).hexdigest()
+    job_id, _ = await queue.enqueue(admin, ej.KIND, {"subject": "traveller", "email_sha256": h, "mode": "dry_run"})
+    await admin.execute("UPDATE shared.job SET result = '\"done\"'::jsonb WHERE id = $1::uuid", job_id)
+    async with app.acquire() as conn:
+        await ej._strip_hash(conn, [job_id], h, ej.STRIPPED)
+    row = await admin.fetchrow("SELECT payload ->> 'email_sha256' AS h, result::text AS r FROM shared.job "
+                               "WHERE id = $1::uuid", job_id)
+    assert row["h"] == ej.STRIPPED and row["r"] == '"done"'
 
 
 @pytest.mark.asyncio
