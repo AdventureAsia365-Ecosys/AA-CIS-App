@@ -72,12 +72,24 @@ def _fake_graph_result():
     }
 
 
+def _fake_conn(rows):
+    """A faked asyncpg connection: fetchrow returns `rows` in order; execute/fetchval are mocks;
+    transaction() is an async context manager (AA-983: the score write is one transaction)."""
+    conn = AsyncMock()
+    conn.fetchrow.side_effect = rows
+    conn.execute = AsyncMock(return_value="UPDATE 0")
+    conn.fetchval = AsyncMock(return_value=FAKE_UUID)
+    tx = MagicMock()
+    tx.__aenter__ = AsyncMock(return_value=None)
+    tx.__aexit__ = AsyncMock(return_value=False)
+    conn.transaction = MagicMock(return_value=tx)
+    return conn
+
+
 def _run(gc_row=None, seo_row=None):
     """Runs the real _revalidate_tour with I/O faked; returns the initial_state
     actually handed to graph.invoke() (captured via the mocked graph)."""
-    conn = AsyncMock()
-    conn.fetchrow.side_effect = [gc_row or _gc_row(), seo_row or _seo_row()]
-    conn.execute = AsyncMock()
+    conn = _fake_conn([gc_row or _gc_row(), seo_row or _seo_row()])
 
     captured = {}
     fake_graph = MagicMock()
@@ -134,9 +146,7 @@ def test_itineraries_text_column_passed_through_unchanged():
 def test_metadata_brand_name_resolved_from_decoded_dict():
     # Exercises the pre-existing metadata decode path (kept working, not regressed):
     # _resolve_brand_rule is called with brand_name parsed OUT of jsonb metadata.
-    conn = AsyncMock()
-    conn.fetchrow.side_effect = [_gc_row(), _seo_row()]
-    conn.execute = AsyncMock()
+    conn = _fake_conn([_gc_row(), _seo_row()])
     resolve_mock = AsyncMock(return_value=None)
     fake_graph = MagicMock()
     fake_graph.invoke.return_value = _fake_graph_result()
@@ -154,9 +164,7 @@ def test_metadata_brand_name_resolved_from_decoded_dict():
 
 def test_missing_seo_context_row_yields_empty_seo_without_crash():
     # seo_row is None (no seo_context row) — must not KeyError/AttributeError.
-    conn = AsyncMock()
-    conn.fetchrow.side_effect = [_gc_row(), None]
-    conn.execute = AsyncMock()
+    conn = _fake_conn([_gc_row(), None])
     fake_graph = MagicMock()
     captured = {}
     fake_graph.invoke.side_effect = lambda state: (captured.update(state=state), _fake_graph_result())[1]

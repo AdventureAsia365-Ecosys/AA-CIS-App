@@ -8,9 +8,10 @@ overwrites the version's quality_scores rows and sets `generated_content.revalid
 
 Payload: {"content_id", "tour_id"}.
 
-Idempotent by construction: `_revalidate_tour` DELETEs then re-INSERTs the version's quality_scores
-rows and overwrites `revalidate_passed`, so a reap/retry simply recomputes the same version in
-place — no duplicate rows.
+Idempotent by construction: `_revalidate_tour` INSERTs the version's new quality_scores row, re-points
+the published tour of that version at it (AA-983), DELETEs the older rows and overwrites
+`revalidate_passed`, all in one transaction, so a reap/retry simply recomputes the same version in
+place — no duplicate rows, no NULL `published_tours.quality_score_id`.
 """
 from __future__ import annotations
 
