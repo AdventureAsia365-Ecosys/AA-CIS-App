@@ -5,7 +5,9 @@
 
 import { apiGet } from "@/app/_kit";
 
-export interface Version {
+import type { ServedFields } from "./ServedBadge";
+
+export interface Version extends ServedFields {
   id: string;
   version_number: number;
   status: string;

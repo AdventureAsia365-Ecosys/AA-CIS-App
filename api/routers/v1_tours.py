@@ -12,6 +12,9 @@ from api.core.secret_compare import secrets_equal
 from api.routers.admin import PLAN_LIMITS
 from api.routers._billing import no_plan_usage, usage_row_to_dict
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
+from api.routers._served import annotate as _annotate_served, refuse_http as _refuse_not_served
+from shared import tour_liveness as _tl
+from shared.tour_liveness import TourNotServedError, live_source_sql
 from api.routers._tenant_projection import (
     project_billing, project_raw, project_tour, project_version,
     tenant_status_filter, tenant_version_status,
@@ -91,6 +94,9 @@ _POOL_BASE_CONDITIONS = (
     f"pt.tenant_id = '{_AA_MASTER_TENANT}'::uuid",
     "pt.master_status = 'active'",
     "pt.deleted_at IS NULL",
+    # AA-986 L3: and its source version is live (the served rule, shared/tour_liveness.py; L2 keeps a Master off over
+    # a dead source, this is the reader's half)
+    live_source_sql("rt"),
 )
 _POOL_COUNT_SQL = """
     SELECT COUNT(*)
@@ -125,6 +131,7 @@ _POOL_COUNTRIES_SQL = f"""
     WHERE pt.tenant_id = '{_AA_MASTER_TENANT}'::uuid
       AND pt.master_status = 'active'
       AND pt.deleted_at IS NULL
+      AND {live_source_sql("rt")}
       AND rt.country IS NOT NULL
     ORDER BY rt.country
 """
@@ -195,10 +202,11 @@ async def browse_pool(
         total = await conn.fetchval(_POOL_COUNT_SQL.format(where=where), *params)
         rows = await conn.fetch(rows_sql, *params_paged)
         countries = await conn.fetch(_POOL_COUNTRIES_SQL)
+        data = await _annotate_served(conn, [project_tour(r) for r in rows])   # AA-986 L3
     _log_t2_read("pool", tenant_id, used_tenant_pool, count=len(rows))
 
     return {
-        "data": [project_tour(r) for r in rows],
+        "data": data,
         "pagination": {"page": page, "page_size": page_size,
                        "total": total, "pages": -(-total // page_size)},
         "countries": [r["country"] for r in countries],
@@ -455,8 +463,17 @@ async def trigger_rewrite(
             LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
             WHERE pt.id = $1::uuid
               AND pt.master_status = 'active' AND pt.deleted_at IS NULL
+              AND rt.source_status = 'active' AND rt.deleted_at IS NULL
         """, published_tour_id)
         if not pt:
+            # AA-986 L3 (ADR 0015 decision 5): a tour AA no longer serves (retired) or has paused answers 409 with a
+            # plain sentence, not the generic 404; nothing is charged (the quota is consumed below).
+            tour_of = await conn.fetchval(
+                "SELECT tour_id FROM gold_aa_internal.published_tours WHERE id = $1::uuid", published_tour_id)
+            try:
+                await _tl.ensure_served(conn, tour_of, "start a new rewrite")
+            except TourNotServedError as exc:
+                raise _refuse_not_served(exc) from exc
             raise HTTPException(status_code=404, detail="Tour not found in pool")
 
         # One rewrite in flight per (tenant, tour): serialise concurrent clicks on this pair, then
@@ -623,12 +640,14 @@ async def list_my_versions(
         job = _MY_VERSIONS_JOB_SPLIT if used_tenant_pool else _MY_VERSIONS_JOB_JOINED
         rows = await conn.fetch(_MY_VERSIONS_ROWS_SQL.format(
             where=where, limit=len(params) + 1, offset=len(params) + 2, **job), *params, page_size, offset)
+        served = await _annotate_served(conn, [{"tour_id": r.get("tour_id")} for r in rows])   # AA-986 L3
     _log_t2_read("my_versions", tenant_id, used_tenant_pool, count=len(rows))
     if used_tenant_pool:  # after the tenant block: the tenant connection is released before MAIN
         rows = await _with_job_status(request.app.state.pool, rows, "_job_id")
 
     return {
-        "data": [project_version(r) for r in rows],
+        "data": [{**project_version(r), **{k: v for k, v in sv.items() if k != "tour_id"}}
+                 for r, sv in zip(rows, served)],
         "pagination": {"page": page, "page_size": page_size,
                        "total": total, "pages": -(-total // page_size)},
     }
@@ -644,9 +663,17 @@ async def retry_rewrite(version_id: str, request: Request, tenant=Depends(get_te
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         row = await conn.fetchrow("""
-            SELECT id, status, job_id FROM gold_aa_internal.tenant_tour_versions
-            WHERE id = $1::uuid AND tenant_id = $2::uuid
+            SELECT ttv.id, ttv.status, ttv.job_id, pt.tour_id
+            FROM gold_aa_internal.tenant_tour_versions ttv
+            LEFT JOIN gold_aa_internal.published_tours pt ON pt.id = ttv.published_tour_id
+            WHERE ttv.id = $1::uuid AND ttv.tenant_id = $2::uuid
         """, version_id, tenant_id)
+        if row and row["status"] == "failed" and row["job_id"] is not None:
+            # AA-986 L3: no retry (LLM spend) on a tour AA no longer serves or has paused
+            try:
+                await _tl.ensure_served(conn, row.get("tour_id"), "retry this rewrite")
+            except TourNotServedError as exc:
+                raise _refuse_not_served(exc) from exc
     if not row:
         raise HTTPException(status_code=404, detail="Version not found")
     if row["status"] != "failed" or row["job_id"] is None:
@@ -884,9 +911,11 @@ async def get_version(
         job = _VERSION_JOB_SPLIT if used_tenant_pool else _VERSION_JOB_JOINED
         row = await conn.fetchrow(_VERSION_SQL.format(tenant_cond=_VERSION_TENANT_COND, **job),
                                   version_id, tenant_id)
+        served = {}
         if row:  # version history
             history = await conn.fetch(_VERSION_HISTORY_SQL.format(tenant_cond=_VERSION_HISTORY_TENANT_COND),
                                        tenant_id, row["published_tour_id"])
+            served = (await _annotate_served(conn, [{"tour_id": row.get("tour_id")}]))[0]   # AA-986 L3
     _log_t2_read("version", tenant_id, used_tenant_pool, found=row is not None)
 
     if not row:
@@ -898,6 +927,7 @@ async def get_version(
     # AA-796 — and the score-derived needs_review status reads as ai_generated.
     return {
         **project_version(row),
+        **{k: v for k, v in served.items() if k != "tour_id"},
         "version_history": [project_version(h) for h in history],
     }
 

@@ -56,7 +56,10 @@ from api.core.aa544_tenant_pool import (
     PUBLISH_FLAG, PUBLISH_LOG_LIST_FLAG, STAGE1_PUBLISH_PENDING_FLAG, UNPUBLISH_FLAG, acquire_scoped_conn,
 )
 from api.routers.v1_integrations import is_tombstoned_secret, reconnect_detail
+from api.routers._served import annotate_by_request, refuse_http
 from api.routers.v1_tours import get_tenant
+from shared import tour_liveness as _tl
+from shared.tour_liveness import TourNotServedError
 from services.acp_content_writing.export import render_content_text_to_fragment
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from services.acp_publish import daily_limit
@@ -108,7 +111,8 @@ async def list_publish_log(request: Request, tenant=Depends(get_tenant),
         rows = await conn.fetch(
             """
             SELECT pl.publish_id::text, pl.piece_id::text, pl.channel, pl.status, pl.external_url,
-                   pl.published_at, pl.unpublished_at, ago.name AS angle_name
+                   pl.published_at, pl.unpublished_at, ago.name AS angle_name,
+                   cp.angle_gate_request_id::text AS request_id
             FROM acp_shared.publish_log pl
             JOIN acp_shared.content_piece cp ON cp.piece_id = pl.piece_id
             JOIN acp_shared.angle_gate_request agr ON agr.request_id = cp.angle_gate_request_id
@@ -122,9 +126,7 @@ async def list_publish_log(request: Request, tenant=Depends(get_tenant),
             """,
             tenant_id, limit,
         )
-    logger.info("publish_log_listed", tenant_id=tenant_id, count=len(rows), used_tenant_pool=used_tenant_pool)
-    return {
-        "data": [
+        data = [
             {
                 "publish_id": r["publish_id"],
                 "piece_id": r["piece_id"],
@@ -134,11 +136,19 @@ async def list_publish_log(request: Request, tenant=Depends(get_tenant),
                 "external_url": r["external_url"],
                 "published_at": r["published_at"].isoformat() if r["published_at"] else None,
                 "unpublished_at": r["unpublished_at"].isoformat() if r["unpublished_at"] else None,
+                "request_id": r.get("request_id"),
             }
             for r in rows
-        ],
-        "total": len(rows),
-    }
+        ]
+        # AA-986 L3 (ADR 0015 decision 5, Q3): the served state of each post's tour. A post still live about a
+        # tour AA no longer serves is flagged for the tenant ("remove or edit"); AA never removes it on its own —
+        # the tenant's one-click Unpublish is DELETE /v1/publish-log/{id} (the real WordPress / Facebook removal).
+        await annotate_by_request(conn, tenant_id, data)
+    for d in data:
+        d.pop("request_id", None)
+        d["live_post_of_discontinued_tour"] = d["status"] == "published" and d["served_status"] == "retired"
+    logger.info("publish_log_listed", tenant_id=tenant_id, count=len(rows), used_tenant_pool=used_tenant_pool)
+    return {"data": data, "total": len(data)}
 
 
 def _site_host(url: Optional[str]) -> str:
@@ -293,7 +303,7 @@ async def unpublish(publish_id: UUID, request: Request, tenant=Depends(get_tenan
 _PENDING_SQL = """
     SELECT cp.piece_id::text, cp.content_text, cp.created_at,
            COALESCE(cp.channel, agr.channel) AS channel, ago.name AS angle_name,
-           cp.route_hub_name, cp.route_segment_count
+           cp.route_hub_name, cp.route_segment_count, cp.angle_gate_request_id::text AS request_id
     FROM (
         SELECT DISTINCT ON (angle_gate_request_id) piece_id
         FROM acp_shared.content_piece
@@ -358,11 +368,14 @@ async def list_pending(request: Request, tenant=Depends(get_tenant)):
         request, tenant_id, STAGE1_PUBLISH_PENDING_FLAG, fail_closed=True,
     ) as (conn, used_tenant_pool):
         rows = await conn.fetch(_PENDING_SQL, tenant_id, list(_SUPPORTED_CHANNELS))
+        # AA-986 L3: the served state of each piece's tour (Publish badge; publishing it is refused with a 409)
+        served = await annotate_by_request(conn, tenant_id, [{"request_id": r.get("request_id")} for r in rows])
     logger.info("aa544_stage1_list_pending", tenant_id=tenant_id, used_tenant_pool=used_tenant_pool)
 
     return {
         "data": [
             {
+                **{k: v for k, v in sv.items() if k != "request_id"},
                 "piece_id": r["piece_id"],
                 "title": r["angle_name"] or "Untitled",
                 "content_preview": r["content_text"][:280],
@@ -373,7 +386,7 @@ async def list_pending(request: Request, tenant=Depends(get_tenant)):
                 "route_hub_name": r["route_hub_name"],
                 "route_segment_count": r["route_segment_count"],
             }
-            for r in rows
+            for r, sv in zip(rows, served)
         ],
         "total": len(rows),
     }
@@ -442,6 +455,7 @@ _PUBLISH_PIECE_TENANT_COND = "cp.tenant_id = $2::uuid"
 _PUBLISH_PIECE_SQL = """
             SELECT cp.piece_id, cp.content_text, cp.status, cp.slug, cp.seo_title, cp.meta_description,
                    COALESCE(cp.channel, agr.channel) AS channel, ago.name AS angle_name,
+                   cp.angle_gate_request_id::text AS request_id,
                    EXISTS (SELECT 1 FROM acp_shared.content_piece newer
                            WHERE newer.angle_gate_request_id = cp.angle_gate_request_id
                              AND newer.tenant_id = cp.tenant_id
@@ -528,6 +542,13 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
         piece = await conn.fetchrow(_PUBLISH_PIECE_SQL.format(tenant_cond=_PUBLISH_PIECE_TENANT_COND),
                                     piece_id, tenant_id)
         channel = _publishable_channel(piece)
+        # AA-986 L3 (ADR 0015 decision 5): no new post about a tour AA no longer serves or has paused (409)
+        req_id = piece.get("request_id")
+        tour_of = (await _tl.request_tours(conn, tenant_id, [req_id])).get(req_id) if req_id else None
+        try:
+            await _tl.ensure_served(conn, tour_of, "publish a new post")
+        except TourNotServedError as exc:
+            raise refuse_http(exc) from exc
         integ = await conn.fetchrow(_PUBLISH_INTEGRATION_SQL, tenant_id, _INTEGRATION_TYPE[channel])
 
     if not integ or not integ["secret_key"]:

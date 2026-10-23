@@ -4,6 +4,7 @@
 // established and the tenant-safe projection (never gate_ledger/held_reason/repair_log).
 
 import { apiGet } from "@/app/_kit";
+import type { ServedFields } from "./ServedBadge";
 
 export interface ReviewGoal { key: string; label: string }
 export interface ReviewAngle {
@@ -27,7 +28,8 @@ export interface DfsPaaSnapshot {
 
 export type ReadyState = "ready" | "in_progress" | "not_ready";
 
-export interface ReviewItem {
+// AA-986 L3: each review row carries the served state of its tour (badge on Content).
+export interface ReviewItem extends ServedFields {
   request_id: string;
   piece_id: string;
   channel: string;

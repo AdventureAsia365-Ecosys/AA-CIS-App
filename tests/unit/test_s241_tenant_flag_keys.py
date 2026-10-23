@@ -43,6 +43,7 @@ DOCUMENTED_FLAG_KEYS = frozenset({
     "aa859:trip_reallocation_pool",          # wave 4 GET .../trip-reallocation/suggest, POST .../confirm
     "aa859:marketplace_pool",                # wave 4 GET /v1/marketplace
     "aa859:reviews_pool",                    # wave 4 GET /v1/content-writing/reviews, .../requests/{id}/review
+    "aa986:tenant_notifications_pool",       # AA-986 L3 GET /v1/notifications, POST .../read-all, .../{id}/read
 })
 
 # The flag reader's entry points and the position of their flag-key argument.
@@ -98,7 +99,7 @@ def _call_site_keys():
 
 
 def test_documented_list_matches_the_module_inventory():
-    assert len(DOCUMENTED_FLAG_KEYS) == 20
+    assert len(DOCUMENTED_FLAG_KEYS) == 21
     assert set(tp.ALL_TENANT_POOL_FLAGS) == DOCUMENTED_FLAG_KEYS
 
 

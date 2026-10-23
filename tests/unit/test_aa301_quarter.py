@@ -112,7 +112,8 @@ class TestComputeQuarterPlan:
         assert plan.thin_trip_notes
 
     def test_retired_trip_excluded(self):
-        retired = _trip(lifecycle_stage="retired")
+        # AA-986 L3 (ADR 0015 Q9): the served state decides, not the sales lifecycle_stage
+        retired = _trip(served_state="retired")
         runway = RunwayMap(tenant_id=TENANT, year=2026, cells=[])
         plan = compute_quarter_plan(
             TENANT, 2026, 1, [retired], markets=["US"], capacity_posts_per_week=1,

@@ -71,6 +71,8 @@ import structlog
 from services.acp_contract.segment_matching import live_segment_labels, resolve_segment_aliases
 from services.acp_shared.route_guard import current_route, trip_route_segment_ids
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
+from shared import tour_liveness as _tl
+from shared.tour_liveness import ServedState, served_tour_joins_sql, with_served
 from services.acp_shared.subject_seed import (
     choose_representative, choose_route_anchor, load_alias_cards, load_segment_members,
 )
@@ -742,11 +744,22 @@ async def fetch_slate(tenant_id: UUID, pool) -> dict:
 # AA-859 wave 4 — module level so the tests can mutate it (forgotten-WHERE check). On the tenant pool RLS on
 # acp_shared.subject (265) holds the boundary even without `s.tenant_id = $1`; atom_segment / route are platform
 # tables (265's platform read allowlist).
-_SLATE_SUBJECTS_SQL = """
+# AA-986 L3: `segment_dead` = the Segment has members and none of them is a live atom of a served tour (the 203 /
+# 271 rule inlined: the tenant pool holds no grant on v_active_tour_atoms). A merged id with no members of its own is
+# not dead (it is shown on its live id).
+_SLATE_SUBJECTS_SQL = f"""
     SELECT s.subject_id, s.channel, s.state, s.score, s.cleared_bar_reason,
            s.segment_id, s.route_id, s.created_at,
            asg.canonical_place, asg.canonical_action,
-           r.hub_name, r.ordered_segment_ids, r.tour_id
+           r.hub_name, r.ordered_segment_ids, r.tour_id,
+           (s.segment_id IS NOT NULL
+            AND EXISTS (SELECT 1 FROM acp_contract.atom_segment_member m0 WHERE m0.segment_id = s.segment_id)
+            AND NOT EXISTS (
+                SELECT 1 FROM acp_contract.atom_segment_member m
+                  JOIN acp_contract.tour_atoms ta ON ta.atom_id = m.atom_id AND NOT ta.deleted
+                       AND NOT ta.is_empty_marker
+                  {served_tour_joins_sql("ta.tour_id")}
+                 WHERE m.segment_id = s.segment_id)) AS segment_dead
     FROM acp_shared.subject s
     LEFT JOIN acp_contract.atom_segment asg ON asg.segment_id = s.segment_id
     LEFT JOIN acp_contract.route r ON r.route_id = s.route_id
@@ -760,6 +773,10 @@ async def fetch_slate_on(conn, tenant_id: UUID, enabled_channel_list) -> dict:
     of its config): the Subject rows and the live labels of merged Segment ids."""
     enabled = set(enabled_channel_list)
     rows = await conn.fetch(_SLATE_SUBJECTS_SQL, tenant_id)
+    # AA-986 L3 (ADR 0015 decision 5): the served state of each Route Subject's tour. A still-proposed Subject on a
+    # tour AA no longer serves (or has paused), or on a Segment with no served tour left, is not offered (the next
+    # proposal deletes it); a picked / used one stays, with the served fields, so the tenant sees why.
+    tour_states = await _tl.served_states(conn, [str(r["tour_id"]) for r in rows if r["tour_id"]])
     # AA-857 — a Subject stored on an id that has since merged into another (atom_segment_alias)
     # is shown on the live id, with the live Segment's label (the old row keeps its old label).
     moved = await live_segment_labels(conn, [r["segment_id"] for r in rows])
@@ -767,6 +784,14 @@ async def fetch_slate_on(conn, tenant_id: UUID, enabled_channel_list) -> dict:
     by_channel: dict[str, list[dict]] = {c: [] for c in CHANNEL_BARS}
     for r in rows:
         if r["state"] == "proposed" and r["channel"] not in enabled:
+            continue
+        if r["tour_id"]:
+            served = tour_states.get(str(r["tour_id"]))
+        elif r.get("segment_dead"):
+            served = ServedState("retired", "no_served_tour")
+        else:
+            served = None
+        if r["state"] == "proposed" and served is not None and not served.served:
             continue
         reason = r["cleared_bar_reason"]
         if isinstance(reason, str):
@@ -786,6 +811,7 @@ async def fetch_slate_on(conn, tenant_id: UUID, enabled_channel_list) -> dict:
             "hub_name": r["hub_name"],
             "created_at": r["created_at"].isoformat() if r["created_at"] else None,
         })
+        with_served(by_channel[r["channel"]][-1], served)
 
     return {
         channel: {

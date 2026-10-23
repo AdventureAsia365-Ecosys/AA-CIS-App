@@ -219,10 +219,14 @@ export default function ContentTracePage() {
   useEffect(() => { load(); }, [load]);
 
   // AA-560 — same confirm-dialog + re-fetch-after-success shape as the old a4-oversight page's
-  // handleForceUnpublish(). Destructive/irreversible from here (real, immediate publish-status
-  // change on the actual channel), hence the native confirm().
+  // handleForceUnpublish(). AA-986 L3 (ADR 0015 Q3): the backend changes AA's record only; the post stays live on
+  // the tenant's WordPress site / Facebook Page until the tenant removes it (portal one-click Unpublish). The
+  // label and the confirm text say exactly that.
   const handleForceUnpublish = useCallback(async (publishId: string) => {
-    if (!window.confirm("Force-unpublish this piece? This cannot be undone from here.")) return;
+    if (!window.confirm(
+      "Mark this post unpublished in AA's record? This does NOT remove it from the tenant's site or page: "
+      + "it stays live there until the tenant unpublishes it from the portal.",
+    )) return;
     setUnpublishingId(publishId);
     setUnpublishError(null);
     try {
@@ -667,11 +671,12 @@ function ContentTraceAccordion({ row: p, onForceUnpublish, unpublishingId }: {
             disabled={unpublishingId === p.publish_id}
             style={{
               padding: "5px 10px", borderRadius: 6, border: `1px solid ${A.red}`,
+              // AA-986 L3: the record only, never the channel (see handleForceUnpublish)
               background: "transparent", color: A.red, fontSize: 11.5, cursor: "pointer",
               opacity: unpublishingId === p.publish_id ? 0.5 : 1,
             }}
           >
-            {unpublishingId === p.publish_id ? "Unpublishing…" : "Force unpublish"}
+            {unpublishingId === p.publish_id ? "Marking…" : "Mark unpublished in AA"}
           </button>
         )}
       </div>

@@ -14,6 +14,9 @@ import uuid
 from typing import Optional
 import structlog
 
+from api.routers.v1_notifications import router as v1_notifications_router
+from api.routers._served import tour_not_served_handler
+from shared.tour_liveness import TourNotServedError
 from api.routers.auth import (
     _hash_api_key, _create_jwt, verify_jwt, verify_tenant_jwt,
     TenantLoginRequest, TenantLoginResponse,
@@ -270,6 +273,7 @@ app.include_router(v1_content_writing_router)  # AA-450 — T9 Content Writing +
 # tenant thật trong 14 ngày CloudWatch, 0 UI caller. Xem AA-579 (Linear) trước khi khôi phục.
 app.include_router(v1_pipeline_router)
 app.include_router(v1_publish_router)  # AA-455 bước 1 — tenant self-unpublish (publish_log)
+app.include_router(v1_notifications_router)  # AA-986 L3 — tenant bell: GET /v1/notifications, mark read
 app.include_router(v1_integrations_router)  # AA-457 [T11 PR1] — tenant WordPress credentials
 app.include_router(v1_trip_page_router)  # AA-482 — GET /v1/trip/{tour_id}, public page data
 app.include_router(admin_trip_page_router)  # AA-482 — /admin/trip-pages/{publish,recheck}
@@ -315,6 +319,8 @@ app.middleware("http")(sentry_context_middleware)
 # AA-871 — registered LAST = outermost user middleware: every response (401/403/429 from the middlewares above
 # included) carries X-Request-ID and every log line of the request carries request_id. The unhandled 500 is
 # answered outside all user middleware, so its handler adds the header itself.
+# AA-986 L3 — new tenant work on a tour AA no longer serves: 409 tour_discontinued / tour_paused, plain sentence.
+app.add_exception_handler(TourNotServedError, tour_not_served_handler)
 app.add_exception_handler(Exception, unhandled_error_handler)
 app.add_middleware(RequestIdMiddleware)
 

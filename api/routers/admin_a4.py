@@ -522,7 +522,13 @@ async def force_unpublish(
     same `x-admin-user-id` header AA-232 already established (BFF forwards the verified JWT's
     `sub` claim) — tolerant of a missing/malformed header, same fallback shape
     admin_pipeline.py's reviewed_by handling already uses, so a legacy ADMIN_SECRET-only session
-    doesn't 500, it just records "admin:unknown"."""
+    doesn't 500, it just records "admin:unknown".
+
+    AA-986 L3 (root ADR 0015 decision 5, Q3): this changes AA's record only. It does NOT remove the post from the
+    tenant's WordPress site or Facebook Page (those are the tenant's; AA never unpublishes them on its own). The
+    answer says so (`channel_post_removed: false`, `note`), and the admin button is labelled "Mark unpublished in
+    AA". The tenant removes a live post with the one-click Unpublish of the portal (DELETE /v1/publish-log/{id}, the
+    real channel call)."""
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
 
@@ -552,6 +558,9 @@ async def force_unpublish(
         "status": row["status"],
         "unpublished_at": row["unpublished_at"].isoformat() if row["unpublished_at"] else None,
         "unpublished_by": f"admin:{admin_actor}",
+        "channel_post_removed": False,
+        "note": ("Marked unpublished in AA's record only. The post is still live on the tenant's channel until the "
+                 "tenant removes it (portal: Publish, Published, Unpublish)."),
     }
 
 

@@ -102,3 +102,24 @@ async def _aa986_fake_publish(conn, data, *, tenant_slug="aa_internal", actor="p
 @pytest.fixture
 def plain_publish(monkeypatch):
     monkeypatch.setattr("services.tour_lifecycle.publish", _aa986_fake_publish)
+
+
+# AA-986 L3: the tenant routes read the served state of their tours (shared/tour_liveness.served_states /
+# request_tours: one query each on the route's connection). Unit tests script faked asyncpg connections call by call;
+# by default these two reads answer "no state" (every tour served, nothing refused) without touching the fake, so the
+# scripts stay as they were. The real reads, on both pools, are tested on Postgres
+# (tests/integration/test_aa986_l3_tenant_served.py). Mark a test `real_served_state` to keep the real functions.
+@pytest.fixture(autouse=True)
+def _served_state_unknown(request, monkeypatch):
+    if "real_served_state" in request.keywords:
+        return
+    from shared import tour_liveness
+
+    async def _no_states(conn, tour_ids):
+        return {}
+
+    async def _no_tours(conn, tenant_id, request_ids):
+        return {}
+
+    monkeypatch.setattr(tour_liveness, "served_states", _no_states)
+    monkeypatch.setattr(tour_liveness, "request_tours", _no_tours)

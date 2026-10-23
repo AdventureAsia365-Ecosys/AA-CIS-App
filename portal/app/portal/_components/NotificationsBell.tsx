@@ -4,11 +4,33 @@
 // per-browser "last seen" timestamp. No new backend: notifications are a view of activity.
 // AA-759: lives in the PortalShell topbar; the panel is a disclosure region (not a dialog: it does
 // not trap focus), so the kit rule against hand-rolled dialogs holds.
+// AA-986 L3 (root ADR 0015, Q7): the bell also reads the tenant's REAL notifications, GET /v1/notifications
+// (tour.discontinued / tour.reinstated, written by the tour lifecycle service when AA stops or resumes serving a
+// tour the tenant uses). They come first, with a server-side unread count; opening the panel marks them read
+// (POST /v1/notifications/read-all). The badges on My Tours / Content / Publish stay the source of truth.
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Bell, Check, X, RefreshCw } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AlertTriangle, Bell, Check, X, RefreshCw, RotateCcw } from "lucide-react";
+import { apiGet, apiSend } from "@/app/_kit";
 import { T, sans, fmtDateTime } from "./ui";
 import type { ShellActivityView } from "./PortalShellContext";
+
+/** One row of GET /v1/notifications (api/routers/v1_notifications.py). */
+export interface TenantNotification {
+  id: number;
+  event_type: string;
+  title: string;
+  message: string;
+  tour_id: string | null;
+  tour_name: string | null;
+  reason: string | null;
+  live_posts: number;
+  is_read: boolean;
+  created_at: string | null;
+}
+
+export const TENANT_NOTIFICATIONS_KEY = ["tenant-notifications"] as const;
 
 type Activity = ShellActivityView;
 
@@ -48,13 +70,28 @@ export default function NotificationsBell({ activity }: { activity: Activity[] }
     return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
   }, [open]);
 
+  const qc = useQueryClient();
+  const { data: notes } = useQuery({
+    queryKey: TENANT_NOTIFICATIONS_KEY,
+    queryFn: () => apiGet<{ items?: TenantNotification[]; unread?: number }>("/api/tenant/v1/notifications?limit=20"),
+    refetchInterval: 120_000,
+    staleTime: 60_000,
+  });
+  const markAllRead = useMutation({
+    mutationFn: () => apiSend<{ cleared: number }>("/api/tenant/v1/notifications/read-all", { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: TENANT_NOTIFICATIONS_KEY }),
+  });
+  const tourNotes = notes?.items ?? [];
+  const serverUnread = notes?.unread ?? 0;
+
   const newest = activity.reduce((m, a) => Math.max(m, Date.parse(a.created_at) || 0), 0);
-  const unread = activity.filter(a => (Date.parse(a.created_at) || 0) > seenAt).length;
+  const unread = activity.filter(a => (Date.parse(a.created_at) || 0) > seenAt).length + serverUnread;
 
   function toggle() {
     const next = !open;
     setOpen(next);
     if (next && newest > seenAt) { writeSeen(newest); setSeenAt(newest); }
+    if (next && serverUnread > 0 && !markAllRead.isPending) markAllRead.mutate();
   }
 
   return (
@@ -75,7 +112,29 @@ export default function NotificationsBell({ activity }: { activity: Activity[] }
             <span style={{ fontSize: 13, fontWeight: 600, color: T.ink }}>Notifications</span>
             <Link href="/portal/account/activity" onClick={() => setOpen(false)} style={{ fontSize: 12, color: T.ink3, textDecoration: "none" }}>View all →</Link>
           </div>
-          {activity.length === 0 ? (
+          {tourNotes.slice(0, 5).map(n => {
+            const gone = n.event_type === "tour.discontinued";
+            const Icon = gone ? AlertTriangle : RotateCcw;
+            return (
+              <Link key={`n-${n.id}`} href={n.live_posts > 0 ? "/portal/content/publish" : "/portal/tours/mine"}
+                onClick={() => setOpen(false)} style={{
+                  display: "grid", gridTemplateColumns: "30px minmax(0,1fr)", gap: 10, padding: "11px 16px",
+                  textDecoration: "none", borderBottom: `1px solid ${T.line2}`,
+                  background: n.is_read ? "transparent" : T.goldTint,
+                }}>
+                <span style={{ width: 30, height: 30, borderRadius: 8, background: gone ? T.redSoft : T.greenSoft, color: gone ? T.red : T.green, display: "grid", placeItems: "center" }}>
+                  <Icon size={14} strokeWidth={2.2} />
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <span style={{ display: "block", fontSize: 12.5, color: T.ink, lineHeight: 1.4 }}>
+                    <strong style={{ fontWeight: 600 }}>{n.title}</strong> · {n.message}
+                  </span>
+                  <span style={{ display: "block", fontSize: 11, color: T.muted2, marginTop: 2 }}>{fmtDateTime(n.created_at)}</span>
+                </span>
+              </Link>
+            );
+          })}
+          {activity.length === 0 && tourNotes.length === 0 ? (
             <div style={{ padding: "28px 16px", textAlign: "center", fontSize: 13, color: T.muted2 }}>You&rsquo;re all caught up.</div>
           ) : activity.slice(0, 6).map(a => {
             const bad = a.state === "rejected" || a.state === "failed";

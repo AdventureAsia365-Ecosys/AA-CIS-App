@@ -53,6 +53,8 @@ from api.core.aa544_tenant_pool import (
 from api.routers.v1_tours import get_tenant
 from services.acp_angle_gate import service
 from services.acp_angle_gate.goals import GOALS
+from api.routers._served import refuse_http
+from shared.tour_liveness import TourNotServedError
 
 logger = structlog.get_logger()
 
@@ -85,6 +87,8 @@ async def set_goal(request_id: UUID, body: SetGoalBody, request: Request, tenant
     pool = request.app.state.pool
     try:
         return await service.start_goal_generation(tenant_id, request_id, body.goal, pool)
+    except TourNotServedError as exc:          # AA-986 L3: 409 tour_discontinued / tour_paused
+        raise refuse_http(exc) from exc
     except service.RequestNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except service.InvalidGoalError as exc:

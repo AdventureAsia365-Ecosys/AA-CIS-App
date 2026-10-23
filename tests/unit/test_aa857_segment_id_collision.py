@@ -321,6 +321,8 @@ class _AliasConn:
         self.executed = []
 
     async def fetch(self, sql, *args):
+        if "FROM acp_shared.subject" in sql:      # first: since AA-986 L3 the Slate query names atom_segment_member
+            return self.subjects
         if "atom_segment_alias" in sql:
             return [{"start_id": i, "segment_id": follow_alias(self.alias, i)}
                     for i in args[0] if i in self.alias]

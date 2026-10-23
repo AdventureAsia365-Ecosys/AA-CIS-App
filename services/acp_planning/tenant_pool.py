@@ -71,10 +71,13 @@ _TENANT_TRIP_QUERY = f"""
     SELECT
         rt.tour_id AS id, pt.aa_name AS name, rt.country AS destination,
         rt.period AS period, rt.duration AS duration_raw, rt.src_itineraries AS itinerary_source,
-        rt.lifecycle_stage AS lifecycle_stage, ttp.url AS trip_url, ttp.url_alive AS url_alive
+        rt.lifecycle_stage AS lifecycle_stage, ttp.url AS trip_url, ttp.url_alive AS url_alive,
+        tl.state AS served_state
     FROM latest_versions lv
     JOIN gold_aa_internal.published_tours pt ON pt.id = lv.published_tour_id
     JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
+    -- AA-986 L3: the served state of the tour's catalog key (CIS 272: SELECT to cis_app and aa_app_user)
+    LEFT JOIN gold_aa_internal.v_tour_liveness tl ON tl.source_id = (COALESCE(rt.source_group_id, rt.tour_id))::text
     LEFT JOIN LATERAL (
         SELECT p.url, p.url_alive
         FROM acp_deliver.tenant_tour_pages p

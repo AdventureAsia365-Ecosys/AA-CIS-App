@@ -374,7 +374,12 @@ async def start_goal_generation(tenant_id: UUID, request_id: UUID, goal_key: str
         raise InvalidGoalError(f"Unknown goal key: {goal_key!r}")
 
     from shared.jobs.registry import enqueue  # local: keeps this module importable without the runner
+    from shared import tour_liveness as _tl
     async with pool.acquire() as conn:
+        # AA-986 L3 (ADR 0015 decision 5): no T8 spend on a tour AA no longer serves or has paused (409, the
+        # router maps TourNotServedError). Before: two job runs, then a generic "generation failed".
+        tour_of = (await _tl.request_tours(conn, tenant_id, [request_id])).get(str(request_id))
+        await _tl.ensure_served(conn, tour_of, "choose a goal for this post")
         async with conn.transaction():
             claimed = await conn.fetchval(
                 """

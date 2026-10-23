@@ -48,7 +48,9 @@ import uuid
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi.responses import RedirectResponse
 from api.core.staff_authz import staff_policy
+from shared.tour_liveness import live_master_sql, live_source_sql
 
 from api.routers.admin import verify_admin_secret
 
@@ -78,10 +80,9 @@ def _jsonb(val):
     return val
 
 
-async def _fetch_page_data(conn, tour_id: str):
-    """Real query -- same field set + eligibility rule as ADR-2026-030's own v_trip_registry
-    (pt.master_status='active' AND pt.deleted_at IS NULL), scoped to a single tour_id."""
-    return await conn.fetchrow("""
+# AA-986 L4: the page rule is the served rule of shared/tour_liveness.py (Master live AND source version live), so a
+# superseded version no longer shows (it 301s to the current one, get_trip_page).
+_PAGE_DATA_SQL = f"""
         SELECT
             rt.tour_id::text, rt.country, rt.duration,
             pt.aa_name, pt.aa_subtitle, pt.aa_summary, pt.aa_itineraries,
@@ -89,11 +90,39 @@ async def _fetch_page_data(conn, tour_id: str):
         FROM silver_aa_internal.raw_tours rt
         JOIN gold_aa_internal.published_tours pt ON pt.tour_id = rt.tour_id
         WHERE rt.tour_id = $1::uuid
-          AND pt.master_status = 'active'
-          AND pt.deleted_at IS NULL
-          AND (rt.source_status IS NULL OR rt.source_status::text != 'trashed')
-          AND rt.deleted_at IS NULL
-    """, tour_id)
+          AND {live_master_sql("pt")}
+          AND {live_source_sql("rt")}
+"""
+
+# AA-986 L4 (root ADR 0015 decision 5, Q5): what a tour id that has no page answers. The served state of its catalog
+# key (gold_aa_internal.v_tour_liveness) and the key's current version.
+_GONE_OR_MOVED_SQL = f"""
+        SELECT tl.state, tl.reason, tl.tour_id::text AS current_tour_id
+        FROM silver_aa_internal.raw_tours rt
+        JOIN gold_aa_internal.v_tour_liveness tl ON tl.source_id = (COALESCE(rt.source_group_id, rt.tour_id))::text
+        WHERE rt.tour_id = $1::uuid AND rt.tenant_id = '{_AA_INTERNAL_TENANT_ID}'::uuid
+"""
+
+
+async def _fetch_page_data(conn, tour_id: str):
+    """Real query -- same field set as ADR-2026-030's own v_trip_registry, scoped to a single tour_id; eligible when
+    the tour is served (AA-986: Master live and its source version live)."""
+    return await conn.fetchrow(_PAGE_DATA_SQL, tour_id)
+
+
+async def _gone_or_moved(conn, tour_id: str):
+    """For a tour id without a page: ("gone", reason) for a retired key (410), ("moved", current tour id) for an
+    older version of a key served by a newer one (301), None otherwise (404: never served, or paused: the URL is kept
+    for when it comes back)."""
+    row = await conn.fetchrow(_GONE_OR_MOVED_SQL, tour_id)
+    if row is None:
+        return None
+    if row["state"] == "retired":
+        return ("gone", row["reason"])
+    if row["state"] == "served" and row["current_tour_id"] and row["current_tour_id"] != tour_id:
+        if await _fetch_page_data(conn, row["current_tour_id"]):
+            return ("moved", row["current_tour_id"])
+    return None
 
 
 def _is_uuid(value: str) -> bool:
@@ -135,6 +164,14 @@ async def get_trip_page(tour_id: str, request: Request):
             """, _AA_INTERNAL_TENANT_ID, tour_id, now)
 
     if not row:
+        # AA-986 L4 (ADR 0015 Q5): 410 Gone for a retired tour, 301 to the current version for a superseded one
+        # (same catalog key), 404 otherwise (never served; paused keeps the URL for when it returns).
+        async with pool.acquire() as conn:
+            answer = await _gone_or_moved(conn, tour_id)
+        if answer and answer[0] == "moved":
+            return RedirectResponse(url=f"/v1/trip/{answer[1]}", status_code=301)
+        if answer and answer[0] == "gone":
+            raise HTTPException(status_code=410, detail="Trip page gone: Adventure Asia no longer offers this tour")
         raise HTTPException(status_code=404, detail="Trip page not found")
 
     return {

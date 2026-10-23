@@ -251,8 +251,9 @@ async def test_pool_rewritten_flag_rls_holds_when_the_where_is_forgotten(ctx, mo
 async def test_pool_master_tour_on_a_non_master_raw_row_loses_raw_fields_on_tenant_pool(ctx):
     """Known divergence, pinned (review of PR-D5a): 239 lets aa_app_user read raw_tours rows only where
     tenant_id = AA master, while the admin pool joins any raw_tours row. A master published tour whose
-    raw_tours row has another tenant_id therefore loses country / duration / price_raw (and its country in
-    the dropdown) on the tenant pool. Dev must have 0 such rows before the flip (pre-flip probe in
+    raw_tours row has another tenant_id is therefore not offered on the tenant pool (since AA-986 L3; it
+    used to lose country / duration / price_raw and its country in the dropdown).
+    Dev must have 0 such rows before the flip (pre-flip probe in
     docs/implementation-notes/AA-859-d5.md); if this test starts failing, the policy changed and the probe
     can be dropped."""
     name = f"AA859-D5-odd {uuid.uuid4().hex[:8]}"
@@ -264,9 +265,12 @@ async def test_pool_master_tour_on_a_non_master_raw_row_loses_raw_fields_on_tena
                                           sort="newest")
     off, on = await browse(False), await browse(True)
     assert [d["country"] for d in off["data"]] == ["Laos"] and "Laos" in off["countries"]
-    # The row itself loses its raw fields on the tenant pool. The country dropdown is global (other tests'
-    # committed master tours may also be in Laos), so only check that the tenant pool never adds a country.
-    assert [d["country"] for d in on["data"]] == [None]
+    # AA-986 L3: the pool now also requires a live source version (the served rule), which the tenant pool cannot
+    # see for this row, so the tour is not offered there at all (before: listed with its raw fields lost). Such a
+    # tour has no served state either (gold_aa_internal.v_tour_liveness reads AA master raw rows only). The country
+    # dropdown is global (other tests' committed master tours may also be in Laos), so only check that the tenant
+    # pool never adds a country.
+    assert on["data"] == []
     assert set(on["countries"]) <= set(off["countries"])
 
 

@@ -39,6 +39,8 @@ from api.core.aa544_tenant_pool import MARKETPLACE_FLAG, acquire_scoped_conn
 from api.routers._tenant_projection import project_version, tenant_version_state  # AA-796 — shared rule
 from api.routers.v1_tours import get_tenant
 from services.acp_shared.marketplace_estimates import parse_price, runway_months
+from shared import tour_liveness as _tl
+from shared.tour_liveness import with_served
 
 router = APIRouter(prefix="/v1/marketplace", tags=["tenant-marketplace"])
 logger = structlog.get_logger()
@@ -125,6 +127,7 @@ async def get_marketplace(request: Request, tenant=Depends(get_tenant)):
     async with acquire_scoped_conn(request, str(tenant_id), MARKETPLACE_FLAG, fail_closed=True) as (conn, used):
         logger.info("aa859_marketplace_read", tenant_id=str(tenant_id), used_tenant_pool=used)
         rows = await conn.fetch(_MARKETPLACE_QUERY, tenant_id, tenant_id)
+        served = await _tl.served_states(conn, [str(r["tour_id"]) for r in rows])   # AA-986 L3
 
     posts_per_week = tenant_row["posts_per_week"] if tenant_row else None
 
@@ -139,10 +142,17 @@ async def get_marketplace(request: Request, tenant=Depends(get_tenant)):
         t["price_usd"] = price_usd
         t["price_available"] = price_usd is not None
         atom_count = t["atom_count"]
-        total_atoms += atom_count
-        t["runway_months"] = (
-            runway_months(atom_count, posts_per_week) if posts_per_week else None
-        )
+        state = served.get(str(r["tour_id"]))
+        with_served(t, state)
+        # AA-986 L3 (ADR 0015 decision 5): a tour AA no longer serves (or has paused) keeps its row and badge, but
+        # its atoms feed no new content: no runway, not counted in total_atoms.
+        if state is None or state.served:
+            total_atoms += atom_count
+            t["runway_months"] = (
+                runway_months(atom_count, posts_per_week) if posts_per_week else None
+            )
+        else:
+            t["runway_months"] = None
         tours.append(t)
 
     return {
