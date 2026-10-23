@@ -1,7 +1,8 @@
 """AA-884 (S241 GĐ7 / GĐ8 / GĐ10) — Platform › Apps, Audit log and Cost per app (admin only, read only).
 
   GET /admin/platform/apps             every app's health / version card (cached 60 s; ?refresh=1)   ops.read
-  GET /admin/platform/apps/{app_id}    one card (cis | booking | tripplanner)                         ops.read
+  GET /admin/platform/apps/{app_id}    one card (cis | booking | tripplanner | crm)                   ops.read
+  GET /admin/platform/apps/crm/jobs    AA-936: the CRM's crm.job per kind (crm.ops.v1), staff token     ops.read
   GET /admin/platform/audit            acp_shared.audit_log rows, newest first, keyset cursor        audit.read
   GET /admin/platform/audit/verify     recompute the CIS 248 hash chain (full chain cached 60 s)     audit.read
   GET /admin/platform/cost             cost per app for a month (CE App-tag snapshot + LLM spend)    spend.read
@@ -39,6 +40,13 @@ def _redis(request: Request):
 @router.get("/apps", summary="AA-884 — health and version of every app (cached 60 s)")
 async def get_apps(request: Request, refresh: bool = Query(False)):
     return await platform_apps.collect_apps(request.app.state.pool, _redis(request), refresh=refresh)
+
+
+# Literal /apps/crm/jobs before /apps/{app_id}/… (FastAPI matches in order; {app_id} takes one segment anyway).
+@router.get("/apps/crm/jobs", summary="AA-936 — the partner CRM's job backlog per kind (crm.ops.v1)")
+async def get_crm_jobs(request: Request):
+    # The CRM accepts only a WORKFORCE cis-admin token on /crm/ops/v1: the staff member's own Bearer is relayed.
+    return await platform_apps.crm_jobs(request.headers.get("authorization"))
 
 
 @router.get("/apps/{app_id}", summary="AA-884 — one app's health and version card")

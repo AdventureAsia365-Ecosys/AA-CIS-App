@@ -13,6 +13,13 @@ Code constants, not env vars (Dev only today; a hostname change is a PR). The fr
   ``ONLINE_STAGES`` and ``backend/config.py`` ``TP_DAILY_SPEND_CAP_USD`` (default "5.0"); the live cap is a TP Lambda
   env var CIS cannot see, so the page labels it "default cap". If TP changes either, change it here.
 
+- ``crm`` (AA-936, AA-Partner, root ADR 0010): probed over HTTP like Booking (``/crm/health`` and
+  ``/crm/health/ready`` on the partner host, public). Its jobs come from the CRM's ``crm.ops.v1`` contract
+  (``GET /crm/ops/v1/jobs/summary``, ``extra["ops_base"]``), called with the signed-in staff member's own WORKFORCE
+  ``cis-admin`` token (the route class the CRM accepts on ``/crm/ops/v1``); CIS never reads schema ``crm``. CRM LLM
+  calls are logged by the CRM's own gateway (``crm.llm_call``, D12), not in ``shared.llm_call_log``, so ``llm_app``
+  is None.
+
 ``cost_tags``: values of the ``App`` cost-allocation tag that belong to the app (Cost Explorer GroupBy TAG App; an
 untagged resource has the empty value). Tags that belong to no single app (``shared``, ``identity``, ``platform``)
 are reported as their own rows by the cost module.
@@ -51,6 +58,8 @@ class AppInfo:
 TP_ONLINE_STAGES: tuple[str, ...] = ("tp_compose", "tp_search_embed")
 # AA-TripPlanner-Web backend/config.py TP_DAILY_SPEND_CAP_USD default (mirrored; the live value may differ).
 TP_DEFAULT_DAILY_CAP_USD = 5.0
+# AA-Partner's Dev partner host (CloudFront, AA-CIS-Infra crm_edge.tf).
+CRM_PARTNER_ORIGIN = "https://partner-dev.lumiguides.it.com"
 
 APPS: dict[str, AppInfo] = {
     "cis": AppInfo(
@@ -66,6 +75,13 @@ APPS: dict[str, AppInfo] = {
         id="tripplanner", label="TripPlanner", repo="AA-TripPlanner-Web", cost_tags=("tripplanner",),
         llm_app="tripplanner",
         extra={"online_stages": TP_ONLINE_STAGES, "default_cap_usd": TP_DEFAULT_DAILY_CAP_USD},
+    ),
+    # AA-936 (card CRM-08 "CIS AppInfo('crm') + jobs tab"): the partner CRM. AWS resources carry App = crm.
+    "crm": AppInfo(
+        id="crm", label="Partner CRM", repo="AA-Partner", cost_tags=("crm",),
+        health_base=CRM_PARTNER_ORIGIN,
+        health_paths=("/crm/health", "/crm/health/ready"),
+        extra={"ops_base": f"{CRM_PARTNER_ORIGIN}/crm/ops/v1"},
     ),
 }
 

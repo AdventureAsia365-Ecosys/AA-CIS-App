@@ -334,6 +334,7 @@ POLICY: dict[tuple[str, str], str] = {
     # ── admin_platform_ops (AA-884, GĐ7/8/10) — Apps (health/version), the staff audit trail, cost per app.
     ("GET", "/admin/platform/apps"): OPS_READ,
     ("GET", "/admin/platform/apps/{app_id}"): OPS_READ,
+    ("GET", "/admin/platform/apps/crm/jobs"): OPS_READ,  # AA-936: CRM jobs (crm.ops.v1), staff token relayed
     ("GET", "/admin/platform/audit"): AUDIT_READ,
     ("GET", "/admin/platform/audit/verify"): AUDIT_READ,
     ("GET", "/admin/platform/cost"): SPEND_READ,
