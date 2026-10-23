@@ -122,7 +122,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
       `cors_allow_origins()` in `api/main.py`: empty when `AWS_EXECUTION_ENV` is set, only `localhost:3000/3001`
       off ECS); a browser preflight from any origin gets no `Access-Control-Allow-Origin`.
     - Page gate `portal/proxy.ts` (Next 16 Proxy): `/tenant-login` public; `/portal/*` needs a token
-      `/auth/verify-tenant` accepts (cached ≤ 20 s, `portal/lib/auth-server.ts`); refused → cookies cleared,
+      `/auth/verify-tenant` accepts (tenant tokens only: `role = tenant`, a staff token gets 403; a body that is
+      not a JSON object gets 401, never 500; cached ≤ 20 s, `portal/lib/auth-server.ts`); refused → cookies cleared,
       back to `/tenant-login`; backend unreachable → fail closed outside development.
     - Security headers on every response (`portal/next.config.ts`): HSTS, `nosniff`, `Referrer-Policy`,
       `X-Frame-Options: DENY`, a minimal CSP (`frame-ancestors 'none'; base-uri 'self'; form-action 'self';
