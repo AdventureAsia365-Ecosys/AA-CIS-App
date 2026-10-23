@@ -343,10 +343,27 @@ def _delete_order(nodes: dict[str, Node], edges: list[Edge]) -> tuple[list[str],
 
 # ── DRY RUN counts / apply (DB) ─────────────────────────────────────────────────────────────────
 
-def fingerprint(subject: str, rows: list[dict]) -> str:
-    """sha256 of the subject kind and the (table, action, rows) list: what an approval names."""
+# v2 (AA-839 review): the fingerprint names the subject, not only its counts. v1 hashed the subject kind and the
+# counts only, so two tenants with the same counts shared one fingerprint. A v1 DRY RUN cannot be applied
+# (erasure_job.apply_refusals checks `fingerprint_version`).
+FINGERPRINT_VERSION = 2
+
+
+def traveller_key(email_sha256: str, salt: str) -> str:
+    """The traveller's subject key: sha256 of a per-DRY-RUN random salt and the address hash. The salt is stripped
+    with the hash after the apply, so the fingerprint kept in the job rows and the audit row cannot be matched
+    against a guessed address later (a plain hash of the hash could)."""
+    return hashlib.sha256(f"{salt}:{email_sha256}".encode()).hexdigest()
+
+
+def fingerprint(subject: str, subject_key: str, rows: list[dict]) -> str:
+    """sha256 of the subject kind, the subject key (the tenant id, or traveller_key) and the (table, action, rows)
+    list: what an approval names. Same counts for another tenant or traveller = another fingerprint."""
+    if not subject_key:
+        raise ValueError("fingerprint needs the subject key (tenant id or traveller key)")
     key = sorted((r["table"], r["action"], int(r["rows"])) for r in rows)
-    return hashlib.sha256(json.dumps({"subject": subject, "rows": key}).encode()).hexdigest()
+    return hashlib.sha256(json.dumps({"v": FINGERPRINT_VERSION, "subject": subject, "subject_key": subject_key,
+                                      "rows": key}).encode()).hexdigest()
 
 
 _PRIV = {"delete": ("DELETE",), "cascade": ("DELETE",), "detach": ("UPDATE",),

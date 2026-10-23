@@ -524,6 +524,10 @@ async def test_traveller_dry_run_then_apply(pool):
     assert await admin.fetchval("SELECT count(*) FROM shared.job WHERE payload::text LIKE '%' || $1 || '%'", h) == 0
     stripped = await admin.fetchval("SELECT payload ->> 'email_sha256' FROM shared.job WHERE id = $1::uuid", first_id)
     assert stripped == ej.STRIPPED
+    # the DRY RUN salts went with the hash: the fingerprints left in the rows cannot be matched to an address
+    assert dry["subject_salt"] and dry["fingerprint_version"] == pl.FINGERPRINT_VERSION
+    assert await admin.fetchval("SELECT count(*) FROM shared.job WHERE kind = $1 AND result ? 'subject_salt' "
+                                "AND id = ANY($2::uuid[])", ej.KIND, [first_id, dry_id]) == 0
     audit = await admin.fetchval("SELECT details::text FROM acp_shared.audit_log WHERE action = 'dsar.cis_erased' "
                                  "AND details ->> 'dry_run_job_id' = $1", dry_id)
     assert audit and h not in audit
@@ -546,6 +550,22 @@ async def test_a_failed_traveller_job_keeps_no_hash(pool):
                                   "WHERE kind = $1 AND status = 'failed' AND payload ->> 'dry_run_job_id' = $2",
                                   ej.KIND, dry_id)
     assert failed["h"] == "stripped-on-failed"
+
+
+@pytest.mark.asyncio
+async def test_same_counts_for_two_tenants_give_two_fingerprints(pool):
+    """AA-839 review: the fingerprint names the subject. Two bare offboarded tenants have identical counts; an
+    approval of tenant A's fingerprint does not apply tenant B (v1 fingerprints were equal here)."""
+    a, b = await _tenant(pool, offboarded_days=40), await _tenant(pool, offboarded_days=40)
+    _, dry_a = await _run(pool, {"subject": "tenant", "tenant": a})
+    dry_b_id, dry_b = await _run(pool, {"subject": "tenant", "tenant": b})
+    assert _rows(dry_a) == _rows(dry_b) and dry_a["fingerprint"] != dry_b["fingerprint"]
+    with pytest.raises(NonRetryable, match="approved_fingerprint differs"):
+        await _run(pool, {"subject": "tenant", "tenant": b, "mode": "apply", "dry_run_job_id": dry_b_id,
+                          "approved_fingerprint": dry_a["fingerprint"], "approved_by": "N", "snapshot_id": "s"},
+                   env=dict(ON, ERASURE_TENANT_RETENTION_DAYS="0"))
+    admin, _ = pool
+    assert await admin.fetchval("SELECT count(*) FROM shared.tenants WHERE tenant_id = $1::uuid", b) == 1
 
 
 @pytest.mark.asyncio
