@@ -454,3 +454,124 @@ def test_panel_files_pair_the_new_page_with_the_live_page(tmp_path):
     packet = json.loads((tmp_path / "k__shadow-panel__packet.json").read_text())
     assert len(key) == 3 and len(packet["groups"]) == 2
     assert all("arm" not in p for g in packet["groups"] for p in g["pages"])      # blind: arms only in the key
+
+
+# ── shadow.run end to end, offline (fake DB, fake graph; nothing patched globally) ───────────────────────────
+
+
+class _Conn:
+    def __init__(self, cands):
+        self.cands = cands
+
+    async def fetchval(self, sql, *a):
+        return 0 if "shared.job" in sql else 0.25
+
+    async def fetch(self, sql, *a):
+        if "published_tours pt" in sql and "has_places" in sql:
+            return self.cands
+        if "GROUP BY 1, 2, 3, 4" in sql:      # calls by job
+            return [{"job_id": a[1] and _JOBS.get("j"), "role": "writer", "provider": "bedrock-satellite",
+                     "real_stage": "s1_generate", "n": 2, "usd": 0.07, "fallback_rows": 0, "throttle_rows": 0,
+                     "unusable_rows": 0}]
+        if "role = 'judge'" in sql:
+            return [{"job_id": _JOBS.get("j"), "brand_fit": 7.5, "gate": "brand_fit_report_only", "rubric": "v1"}]
+        if "decision_log" in sql:
+            return [{"job_id": _JOBS.get("j"), "question_key": "a1_claim_supported", "zone": "accept", "n": 4}]
+        return []
+
+    async def fetchrow(self, sql, *a):
+        if "raw_tours WHERE" in sql:
+            return {"src_name": TOUR["name"], "src_summary": TOUR["summary"], "src_description": "",
+                    "src_highlights": json.dumps(TOUR["highlights"]), "src_itineraries": TOUR["itineraries"],
+                    "country": "Laos", "duration": "1 day", "price_raw": None, "inclusions": "Lunch",
+                    "exclusions": "", "group_size": "2-8", "best_time_to_go": None}
+        if "seo_context" in sql:
+            return {"top_keywords": json.dumps(["vang vieng kayak"]), "people_also_ask": "[]"}
+        if "generated_content gc" in sql:
+            return {"id": "live-1", "metadata": "{}", "aa_name": "Old", "aa_itineraries": "Day 1 — Old\nKayak.",
+                    "aa_highlights": "[]", "seo_title": "t", "seo_meta": "m"}
+        return None
+
+
+_JOBS: dict = {}
+
+
+class _Pool:
+    def __init__(self, conn):
+        self.conn = conn
+
+    def acquire(self):
+        conn = self.conn
+
+        class _Ctx:
+            async def __aenter__(self):
+                return conn
+
+            async def __aexit__(self, *a):
+                return False
+        return _Ctx()
+
+    async def close(self):
+        pass
+
+
+def test_shadow_run_offline_end_to_end(monkeypatch, tmp_path):
+    import asyncio as _asyncio
+
+    from api.routers import admin_pipeline, v1_pipeline
+    from scripts.aa729 import common, evalpatch
+    from services.content_generation import pipeline_lessons
+    from services.content_generation import s1_writer_v2_live as live
+
+    for k in ("AA729_STAGE", "S1_WRITER_V2"):
+        monkeypatch.setenv(k, "x")
+        monkeypatch.delenv(k)
+    monkeypatch.setattr(common, "STAGE", "adhoc_aa645")
+    monkeypatch.setattr(live, "_call", live._call)                 # restored after the test
+    monkeypatch.setattr(evalpatch, "install", lambda run_id, stage: None)
+    monkeypatch.setattr(evalpatch, "CALL_MARGIN_USD", evalpatch.CALL_MARGIN_USD)
+    monkeypatch.setattr(sh, "SETTLE_S", 0.0)
+    cands = [_cand("t-laos", "Laos", places=True, live_id="live-1")]
+    monkeypatch.setattr(sh, "_pool", lambda: _async(_Pool(_Conn(cands))))
+
+    async def _brand(conn, *a):
+        return {"forbidden_words": "[]", "voice_examples": "[]", "core_idea": "c"}
+
+    async def _lessons(conn):
+        return ""
+    monkeypatch.setattr(admin_pipeline, "_resolve_brand_rule", _brand)
+    monkeypatch.setattr(pipeline_lessons, "load_s1_lessons_block", _lessons)
+    seen = {}
+
+    async def _rewrite(tour, idx, total, **kw):
+        seen.update(kw)
+        from shared.llm_client.call_log import current_job_id
+        _JOBS["j"] = current_job_id()
+        return {"status": "success", "writer_version": "v2", "model_used": "satellite-sonnet-5-5", "retry_count": 0,
+                "quality_score": 8.4, "brand_audit_status": "pass", "failure_codes": [], "judge_brand_fit": 7.5,
+                "judge_score": 7.5, "grounding_ran": True, "grounding_found": [], "grounding_violations": [],
+                "degraded": [], "quality_shadow": [], "generated": OUT}
+    monkeypatch.setattr(v1_pipeline, "_rewrite_tour", _rewrite)
+    monkeypatch.setattr(common, "save_output", lambda obj, key, **kw: str(tmp_path / key.replace("/", "__")))
+
+    args = sh.parse_args(["--select", "pilot", "--n", "3", "--max-cost-usd", "0.5", "--no-upload"])
+    out = _asyncio.run(sh.run(args))
+    assert os.environ["S1_WRITER_V2"] == "1" and live._call._aa645_model == "sonnet-5-5"
+    assert seen["tour_agency"] == {"group_size": "2-8", "best_time_to_go": None} and seen["model_tier"] is None
+    assert seen["seo"]["top_keywords"] == ["vang vieng kayak"]
+    t = out["tours"][0]
+    assert t["tour_id"] == "t-laos" and not t.get("error") and t["writer_version"] == "v2"
+    assert t["job_id"] == _JOBS["j"] == common.sample_job_id(out["run_id"], "t-laos")
+    assert t["cost_usd"] == pytest.approx(0.07) and t["calls_by_stage"] == {"s1_generate": 2}
+    assert t["judged_drafts"] == [{"brand_fit": 7.5, "gate": "brand_fit_report_only", "rubric": "v1"}]
+    assert t["jev"]["ran"] is True and t["live_page"]["days"] == [1]
+    assert out["summary"]["countries"]["ALL"]["publishable"] == 1
+    # both fake pages carry a 1-character meta (META gates): new is not better than live -> a stop, as designed
+    stops = out["summary"]["stop_conditions"]
+    assert [k for k, v in stops.items() if v] == ["not_better_than_live"]
+    assert "_output" in t                                         # kept in-process for the panel files only
+    assert "_output" not in sh._public(out)["tours"][0]
+
+
+async def _async(v):
+    return v
