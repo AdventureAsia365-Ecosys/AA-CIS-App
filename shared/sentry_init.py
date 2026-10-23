@@ -138,9 +138,55 @@ def _log_event_key(record) -> tuple:
     return (record.name, str(name))
 
 
+# AA-839 review: the SDK keeps frame locals (include_local_variables defaults to True). A failed data_erasure job's
+# traceback would carry `payload` / `ctx` locals (the traveller's sha256, the approver) to Sentry, whose default
+# scrubber does not know those keys. Events of these job kinds, or with a frame in these modules, lose every
+# frame's locals.
+SCRUB_LOCALS_KINDS = frozenset({"data_erasure"})
+SCRUB_LOCALS_MODULES = ("services.erasure", "services.jobs.erasure_job")
+
+
+def _tag(event, name):
+    tags = event.get("tags")
+    if isinstance(tags, dict):
+        return tags.get(name)
+    if isinstance(tags, (list, tuple)):
+        for t in tags:
+            if isinstance(t, (list, tuple)) and len(t) == 2 and t[0] == name:
+                return t[1]
+    return None
+
+
+def _frames(event):
+    for container in ("exception", "threads"):
+        block = event.get(container)
+        values = block.get("values") if isinstance(block, dict) else None
+        for v in values or []:
+            stack = v.get("stacktrace") if isinstance(v, dict) else None
+            for f in (stack or {}).get("frames") or []:
+                if isinstance(f, dict):
+                    yield f
+
+
+def scrub_frame_locals(event) -> None:
+    """Drops frame locals from the whole event when it belongs to a SCRUB_LOCALS_KINDS job or touches an erasure
+    module (AA-839)."""
+    frames = list(_frames(event))
+    if _tag(event, "job_kind") in SCRUB_LOCALS_KINDS or any(
+            str(f.get("module") or "").startswith(SCRUB_LOCALS_MODULES) for f in frames):
+        for f in frames:
+            f.pop("vars", None)
+
+
 def before_send(event, hint):
     """Drop request bodies, cookies and non-allowlisted headers; redact key-like query strings.
-    AA-871: shape and throttle events made from log lines (``hint["log_record"]``)."""
+    AA-871: shape and throttle events made from log lines (``hint["log_record"]``).
+    AA-839: no frame locals for erasure jobs (scrub_frame_locals)."""
+    try:
+        scrub_frame_locals(event)
+    except Exception:  # fail closed for the locals: drop them everywhere rather than send them
+        for f in _frames(event):
+            f.pop("vars", None)
     request = event.get("request")
     if isinstance(request, dict):
         request.pop("data", None)
