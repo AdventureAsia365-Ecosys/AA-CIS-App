@@ -96,3 +96,12 @@ def test_quality_module_imports_no_writer_module():
     mods = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module}
     assert mods <= {"__future__", "re", "typing", "services.content_generation.day_parse",
                     "services.content_generation.prompts"}, mods
+
+
+def test_s248_day_list_marker_is_a_range_not_missing_days():
+    # golden s1-004: "Day 05 & 06" / "Day 11, 12 & 13" read as days 5 and 11 only, so a faithful day 6/12/13 was
+    # charged as DAY_OUTPUT_EXTRA
+    src = "Day 04: A – B\nRide.\nDay 05 & 06: B – C\nRide.\nDay 07: C – D\nRide.\nDay 08, 09 & 10: D – E\nBeach."
+    out = "\n\n".join(f"Day {n} — Stage {n}\nRide on." for n in range(4, 11))
+    codes = [f["code"] for f in do.check(src, "10 days", out)]
+    assert "DAY_OUTPUT_EXTRA" not in codes
