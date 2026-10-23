@@ -61,6 +61,19 @@ class TestTheEndedRoleStillFires:
         "It still houses the national government and the district administration.",
         "The founding purpose, religious and governmental in one, remains present.",
         "It remains the capital of Bhutan and the seat of the district administration.",
+        # review round: a local phrase beside a strong term does not hide it (no ' and ' clause split)
+        "It remains the capital and the district seat.",
+        "Today it is still the capital and home to the dzongkhag administration.",
+        "It remains the seat of government and district administration.",
+        "It remains the seat of power and the district government offices.",
+        "It is still the capital, seat of the regional government.",
+        # review round: 'of <lowercase word> district' is not a local phrase ((?-i:[A-Z]) proper noun only)
+        "It still houses the seat of government and district offices.",
+        # review round: a local phrase coordinated with the national scope is the national role too
+        "It still houses the government of the district and the kingdom.",
+        # review round: hosting the ministries is being the seat of government
+        "It still houses government ministries.",
+        "It still houses the government agencies.",
     ])
     def test_a_claim_of_the_same_role_fires(self, sentence):
         out = tf.date_authority_claims(sentence, DZONG_SEED)
@@ -99,3 +112,28 @@ class TestSpanChecksOnlyTheRole:
 
     def test_a_span_of_the_national_role_is_still_checked(self):
         assert tf.date_authority_claims("For nearly three centuries it served as Bhutan's capital.", DZONG_SEED)
+
+    @pytest.mark.parametrize("sentence", [
+        # review round: the span check decides on what is left after the local phrase is removed
+        "For nearly three centuries it served as the capital and district seat.",
+        "For nearly three centuries it was the seat of government and district administration.",
+        "For nearly three centuries it served as the dzong of Punakha.",
+    ])
+    def test_a_span_beside_a_local_phrase_is_still_checked(self, sentence):
+        out = tf.date_authority_claims(sentence, DZONG_SEED)
+        assert out and "gives the span as" in out[0], sentence
+
+    @pytest.mark.parametrize("sentence", [
+        "For nearly four centuries it has housed the district administration.",
+        "For nearly four centuries it has housed government offices for district administration.",
+        "For nearly four centuries it served as the district seat.",
+    ])
+    def test_a_span_of_only_the_local_role_is_not_checked(self, sentence):
+        assert tf.date_authority_claims(sentence, DZONG_SEED) == [], sentence
+
+
+class TestLocalPhraseBinding:
+    def test_a_lowercase_word_does_not_stand_in_for_a_proper_noun(self):
+        assert not tf._LOCAL_OF_RE.search("the seat of government and district administration")
+        assert tf._LOCAL_OF_RE.search("the administrative centre of Punakha District")
+        assert tf._LOCAL_OF_RE.search("the seat of government for the district")

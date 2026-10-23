@@ -799,13 +799,14 @@ _LOCAL_GOV_RE = re.compile(
 # 'the seat of government for the district', 'the administrative centre of Punakha District'
 _LOCAL_OF_RE = re.compile(
     r"\b(?:government(?:al)?|administration|administrative|offices?|seat|capital|headquarters|cent(?:re|er))\b"
-    r"(?:\s+[\w’'-]+){0,3}?\s+(?:of|for)\s+(?:the\s+|its\s+|this\s+|[A-Z][\w’'-]+\s+){0,2}"
+    r"(?:\s+[\w’'-]+){0,3}?\s+(?:of|for)\s+(?:the\s+|its\s+|this\s+|(?-i:[A-Z])[\w’'-]+\s+){0,2}"
     r"(?:district|dzongkhag|province|region|municipality|county)\b", re.I)
 # AA-985 — a building that HOSTS government offices / officials does not claim to BE the seat of government:
-# 'it houses both monk bodies and government offices' names a function, not the ended role
+# 'it houses both monk bodies and government offices' names a function, not the ended role. Ministries and
+# agencies are not on the list: hosting the ministries is being the seat of government (review round).
 _GOV_HOSTED_RE = re.compile(
-    r"\bgovernment(?:al)?\s+(?:offices?|officials?|departments?|staff|employees|workers|functions|bodies|agencies"
-    r"|ministries|ministers|buildings?|business)\b", re.I)
+    r"\bgovernment(?:al)?\s+(?:offices?|officials?|departments?|staff|employees|workers|functions|bodies"
+    r"|buildings?|business)\b", re.I)
 # AA-985 — a 'capital' of something other than government is a different role ('the spiritual capital')
 _OTHER_CAPITAL_RE = re.compile(
     r"\b(?:spiritual|cultural|religious|monastic|buddhist|culinary|food|tourism|tourist|adventure|trekking|rice"
@@ -813,11 +814,15 @@ _OTHER_CAPITAL_RE = re.compile(
 _NATIONAL_SCOPE = r"national|the country(?:'s|’s)?|the kingdom(?:'s|’s)?|of the (?:country|kingdom)"
 
 
-def _national_scope(clause: str, country: Optional[str]) -> bool:
+def _scope_alt(country: Optional[str]) -> str:
     scope = _NATIONAL_SCOPE
     if country:
         scope += rf"|{re.escape(country)}(?:'s|’s)?"
-    return bool(re.search(rf"\b(?:{scope})", clause, re.I))
+    return scope
+
+
+def _national_scope(clause: str, country: Optional[str]) -> bool:
+    return bool(re.search(rf"\b(?:{_scope_alt(country)})", clause, re.I))
 
 
 def _local_role(role: Optional[EndedRole]) -> bool:
@@ -825,25 +830,38 @@ def _local_role(role: Optional[EndedRole]) -> bool:
     return bool(role and (_LOCAL_GOV_RE.search(role.role) or _LOCAL_OF_RE.search(role.role)))
 
 
+def _strip_other_roles(clause: str, country: Optional[str]) -> tuple[str, bool, bool, bool]:
+    """The clause with every phrase that names a DIFFERENT role removed: local governance phrases in
+    either word order, a non-governmental 'capital', hosted government offices. Returns (rest, local_scoped,
+    hosted, national). A local phrase coordinated with the national scope stays ('the government of the
+    district and the kingdom' is also the kingdom's government)."""
+    national = _national_scope(clause, country)
+    coordinated = re.compile(rf"\s*(?:and|&)\s+(?:of\s+|for\s+)?(?:{_scope_alt(country)})", re.I)
+
+    def _drop(m: re.Match) -> str:
+        return m.group(0) if coordinated.match(m.string, m.end()) else " "
+
+    local_scoped = bool(_LOCAL_GOV_RE.search(clause) or _LOCAL_OF_RE.search(clause))
+    rest = _LOCAL_OF_RE.sub(_drop, _LOCAL_GOV_RE.sub(_drop, clause))
+    rest = _OTHER_CAPITAL_RE.sub(" ", rest)
+    hosted = bool(_GOV_HOSTED_RE.search(rest))
+    rest = _GOV_HOSTED_RE.sub(" ", rest)
+    return rest, local_scoped, hosted, national
+
+
 def role_claim(clause: str, country: Optional[str], role: Optional[EndedRole] = None) -> bool:
     """AA-985 — does this clause name the SAME governmental role the seed dates as ended (role identity,
     not place identity)? A present-tense clause about the place holding a different, still-current role
     is not a claim of the ended one: the district administration it still houses, the government offices
-    it hosts, its standing as a 'spiritual capital'. The national role is named by 'capital' / 'seat of
-    government' / bare 'government(al)'; 'administrative' / 'political' / hosted government offices only
-    with a national scope ('Bhutan's', 'national', 'the kingdom's'). A local governance phrase
-    ('district administration', 'seat of government for the district') takes the weak words with it.
-    When the ended role is itself local, a clause naming a local governance role is that role."""
+    it hosts, its standing as a 'spiritual capital'. Those phrases are removed first (`_strip_other_roles`);
+    what is left names the national role by 'capital' / 'seat of government' / bare 'government(al)', or by
+    'administrative' / 'political' / hosted government offices with a national scope ('Bhutan's',
+    'national', 'the kingdom's'). A local phrase does not hide a strong term beside it: 'It remains the
+    capital and the district seat' still claims the capital. When the ended role is itself local, a clause
+    naming a local governance role is that role."""
     if _local_role(role):
         return bool(_LOCAL_GOV_RE.search(clause) or _LOCAL_OF_RE.search(clause))
-    national = _national_scope(clause, country)
-    local_scoped = bool(_LOCAL_GOV_RE.search(clause) or _LOCAL_OF_RE.search(clause))
-    rest = _LOCAL_OF_RE.sub(" ", _LOCAL_GOV_RE.sub(" ", clause))
-    rest = _OTHER_CAPITAL_RE.sub(" ", rest)
-    hosted = bool(_GOV_HOSTED_RE.search(rest))
-    rest = _GOV_HOSTED_RE.sub(" ", rest)
-    if local_scoped and not national:
-        return False  # the clause is about the local role it still holds; nothing names the national one
+    rest, _local, hosted, national = _strip_other_roles(clause, country)
     if _GOV_STRONG_RE.search(rest):
         return True
     if not (_GOV_WEAK_RE.search(rest) or hosted):
@@ -894,12 +912,22 @@ def date_authority_claims(text: str, seed: Optional[str], cta: Optional[str] = N
 
 
 def _span_about_role(sentence: str, country: Optional[str], role: EndedRole) -> bool:
-    if not (_GOV_RE.search(sentence) or re.search(r"\bserved\b", sentence, re.I)):
+    """Is this span sentence about the ended role? Decided on what is left once the phrases naming a
+    different role are removed (review round): 'For nearly three centuries it served as the capital and
+    district seat' keeps 'capital' and is checked; 'For nearly four centuries it has housed the district
+    administration' has nothing left and is not. A bare 'served' sentence with no governance phrase at all
+    is still checked, as before."""
+    served = bool(re.search(r"\bserved\b", sentence, re.I))
+    if not (_GOV_RE.search(sentence) or served):
         return False
     if _local_role(role):
         return True
-    local_scoped = bool(_LOCAL_GOV_RE.search(sentence) or _LOCAL_OF_RE.search(sentence))
-    return not (local_scoped and not _national_scope(sentence, country))
+    rest, local_scoped, hosted, national = _strip_other_roles(sentence, country)
+    if _GOV_RE.search(rest):
+        return True
+    if hosted:
+        return national
+    return served and not local_scoped and not _OTHER_CAPITAL_RE.search(sentence)
 
 
 def _centuries_phrase(years: int) -> str:
