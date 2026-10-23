@@ -587,12 +587,25 @@ async def approve_review(
             await process_export(str(generated_content_id))
             exported = True
         except SourceNotLiveError as e:
-            # The source was trashed between the claim and the export (race): the review stays
-            # approved, nothing is published.
+            # The source was trashed between the claim and the export (race). Nothing is published and
+            # process_export already moved the version approved → hitl; close the claimed review as
+            # 'dismissed' (the _enqueue_review state for a dead source) so no row says "approved" without a
+            # Master, and give the reviewer the same 409 as a dead source caught before the claim.
             import structlog as _sl
             _sl.get_logger().warning(
                 "approve_export_source_not_live", review_id=review_id,
                 version_id=generated_content_id, reason=e.state.reason,
+            )
+            async with pool.acquire() as conn:
+                await conn.execute("""
+                    UPDATE silver_aa_internal.review_queue
+                    SET review_status = 'dismissed', reviewed_at = NOW()
+                    WHERE id = $1::uuid AND review_status = 'approved'
+                """, review_id)
+            raise HTTPException(
+                status_code=409,
+                detail=source_not_live_message(e.state, "approve this review"),
+                headers={"X-Error-Code": SOURCE_NOT_LIVE},
             )
         except Exception as e:
             import structlog as _sl

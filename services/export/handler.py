@@ -362,6 +362,15 @@ async def process_export(version_id: str) -> dict:
         if not src.live:
             logger.warning("export_refused_source_not_live", version_id=version_id, tour_id=str(tour_id),
                            reason=src.reason)
+            # The one write on a refusal: the version leaves 'approved' ('hitl' = not publishable as is, the
+            # value _is_publishable gives a version that needs a human). Left 'approved' it would sit as an
+            # approved version with no Master, which the S248 probe counts as a violation. Done here, not in
+            # the callers, so every caller (S1 auto-export, review approve race, the legacy Lambda) is covered.
+            await conn.execute(f"""
+                UPDATE {silver}.generated_content
+                SET status = 'hitl'
+                WHERE id = $1::uuid AND status = 'approved'
+            """, version_id)
             raise SourceNotLiveError(src)
 
         # 2. Insert into published catalog (gold)

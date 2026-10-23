@@ -4,7 +4,8 @@ Unit level (no DB):
   * shared/tour_liveness.py fragments are the predicates CIS 271 writes into acp_contract.v_active_tour_atoms, and
     the two former hand copies (subject_seed._MEMBERS_SQL, route_guard._TRIP_MEMBER_SQL) use them;
   * migration 271 hygiene (one BEGIN/COMMIT, self-registers, explicit column list, the Infra copy when present);
-  * process_export refuses a trashed / superseded source before any write;
+  * process_export refuses a trashed / superseded source before any publish write, and moves the version
+    approved → hitl; the S1 auto-export logs that as a warning and files a dismissed review;
   * approve_review returns 409 source_not_live for a pending review whose source is not live, and keeps the old
     answers (re-validation gate, already processed) otherwise;
   * _enqueue_review files a dead-source review as 'dismissed'; the admin review list hides pending dead-source rows.
@@ -161,7 +162,13 @@ def test_process_export_refuses_a_dead_source_before_any_write(_db_url, status, 
         with pytest.raises(tl.SourceNotLiveError):
             asyncio.run(handler.process_export(GCID))
     assert conn.fetchrow.await_count == 1                # no INSERT INTO published_tours
-    conn.execute.assert_not_called()                     # no pipeline_status / review_queue write
+    # The one write: the version leaves 'approved' (no "approved without a Master" left behind); no
+    # pipeline_status / review_queue write.
+    conn.execute.assert_awaited_once()
+    demote = " ".join(conn.execute.await_args.args[0].split())
+    assert demote == ("UPDATE silver_aa_internal.generated_content SET status = 'hitl' "
+                      "WHERE id = $1::uuid AND status = 'approved'")
+    assert conn.execute.await_args.args[1] == GCID
     atomize.assert_not_called()
     conn.close.assert_awaited_once()
     sql = conn.fetchrow.await_args_list[0].args[0]
@@ -246,15 +253,43 @@ def test_approve_on_a_live_source_exports():
     export.assert_awaited_once_with(GCID)
 
 
-def test_approve_survives_a_trash_between_claim_and_export():
+def test_approve_trash_between_claim_and_export_dismisses_and_409s():
     from api.routers import v1_pipeline
     conn = AsyncMock()
     conn.fetchrow = AsyncMock(side_effect=[{"generated_content_id": GCID, "step_fn_task_token": None}])
     conn.execute = AsyncMock(return_value="UPDATE 1")
     err = tl.SourceNotLiveError(tl.SourceState(TOUR, True, "trashed", None))
     with patch("services.export.handler.process_export", new=AsyncMock(side_effect=err)):
-        out = asyncio.run(v1_pipeline.approve_review(REVIEW_ID, _request(conn), None))
-    assert out["status"] == "approved" and out["exported"] is False
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(v1_pipeline.approve_review(REVIEW_ID, _request(conn), None))
+    assert exc.value.status_code == 409 and exc.value.detail.startswith("source_not_live: cannot approve")
+    assert exc.value.headers == {"X-Error-Code": "source_not_live"}
+    close = conn.execute.await_args_list[-1].args       # the claimed review is closed, not left 'approved'
+    assert "SET review_status = 'dismissed'" in close[0] and "review_status = 'approved'" in close[0]
+    assert close[1] == REVIEW_ID
+
+
+def test_s1_auto_export_treats_a_dead_source_as_a_warning_and_files_a_dismissed_review():
+    import inspect
+    from api.routers import admin_pipeline
+    src = inspect.getsource(admin_pipeline._execute_run_tour)
+    refused = src.index("except SourceNotLiveError as _dead:")
+    generic = src.index('logger.error("export_failed"')
+    assert refused < generic                             # caught before the generic error log (no Sentry noise)
+    branch = src[refused:generic]
+    assert 'logger.warning("s1_export_refused_source_not_live"' in branch
+    assert "_enqueue_review(conn, req.tour_id, version_id, result, failure_summary=str(_dead))" in branch
+
+
+def test_enqueue_review_summary_override():
+    from api.routers import admin_pipeline
+    conn = AsyncMock()
+    asyncio.run(admin_pipeline._enqueue_review(conn, TOUR, GCID, {"quality_score": 9.0},
+                                               failure_summary="source_not_live: x"))
+    assert conn.execute.await_args_list[0].args[4] == "source_not_live: x"
+    conn = AsyncMock()
+    asyncio.run(admin_pipeline._enqueue_review(conn, TOUR, GCID, {"quality_score": 4.0}))
+    assert conn.execute.await_args_list[0].args[4] == admin_pipeline._build_failure_summary({"quality_score": 4.0})
 
 
 # ── review queue in and out ─────────────────────────────────────────────────────────────────────────────────────────

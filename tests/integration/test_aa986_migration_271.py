@@ -239,6 +239,59 @@ async def test_process_export_refuses_an_approved_version_of_a_trashed_source(co
     atomize.assert_not_called()
     assert await conn.fetchval("SELECT count(*) FROM gold_aa_internal.published_tours WHERE tour_id = $1",
                                t.tour) == 0
+    # The version leaves 'approved': no "approved without a Master" row left for the S248 probe to flag.
+    assert await conn.fetchval("SELECT status::text FROM silver_aa_internal.generated_content WHERE id = $1",
+                               gc) == "hitl"
+
+
+@pytest.mark.asyncio
+async def test_approve_trash_between_claim_and_export_leaves_nothing_approved(conn):
+    from api.routers import v1_pipeline
+    from services.export import handler
+    t = await _tour(conn, "approve-race", master=None)
+    gc, rq = await _review(conn, t.tour)
+    real_export = handler.process_export
+
+    async def trash_then_export(version_id):
+        await conn.execute("UPDATE silver_aa_internal.raw_tours SET source_status = 'trashed', deleted_at = now() "
+                           "WHERE tour_id = $1", t.tour)
+        return await real_export(version_id)
+
+    with patch("services.export.handler.process_export", new=trash_then_export), \
+         patch("services.export.handler.asyncpg.connect", AsyncMock(return_value=_NoClose(conn))), \
+         patch("services.jobs.a3_atomize_job.enqueue_a3_atomize", AsyncMock()) as atomize:
+        with pytest.raises(HTTPException) as exc:
+            await v1_pipeline.approve_review(str(rq), _req(conn), None)
+    assert exc.value.status_code == 409 and exc.value.detail.startswith("source_not_live")
+    atomize.assert_not_called()
+    assert await conn.fetchval("SELECT review_status::text FROM silver_aa_internal.review_queue WHERE id = $1",
+                               rq) == "dismissed"
+    assert await conn.fetchval("SELECT status::text FROM silver_aa_internal.generated_content WHERE id = $1",
+                               gc) == "hitl"
+    assert await conn.fetchval("SELECT count(*) FROM gold_aa_internal.published_tours WHERE tour_id = $1",
+                               t.tour) == 0
+
+
+@pytest.mark.asyncio
+async def test_s1_refusal_files_a_dismissed_review_with_the_reason(conn):
+    """The S1 auto-export branch: after process_export refused (version now 'hitl'), _enqueue_review with the
+    source_not_live message files a 'dismissed' row carrying that reason."""
+    from api.routers import admin_pipeline
+    from services.export import handler
+    t = await _tour(conn, "s1-dead", source_status="superseded", master=None)
+    gc = await conn.fetchval(
+        "INSERT INTO silver_aa_internal.generated_content (tour_id, tenant_id, version_num, aa_name, status) "
+        "VALUES ($1, $2, 1, 'aa986', 'approved') RETURNING id", t.tour, MASTER)
+    with patch("services.export.handler.asyncpg.connect", AsyncMock(return_value=_NoClose(conn))):
+        with pytest.raises(SourceNotLiveError) as exc:
+            await handler.process_export(str(gc))
+    await admin_pipeline._enqueue_review(conn, str(t.tour), str(gc), {"quality_score": 9.0},
+                                         failure_summary=str(exc.value))
+    row = await conn.fetchrow("SELECT review_status::text AS s, failure_summary FROM silver_aa_internal.review_queue "
+                              "WHERE generated_content_id = $1", gc)
+    assert row["s"] == "dismissed" and row["failure_summary"].startswith("source_not_live")
+    assert await conn.fetchval("SELECT count(*) FROM silver_aa_internal.generated_content gc WHERE gc.id = $1 "
+                               "AND gc.status = 'approved'", gc) == 0
 
 
 # ── review queue in and out ────────────────────────────────────────────────────────────────────────────────────────
