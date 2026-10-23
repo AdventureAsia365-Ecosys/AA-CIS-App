@@ -469,3 +469,17 @@ def test_retry_errors_run_records_the_attempt_and_keeps_the_errored_unit_when_sk
         return {**unit, "error": "skipped_cost_cap", "calls": [], "n_calls": 0, "cost_usd": 0.0}
     got = _retry_run(tmp_path / "skip", skipped)
     assert got["error"] == "writer reply is not JSON" and "attempt" not in got
+
+
+def test_figure_coverage_strips_only_heading_style_day_references():
+    from services.quality.s1_facts import build_fact_table
+    facts = build_fact_table({**TOUR, "itineraries": TOUR["itineraries"] + " Cycle 60 km a day."})
+    assert s1_screen.figure_coverage(facts, {"summary": "Cycle over 4 days 60 km a day."}) == 1.0
+    assert s1_screen.figure_coverage(facts, {"summary": "Nice.", "itineraries": "Day 60\nA ride."}) == 0.0
+    assert s1_screen.figure_coverage(facts, {"summary": "Nice.", "itineraries": "Day 60: rest."}) == 0.0
+    assert s1_screen.figure_coverage(facts, {"summary": "Ride. Day 60 — rest."}) == 0.0
+    sub = s1_screen._DAY_REF_RE.sub
+    assert sub("|", "Days 2–3: Chilaw") == "|: Chilaw" and sub("|", "- Day 4: Habarana") == "|: Habarana"
+    assert sub("|", "Day 2 to 3,000 m") == "| to 3,000 m"
+    for keep in ("Cycle over 4 days 60 km", "Day 12,000 steps", "day 3 — x", "a ride on Day 2 to 3,000 m"):
+        assert sub("|", keep) == keep, keep
