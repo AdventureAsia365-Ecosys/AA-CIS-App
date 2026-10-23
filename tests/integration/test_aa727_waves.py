@@ -158,9 +158,13 @@ async def test_a_republished_tour_counts_as_master_by_updated_at(pool):
         # the publish of the wave's new version (PublishedCatalogRepository.insert ON CONFLICT): updated_at only
         await conn.execute("UPDATE gold_aa_internal.published_tours SET updated_at = now() WHERE tour_id = $1::uuid",
                            t_new)
-        rep = await wr.report(conn, wave_id)
-        states = {r["name"]: r["state"] for r in rep["tours"]}
-        assert states == {"Rewritten": "master", "Not republished": "unclassified"}
-        pub = await conn.fetchval("SELECT published_at FROM gold_aa_internal.published_tours WHERE tour_id = $1::uuid",
-                                  t_new)
-        assert pub < await conn.fetchval("SELECT created_at FROM shared.rerun_wave WHERE id = $1::uuid", wave_id)
+        try:
+            rep = await wr.report(conn, wave_id)
+            states = {r["name"]: r["state"] for r in rep["tours"]}
+            assert states == {"Rewritten": "master", "Not republished": "unclassified"}
+            pub = await conn.fetchval(
+                "SELECT published_at FROM gold_aa_internal.published_tours WHERE tour_id = $1::uuid", t_new)
+            assert pub < await conn.fetchval("SELECT created_at FROM shared.rerun_wave WHERE id = $1::uuid", wave_id)
+        finally:
+            # an open wave left behind pauses every scheduler that waits for waves (test_aa825_retention_jobs)
+            await conn.execute("DELETE FROM shared.rerun_wave WHERE id = $1::uuid", wave_id)
