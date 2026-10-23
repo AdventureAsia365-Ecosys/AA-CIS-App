@@ -8,9 +8,10 @@ cis_owner (DB Migrate's live-owner switch), the checks run, and the transaction 
 
 Checks: registered once and re-runnable; both views catalog_owner's, security_barrier, exact grants (booking,
 tripplanner, aa_app_user SELECT); read as booking / tripplanner, the tombstone has one row per not-served key with the
-right state / reason, a `restored` row for a key served again, nothing for a served key or a key never served; the
-outbox shows every event without the internal columns; the tenant role reads only its own tenant-facing
-notifications, may flip is_read and nothing else; cis_app keeps every row.
+right state / reason, a `restored` row for a key served again after a retirement, nothing for a served key, a key
+never served or a supersede (even one the service closed with a `restored` event, Q2); the outbox shows every event
+without the internal columns; the tenant role reads only its own tenant-facing notifications, may flip is_read and
+nothing else; cis_app keeps every row.
 """
 import os
 import re
@@ -118,6 +119,34 @@ def cur(rds_like_245):  # noqa: F811
         _event(c, grp, tid, "retired", "master_trashed")
         _event(c, grp, tid, "restored", "restore")
         seeded["restored"] = (tid, grp)
+        # supersede of a served key onto a version that already has a live Master: the service writes superseded +
+        # restored (set_active), the key was served throughout -> no tombstone row (Q2)
+        old_v, grp = t228._tour(c, name=f"Superseded old {tag}", country="Laos", master_status="inactive")
+        c.execute("UPDATE silver_aa_internal.raw_tours SET source_status = 'superseded' WHERE tour_id = %s", (old_v,))
+        new_v, _ = t228._tour(c, name=f"Superseded new {tag}", country="Laos", group=grp)
+        _event(c, grp, old_v, "superseded", "replaced", replaced_by=new_v)
+        _event(c, grp, new_v, "restored", "set_active")
+        seeded["supersede_served"] = (new_v, grp)
+        # a superseded_pending gap closed by the new Master's publish: superseded, then restored (publish) -> no row
+        old_v, grp = t228._tour(c, name=f"Gap old {tag}", country="Laos", master_status="inactive")
+        c.execute("UPDATE silver_aa_internal.raw_tours SET source_status = 'superseded' WHERE tour_id = %s", (old_v,))
+        new_v, _ = t228._tour(c, name=f"Gap new {tag}", country="Laos", group=grp)
+        _event(c, grp, old_v, "superseded", "replaced", replaced_by=new_v)
+        _event(c, grp, new_v, "restored", "publish")
+        seeded["supersede_gap"] = (new_v, grp)
+        # restored long ago, then a supersede closed by restored: the latest restore closes no retirement -> no row
+        tid, grp = t228._tour(c, name=f"Restored then superseded {tag}", country="Laos")
+        _event(c, grp, tid, "retired", "master_trashed")
+        _event(c, grp, tid, "restored", "restore")
+        _event(c, grp, tid, "superseded", "replaced", replaced_by=tid)
+        _event(c, grp, tid, "restored", "set_active")
+        seeded["restored_then_superseded"] = (tid, grp)
+        # retired, then a new upload superseded the dead version and its Master published: a real restore -> row
+        tid, grp = t228._tour(c, name=f"Retired then republished {tag}", country="Laos")
+        _event(c, grp, tid, "retired", "source_deleted")
+        _event(c, grp, tid, "superseded", "replaced", replaced_by=tid)
+        _event(c, grp, tid, "restored", "publish")
+        seeded["retired_then_republished"] = (tid, grp)
         # retired before L2 (no event): Master trashed
         seeded["old_retired"] = t228._tour(c, name=f"Old trashed {tag}", country="Laos", master_status="trashed")
         # never served: a source without a Master
@@ -164,6 +193,11 @@ def test_tombstone_rows_per_key(cur):
     assert by_key[s["paused"][1]] == (s["paused"][0], "paused", "master_inactive")
     assert by_key[s["restored"][1]] == (s["restored"][0], "restored", "restore")
     assert by_key[s["old_retired"][1]] == (s["old_retired"][0], "retired", "master_trashed")   # no event needed
+    assert by_key[s["retired_then_republished"][1]] == (s["retired_then_republished"][0], "restored", "publish")
+    # a supersede is never a restore (Q2), even when the service closed it with a `restored` event
+    assert s["supersede_served"][1] not in by_key
+    assert s["supersede_gap"][1] not in by_key
+    assert s["restored_then_superseded"][1] not in by_key
     assert s["served"][1] not in by_key                     # served, never changed: no row
     assert s["never"][1] not in by_key                      # never served: no row (404, not 410)
 
