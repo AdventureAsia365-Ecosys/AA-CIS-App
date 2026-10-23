@@ -555,6 +555,16 @@ def scope_dropped(decision) -> bool:
     return decision.accepted(SCOPE_FOREIGN_Q) or decision.rejected(SCOPE_HERE_Q)
 
 
+def country_scope(countries) -> str:
+    """The country-set string both scope questions are asked against: sorted, ', '-joined."""
+    return ", ".join(sorted({c for c in (countries or []) if c}))
+
+
+def scope_subject_key(scope: str, question: str) -> str:
+    """`decision_log.subject_key` of a country-scope verdict (AA-982: T9 reads it back)."""
+    return f"paa:{scope}:{question[:300]}"
+
+
 logger = structlog.get_logger()
 
 
@@ -565,10 +575,9 @@ async def filter_candidates_by_country_scope(pool, rows, segment_candidates: dic
     pairs: dict[tuple[str, str], None] = {}
     seg_scope: dict[str, str] = {}
     for row in rows:
-        countries = sorted({c for c in (row.get("countries") or []) if c})
-        if not countries:
+        scope = country_scope(row.get("countries"))
+        if not scope:
             continue
-        scope = ", ".join(countries)
         seg_scope[row["segment_id"]] = scope
         for q in segment_candidates.get(row["segment_id"], ()):
             pairs[(scope, q)] = None
@@ -578,7 +587,7 @@ async def filter_candidates_by_country_scope(pool, rows, segment_candidates: dic
 
     async def _one(scope: str, q: str):
         async with sem:
-            dec = await decide(SCOPE_STAGE, f"paa:{scope}:{q[:300]}", {"question": q, "countries": scope},
+            dec = await decide(SCOPE_STAGE, scope_subject_key(scope, q), {"question": q, "countries": scope},
                                [SCOPE_FOREIGN_Q, SCOPE_HERE_Q], pool=pool)
         return scope, q, scope_dropped(dec)
 
@@ -606,6 +615,11 @@ def landing_moment(place: str, action: str) -> str:
     return f"{place} — {action}" if action else place
 
 
+def landing_subject_key(moment: str, question: str) -> str:
+    """`decision_log.subject_key` of a landing verdict (AA-982: T9 reads it back)."""
+    return f"land:{moment[:200]}:{question[:300]}"
+
+
 async def filter_candidates_by_landing(pool, rows, segment_candidates: dict[str, set[str]]) -> dict:
     """Removes questions Jev confidently says do not belong to the Segment's moment, in place. One
     Verdict per distinct (moment, question) — Segments sharing a moment share it, and the decide()
@@ -623,7 +637,7 @@ async def filter_candidates_by_landing(pool, rows, segment_candidates: dict[str,
 
     async def _one(moment: str, q: str):
         async with sem:
-            dec = await decide(LANDING_STAGE, f"land:{moment[:200]}:{q[:300]}", {"query": q, "moment": moment},
+            dec = await decide(LANDING_STAGE, landing_subject_key(moment, q), {"query": q, "moment": moment},
                                [LANDING_Q], pool=pool)
         return moment, q, dec.rejected(LANDING_Q)
 
