@@ -13,6 +13,9 @@ paragraphs, lowest value first, until the text is under BLOG_TRIM_TARGET_CHARS:
   introduces its moment), not in the FAQ, holding no CTA sentence, no list item or FAQ line, not a list lead-in
   (ending on ':'), not the only paragraph that names one of the trip's moments, and not followed in its section
   by a paragraph that opens on a pronoun ('It…', 'This is…');
+- never the paragraph that says a moment's family access caveat: the trim runs after
+  trip_facts.add_family_caveats, so a drop that makes trip_facts.missing_family_caveat report a moment it did
+  not report before is skipped (it would reopen a blocking F17_trip_fact — S248 review, terra-family);
 - order: an untagged paragraph (no citation tag, so no cited source fact) before a tagged one, then the longest
   section, then the latest paragraph of that section;
 - each drop must leave the text clean at its seam (sentence_repair._integrity on the section heading and the
@@ -113,11 +116,22 @@ def _orphans_next(block: dict, blocks: list[dict]) -> bool:
     return dangling_opener(first)
 
 
+def _caveat_misses(text: str, trip_ctx) -> frozenset:
+    """The moments trip_facts.missing_family_caveat reports for `text` (empty without a trip context)."""
+    if trip_ctx is None:
+        return frozenset()
+    from services.acp_content_writing.trip_facts import missing_family_caveat  # lazy: a T9 module
+    return frozenset(m["moment"] for m in missing_family_caveat(text, trip_ctx.moments, trip_ctx.audience,
+                                                                 trip_ctx.cta))
+
+
 def trim_to_band(text: str, *, channel: Optional[str], cta: Optional[str] = None,
-                 ignore: frozenset = frozenset(), moments: Optional[list] = None) -> tuple[str, list[str]]:
+                 ignore: frozenset = frozenset(), moments: Optional[list] = None,
+                 trip_ctx=None) -> tuple[str, list[str]]:
     """(text, log): an over-long blog trimmed under BLOG_TRIM_TARGET_CHARS by dropping whole low-value
     paragraphs (module docstring), or the text unchanged and [] — any other channel, a blog inside its band,
-    or one the safe drops cannot bring under the band's maximum."""
+    or one the safe drops cannot bring under the band's maximum. `trip_ctx` (trip_facts.TripFactContext) guards
+    the family access caveats."""
     if channel != "blog" or not text:
         return text, []
     from services.acp_content_writing.sentence_repair import _integrity  # lazy: sentence_repair imports hygiene
@@ -126,6 +140,7 @@ def trim_to_band(text: str, *, channel: Optional[str], cta: Optional[str] = None
     if before <= hi:
         return text, []
     cur, dropped, skipped = text, [], set()
+    caveats_missing = _caveat_misses(cur, trip_ctx)
     while measure(cur) > BLOG_TRIM_TARGET_CHARS:
         blocks = _blocks(cur, cta)
         cands = [b for b in blocks if b["droppable"] and b["clean"] not in skipped]
@@ -139,7 +154,8 @@ def trim_to_band(text: str, *, channel: Optional[str], cta: Optional[str] = None
         trial = tidy_after_cut(cur[:b["start"]] + cur[b["end"]:])
         if (_sole_namer(b, blocks, moments) or _orphans_next(b, blocks) or measure(trial) < lo
                 or (gate_complete(cur)["passed"] and not gate_complete(trial)["passed"])
-                or _integrity(*_seam(b, blocks), ignore, cta, moments)):
+                or _integrity(*_seam(b, blocks), ignore, cta, moments)
+                or _caveat_misses(trial, trip_ctx) - caveats_missing):
             skipped.add(b["clean"])
             continue
         cur = trial

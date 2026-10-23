@@ -78,9 +78,25 @@ class TestHeadingClaim:
 
     def test_partial_quote_matches_one_heading_only(self):
         text = _mong_blog()
-        span = sentence_repair.locate_heading(text, "Ruined Monastery Tells Families")
+        span = sentence_repair.locate_heading(text, "Ruined Monastery Tells Families About Mongolia")  # 6 of 8
         assert span is not None and text[span[0]:span[1]] == RUINED
+        assert sentence_repair.locate_heading(text, "Ruined Monastery Tells Families") is None  # 4 of 8 < 60 %
         assert sentence_repair.locate_heading(text, "Families About") is None  # 2-word run: too loose
+
+    def test_a_prose_quote_that_contains_a_heading_is_not_a_heading_claim(self):
+        """S248 review: a paraphrased prose claim that repeats a heading inside a longer quote is a prose claim;
+        rewriting (or at attempt 3 replacing) the correct heading would leave the real claim in place."""
+        text = _mong_blog()
+        quote = ("Uran Togoo: A Volcano for Curious Children is where kids learn the volcano erupted 8,000 "
+                 "years ago")
+        assert sentence_repair.locate_heading(text, quote) is None
+        assert sentence_repair.plan(text, _ledger(f'audit: unsupported claim(s): "{quote}" (claims: x)')) is None
+
+    def test_a_short_fragment_of_a_long_heading_is_not_a_heading_claim(self):
+        text = _mong_blog()
+        assert sentence_repair.locate_heading(text, "for curious children") is None  # 3 of 7 words
+        span = sentence_repair.locate_heading(text, "## Uran Togoo: A Volcano for Curious Children [R:a2]")
+        assert span is not None and text[span[0]:span[1]] == "Uran Togoo: A Volcano for Curious Children"
 
     def test_splice_keeps_the_marker_and_drops_the_end_mark(self):
         text = _mong_blog()
@@ -245,6 +261,14 @@ def _unique_sentences(k: int, seed: int) -> list[str]:
 
 
 BHU_CTA = "Plan your private journey through Bhutan with Atlas & Hearth."
+TSAATAN_SEED = ("Tsaatan reindeer herders' settlements — excursions to Tsaatan reindeer herders' settlements\n"
+                "Location: Tsaatan Reindeer Herder Settlements, Khövsgöl Province, Mongolia\nDay 5 of the trip\n"
+                "Source itinerary: excursions to Tsaatan reindeer herders' settlements\n"
+                "Place background (checked facts about the place itself — you may use these; they say nothing "
+                "about what this trip does):\n"
+                "- Their territory lies deep in the taiga, and access requires a multi-hour horse or reindeer ride, "
+                "often crossing rivers and boggy forest terrain.")
+FAMILY_AUDIENCE = "Affluent families with children aged 7–16"
 
 
 def _para(seed: int, tagged: bool, k: int = 5) -> str:
@@ -324,6 +348,23 @@ class TestTrimToBand:
         out, _ = length_trim.trim_to_band(text, channel="blog", cta=BHU_CTA, moments=moments)
         assert "Punakha Dzong" in out
 
+    def test_the_family_access_caveat_paragraph_stays(self):
+        """S248 review: the trim runs after add_family_caveats; dropping the paragraph that says the access
+        caveat would reopen a blocking F17_trip_fact ('add ONE sentence') for a family brand."""
+        ctx = trip_facts.TripFactContext(seed=TSAATAN_SEED, audience=FAMILY_AUDIENCE, cta=BHU_CTA)
+        first, last = _para(1000, tagged=True), _para(1002, tagged=False)
+        caveat = ("Access requires a multi-hour horse or reindeer ride, often crossing rivers and boggy forest "
+                  "terrain. " + last)
+        text = (_bhutan_blog().replace(first, "The Tsaatan herd reindeer in the taiga [R:t5]. " + first)
+                .replace(last, caveat))
+        assert trip_facts.missing_family_caveat(text, ctx.moments, ctx.audience, BHU_CTA) == []
+        # without the guard the caveat paragraph (untagged, in the longest section) is the first one dropped
+        bare, _ = length_trim.trim_to_band(text, channel="blog", cta=BHU_CTA)
+        assert caveat not in bare and trip_facts.missing_family_caveat(bare, ctx.moments, ctx.audience, BHU_CTA)
+        out, log = length_trim.trim_to_band(text, channel="blog", cta=BHU_CTA, moments=ctx.moments, trip_ctx=ctx)
+        assert log and length_trim.measure(out) <= length_trim.BLOG_TRIM_TARGET_CHARS
+        assert caveat in out and trip_facts.missing_family_caveat(out, ctx.moments, ctx.audience, BHU_CTA) == []
+
     def test_the_cta_paragraph_and_lists_are_never_dropped(self):
         text = _bhutan_blog().replace("## Plan Your Private Journey Through Bhutan\n\n",
                                       "## Plan Your Private Journey Through Bhutan\n\nWhat to pack:\n\n"
@@ -336,12 +377,22 @@ def test_f4_over_max_feedback_carries_the_target():
     ledger = [{"gate": "F4_extreme_length", "passed": False, "blocking": True,
                "violations": ["content is 14576 chars — far beyond any real channel example"]},
               {"gate": "F9_cta_fact", "passed": False, "blocking": True, "violations": ["claim x"]}]
-    fb = service._repair_feedback(ledger)
+    fb = service._repair_feedback(ledger, "blog")
     assert "under 12,000 characters" in fb[0] and "keep every heading, the CTA and the FAQ" in fb[0]
     assert fb[1] == "F9_cta_fact: claim x"
     short = [{"gate": "F4_extreme_length", "passed": False, "blocking": True,
               "violations": ["content is only 3000 chars — effectively empty"]}]
-    assert "under 12,000" not in service._repair_feedback(short)[0]
+    assert "under 12,000" not in service._repair_feedback(short, "blog")[0]
+
+
+def test_f4_over_max_feedback_on_another_channel_has_no_blog_target():
+    """S248 review: the 12,000 target is the blog band's; a LinkedIn post over its 6,000 max must not be told
+    it may keep 12,000 characters."""
+    ledger = [{"gate": "F4_extreme_length", "passed": False, "blocking": True,
+               "violations": ["content is 7100 chars — far beyond any real channel example"]}]
+    for channel in ("linkedin", "facebook", None):
+        fb = service._repair_feedback(ledger, channel)
+        assert fb == ["F4_extreme_length: content is 7100 chars — far beyond any real channel example"]
 
 
 @pytest.mark.asyncio

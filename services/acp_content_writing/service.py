@@ -1258,12 +1258,15 @@ async def _sibling_titles(tenant_id: Optional[str], channel: Optional[str], piec
         return []
 
 
-def _repair_feedback(gate_ledger: list[dict]) -> list[str]:
+def _repair_feedback(gate_ledger: list[dict], channel: Optional[str] = None) -> list[str]:
     """AA-768 — every failed BLOCKING gate's violations, each prefixed with its gate, for the
     rewrite. Before this only `first_failure` was sent, so a piece failing F1 + F4 + F3 + F9 got
-    one gate fixed per attempt and held on the rest (S231 pilot, atlas-hearth blog)."""
+    one gate fixed per attempt and held on the rest (S231 pilot, atlas-hearth blog).
+    AA-984 — a blog's over-max F4 violation also carries the size to reach; the target is the blog band's,
+    so another channel (max 6,000) never gets it (S248 review)."""
+    target = F4_OVER_MAX_TARGET if channel == "blog" else ""
     return [
-        f"{g['gate']}: {v}" + (F4_OVER_MAX_TARGET if g["gate"] == "F4_extreme_length" and _F4_OVER_RE.search(v) else "")
+        f"{g['gate']}: {v}" + (target if g["gate"] == "F4_extreme_length" and _F4_OVER_RE.search(v) else "")
         for g in gate_ledger if not g["passed"] and g.get("blocking", True)
         for v in g["violations"]
     ]
@@ -2004,7 +2007,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             # AA-984 — an over-long blog is trimmed into its band here (whole low-value paragraphs, never a
             # heading, the FAQ or the CTA), so it is never rewritten or held for length alone (S247 r9 32789658).
             content_text, trim_log = length_trim.trim_to_band(content_text, channel=channel, cta=cta,
-                                                              ignore=brand_ignore, moments=hyg.moments)
+                                                              ignore=brand_ignore, moments=hyg.moments,
+                                                              trip_ctx=trip_ctx)
             first_line_log = first_line_log + tf_log + final_log + trim_log
             progress_step("check")  # AA-637 live view (no-op without a bound tracker)
             outcome = await asyncio.to_thread(
@@ -2040,7 +2044,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 "attempt": attempt, "gate_targeted": first_failure["gate"],
                 "violations": first_failure["violations"], "repairable": first_failure["repairable"],
                 # AA-768 — what the rewrite is actually told: every blocking failure, not one gate.
-                "feedback": _repair_feedback(gate_ledger),
+                "feedback": _repair_feedback(gate_ledger, channel),
                 # AA-791 — this attempt's whole ledger (trimmed), so every attempt's gates are kept.
                 "gate_ledger": ledger_snapshot(gate_ledger),
             })

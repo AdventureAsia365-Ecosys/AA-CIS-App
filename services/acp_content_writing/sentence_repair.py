@@ -135,17 +135,27 @@ def _heading_text_spans(text: str) -> list[tuple[int, int]]:
     return out
 
 
+# AA-984 (S248 review) — how close a judge quote must be to a heading to be a claim ON it (locate_heading).
+HEADING_RUN_MIN_SHARE = 0.6
+HEADING_QUOTE_SLACK_WORDS = 2
+
+
 def locate_heading(text: str, quote: str) -> Optional[tuple[int, int]]:
     """AA-984 — (start, end) of the text of the ONE body heading (never the FAQ heading) a judge quote names:
-    the same words, a run of ≥ 3 of the heading's words, or the whole heading (≥ 3 words) inside the quote.
-    The span starts after the '## ' marker. None when no heading or more than one heading matches."""
+    the same words; a run of ≥ 3 of the heading's words covering ≥ HEADING_RUN_MIN_SHARE of them; or the whole
+    heading (≥ 3 words) inside a quote at most HEADING_QUOTE_SLACK_WORDS longer (a '##', a tag). A longer
+    quote that contains a heading is a prose claim that paraphrases it, and a short fragment ('for curious
+    children') may sit in any sentence — neither is a heading claim (S248 review), so plan() skips them as
+    before. The span starts after the '## ' marker. None when no heading or more than one heading matches."""
     q = _words(strip_citation_tags(_clean_quote(quote), " "))
     if len(q) < 2:
         return None
     hits = []
     for start, end in _heading_text_spans(text):
         h = _words(strip_citation_tags(text[start:end], " "))
-        if h == q or (len(q) >= 3 and _contains_run(h, q)) or (len(h) >= 3 and _contains_run(q, h)):
+        if (h == q
+                or (len(q) >= 3 and len(q) >= HEADING_RUN_MIN_SHARE * len(h) and _contains_run(h, q))
+                or (len(h) >= 3 and len(q) <= len(h) + HEADING_QUOTE_SLACK_WORDS and _contains_run(q, h))):
             hits.append((start, end))
     return hits[0] if len(hits) == 1 else None
 
