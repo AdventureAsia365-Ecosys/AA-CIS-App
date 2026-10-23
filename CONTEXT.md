@@ -1930,7 +1930,10 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   `raw_tours.group_size` / `best_time_to_go` reach the writer (`with_agency_fields`). The paid harness is
   `scripts/aa645/s1_screen.py` (LLMClient, `llm_call_log` stage `adhoc_aa645`, role `writer`; runs on the deployed
   image via S3) and `scripts/aa645/score_screen.py` (panel rubric v1 + rank, code gates, $ per tour, the W pick,
-  paired Wilcoxon for the A/B runs). The A1 flag-fix prompt is neutral white-label (no "Adventure Asia").
+  paired Wilcoxon for the A/B runs); the gate codes are defined once in `scripts/aa645/gates.py`
+  (DAY_PLACE_MISMATCH, NAME_NOT_IN_SOURCE, NUMBER_NOUN_MISMATCH are report-only). The A1 flag-fix prompt and the A1
+  brand-audit judge's user prompt are neutral white-label (no "Adventure Asia"); the judge's voice rubric
+  (`AA_BRAND_IDENTITY_PROMPT`) is unchanged until the step-5 cleanup.
 - **Degraded detectors + repair contract** (AA-925, Q-2, design §4.3/§6.3; `services/quality/`, pure modules —
   gate runners are passed in, no writer module is imported):
   - `degraded[]` (`services/quality/degraded.py`) names every fail-open path that ran on an output: Jev
