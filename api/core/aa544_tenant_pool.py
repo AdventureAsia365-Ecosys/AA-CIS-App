@@ -33,6 +33,13 @@ since AA-817 PR-A, S239; each logs `used_tenant_pool` per request):
     (TRIP_REALLOCATION_FLAG), GET /v1/marketplace (MARKETPLACE_FLAG), GET /v1/content-writing/reviews and
     .../requests/{id}/review (REVIEWS_FLAG). Each group has its own flag and needs 265 and / or 266 (see the
     constants): `SET <key> false` on Dev before the deploy, flip after the apply.
+  - AA-976 (S249), outside the flag ritual above: GET /catalog/v1/tours, /catalog/v1/tours/{source_system}/{source_id}
+    and /catalog/v1/destinations/{id} (api/routers/catalog_http.py, M2M caller: the partner CRM). It does NOT use
+    acquire_scoped_conn: services/catalog_http/reader.catalog_connection takes app.state.tenant_pool directly, in a
+    READ ONLY transaction with app.tenant_id = '' (the catalog views run as catalog_owner, aa_app_user only needs
+    the SELECT it already holds), and a per-process semaphore (reader.MAX_CONCURRENT_READS = 1) caps it at ONE of
+    this pool's connections per api task. No flag, no `used_tenant_pool` log line (no tenant). Anyone resizing
+    TENANT_POOL_MAX_SIZE or the role's CONNECTION LIMIT must count this consumer.
 
 Design (matches AA-544's approved 2-pool split): Admin (/admin/*) keeps app.state.pool unchanged,
 always. That pool logs in as the CIS runtime role: aa_cis_admin today (owner, so exempt on the ENABLE-only

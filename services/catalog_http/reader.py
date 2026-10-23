@@ -11,8 +11,14 @@ neither (ADR 0015 decision 3), so no new grant is needed. The contract views do 
 (they run with ``catalog_owner``'s rights); each read still runs in a READ ONLY transaction with the GUC set to ''
 so a pooled connection never carries a tenant into it. See :func:`catalog_connection`.
 
-All statements filter ``source_id`` with ``=`` for one tour and ``= ANY($1::text[])`` for a page (lesson S238:
-``v_tour_place`` handles both since CIS 235's per-tour LATERAL).
+The tour itself is read by ``source_id`` (the contract key). The detail views are then read by the ``tour_id`` of
+those rows, ``tour_id = ANY($1::uuid[])``, never by ``source_id`` (lesson S238): ``catalog._tour_day_text`` (under
+``v_tour_day``) is a ``DISTINCT ON (tour_id, day)`` and ``v_tour_place`` ends in window functions partitioned by
+``tour_id``, so Postgres can push a ``tour_id`` filter down to the ``raw_tours`` scan but keeps a ``source_id``
+filter above them, which parses the itinerary and resolves the places of EVERY live tour on each call (EXPLAIN on
+the CIS 274 state, AA-976; ``tests/integration/test_aa976_catalog_http_reader.py`` guards the plan shape). All
+statements of one request share one REPEATABLE READ snapshot, so the ``tour_id`` read from ``v_tour`` is the one
+the detail views see even if a Master swap commits in between.
 """
 
 from __future__ import annotations
@@ -40,7 +46,8 @@ ACQUIRE_TIMEOUT_S = 5.0
 DEFAULT_PAGE = 20
 MAX_PAGE = 50
 
-_TOUR_COLS = ("source_id, title, summary, country, duration_days, activities, inclusions, exclusions, updated_at")
+_TOUR_COLS = ("source_id, tour_id, title, summary, country, duration_days, activities, inclusions, exclusions, "
+              "updated_at")
 
 LIST_TOURS_SQL = f"""
     SELECT {_TOUR_COLS}
@@ -66,8 +73,8 @@ _DETAIL_SQL = {
     "components": ("SELECT DISTINCT source_id, activity, intensity_level FROM catalog.v_tour_component "
                    "WHERE {cond}"),
 }
-_ONE = "source_system = 'cis' AND source_id = $1::text"
-_MANY = "source_system = 'cis' AND source_id = ANY($1::text[])"
+# tour_id, not source_id: see the module docstring (pushdown through DISTINCT ON / window functions).
+DETAIL_COND = "source_system = 'cis' AND tour_id = ANY($1::uuid[])"
 DESTINATION_SQL = """
     SELECT destination_id, name, country, lat, lng
       FROM catalog.v_destination
@@ -103,7 +110,7 @@ def reset_gate() -> None:
 
 @asynccontextmanager
 async def catalog_connection(pool: Any) -> AsyncIterator[Any]:
-    """One READ ONLY transaction on a tenant-pool connection with ``app.tenant_id`` = ''.
+    """One READ ONLY, REPEATABLE READ transaction on a tenant-pool connection with ``app.tenant_id`` = ''.
 
     Raises :class:`CatalogUnavailable` when there is no pool, the gate or the pool does not hand out a connection
     within :data:`ACQUIRE_TIMEOUT_S`, the connection drops, or a statement hits the pool's statement_timeout."""
@@ -120,7 +127,7 @@ async def catalog_connection(pool: Any) -> AsyncIterator[Any]:
         except _POOL_ERRORS as exc:
             raise CatalogUnavailable(type(exc).__name__) from exc
         try:
-            async with conn.transaction(readonly=True):
+            async with conn.transaction(isolation="repeatable_read", readonly=True):
                 await conn.execute("SELECT set_config('app.tenant_id', '', true)")
                 yield conn
         except (*_POOL_ERRORS, asyncpg.QueryCanceledError) as exc:
@@ -182,12 +189,12 @@ def _group(rows: list[Any]) -> dict[str, list[dict]]:
     return out
 
 
-async def _details(conn: Any, source_ids: list[str]) -> dict[str, dict[str, list[dict]]]:
-    one = len(source_ids) == 1
-    arg: Any = source_ids[0] if one else source_ids
-    details: dict[str, dict[str, list[dict]]] = {sid: {} for sid in source_ids}
+async def _details(conn: Any, tour_rows: list[Any]) -> dict[str, dict[str, list[dict]]]:
+    """The day, place, photo and component rows of some served ``v_tour`` rows, keyed by source_id."""
+    details: dict[str, dict[str, list[dict]]] = {str(r["source_id"]): {} for r in tour_rows}
+    tour_ids = [str(r["tour_id"]) for r in tour_rows]
     for name, sql in _DETAIL_SQL.items():
-        rows = await conn.fetch(sql.format(cond=_ONE if one else _MANY), arg)
+        rows = await conn.fetch(sql.format(cond=DETAIL_COND), tour_ids)
         for sid, group in _group(rows).items():
             if sid in details:
                 details[sid][name] = group
@@ -208,7 +215,7 @@ async def list_tours(conn: Any, *, after: Optional[str], updated_since: Optional
     rows = await conn.fetch(LIST_TOURS_SQL, after, updated_since, names, limit + 1)
     more = len(rows) > limit
     rows = rows[:limit]
-    details = await _details(conn, [str(r["source_id"]) for r in rows]) if rows else {}
+    details = await _details(conn, rows) if rows else {}
     items = []
     for row in rows:
         body = _assemble(row, details.get(str(row["source_id"]), {}), photo_base)
@@ -228,7 +235,7 @@ class TourLookup:
 async def get_tour(conn: Any, source_id: str, *, photo_base: str) -> TourLookup:
     row = await conn.fetchrow(GET_TOUR_SQL, source_id)
     if row is not None:
-        detail = (await _details(conn, [source_id])).get(source_id, {})
+        detail = (await _details(conn, [row])).get(str(row["source_id"]), {})
         body = _assemble(row, detail, photo_base)
         if body is not None:
             return TourLookup(body=body, state=None, reason=None)

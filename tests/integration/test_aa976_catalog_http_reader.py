@@ -12,8 +12,11 @@ asyncpg-shaped adapter over the test transaction, each one under ``SET LOCAL ROL
   'paused' (404 with reason), never served -> no state (404);
 - the list pages by source_id with the keyset cursor, filters by country code and never lists a retired or paused key;
 - the destination read answers the seeded destination;
-- every statement runs as aa_app_user (a missing grant would raise here, not on Dev).
+- every statement runs as aa_app_user (a missing grant would raise here, not on Dev);
+- lesson S238 guard: each detail statement's tour_id filter reaches a table scan inside the view (EXPLAIN),
+  so a call never parses or resolves every live tour.
 """
+import json
 import asyncio
 import os
 import re
@@ -106,7 +109,7 @@ def test_served_tour_is_assembled_from_the_views_and_matches_the_contract(seeded
     errors = [e.message for e in _tour_validator().iter_errors(body)]
     assert errors == []
     assert body["content_hash"].startswith("sha256:")
-    assert conn.statements == 5     # v_tour + days, places, photos, components (`= $1` each)
+    assert conn.statements == 5     # v_tour + days, places, photos, components (tour_id = ANY each)
 
 
 @pytest.mark.parametrize("key, state, reason", [
@@ -166,13 +169,14 @@ def test_destination_read(seeded):
 
 
 def test_catalog_connection_shape_on_a_fake_pool_matches_the_adapter():
-    """The adapter above mirrors catalog_connection: one READ ONLY transaction, tenant GUC cleared first."""
+    """The adapter above mirrors catalog_connection: one READ ONLY, REPEATABLE READ transaction, tenant GUC cleared
+    first."""
     calls = []
 
     class Conn:
         @asynccontextmanager
-        async def transaction(self, readonly=False):
-            calls.append(("tx", readonly))
+        async def transaction(self, isolation=None, readonly=False):
+            calls.append(("tx", isolation, readonly))
             yield
 
         async def execute(self, sql, *a):
@@ -191,4 +195,32 @@ def test_catalog_connection_shape_on_a_fake_pool_matches_the_adapter():
             pass
 
     _run(go())
-    assert calls == [("tx", True), ("exec", "SELECT set_config('app.tenant_id', '', true)"), ("release",)]
+    assert calls == [("tx", "repeatable_read", True), ("exec", "SELECT set_config('app.tenant_id', '', true)"),
+                     ("release",)]
+
+
+def _nodes(plan):
+    yield plan
+    for child in plan.get("Plans", ()):
+        yield from _nodes(child)
+
+
+@pytest.mark.parametrize("name", sorted(reader._DETAIL_SQL))  # noqa: SLF001
+def test_detail_filter_is_pushed_down_to_the_tour_scan(seeded, name):
+    """Lesson S238: `source_id = ANY` stays above catalog._tour_day_text's DISTINCT ON and v_tour_place's window
+    functions (every live tour parsed per call); the reader's `tour_id = ANY` must reach a table scan inside the
+    view (raw_tours, or place_photo for the photos), not stay on the view's top node."""
+    c, _ = seeded
+    tid, _ = c.seeded["served"]
+    sql = reader._DETAIL_SQL[name].format(cond=reader.DETAIL_COND)  # noqa: SLF001
+    c.execute("SAVEPOINT aa976_plan")
+    try:
+        c.execute(f"SET LOCAL ROLE {ROLE}")
+        c.execute("EXPLAIN (FORMAT JSON, COSTS OFF) " + _PARAM.sub("%(p1)s", sql), {"p1": [str(tid)]})
+        raw = c.fetchone()[0]
+    finally:
+        c.execute("ROLLBACK TO SAVEPOINT aa976_plan")
+    plan = (raw if isinstance(raw, list) else json.loads(raw))[0]["Plan"]
+    scans = [n for n in _nodes(plan) if n.get("Relation Name")]
+    conds = " ".join(f"{n.get('Filter', '')} {n.get('Index Cond', '')} {n.get('Recheck Cond', '')}" for n in scans)
+    assert "tour_id = ANY" in conds, (name, json.dumps(plan)[:2000])

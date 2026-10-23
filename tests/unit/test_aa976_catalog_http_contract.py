@@ -1,11 +1,14 @@
 """AA-976 — the /catalog/v1 routes conform to the contract catalog.http.v1 (OpenAPI 3.1, JSON Schema 2020-12).
 
 ``docs/contracts/catalog.http.v1.openapi.yaml`` is a byte-identical copy of the root contract
-(AA-Ecosys ``docs/contracts/``, the source of truth, checked there by ``tools/contracts/check_contracts.py``). Every
+(AA-Ecosys ``docs/contracts/``, the source of truth, checked there by ``tools/contracts/check_contracts.py``, whose
+rule M1 compares this copy with the root file in the workspace). This repo cannot see the root repo in CI, so
+:data:`ROOT_CONTRACT_SHA256` pins the root file's sha256: a change to the copy alone fails here. Every
 scenario below calls the real router (fake catalog views, local M2M issuer) and validates the answer against the
 response the contract declares for that operation and status: the body schema (``additionalProperties: false``
 everywhere, so an extra field fails), the declared status codes, and the ETag header where the contract lists one.
 """
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -22,6 +25,15 @@ from tests.unit.aa976_m2m import OTHER_CLIENT, install_m2m
 
 CONTRACT = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "catalog.http.v1.openapi.yaml"
 DOC = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
+# sha256 of AA-Ecosys docs/contracts/catalog.http.v1.openapi.yaml (info.version 1.1). Update the root file first,
+# copy it here byte for byte, then set this to `sha256sum` of the root file.
+ROOT_CONTRACT_SHA256 = "855d609b3e9234a56b3111212cdd20ed9c9324af20772adc7bd611286164ea3e"
+
+
+def test_copy_is_the_pinned_root_contract():
+    assert hashlib.sha256(CONTRACT.read_bytes()).hexdigest() == ROOT_CONTRACT_SHA256, (
+        "docs/contracts/catalog.http.v1.openapi.yaml differs from the pinned root contract: change the AA-Ecosys "
+        "root file first, copy it here unchanged, then update ROOT_CONTRACT_SHA256")
 
 # The operations this card serves (the /aa-content ones are AA-977).
 SERVED = {

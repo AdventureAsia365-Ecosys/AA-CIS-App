@@ -7,9 +7,11 @@ IANA time zone per place, so both are derived here, never stored:
 - the country code comes from ``services/places/guards.iso2`` (the AA country list, the same one the
   ``chk_raw_tours_country`` constraint enforces), plus the few neighbour countries a multi-country tour may cross
   into (:data:`_EXTRA_ISO2`);
-- the time zone is the country's zone; the four AA countries with more than one zone split by longitude
-  (Indonesia WIB / WITA / WIT, Malaysia peninsula / Borneo, Mongolia west / rest), which is exact enough for a day
-  plan (every split is a whole-hour step between provinces that have no tour stop on the boundary).
+- the time zone is the country's zone; the three AA countries with more than one zone split by longitude
+  (Indonesia WIB / WITA / WIT, Malaysia peninsula / Borneo, Mongolia west / rest), Indonesia also by latitude
+  where a province line is not a meridian (North Sulawesi east of 125 deg E, e.g. Bitung and the Lembeh Strait,
+  is WITA like the rest of Sulawesi). That is exact enough for a day plan: each split is a whole-hour step
+  between provinces, and the test table pins the dive and ferry stops nearest each line.
 
 No network and no tz database lookup at request time; ``tests/unit/test_aa976_catalog_http.py`` checks that every
 zone named here exists in the system tz database.
@@ -19,7 +21,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from services.places.guards import _ALIASES, COUNTRY_ISO2, iso2
+from services.places.guards import country_spellings, iso2
 
 # Neighbours a multi-country AA tour may stop in that are not AA sales countries (not in guards.COUNTRY_ISO2).
 _EXTRA_ISO2 = {
@@ -44,8 +46,12 @@ _ZONE = {
 FALLBACK_ZONE = "UTC"
 
 # Longitude splits (degrees east).
-_ID_WITA_FROM = 114.5     # Bali, Lombok, Sulawesi, Nusa Tenggara, East / South Kalimantan: UTC+8
-_ID_WIT_FROM = 125.0      # Maluku, Papua: UTC+9
+_ID_WITA_FROM = 114.42    # Bali (Gilimanuk 114.43), Lombok, Sulawesi, Nusa Tenggara, East / South Kalimantan:
+#                           UTC+8; Java's east tip (Banyuwangi / Ketapang 114.37-114.40) stays UTC+7
+_ID_WIT_FROM = 125.0      # Maluku, Papua: UTC+9 (Sula, Buru, Wetar lie between 125 and 127 deg E)
+_ID_WIT_NORTH_FROM = 127.0  # north of _ID_NORTH_SULAWESI_LAT: Sangihe, Talaud, Bitung / Lembeh stay WITA;
+#                             Ternate / Tidore / Halmahera (127.3+) are WIT
+_ID_NORTH_SULAWESI_LAT = 1.0  # North Sulawesi east of 125 deg E lies at 1.1 deg N and above
 _MY_BORNEO_FROM = 109.0   # Sabah, Sarawak
 _MN_HOVD_BEFORE = 96.5    # Bayan-Olgii, Khovd, Uvs: UTC+7
 
@@ -58,14 +64,21 @@ def country_code(name: Optional[str]) -> Optional[str]:
     return _EXTRA_ISO2.get((name or "").strip().lower())
 
 
-def time_zone(code: Optional[str], lng: Optional[float] = None) -> Optional[str]:
-    """IANA zone for a country code, split by longitude where the country has several; None when unknown."""
+def _indonesia_wit(lng: float, lat: Optional[float]) -> bool:
+    if lat is not None and lat >= _ID_NORTH_SULAWESI_LAT:
+        return lng >= _ID_WIT_NORTH_FROM
+    return lng >= _ID_WIT_FROM
+
+
+def time_zone(code: Optional[str], lng: Optional[float] = None, lat: Optional[float] = None) -> Optional[str]:
+    """IANA zone for a country code, split by longitude (and for Indonesia latitude) where the country has
+    several; None when unknown. Without ``lat`` the Indonesian WITA / WIT line is the 125 deg E meridian."""
     if not code:
         return None
     code = code.upper()
     if lng is not None:
         if code == "ID":
-            if lng >= _ID_WIT_FROM:
+            if _indonesia_wit(lng, lat):
                 return "Asia/Jayapura"
             if lng >= _ID_WITA_FROM:
                 return "Asia/Makassar"
@@ -79,8 +92,7 @@ def time_zone(code: Optional[str], lng: Optional[float] = None) -> Optional[str]
 def spellings(code: str) -> list[str]:
     """Every lower-case country name that maps to one ISO code ('CN' -> ['china', 'tibet']), for filters."""
     code = (code or "").upper()
-    names = {name for name, iso in COUNTRY_ISO2.items() if iso.upper() == code}
-    names |= {alias for alias in _ALIASES if country_code(alias) == code}
+    names = set(country_spellings(code))
     names |= {name for name, iso in _EXTRA_ISO2.items() if iso == code}
     return sorted(names)
 

@@ -37,11 +37,17 @@ paths:
   /tours:
     get:
       operationId: listTours
-      summary: Published tours, changed since a time
+      summary: Published tours, optionally only those whose tour record changed since a time
       parameters:
         - name: updated_since
           in: query
           required: false
+          description: >-
+            Keeps tours whose tour record (the published Master: title, texts, country, duration, inclusions,
+            exclusions) changed at or after this time. It is NOT a full change cursor: a change to the
+            tour's places, place time zones, photos or components moves content_hash without moving updated_at.
+            A CRM that syncs incrementally with updated_since must also run a periodic full pass (no
+            updated_since) and re-fetch every tour whose content_hash differs from its copy.
           schema: {type: string, format: date-time}
         - name: country_code
           in: query

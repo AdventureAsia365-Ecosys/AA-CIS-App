@@ -210,7 +210,7 @@ def photo_url(path: str, base: str) -> Optional[str]:
 def _place(row: Mapping[str, Any], tour_code: Optional[str]) -> dict:
     lat, lng = _coord(row.get("lat"), 90), _coord(row.get("lng"), 180)
     code = country_code(row.get("country")) or tour_code
-    zone = time_zone(code, lng) or time_zone(tour_code, None) or FALLBACK_ZONE
+    zone = time_zone(code, lng, lat) or time_zone(tour_code, None) or FALLBACK_ZONE
     precision = row.get("precision")
     name = row.get("destination_name") or row.get("place_display_name") or row.get("place_name") or ""
     return {
@@ -309,12 +309,12 @@ def tour_summary(body: Mapping[str, Any], updated_at: Any) -> dict:
 def destination_body(row: Mapping[str, Any]) -> dict:
     """The contract ``Destination`` for one ``catalog.v_destination`` row."""
     code = country_code(row.get("country"))
-    lng = _coord(row.get("lng"), 180)
+    lat, lng = _coord(row.get("lat"), 90), _coord(row.get("lng"), 180)
     return {
         "destination_id": str(row["destination_id"]),
         "name": _clip(row.get("name") or "", MAX_NAME) or "",
         "country_code": code,
-        "time_zone": time_zone(code, lng) or FALLBACK_ZONE,
-        "lat": _coord(row.get("lat"), 90),
+        "time_zone": time_zone(code, lng, lat) or FALLBACK_ZONE,
+        "lat": lat,
         "lng": lng,
     }

@@ -14,6 +14,7 @@ from api.core import m2m_auth
 from services.catalog_http import geo, mapping, reader
 from tests.unit.aa976_catalog_fake import (
     DEST_BALI, DEST_HALONG, DEST_HANOI, SID_A, SID_B, SID_C, SID_PAUSED, SID_RETIRED, FakePool, catalog_app, seeded,
+    tour_id_of,
 )
 from tests.unit.aa976_m2m import OTHER_CLIENT, install_m2m
 
@@ -72,6 +73,42 @@ def test_country_code(name, code):
 ])
 def test_time_zone(code, lng, zone):
     assert geo.time_zone(code, lng) == zone
+
+
+# Indonesian stops nearest a zone line (lat, lng): province lines are not meridians, so latitude matters.
+@pytest.mark.parametrize("place, lat, lng, zone", [
+    ("Banyuwangi (East Java)", -8.22, 114.37, "Asia/Jakarta"),
+    ("Ketapang ferry (East Java)", -8.14, 114.40, "Asia/Jakarta"),
+    ("Gilimanuk (Bali)", -8.17, 114.434, "Asia/Makassar"),
+    ("Banjarmasin (South Kalimantan)", -3.32, 114.59, "Asia/Makassar"),
+    ("Palangka Raya (Central Kalimantan)", -2.21, 113.92, "Asia/Jakarta"),
+    ("Kupang (East Nusa Tenggara)", -10.17, 123.6, "Asia/Makassar"),
+    ("Manado (North Sulawesi)", 1.49, 124.84, "Asia/Makassar"),
+    ("Bitung (North Sulawesi)", 1.44, 125.19, "Asia/Makassar"),
+    ("Lembeh Strait (North Sulawesi)", 1.45, 125.24, "Asia/Makassar"),
+    ("Talaud (North Sulawesi)", 4.0, 126.8, "Asia/Makassar"),
+    ("Ternate (North Maluku)", 0.79, 127.38, "Asia/Jayapura"),
+    ("Buru (Maluku)", -3.4, 126.6, "Asia/Jayapura"),
+    ("Wetar (Maluku)", -7.8, 126.0, "Asia/Jayapura"),
+    ("Ambon (Maluku)", -3.69, 128.18, "Asia/Jayapura"),
+    ("Raja Ampat (Southwest Papua)", -0.23, 130.52, "Asia/Jayapura"),
+])
+def test_indonesia_zone_lines(place, lat, lng, zone):
+    assert geo.time_zone("ID", lng, lat) == zone, place
+
+
+def test_destination_zone_uses_latitude():
+    body = mapping.destination_body({"destination_id": "00000000-0000-0000-0000-000000000001", "name": "Bitung",
+                                     "country": "Indonesia", "lat": 1.44, "lng": 125.19})
+    assert body["time_zone"] == "Asia/Makassar"
+
+
+def test_guards_country_spellings_is_the_public_alias_source():
+    from services.places import guards
+    assert guards.country_spellings("cn") == ["china", "tibet"]
+    assert guards.country_spellings("LK") == ["sri lanka", "sri-landka"]
+    assert "kyrgyz republic" in guards.country_spellings("kg")
+    assert guards.country_spellings("") == [] and guards.country_spellings("ph") == []
 
 
 def test_spellings_cover_aliases():
@@ -273,10 +310,14 @@ def test_get_tour_served_with_etag_and_cache_headers(client, issuer, views):
     assert resp.headers["etag"] == f'"{body["content_hash"]}"'
     assert resp.headers["cache-control"] == "private, max-age=60"
     assert resp.headers["vary"] == "Authorization"
-    # one READ ONLY transaction with the tenant GUC cleared; single-tour reads use `= $1`, not ANY
-    assert views.readonly == [True]
+    # one READ ONLY, REPEATABLE READ transaction with the tenant GUC cleared; the tour by source_id, its details
+    # by the tour_id of that row (lesson S238: source_id is not pushed below DISTINCT ON / window functions)
+    assert views.readonly == [True] and views.isolation == ["repeatable_read"]
     assert any("set_config('app.tenant_id', '', true)" in s for s in views.executed)
-    assert all("ANY" not in sql for sql, _ in views.sql)
+    details = [(sql, args) for sql, args in views.sql if sql != reader.GET_TOUR_SQL]
+    assert len(details) == 4
+    assert all("tour_id = ANY($1::uuid[])" in sql and "source_id" not in sql.split("WHERE")[1] for sql, _ in details)
+    assert all(args == ([tour_id_of(SID_A)],) for _, args in details)
 
 
 def test_if_none_match_answers_304(client, issuer):
@@ -355,7 +396,7 @@ def test_list_items_carry_the_tour_content_hash(client, issuer):
 def test_list_reads_details_once_per_page_with_any(client, issuer, views):
     client.get("/catalog/v1/tours", headers=_auth(issuer))
     detail_sql = [sql for sql, _ in views.sql if sql != reader.LIST_TOURS_SQL]
-    assert len(detail_sql) == 4 and all("ANY($1::text[])" in sql for sql in detail_sql)
+    assert len(detail_sql) == 4 and all(sql.endswith("tour_id = ANY($1::uuid[])") for sql in detail_sql)
 
 
 def test_list_filters(client, issuer):

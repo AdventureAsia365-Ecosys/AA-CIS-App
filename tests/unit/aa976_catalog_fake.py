@@ -2,6 +2,7 @@
 pool, and a small FastAPI app carrying only the catalog router. No DB, no network."""
 from __future__ import annotations
 
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -23,10 +24,16 @@ DEST_BALI = "2a2a2a2a-0000-4000-8000-000000000003"
 T0 = datetime(2026, 10, 20, 8, 0, tzinfo=timezone.utc)
 
 
+def tour_id_of(source_id: str) -> str:
+    """The (current) raw_tours.tour_id behind a source key; stable per key in the fake."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"tour:{source_id}"))
+
+
 def tour_row(source_id: str, *, title: str = "Hanoi and Ha Long", country: str = "Vietnam",
              updated_at: datetime = T0, duration_days: Optional[int] = 3) -> dict:
     return {
-        "source_id": source_id, "title": title, "summary": "Old Quarter and the bay.", "country": country,
+        "source_id": source_id, "tour_id": tour_id_of(source_id), "title": title,
+        "summary": "Old Quarter and the bay.", "country": country,
         "duration_days": duration_days, "activities": ["Kayaking", "Food tour"],
         "inclusions": "- Guide\n- Boat cruise; Breakfast daily",
         "exclusions": "International flights\nEntrance fees at the pagodas\nTips for guide and driver\nVisa",
@@ -46,6 +53,7 @@ class CatalogViews:
         self.sql: list[tuple[str, tuple]] = []
         self.executed: list[str] = []
         self.readonly: list[bool] = []
+        self.isolation: list[Optional[str]] = []
 
     def add_tour(self, source_id: str, **kw: Any) -> dict:
         row = tour_row(source_id, **kw)
@@ -86,8 +94,9 @@ class CatalogViews:
 
     # asyncpg surface -------------------------------------------------------
     @asynccontextmanager
-    async def transaction(self, readonly: bool = False):
+    async def transaction(self, isolation: Optional[str] = None, readonly: bool = False):
         self.readonly.append(readonly)
+        self.isolation.append(isolation)
         yield
 
     async def execute(self, sql: str, *args: Any) -> str:
@@ -115,10 +124,9 @@ class CatalogViews:
                     and (names is None or r["country"].lower() in names)]
             return rows[:limit]
         for name, template in reader._DETAIL_SQL.items():  # noqa: SLF001
-            if sql == template.format(cond=reader._ONE):  # noqa: SLF001
-                return list(self.details.get(args[0], {}).get(name, []))
-            if sql == template.format(cond=reader._MANY):  # noqa: SLF001
-                return [r for sid in args[0] for r in self.details.get(sid, {}).get(name, [])]
+            if sql == template.format(cond=reader.DETAIL_COND):
+                by_tour_id = {tour_id_of(sid): sid for sid in self.details}
+                return [r for tid in args[0] for r in self.details.get(by_tour_id.get(tid, ""), {}).get(name, [])]
         raise AssertionError(sql)
 
 
@@ -161,5 +169,6 @@ def seeded() -> CatalogViews:
     return views
 
 
-__all__ = ["SID_A", "SID_B", "SID_C", "SID_RETIRED", "SID_PAUSED", "DEST_HANOI", "DEST_HALONG", "DEST_BALI", "T0",
+__all__ = ["tour_id_of", "SID_A", "SID_B", "SID_C", "SID_RETIRED", "SID_PAUSED", "DEST_HANOI", "DEST_HALONG",
+           "DEST_BALI", "T0",
            "CatalogViews", "FakePool", "catalog_app", "seeded", "tour_row", "SimpleNamespace"]

@@ -67,6 +67,18 @@ def iso2(name: Optional[str]) -> str:
     return COUNTRY_ISO2.get(c.lower(), "") if c else ""
 
 
+def country_spellings(code: Optional[str]) -> list[str]:
+    """Every lower-case country spelling :func:`iso2` maps to one ISO code, aliases included
+    ('cn' -> ['china', 'tibet'], 'lk' -> ['sri lanka', 'sri-landka']); [] when the code is not AA.
+    Used to filter raw_tours.country by ISO code (catalog.http.v1, AA-976)."""
+    key = (code or "").strip().lower()
+    if not key:
+        return []
+    names = {name for name, iso in COUNTRY_ISO2.items() if iso == key}
+    names |= {alias for alias in _ALIASES if iso2(alias) == key}
+    return sorted(names)
+
+
 def km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     p1, p2 = math.radians(lat1), math.radians(lat2)
     a = (math.sin((p2 - p1) / 2) ** 2

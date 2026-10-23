@@ -8,6 +8,10 @@ schema (ADR 0008a decision 1), so it reads published content here.
   GET /catalog/v1/tours/{source_system}/{source_id}      one tour: 200 served, 410 retired, 404 paused / never served
   GET /catalog/v1/destinations/{destination_id}          one destination with its IANA time zone
 
+``updated_since`` filters ``catalog.v_tour.updated_at`` only (the published Master row). Place, time-zone, photo and
+component changes move ``content_hash`` without moving it, so the contract tells an incremental CRM sync to also run
+a periodic full pass and compare ``content_hash``.
+
 The AA-authored content paths of the same contract (``/aa-content``) arrive with AA-977 (CRM-B5).
 
 Auth: an M2M client-credentials token of the ``aa-m2m-<env>`` pool, client = AA-Partner (CRM), scope
