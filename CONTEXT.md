@@ -2031,6 +2031,31 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   pre-audit codes, product-truth codes and a `manual_check` verdict still gate. Every other gate (validate,
   grounding, flag_fix, revalidate, the day oracle) is unchanged. `raw_tours.group_size` /
   `best_time_to_go` reach the v2 fact sheet as `tour_agency` (A1 only).
+- **A1 brand-fit rubric v2** (AA-645, S249; d02 follow-up): `services/content_generation/brand_fit_v2.py` scores the
+  page's voice against the white-label house style WITHIN THE LIMITS OF ITS SOURCE — the judge reads the writer-v2
+  fact sheet of the raw tour, plain wording on a thin source is not "generic", it never rewards or asks for brand
+  colour / an angle / claims the source lacks, it lists the specifics the page states that the source does not
+  support (quoted; code keeps only quotes found in the page and caps the score at 6, or 4 for three or more), and code
+  caps it at 5 when the page names "Adventure Asia" / "Design This Journey" and the source does not. Same reply shape
+  (`brand_fit_score` = voice, `cross_brand_distinct` = source specificity), same `s1_judge` route, same AA-714
+  near-band median of 3 — `brand_fit.score_brand_fit(rubric="v2", source=tour)`. Selected by `A1_BRAND_FIT_RUBRIC`
+  (worker env: `auto` default = v2 on a writer-v2 draft, v1 on today's writer; `v1` / `v2` force); a draft without its
+  source in state falls back to v1. T2 and the T7 Debate stay on v1 (they never pass a rubric). The v2 score still does
+  not gate a writer-v2 draft until `A1_V2_BRAND_FIT_GATE=enforce` (gate label `brand_fit_v2`, no Jev tie-break: the
+  a1_brand_fit Question was set up on v1 scores); that flip waits for the offline re-measure on the 125 A/B pages
+  (`scripts/aa645/brandfit_measure.py` + `brandfit_analyze.py`, pass = W x Sonnet retry % <= A+ retry % + 5 points AND
+  Spearman(brand fit, panel serious errors) <= 0). Every v2 score carries its rubric version
+  (`brand_fit_v2.RUBRIC_V2_VERSION`, pinned to the prompt text by a test) in `llm_call_log.quality_signal.rubric` and
+  `generated_content.metadata.judge.rubric` (+ `unsupported`, `caps`); absent = v1. The two are different scales: the
+  wave report labels each brand fit with its rubric. No brand-fit cache exists on the A1 path; the T7 Debate cache
+  (`acp_shared.debate_brand_fit_cache`) holds `score_candidate_fit` scores, which this does not change.
+- **Shadow run of the A1 chain** (AA-645, S249, d03): `scripts/aa645/shadow.py` runs `v1_pipeline._rewrite_tour` (the
+  graph the A1 job runs, + the AA-736 Sonnet retry rule) with writer v2 on in-process only and its writer + meta calls
+  on `--writer-model`, for a pilot (3 Laos tours with built places) or <= 50 tours stratified by country (golden and
+  elephant-riding tours excluded). Nothing is persisted (no version, review row, publish, atomize, place work); the
+  AA-729 isolation layer (`scripts/aa729/evalpatch`) logs every call under `adhoc_aa645` with the tour's job id, so real
+  $ per tour comes from `llm_call_log`. `shadow_report.py` gives the per-country table and the memo section 6 stop
+  conditions.
 - **Per-wave quality report** (AA-645 step 0, d13): `scripts/aa645/wave_report.py` (read-only, $0) compares, per
   country, the version a rerun wave wrote with the version that was live before it: outcome (published / stayed v1 /
   not published), the A/B code checks on both pages (gate pages = the serious-error proxy, gate codes, figure

@@ -280,6 +280,11 @@ class ContentState(TypedDict):
     # AA-209: judge_score must be declared too, else LangGraph strips it from the final state and it
     # never reaches _rewrite_tour → _build_generated_metadata (metadata.judge.judge_score stayed null).
     judge_score:                float
+    # AA-645 (S249): rubric-v2 verdict details (brand_fit_v2); absent on a v1 verdict. Declared so LangGraph keeps
+    # them (AA-209 gotcha) for generated_content.metadata.judge.
+    judge_rubric:               str
+    judge_unsupported:          list
+    judge_caps:                 list
     # AA-215: revalidate-after-flag_fix verification (POST-fix). revalidate_ran=True chi khi
     # fix_pass_applied; revalidate_passed phan anh ket qua re-validate+re-judge tren content da sua.
     revalidate_ran:         bool

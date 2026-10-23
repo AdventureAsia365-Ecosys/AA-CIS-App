@@ -92,6 +92,16 @@ class BrandFitResult:
     # AA-927: billing records (call_log.billed_record shape) of the calls that were billed but dropped
     # from the verdict (median3 malformed reply); judge_node logs each as a billed_unusable row.
     billed_failed: tuple = ()
+    # AA-645: which rubric scored this verdict ("v1" = the brand-angle prompt above; "v2" = brand_fit_v2, the
+    # white-label voice within the source). The v2-only fields: the verified unsupported specifics
+    # [{quote, why}], the claims dropped because their quote is not in the page, the brand leaks, the code caps
+    # applied and the model's own score before the caps (brand_fit_score is after them).
+    rubric: str = "v1"
+    unsupported: tuple = ()
+    unverified_unsupported: int = 0
+    leaks: tuple = ()
+    caps: tuple = ()
+    raw_brand_fit: Optional[float] = None
 
 
 def aggregate_runs(results: list[BrandFitResult], *, mission_absent_cap: Optional[float],
@@ -128,7 +138,8 @@ def aggregate_runs(results: list[BrandFitResult], *, mission_absent_cap: Optiona
     runs = tuple(
         {"brand_fit": r.brand_fit_score, "distinct": r.cross_brand_distinct,
          "mission": bool(r.mission_present), **run_billing(r),
-         **({"evidence_verified": r.evidence_verified} if r.evidence_verified is not None else {})}
+         **({"evidence_verified": r.evidence_verified} if r.evidence_verified is not None else {}),
+         **({"raw_brand_fit": r.raw_brand_fit, "caps": list(r.caps)} if r.rubric != "v1" else {})}
         for r in results)
     return BrandFitResult(
         brand_fit_score=brand_fit, cross_brand_distinct=distinct, mission_present=mission,
@@ -141,6 +152,15 @@ def aggregate_runs(results: list[BrandFitResult], *, mission_absent_cap: Optiona
         mission_evidence=evidence,
         evidence_verified=verified,
         billed_failed=tuple(billed_failed or ()),
+        # AA-645: the rubric of the first run (one verdict = one rubric); the v2 claims / leaks / caps of the run
+        # whose brand_fit is closest to the median (the one whose feedback is kept).
+        rubric=first.rubric,
+        unsupported=picked.unsupported,
+        unverified_unsupported=picked.unverified_unsupported,
+        leaks=picked.leaks,
+        caps=picked.caps,
+        raw_brand_fit=(_median([r.raw_brand_fit for r in results if r.raw_brand_fit is not None])
+                       if any(r.raw_brand_fit is not None for r in results) else None),
     )
 
 
@@ -531,7 +551,8 @@ def score_candidate_fit(brand_profile: dict, candidate: dict, *, stage: str = "s
 def score_brand_fit(
     brand_profile: dict, generated: dict, *, mission_absent_cap: float = 6.0, stage: str = "s1_judge",
     mission: Optional[str] = None, repeat: int = 1, anchors: bool = False,
-    model_override: Optional[str] = None,
+    model_override: Optional[str] = None, rubric: str = "v1", source: Optional[dict] = None,
+    tour_agency: Optional[dict] = None,
 ) -> BrandFitResult:
     """The GPT-4.1 brand-fit call itself — extracted verbatim from judge_node.py's try block
     (same system prompt, same model_tier pin, same temperature/seed, same score-combining
@@ -564,14 +585,33 @@ def score_brand_fit(
     gateway's existing per-request override: one model, no route fallback, no shadow). Measurement
     only: allowed on an `adhoc_*` stage, never on a production stage route (ValueError), so app code
     cannot pin a judge model past `shared.llm_role_config`.
+
+    AA-645: `rubric="v2"` (A1 only, `judge_node.a1_brand_fit_rubric`) scores with `brand_fit_v2`: the white-label
+    voice within the limits of `source` (the raw tour dict, + `tour_agency`), unsupported specifics quoted and capped
+    by code, a brand leak capped. Same stage route, same call count rules (AA-714 near-band median of 3, `repeat`),
+    same result shape (`rubric`, `unsupported`, `leaks`, `caps`, `raw_brand_fit` filled). The brand profile, the
+    mission and the anchors are not part of a v2 prompt: passing `mission` or `anchors` with v2 is a ValueError, and
+    so is v2 without a source. "v1" (default — T2, T7 Debate and every other caller) is unchanged byte for byte.
     """
     if model_override and not (stage or "").startswith("adhoc_"):
         raise ValueError(f"model_override is for adhoc_* measurement stages only, not {stage!r}; "
                          "change the stage route in shared.llm_role_config instead")
-    system_prompt = JUDGE_SYSTEM
-    user_prompt = (_build_judge_prompt(brand_profile, generated, mission, anchors=True) if anchors
-                   else _build_judge_prompt(brand_profile, generated, mission))
     extra = {}
+    if rubric == "v2":
+        from . import brand_fit_v2 as v2
+        if mission or anchors:
+            raise ValueError("rubric v2 judges the white-label voice: no mission, no brand anchors")
+        if not source:
+            raise ValueError("rubric v2 needs the source tour (it judges within the limits of the source)")
+        system_prompt = v2.SYSTEM_V2
+        user_prompt = v2.build_user_prompt(generated, v2.source_sheet(source, tour_agency))
+        extra["v2_context"] = (generated, v2.source_text(source))
+    elif rubric == "v1":
+        system_prompt = JUDGE_SYSTEM
+        user_prompt = (_build_judge_prompt(brand_profile, generated, mission, anchors=True) if anchors
+                       else _build_judge_prompt(brand_profile, generated, mission))
+    else:
+        raise ValueError(f"unknown brand-fit rubric {rubric!r}")
     if anchors and mission:
         extra["require_evidence"] = True
         extra["evidence_source"] = itinerary_digest(generated.get("itineraries"))
@@ -665,11 +705,15 @@ def _seeded_model(model_used: Optional[str]) -> bool:
 
 def _judge(system_prompt: str, user_prompt: str, *, mission_absent_cap: float | None,
            stage: str = "s1_judge", require_evidence: bool = False, evidence_source: Optional[str] = None,
-           model_tier: Optional[str] = None) -> BrandFitResult:
+           model_tier: Optional[str] = None, v2_context: Optional[tuple] = None) -> BrandFitResult:
     """One judge call. AA-801: `require_evidence` (anchored mission test) counts mission_present only
     when the reply quotes a non-empty `mission_evidence` that, when `evidence_source` is given, is
     found verbatim in it (`evidence_in_source`); `model_tier` is the gateway's per-request model
-    override (adhoc measurement only — `score_brand_fit` guards the stage)."""
+    override (adhoc measurement only — `score_brand_fit` guards the stage).
+
+    AA-645: `v2_context` = (generated page, source text) marks a rubric-v2 call: the reply is read by
+    `brand_fit_v2.apply_reply` (claims verified against the page, code caps); there is no mission axis
+    (mission_present True, never caps)."""
     request = LLMRequest(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
@@ -695,11 +739,18 @@ def _judge(system_prompt: str, user_prompt: str, *, mission_absent_cap: float | 
         if not isinstance(result, dict):   # a JSON list / scalar is no verdict
             raise ValueError(f"judge reply is a JSON {type(result).__name__}, not an object")
 
-        brand_fit = _coerce_score(result.get("brand_fit_score"))
-        distinct = _coerce_score(result.get("cross_brand_distinct"))
-        mission_present = _coerce_bool(result.get("mission_present", True))
-        feedback = _coerce_text(result.get("feedback"))
-        evidence = _coerce_text(result.get("mission_evidence"))
+        v2_verdict = None
+        if v2_context is not None:
+            from . import brand_fit_v2 as v2
+            v2_verdict = v2.apply_reply(result, v2_context[0], v2_context[1])
+            brand_fit, distinct, feedback = v2_verdict.brand_fit, v2_verdict.distinct, v2_verdict.feedback
+            mission_present, evidence = True, ""
+        else:
+            brand_fit = _coerce_score(result.get("brand_fit_score"))
+            distinct = _coerce_score(result.get("cross_brand_distinct"))
+            mission_present = _coerce_bool(result.get("mission_present", True))
+            feedback = _coerce_text(result.get("feedback"))
+            evidence = _coerce_text(result.get("mission_evidence"))
         verified: Optional[bool] = None
         if require_evidence and mission_present:
             # AA-801 (b): a "yes" counts only with a quote that is really in the itinerary the judge saw.
@@ -731,4 +782,7 @@ def _judge(system_prompt: str, user_prompt: str, *, mission_absent_cap: float | 
         fallback_used=getattr(resp, "fallback_used", None),
         mission_evidence=evidence if mission_present else "",
         evidence_verified=verified,
+        **({"rubric": "v2", "unsupported": v2_verdict.unsupported,
+            "unverified_unsupported": v2_verdict.unverified, "leaks": v2_verdict.leaks, "caps": v2_verdict.caps,
+            "raw_brand_fit": v2_verdict.raw_brand_fit} if v2_verdict is not None else {}),
     )
