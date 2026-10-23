@@ -85,3 +85,20 @@ async def _fake_public_dns(host, port, family=0):
 @pytest.fixture(autouse=True)
 def _no_real_dns(monkeypatch):
     monkeypatch.setattr("shared.safe_http._getaddrinfo", _fake_public_dns)
+
+
+# AA-986 L2: process_export publishes through services.tour_lifecycle.publish (a transaction, key reads, the cascade).
+# Unit tests that drive process_export with a faked asyncpg connection opt in to this stand-in: the repository
+# insert only, the call the service makes first. The real publish is tested on Postgres
+# (tests/integration/test_aa986_l2_tour_lifecycle.py).
+async def _aa986_fake_publish(conn, data, *, tenant_slug="aa_internal", actor="pipeline"):
+    from types import SimpleNamespace
+
+    from shared.repository.published_catalog_repository import PublishedCatalogRepository
+    catalog_id = await PublishedCatalogRepository(conn, tenant_slug).insert(data)
+    return SimpleNamespace(extra={"catalog_id": catalog_id}, events=[])
+
+
+@pytest.fixture
+def plain_publish(monkeypatch):
+    monkeypatch.setattr("services.tour_lifecycle.publish", _aa986_fake_publish)

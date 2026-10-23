@@ -132,9 +132,26 @@ class TestAA490DryRunInFileDedup:
             {"src_name": "Halong Bay Cruise", "provider": "Horizon Voyages",
              "country": "Vietnam", "duration": "3 days", "price_raw": "500", "src_itineraries": "Day 1 — Arrival"},
         ]
-        dup_rows = [{"n": "halong bay cruise"}]
+        dup_rows = [{"n": "halong bay cruise", "live": True, "deleted_at": None}]
         result = await self._run(monkeypatch, records, duplicate_names_rows=dup_rows)
 
         assert result["ready_count"] == 0
         assert result["blocked_count"] == 1
         assert result["blocked_tours"][0]["reason"] == "duplicate_tour"
+        assert result["blocked_tours"][0]["message"] == "This tour already exists in the system."
+
+    async def test_dry_run_duplicate_of_a_deleted_tour_says_when_it_was_deleted(self, monkeypatch):
+        """AA-986 L2 (Q6): the re-upload of a tour deleted at S0/A0 is announced with its date; Duplicate Review
+        then offers Restore or Create a new tour."""
+        from datetime import datetime, timezone
+        records = [
+            {"src_name": "Halong Bay Cruise", "provider": "Horizon Voyages",
+             "country": "Vietnam", "duration": "3 days", "price_raw": "500", "src_itineraries": "Day 1 — Arrival"},
+        ]
+        dup_rows = [{"n": "halong bay cruise", "live": False,
+                     "deleted_at": datetime(2026, 10, 20, 8, 0, tzinfo=timezone.utc)}]
+        result = await self._run(monkeypatch, records, duplicate_names_rows=dup_rows)
+        blocked = result["blocked_tours"][0]
+        assert blocked["reason"] == "duplicate_tour"
+        assert blocked["message"].startswith("This tour was deleted on 2026-10-20")
+        assert "Restore" in blocked["message"] and blocked["deleted_at"].startswith("2026-10-20")

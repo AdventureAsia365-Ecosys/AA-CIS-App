@@ -7,6 +7,12 @@ from services.jobs import a3_atomize_job as a3
 from shared.jobs import queue, registry
 from shared.jobs.registry import JobContext, NonRetryable
 
+
+@pytest.fixture(autouse=True)
+def _aa986_plain_publish(plain_publish):
+    """AA-986 L2: process_export publishes through services.tour_lifecycle (tests/unit/conftest.py plain_publish)."""
+
+
 PAYLOAD = {"tour_id": "t-1", "version_id": "v-1", "country": "Vietnam",
            "rewritten": {"name": "Sapa", "summary": "", "highlights": "[]", "itineraries": ""}}
 

@@ -22,6 +22,12 @@ from fastapi import HTTPException
 
 from shared import tour_liveness as tl
 
+
+@pytest.fixture(autouse=True)
+def _aa986_plain_publish(plain_publish):
+    """AA-986 L2: process_export publishes through services.tour_lifecycle (tests/unit/conftest.py plain_publish)."""
+
+
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 MIGRATION = os.path.join(ROOT, "api", "migrations", "271_v_active_tour_atoms_live_source.sql")
 INFRA_COPY = os.path.join(ROOT, "..", "..", "infra", "AA-CIS-Infra", "db", "migrations", "cis",

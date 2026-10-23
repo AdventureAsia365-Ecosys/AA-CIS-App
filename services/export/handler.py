@@ -4,7 +4,6 @@ import json
 import os
 import structlog
 from shared.secrets import get_database_url
-from shared.repository.published_catalog_repository import PublishedCatalogRepository
 from shared.tour_liveness import SourceNotLiveError, SourceState
 
 logger = structlog.get_logger()
@@ -373,9 +372,11 @@ async def process_export(version_id: str) -> dict:
             """, version_id)
             raise SourceNotLiveError(src)
 
-        # 2. Insert into published catalog (gold)
-        repo = PublishedCatalogRepository(conn, tenant_slug)
-        catalog_id = await repo.insert({
+        # 2. Insert into published catalog (gold). AA-986 L2: through the tour lifecycle service (ADR 0015
+        # decision 2, `publish`): the insert, "never two active Masters per key" and the `restored` record of a key
+        # that was paused (a supersede waiting for this Master) happen in one transaction.
+        from services.tour_lifecycle import publish as _lifecycle_publish
+        published = await _lifecycle_publish(conn, {
             "tour_id":              tour_id,
             "generated_content_id": row["id"],
             "tenant_id":            row["tenant_id"],
@@ -402,8 +403,10 @@ async def process_export(version_id: str) -> dict:
             ),
             "s3_gold_path":         None,
             "approved_by":          "pipeline",
-        })
-        logger.info("export_done", catalog_id=catalog_id, version_id=version_id)
+        }, tenant_slug=tenant_slug)
+        catalog_id = published.extra["catalog_id"]
+        logger.info("export_done", catalog_id=catalog_id, version_id=version_id,
+                    lifecycle_events=[e["event"] for e in published.events])
 
         # 3. Mark tour as exported
         await conn.execute(f"""
