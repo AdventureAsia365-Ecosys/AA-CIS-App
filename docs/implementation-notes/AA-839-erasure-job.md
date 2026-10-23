@@ -79,9 +79,11 @@ slices never edit the same notes file (lessons: parallel PRs on one notes file g
   runbook has the single-line commands.
 - **One fingerprint over all counts** instead of a `max_rows` like retention: an erasure is all-or-nothing for one
   subject, so the approval names the exact per-table counts; any drift refuses the apply.
-- **The traveller hash stays in the job payload until the apply** (or until `retention_job` deletes the
-  succeeded row after 30 days, for a DRY RUN never applied). The apply strips it from both job rows; callers
-  without `tenant.read` never see it.
+- **The traveller hash stays in a succeeded DRY RUN's payload until the apply** (or until `retention_job`
+  deletes the succeeded row after 30 days, for a DRY RUN never applied — the open request itself). The apply
+  strips it from every `data_erasure` row holding it; a failed/cancelled traveller job strips its own
+  (`on_terminal`), so the 90-day failed-job archive never carries it; a `verify: true` DRY RUN strips its own when
+  done. Callers without `tenant.read` never see it.
 
 ## Should know
 - **Apply is OFF everywhere**: nothing sets `ERASURE_APPLY_ENABLED`. Turning it on for a Dev drill is a Terraform
@@ -92,6 +94,39 @@ slices never edit the same notes file (lessons: parallel PRs on one notes file g
   kept audit rows remain.
 - `shared.job` rows of the tenant are matched by `payload->>'tenant_id'` (the tenant job kinds' convention, as
   offboard uses); `data_erasure` jobs carry `tenant`, never `tenant_id`, and are excluded by kind as well.
-- Tests: `tests/unit/test_aa839_erasure.py` (45, pure + routes), `tests/integration/test_aa839_erasure_job.py`
-  (7, real Postgres: inventory completeness on the replayed schema + every generated SQL runs, tenant DRY RUN /
+- Tests: `tests/unit/test_aa839_erasure.py` (61, pure + routes + Sentry), `tests/integration/test_aa839_erasure_job.py`
+  (11, real Postgres, handler as cis_app: inventory completeness on the replayed schema + every generated SQL runs, tenant DRY RUN /
   refusals / apply / cross-tenant blocker, traveller DRY RUN + apply).
+
+## Review round (S248, independent review)
+Decisions taken on the eight findings (details and evidence in the lane handoff):
+- **Tenant keys beyond `tenant_id`.** Registered `acp_contract.tour_atoms` (owner_scope = tenant, OR a tour of
+  the tenant — one node, so the platform atoms of a tenant raw tour are not a false cross-tenant blocker),
+  `shared.pipeline_jobs` (`tenant` = the id as text, OR the slug), `acp_contract.atomize_day_fingerprint`
+  (version id IN the tenant's T2 versions OR its generated_content rows). New `TenantTable.where_any`: predicate
+  branches with the tables each reads; a branch whose table is absent is dropped (CI lacks ttv), the tables read
+  become soft parents in the delete order (the fingerprint rows go before the versions their predicate needs).
+  The catalog guard now counts `tenant_id`, `tenant`, `owner_scope` and any "tenant" column no FK covers.
+  Evidence code-side: `pipeline_jobs.tenant` was written from `payload.get("tenant_id")` (removed writer,
+  commit 60819bcd / fe7e3530); the slug branch is a safety net. Dev counts are a pre-merge probe (orchestrator).
+- **Retry.** `JobKind.retry_refusal` (generic, asked by the retry route, 409); the erasure kind refuses an apply.
+  Belt and braces in the job: an apply claims its DRY RUN atomically (`result.used_by_apply`) before writing,
+  so neither a retried apply (route bypassed) nor a second apply can reuse the approval.
+- **Self FKs.** A `self_reference` check per self FK on a deleted node, whatever the action. Outside-row checks
+  (cross_tenant, self_reference) use `NOT coalesce(pred, false)`: a child job without `payload.tenant_id` has a
+  NULL predicate and was invisible to a plain `NOT pred` (caught by the integration test).
+- **Savepoints.** Each guarded check and each S3-ref statement runs in `conn.transaction()` (a savepoint inside
+  the DRY RUN's read-only transaction and inside the apply's write transaction).
+- **Hash leaving the store.** Sentry: `before_send` drops every frame's locals for events tagged
+  `job_kind=data_erasure` or touching an erasure module (targeted, not a global `include_local_variables=False`:
+  the other kinds keep their debugging value). Plus `on_terminal`, strip-all at apply, `verify` DRY RUN. Refusals
+  still raise (a failed job is the honest status); the scrub makes that safe.
+- **Locked re-check.** `_apply` locks the tenant row `FOR UPDATE` and re-runs `tenant_refusals` before the
+  recount.
+- **S3 copies.** `raw_sources.s3_path` added; the DRY RUN lists keys outside the tenant prefixes (normalising
+  `s3://bucket/`), more than 200 per column or an unreadable column blocks. Checklist + runbook: those keys, and
+  the AA-825 retention archives (scan or a recorded keep-until-expiry decision).
+- **Tests as cis_app.** The integration module applies CIS 244 in the Dev order (like
+  `test_x1_cis_app_privileges`), builds the live `tenant_tour_versions` (FKs: tenant, published tour, self, job;
+  RLS + cis_app policy) and `review_queue.tenant_tour_version_id` for its own tests and drops them after; the
+  handler runs on a pool logged in AS `cis_app`.

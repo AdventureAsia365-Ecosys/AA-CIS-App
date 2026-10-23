@@ -34,7 +34,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from api.core.staff_authz import has_perm, request_staff_identity, staff_policy
 from api.routers.admin import verify_admin_secret
 from shared.jobs import queue
-from shared.jobs.registry import kinds, run_terminal_hook
+from shared.jobs.registry import get_kind, kinds, run_terminal_hook
 
 logger = structlog.get_logger()
 
@@ -228,6 +228,14 @@ async def cancel_job(job_id: str, request: Request, x_admin_secret: str = Header
 async def retry_job(job_id: str, request: Request, x_admin_secret: str = Header(None),
                     x_admin_user_id: Optional[str] = Header(None)):
     verify_admin_secret(x_admin_secret)
+    # AA-839: a kind may refuse a retry (a data_erasure apply is single use: approval, Cognito actor, DRY RUN)
+    from shared.jobs.worker import load_kinds
+    load_kinds()                         # registers every kind (as the ops metrics sampler does), idempotent
+    row = await queue.get(request.app.state.pool, job_id)
+    kind = get_kind(row["kind"]) if row else None
+    refusal = kind.retry_refusal(row) if kind is not None and kind.retry_refusal is not None else None
+    if refusal:
+        raise HTTPException(status_code=409, detail=refusal)
     if not await queue.retry(request.app.state.pool, job_id):
         raise HTTPException(status_code=409, detail="only failed, stopped_budget or cancelled jobs can be retried")
     logger.info("admin_job_retry", job_id=job_id, admin_user=x_admin_user_id)
@@ -365,6 +373,8 @@ class ErasureRunRequest(BaseModel):
     # sha256 hex of the trimmed, lowercased address (runbook section 2 step 2). Never the address.
     email_sha256: Optional[str] = Field(None, max_length=64)
     dry_run: bool = True
+    # traveller DRY RUN after an apply (runbook section 3): the job strips the hash from its own row when done
+    verify: bool = False
     # apply only: the approved DRY RUN (destructive-ops.md)
     dry_run_job_id: Optional[str] = None
     approved_fingerprint: Optional[str] = Field(None, max_length=64)
@@ -386,6 +396,8 @@ async def erasure_run(body: ErasureRunRequest, request: Request, x_admin_secret:
         payload["tenant"] = body.tenant_id
     if body.email_sha256 is not None:
         payload["email_sha256"] = body.email_sha256
+    if body.verify:
+        payload["verify"] = True
     for k in ("dry_run_job_id", "approved_fingerprint", "approved_by", "snapshot_id"):
         v = getattr(body, k)
         if v is not None:

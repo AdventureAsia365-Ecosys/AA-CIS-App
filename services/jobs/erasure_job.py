@@ -3,6 +3,8 @@
 Payload (POST /admin/job-runner/erasure/run builds it; never an e-mail address):
   {"subject": "tenant", "tenant": "<uuid>", "mode": "dry_run"}
   {"subject": "traveller", "email_sha256": "<64 hex>", "mode": "dry_run"}
+  {"subject": "traveller", "email_sha256": "<64 hex>", "mode": "dry_run", "verify": true}  (after an apply: the
+      job strips the hash from its own row when done, so the verification leaves no copy behind)
   apply adds: "dry_run_job_id", "approved_fingerprint", "approved_by", "snapshot_id", "actor"
 
 DRY RUN (SELECT only, one repeatable-read read-only transaction): rows per CIS table and action, blockers, the
@@ -17,7 +19,13 @@ Apply (destructive-ops.md: DRY RUN -> approval -> snapshot -> transaction -> ver
   - tenant: offboarded (cancelled_at) at least ERASURE_TENANT_RETENTION_DAYS days ago, never the AA tenant,
   - inside the apply transaction: the recount gives the same fingerprint and no blocker; every statement touches
     exactly the approved rows; a recount finds 0. Otherwise it raises and nothing is committed.
-It writes one acp_shared.audit_log row (counts only) and, for a traveller, strips the hash from both job rows.
+It writes one acp_shared.audit_log row (counts only) and, for a traveller, strips the hash from every
+data_erasure job row that holds it.
+
+Single use, no retry (AA-839 review): an apply claims its DRY RUN (`result.used_by_apply`) before it starts, so
+neither a second apply nor a retried one can reuse that approval; POST /jobs/{id}/retry refuses an apply
+(`retry_refusal`). A traveller job that ends without success has its hash replaced by a marker (`on_terminal`),
+and Sentry events of this kind carry no frame locals (shared/sentry_init.py SCRUB_LOCALS_KINDS).
 """
 from __future__ import annotations
 
@@ -52,6 +60,7 @@ LOCK_TIMEOUT = "10s"
 TENANT_ERASED = AdminTenantAuditAction.ERASED
 DSAR_ERASED = "dsar.cis_erased"
 STRIPPED = "stripped-after-apply"
+STRIPPED_VERIFY = "stripped-after-verify"
 
 # What a caller without tenant.read sees of a data_erasure job on the job-runner API (AA-816 M1 mechanism).
 RESULT_CAPABILITY = "tenant.read"
@@ -88,6 +97,9 @@ def validate_payload(payload: dict) -> dict:
     if mode not in MODES:
         raise NonRetryable(f"mode must be one of {list(MODES)}")
     p["mode"] = mode
+    if "verify" in p:
+        if p["verify"] is not True or subject != "traveller" or mode != "dry_run":
+            raise NonRetryable("verify is only for a traveller DRY RUN after an apply (it strips its own hash)")
     if subject == "tenant":
         tid = str(p.get("tenant") or "").strip().lower()
         if not UUID_RE.match(tid):
@@ -140,17 +152,26 @@ def apply_refusals(payload: dict, dry_job: Optional[dict], tenant_row: Optional[
             out.append("approved_fingerprint differs from the DRY RUN's fingerprint")
         if res.get("blocked"):
             out.append("the DRY RUN had blockers")
+        if res.get("used_by_apply"):
+            out.append(f"the DRY RUN was already used by apply job {res['used_by_apply']}; run a new DRY RUN and "
+                       "approve it")
     if payload.get("subject") == "tenant":
-        if tenant_row is None:
-            out.append("the tenant row does not exist (already erased?)")
-        else:
-            cancelled = tenant_row.get("cancelled_at")
-            days = tenant_retention_days(env)
-            if cancelled is None:
-                out.append("the tenant is not offboarded (POST /admin/tenants/{id}/offboard first)")
-            elif now - cancelled < timedelta(days=days):
-                out.append(f"the tenant was offboarded less than {days} days ago (ERASURE_TENANT_RETENTION_DAYS)")
+        out.extend(tenant_refusals(tenant_row, now, env))
     return out
+
+
+def tenant_refusals(tenant_row: Optional[dict], now: datetime, env: Optional[dict] = None) -> list[str]:
+    """The tenant must exist, be offboarded and be past the retention window. Checked before the apply and
+    again inside the apply transaction on the locked row (a restore in between must stop the apply)."""
+    if tenant_row is None:
+        return ["the tenant row does not exist (already erased?)"]
+    cancelled = tenant_row.get("cancelled_at")
+    days = tenant_retention_days(env)
+    if cancelled is None:
+        return ["the tenant is not offboarded (POST /admin/tenants/{id}/offboard first)"]
+    if now - cancelled < timedelta(days=days):
+        return [f"the tenant was offboarded less than {days} days ago (ERASURE_TENANT_RETENTION_DAYS)"]
+    return []
 
 
 def totals(rows: list[dict]) -> dict[str, int]:
@@ -239,18 +260,48 @@ async def tenant_objects(resources: dict, tenant: str) -> dict:
     return out
 
 
-async def _s3_refs(conn, tenant: str, tables: set[str]) -> list[dict]:
-    out = []
+def _s3_ref_sql(table: str, col: str) -> tuple[str, str]:
+    """(count SQL, outside-keys SQL); $1 = tenant id, $2 = the tenant's S3 prefixes. A key may be s3://bucket/key."""
+    c = pl.qcol(col)
+    key = f"regexp_replace(t.{c}, '^s3://[^/]+/', '')"
+    inside = f"EXISTS (SELECT 1 FROM unnest($2::text[]) AS px(p) WHERE starts_with({key}, px.p))"
+    where = f"t.tenant_id = $1::uuid AND t.{c} IS NOT NULL"
+    return (f"SELECT count(*) AS n, count(*) FILTER (WHERE NOT {inside}) AS outside "
+            f"FROM {pl.qname(table)} t WHERE {where}",
+            f"SELECT DISTINCT t.{c}::text AS k FROM {pl.qname(table)} t WHERE {where} AND NOT {inside} "
+            f"ORDER BY 1 LIMIT {inv.MAX_S3_REF_KEYS + 1}")
+
+
+async def _s3_refs(conn, tenant: str, tables: set[str]) -> tuple[list[dict], list[dict]]:
+    """S3 keys held by rows the apply deletes. Keys outside TENANT_S3_PREFIXES are listed (the operator's only
+    pointer to them once the rows are gone); more than MAX_S3_REF_KEYS per column, or a column that cannot be
+    read, blocks the apply. Each statement runs in a savepoint (a failure must not abort the DRY RUN's
+    transaction)."""
+    prefixes = [tpl.format(tenant=tenant) for tpl in inv.TENANT_S3_PREFIXES]
+    out, blockers = [], []
     for table, col in inv.TENANT_S3_REF_COLUMNS:
         if table not in tables:
             continue
+        name = f"{table}.{col}"
+        count_sql, keys_sql = _s3_ref_sql(table, col)
         try:
-            n = await conn.fetchval(f"SELECT count({pl.qcol(col)}) FROM {pl.qname(table)} t "
-                                    f"WHERE t.tenant_id = $1::uuid", tenant)
-            out.append({"column": f"{table}.{col}", "rows": int(n)})
+            async with conn.transaction():
+                row = await conn.fetchrow(count_sql, tenant, prefixes)
+                keys = [r["k"] for r in await conn.fetch(keys_sql, tenant, prefixes)] if row["outside"] else []
         except Exception as e:
-            out.append({"column": f"{table}.{col}", "rows": None, "error": type(e).__name__})
-    return out
+            out.append({"column": name, "rows": None, "error": type(e).__name__})
+            blockers.append({"kind": "s3_refs", "table": table, "rows": None,
+                             "detail": f"{name} not readable ({type(e).__name__}): the S3 keys it holds are unknown"})
+            continue
+        listed = keys[:inv.MAX_S3_REF_KEYS]
+        out.append({"column": name, "rows": int(row["n"]), "outside_prefixes": int(row["outside"]),
+                    "outside_keys": listed,
+                    "outside_dirs": sorted({k.rsplit("/", 1)[0] + "/" for k in listed if "/" in k})})
+        if len(keys) > inv.MAX_S3_REF_KEYS:
+            blockers.append({"kind": "s3_refs_unlisted", "table": table, "rows": int(row["outside"]),
+                             "detail": f"{name}: more than {inv.MAX_S3_REF_KEYS} distinct keys outside the tenant "
+                                       "prefixes; list them by hand before an apply"})
+    return out, blockers
 
 
 # ── the job ─────────────────────────────────────────────────────────────────────────────────────
@@ -290,7 +341,8 @@ async def run_erasure(ctx: JobContext, *, env: Optional[dict] = None, now: Optio
             await _timeouts(conn)
             if subject == "tenant":
                 counted = await pl.count_tenant(conn, plan, payload["tenant"])
-                s3_refs = await _s3_refs(conn, payload["tenant"], catalog.tables)
+                s3_refs, s3_blockers = await _s3_refs(conn, payload["tenant"], catalog.tables)
+                counted["blockers"].extend(s3_blockers)
             else:
                 counted = await pl.count_traveller(conn, payload["email_sha256"], catalog.tables)
                 counted.setdefault("blockers", [])
@@ -329,16 +381,38 @@ async def run_erasure(ctx: JobContext, *, env: Optional[dict] = None, now: Optio
                       "dry_run_job_id = this job", f"{APPLY_FLAG}=true", "a verified Cognito staff session"],
         }
         if mode == "dry_run":
+            if payload.get("verify"):
+                # the verification after an apply must not leave the hash behind for another retention window
+                await _strip_hash(conn, [ctx.job_id], None, STRIPPED_VERIFY)
+                result["hash_stripped"] = True
             await ctx.progress(phase="done", mode="dry_run", **result["totals"])
             logger.info("erasure_dry_run", subject=subject, job_id=ctx.job_id, totals=result["totals"],
                         blocked=result["blocked"])
             return result
         if refusals:
             raise NonRetryable("apply refused: " + "; ".join(refusals))
-        return await _apply(ctx, conn, payload, plan, catalog.tables, fp, result)
+        # single use: the apply claims its DRY RUN before it writes anything; a second apply or a retry of this
+        # one finds the claim and is refused (AA-839 review)
+        claimed = await conn.fetchval(
+            "UPDATE shared.job SET result = coalesce(result, '{}'::jsonb) || jsonb_build_object('used_by_apply', "
+            "$2::text) WHERE id = $1::uuid AND NOT coalesce(result ? 'used_by_apply', false) RETURNING id",
+            payload["dry_run_job_id"], ctx.job_id)
+        if claimed is None:
+            raise NonRetryable("apply refused: the DRY RUN was already used by another apply; run a new DRY RUN")
+        return await _apply(ctx, conn, payload, plan, catalog.tables, fp, result, env=env, now=now)
 
 
-async def _apply(ctx: JobContext, conn, payload: dict, plan, tables: set[str], dry_fp: str, result: dict) -> dict:
+async def _strip_hash(conn, job_ids: list[str], email_sha256: Optional[str], marker: str) -> None:
+    """Replaces the traveller hash in data_erasure job rows: the given ids, and every row holding that hash."""
+    await conn.execute(
+        "UPDATE shared.job SET payload = jsonb_set(payload, '{email_sha256}', to_jsonb($2::text)) "
+        "WHERE kind = $4 AND payload ? 'email_sha256' "
+        "AND (id = ANY($1::uuid[]) OR ($3::text IS NOT NULL AND payload ->> 'email_sha256' = $3::text))",
+        job_ids, marker, email_sha256, KIND)
+
+
+async def _apply(ctx: JobContext, conn, payload: dict, plan, tables: set[str], dry_fp: str, result: dict, *,
+                 env: Optional[dict] = None, now: Optional[datetime] = None) -> dict:
     subject = payload["subject"]
     approved = str(payload["approved_fingerprint"]).lower()
     if dry_fp != approved:
@@ -348,6 +422,14 @@ async def _apply(ctx: JobContext, conn, payload: dict, plan, tables: set[str], d
     await ctx.progress(phase="applying", subject=subject)
     async with conn.transaction():
         await _timeouts(conn)
+        if subject == "tenant":
+            # lock the account row and re-check its state: a restore (or anything else) landing after the checks
+            # above must stop the apply, whether or not it changed a counted row (AA-839 review)
+            row = await conn.fetchrow("SELECT cancelled_at, is_active FROM shared.tenants WHERE tenant_id = $1::uuid "
+                                      "FOR UPDATE", payload["tenant"])
+            why = tenant_refusals(dict(row) if row else None, now or datetime.now(timezone.utc), env)
+            if why:
+                raise NonRetryable("apply refused inside the transaction: " + "; ".join(why))
         # recount inside the write transaction: the approval must still describe these exact rows
         if subject == "tenant":
             recount = await pl.count_tenant(conn, plan, payload["tenant"])
@@ -371,10 +453,9 @@ async def _apply(ctx: JobContext, conn, payload: dict, plan, tables: set[str], d
         else:
             await write_audit_log(conn, tenant_id=None, actor=payload.get("actor") or "admin",
                                   action=DSAR_ERASED, resource_type="dsar", resource_id=ctx.job_id, details=details)
-            # the hash leaves CIS with the erasure: both job rows keep everything but it
-            await conn.execute(
-                "UPDATE shared.job SET payload = jsonb_set(payload, '{email_sha256}', to_jsonb($2::text)) "
-                "WHERE id = ANY($1::uuid[])", [ctx.job_id, payload["dry_run_job_id"]], STRIPPED)
+            # the hash leaves CIS with the erasure: every data_erasure row that holds it (this apply, its DRY RUN,
+            # earlier DRY RUNs of the same request) keeps everything but the hash
+            await _strip_hash(conn, [ctx.job_id, payload["dry_run_job_id"]], payload["email_sha256"], STRIPPED)
     # independent verification from a new connection (destructive-ops step 5)
     async with ctx.pool.acquire() as fresh:
         if subject == "tenant":
@@ -390,7 +471,31 @@ async def _apply(ctx: JobContext, conn, payload: dict, plan, tables: set[str], d
     return out
 
 
-@job_kind(KIND, concurrency=1, max_attempts=1, expected_seconds=900, background=True)
+async def on_terminal(pool, job_row: dict) -> None:
+    """A traveller job that ended without success (failed, cancelled) keeps no hash: retention archives failed
+    jobs to S3 for 90 days (AA-825), and a refused or failed run is never reused (no retry, single-use DRY RUN)."""
+    import json
+    payload = job_row.get("payload") or {}
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    if payload.get("subject") != "traveller" or not HEX64.match(str(payload.get("email_sha256") or "")):
+        return
+    async with pool.acquire() as conn:
+        await _strip_hash(conn, [str(job_row["id"])], None, f"stripped-on-{job_row.get('status') or 'end'}")
+
+
+def retry_refusal(job_row: dict) -> Optional[str]:
+    """POST /admin/job-runner/jobs/{id}/retry: an apply is never re-queued (its approval, the Cognito actor and
+    the DRY RUN are single use); a DRY RUN may be."""
+    payload = job_row.get("payload") or {}
+    if isinstance(payload, dict) and payload.get("mode") == "apply":
+        return "an erasure apply is never retried: run a new DRY RUN, approve it and start a new apply from " \
+               "POST /admin/job-runner/erasure/run"
+    return None
+
+
+@job_kind(KIND, concurrency=1, max_attempts=1, expected_seconds=900, background=True, on_terminal=on_terminal,
+          retry_refusal=retry_refusal)
 async def run(ctx: JobContext) -> dict:
     result = await run_erasure(ctx)
     ctx.set_result(result)

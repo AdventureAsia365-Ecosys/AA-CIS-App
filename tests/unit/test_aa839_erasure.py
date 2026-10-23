@@ -14,6 +14,7 @@ from services.erasure import inventory as inv
 from services.erasure import plan as pl
 from services.jobs import erasure_job as ej
 from shared.jobs.registry import NonRetryable, get_kind
+from tests.unit.test_aa871_request_id_json_logs import json_lines, sentry_events  # noqa: F401 (fixtures)
 
 TID = "11111111-2222-4333-8444-555555555555"
 H = "a" * 64
@@ -34,6 +35,9 @@ def test_inventory_is_well_formed():
             assert t.table in inv.MERGE_SQL
         if t.where:
             assert "{t}" in t.where and "$1" in t.where
+        for tpl, needs in t.where_any:
+            assert "{t}" in tpl and "$1" in tpl and all(n.split(".")[0] in inv.CIS_SCHEMAS for n in needs)
+        assert not (t.where and t.where_any), t.table
     assert inv.TENANT_TABLE_BY_NAME["shared.tenants"].action == "delete"
     assert inv.TENANT_TABLE_BY_NAME["acp_shared.audit_log"].action == "keep"
     # a tenant-actor usage row cannot lose its tenant (CHECK chk_tenant_api_usage_actor): never detach it
@@ -362,3 +366,280 @@ async def test_status_route_lists_the_inventory(monkeypatch):
     out = await r.erasure_status()
     assert out["apply_enabled"] is False and out["tenant_retention_days"] == 30
     assert {t["table"] for t in out["tenant_tables"]} == {t.table for t in inv.TENANT_TABLES}
+
+
+# ── AA-839 review round ─────────────────────────────────────────────────────────────────────────
+
+def test_review_tenant_data_keyed_without_tenant_id_is_registered():
+    """owner_scope atoms, pipeline_jobs.tenant and the soft-keyed A3 fingerprints are in the inventory."""
+    by = inv.TENANT_TABLE_BY_NAME
+    atoms = by["acp_contract.tour_atoms"]
+    assert atoms.action == "delete" and atoms.no_tenant_column
+    assert [tpl for tpl, _ in atoms.where_any][0] == "{t}.owner_scope = $1::text"
+    assert by["shared.pipeline_jobs"].where_any[0][0] == "{t}.tenant = $1::text"
+    assert "tenant_tour_version_id" in by["acp_contract.atomize_day_fingerprint"].where_any[0][0]
+    assert ("silver_aa_internal.raw_sources", "s3_path") in inv.TENANT_S3_REF_COLUMNS
+    assert any("retention archives" in i.item for i in inv.TENANT_CHECKLIST)
+
+
+def _review_catalog(with_ttv=True):
+    tables = ["shared.tenants", "silver_aa_internal.raw_tours", "acp_contract.tour_atoms",
+              "acp_contract.atom_embedding", "acp_contract.atomize_day_fingerprint",
+              "silver_aa_internal.generated_content"] + (["gold_aa_internal.tenant_tour_versions"] if with_ttv else [])
+    cols = {t: "uuid" for t in ("shared.tenants", "silver_aa_internal.raw_tours",
+                                "silver_aa_internal.generated_content")}
+    if with_ttv:
+        cols["gold_aa_internal.tenant_tour_versions"] = "uuid"
+    edges = [E("raw_tenant_fk", "silver_aa_internal.raw_tours", "shared.tenants", ("tenant_id",), ("tenant_id",)),
+             E("atoms_tour_fk", "acp_contract.tour_atoms", "silver_aa_internal.raw_tours", ("tour_id",), ("tour_id",)),
+             E("emb_atom_fk", "acp_contract.atom_embedding", "acp_contract.tour_atoms", ("atom_id",), ("atom_id",))]
+    if with_ttv:
+        edges += [E("ttv_tenant_fk", "gold_aa_internal.tenant_tour_versions", "shared.tenants", ("tenant_id",),
+                    ("tenant_id",)),
+                  E("ttv_parent_fk", "gold_aa_internal.tenant_tour_versions", "gold_aa_internal.tenant_tour_versions",
+                    ("parent_version_id",), ("id",), nullable=True)]
+    keys = {t: ("tenant_id",) for t in cols}
+    keys.update({"acp_contract.tour_atoms": ("owner_scope",),
+                 "acp_contract.atomize_day_fingerprint": ("tenant_tour_version_id",)})
+    return pl.Catalog(set(tables), cols, edges, keys)
+
+
+def _review_registry(*names):
+    return _registry(*[inv.TENANT_TABLE_BY_NAME[n] for n in names])
+
+
+REVIEW_TABLES = ("shared.tenants", "silver_aa_internal.raw_tours", "acp_contract.tour_atoms",
+                 "acp_contract.atomize_day_fingerprint", "silver_aa_internal.generated_content",
+                 "gold_aa_internal.tenant_tour_versions")
+
+
+def test_review_a_tenant_key_other_than_tenant_id_must_be_registered():
+    plan = pl.plan_tenant(_review_registry("shared.tenants", "silver_aa_internal.raw_tours"), _review_catalog())
+    assert {"acp_contract.tour_atoms", "acp_contract.atomize_day_fingerprint"} <= set(plan.unregistered)
+    # an unregistered tenant-key table is never turned into a cascade node (it blocks instead)
+    assert "acp_contract.tour_atoms" not in plan.nodes
+
+
+def test_review_owner_scope_atoms_are_one_node_with_the_tour_path():
+    plan = pl.plan_tenant(_review_registry(*REVIEW_TABLES), _review_catalog())
+    atoms = plan.nodes["acp_contract.tour_atoms"]
+    assert atoms.action == "delete" and atoms.template.startswith("({t}.owner_scope = $1::text) OR (")
+    assert "silver_aa_internal.raw_tours" in atoms.soft_parents
+    # children of the atoms still cascade from the registered node
+    assert plan.nodes["acp_contract.atom_embedding"].action == "cascade"
+    pred = pl.predicate(plan.nodes, "acp_contract.atom_embedding", "t")
+    assert "owner_scope = $1::text" in pred and "t_rt" not in pred      # the inner alias follows the outer one
+    assert plan.order.index("acp_contract.atom_embedding") < plan.order.index("acp_contract.tour_atoms") \
+        < plan.order.index("silver_aa_internal.raw_tours")
+    assert plan.unregistered == []
+
+
+def test_review_soft_key_rows_go_before_the_tables_their_predicate_reads():
+    plan = pl.plan_tenant(_review_registry(*REVIEW_TABLES), _review_catalog())
+    fp = "acp_contract.atomize_day_fingerprint"
+    assert set(plan.nodes[fp].soft_parents) == {"gold_aa_internal.tenant_tour_versions",
+                                                "silver_aa_internal.generated_content"}
+    assert plan.order.index(fp) < plan.order.index("gold_aa_internal.tenant_tour_versions")
+    assert plan.order.index(fp) < plan.order.index("silver_aa_internal.generated_content")
+    assert not [c for c in plan.checks if c.kind == "unsupported_cycle"]
+
+
+def test_review_a_branch_whose_table_is_absent_is_left_out():
+    plan = pl.plan_tenant(_review_registry(*REVIEW_TABLES[:-1]), _review_catalog(with_ttv=False))
+    fp = plan.nodes["acp_contract.atomize_day_fingerprint"]
+    assert "tenant_tour_versions" not in fp.template and "generated_content" in fp.template
+    assert fp.soft_parents == ("silver_aa_internal.generated_content",)
+    only = inv.TenantTable("acp_contract.atomize_day_fingerprint", "delete", "x", no_tenant_column=True,
+                           where_any=(("{t}.a IN (SELECT 1 FROM gold_aa_internal.tenant_tour_versions WHERE $1)",
+                                       ("gold_aa_internal.tenant_tour_versions",)),))
+    plan = pl.plan_tenant(_registry(only), _review_catalog(with_ttv=False))
+    assert plan.missing == ["acp_contract.atomize_day_fingerprint"]
+
+
+def test_review_self_referencing_fk_gets_a_blocker_check():
+    plan = pl.plan_tenant(_review_registry(*REVIEW_TABLES), _review_catalog())
+    (check,) = [c for c in plan.checks if c.kind == "self_reference"]
+    assert check.table == "gold_aa_internal.tenant_tour_versions"
+    assert '(c."parent_version_id") IN (SELECT p."id" FROM "gold_aa_internal"."tenant_tour_versions" p' in check.sql
+    assert "AND NOT coalesce((c.tenant_id = $1::uuid), false)" in check.sql      # NULL predicate = outside
+    # a cascade node with a self FK is checked too (shared.job-like parent_job_id on a reached table)
+    reg = _registry(inv.TenantTable("acp_shared.quarter_plan", "delete", "plans"))
+    cat = _catalog(["acp_shared.quarter_plan", "acp_shared.qpv"], {"acp_shared.quarter_plan": "uuid"},
+                   [E("qpv_plan", "acp_shared.qpv", "acp_shared.quarter_plan", ("plan_id",), ("plan_id",)),
+                    E("qpv_self", "acp_shared.qpv", "acp_shared.qpv", ("prev_id",), ("version_id",), deltype="c")])
+    plan = pl.plan_tenant(reg, cat)
+    assert [c.table for c in plan.checks if c.kind == "self_reference"] == ["acp_shared.qpv"]
+
+
+class _FakeTx:
+    def __init__(self, conn):
+        self.conn = conn
+
+    async def __aenter__(self):
+        self.conn.savepoints += 1
+
+    async def __aexit__(self, et, e, tb):
+        return False
+
+
+class _FakeConn:
+    """fetchval answers by SQL; a check whose SQL contains 'boom' raises, as a missing privilege would."""
+
+    def __init__(self):
+        self.savepoints = 0
+        self.calls = []
+
+    def transaction(self):
+        return _FakeTx(self)
+
+    async def fetchval(self, sql, *args):
+        self.calls.append(sql)
+        if "boom" in sql:
+            raise PermissionError("permission denied")
+        if "has_table_privilege" in sql:
+            return True
+        return 0
+
+
+@pytest.mark.asyncio
+async def test_review_every_guarded_check_runs_in_a_savepoint():
+    plan = pl.TenantPlan(nodes={}, checks=[pl.Check("foreign_owner", "booking.x", "d", "SELECT boom"),
+                                           pl.Check("cross_tenant", "acp_shared.y", "d", "SELECT count(*) y")],
+                         order=[], null_first=[], unregistered=[], missing=[])
+    conn = _FakeConn()
+    out = await pl.count_tenant(conn, plan, TID)
+    assert conn.savepoints == 2
+    assert [b["kind"] for b in out["blockers"]] == ["foreign_owner"] and "not readable" in out["blockers"][0]["detail"]
+    assert out["checks_passed"][0]["table"] == "acp_shared.y"          # the check after the failure still ran
+
+
+def test_review_s3_ref_sql_lists_keys_outside_the_tenant_prefixes():
+    count_sql, keys_sql = ej._s3_ref_sql("gold_aa_internal.content_exports", "s3_path")
+    assert "regexp_replace(t.\"s3_path\", '^s3://[^/]+/', '')" in count_sql
+    assert "starts_with(" in count_sql and "unnest($2::text[])" in count_sql
+    assert keys_sql.endswith(f"LIMIT {inv.MAX_S3_REF_KEYS + 1}") and "AND NOT EXISTS" in keys_sql
+
+
+def test_review_apply_refuses_a_used_dry_run():
+    used = _dry_job(result={"mode": "dry_run", "fingerprint": FP, "blocked": False, "used_by_apply": "job-9"})
+    out = ej.apply_refusals(_apply_payload(), used, OFFBOARDED, NOW, ON)
+    assert any("already used by apply job job-9" in r for r in out)
+
+
+def test_review_tenant_refusals_are_shared_with_the_locked_recheck():
+    assert ej.tenant_refusals(OFFBOARDED, NOW, ON) == []
+    assert "not offboarded" in ej.tenant_refusals({"cancelled_at": None, "is_active": True}, NOW, ON)[0]
+    assert "does not exist" in ej.tenant_refusals(None, NOW, ON)[0]
+
+
+def test_review_verify_is_a_traveller_dry_run_only():
+    assert ej.validate_payload({"subject": "traveller", "email_sha256": H, "verify": True})["verify"] is True
+    for p in ({"subject": "tenant", "tenant": TID, "verify": True},
+              {"subject": "traveller", "email_sha256": H, "verify": "yes"},
+              {"subject": "traveller", "email_sha256": H, "verify": True, "mode": "apply", "dry_run_job_id": TID,
+               "approved_fingerprint": FP, "approved_by": "n", "snapshot_id": "s"}):
+        with pytest.raises(NonRetryable):
+            ej.validate_payload(p)
+
+
+def test_review_kind_refuses_retry_of_an_apply_and_strips_on_terminal():
+    k = get_kind(ej.KIND)
+    assert k.on_terminal is ej.on_terminal and k.retry_refusal is ej.retry_refusal
+    assert "never retried" in ej.retry_refusal({"payload": {"mode": "apply"}})
+    assert ej.retry_refusal({"payload": {"mode": "dry_run"}}) is None
+
+
+class _Pool:
+    def __init__(self):
+        self.executed = []
+
+    def acquire(self):
+        pool = self
+
+        class _A:
+            async def __aenter__(self):
+                return pool
+
+            async def __aexit__(self, *a):
+                return False
+        return _A()
+
+    async def execute(self, sql, *args):
+        self.executed.append((sql, args))
+
+
+@pytest.mark.asyncio
+async def test_review_on_terminal_strips_a_traveller_hash_only():
+    pool = _Pool()
+    await ej.on_terminal(pool, {"id": TID, "status": "failed", "payload": {"subject": "traveller",
+                                                                           "email_sha256": H}})
+    ((sql, args),) = pool.executed
+    assert "jsonb_set(payload, '{email_sha256}'" in sql and args[0] == [TID] and args[1] == "stripped-on-failed"
+    pool = _Pool()
+    await ej.on_terminal(pool, {"id": TID, "status": "failed", "payload": {"subject": "tenant", "tenant": TID}})
+    await ej.on_terminal(pool, {"id": TID, "status": "cancelled",
+                                "payload": {"subject": "traveller", "email_sha256": ej.STRIPPED}})
+    assert pool.executed == []
+
+
+@pytest.mark.asyncio
+async def test_review_retry_route_refuses_an_erasure_apply(monkeypatch):
+    from fastapi import HTTPException
+    from api.routers import admin_job_runner as r
+    monkeypatch.setattr(r, "verify_admin_secret", lambda s: None)
+    retried = []
+
+    async def fake_retry(pool, job_id):
+        retried.append(job_id)
+        return True
+    rows = {"a": {"id": "a", "kind": ej.KIND, "status": "failed", "payload": {"subject": "tenant", "mode": "apply"}},
+            "d": {"id": "d", "kind": ej.KIND, "status": "failed", "payload": {"subject": "tenant", "mode": "dry_run"}}}
+
+    async def fake_get(pool, job_id):
+        return rows.get(job_id)
+    monkeypatch.setattr(r.queue, "retry", fake_retry)
+    monkeypatch.setattr(r.queue, "get", fake_get)
+    with pytest.raises(HTTPException) as e:
+        await r.retry_job("a", _req(), "s", None)
+    assert e.value.status_code == 409 and "never retried" in e.value.detail and retried == []
+    assert (await r.retry_job("d", _req(), "s", None))["status"] == "queued" and retried == ["d"]
+
+
+def test_review_sentry_drops_frame_locals_of_erasure_events():
+    from shared import sentry_init
+
+    def ev(kind, module="shared.jobs.worker"):
+        return {"tags": {"job_kind": kind}, "exception": {"values": [{"stacktrace": {"frames": [
+            {"module": module, "vars": {"payload": {"email_sha256": H}}}]}}]}}
+    out = sentry_init.before_send(ev(ej.KIND), {})
+    assert "vars" not in out["exception"]["values"][0]["stacktrace"]["frames"][0]
+    out = sentry_init.before_send(ev("other", module="services.erasure.plan"), {})
+    assert "vars" not in out["exception"]["values"][0]["stacktrace"]["frames"][0]
+    out = sentry_init.before_send(ev("other"), {})
+    assert out["exception"]["values"][0]["stacktrace"]["frames"][0]["vars"]            # other kinds keep locals
+
+
+def test_review_failed_erasure_job_reaches_sentry_without_the_hash(json_lines, sentry_events,  # noqa: F811
+                                                                   monkeypatch):
+    """End to end through the worker and a real Sentry client: the traceback is there, the frame locals are not."""
+    import asyncio
+    import json as _json
+    from unittest.mock import AsyncMock, MagicMock
+
+    from shared.jobs import queue, registry
+    from shared.jobs import worker as worker_mod
+
+    async def handler(ctx):
+        email_sha256 = ctx.payload["email_sha256"]                  # a local holding the hash
+        raise RuntimeError(f"refused ({len(email_sha256)})")
+
+    monkeypatch.setitem(registry._KINDS, ej.KIND, registry.JobKind(ej.KIND, handler))
+    monkeypatch.setattr(queue, "fail", AsyncMock(return_value="failed"))
+    monkeypatch.setattr(worker_mod, "run_terminal_hook", AsyncMock())
+    w = worker_mod.Worker(MagicMock(), worker_id="w-aa839")
+    job = queue.Job("33333333-3333-3333-3333-333333333333", ej.KIND,
+                    {"subject": "traveller", "email_sha256": H, "mode": "apply"}, "running", 1, 1, {}, 0.0)
+    asyncio.run(w._execute(job))
+    (event,) = [e for e in sentry_events if e["logentry"]["message"] == "job_failed"]
+    assert event["exception"]["values"][-1]["type"] == "RuntimeError"
+    assert H not in _json.dumps(event, default=str)

@@ -361,12 +361,20 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     (admin, `tenant.write`) enqueues a **DRY RUN** by default: SELECT only, rows per CIS table and action,
     blockers, the delete order, the tenant's S3 objects/secrets (best-effort) and the per-app checklist
     (`booking.*`, `tripplanner.*`, `crm.*`, Cognito, mailbox, Sentry), plus a `fingerprint` of the counts.
-    Inventory: `services/erasure/inventory.py` — every CIS table with `tenant_id` has an action (`delete`,
+    Inventory: `services/erasure/inventory.py` — every CIS table with a tenant key has an action (`delete`,
     `detach` = keep the cost row without the tenant link, `merge` = add into the NULL-tenant rollup row, `keep` =
-    the append-only `acp_shared.audit_log`); a `tenant_id` table without an entry is reported `unregistered` and
-    fails `tests/integration/test_aa839_erasure_job.py`. Rows that reach a tenant only through foreign keys are
-    found from `pg_constraint` at run time (`services/erasure/plan.py`) and deleted children-first; a row of
-    another tenant, a kept row or another owner's row pointing at an erased row is a blocker. CIS holds no
+    the append-only `acp_shared.audit_log`). A tenant key is `tenant_id`, `tenant` (`shared.pipeline_jobs`),
+    `owner_scope` (`acp_contract.tour_atoms`: tenant-owned T5 atoms may sit on an AA master tour) or a "tenant"
+    soft key without an FK (`acp_contract.atomize_day_fingerprint.tenant_tour_version_id`); such entries carry
+    explicit predicates (`where_any`) and are deleted before the tables those predicates read. A tenant-key table
+    without an entry is reported `unregistered` and fails `tests/integration/test_aa839_erasure_job.py`. Rows
+    that reach a tenant only through foreign keys are found from `pg_constraint` at run time
+    (`services/erasure/plan.py`) and deleted children-first; a row of another tenant, a kept row, another
+    owner's row, or a row of the same table outside the erasure (self FK: `shared.job.parent_job_id`,
+    `tenant_tour_versions.parent_version_id`) pointing at an erased row is a blocker. Each check runs in a
+    savepoint, so an unreadable table is one blocker, not an aborted DRY RUN. S3 keys held by deleted rows
+    (`content_exports`, `webhook_deliveries`, `raw_sources`, `tenants`) outside `raw-inbox/<t>/` and
+    `brand-identity/<t>/` are listed in `s3_refs` (more than 200 per column blocks). CIS holds no
     traveller data by design (only staff/alert e-mails are tagged in `shared`), so the traveller DRY RUN is a proof
     of absence (exact hash on the tagged columns, hashed e-mail tokens in notification/job/audit text).
     **Apply** is in the code but OFF: it needs `ERASURE_APPLY_ENABLED=true` (unset everywhere), a verified Cognito
@@ -374,8 +382,14 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     fingerprint is passed as `approved_fingerprint`, `approved_by`, `snapshot_id`, and for a tenant an offboard at
     least `ERASURE_TENANT_RETENTION_DAYS` (default 30, Nghiệp sets it) ago. One transaction: recount = same
     fingerprint, every statement touches exactly the approved rows, a recount finds 0, one `acp_shared.audit_log`
-    row (`tenant.erased` / `dsar.cis_erased`, counts only); for a traveller the hash is then stripped from both
-    job rows. Inventory and settings: `GET /admin/job-runner/erasure`.
+    row (`tenant.erased` / `dsar.cis_erased`, counts only); for a traveller the hash is then stripped from every
+    `data_erasure` row holding it. Inside the transaction the tenant row is locked (`FOR UPDATE`) and its
+    offboarded state and retention window re-checked (a restore in between stops the apply). An apply claims its
+    DRY RUN (`result.used_by_apply`, single use) and is never retried: `POST /admin/job-runner/jobs/{id}/retry`
+    refuses it (409, `JobKind.retry_refusal`). A traveller job that fails or is cancelled has its hash replaced
+    (`on_terminal`); `verify: true` on a traveller DRY RUN (after an apply) strips its own hash; Sentry events of
+    this kind carry no frame locals (`shared/sentry_init.py` `SCRUB_LOCALS_KINDS`). Inventory and settings:
+    `GET /admin/job-runner/erasure`.
   - **Ops metrics sampler (AA-832, AA-751)**: `api/core/ops_metrics_sampler.py`, a background task of
     the **api** (not the worker) started in `api/main.py`'s lifespan after the main pool, cancelled
     before it closes, off when `ENVIRONMENT=test`, never raises. Every 300 s (first tick 30 s after

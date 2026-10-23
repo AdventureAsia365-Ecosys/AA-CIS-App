@@ -1,10 +1,13 @@
 """AA-839 — what an erasure covers in the CIS schemas, and what it leaves to the other owners.
 
-Tenant erasure: every CIS base table with a `tenant_id` column has one entry in TENANT_TABLES with its action.
-The job compares this registry with the live catalog on every run: a table that has `tenant_id` and no entry is
-listed under `unregistered` and blocks an apply (tests/integration/test_aa839_erasure_job.py fails CI on it), so a
-new tenant table cannot be missed silently. Rows that reach the tenant only through foreign keys (no tenant_id)
-are found from pg_constraint at run time by services/erasure/plan.py; they need no entry here.
+Tenant erasure: every CIS base table with a tenant key has one entry in TENANT_TABLES with its action. A tenant
+key (plan._TENANT_KEYS_SQL) is a column named `tenant_id`, `tenant` or `owner_scope`, or any other column whose
+name contains "tenant" and that no foreign key covers (a soft key such as
+`atomize_day_fingerprint.tenant_tour_version_id`). The job compares this registry with the live catalog on every
+run: a table with a tenant key and no entry is listed under `unregistered` and blocks an apply
+(tests/integration/test_aa839_erasure_job.py fails CI on it), so a new tenant table cannot be missed silently.
+Rows that reach the tenant only through foreign keys (no tenant key) are found from pg_constraint at run time by
+services/erasure/plan.py; they need no entry here.
 
 Actions:
   delete  rows of the tenant are deleted (children first, see plan.py)
@@ -42,8 +45,12 @@ class TenantTable:
     # detach: further soft-key columns (no FK) set to NULL with tenant_id, because they point at rows the erasure
     # deletes.
     null_also: tuple[str, ...] = ()
-    # Without a tenant_id column (keyed some other way): skipped by the catalog check.
+    # Without a tenant_id column (keyed some other way): the predicate comes from `where` / `where_any`.
     no_tenant_column: bool = False
+    # Predicate branches OR-ed together, each with the tables it reads: (template, needs). A branch whose tables
+    # are absent from the database is left out (CI lacks some live tables). The tables a used branch reads are
+    # "soft parents": plan.py deletes this table before them, since the predicate needs their rows to exist.
+    where_any: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 def _d(table: str, reason: str, **kw) -> TenantTable:
@@ -98,6 +105,34 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
        where="{t}.payload ->> 'tenant_id' = $1::text AND {t}.status NOT IN ('queued', 'running') "
              "AND {t}.kind <> 'data_erasure'",
        no_tenant_column=True),
+    # AA-839 review: tenant data keyed without a tenant_id column.
+    # Tenant-owned atoms (AA-461 T5) carry owner_scope = the tenant id while tour_id may point at an AA master raw
+    # tour, so the FK walk from the tenant's raw tours misses them. One node for both ways in: owner_scope, or a
+    # tour of the tenant (else the platform atoms of a tenant raw tour would show up as a cross-tenant blocker).
+    # Children (atom_embedding, atom_matches, atom_segment_member, atom_place_card) follow through the FKs.
+    _d("acp_contract.tour_atoms", "atoms owned by the tenant (owner_scope) or on the tenant's own raw tours",
+       no_tenant_column=True, where_any=(
+           ("{t}.owner_scope = $1::text", ()),
+           ("{t}.tour_id IN (SELECT {t}_rt.tour_id FROM silver_aa_internal.raw_tours {t}_rt "
+            "WHERE {t}_rt.tenant_id = $1::uuid)", ("silver_aa_internal.raw_tours",)),
+       )),
+    # Retired AA-223 run-tour jobs (no new writes since AA-735): `tenant` held the request's tenant_id as text;
+    # the slug is matched too in case an old writer stored it.
+    _d("shared.pipeline_jobs", "historic run-tour jobs of the tenant (column tenant)",
+       no_tenant_column=True, where_any=(
+           ("{t}.tenant = $1::text", ()),
+           ("{t}.tenant = (SELECT {t}_tn.slug::text FROM shared.tenants {t}_tn WHERE {t}_tn.tenant_id = $1::uuid)",
+            ("shared.tenants",)),
+       )),
+    # A3 per-day fingerprints keyed by the version id (soft key, no FK): a tenant T2 version or a generated
+    # content row of the tenant. Deleted before those tables (soft parents), so the predicate still finds them.
+    _d("acp_contract.atomize_day_fingerprint", "A3 per-day fingerprints of the tenant's versions (soft key)",
+       no_tenant_column=True, where_any=(
+           ("{t}.tenant_tour_version_id IN (SELECT {t}_v.id FROM gold_aa_internal.tenant_tour_versions {t}_v "
+            "WHERE {t}_v.tenant_id = $1::uuid)", ("gold_aa_internal.tenant_tour_versions",)),
+           ("{t}.tenant_tour_version_id IN (SELECT {t}_g.id FROM silver_aa_internal.generated_content {t}_g "
+            "WHERE {t}_g.tenant_id = $1::uuid)", ("silver_aa_internal.generated_content",)),
+       )),
     # The account row goes last (plan.py orders deletes children-first, and every table above points at it).
     _d("shared.tenants", "the tenant account row"),
     # ── legacy tables: absent on Dev (schema reference 22/10/2026), still created by the CI migration replay
@@ -149,12 +184,16 @@ MERGE_SQL: dict[str, str] = {
 # operator (runbook section 4); the worker role has no delete rights on them.
 TENANT_S3_PREFIXES: tuple[str, ...] = ("raw-inbox/{tenant}/", "brand-identity/{tenant}/")
 TENANT_SECRETS: tuple[str, ...] = ("acp/cms/{tenant}", "acp/social/{tenant}")
-# DB columns that hold an S3 key of the tenant (counted, so the operator knows what the prefixes must cover).
+# DB columns that hold an S3 key of the tenant. The apply deletes these rows, so the DRY RUN lists every key that
+# is not under TENANT_S3_PREFIXES (up to MAX_S3_REF_KEYS per column; more blocks the apply): the operator keeps
+# that list and deletes those objects after the DB apply (runbook section 4). Keys may be `s3://bucket/key`.
 TENANT_S3_REF_COLUMNS: tuple[tuple[str, str], ...] = (
     ("shared.tenants", "last_brand_brief_s3_key"),
     ("gold_aa_internal.webhook_deliveries", "payload_s3_path"),
     ("gold_aa_internal.content_exports", "s3_path"),
+    ("silver_aa_internal.raw_sources", "s3_path"),
 )
+MAX_S3_REF_KEYS = 200
 
 
 @dataclass(frozen=True)
@@ -229,6 +268,13 @@ TENANT_CHECKLIST: tuple[ChecklistItem, ...] = (
                   "runbook section 4: aws s3 rm --recursive after the DB apply (WRITE)"),
     ChecklistItem("AA-CIS (operator)", "Secrets Manager acp/cms/<tenant> and acp/social/<tenant>",
                   "runbook section 4: aws secretsmanager delete-secret (WRITE)"),
+    ChecklistItem("AA-CIS (operator)", "S3 objects listed in s3_refs[].outside_keys (keys outside the two prefixes "
+                  "whose DB rows the apply deletes)",
+                  "runbook section 4: copy the list from the approved DRY RUN, remove each object after the apply"),
+    ChecklistItem("AA-CIS (operator)", "AA-825 retention archives s3://<bronze>/archive/{llm_call_log,"
+                  "tenant_api_usage,job,decision_log}/ (gzipped JSONL rows that still carry the tenant id)",
+                  "runbook section 4: scan for the tenant id (S3 Select), then rewrite or remove the object, or "
+                  "record the decision to keep it until its lifecycle expiry"),
     ChecklistItem("AA-Partner (crm)", "the tenant's CRM rows (DM-6.8 hard delete on offboarding)",
                   "AA-Partner tenant erasure, owner crm; cis_app has no grant on crm.*"),
     ChecklistItem("Cognito", "tenant portal users (AA-813, once built)", "runbook section 4"),

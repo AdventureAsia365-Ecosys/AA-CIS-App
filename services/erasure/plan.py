@@ -56,6 +56,12 @@ class Catalog:
     tables: set[str]                                  # every base table in the CIS schemas
     tenant_columns: dict[str, str]                    # table -> format_type of its tenant_id column
     edges: list[Edge] = field(default_factory=list)   # FKs whose parent is a CIS table
+    # table -> its tenant-key columns (_TENANT_KEYS_SQL: tenant_id, tenant, owner_scope, or a "tenant" soft key)
+    tenant_keys: dict[str, tuple[str, ...]] = field(default_factory=dict)
+
+    def key_tables(self) -> set[str]:
+        """Tables that hold a tenant key: each needs an inventory entry."""
+        return set(self.tenant_columns) | set(self.tenant_keys)
 
 
 _TABLES_SQL = """
@@ -70,6 +76,23 @@ _TENANT_COLUMNS_SQL = """
       JOIN pg_namespace n ON n.oid = c.relnamespace
      WHERE a.attname = 'tenant_id' AND a.attnum > 0 AND NOT a.attisdropped
        AND c.relkind IN ('r', 'p') AND NOT c.relispartition AND n.nspname = ANY($1::text[])
+"""
+# AA-839 review: tenant data is not always keyed by a column named tenant_id (tour_atoms.owner_scope,
+# pipeline_jobs.tenant, atomize_day_fingerprint.tenant_tour_version_id). A tenant key is tenant_id / tenant /
+# owner_scope, or any column whose name contains "tenant" that no foreign key covers (an FK-covered one is found
+# by the FK walk instead).
+_TENANT_KEYS_SQL = """
+    SELECT n.nspname || '.' || c.relname AS tbl, array_agg(a.attname::text ORDER BY a.attnum) AS cols
+      FROM pg_attribute a
+      JOIN pg_class c ON c.oid = a.attrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE a.attnum > 0 AND NOT a.attisdropped
+       AND c.relkind IN ('r', 'p') AND NOT c.relispartition AND n.nspname = ANY($1::text[])
+       AND (a.attname IN ('tenant_id', 'tenant', 'owner_scope')
+            OR (a.attname LIKE '%tenant%' AND NOT EXISTS (
+                    SELECT 1 FROM pg_constraint k
+                     WHERE k.contype = 'f' AND k.conrelid = c.oid AND a.attnum = ANY(k.conkey))))
+     GROUP BY 1
 """
 _FK_SQL = """
     SELECT c.conname, c.confdeltype::text AS deltype,
@@ -95,7 +118,8 @@ async def load_catalog(conn, schemas: Iterable[str] = CIS_SCHEMAS) -> Catalog:
     cols = {r["tbl"]: r["typ"] for r in await conn.fetch(_TENANT_COLUMNS_SQL, schemas)}
     edges = [Edge(r["conname"], r["child"], r["parent"], tuple(r["child_cols"]), tuple(r["parent_cols"]),
                   bool(r["child_nullable"]), r["deltype"]) for r in await conn.fetch(_FK_SQL, schemas)]
-    return Catalog(tables, cols, edges)
+    keys = {r["tbl"]: tuple(r["cols"]) for r in await conn.fetch(_TENANT_KEYS_SQL, schemas)}
+    return Catalog(tables, cols, edges, keys)
 
 
 # ── tenant plan (pure) ──────────────────────────────────────────────────────────────────────────
@@ -108,6 +132,7 @@ class Node:
     template: Optional[str] = None    # registry predicate over {t}; None for a cascade node
     via: list[Edge] = field(default_factory=list)   # cascade: the FKs that reach it
     null_also: tuple[str, ...] = ()
+    soft_parents: tuple[str, ...] = ()  # tables the predicate reads: deleted after this one (where_any needs)
 
     @property
     def deletes(self) -> bool:
@@ -171,6 +196,23 @@ def _same_tenant_link(e: Edge, child: Node, parent: Node) -> bool:
             and child.template.startswith("{t}.tenant_id") and parent.template.startswith("{t}.tenant_id"))
 
 
+def _registry_template(t: TenantTable, catalog: Catalog) -> tuple[Optional[str], tuple[str, ...]]:
+    """(predicate template, soft parents) of a registry entry on this database; (None, ()) = cannot plan it."""
+    if t.where_any:
+        used = [(tpl, needs) for tpl, needs in t.where_any if all(n in catalog.tables for n in needs)]
+        if not used:
+            return None, ()
+        template = " OR ".join(f"({tpl})" for tpl, _ in used) if len(used) > 1 else used[0][0]
+        soft = tuple(sorted({n for _, needs in used for n in needs if n != t.table}))
+        return template, soft
+    if t.where is not None:
+        return t.where, ()
+    typ = catalog.tenant_columns.get(t.table)
+    if typ is None:
+        return None, ()               # registry says tenant_id, the DB has none: report, do not guess
+    return _default_template(typ), ()
+
+
 def plan_tenant(registry: Registry, catalog: Catalog) -> TenantPlan:
     by_name = registry.by_name()
     nodes: dict[str, Node] = {}
@@ -179,16 +221,13 @@ def plan_tenant(registry: Registry, catalog: Catalog) -> TenantPlan:
         if t.table not in catalog.tables:
             missing.append(t.table)
             continue
-        typ = catalog.tenant_columns.get(t.table)
-        if t.where is not None:
-            template = t.where
-        elif typ is None:
-            missing.append(t.table)       # registry says tenant_id, the DB has none: report, do not guess
+        template, soft = _registry_template(t, catalog)
+        if template is None:
+            missing.append(t.table)
             continue
-        else:
-            template = _default_template(typ)
-        nodes[t.table] = Node(t.table, t.action, t.reason, template, null_also=t.null_also)
-    unregistered = sorted(tb for tb in catalog.tenant_columns if tb not in by_name)
+        nodes[t.table] = Node(t.table, t.action, t.reason, template, null_also=t.null_also, soft_parents=soft)
+    key_tables = catalog.key_tables()
+    unregistered = sorted(tb for tb in key_tables if tb not in by_name)
     checks: list[Check] = []
 
     # BFS over FKs from every deleted table: children with no tenant_id become cascade nodes.
@@ -216,7 +255,7 @@ def plan_tenant(registry: Registry, catalog: Catalog) -> TenantPlan:
                     continue
                 pending_checks.append(("registered_child", e))
                 continue
-            if e.child in catalog.tenant_columns:
+            if e.child in key_tables:
                 continue                  # unregistered tenant table: already a blocker via `unregistered`
             if depth + 1 > MAX_DEPTH:
                 checks.append(Check("too_deep", e.child, f"{e.conname}: more than {MAX_DEPTH} FK hops", None))
@@ -241,7 +280,8 @@ def plan_tenant(registry: Registry, catalog: Catalog) -> TenantPlan:
             child_pred = predicate(nodes, e.child, "c")
             checks.append(Check("cross_tenant", e.child,
                                 f"{e.conname}: rows outside the erasure point at erased {e.parent} rows",
-                                f"SELECT count(*) FROM {qname(e.child)} c WHERE {refs} AND NOT {child_pred}"))
+                                f"SELECT count(*) FROM {qname(e.child)} c WHERE {refs} "
+                                f"AND NOT coalesce({child_pred}, false)"))
         elif child.action in ("detach", "merge") and e.child_cols == ("tenant_id",):
             continue                      # the tenant link is nulled / merged away before the deletes
         elif e.deltype == "n":
@@ -250,6 +290,20 @@ def plan_tenant(registry: Registry, catalog: Catalog) -> TenantPlan:
             checks.append(Check("kept_row_reference", e.child,
                                 f"{e.conname}: a {child.action} row points at erased {e.parent} rows",
                                 f"SELECT count(*) FROM {qname(e.child)} c WHERE {refs}"))
+
+    # Self-referencing FKs (shared.job.parent_job_id, tenant_tour_versions.parent_version_id): a row outside the
+    # erasure that points at an erased row of the same table would make the apply fail (NO ACTION / RESTRICT) or
+    # lose / delete it silently (SET NULL / CASCADE). Counted like a cross-tenant reference, whatever the action.
+    # coalesce: a row whose predicate is NULL (e.g. a child job without payload tenant_id) is outside the erasure.
+    for e in catalog.edges:
+        if e.child != e.parent or e.child not in nodes or not nodes[e.child].deletes:
+            continue
+        cols = ", ".join(f"c.{qcol(c)}" for c in e.child_cols)
+        pcols = ", ".join(f"p.{qcol(c)}" for c in e.parent_cols)
+        checks.append(Check(
+            "self_reference", e.child, f"{e.conname}: rows outside the erasure point at erased rows of the same table",
+            f"SELECT count(*) FROM {qname(e.child)} c WHERE ({cols}) IN (SELECT {pcols} FROM {qname(e.parent)} p "
+            f"WHERE {predicate(nodes, e.parent, 'p')}) AND NOT coalesce({predicate(nodes, e.child, 'c')}, false)"))
 
     order, null_first, cycle_error = _delete_order(nodes, catalog.edges)
     if cycle_error:
@@ -262,7 +316,10 @@ def plan_tenant(registry: Registry, catalog: Catalog) -> TenantPlan:
 def _delete_order(nodes: dict[str, Node], edges: list[Edge]) -> tuple[list[str], list[NullFirst], Optional[str]]:
     """Children before parents among the deleted tables; a cycle is broken by nulling a nullable FK first."""
     deleted = {tb for tb, n in nodes.items() if n.deletes}
-    live = sorted({e for e in edges if e.child in deleted and e.parent in deleted and e.child != e.parent},
+    # a soft parent is read by the child's predicate, so it must outlive the child's DELETE (never nulled)
+    soft = {Edge(f"soft:{tb}->{sp}", tb, sp, (), (), False, "a")
+            for tb, n in nodes.items() if n.deletes for sp in n.soft_parents if sp in deleted}
+    live = sorted({e for e in edges if e.child in deleted and e.parent in deleted and e.child != e.parent} | soft,
                   key=lambda e: (e.conname, e.child))
     remaining = set(deleted)
     order: list[str] = []
@@ -316,7 +373,10 @@ async def count_tenant(conn, plan: TenantPlan, tenant_id: str) -> dict:
             blockers.append({"kind": c.kind, "table": c.table, "detail": c.detail, "rows": None})
             continue
         try:
-            n = int(await conn.fetchval(c.sql, tenant_id))
+            # a savepoint: a failed statement would otherwise abort the whole (repeatable-read) transaction and
+            # every later check would fail as "not readable" too (AA-839 review)
+            async with conn.transaction():
+                n = int(await conn.fetchval(c.sql, tenant_id))
         except Exception as e:  # e.g. no privilege on another owner's table
             blockers.append({"kind": c.kind, "table": c.table, "detail": f"{c.detail} (not readable: "
                              f"{type(e).__name__})", "rows": None})
