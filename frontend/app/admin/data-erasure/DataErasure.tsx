@@ -29,7 +29,7 @@ import {
 } from "../../_kit";
 import {
   ERASURE_API, ERASURE_KIND, JOBS_API, detailMessage, isTerminal, isVerifyRun, jobHash, jobMode, jobSubject,
-  jobTenant, totalsSentence,
+  jobTenant, subjectLabel, totalsSentence,
   type ErasureJob, type ErasureSettings, type JobsPage, type TenantOption,
 } from "@/lib/dataErasure";
 import ApplyPanel, { type SendResult } from "./ApplyPanel";
@@ -72,7 +72,12 @@ async function runErasure(body: Record<string, unknown>): Promise<SendResult> {
       body: JSON.stringify(body),
     });
   } catch {
-    return { ok: false, status: 0, message: "Network error: nothing was sent. Check your connection and try again." };
+    // A rejected fetch does not prove the request never arrived (reset, proxy timeout after the BFF got it).
+    return {
+      ok: false,
+      status: 0,
+      message: "No answer from the server; the request may have been received. Check Recent erasure jobs before trying again.",
+    };
   }
   let data: Record<string, unknown> = {};
   try {
@@ -131,12 +136,24 @@ export default function DataErasure() {
   const dry = useJob(view.job);
   const applied = useJob(view.apply);
 
-  const tenantName = useMemo(() => {
-    const m = new Map((tenants.data?.tenants ?? []).map((t) => [t.tenant_id, `${t.name} (${t.slug})`]));
-    return (id: string | null) => (id ? m.get(id) ?? id : null);
-  }, [tenants.data]);
+  const tenantById = useMemo(
+    () => new Map((tenants.data?.tenants ?? []).map((t) => [t.tenant_id, t])),
+    [tenants.data],
+  );
+  const tenantName = useMemo(() => (id: string | null) => {
+    if (!id) return null;
+    const t = tenantById.get(id);
+    return t ? `${t.name} (${t.slug})` : id;
+  }, [tenantById]);
 
   const refreshHistory = () => qc.invalidateQueries({ queryKey: ["erasure-history"] });
+
+  /** runErasure, plus a history refresh when no answer came back (the request may have been enqueued). */
+  const send = async (body: Record<string, unknown>): Promise<SendResult> => {
+    const out = await runErasure(body);
+    if (!out.ok && out.status === 0) void refreshHistory();
+    return out;
+  };
 
   const startDryRun = (jobId: string, hash: string | null) => {
     if (hash) setTravellerHash(hash);
@@ -168,7 +185,7 @@ export default function DataErasure() {
       }
       body = { subject: "traveller", email_sha256: hash, verify: true };
     }
-    const out = await runErasure(body);
+    const out = await send(body);
     if (!out.ok) {
       setVerifyError(out.message);
       return;
@@ -284,7 +301,9 @@ export default function DataErasure() {
 
   // Hidden as soon as an apply id is in view (not only once the apply job has loaded): a second click on
   // "Apply erasure" while the new job loads would enqueue a second apply (the job refuses it, single-use DRY RUN).
-  const showApplyPanel = !!dryJob && dryJob.status === "succeeded" && jobMode(dryJob) === "dry_run" && !view.apply;
+  const isErasureJob = !!dryJob && dryJob.kind === ERASURE_KIND;
+  const showApplyPanel = !!dryJob && isErasureJob && dryJob.status === "succeeded" && jobMode(dryJob) === "dry_run"
+    && !view.apply;
 
   return (
     <div data-testid="data-erasure-ready" style={{ minWidth: 0 }}>
@@ -330,7 +349,7 @@ export default function DataErasure() {
         tenantsError={tenants.error ? (tenants.error as Error).message : null}
         retentionDays={s?.tenant_retention_days}
         now={now}
-        send={runErasure}
+        send={send}
         onStarted={startDryRun}
       />
 
@@ -338,6 +357,13 @@ export default function DataErasure() {
         dry.error ? (
           <Section title="DRY RUN">
             <ErrorState message={(dry.error as Error).message} onRetry={() => void dry.refetch()} />
+          </Section>
+        ) : dryJob && !isErasureJob ? (
+          <Section title="DRY RUN" testId="erasure-not-erasure">
+            <Notice tone="warning">
+              This job is not a data erasure (kind <span style={{ fontFamily: mono }}>{dryJob.kind}</span>). Open it from
+              Platform › Jobs instead.
+            </Notice>
           </Section>
         ) : dryJob ? (
           <ErasurePlan job={dryJob} tenantName={tenantName(jobTenant(dryJob))} />
@@ -347,7 +373,16 @@ export default function DataErasure() {
       )}
 
       {showApplyPanel && dryJob && (
-        <ApplyPanel job={dryJob} settings={s} now={now} send={runErasure} onStarted={startApply} />
+        <ApplyPanel
+          key={dryJob.id}
+          job={dryJob}
+          settings={s}
+          now={now}
+          history={history.data?.jobs ?? []}
+          subjectName={subjectLabel(dryJob, tenantById.get(jobTenant(dryJob) ?? ""))}
+          send={send}
+          onStarted={startApply}
+        />
       )}
 
       {view.apply && (

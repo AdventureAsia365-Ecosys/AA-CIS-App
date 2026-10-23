@@ -288,18 +288,25 @@ export function applyGate(
   job: ErasureJob | null | undefined,
   settings: Pick<ErasureSettings, "apply_enabled" | "dry_run_max_age_hours" | "tenant_retention_days"> | null | undefined,
   now: number,
+  history: readonly ErasureJob[] = [],
 ): ApplyGate {
   const reasons: string[] = [];
   const warnings: string[] = [];
   if (!job) return { open: false, reasons: ["Run a DRY RUN first."], warnings };
   const res = job.result;
+  // Fail closed: every check below must hold, including when the job has no result or is of another kind.
+  if (job.kind !== ERASURE_KIND) reasons.push("This job is not a data erasure.");
   if (jobMode(job) !== "dry_run") reasons.push("This job is an apply, not a DRY RUN.");
   if (job.status !== "succeeded") reasons.push("The DRY RUN has not succeeded.");
+  if (jobSubject(job) === null) reasons.push("The job names no subject (tenant or traveller).");
   if (isVerifyRun(job)) reasons.push("This is a verification DRY RUN after an apply; it cannot be applied.");
   if (res?.redacted) reasons.push("Your role sees only the counts of this job.");
-  if (res && !isHex64(res.fingerprint)) reasons.push("The DRY RUN has no fingerprint.");
+  if (!isHex64(res?.fingerprint)) reasons.push("The DRY RUN has no fingerprint.");
   if (res?.blocked) reasons.push("The DRY RUN has blockers: resolve them and run a new DRY RUN.");
   if (res?.used_by_apply) reasons.push(`This DRY RUN was already used by apply job ${res.used_by_apply}; run a new one.`);
+  // used_by_apply is written only when the apply job starts: a queued apply is seen through the history.
+  const user = applyUsing(job.id, history);
+  if (user && user.id !== res?.used_by_apply) reasons.push(`Apply job ${user.id} already uses this DRY RUN.`);
   if (jobSubject(job) === "traveller" && !jobHash(job)) {
     reasons.push("The job no longer holds the traveller hash; run a new DRY RUN.");
   }
@@ -322,6 +329,26 @@ export function applyGate(
     }
   }
   return { open: reasons.length === 0, reasons, warnings };
+}
+
+/** A queued, running or succeeded apply job that names this DRY RUN, from the recent erasure jobs. */
+export function applyUsing(dryRunJobId: string, history: readonly ErasureJob[]): ErasureJob | null {
+  return history.find((j) =>
+    j.kind === ERASURE_KIND
+    && jobMode(j) === "apply"
+    && j.payload?.dry_run_job_id === dryRunJobId
+    && (j.status === "queued" || j.status === "running" || j.status === "succeeded"),
+  ) ?? null;
+}
+
+/** How the apply panel names the subject: "tenant Acme (acme) · <uuid>" or "traveller hash abcd1234…". */
+export function subjectLabel(job: ErasureJob, tenant?: Pick<TenantOption, "name" | "slug"> | null): string {
+  if (jobSubject(job) === "tenant") {
+    const id = jobTenant(job) ?? "unknown id";
+    return tenant ? `tenant ${tenant.name} (${tenant.slug}) · ${id}` : `tenant ${id}`;
+  }
+  const h = jobHash(job);
+  return h ? `traveller hash ${h.slice(0, 8)}…` : "traveller (hash no longer held)";
 }
 
 export interface ApplyForm {

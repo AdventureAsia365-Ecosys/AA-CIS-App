@@ -17,14 +17,20 @@ import { Notice, Section, hintStyle, inputStyle, labelStyle } from "./erasureUi"
 
 export type SendResult = { ok: true; data: Record<string, unknown> } | { ok: false; status: number; message: string };
 
-export default function ApplyPanel({ job, settings, now, send, onStarted }: {
+// Mount with key={job.id}: the form must start empty for every DRY RUN, so an approval typed for one subject can
+// never carry over to another one with the same counts (the fingerprint hashes the counts, not the subject).
+export default function ApplyPanel({ job, settings, now, history, subjectName, send, onStarted }: {
   job: ErasureJob;
   settings: ErasureSettings | undefined;
   now: number;
+  /** Recent data_erasure jobs: an apply already queued on this DRY RUN locks the panel. */
+  history: readonly ErasureJob[];
+  /** "tenant Acme (acme) · <uuid>" or "traveller hash abcd1234…" (lib/dataErasure subjectLabel). */
+  subjectName: string;
   send: (body: Record<string, unknown>) => Promise<SendResult>;
   onStarted: (applyJobId: string) => void;
 }) {
-  const gate = applyGate(job, settings, now);
+  const gate = applyGate(job, settings, now, history);
   const subject = jobSubject(job) ?? "tenant";
   const fp = job.result?.fingerprint ?? "";
   const [form, setForm] = useState<ApplyForm>({ fingerprintPrefix: "", snapshotId: "", approvedBy: "", confirmed: false });
@@ -65,6 +71,7 @@ export default function ApplyPanel({ job, settings, now, send, onStarted }: {
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <Notice tone="danger">
+            You are about to erase <strong data-testid="erasure-apply-subject" style={{ overflowWrap: "anywhere" }}>{subjectName}</strong>.
             This cannot be undone{subject === "tenant" ? " and the tenant can no longer be restored" : ""}. Before you start:
             Nghiệp approved this fingerprint, and a manual RDS snapshot exists (runbook: <span style={{ fontFamily: mono }}>
             aws rds create-db-snapshot …</span>). The apply runs once: if it fails, nothing is committed and you start again
@@ -121,8 +128,8 @@ export default function ApplyPanel({ job, settings, now, send, onStarted }: {
               style={{ marginTop: 3 }}
             />
             <span>
-              I confirm erasing {subject === "tenant" ? "this tenant" : "this traveller"} from CIS: <strong>{sentence}</strong>{" "}
-              row(s), exactly as approved.
+              I confirm erasing <strong style={{ overflowWrap: "anywhere" }}>{subjectName}</strong> from CIS:{" "}
+              <strong>{sentence}</strong> row(s), exactly as approved for this subject.
             </span>
           </label>
           {problems.length > 0 && (

@@ -39,3 +39,20 @@ Scope of this PR: the operator UI for the `data_erasure` job kind shipped in the
 - An apply job that failed committed nothing; its DRY RUN is used up, the page says to start again.
 - The audit row of an apply is `tenant.erased` or `dsar.cis_erased` (counts only), visible in
   Platform › Audit log.
+
+## Review round (S248)
+- `ApplyPanel` is mounted with `key={dryJob.id}`: every DRY RUN starts with an empty form. The backend
+  fingerprint hashes the subject kind and the (table, action, rows) list only, so two tenants with the same
+  counts share a fingerprint; a form typed for one must never carry over to the other.
+- The danger notice and the confirmation sentence name the subject (`subjectLabel`): tenant name, slug and
+  id, or `traveller hash abcd1234…`.
+- `applyGate` fails closed: a job of another kind, a job without a 64-hex fingerprint (also when `result`
+  is null) or without a subject keeps the panel locked. A job of another kind opened with `?job=` shows
+  "This job is not a data erasure" instead of the plan.
+- `applyGate` takes the recent erasure jobs: a queued, running or succeeded apply whose
+  `payload.dry_run_job_id` is this DRY RUN locks the panel (`used_by_apply` is written only when the apply
+  starts). Limit: the history holds the 20 newest erasure jobs; the job's atomic claim stays the control.
+- A rejected `fetch` no longer says "nothing was sent": the request may have reached the BFF or API. The
+  page says so and refreshes the history.
+- Backend follow-up (separate PR): put the tenant id or the hash in the fingerprint, or require
+  `approved_tenant_id`, so an approval names the subject and not only the counts.
