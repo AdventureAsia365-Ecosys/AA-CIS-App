@@ -290,7 +290,7 @@ def test_t2_audit_fallback_without_a_brand_makes_no_llm_call():
     assert out["brand_audit_codes"] == ["META_OPENER_ROBOTIC"] and out["brand_audit_status"] == "flagged"
 
 
-def test_a1_audit_fallback_still_uses_adventure_asia_standards():
+def test_a1_audit_fallback_keeps_the_voice_rubric_with_white_label_framing():
     from services.content_generation import brand_audit_node as ba
     state = {"tour": _TOUR,
              "generated": {"name": "Bhutan Trail Ride", "summary": "S", "seo_meta": "M", "itineraries": ""}}
@@ -299,7 +299,10 @@ def test_a1_audit_fallback_still_uses_adventure_asia_standards():
         ba.brand_audit_node(state)
     req = cls.return_value.generate.call_args.args[0]
     assert req.system_prompt.startswith(ba.AA_BRAND_IDENTITY_PROMPT)
-    assert "Review this tour against Adventure Asia brand standards." in req.user_prompt
+    # AA-645: the A1 judge is framed white-label, like the A1 fixer.
+    assert ("Review this tour against the editorial standard above, for a neutral white-label catalogue page that "
+            "agencies resell unchanged (no brand, operator or supplier name on the page).") in req.user_prompt
+    assert "Adventure Asia brand standards" not in req.user_prompt
     assert "2. Brand fit: calm, assured, selective, precise, private, no hype?" in req.user_prompt
 
 
