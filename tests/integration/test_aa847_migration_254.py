@@ -5,8 +5,9 @@ cis_owner's does on Dev). Because conftest swallows migration errors, the module
 not swallowed; the re-run must be a no-op) and checks the effect by privilege, not by the registry row:
   * tripplanner can read no column of silver_aa_internal.raw_tours or acp_contract.tour_atoms;
   * USAGE on schema silver_aa_internal is gone (nothing else of the schema is granted to tripplanner);
-  * kept: USAGE on acp_contract and the CIS 216 column grants on acp_contract.v_active_tour_atoms, and the catalog
-    reads (USAGE on schema catalog);
+  * kept by 254: USAGE on acp_contract and the CIS 216 column grants on acp_contract.v_active_tour_atoms, and the
+    catalog reads (USAGE on schema catalog). CIS 270 (AA-712 X4) revokes the first two later; conftest replays every
+    file, so those checks expect 270's result when 270 is registered (test_aa712_migration_270.py covers it);
   * registered once.
 """
 import os
@@ -54,13 +55,18 @@ def test_no_column_of_raw_tours_or_tour_atoms_is_readable(cur):
     assert any("revoked" in n or "nothing to revoke" in n for n in notices), notices
 
 
+def _after_270(k) -> bool:
+    k.execute("SELECT count(*) FROM shared.schema_versions WHERE version = '270'")
+    return k.fetchone()[0] > 0
+
+
 def test_silver_usage_is_gone_and_acp_contract_usage_is_kept(cur):
     k, _ = cur
     k.execute("SELECT has_schema_privilege('tripplanner', 'silver_aa_internal', 'USAGE'), "
               "has_schema_privilege('tripplanner', 'acp_contract', 'USAGE'), "
               "has_schema_privilege('tripplanner', 'catalog', 'USAGE')")
     silver, acp, catalog = k.fetchone()
-    assert silver is False and acp is True
+    assert silver is False and acp is (not _after_270(k))
     k.execute("SELECT to_regnamespace('catalog') IS NOT NULL")
     if k.fetchone()[0]:
         assert catalog is True
@@ -75,7 +81,10 @@ def test_the_216_view_grants_are_kept(cur):
     if not k.fetchone()[0]:
         pytest.skip("CIS 216 not applied in this database")
     readable = set(_readable(k, "acp_contract.v_active_tour_atoms"))
-    assert {"atom_id", "tour_id", "place", "activity_type"} <= readable <= set(TOUR_ATOM_COLS)
+    if _after_270(k):
+        assert readable == set()                              # AA-712 X4: CIS 270 revokes the 216 grants
+    else:
+        assert {"atom_id", "tour_id", "place", "activity_type"} <= readable <= set(TOUR_ATOM_COLS)
 
 
 def test_registered_once(cur):

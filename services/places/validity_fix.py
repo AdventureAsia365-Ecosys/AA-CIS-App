@@ -45,7 +45,9 @@ RESOURCE_TYPE = "places_validity"
 # the review reason the first validity branch wrote on hidden linear features (never deployed; S246: lines are drawn)
 HIDDEN_LINEAR_REASON = "linear_feature"
 
-CROSS_APP_TABLES = ("booking.hotels", "booking.services", "booking.suppliers", "tripplanner.itinerary_components")
+# Other owners' tables that may hold a destination id (reported on a merge, never repointed). AA-712 X4: the frozen
+# tripplanner.itinerary_components is dropped by tp-018 (TripPlanner pins catalog component ids, which survive a merge).
+CROSS_APP_TABLES = ("booking.hotels", "booking.services", "booking.suppliers")
 # (table, key columns, destination column) of the CIS rows a merge repoints
 REPOINT = (
     ("geo.tour_place", ("component_id",), "destination_id"),
