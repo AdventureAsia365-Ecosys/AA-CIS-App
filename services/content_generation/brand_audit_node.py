@@ -365,7 +365,11 @@ def brand_audit_node(state: dict) -> dict:
     # no hype…) — that marked e.g. Trail Pulse's energetic copy off-brand. It is audited against the
     # tenant's own rubric (brand_pack.compile_rubric / its system_prompt), or, with no brand set up,
     # gets the deterministic pre-audit codes only.
-    standard = "Adventure Asia brand standards"
+    # AA-645 (S248): the A1 page is a neutral, white-label catalogue page agencies resell unchanged — the judge is
+    # framed like the A1 fixer (flag_fix_node.FIX_SYSTEM), not as "Adventure Asia brand standards". The voice rubric
+    # in the system prompt (AA_BRAND_IDENTITY_PROMPT) is unchanged: step-5 cleanup.
+    standard = ("the editorial standard above, for a neutral white-label catalogue page that agencies resell "
+                "unchanged (no brand, operator or supplier name on the page)")
     brand_fit_question = "calm, assured, selective, precise, private, no hype?"
     if state.get("is_tenant_rewrite"):
         rubric = _tenant_rubric(state)

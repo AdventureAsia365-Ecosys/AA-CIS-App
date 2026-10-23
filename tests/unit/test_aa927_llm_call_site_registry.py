@@ -99,6 +99,7 @@ LOGGED_CALL_SITES: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
         ("shared/llm_client/column_mapper.py", "_log_call"),),
     ("scripts/aa856_global_profile_probe.py", "_invoke_global"): (
         ("scripts/aa856_global_profile_probe.py", "_log_probe"),),
+    ("scripts/aa645/s1_screen.py", "llm_call"): _self("scripts/aa645/s1_screen.py", "llm_call"),
 }
 
 # (path, enclosing function) -> why no llm_call_log row is written there.

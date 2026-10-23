@@ -187,6 +187,26 @@ def check_meta(output: dict) -> list[dict]:
     return out
 
 
+# AA-645: a list item ("- Bike, helmet") or a code-built fact line ("Meals: B, L", "Overnight: Phakding") is a
+# complete unit without a full stop — the short page (arm E) ends its fields with them — unless it visibly stops
+# mid-phrase: a trailing comma / colon / dash or a dangling lowercase function word ("Meals: breakfast and",
+# "- Visit the temple and the"). Uppercase single letters stay complete ("Grade: A", "Meals: B, L, D").
+_LIST_OR_LABEL_LINE_RE = re.compile(r"^(?:[-•*]\s+\S|[A-Z][A-Za-z ]{1,30}:\s+\S)")
+_DANGLING_WORDS = frozenset((
+    "and", "or", "nor", "but", "plus", "then", "with", "without", "including", "the", "a", "an", "of", "to", "in",
+    "on", "at", "for", "by", "from", "into", "onto", "via", "through", "as", "its", "their", "this", "that",
+    "these", "those", "before", "after", "while", "where", "which", "who", "is", "are", "was", "were", "be",
+))
+_DANGLING_TAIL_RE = re.compile(r"[,;:\-–—/&]$")   # no "+": "Group size: 10+", "ages 8+" are whole
+
+
+def _cut_mid_phrase(line: str) -> bool:
+    if _DANGLING_TAIL_RE.search(line):
+        return True
+    words = line.split()
+    return bool(words) and words[-1] in _DANGLING_WORDS
+
+
 def check_truncation(output: dict) -> list[dict]:
     out = []
     for f in ("summary", "description", "itineraries"):
@@ -194,7 +214,8 @@ def check_truncation(output: dict) -> list[dict]:
         if not text:
             continue
         last = text.splitlines()[-1].strip()
-        if _DAY_TITLE_RE.match(last) or last.endswith(_TERMINAL) or last[-1:].isdigit():
+        if (_DAY_TITLE_RE.match(last) or last.endswith(_TERMINAL) or last[-1:].isdigit()
+                or (_LIST_OR_LABEL_LINE_RE.match(last) and not _cut_mid_phrase(last))):
             continue
         out.append(_finding(TEXT_TRUNCATED, CLASS_TRUNC, f, last[-120:], "ends without terminal punctuation"))
     return out
