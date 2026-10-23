@@ -249,3 +249,39 @@ def test_truncation_accepts_a_plus_at_the_end_of_a_count():
         assert check_truncation({"summary": "At a glance\n" + whole}) == [], whole
         assert check_truncation({"itineraries": "Day 1 — Paro\nA walk.\n" + whole}) == [], whole
     assert [f["code"] for f in check_truncation({"summary": "At a glance\n- Bike, helmet &"})] == ["TEXT_TRUNCATED"]
+
+
+def test_drop_do_not_use_matches_whole_words_and_ignores_short_values():
+    facts = {"do_not_use": [{"value": "Asia"}, {"value": "B"}, {"value": "Lanka Trails Ltd"}]}
+    keep = ["Meals: B, L", "Asian food stalls", "Srilanka Trails Ltd office"]
+    assert v2.drop_do_not_use(keep, facts) == keep
+    assert v2.drop_do_not_use(["Visit Asia Gallery", "Guide from LANKA  TRAILS ltd"], facts) == []
+
+
+def test_drop_do_not_use_trims_inclusion_items_when_the_rest_still_stands():
+    facts = {"do_not_use": [{"value": "Lanka Trails Ltd"}, {"value": "+94 77 123 4567"},
+                            {"value": "info@lt.example"}, {"value": "Asia"}]}
+    lines = ["Guide from Lanka Trails Ltd", "Guide from Lanka Trails Ltd and transfers", "Pickup (call +94 77 123 4567)",
+             "Boat operated by Lanka Trails Ltd", "Tel: +94 77 123 4567", "Contact info@lt.example for visas",
+             "Transfers by Lanka Trails Ltd, with the", "Visit Asia Gallery", "Breakfast"]
+    assert v2.drop_do_not_use(lines, facts, trim=True) == ["Guide", "Guide and transfers", "Pickup", "Boat",
+                                                            "Breakfast"]
+    assert v2.drop_do_not_use(lines, facts) == ["Breakfast"]
+
+
+def test_e_page_trims_the_operator_out_of_an_inclusion_item():
+    tour = {**MULTI, "inclusions": "Breakfast and dinner\nGuide from www.lankatrails.example\nAccommodation"}
+    facts = build_fact_table(tour)
+    page = v2.assemble_e_page(tour, facts, v2.day_plan(tour, facts), {})
+    assert "- Guide\n" in page["description"] and "lankatrails" not in page["description"]
+
+
+def test_meta_problems_name_check_is_whole_word():
+    facts = build_fact_table(MULTI)
+    facts["do_not_use"] = facts["do_not_use"] + [{"value": "Loop"}, {"value": "B"}]
+    meta = {"seo_title": "Sri Lanka Island Loops: 4 Days",
+            "seo_meta": ("A four-day Sri Lanka road trip from Colombo to the coast at Chilaw and on to Habarana, with "
+                         "breakfast, dinner, accommodation and a guide included.")}
+    assert not any("names the operator" in p for p in v2.meta_problems(meta, MULTI, facts, []))
+    meta["seo_title"] = "Sri Lanka Island loop: 4 Days"
+    assert any("names the operator" in p and "loop" in p for p in v2.meta_problems(meta, MULTI, facts, []))

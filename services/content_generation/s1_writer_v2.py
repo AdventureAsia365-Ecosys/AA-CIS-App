@@ -387,11 +387,76 @@ def at_a_glance(tour: dict, facts: dict) -> list[str]:
     return lines
 
 
-def drop_do_not_use(lines: list[str], facts: dict) -> list[str]:
-    """The verbatim source lines arm E copies, minus any that carries a DO NOT USE item (operator name, URL,
-    e-mail, phone): code copies them unseen, so code must keep the supplier out."""
-    bad = [fold_text(e["value"]) for e in facts.get("do_not_use") or [] if str(e.get("value") or "").strip()]
-    return [ln for ln in lines if not any(b and b in fold_text(ln) for b in bad)]
+DNU_MIN_CHARS = 3          # a 1–2 character DO NOT USE value ("B") would match meal codes and initials
+# words that only point at a removed supplier item ("Guide from <operator>", "Tel: <phone>"): removed with it
+_DNU_LEAD_RE = (r"(?:\b(?:(?:operated|provided|arranged|organi[sz]ed|run|booked|supplied)\s+(?:by|through|with|via)"
+                r"|from|by|via|call|contact|tel|phone|email|e-mail|website|web)\b[:.]?\s+)*")
+_DNU_TAIL_WORDS = frozenset({"from", "by", "via", "call", "contact", "tel", "phone", "email", "e-mail", "website",
+                             "web", "operated", "provided", "arranged", "organised", "organized", "booked", "supplied"})
+# a remainder that starts like this is a dangling fragment ("Contact <e-mail> for visas" → "for visas"): drop it
+_DNU_FRAGMENT_START = frozenset({"for", "and", "or", "to", "with", "of", "at", "in", "on", "the", "a", "an"})
+
+
+def do_not_use_patterns(facts: dict) -> list[re.Pattern]:
+    """One case-insensitive, whole-word pattern per DO NOT USE value of at least DNU_MIN_CHARS characters
+    (whitespace inside the value matches any whitespace). Whole word = not inside a longer word: "Asia" does not
+    match "Asian", "B" is too short to match at all."""
+    out = []
+    for e in facts.get("do_not_use") or []:
+        value = " ".join(str(e.get("value") or "").split())
+        if len(value) < DNU_MIN_CHARS:
+            continue
+        body = r"\s+".join(re.escape(w) for w in value.split())
+        out.append(re.compile(rf"(?<!\w){body}(?!\w)", re.I))
+    return out
+
+
+def _trim_do_not_use(line: str, pats: list[re.Pattern]) -> Optional[str]:
+    """The line without its DO NOT USE text (and the pointer words before it), or None when cutting would leave no
+    meaningful item: the text sits mid-phrase with no pointer word ("Visit Asia Gallery"), or the rest has no word
+    of 3+ letters, ends mid-phrase or starts as a fragment ("for visas")."""
+    from services.quality.s1_checks import _cut_mid_phrase
+
+    out = line
+    for rx in pats:
+        for m in re.finditer(rf"(?P<lead>{_DNU_LEAD_RE}){rx.pattern}", out, flags=re.I):
+            before, after = out[:m.start()].rstrip(), out[m.end():].strip(" ,;:.)")
+            if not (m.group("lead") or not before or before.endswith("(") or not after):
+                return None        # a name in the middle of a phrase ("Visit Asia Gallery"): cutting it mangles it
+        out = re.sub(rf"{_DNU_LEAD_RE}{rx.pattern}", " ", out, flags=re.I)
+    out = re.sub(r"\(\s*[,;:/&-]*\s*\)", " ", out)
+    out = " ".join(out.split())
+    out = re.sub(r"\s+([,;:.)])", r"\1", out)
+    prev = None
+    while prev != out:
+        prev = out
+        out = out.strip(" ,;:/&-–—")
+        words = out.split()
+        while words and words[-1].lower().strip(",;:.") in _DNU_TAIL_WORDS:
+            words.pop()
+        out = " ".join(words)
+    if (not re.search(r"[A-Za-z]{3,}", out) or _cut_mid_phrase(out)
+            or out.split()[0].lower() in _DNU_FRAGMENT_START):
+        return None
+    return out
+
+
+def drop_do_not_use(lines: list[str], facts: dict, trim: bool = False) -> list[str]:
+    """The verbatim source lines arm E copies, minus the DO NOT USE items (operator name, URL, e-mail, phone): code
+    copies them unseen, so code must keep the supplier out. Matching is whole-word and case-insensitive
+    (`do_not_use_patterns`). A line that carries an item is dropped; with `trim` (inclusion / exclusion items) only
+    the item and its pointer words are cut when the rest is still a meaningful item ("Guide from Lanka Trails Ltd"
+    → "Guide"), else the line is dropped."""
+    pats = do_not_use_patterns(facts)
+    out = []
+    for ln in lines:
+        if not any(rx.search(ln) for rx in pats):
+            out.append(ln)
+        elif trim:
+            kept = _trim_do_not_use(ln, pats)
+            if kept:
+                out.append(kept)
+    return out
 
 
 def fold_text(text: str) -> str:
@@ -416,8 +481,8 @@ def assemble_e_page(tour: dict, facts: dict, plan: dict, llm: dict) -> dict:
     summary = str(llm.get("hook") or "").strip()
     if glance:
         summary = (summary + "\n\n" if summary else "") + "At a glance\n" + "\n".join(f"- {g}" for g in glance)
-    inc = drop_do_not_use(item_lines(field_text(tour.get("inclusions"))), facts)
-    exc = drop_do_not_use(item_lines(field_text(tour.get("exclusions"))), facts)
+    inc = drop_do_not_use(item_lines(field_text(tour.get("inclusions"))), facts, trim=True)
+    exc = drop_do_not_use(item_lines(field_text(tour.get("exclusions"))), facts, trim=True)
     desc = []
     if inc:
         desc.append("Included:\n" + "\n".join(f"- {v}" for v in inc))
@@ -563,8 +628,8 @@ def meta_problems(meta_json: Optional[dict], tour: dict, facts: dict, forbidden:
     hits = sorted({w for w in forbidden if has_word(meta, w) or has_word(title, w)})
     if hits:
         out.append("forbidden words: " + ", ".join(hits))
-    names = sorted({e["value"] for e in facts.get("do_not_use") or [] if str(e.get("value") or "").strip()
-                    and fold_text(e["value"]) in fold_text(title + " " + meta)}
+    names = sorted({rx.search(title + " " + meta).group(0) for rx in do_not_use_patterns(facts)
+                    if rx.search(title + " " + meta)}
                    | ({"Adventure Asia"} if "adventure asia" in fold_text(title + " " + meta) else set()))
     if names:
         out.append("names the operator, a brand or a contact (white-label page): " + ", ".join(names))
