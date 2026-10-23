@@ -633,6 +633,18 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   `gh pr merge --auto` (auto-merge once checks pass). Agents must not push to `main` directly.
 - **CI gate parity (AA-879)**: `ci.yml` also runs **Frontend Build** and **Portal Build** (`tsc --noEmit` +
   `next build` of `frontend/` and `portal/`, no secret needed; meant to be required checks next to the 5).
+- **Secret scan (AA-981 follow-up)**: `secret-scan.yml`, check **gitleaks** on every PR (lines the PR adds, rules
+  and baseline from the base branch; a change to `.gitleaks.toml` / `.gitleaksignore` / either secret scan workflow /
+  `.github/CODEOWNERS` / any `.gitattributes`, or a new inline `gitleaks:allow`, needs the label `secret-scan-baseline-reviewed`, added after the last push: any later
+  push, reopen or label change removes it) and **gitleaks full history** (`secret-scan-history.yml`) nightly / on push to `main`
+  (branches, tags and pull request heads; merge commits, renames and type changes included, every file read as
+  text; historical findings pinned by commit in `.gitleaksignore`). A red result means the value is public: rotate
+  it, even if it was force-pushed away.
+  The PR check runs on `pull_request_target`: GitHub always runs the base branch's copy of the workflow and the PR
+  head is only read as data, so a PR cannot change the check that judges it. It also scans a squash preview of the PR
+  (what the squash merge writes), and it fails when another workflow has a job named `gitleaks`. `.gitleaks.toml`
+  carries a copy of the gitleaks v8.30.1 default rules and no path allowlist, so every file is scanned (`.svg`,
+  `go.sum`, `node_modules/`, images, lock files); UTF-16 files are transcoded to UTF-8 and scanned too.
   The image scan in **Docker Build Check** is blocking: Trivy fails on any fixable CRITICAL/HIGH finding
   (`ignore-unfixed`); an accepted one goes into `.trivyignore` with a `# reason` line and `exp:YYYY-MM-DD`
   ≤ 90 days ahead (`.github/scripts/check_trivyignore.py`). **Unit Tests** enforces a coverage ratchet
