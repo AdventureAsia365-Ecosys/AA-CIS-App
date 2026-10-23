@@ -161,3 +161,48 @@ Approved by Nghiệp in S247 (AA-816 S247 comment, AA-911). Three CIS branches, 
   `test_aa878_viewer_role.py`, `test_aa854_staff_bearer_middleware.py`, `test_aa911_preview_client_cap.py`,
   `test_s241_admin_routes_require_auth.py`, `test_aa680_booking_jwt.py`, `test_aa816_smoke_split.py`; flake8;
   frontend `tsc --noEmit` + eslint on the touched files; ad hoc `tsc --strict` on the changed e2e files.
+
+## Follow-up (S248): verify routes answer 401/403, never 500, on bad input
+
+Branch `fix/aa816-verify-admin-bad-body`. Found by the S248 live check of S2 (the flag itself was already off and
+deployed: api task definition without the env var, image `dev-5a54bd26`, HS256-shaped token → 401 "Password
+sessions are switched off").
+
+### Decisions
+
+- **Bodies that are not a JSON object answer 401 "Invalid token".** `POST /auth/verify-admin` and
+  `POST /auth/verify-tenant` with no body, a non-JSON body, non-UTF-8 bytes or a JSON array/string/null answered
+  500 (`request.json()` raised, or `.get` on a non-dict). A deeply nested body (`b"[" * 100000`, well inside
+  the API Gateway body limit) also answered 500: `json.loads` raises `RecursionError`, a `RuntimeError`, so the
+  helper catches `(ValueError, RecursionError)` (independent review, S248). One helper `_session_token_from_body` in `api/main.py`
+  parses the body for both routes; a missing or non-string `token` becomes `""`, so the rest of each route is
+  unchanged (verify-admin: malformed → legacy path → 401 while the flag is off; verify-tenant: `verify_jwt("")` →
+  401 "Invalid token").
+- **`/auth/verify-tenant` uses `verify_tenant_jwt`.** Staff HS256 tokens share `JWT_SECRET` but carry no `name` /
+  `plan_tier`, so a staff token reached `payload["name"]` and answered 500. It now answers 403 "Tenant token
+  required" (the helper the `/acp` tenant routes already use, AA-741). Tenant tokens always carry `role=tenant`
+  (`_create_jwt`), so no live tenant session is affected.
+
+### Changed
+
+- Not in the AA-816 S2 scope as written (the flag work was done in S247). Kept in the AA-816 lane because it is
+  the same route and was found by the S2 verification.
+
+### Tradeoffs
+
+- 401 (not 400/422) for a malformed body: both callers (CIS BFF `lib/auth-server.ts`, portal
+  `portal/lib/auth-server.ts`) treat any non-200 as "not signed in", and a 401 keeps the routes from telling a
+  prober anything about body parsing. The CIS BFF's `cognitoRoutes.ts` treats 401/403 as terminal, which is right
+  for a token it could not even send as JSON.
+
+### Should know
+
+- The BFFs always send `{"token": "..."}`, so no real caller sees a different answer; only probes and broken
+  clients move from 500 to 401/403. Fewer 5xx on `/auth/*` also keeps the API 5xx alarms quieter.
+- Tests: `tests/unit/test_aa816_s2_legacy_off.py` (new cases: 6 body shapes × 2 routes, 4 non-string tokens × 2
+  routes, staff token on verify-tenant → 403, tenant token → 200). 12 of the body cases failed before the fix.
+- **Legacy e2e helper** (`tests/e2e/helpers/auth.ts`, second commit): `loginAsAdmin` now fails at once with a
+  message naming S2 and the `smoke` / `smoke-public` projects when `/login` has no password form, instead of a
+  Playwright fill timeout. The 10 historical live-verify specs of the `chromium` project that use it (and
+  `cis.spec.ts`, which has its own copy) are left in place: no workflow runs them, and deleting them is test
+  hygiene for the bridge retirement (AA-911 P6b), when the HS256 path and the GitHub `E2E_ADMIN_*` secrets go too.
