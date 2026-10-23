@@ -1,0 +1,82 @@
+# gitleaks ignore list for AA-CIS-App (AA-981 follow-up): one finding fingerprint per line, for a single known false
+# positive that a narrow allowlist entry in .gitleaks.toml cannot express. Read by .github/workflows/secret-scan.yml.
+#
+# Fingerprint format (printed by gitleaks with --redact, never the value itself):
+#   PR / history scan:  <commit sha>:<file>:<rule id>:<line>
+#   working-tree scan:  <file>:<rule id>:<line>
+# Add a short comment above each entry: what the value is and why it is not a secret. Never write the value here.
+# A real secret is never ignored here: remove it, rotate it, then pin the old commit.
+# A change to this file needs the PR label `secret-scan-baseline-reviewed` (see the workflow header).
+
+# --- Full-history baseline (AA-981 follow-up, S248): every finding of the first full-history scan with
+# .gitleaks.toml (branches, tags and pull request heads). Each entry is pinned to its commit, so the same
+# file/line in any later commit is still reported. Triage is in the private record (Linear AA-981), not here.
+
+# CI service-container values: the throwaway Postgres of the CI job (DSN, PGPASSWORD) and test-only
+# env values (JWT secret, OpenAI key placeholder); README repeats the CI DSN for local runs.
+0e22e73b438ce257d6b85b42696062c2c03afb42:.github/workflows/ci.yml:credential-key-literal:160
+0e22e73b438ce257d6b85b42696062c2c03afb42:.github/workflows/ci.yml:credential-key-literal:83
+66c8764e523d572609259cf5aa6a3b97468f5de7:.github/workflows/ci.yml:credential-key-literal:115
+66c8764e523d572609259cf5aa6a3b97468f5de7:.github/workflows/ci.yml:credential-key-literal:116
+7fc5300c177cd2f0075bb79a8c1f460dd295e67c:.github/workflows/ci.yml:credential-key-literal:115
+7fc5300c177cd2f0075bb79a8c1f460dd295e67c:.github/workflows/ci.yml:credential-key-literal:116
+94cfd5650c3fed2538805787d4ad548e208d1a0d:.github/workflows/ci.yml:credential-key-literal:130
+94cfd5650c3fed2538805787d4ad548e208d1a0d:.github/workflows/ci.yml:credential-key-literal:56
+94cfd5650c3fed2538805787d4ad548e208d1a0d:.github/workflows/ci.yml:uri-embedded-credentials:114
+94cfd5650c3fed2538805787d4ad548e208d1a0d:.github/workflows/ci.yml:uri-embedded-credentials:126
+b18166db4c0287af6e8c1786065d3de92c073a7d:.github/workflows/ci.yml:credential-key-literal:160
+b18166db4c0287af6e8c1786065d3de92c073a7d:.github/workflows/ci.yml:credential-key-literal:83
+b2f133d15cc92c3f953d6496a8230a3170d0d652:.github/workflows/ci.yml:credential-key-literal:117
+b45ceeb194989254fa0c260b71078ee730711c32:.github/workflows/ci.yml:credential-key-literal:115
+b45ceeb194989254fa0c260b71078ee730711c32:.github/workflows/ci.yml:credential-key-literal:116
+df8924179029c6bacefa50937afe129bfc85245c:README.md:uri-embedded-credentials:59
+e115e4a439a5ea8ad93fa9447b3988d6405d3f0c:README.md:uri-embedded-credentials:59
+
+# Docstring example of the config shape: a PEM header placeholder, no key material.
+59bd78fa5ffd83c23bf8951d1ace66576667b0f9:api/core/booking_jwt.py:private-key:11
+c51f889374685d52e9f67c60c40e54c9b3c8d04d:api/core/booking_jwt.py:private-key:11
+
+# Local UAT docker compose: database password of a throwaway local container.
+3ef9d509352bb9e2283b74e4b5529ba876d97550:docker/wordpress-uat/docker-compose.yml:credential-key-literal:10
+3ef9d509352bb9e2283b74e4b5529ba876d97550:docker/wordpress-uat/docker-compose.yml:credential-key-literal:20
+
+# curl examples in an audit note; the header value is a placeholder.
+337766139b7eaae1d77639fdbbaf85c0e124dfc1:docs/claude_audit/AA-432-api-gateway-401-step0.md:curl-auth-header:84
+337766139b7eaae1d77639fdbbaf85c0e124dfc1:docs/claude_audit/AA-432-api-gateway-401-step0.md:curl-auth-header:94
+428e2b7db5375f5d10b99fc85ef0bba70137783c:docs/claude_audit/AA-432-api-gateway-401-step0.md:curl-auth-header:84
+428e2b7db5375f5d10b99fc85ef0bba70137783c:docs/claude_audit/AA-432-api-gateway-401-step0.md:curl-auth-header:94
+
+# AA-433 implementation note: request examples. Handling is in the private record (Linear AA-981).
+05c6d4e42e4d4cc15450465ba153599d53175435:docs/implementation-notes/AA-433-rotate-wanderlux-key.md:generic-api-key:108
+05c6d4e42e4d4cc15450465ba153599d53175435:docs/implementation-notes/AA-433-rotate-wanderlux-key.md:generic-api-key:111
+05c6d4e42e4d4cc15450465ba153599d53175435:docs/implementation-notes/AA-433-rotate-wanderlux-key.md:generic-api-key:128
+c464c57e70efda77660deea5621535156a41822f:docs/implementation-notes/AA-433-rotate-wanderlux-key.md:generic-api-key:108
+c464c57e70efda77660deea5621535156a41822f:docs/implementation-notes/AA-433-rotate-wanderlux-key.md:generic-api-key:111
+c464c57e70efda77660deea5621535156a41822f:docs/implementation-notes/AA-433-rotate-wanderlux-key.md:generic-api-key:128
+
+# Prose in an implementation note that the generic rule reads as a key.
+0b7f1cb9cf5916fea08021e1bf0b72abe8b2df62:docs/implementation-notes/AA-680.md:generic-api-key:85
+c51f889374685d52e9f67c60c40e54c9b3c8d04d:docs/implementation-notes/AA-680.md:generic-api-key:85
+
+# Mock tenant data of an early UI prototype (hard-coded sample, not a key of any system).
+c5c35a551d3e8a15e8d6afcd5d0a312b7462d5b9:frontend/app/(tenant)/portal/page.tsx:generic-api-key:7
+
+# Synthetic test values: fake secrets and keys, DSNs on localhost / 127.0.0.1 / db.internal.
+1474416efcd40c5d1f5724d11f75a8ac93576ba5:tests/integration/test_aa412_produce_history_piece_review.py:generic-api-key:146
+347e66b12929d7be1eaaa001f71e658e1b189083:tests/integration/test_aa884_audit_rows.py:generic-api-key:33
+44443ec8e14ddd0d9b988a08430a38419be4b4cc:tests/unit/test_aa712_geoapify.py:generic-api-key:19
+46b77d333e7df26f88798c03606d7591fecbd422:tests/unit/test_aa712_geoapify.py:generic-api-key:19
+5b94f55be9bc5104ae1c441ac6c94a5def343ed4:tests/unit/test_aa871_request_id_json_logs.py:generic-api-key:368
+5b94f55be9bc5104ae1c441ac6c94a5def343ed4:tests/unit/test_aa871_request_id_json_logs.py:uri-embedded-credentials:362
+5b94f55be9bc5104ae1c441ac6c94a5def343ed4:tests/unit/test_aa871_request_id_json_logs.py:uri-embedded-credentials:363
+5efca2f83c1621c6d451289d4ffcc16377c912ff:tests/integration/test_aa847_admin_places_validity.py:generic-api-key:39
+665001e945ae9c6de0f971ae5f523ab4b70d8c8c:tests/integration/test_tenant_config_service.py:uri-embedded-credentials:17
+69fa2d3f86011a27f99982636f4add8ba8102640:tests/integration/test_aa884_audit_rows.py:generic-api-key:33
+8385f0db329724c623029ef3aad42e5a646b6600:tests/integration/test_aa847_admin_places_validity.py:generic-api-key:42
+9343df3af32db684b6d6ab73ca66c5fafde921b2:tests/unit/test_auth_tenant_api_key.py:generic-api-key:31
+babc680d0ad4ad0504d2f72125e14c660030bc2a:tests/integration/test_export_service.py:uri-embedded-credentials:14
+da21b48b3b3a4b5acd890fd660969d7186ee5a61:tests/integration/test_aa412_produce_history_piece_review.py:generic-api-key:139
+e054ef56323d9d79dc13864ecd0c8cc7465a3b88:tests/unit/test_aa871_request_id_json_logs.py:generic-api-key:368
+e054ef56323d9d79dc13864ecd0c8cc7465a3b88:tests/unit/test_aa871_request_id_json_logs.py:uri-embedded-credentials:362
+e054ef56323d9d79dc13864ecd0c8cc7465a3b88:tests/unit/test_aa871_request_id_json_logs.py:uri-embedded-credentials:363
+ffa78aefa4e88ec83def8938768c1f3b47bba6dc:tests/integration/test_007_rls_isolation.py:uri-embedded-credentials:26

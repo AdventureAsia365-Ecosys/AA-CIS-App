@@ -67,6 +67,13 @@ CI (`.github/workflows/ci.yml`) requires Lint, Security Audit, Unit Tests, Integ
 Docker Build Check; `vercel-deploy.yml` deploys the frontend preview and then runs a Playwright UI
 smoke on it.
 
+Secret scan (`.github/workflows/secret-scan.yml`, AA-981 follow-up): check **gitleaks** on every PR
+(the lines the PR adds; rules and baseline read from the base branch) and **gitleaks full history**
+nightly, on push to `main` and on demand (every branch, tag and pull request head). Rules in
+`.gitleaks.toml` (same as the root repo), reviewed findings pinned by commit in `.gitleaksignore`. A
+PR that changes either file fails until a reviewer adds the label `secret-scan-baseline-reviewed`.
+Local commands are in the workflow header.
+
 ## Deploy
 
 - **Backend:** merge to `main` → `Deploy Dev` (`.github/workflows/deploy-dev.yml`): pre-deploy job
