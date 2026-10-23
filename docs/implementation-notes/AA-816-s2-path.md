@@ -199,3 +199,8 @@ sessions are switched off").
   clients move from 500 to 401/403. Fewer 5xx on `/auth/*` also keeps the API 5xx alarms quieter.
 - Tests: `tests/unit/test_aa816_s2_legacy_off.py` (new cases: 6 body shapes × 2 routes, 4 non-string tokens × 2
   routes, staff token on verify-tenant → 403, tenant token → 200). 12 of the body cases failed before the fix.
+- **Legacy e2e helper** (`tests/e2e/helpers/auth.ts`, second commit): `loginAsAdmin` now fails at once with a
+  message naming S2 and the `smoke` / `smoke-public` projects when `/login` has no password form, instead of a
+  Playwright fill timeout. The 10 historical live-verify specs of the `chromium` project that use it (and
+  `cis.spec.ts`, which has its own copy) are left in place: no workflow runs them, and deleting them is test
+  hygiene for the bridge retirement (AA-911 P6b), when the HS256 path and the GitHub `E2E_ADMIN_*` secrets go too.

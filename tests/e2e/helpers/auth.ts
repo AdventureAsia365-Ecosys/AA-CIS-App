@@ -5,6 +5,12 @@
 //
 // Why a shared helper: 23 spec files each inlined the same username/password pair. A credential
 // in version control is a standing leak and a rotation blocker — one helper, one env source.
+//
+// AA-816 S2 (22/10/2026): the password login is OFF on every CIS host (the API refuses HS256 staff sessions, the
+// /login page has no password form). The specs of the `chromium` project that use this helper are historical
+// live-verify specs; no workflow runs them and they cannot pass against a deployed host. Signed-in checks run in
+// the `smoke` / `cognito` projects (Cognito E2E user, from main). Kept only for the rollback window
+// (root docs/ops/runbooks/legacy-login-flag.md) and removed with the HS256 path (AA-911 P6b).
 import type { Page } from '@playwright/test';
 
 /** Read a required env var or throw a clear message naming it (never echo the value). */
@@ -34,6 +40,12 @@ export function adminPassword(): string {
  */
 export async function loginAsAdmin(page: Page): Promise<void> {
   await page.goto('/login');
+  if ((await page.locator('input[type="password"]').count()) === 0) {
+    throw new Error(
+      'No password form on /login: the legacy staff login is off since AA-816 S2. ' +
+        'Use --project=smoke (Cognito E2E user, CI from main) or --project=smoke-public.',
+    );
+  }
   await page.fill('input[type="text"]', adminUsername());
   await page.fill('input[type="password"]', adminPassword());
   await page.click('button:has-text("Login")');
