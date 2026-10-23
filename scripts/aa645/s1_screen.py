@@ -51,16 +51,20 @@ from typing import Any, Optional
 
 sys.path.insert(0, os.getcwd())
 
+from scripts.aa645.gates import gate_label, is_report, page_gate_codes  # noqa: E402
+
 STAGE = "adhoc_aa645"
 S3_PREFIX = "scripts/out/aa645"
 DEFAULT_MODELS = "haiku-5-5,gpt-6-luna,sonnet-5-5"
 ARMS_ALL = ("aplus", "aplus2", "w", "e")      # aplus2 = A' (A+ run again: the A/A noise check of run 1)
-GATE_CODES = ("DAY_", "META_CUT", "META_LENGTH", "TEXT_TRUNCATED", "NUMBER_NOT_IN_SOURCE", "INCLUSION_CONTRADICTED")
-REPORT_CODES = ("NUMBER_NOUN_MISMATCH", "NAME_NOT_IN_SOURCE", "DAY_PLACE_MISMATCH")
 MASTER_TENANT_ID = "00000000-0000-0000-0000-000000000001"
-# One unit's worst case before it starts (a Sonnet writer + meta + retry on a long tour), per model family.
-UNIT_MARGIN_USD = {"sonnet": 0.20, "opus": 0.60}
-UNIT_MARGIN_DEFAULT = 0.05
+# One unit's worst case (writer + meta + meta retry, every call at max_tokens) is reserved before it starts:
+# output = WRITER_MAX_TOKENS + 2 x META_MAX_TOKENS at the catalog output price, input = this allowance at the input
+# price (3 calls x a long fact sheet; golden max ≈ 8k tokens). Sonnet 5.5 ($2 / $10): ≈ $0.31.
+UNIT_INPUT_TOKENS = 36_000
+# When the catalog has no price for the key (legacy key, catalog unreadable): per family, else the most expensive.
+UNIT_MARGIN_USD = {"opus": 1.20, "sonnet": 0.47, "haiku": 0.16}
+UNIT_MARGIN_DEFAULT = 0.47
 
 CANDIDATES_SQL = """
 SELECT rt.tour_id::text AS tour_id, rt.src_name, rt.src_subtitle, rt.src_summary, rt.src_description,
@@ -185,6 +189,35 @@ async def load_db(args) -> tuple[list[dict], dict]:
     return picked, brand
 
 
+async def load_brand_standalone() -> dict:
+    """`--aplus-brand` with a non-DB source (fixture / pages): the brand rule still comes from the DB."""
+    import asyncpg
+
+    if not os.environ.get("DATABASE_URL"):
+        raise SystemExit("--aplus-brand needs DATABASE_URL (the A1 brand rule is read from the DB)")
+    conn = await asyncpg.connect(os.environ["DATABASE_URL"], ssl="require")
+    try:
+        return await load_brand(conn)
+    finally:
+        await conn.close()
+
+
+def load_inputs(args) -> tuple[list[dict], dict]:
+    """(samples, brand) for any source. `--aplus-brand` loads the A1 brand rule whatever the source, and an empty
+    rule stops the run (A+ without it is not today's prompt)."""
+    brand: dict = {}
+    if args.source == "db":
+        samples, brand = asyncio.run(load_db(args))
+    else:
+        samples = load_fixture(args) if args.source == "fixture" else load_pages_file(args.pages, args.sample,
+                                                                                      args.seed)
+        if args.aplus_brand:
+            brand = asyncio.run(load_brand_standalone())
+    if args.aplus_brand and not brand:
+        raise SystemExit("--aplus-brand: no A1 brand rule found for the master tenant")
+    return samples, brand
+
+
 async def load_brand(conn) -> dict:
     """The A1 brand rule fields today's writer reads (s1_batch._load_prompt_state, without the SEO fetch)."""
     from api.routers.admin_pipeline import _resolve_brand_rule
@@ -229,22 +262,67 @@ def load_pages_file(path: str, n: int, seed: str) -> list[dict]:
 # ------------------------------------------------------------------ spend
 
 class Spend:
+    """Billed $ of this process + the worst-case reservations of the units running now. A unit starts only when
+    spent + every running unit's reservation + its own fits under the cap, so concurrency cannot overshoot it."""
+
     def __init__(self) -> None:
-        self._lock = threading.Lock()
+        self._cv = threading.Condition()
         self.usd = 0.0
         self.calls = 0
+        self.reserved = 0.0
 
     def add(self, usd: float) -> None:
-        with self._lock:
+        with self._cv:
             self.usd += float(usd or 0.0)
             self.calls += 1
+
+    def reserve(self, amount: float, cap: float) -> bool:
+        """Hold `amount` for one unit. Waits while running units hold the room; False when even alone it would
+        pass the cap (spent + amount > cap): the unit is skipped."""
+        with self._cv:
+            while True:
+                if self.usd + amount > cap + 1e-12:
+                    return False
+                if self.usd + self.reserved + amount <= cap + 1e-12:
+                    self.reserved += amount
+                    return True
+                self._cv.wait()
+
+    def release(self, amount: float) -> None:
+        """The unit is done: its real cost is already in `usd`; the rest of its reservation goes back."""
+        with self._cv:
+            self.reserved = max(0.0, self.reserved - amount)
+            self._cv.notify_all()
 
 
 SPEND = Spend()
 
 
 def unit_margin(model: str) -> float:
+    """Worst-case $ of one unit of `model` from the catalog prices; the family table when the catalog has none."""
+    from services.content_generation.s1_writer_v2 import META_MAX_TOKENS, WRITER_MAX_TOKENS
+
+    try:
+        from shared.llm_client.catalog import get_model_sync
+        m = get_model_sync(model)
+    except Exception:  # noqa: BLE001 — no catalog → the conservative table
+        m = None
+    if m is not None and m.price_in_per_mtok is not None and m.price_out_per_mtok is not None:
+        out_tokens = WRITER_MAX_TOKENS + 2 * META_MAX_TOKENS
+        return round((out_tokens * m.price_out_per_mtok + UNIT_INPUT_TOKENS * m.price_in_per_mtok) / 1_000_000, 4)
     return next((v for k, v in UNIT_MARGIN_USD.items() if k in model), UNIT_MARGIN_DEFAULT)
+
+
+def run_capped(client, run_id: str, unit: dict, sample: dict, ctx: dict, cap: float, spend: Spend = None) -> dict:
+    """`run_unit` under the cost cap: reserve the unit's worst case first, release it when the unit is done."""
+    spend = spend or SPEND
+    margin = unit_margin(unit["model"])
+    if not spend.reserve(margin, cap):
+        return {**unit, "error": "skipped_cost_cap", "calls": [], "n_calls": 0, "cost_usd": 0.0}
+    try:
+        return run_unit(client, run_id, unit, sample, ctx)
+    finally:
+        spend.release(margin)
 
 
 # ------------------------------------------------------------------ one unit (tour × model × arm)
@@ -253,6 +331,7 @@ def llm_call(client, run_id: str, unit: dict, call: str, system: str, user: str,
     """One model call through the gateway, logged as adhoc_aa645 / writer. Returns the call record with the reply
     text; a gateway error is recorded (the gateway logs a billed-but-unusable attempt itself)."""
     from shared.llm_client.call_log import record_call_sync
+    from shared.llm_client.client import _billed_usage_of
     from shared.llm_client.models import LLMRequest
     from services.content_generation.s1_writer_v2 import parse_json
 
@@ -263,6 +342,18 @@ def llm_call(client, run_id: str, unit: dict, call: str, system: str, user: str,
                                           stage=STAGE, max_tokens=max_tokens))
     except Exception as e:  # noqa: BLE001 — recorded per unit, the run goes on
         rec.update(error=str(e)[:500], latency_s=round(time.monotonic() - t0, 1))
+        # AA-927: billed but unusable (e.g. cut at max_tokens, invalid JSON) — the gateway already wrote its
+        # llm_call_log rows (gateway_attempt / billed_unusable), so no record_call_sync here; the money still counts
+        # against the cap and in the unit's cost, and its stop_reason reaches writer_stop_max_tokens.
+        billed = _billed_usage_of(e)
+        if billed:
+            for b in billed:
+                SPEND.add(b.get("cost_usd") or 0.0)
+            rec.update(billed_unusable=True, cost_usd=round(sum(b.get("cost_usd") or 0.0 for b in billed), 6),
+                       stop_reason=billed[-1].get("stop_reason"),
+                       tokens_in=sum(b.get("tokens_in") or 0 for b in billed),
+                       tokens_out=sum(b.get("tokens_out") or 0 for b in billed),
+                       model_used=billed[-1].get("model"))
         return rec
     parsed = parse_json(resp.content)
     SPEND.add(resp.cost_usd)
@@ -282,6 +373,7 @@ def llm_call(client, run_id: str, unit: dict, call: str, system: str, user: str,
 
 
 COVERAGE_SKIP_UNITS = frozenset({"day", "night", "week"})   # the trip length: structure, written as words
+_DAY_REF_RE = re.compile(r"\bDays?\s+\d+(?:\s*(?:[-–—]|to|and)\s*\d+)?", re.I)
 
 
 def figure_coverage(facts: dict, page: dict) -> Optional[float]:
@@ -297,6 +389,7 @@ def figure_coverage(facts: dict, page: dict) -> Optional[float]:
         return None
     text = " ".join(field_text(page.get(f)) for f in ("subtitle", "summary", "description", "highlights",
                                                       "itineraries", "seo_meta"))
+    text = _DAY_REF_RE.sub(" ", text)          # "Day 3 — …", "Days 2–3": structure, not a figure
     have = set(re.findall(r"\d+(?:[.,]\d+)?", text))
     return round(len({n for n in nums if n in have}) / len(nums), 3)
 
@@ -331,9 +424,10 @@ def run_unit(client, run_id: str, unit: dict, sample: dict, ctx: dict) -> dict:
     m1 = llm_call(client, run_id, unit, "meta", msys, muser, v2.META_MAX_TOKENS)
     out["calls"].append({k: v for k, v in m1.items() if k != "parsed"})
     meta_json = m1.get("parsed")
-    problems = v2.meta_problems(meta_json, tour, facts, ctx["forbidden"]) if m1["ok"] else ["no answer"]
+    problems = v2.meta_problems(meta_json, tour, facts, ctx["forbidden"]) if m1["ok"] else (
+        ["the answer is not the JSON object asked for"] if "error" not in m1 else ["no answer"])
     out["meta_first_problems"] = problems
-    if problems and m1["ok"]:
+    if problems:       # one retry, also after an unparsable or failed first answer (still ≤ 3 calls)
         m2 = llm_call(client, run_id, unit, "meta_retry", msys, muser + v2.meta_retry_prompt(meta_json, problems),
                       v2.META_MAX_TOKENS)
         out["calls"].append({k: v for k, v in m2.items() if k != "parsed"})
@@ -371,10 +465,6 @@ def stored_unit(sample: dict) -> Optional[dict]:
 
 # ------------------------------------------------------------------ summary + panel packet
 
-def gate_hit(code: str) -> bool:
-    return code.startswith(GATE_CODES)
-
-
 def summarize(units: list[dict]) -> dict:
     groups: dict[str, list[dict]] = defaultdict(list)
     for u in units:
@@ -384,14 +474,13 @@ def summarize(units: list[dict]) -> dict:
         ok = [u for u in us if not u.get("error")]
         gates, reports = Counter(), Counter()
         for u in ok:
-            codes = {f["code"] for f in u.get("findings") or [] if f["code"] != "SOURCE_DAY_CONTRADICTION"}
-            gates.update({("DAY_*" if c.startswith("DAY_") else c) for c in codes if gate_hit(c)})
-            reports.update({c for c in codes if c in REPORT_CODES})
+            gates.update({gate_label(c) for c in page_gate_codes(u.get("findings"))})
+            reports.update({f["code"] for f in u.get("findings") or [] if is_report(f["code"])})
         cov = [u["figure_coverage"] for u in ok if u.get("figure_coverage") is not None]
         paid = [u for u in us if u["arm"] != "stored"]
         out[key] = {
             "units": len(us), "errors": len(us) - len(ok),
-            "pages_with_any_gate_code": sum(1 for u in ok if any(gate_hit(f["code"]) for f in u.get("findings") or [])),
+            "pages_with_any_gate_code": sum(1 for u in ok if page_gate_codes(u.get("findings"))),
             "gate_codes_pages": dict(sorted(gates.items())), "report_codes_pages": dict(sorted(reports.items())),
             "figure_coverage_mean": round(sum(cov) / len(cov), 3) if cov else None,
             "calls_per_tour": round(sum(u["n_calls"] for u in paid) / len(paid), 2) if paid else 0,
@@ -401,6 +490,7 @@ def summarize(units: list[dict]) -> dict:
             "meta_final_ok": sum(1 for u in ok if u.get("meta_final_problems") == []),
             "writer_stop_max_tokens": sum(1 for u in us for c in u["calls"]
                                           if c["call"] == "write" and c.get("stop_reason") in ("max_tokens", "length")),
+            "billed_unusable_calls": sum(1 for u in us for c in u["calls"] if c.get("billed_unusable")),
         }
     return out
 
@@ -503,11 +593,14 @@ def parse_args(argv=None):
     ap.add_argument("--limit", type=int, default=0, help="first N tours only (the 3-tour trial)")
     ap.add_argument("--background", choices=("allow", "forbid"), default="allow")
     ap.add_argument("--examples", help="JSON list of reference examples (private root repo)")
-    ap.add_argument("--aplus-brand", action="store_true", help="load the A1 brand rule for A+ (DB)")
+    ap.add_argument("--aplus-brand", action="store_true",
+                    help="load the A1 brand rule for A+ from the DB (any --source; needs DATABASE_URL)")
     ap.add_argument("--max-cost-usd", type=float, default=3.0)
     ap.add_argument("--concurrency", type=int, default=3)
     ap.add_argument("--run-id")
-    ap.add_argument("--resume", action="store_true")
+    ap.add_argument("--resume", action="store_true", help="skip the units already written for --run-id")
+    ap.add_argument("--retry-errors", action="store_true",
+                    help="with --resume, run again the written units that ended in an error (paid)")
     ap.add_argument("--out", default="/tmp/aa645")
     ap.add_argument("--s3", action="store_true")
     ap.add_argument("--panel-include-stored", action="store_true")
@@ -525,13 +618,7 @@ def main(argv=None) -> int:
     if bad:
         raise SystemExit(f"unknown arm(s) {bad}; one of {ARMS_ALL}")
     models = [m.strip() for m in args.models.split(",") if m.strip()]
-    brand: dict = {}
-    if args.source == "db":
-        samples, brand = asyncio.run(load_db(args))
-    elif args.source == "fixture":
-        samples = load_fixture(args)
-    else:
-        samples = load_pages_file(args.pages, args.sample, args.seed)
+    samples, brand = load_inputs(args)
     if args.limit:
         samples = samples[: args.limit]
     ctx = {"brand": brand, "forbidden": all_forbidden(brand.get("brand_forbidden_words")),
@@ -541,6 +628,8 @@ def main(argv=None) -> int:
     sink.put("samples.json", [{"sample_id": s["sample_id"], "tour_id": s.get("tour_id"),
                                "name": s["tour"].get("name"), "duration": s["tour"].get("duration")} for s in samples])
     done = sink.existing() if args.resume else {}
+    if args.retry_errors:
+        done = {k: v for k, v in done.items() if v.get("error") is None}
     units = [{"key": safe_key(s["sample_id"], a, m), "sample_id": s["sample_id"], "arm": a, "model": m}
              for s in samples for m in models for a in arms]
     todo = [u for u in units if u["key"] not in done]
@@ -563,9 +652,7 @@ def main(argv=None) -> int:
     skipped = []
 
     def go(u):
-        if SPEND.usd + unit_margin(u["model"]) > args.max_cost_usd:
-            return {**u, "error": "skipped_cost_cap", "calls": [], "n_calls": 0, "cost_usd": 0.0}
-        return run_unit(client, run_id, u, by_id[u["sample_id"]], ctx)
+        return run_capped(client, run_id, u, by_id[u["sample_id"]], ctx, args.max_cost_usd)
 
     with ThreadPoolExecutor(max_workers=max(1, args.concurrency)) as ex:
         futs = {ex.submit(go, u): u for u in todo}
