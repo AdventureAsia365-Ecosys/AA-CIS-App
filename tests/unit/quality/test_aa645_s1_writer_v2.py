@@ -261,7 +261,8 @@ def test_drop_do_not_use_matches_whole_words_and_ignores_short_values():
 def test_drop_do_not_use_trims_inclusion_items_when_the_rest_still_stands():
     facts = {"do_not_use": [{"value": "Lanka Trails Ltd"}, {"value": "+94 77 123 4567"},
                             {"value": "info@lt.example"}, {"value": "Asia"}]}
-    lines = ["Guide from Lanka Trails Ltd", "Guide from Lanka Trails Ltd and transfers", "Pickup (call +94 77 123 4567)",
+    lines = ["Guide from Lanka Trails Ltd", "Guide from Lanka Trails Ltd and transfers",
+             "Pickup (call +94 77 123 4567)",
              "Boat operated by Lanka Trails Ltd", "Tel: +94 77 123 4567", "Contact info@lt.example for visas",
              "Transfers by Lanka Trails Ltd, with the", "Visit Asia Gallery", "Breakfast"]
     assert v2.drop_do_not_use(lines, facts, trim=True) == ["Guide", "Guide and transfers", "Pickup", "Boat",

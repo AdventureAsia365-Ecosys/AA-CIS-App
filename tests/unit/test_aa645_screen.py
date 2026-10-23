@@ -389,7 +389,8 @@ def test_pick_excludes_a_model_that_errored_on_every_unit_without_hiding_the_oth
     got = score_screen.pick(table)
     assert got["pick"] == "w|haiku" and got["gate_clean_pick"] is True
     assert got["rows"]["w|luna"]["eligible"] is False
-    assert got["rows"]["w|luna"]["excluded_reason"] == "3 writer error(s); 0/3 samples of the arm completed and panel-scored"
+    assert got["rows"]["w|luna"]["excluded_reason"] == (
+        "3 writer error(s); 0/3 samples of the arm completed and panel-scored")
 
 
 def test_pick_excludes_a_trial_only_model_instead_of_shrinking_the_common_set():
