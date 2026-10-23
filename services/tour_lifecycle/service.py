@@ -18,7 +18,8 @@ dismisses pending reviews of dead versions (all pending reviews of the key when 
 lifecycle event when the derived state of the key (gold_aa_internal.v_tour_liveness) changed; cancels queued T2 / T8 /
 T9 jobs of a retired or paused key; notifies every tenant with a derivative when the key becomes retired
 (tour.discontinued) and every tenant still holding that warning when it is served again (tour.reinstated). After
-commit the caller runs services.tour_lifecycle.effects.run_after_commit (recompute, place graph, job hooks).
+commit the caller runs services.tour_lifecycle.effects.run_after_commit (recompute, place graph, trip pages, job
+hooks).
 
 Not here (ADR 0015 slices): tenant reading of the notifications and the 409s on tenant routes (L3), the catalog
 tombstone views (L4), Booking's staff notification for confirmed bookings (L5: CIS cannot read booking.*).
@@ -130,6 +131,19 @@ _MASTER_SQL = """
 """
 
 
+# The source row of a Master / a publish, locked FOR SHARE until the action's transaction ends. Every writer of the
+# source row (retire_source, restore_source, set_active, supersede) takes a row lock on it (FOR UPDATE, or the UPDATE
+# itself), so it waits for this transaction, and this one waits for it: activate_master and publish re-check liveness
+# under the lock and never put an active Master over a source that a concurrent retire / supersede just killed.
+# Lock order: the source row first, then the Master row (retire_source does the same), so the two never deadlock.
+_LOCK_SOURCE_SQL = """
+    SELECT source_status::text AS source_status, deleted_at
+      FROM silver_aa_internal.raw_tours
+     WHERE tour_id = $1::uuid
+       FOR SHARE
+"""
+
+
 def _uuid_or_none(value) -> Optional[str]:
     try:
         return str(uuid.UUID(str(value)))
@@ -145,6 +159,16 @@ async def _version(conn, tour_id) -> Optional[asyncpg.Record]:
 async def _master(conn, tour_id) -> Optional[asyncpg.Record]:
     tid = _uuid_or_none(tour_id)
     return await conn.fetchrow(_MASTER_SQL, tid) if tid else None
+
+
+async def _locked_source_state(conn, tour_id) -> SourceState:
+    """The liveness of `tour_id`'s source row, read under FOR SHARE (see _LOCK_SOURCE_SQL). Call inside the action's
+    transaction, before the Master row is locked."""
+    tid = _uuid_or_none(tour_id)
+    row = await conn.fetchrow(_LOCK_SOURCE_SQL, tid) if tid else None
+    if row is None:
+        return SourceState(tour_id=str(tour_id), exists=False)
+    return SourceState(tour_id=tid, exists=True, source_status=row["source_status"], deleted_at=row["deleted_at"])
 
 
 async def key_of(conn, tour_id) -> Optional[str]:
@@ -551,14 +575,12 @@ async def activate_master(conn, tour_id, *, actor: str = "admin") -> Outcome:
     """Set Active. Refused when the source version is not live (409 source_not_live): a deleted tour comes back only
     through restore_source."""
     async with conn.transaction():
+        # Source first (FOR SHARE), then the Master: a concurrent retire / supersede of this source either commits
+        # before (and the check below refuses) or waits for this commit (and its switch-off sees this active Master).
+        state = await _locked_source_state(conn, tour_id)
         out, m = await _master_outcome(conn, "activate_master", tour_id)
         if m["master_status"] == "trashed":
             raise LifecycleError(409, "master_trashed", "this Master is in the trash. Restore it first.")
-        src = await conn.fetchrow("SELECT source_status::text AS source_status, deleted_at "
-                                  "FROM silver_aa_internal.raw_tours WHERE tour_id = $1::uuid", out.tour_id)
-        state = SourceState(tour_id=out.tour_id, exists=src is not None,
-                            source_status=src["source_status"] if src else None,
-                            deleted_at=src["deleted_at"] if src else None)
         if not state.live:
             msg = source_not_live_message(state, "activate this Master").split(": ", 1)[1]
             if state.reason in ("trashed", "deleted"):
@@ -620,11 +642,19 @@ async def restore_master(conn, tour_id, *, actor: str = "admin") -> Outcome:
 # ── inserts ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 async def publish(conn, data: dict, *, tenant_slug: str = "aa_internal", actor: str = "pipeline") -> Outcome:
-    """The Master insert of process_export (the caller has checked the source is live, L1). Closes a paused /
-    retired key with `restored` (reason publish) and switches off any other active Master of the key."""
+    """The Master insert of process_export. Closes a paused / retired key with `restored` (reason publish) and
+    switches off any other active Master of the key.
+
+    The caller checked the source is live (L1) before its own reads; this re-checks it under FOR SHARE inside the
+    transaction (409 source_not_live), so a retire / supersede that commits between that check and this insert is
+    refused here, and one that starts after the lock waits for this commit and then switches the new Master off."""
     from shared.repository.published_catalog_repository import PublishedCatalogRepository
     async with conn.transaction():
         tour_id = str(data["tour_id"])
+        state = await _locked_source_state(conn, tour_id)
+        if not state.live:
+            raise LifecycleError(409, "source_not_live",
+                                 source_not_live_message(state, "publish to Master Content").split(": ", 1)[1])
         out = Outcome("publish", tour_id, await key_of(conn, tour_id), str(data.get("aa_name") or ""))
         out.before = await served_state(conn, out.source_id)
         out.extra["catalog_id"] = await PublishedCatalogRepository(conn, tenant_slug).insert(data)

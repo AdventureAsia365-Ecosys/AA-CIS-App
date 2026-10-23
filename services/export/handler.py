@@ -4,7 +4,7 @@ import json
 import os
 import structlog
 from shared.secrets import get_database_url
-from shared.tour_liveness import SourceNotLiveError, SourceState
+from shared.tour_liveness import SOURCE_NOT_LIVE, SourceNotLiveError, SourceState, source_state
 
 logger = structlog.get_logger()
 
@@ -358,9 +358,10 @@ async def process_export(version_id: str) -> dict:
         # tour. Every publish path (review approve, the S1 auto-export) goes through here.
         src = SourceState(tour_id=str(tour_id), exists=True, source_status=row.pop("src_source_status"),
                           deleted_at=row.pop("src_deleted_at"))
-        if not src.live:
+
+        async def _refuse_not_live(state: SourceState) -> None:
             logger.warning("export_refused_source_not_live", version_id=version_id, tour_id=str(tour_id),
-                           reason=src.reason)
+                           reason=state.reason)
             # The one write on a refusal: the version leaves 'approved' ('hitl' = not publishable as is, the
             # value _is_publishable gives a version that needs a human). Left 'approved' it would sit as an
             # approved version with no Master, which the S248 probe counts as a violation. Done here, not in
@@ -370,40 +371,51 @@ async def process_export(version_id: str) -> dict:
                 SET status = 'hitl'
                 WHERE id = $1::uuid AND status = 'approved'
             """, version_id)
-            raise SourceNotLiveError(src)
+            raise SourceNotLiveError(state)
+
+        if not src.live:
+            await _refuse_not_live(src)
 
         # 2. Insert into published catalog (gold). AA-986 L2: through the tour lifecycle service (ADR 0015
         # decision 2, `publish`): the insert, "never two active Masters per key" and the `restored` record of a key
         # that was paused (a supersede waiting for this Master) happen in one transaction.
+        # The service re-checks the source under a row lock (a retire / supersede that committed after the read
+        # above): its 409 source_not_live is the same refusal as the check above.
+        from services.tour_lifecycle import LifecycleError
         from services.tour_lifecycle import publish as _lifecycle_publish
-        published = await _lifecycle_publish(conn, {
-            "tour_id":              tour_id,
-            "generated_content_id": row["id"],
-            "tenant_id":            row["tenant_id"],
-            "aa_name":              row.get("aa_name"),
-            "aa_subtitle":          row.get("aa_subtitle"),
-            "aa_summary":           row.get("aa_summary"),
-            "aa_description":       row.get("aa_description"),
-            # AA-314: gc.aa_highlights/seo_keywords_used/og_tags come back from asyncpg as
-            # already-JSON-encoded str (no jsonb codec registered anywhere in this app — see
-            # AA-293/AA-314 audit). json.dumps()'ing them again here double-encoded all three
-            # columns for every export (47/48 published_tours rows, confirmed live). Pass the
-            # existing JSON string straight through — PublishedCatalogRepository.insert() does
-            # not re-serialize either, it hands the value to asyncpg's default jsonb codec as-is.
-            "aa_highlights":        row.get("aa_highlights") or "[]",
-            "aa_itineraries":       row.get("aa_itineraries"),
-            "mobile_card_text":     row.get("mobile_card_text"),
-            "seo_title":            row.get("seo_title"),
-            "seo_meta":             row.get("seo_meta"),
-            "seo_keywords_used":    row.get("seo_keywords_used") or "[]",
-            "og_tags":              row.get("og_tags") or "{}",
-            "quality_score":        row.get("quality_score"),
-            "quality_score_id": (
-                str(row["quality_score_id"]) if row.get("quality_score_id") else None
-            ),
-            "s3_gold_path":         None,
-            "approved_by":          "pipeline",
-        }, tenant_slug=tenant_slug)
+        try:
+            published = await _lifecycle_publish(conn, {
+                "tour_id":              tour_id,
+                "generated_content_id": row["id"],
+                "tenant_id":            row["tenant_id"],
+                "aa_name":              row.get("aa_name"),
+                "aa_subtitle":          row.get("aa_subtitle"),
+                "aa_summary":           row.get("aa_summary"),
+                "aa_description":       row.get("aa_description"),
+                # AA-314: gc.aa_highlights/seo_keywords_used/og_tags come back from asyncpg as
+                # already-JSON-encoded str (no jsonb codec registered anywhere in this app — see
+                # AA-293/AA-314 audit). json.dumps()'ing them again here double-encoded all three
+                # columns for every export (47/48 published_tours rows, confirmed live). Pass the
+                # existing JSON string straight through — PublishedCatalogRepository.insert() does
+                # not re-serialize either, it hands the value to asyncpg's default jsonb codec as-is.
+                "aa_highlights":        row.get("aa_highlights") or "[]",
+                "aa_itineraries":       row.get("aa_itineraries"),
+                "mobile_card_text":     row.get("mobile_card_text"),
+                "seo_title":            row.get("seo_title"),
+                "seo_meta":             row.get("seo_meta"),
+                "seo_keywords_used":    row.get("seo_keywords_used") or "[]",
+                "og_tags":              row.get("og_tags") or "{}",
+                "quality_score":        row.get("quality_score"),
+                "quality_score_id": (
+                    str(row["quality_score_id"]) if row.get("quality_score_id") else None
+                ),
+                "s3_gold_path":         None,
+                "approved_by":          "pipeline",
+            }, tenant_slug=tenant_slug)
+        except LifecycleError as e:
+            if e.code != SOURCE_NOT_LIVE:
+                raise
+            await _refuse_not_live(await source_state(conn, tour_id))
         catalog_id = published.extra["catalog_id"]
         logger.info("export_done", catalog_id=catalog_id, version_id=version_id,
                     lifecycle_events=[e["event"] for e in published.events])

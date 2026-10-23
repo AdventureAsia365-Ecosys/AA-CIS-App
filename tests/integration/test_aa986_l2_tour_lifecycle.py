@@ -11,6 +11,7 @@ transactions are savepoints inside it). gold_aa_internal.tenant_tour_versions do
 skipped): each test creates the live-shape stand-in inside its transaction (_ttv_live_standin), dropped by the
 rollback.
 """
+import asyncio
 import json
 import os
 import sys
@@ -608,3 +609,171 @@ async def test_the_service_runs_with_the_runtime_role_grants(conn):
     finally:
         await conn.execute("RESET ROLE")
     assert out.after == ("retired", "master_trashed") and out.events
+
+
+# ── review round: public trip pages follow the change (ADR 0015 decision 2, last paragraph) ─────────────────────
+
+@pytest.mark.asyncio
+async def test_after_commit_rechecks_the_public_trip_page_of_the_tour(conn):
+    t = await _tour(conn, "page")
+    other = await _tour(conn, "page-other")
+    for tid in (t.tour, other.tour):
+        await conn.execute("INSERT INTO acp_deliver.tenant_tour_pages (tenant_id, tour_id, url, published_at, "
+                           "url_alive, last_checked_at) VALUES ($1, $2, 'https://example.test/trip', now(), true, "
+                           "NULL)",
+                           MASTER, uuid.UUID(tid))
+
+    async def _page(tid):
+        return tuple(await conn.fetchrow("SELECT url_alive, last_checked_at IS NOT NULL FROM "
+                                         "acp_deliver.tenant_tour_pages WHERE tour_id = $1", uuid.UUID(tid)))
+
+    out = await tl.trash_master(conn, t.tour)
+    await tl.run_after_commit(_OneConnPool(conn), out)
+    assert await _page(t.tour) == (False, True)
+    assert await _page(other.tour) == (True, False)          # only the tours whose state changed
+    out = await tl.restore_master(conn, t.tour)
+    await tl.run_after_commit(_OneConnPool(conn), out)
+    assert await _page(t.tour) == (False, True)              # restored inactive: still not served
+    out = await tl.activate_master(conn, t.tour)
+    await tl.run_after_commit(_OneConnPool(conn), out)
+    assert await _page(t.tour) == (True, True)
+
+
+@pytest.mark.asyncio
+async def test_trip_page_recheck_failure_does_not_fail_the_action(conn):
+    t = await _tour(conn, "page-fail")
+    out = await tl.pause_master(conn, t.tour)
+    with patch("api.routers.v1_trip_page.recheck_trip_pages_for", AsyncMock(side_effect=RuntimeError("boom"))):
+        await tl.run_after_commit(_OneConnPool(conn), out)       # logged, not raised
+    assert await _master(conn, t.tour) == ("inactive", "staff_deactivated")
+
+
+# ── review round: activate / publish against a concurrent retire (committed data, two connections) ────────────
+# The rule "no active Master over a dead source" must hold for every interleaving: the source row is locked FOR SHARE
+# by activate_master / publish and FOR UPDATE by retire_source, so one waits for the other's commit. These tests
+# commit their seed rows (a second connection must see them) and remove every row they made at the end.
+
+_WAIT = 0.5
+
+
+@asynccontextmanager
+async def _two_conns():
+    a, b = await asyncpg.connect(DSN), await asyncpg.connect(DSN)
+    made: list[str] = []
+    # The retire cascade reads tenant_tour_versions; the CI DB has no such table (001 is skipped). The two
+    # connections need it committed: create the stand-in for these tests and drop it after.
+    standin = await a.fetchval("SELECT to_regclass('gold_aa_internal.tenant_tour_versions')") is None
+    if standin:
+        await a.execute(TTV_LIVE_STANDIN_DDL)
+    try:
+        yield a, b, made
+    finally:
+        for c in (a, b):
+            if c.is_in_transaction():
+                await c.execute("ROLLBACK")
+        ids = [uuid.UUID(x) for x in made]
+        # tour_lifecycle_event is append-only (CIS 272 trigger): the cleanup runs as the superuser test role with
+        # triggers off for this session only.
+        await a.execute("SET session_replication_role = replica")
+        await a.execute("DELETE FROM gold_aa_internal.tour_lifecycle_event WHERE tour_id = ANY($1::uuid[])", ids)
+        await a.execute("DELETE FROM shared.notifications WHERE entity_id = ANY($1::text[])", made)
+        await a.execute("DELETE FROM gold_aa_internal.published_tours WHERE tour_id = ANY($1::uuid[])", ids)
+        await a.execute("DELETE FROM silver_aa_internal.raw_tours WHERE tour_id = ANY($1::uuid[])", ids)
+        await a.execute("RESET session_replication_role")
+        if standin:
+            await a.execute("DROP TABLE gold_aa_internal.tenant_tour_versions")
+        await a.close()
+        await b.close()
+
+
+async def _committed_tour(c, made, label, *, master="inactive", reason="staff_deactivated"):
+    tour_id = uuid.uuid4()
+    await c.execute(
+        "INSERT INTO silver_aa_internal.raw_tours (tour_id, tenant_id, batch_id, src_name, country, duration, "
+        "source_status, source_group_id, source_version) VALUES ($1, $2, $3, $4, 'Vietnam', '3 days', 'active', "
+        "$5, 1)", tour_id, MASTER, BATCH_ID, f"aa986 race {label}", uuid.uuid4())
+    made.append(str(tour_id))
+    if master:
+        await c.execute(
+            "INSERT INTO gold_aa_internal.published_tours (tour_id, generated_content_id, tenant_id, aa_name, "
+            "aa_summary, aa_highlights, master_status, master_status_reason) "
+            "VALUES ($1, $2, $3, $4, 'S', '[]'::jsonb, $5, $6)",
+            tour_id, uuid.uuid4(), MASTER, f"aa986 race {label}", master, reason)
+    return str(tour_id)
+
+
+def _publish_data(tour_id):
+    return {"tour_id": tour_id, "generated_content_id": str(uuid.uuid4()), "tenant_id": MASTER,
+            "aa_name": "aa986 race", "aa_highlights": "[]", "seo_keywords_used": "[]", "og_tags": "{}"}
+
+
+async def _committed_master(c, tour_id):
+    return tuple(await c.fetchrow("SELECT master_status::text, master_status_reason FROM "
+                                  "gold_aa_internal.published_tours WHERE tour_id = $1", uuid.UUID(tour_id)))
+
+
+@pytest.mark.asyncio
+async def test_activate_waits_for_a_concurrent_retire_then_refuses():
+    async with _two_conns() as (a, b, made):
+        tid = await _committed_tour(a, made, "act-after")
+        tr = a.transaction()
+        await tr.start()
+        await tl.retire_source(a, tid)                      # holds the source row FOR UPDATE, not committed
+        task = asyncio.create_task(tl.activate_master(b, tid))
+        await asyncio.sleep(_WAIT)
+        assert not task.done()                              # waits on the source row lock
+        await tr.commit()
+        with pytest.raises(tl.LifecycleError) as e:
+            await asyncio.wait_for(task, 10)
+        assert e.value.status == 409 and e.value.code == "source_not_live"
+        assert await _committed_master(a, tid) == ("inactive", "staff_deactivated")
+
+
+@pytest.mark.asyncio
+async def test_retire_waits_for_a_concurrent_activate_then_switches_the_master_off():
+    async with _two_conns() as (a, b, made):
+        tid = await _committed_tour(a, made, "act-first")
+        tr = b.transaction()
+        await tr.start()
+        await tl.activate_master(b, tid)                    # holds the source row FOR SHARE, not committed
+        task = asyncio.create_task(tl.retire_source(a, tid))
+        await asyncio.sleep(_WAIT)
+        assert not task.done()
+        await tr.commit()
+        out = await asyncio.wait_for(task, 10)
+        assert out.masters_off == [(tid, "source_deleted")]
+        assert await _committed_master(a, tid) == ("inactive", "source_deleted")
+
+
+@pytest.mark.asyncio
+async def test_publish_waits_for_a_concurrent_retire_then_refuses():
+    async with _two_conns() as (a, b, made):
+        tid = await _committed_tour(a, made, "pub-after", master=None)
+        tr = a.transaction()
+        await tr.start()
+        await tl.retire_source(a, tid)
+        task = asyncio.create_task(tl.publish(b, _publish_data(tid)))
+        await asyncio.sleep(_WAIT)
+        assert not task.done()
+        await tr.commit()
+        with pytest.raises(tl.LifecycleError) as e:
+            await asyncio.wait_for(task, 10)
+        assert e.value.code == "source_not_live" and e.value.detail.startswith("source_not_live: cannot publish")
+        assert await a.fetchval("SELECT count(*) FROM gold_aa_internal.published_tours WHERE tour_id = $1",
+                                uuid.UUID(tid)) == 0
+
+
+@pytest.mark.asyncio
+async def test_retire_waits_for_a_concurrent_publish_then_switches_the_new_master_off():
+    async with _two_conns() as (a, b, made):
+        tid = await _committed_tour(a, made, "pub-first", master=None)
+        tr = b.transaction()
+        await tr.start()
+        await tl.publish(b, _publish_data(tid))             # the insert is not committed yet
+        task = asyncio.create_task(tl.retire_source(a, tid))
+        await asyncio.sleep(_WAIT)
+        assert not task.done()
+        await tr.commit()
+        out = await asyncio.wait_for(task, 10)
+        assert out.masters_off == [(tid, "source_deleted")]
+        assert await _committed_master(a, tid) == ("inactive", "source_deleted")

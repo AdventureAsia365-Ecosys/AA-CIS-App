@@ -1,7 +1,8 @@
 """AA-986 L2: what the tour lifecycle service does after its transaction commits (ADR 0015 decision 2, last
-paragraph): recompute ranking / routes with the NEW state, follow the place graph, and run the on_terminal hooks of
-the jobs it cancelled. Each step is best-effort: the state change is already committed and must not fail because a
-queue insert did; every failure is logged (and visible in the job tables).
+paragraph): recompute ranking / routes with the NEW state, follow the place graph, recheck the public trip pages of
+the tours whose state changed, and run the on_terminal hooks of the jobs it cancelled. Each step is best-effort: the
+state change is already committed and must not fail because a queue insert did; every failure is logged (and visible
+in the job tables).
 
 `recompute_after_status_change` is the AA-713 / AA-723 / AA-743 helper that used to live in api/routers/admin.py
 (admin.py keeps a thin alias of the same name).
@@ -47,12 +48,28 @@ async def recompute_after_status_change(pool, tour_id: str, new_status: str) -> 
         _log.warning("aa712_place_enqueue_failed", tour_id=tour_id, exc_info=True)
 
 
+async def recheck_trip_pages(pool, tour_ids) -> None:
+    """ADR 0015 decision 2 (last paragraph): recheck the public trip pages of the tours whose state changed, so
+    acp_deliver.tenant_tour_pages.url_alive (the T10 gate F6 reads it) follows at once. Same rule as
+    POST /admin/trip-pages/recheck, scoped to these tours. The page itself (GET /v1/trip/{id}) already reads the live
+    state on every render; the SEO answer for a retired page (410 / 301) is slice L4."""
+    if not tour_ids:
+        return
+    try:
+        from api.routers.v1_trip_page import recheck_trip_pages_for
+        async with pool.acquire() as conn:
+            await recheck_trip_pages_for(conn, tour_ids)
+    except Exception:
+        _log.warning("aa986_trip_page_recheck_failed", tours=len(tour_ids), exc_info=True)
+
+
 async def run_after_commit(pool, outcome, recompute=None) -> None:
     """Post-commit work of one lifecycle outcome. `recompute` defaults to recompute_after_status_change (a caller may
     pass its own, e.g. a router's alias that tests patch)."""
     recompute = recompute or recompute_after_status_change
     for tour_id, new_status in outcome.recompute:
         await recompute(pool, tour_id, new_status)
+    await recheck_trip_pages(pool, list(dict.fromkeys(t for t, _ in outcome.recompute)))
     if outcome.cancelled_jobs:
         from shared.jobs.registry import run_terminal_hook
         for job in outcome.cancelled_jobs:

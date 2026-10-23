@@ -464,7 +464,7 @@
     "module": "api.routers.admin_pipeline"
   },
   "GET /admin/tours/{tour_id}/lifecycle-preview": {
-    "capability": null,
+    "capability": "master.admin",
     "module": "api.routers.admin"
   },
   "GET /admin/tours/{tour_id}/seo-context": {
