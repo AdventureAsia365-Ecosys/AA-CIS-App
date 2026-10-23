@@ -5,6 +5,7 @@ import os
 import structlog
 from shared.secrets import get_database_url
 from shared.repository.published_catalog_repository import PublishedCatalogRepository
+from shared.tour_liveness import SourceNotLiveError, SourceState
 
 logger = structlog.get_logger()
 
@@ -328,6 +329,7 @@ async def process_export(version_id: str) -> dict:
         # 1. Fetch generated content + tour info
         row = await conn.fetchrow(f"""
             SELECT gc.*, rt.country, rt.duration, rt.batch_id,
+                   rt.source_status::text AS src_source_status, rt.deleted_at AS src_deleted_at,
                    qs.id            AS quality_score_id,
                    qs.score_overall AS quality_score
             FROM {silver}.generated_content gc
@@ -351,6 +353,16 @@ async def process_export(version_id: str) -> dict:
         row = dict(row)
         batch_id = row["batch_id"]
         tour_id = row["tour_id"]
+
+        # AA-986 L1 — never publish a version whose source is not live (trashed / superseded / deleted at
+        # S0/A0): the Master would be created `active` (default, CIS 052) and its atoms would serve a deleted
+        # tour. Every publish path (review approve, the S1 auto-export) goes through here.
+        src = SourceState(tour_id=str(tour_id), exists=True, source_status=row.pop("src_source_status"),
+                          deleted_at=row.pop("src_deleted_at"))
+        if not src.live:
+            logger.warning("export_refused_source_not_live", version_id=version_id, tour_id=str(tour_id),
+                           reason=src.reason)
+            raise SourceNotLiveError(src)
 
         # 2. Insert into published catalog (gold)
         repo = PublishedCatalogRepository(conn, tenant_slug)

@@ -73,7 +73,8 @@ async def test_publish_survives_a_failed_enqueue(monkeypatch):
          "aa_subtitle": "s", "aa_summary": "sum", "aa_description": "d", "aa_highlights": "[]",
          "aa_itineraries": "Day 1...", "mobile_card_text": None, "seo_title": "t", "seo_meta": "m" * 150,
          "seo_keywords_used": "[]", "og_tags": "{}", "quality_score_id": None, "quality_score": 9.0,
-         "country": "Vietnam", "duration": "5 days"},
+         "country": "Vietnam", "duration": "5 days",
+         "src_source_status": "active", "src_deleted_at": None},  # AA-986 L1: a live source
         {"id": "gc-1"},
     ]
     with patch.object(handler.asyncpg, "connect", AsyncMock(return_value=conn)), \

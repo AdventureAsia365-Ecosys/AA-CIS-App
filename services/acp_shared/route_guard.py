@@ -28,6 +28,7 @@ from typing import Iterable, Mapping, Optional, Sequence
 import structlog
 
 from services.acp_contract.segment_matching import resolve_segment_aliases
+from shared.tour_liveness import served_tour_joins_sql
 
 logger = structlog.get_logger()
 
@@ -81,13 +82,13 @@ def filter_route_segments(
 # this tenant's own, not an alias member), answered for every Segment of the snapshot in one read.
 # AA-859 wave 4 (C9) — the v_active_tour_atoms rule (203) inlined on the base table, as subject_seed._MEMBERS_SQL:
 # the pick runs this on the tenant pool, where the owner-rights view is not granted. Same rows for cis_app.
-_TRIP_MEMBER_SQL = """
+# AA-986 L1 — served-tour joins (live Master AND live source, CIS 271) from shared.tour_liveness, not a hand copy.
+_TRIP_MEMBER_SQL = f"""
     SELECT s.segment_id,
            EXISTS (
                SELECT 1 FROM acp_contract.atom_segment_member m
                JOIN acp_contract.tour_atoms ta ON ta.atom_id = m.atom_id
-               JOIN gold_aa_internal.published_tours pt
-                 ON pt.tour_id = ta.tour_id AND pt.master_status = 'active' AND pt.deleted_at IS NULL
+               {served_tour_joins_sql("ta.tour_id")}
                WHERE m.segment_id = s.segment_id AND ta.tour_id = $2::uuid
                  AND ta.owner_scope IN ('platform', $3::text)
                  AND NOT m.is_alias AND NOT ta.deleted AND NOT ta.is_empty_marker

@@ -170,8 +170,28 @@ async def test_restore_reactivates_master_and_warns_tenants_then_recomputes():
     assert events.count(EventType.TOUR_REINSTATED.value) == 1
 
     rec.assert_awaited_once()
-    assert rec.await_args.args[2] == "inactive"
+    # AA-986 L1: the Master came back, so its atoms re-enter Score / Route ("inactive" re-removed them).
+    assert rec.await_args.args[2] == "active"
     assert out["source_status"] == "active" and out["master_reactivated"] is True
+
+
+@pytest.mark.asyncio
+async def test_restore_without_a_master_coming_back_recomputes_as_inactive():
+    """AA-986 L1: a restore that reactivates no Master (none, or trashed at the master level) keeps the tour out
+    of Score / Route: the recompute is told "inactive"."""
+    conn, req = _make(tenants=())
+    orig = conn._execute
+
+    async def _execute(sql, *args):
+        if "published_tours" in sql:
+            conn.executed.append((sql, args))
+            return "UPDATE 0"
+        return await orig(sql, *args)
+    conn.execute = AsyncMock(side_effect=_execute)
+    with patch.object(admin, "_recompute_after_status_change", new=AsyncMock()) as rec:
+        out = await admin.restore_source_tour("tour-1", req, x_admin_secret="test-secret")
+    assert rec.await_args.args[2] == "inactive"
+    assert out["master_reactivated"] is False
 
 
 def test_tenant_facing_events_target_the_tenant_role():

@@ -17,6 +17,10 @@ from api.core.staff_credential import principal_verified
 from fastapi.responses import JSONResponse
 from typing import Optional
 
+from shared.tour_liveness import (
+    SOURCE_NOT_LIVE, SourceNotLiveError, live_source_exists_sql, live_source_sql, source_not_live_message,
+    source_state,
+)
 from services.ingestion.excel_parser import ExcelParser
 from services.content_generation.graph import build_graph
 from pydantic import BaseModel
@@ -449,7 +453,7 @@ async def get_review_queue(
     offset = (page - 1) * page_size
 
     async with pool.acquire() as conn:
-        rows = await conn.fetch("""
+        rows = await conn.fetch(f"""
             SELECT rq.id, rq.tour_id, rq.generated_content_id,
                    rq.review_status, rq.score_overall, rq.failure_summary, rq.created_at,
                    gc.aa_name, gc.aa_subtitle, gc.aa_summary,
@@ -461,13 +465,15 @@ async def get_review_queue(
             JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = rq.tour_id
             WHERE rq.tenant_id = $1::uuid
               AND rq.review_status = 'pending'
+              AND {live_source_sql("rt")}  -- AA-986 L1: a deleted / replaced source cannot be approved
             ORDER BY rq.created_at DESC
             LIMIT $2 OFFSET $3
         """, tenant_id, page_size, offset)
 
-        total = await conn.fetchval("""
-            SELECT COUNT(*) FROM silver_aa_internal.review_queue
-            WHERE tenant_id = $1::uuid AND review_status = 'pending'
+        total = await conn.fetchval(f"""
+            SELECT COUNT(*) FROM silver_aa_internal.review_queue rq
+            WHERE rq.tenant_id = $1::uuid AND rq.review_status = 'pending'
+              AND {live_source_exists_sql("rq.tour_id")}
         """, tenant_id)
 
     return {
@@ -501,7 +507,9 @@ async def approve_review(
         # AA-234: the claim ALSO gates on the linked version — a human-edited version may be
         # claimed ONLY after a passing re-validation. The gate lives in the UPDATE WHERE (one
         # query, no extra round-trip): block when human_edited AND revalidate_passed is not TRUE.
-        claimed = await conn.fetchrow("""
+        # AA-986 L1: the claim also requires a live source version (not trashed / superseded / deleted at
+        # S0/A0), so approving a review of a deleted tour can no longer publish it back as an active Master.
+        claimed = await conn.fetchrow(f"""
             UPDATE silver_aa_internal.review_queue rq
             SET review_status = 'approved', reviewed_at = NOW()
             FROM silver_aa_internal.generated_content gc
@@ -509,21 +517,31 @@ async def approve_review(
               AND rq.review_status = 'pending'
               AND gc.id = rq.generated_content_id
               AND NOT (COALESCE(gc.human_edited, false) AND gc.revalidate_passed IS NOT TRUE)
+              AND {live_source_exists_sql("rq.tour_id")}
             RETURNING rq.generated_content_id, rq.step_fn_task_token
         """, review_id, tenant_id)
 
         if not claimed:
-            # Disambiguate: a still-pending row that failed to claim was blocked by the
-            # re-validation gate; otherwise it was already processed (or not found).
-            blocked = await conn.fetchrow("""
-                SELECT 1
+            # Disambiguate: a still-pending row that failed to claim has a source that is not live
+            # (AA-986) or was blocked by the re-validation gate; otherwise it was already processed
+            # (or not found).
+            pending = await conn.fetchrow("""
+                SELECT rq.tour_id::text AS tour_id,
+                       (gc.human_edited = true AND gc.revalidate_passed IS NOT TRUE) AS blocked
                 FROM silver_aa_internal.review_queue rq
                 JOIN silver_aa_internal.generated_content gc ON gc.id = rq.generated_content_id
                 WHERE rq.id = $1::uuid AND rq.tenant_id = $2::uuid
                   AND rq.review_status = 'pending'
-                  AND gc.human_edited = true AND gc.revalidate_passed IS NOT TRUE
             """, review_id, tenant_id)
-            if blocked:
+            if pending:
+                src = await source_state(conn, pending["tour_id"])
+                if not src.live:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=source_not_live_message(src, "approve this review"),
+                        headers={"X-Error-Code": SOURCE_NOT_LIVE},
+                    )
+            if pending and pending["blocked"]:
                 raise HTTPException(
                     status_code=409,
                     detail="Human-edited content must pass re-validation before approve "
@@ -568,6 +586,14 @@ async def approve_review(
         try:
             await process_export(str(generated_content_id))
             exported = True
+        except SourceNotLiveError as e:
+            # The source was trashed between the claim and the export (race): the review stays
+            # approved, nothing is published.
+            import structlog as _sl
+            _sl.get_logger().warning(
+                "approve_export_source_not_live", review_id=review_id,
+                version_id=generated_content_id, reason=e.state.reason,
+            )
         except Exception as e:
             import structlog as _sl
             _sl.get_logger().error(

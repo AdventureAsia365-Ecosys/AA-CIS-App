@@ -1927,7 +1927,10 @@ async def restore_source_tour(
                 conn, tour_id, EventType.TOUR_REINSTATED, row["src_name"])
 
     # AA-713 chain — recompute so the restored tour's atoms re-enter Score/Route (after commit).
-    await _recompute_after_status_change(pool, tour_id, "inactive")
+    # AA-986 L1: "active" when the Master came back (was "inactive", which superseded the restored tour's
+    # ranking / route rows again and skipped its place extraction); a tour whose Master stays off keeps "inactive".
+    await _recompute_after_status_change(
+        pool, tour_id, "active" if master_reactivated != "UPDATE 0" else "inactive")
 
     return {
         "tour_id": tour_id,
