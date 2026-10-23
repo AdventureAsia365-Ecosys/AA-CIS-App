@@ -22,3 +22,4 @@ from . import ops_alert_email_job  # noqa: F401  AA-828
 from . import staff_reconcile_job  # noqa: F401  AA-816 (C7)
 from . import staff_invite_email_job  # noqa: F401  AA-816 (S242 invitation e-mail)
 from . import erasure_job  # noqa: F401  AA-839 (data erasure DRY RUN / approved apply)
+from . import tripplanner_purge_job  # noqa: F401  AA-987 (TripPlanner cache purge on a lifecycle event)

@@ -30,6 +30,10 @@ samples fire the `*-sampling-stopped` alarms, so a dead api (or a dead loop) is 
   row left over from a rolling deploy (the old api enqueueing during the roll) would otherwise page
   `*-jobs-queue-age` as starved `unregistered` and block every later Deploy Dev. A kind is swept only
   while it is NOT registered.
+- AA-987: each tick also sweeps the TripPlanner purge deliveries (services/jobs/tripplanner_purge_job.sweep): every
+  tour lifecycle event of the last 2 h without a `tripplanner_purge` job gets one (one idempotent INSERT ... SELECT),
+  so an after-commit enqueue lost to a crash still reaches TripPlanner a few minutes later. Field
+  `tripplanner_purge_swept` (jobs created) or `tripplanner_purge_error`.
 - AA-913: each tick also reconciles the platform alert recipients with SNS
   (shared/alert_recipients.periodic_reconcile: one ListSubscriptionsByTopic, throttled like a page view; a no-op
   when ALERTS_TOPIC_ARN / ALERT_BOOTSTRAP_EMAIL are unset). An address removed on the admin page while its
@@ -59,7 +63,7 @@ logger = structlog.get_logger()
 
 OPS_METRICS_INTERVAL_S = 300.0
 OPS_METRICS_FIRST_DELAY_S = 30.0   # let the app finish starting before the first sample
-PART_TIMEOUT_S = 60.0              # bound on each part of a tick (4 parts -> < 300 s interval)
+PART_TIMEOUT_S = 50.0              # bound on each part of a tick (5 parts -> < 300 s interval)
 
 NAMESPACE_RDS = "AA/RDS"
 METRIC_CONNECTIONS = "RoleConnections"
@@ -177,6 +181,16 @@ async def _jobs_part(pool, client, kinds: dict, ts: datetime, out: dict) -> None
     out["jobs_published"] = 2
 
 
+async def _tripplanner_purge_part(pool, out: dict) -> None:
+    """AA-987: enqueue a TripPlanner purge for every recent lifecycle event that has no job yet (an after-commit
+    enqueue that was lost, a path that does not enqueue). One idempotent INSERT ... SELECT."""
+    from services.jobs.tripplanner_purge_job import sweep
+
+    n = await sweep(pool)
+    if n:
+        out["tripplanner_purge_swept"] = n
+
+
 async def _alert_recipients_part(pool, redis, out: dict) -> None:
     from shared import alert_recipients
 
@@ -196,7 +210,8 @@ def _err(e: BaseException) -> str:
 
 async def sample_once(pool, client, kinds: Optional[dict] = None,
                       part_timeout_s: float = PART_TIMEOUT_S, redis: Any = None) -> dict:
-    """One tick: AA/RDS, the alert-recipient reconcile (AA-913), the retired-kind sweep, then AA/Jobs/CIS, each
+    """One tick: AA/RDS, the alert-recipient reconcile (AA-913), the retired-kind sweep, the TripPlanner purge sweep
+    (AA-987), then AA/Jobs/CIS, each
     part on its own and under part_timeout_s (one failing or hanging never blocks the others). Returns the fields
     of the `ops_metrics_sampled` line. Never raises (except CancelledError)."""
     ts = datetime.now(timezone.utc)
@@ -225,6 +240,11 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
         out["retired_error"] = _err(e)
 
     try:
+        await asyncio.wait_for(_tripplanner_purge_part(pool, out), timeout=part_timeout_s)
+    except Exception as e:
+        out["tripplanner_purge_error"] = _err(e)
+
+    try:
         await asyncio.wait_for(_jobs_part(pool, client, kinds, ts, out), timeout=part_timeout_s)
     except Exception as e:
         out["jobs_error"] = _err(e)
@@ -245,7 +265,8 @@ async def jev_credit_tick(pool, part_timeout_s: float = PART_TIMEOUT_S) -> Optio
 
 
 def _log(out: dict) -> None:
-    if any(k in out for k in ("rds_error", "retired_error", "jobs_error", "alert_recipients_error")):
+    if any(k in out for k in ("rds_error", "retired_error", "jobs_error", "alert_recipients_error",
+                              "tripplanner_purge_error")):
         logger.warning("ops_metrics_sampled", **out)
     else:
         logger.info("ops_metrics_sampled", **out)

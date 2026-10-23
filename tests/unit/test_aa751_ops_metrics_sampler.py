@@ -328,6 +328,7 @@ def _pool(rows=None, error=None, execute="UPDATE 0"):
     pool = MagicMock()
     pool.fetch = AsyncMock(return_value=_role_rows() if rows is None else rows, side_effect=error)
     pool.execute = AsyncMock(return_value=execute)   # the retired-kind sweep
+    pool.fetchval = AsyncMock(return_value=0)        # AA-987: the TripPlanner purge sweep (jobs created)
     return pool
 
 
@@ -478,6 +479,20 @@ async def test_sweep_failure_does_not_block_jobs():
     with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
         out = await sampler.sample_once(pool, cw, kinds=KINDS)
     assert "permission denied" in out["retired_error"] and out["jobs_published"] == 2
+
+
+@pytest.mark.asyncio
+async def test_tripplanner_purge_sweep_runs_each_tick_and_its_failure_blocks_nothing():
+    """AA-987: one INSERT ... SELECT per tick; jobs created are reported, an error is its own field."""
+    pool = _pool()
+    pool.fetchval = AsyncMock(return_value=2)
+    with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
+        out = await sampler.sample_once(pool, StubCloudWatch(), kinds=KINDS)
+    assert "tripplanner_purge" in pool.fetchval.call_args[0][0] and out["tripplanner_purge_swept"] == 2
+    pool.fetchval = AsyncMock(side_effect=RuntimeError("permission denied"))
+    with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
+        out = await sampler.sample_once(pool, StubCloudWatch(), kinds=KINDS)
+    assert "permission denied" in out["tripplanner_purge_error"] and out["jobs_published"] == 2
 
 
 # ── the loop ────────────────────────────────────────────────────────────────────────────────────

@@ -460,6 +460,11 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
         catalog_id = published.extra["catalog_id"]
         logger.info("export_done", catalog_id=catalog_id, version_id=version_id,
                     lifecycle_events=[e["event"] for e in published.events])
+        # AA-987: a publish that closes a paused / retired key (`restored`) brings the tour back on TripPlanner now,
+        # not after its 30-min cache. The publish transaction is committed; best-effort, never raises.
+        if published.events:
+            from services.tour_lifecycle.effects import notify_tripplanner
+            await notify_tripplanner(conn, published.events, trigger="publish")
 
         # 3. Mark tour as exported
         await conn.execute(f"""
