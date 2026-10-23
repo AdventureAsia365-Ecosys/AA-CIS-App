@@ -203,6 +203,7 @@ async def test_rerun_unchanged_skips_every_day_zero_llm_calls():
     assert result == {
         "status": "skipped", "atom_count": 0,
         "days_total": 2, "days_read": 0, "days_skipped": 2,
+        "orphan_atoms_deleted": 0,   # AA-645 step 0: the day-count cleanup runs on a skip too
     }
     # No atom/fingerprint writes at all when every day is skipped
     assert not any("INSERT INTO acp_contract.tour_atoms" in c.args[0]

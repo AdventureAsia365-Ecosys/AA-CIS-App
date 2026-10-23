@@ -22,9 +22,9 @@ from shared.sentry_init import release
 
 logger = structlog.get_logger()
 
-# The newest CIS migration this code needs: 257 (AA-847 — geo.place_shape / geo.tour_segment from 255, the
-# duplicate-merge tables and stage rows from 257).
-REQUIRED_CIS_SCHEMA = 257
+# The newest CIS migration this code needs: 273 (AA-645 d06 — the publish upsert and promote write
+# gold_aa_internal.published_tours.updated_at).
+REQUIRED_CIS_SCHEMA = 273
 READY_CACHE_SECONDS = 5.0
 
 SCHEMA_VERSION_SQL = """

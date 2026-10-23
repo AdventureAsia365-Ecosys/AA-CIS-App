@@ -28,7 +28,10 @@ from api.routers.auth import verify_tenant_jwt
 from api.routers.v1_pipeline import _rewrite_tour
 from services.content_generation.pipeline_lessons import load_s1_lessons_block
 from shared.aws_client.bronze import bronze_bucket
-from shared.tour_liveness import SourceNotLiveError, live_source_exists_sql, live_source_sql
+from shared.tour_liveness import (
+    SOURCE_NOT_LIVE, SourceNotLiveError, live_source_exists_sql, live_source_sql, source_not_live_message,
+    source_state,
+)
 from shared.validators.prompt_sanitize import (
     sanitize_text, sanitize_list, MAX_LONG_FIELD_LEN, MAX_SHORT_FIELD_LEN, MAX_SYSTEM_PROMPT_LEN,
     MAX_BRAND_LONG_LEN, MAX_BRAND_MEDIUM_LEN, brand_length_errors,
@@ -320,6 +323,10 @@ def _build_generated_metadata(result, *, brand_rule_id, brand_name, seo_mode,
         metadata["quality_shadow"] = result["quality_shadow"]
     if result.get("degraded"):
         metadata["degraded"] = result["degraded"]
+    # AA-645 step 0: which writer wrote the version ("v2" = S1 writer v2; absent = today's writer). On a v2 version
+    # metadata.judge.brand_fit is report-only (it did not gate the version) — the per-wave report reads both.
+    if result.get("writer_version"):
+        metadata["writer_version"] = result["writer_version"]
     _day_ratios = result.get("itinerary_day_ratios") or []
     if _day_ratios:
         from services.content_generation.graph import ITINERARY_CLAMP_MIN, ITINERARY_CLAMP_MAX
@@ -624,6 +631,8 @@ async def _execute_run_tour(
         except Exception as _seo_err:
             logger.warning("seo_step_failed", tour_id=req.tour_id, error=str(_seo_err))
 
+        # AA-645 step 0: the agency fields only the S1 writer v2's fact sheet reads (A1, flag S1_WRITER_V2).
+        tour_agency = {"group_size": row.get("group_size"), "best_time_to_go": row.get("best_time_to_go")}
         result = await _rewrite_tour(
             tour, idx=0, total=1,
             brand_rules=brand_rules,
@@ -632,6 +641,7 @@ async def _execute_run_tour(
             subtitle_focus=req.subtitle_focus,
             seo_mode=effective_seo_mode,
             on_stage=on_stage,
+            tour_agency=tour_agency,
             batch_text=batch_text,               # AA-606
             batch_model_used=batch_model_used,   # AA-606
             batch_account=batch_account,         # AA-606
@@ -666,6 +676,7 @@ async def _execute_run_tour(
                 subtitle_focus=req.subtitle_focus,
                 seo_mode=effective_seo_mode,
                 on_stage=on_stage,
+                tour_agency=tour_agency,
             )
             # Keep sonnet when it is strictly better: for a hard-code trigger that means fewer
             # surviving hard codes (clearing the blocker is the goal, not a higher score); for the
@@ -2879,32 +2890,52 @@ async def promote_tour_version(
     tour_id: str, version_num: int,
     request: Request, x_admin_secret: str = Header(None),
 ):
+    """Make version `version_num` the tour's live Master Content again (the per-tour rollback).
+
+    AA-645 step 0 (C2): this used to copy only aa_name / aa_subtitle / the score onto published_tours and reset
+    published_at, so the page mixed two versions and the atoms stayed those of the replaced version. It now publishes
+    the version through the one publish path (`process_export`: every text and SEO field, the accepted score
+    pointer, the live-source rule) and re-atomizes it with `dedupe=False` + `force=True` (the version's own
+    `a3_atomize:<id>` key and day fingerprints are already spent). Atom ids are content hashes, so the old text
+    brings the old atoms back and the replaced version's atoms are soft-deleted. published_at is kept (d06); the
+    change is recorded in published_tours.updated_at.
+
+    Only an `approved` version can be promoted (the publish gate of every other path): a version that never passed
+    the gate goes through the Review Queue. 404 unknown tour / version, 409 not approved or source not live."""
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
-        updated = await conn.fetchval("""
-            WITH gc AS (
-                SELECT gc.id, gc.aa_name, gc.aa_subtitle,
-                       qs.score_overall
-                FROM silver_aa_internal.generated_content gc
-                LEFT JOIN silver_aa_internal.quality_scores qs
-                    ON qs.generated_content_id = gc.id
-                WHERE gc.tour_id = $1::uuid AND gc.version_num = $2
-                LIMIT 1
-            )
-            UPDATE gold_aa_internal.published_tours pt
-            SET generated_content_id = gc.id,
-                aa_name              = gc.aa_name,
-                aa_subtitle          = gc.aa_subtitle,
-                quality_score        = gc.score_overall,
-                published_at         = NOW()
-            FROM gc
-            WHERE pt.tour_id = $1::uuid
-            RETURNING pt.id::text
+        gc = await conn.fetchrow("""
+            SELECT gc.id::text AS id, gc.status::text AS status
+            FROM silver_aa_internal.generated_content gc
+            WHERE gc.tour_id = $1::uuid AND gc.version_num = $2
         """, tour_id, version_num)
-    if not updated:
-        raise HTTPException(status_code=404, detail="Tour or version not found")
-    return {"promoted": True, "published_tour_id": updated, "version_num": version_num}
+        if not gc:
+            raise HTTPException(status_code=404, detail="Tour or version not found")
+        if gc["status"] != "approved":
+            raise HTTPException(
+                status_code=409,
+                detail=(f"v{version_num} is '{gc['status']}', not approved: only a version that passed the publish "
+                        "gate can be made current. Approve it in the Review Queue instead."),
+            )
+        src = await source_state(conn, tour_id)
+        if not src.live:
+            raise HTTPException(status_code=409, detail=source_not_live_message(src, "promote this version"),
+                                headers={"X-Error-Code": SOURCE_NOT_LIVE})
+
+    from services.export.handler import process_export
+    try:
+        exported = await process_export(gc["id"], atomize_dedupe=False, atomize_force=True,
+                                        atomize_created_by="admin:promote_version")
+    except SourceNotLiveError as e:   # the source was trashed between the check and the publish
+        raise HTTPException(status_code=409, detail=source_not_live_message(e.state, "promote this version"),
+                            headers={"X-Error-Code": SOURCE_NOT_LIVE})
+    except ValueError:                # the version left 'approved' between the check and the publish
+        raise HTTPException(status_code=409, detail=f"v{version_num} is no longer approved")
+    logger.info("tour_version_promoted", tour_id=tour_id, version_num=version_num, version_id=gc["id"],
+                atomize_job_id=exported.get("atomize_job_id"))
+    return {"promoted": True, "published_tour_id": exported["catalog_id"], "version_num": version_num,
+            "version_id": gc["id"], "atomize_job_id": exported.get("atomize_job_id")}
 
 
 

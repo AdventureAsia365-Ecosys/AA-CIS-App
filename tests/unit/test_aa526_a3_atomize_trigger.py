@@ -285,9 +285,14 @@ class TestA3RunsSegmentScoreRouteAfterAtomize:
         assert kw["debounce_s"] > 0
         # AA-712: the tour's places follow atomize (keyed on the content version)
         assert pl.await_args.kwargs["tour_id"] == str(TOUR_ID) and pl.await_args.kwargs["version_id"] == str(GC_ID)
-        assert out == {"segment_score_route": "ok", "segments": 2, "score_route_job": "job-9",
+        # AA-645 step 0: the atomize summary, and the T7 brand-fit cache rows of this tour's Segments dropped (T13)
+        assert out == {"atomize": {"status": "success", "atom_count": 3},
+                       "brand_fit_cache_cleared": 0,
+                       "segment_score_route": "ok", "segments": 2, "score_route_job": "job-9",
                        "score_route_job_reused": True, "place_extract_job": "job-p",
                        "place_extract_job_reused": False}
+        cleared = [c for c in conn.execute.await_args_list if "debate_brand_fit_cache" in c.args[0]]
+        assert len(cleared) == 1 and cleared[0].args[1] == ["seg_a", "seg_b"]
 
     async def test_place_extract_enqueue_failure_is_recorded_not_raised(self):
         """AA-712 — best-effort: a failed place_extract enqueue lands in the result, atomize still succeeds."""

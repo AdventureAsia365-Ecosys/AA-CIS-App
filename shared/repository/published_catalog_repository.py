@@ -44,7 +44,10 @@ class PublishedCatalogRepository:
                 quality_score_id     = EXCLUDED.quality_score_id,
                 s3_gold_path         = EXCLUDED.s3_gold_path,
                 approved_by          = EXCLUDED.approved_by,
-                published_at         = NOW()
+                -- AA-645 d06 (CIS 273): a new version of a published tour keeps its first published_at
+                -- (Browse pool / TripPlanner order); the change is recorded in updated_at. A first
+                -- publish (the INSERT branch) gets both from their now() defaults.
+                updated_at           = NOW()
             RETURNING id::text
         """,
             data["tour_id"],
