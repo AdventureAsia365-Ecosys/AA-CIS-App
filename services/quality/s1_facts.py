@@ -108,6 +108,7 @@ ITEM_GROUPS: dict[str, str] = {
 }
 _ITEM_RES = {k: re.compile(rf"\b(?:{v})\b", re.I) for k, v in ITEM_GROUPS.items()}
 MEAL_GROUPS = ("breakfast", "lunch", "dinner", "meals")
+CONFLICT_GROUPS = frozenset({"breakfast", "lunch", "dinner", "drinks", "tips", "visa"})
 
 
 def item_groups(text: str) -> list[str]:
@@ -252,11 +253,12 @@ def number_mentions(text: str) -> list[dict]:
 
 MISSING_PROBES: dict[str, str] = {
     "group_size": r"\bgroup\s+size\b|\b(?:max(?:imum)?|min(?:imum)?|up\s+to)\s+(?:of\s+)?\d+\s+"
-                  r"(?:people|pax|persons|guests|participants|travell?ers)\b|\bgroups?\s+of\s+\d|"
-                  r"\bprivate\s+(?:tour|group)\b|\b\d+\s*-\s*\d+\s+(?:guests|pax)\b",
-    "minimum_age": r"\bmin(?:imum)?\s+age\b|\bage[sd]?\s+\d|"
+                  r"(?:people|pax|persons|guests|participants|travell?ers)\b|\bgroups?\s+of\s+(?:up\s+to\s+)?\d|"
+                  r"\bprivate\s+(?:tour|group)\b|\b\d+\s*(?:-|to)\s*\d+\s+(?:guests|pax|people|persons)\b|"
+                  r"\bbased\s+on\s+(?:\d+|one|two|three|four)\s+adults?\b",
+    "minimum_age": r"\bmin(?:imum)?\s+age\b|\bage[sd]?\s+\d|\byears\s+of\s+age\b|"
                    r"\b\d+\s*(?:\+\s*)?years?\s+(?:old|and\s+(?:above|over|older))\b|"
-                   r"\bchildren\s+(?:under|over|above|from)\b|\b\d+\+",
+                   r"\bchildren\s*\(?\s*(?:under|over|above|from|\d)|\(\d+\s+and\s+(?:under|over|older)\)",
     "difficulty": r"\bdifficult(?:y|ies)?\b|\bgrade[ds]?\b|\b(?:easy|moderate|challenging|strenuous|demanding)\b|"
                   r"\bfitness\b|\bbeginners?\b|\ball\s+abilities\b",
     "start_time": r"\b\d{1,2}[:.]\d{2}\b|\b\d{1,2}\s?(?:am|pm|a\.m\.|p\.m\.)\b|\bpick[\s-]?up\s+time\b",
@@ -461,10 +463,15 @@ def _conflicts(fields: dict[str, str], duration: dict, days: list[dict], include
         out.append({"kind": "derived", "value": "name_vs_duration",
                     "detail": f"the name says {name_dur.exact_days} days, the duration says {exact}",
                     "quotes": duration["quotes"] + [{"field": "name", "quote": fields["name"].strip()}]})
+    # Only a specific item the source both includes and excludes outright ("lunch" in both lists). Generic groups
+    # ("meals", "flights", "insurance") are usually qualified on one side ("meals in Kathmandu", "international
+    # flights", "personal insurance") and are left to the reader; a conditional exclusion never conflicts.
     inc_groups = {g: e for e in included for g in e["groups"]}
     for e in excluded:
+        if e.get("conditional"):
+            continue
         for g in e["groups"]:
-            if g in inc_groups and g not in ("guide", "transport", "accommodation", "equipment", "entrance_fees"):
+            if g in inc_groups and g in CONFLICT_GROUPS:
                 out.append({"kind": "derived", "value": "item_included_and_excluded", "detail": g,
                             "quotes": [{"field": inc_groups[g]["field"], "quote": inc_groups[g]["quote"]},
                                        {"field": e["field"], "quote": e["quote"]}]})
@@ -472,7 +479,7 @@ def _conflicts(fields: dict[str, str], duration: dict, days: list[dict], include
 
 
 def _missing(fields: dict[str, str], excluded: list[dict]) -> list[str]:
-    body = "\n".join(fields[f] for f in TEXT_FIELDS) + "\n" + fields["duration"]
+    body = "\n".join(fields[f] for f in TEXT_FIELDS) + "\n" + fields["duration"] + "\n" + fields["price"]
     out = []
     for key in MISSING_PROBES:
         if key == "exclusions":
