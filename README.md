@@ -71,8 +71,9 @@ Secret scan (`.github/workflows/secret-scan.yml`, AA-981 follow-up): check **git
 (the lines the PR adds; rules and baseline read from the base branch) and **gitleaks full history**
 nightly, on push to `main` and on demand (every branch, tag and pull request head). Rules in
 `.gitleaks.toml` (same as the root repo), reviewed findings pinned by commit in `.gitleaksignore`. A
-PR that changes either file, or adds an inline `gitleaks:allow` comment, fails until a reviewer adds the
-label `secret-scan-baseline-reviewed`; a later push that touches them again removes the label. For a false
+PR that changes either file or `secret-scan.yml`, or adds an inline `gitleaks:allow` comment, fails until a
+reviewer adds the label `secret-scan-baseline-reviewed` after the last push (any later push, reopen or label
+change removes it). For a false
 positive prefer a narrow allowlist in `.gitleaks.toml`: a commit fingerprint does not survive the squash
 merge (header of `.gitleaksignore`).
 Local commands are in the workflow header.
