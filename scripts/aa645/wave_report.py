@@ -177,6 +177,9 @@ def version_facts(p: Optional[dict], tour: dict, facts: dict) -> Optional[dict]:
         "grounding_found": grounding.get("found"),
         "grounding_unsupported": len(grounding.get("violations") or []) if grounding else None,
         "brand_fit": judge.get("brand_fit"),
+        # AA-645 (S249): the rubric behind brand_fit ("v1" = the brand-angle prompt, every version before S249; a v2
+        # version string = brand_fit_v2, voice within the source) — the two are different scales.
+        "brand_fit_rubric": judge.get("rubric") or "v1",
         "score": float(p["score_overall"]) if p.get("score_overall") is not None else None,
         "cost_usd": meta.get("llm_cost_usd"),
         "days": page_days(page),
@@ -245,6 +248,10 @@ def aggregate(tours: list[dict]) -> dict:
             "figure_coverage_after": _mean([t["after"]["figure_coverage"] for t in paired]),
             "brand_fit_before": _mean([t["before"]["brand_fit"] for t in paired]),
             "brand_fit_after_report_only": _mean([t["after"]["brand_fit"] for t in paired]),
+            # AA-645 (S249): which rubric scored the before / after brand fit (a v1 -> v2 change is a scale change,
+            # not a quality change)
+            "brand_fit_rubrics_before": dict(Counter(t["before"].get("brand_fit_rubric", "v1") for t in paired)),
+            "brand_fit_rubrics_after": dict(Counter(t["after"].get("brand_fit_rubric", "v1") for t in paired)),
             "writer_versions_after": dict(Counter(t["after"]["writer_version"] for t in rows if t["after"])),
             "cost_per_tour_after": _mean([t["after"]["cost_usd"] for t in rows if t["after"]]),
             "published_not_atomized": sum(1 for t in published if not (t.get("atoms") or {}).get("fingerprint_days")),

@@ -103,6 +103,10 @@ LOGGED_CALL_SITES: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
     ("scripts/aa856_global_profile_probe.py", "_invoke_global"): (
         ("scripts/aa856_global_profile_probe.py", "_log_probe"),),
     ("scripts/aa645/s1_screen.py", "llm_call"): _self("scripts/aa645/s1_screen.py", "llm_call"),
+    # AA-645 (S249) brand-fit re-measure: the verdict rows via judge_node, a billed failure in score_page itself.
+    ("scripts/aa645/brandfit_measure.py", "score_page"): (
+        ("services/content_generation/judge_node.py", "_write_judge_rows"),
+        ("scripts/aa645/brandfit_measure.py", "score_page")),
 }
 
 # (path, enclosing function) -> why no llm_call_log row is written there.
@@ -111,6 +115,8 @@ EXCLUDED: dict[tuple[str, str], str] = {
     ("api/routers/admin_pipeline.py", "get_tour_detail"): "`_judge` is a local variable (stored judge JSON)",
     ("scripts/aa729/evalpatch.py", "install"): "the AA-729 harness wraps LLMClient.generate to count calls; the "
                                                "wrapped call's own caller writes the row",
+    ("scripts/aa645/brandfit_measure.py", "main"): "reads score_brand_fit's signature (inspect) to check the image / "
+                                                   "overlay; no call",
     ("services/content_generation/s1_batch.py", "submit_s1_batch"): (
         "S1 Bedrock Batch writes no llm_call_log row: batch has never run (AA-624 blocks it). It MUST log one "
         "row per record once it is enabled — remove this entry then."),

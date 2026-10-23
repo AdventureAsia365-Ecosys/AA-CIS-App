@@ -123,6 +123,56 @@ def is_v2_draft(state: dict) -> bool:
     return is_v2(state)
 
 
+# AA-645 (S249) — which brand-fit rubric scores an A1 draft (brand_fit_v2: the white-label voice within the source).
+#   "auto" (default)  v2 on a writer-v2 draft, v1 on today's writer;
+#   "v1" / "v2"       that rubric on every A1 draft.
+# A draft without its source tour in state is always scored with v1 (v2 judges against the source). T2 and the T7
+# Debate never read this: they stay on v1. Flip with the env var (worker task def), like T2_JUDGE_GATE.
+A1_BRAND_FIT_RUBRIC_ENV = "A1_BRAND_FIT_RUBRIC"
+A1_BRAND_FIT_RUBRICS = ("auto", "v1", "v2")
+# AA-645 d02 — whether brand fit gates a writer-v2 draft. "report_only" (default) until the offline re-measure of
+# rubric v2 on the 125 A/B pages passes (run sheet criterion: W x Sonnet retry % <= A+ retry % + 5 points AND
+# Spearman(brand fit, panel serious errors) <= 0); "enforce" then gates a v2 draft on its rubric-v2 score (gate label
+# A1_V2_ENFORCED_GATE). A v2 draft scored with v1 is never gated on brand fit (v1 does not reward fidelity).
+A1_V2_BRAND_FIT_GATE_ENV = "A1_V2_BRAND_FIT_GATE"
+A1_V2_ENFORCED_GATE = "brand_fit_v2"
+
+
+def a1_brand_fit_rubric(state: dict) -> str:
+    """"v1" or "v2" for this A1 draft (see A1_BRAND_FIT_RUBRIC_ENV)."""
+    mode = os.environ.get(A1_BRAND_FIT_RUBRIC_ENV, "").strip().lower()
+    mode = mode if mode in A1_BRAND_FIT_RUBRICS else "auto"
+    rubric = mode if mode != "auto" else ("v2" if is_v2_draft(state) else "v1")
+    if rubric == "v2" and not state.get("tour"):
+        logger.info("judge_rubric_v2_without_source", fallback="v1")
+        return "v1"
+    return rubric
+
+
+def a1_v2_gate_enforced() -> bool:
+    return os.environ.get(A1_V2_BRAND_FIT_GATE_ENV, "").strip().lower() == "enforce"
+
+
+def a1_gate(state: dict, rubric: str) -> str:
+    """The gate label of an A1 verdict: v1 drafts gate on brand fit (AA-698); a v2 draft is report-only (d02) unless
+    A1_V2_BRAND_FIT_GATE=enforce AND rubric v2 scored it."""
+    if not is_v2_draft(state):
+        return "brand_fit"
+    return A1_V2_ENFORCED_GATE if (rubric == "v2" and a1_v2_gate_enforced()) else A1_REPORT_ONLY_GATE
+
+
+def _v2_signal(result) -> dict:
+    """The rubric-v2 part of a verdict's quality_signal / graph state (empty for a v1 verdict: rows unchanged)."""
+    if getattr(result, "rubric", "v1") != "v2":
+        return {}
+    from services.content_generation.brand_fit_v2 import RUBRIC_V2_VERSION
+    unsupported = list(getattr(result, "unsupported", ()) or ())
+    return {"rubric": RUBRIC_V2_VERSION, "raw_brand_fit": getattr(result, "raw_brand_fit", None),
+            "unsupported": len(unsupported), "unsupported_quotes": [c.get("quote") for c in unsupported][:5],
+            "unverified_unsupported": getattr(result, "unverified_unsupported", 0),
+            "leaks": list(getattr(result, "leaks", ()) or ()), "caps": list(getattr(result, "caps", ()) or ())}
+
+
 def a1_judge_score(result) -> float:
     """AA-698: the A1 master rewrite is brand-neutral by design (AA-535) — distinctiveness from
     other brands and a brand's mission-hook are T2's job, not A1's. So for A1 the gate is brand fit
@@ -290,17 +340,24 @@ def judge_node(state: dict) -> dict:
                 logger.info("judge_mission_not_gated", reason="tenant_has_no_core_idea", gate=gate,
                             tenant_id=state.get("tenant_id"))
         else:
+            rubric = a1_brand_fit_rubric(state)   # AA-645 (S249): v2 = white-label voice within the source
             result = score_brand_fit(state, generated, mission_absent_cap=_MISSION_ABSENT_CAP,
-                                     stage=stage_for(state, "s1_judge"))  # AA-763
+                                     stage=stage_for(state, "s1_judge"),  # AA-763
+                                     **({"rubric": "v2", "source": state.get("tour"),
+                                         "tour_agency": state.get("tour_agency")} if rubric == "v2" else {}))
             judge_score = a1_judge_score(result)
-            # AA-645 step 0 (d02): a draft of the S1 writer v2 is judged and logged, never gated on brand fit.
-            gate = A1_REPORT_ONLY_GATE if is_v2_draft(state) else "brand_fit"
+            # AA-645 step 0 (d02): a draft of the S1 writer v2 is judged and logged, not gated on brand fit
+            # (unless A1_V2_BRAND_FIT_GATE=enforce and rubric v2 scored it — S249).
+            gate = a1_gate(state, rubric)
             mission_source = None
             repeat_mode = None
             anchors = False
         report_only = gate == A1_REPORT_ONLY_GATE
+        v2_signal = _v2_signal(result)
         tiebreak = None
-        if not report_only and in_tie_band(judge_score, validate_score):
+        # The Jev tie-break Question (a1_brand_fit) was set up on v1 brand-angle scores: a v2 verdict skips it
+        # (the AA-714 near-band median of 3 still applies inside score_brand_fit).
+        if not report_only and not v2_signal and in_tie_band(judge_score, validate_score):
             judge_score, tiebreak = _tie_break(state, generated, judge_score)   # AA-692 A1-4, AA-699 T2-1
 
         # Stack the brand gate on top of validate's structural gate — never let high brand-fit mask a
@@ -342,6 +399,8 @@ def judge_node(state: dict) -> dict:
                     "mission_evidence": (getattr(result, "mission_evidence", "") or "")[:300],
                     "evidence_verified": getattr(result, "evidence_verified", None)}
                    if anchors else {}),
+                # AA-645 (S249): the rubric-v2 verdict details (absent on a v1 verdict).
+                **v2_signal,
             }))
         logged = True
         return {
@@ -357,6 +416,10 @@ def judge_node(state: dict) -> dict:
             "judge_score": judge_score,
             "judge_tiebreak": tiebreak,
             "cost_usd": state.get("cost_usd", 0) + result.cost_usd,
+            # AA-645 (S249): the rubric version + verified unsupported specifics (metadata.judge); v1: absent.
+            **({"judge_rubric": v2_signal["rubric"],
+                "judge_unsupported": [dict(c) for c in (getattr(result, "unsupported", ()) or ())],
+                "judge_caps": v2_signal["caps"]} if v2_signal else {}),
         }
 
     except Exception as e:
