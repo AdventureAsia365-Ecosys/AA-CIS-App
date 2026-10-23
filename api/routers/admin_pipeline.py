@@ -307,6 +307,12 @@ def _build_generated_metadata(result, *, brand_rule_id, brand_name, seo_mode,
             "feedback":        result.get("judge_feedback"),
             "judge_score":     result.get("judge_score"),
         }
+        # AA-645 (S249): which rubric scored it — absent = v1 (every version before S249). A v2 score is on another
+        # scale (voice within the source) and is never compared with a v1 one as the same number.
+        if result.get("judge_rubric"):
+            metadata["judge"]["rubric"] = result["judge_rubric"]
+            metadata["judge"]["unsupported"] = list(result.get("judge_unsupported") or [])[:12]
+            metadata["judge"]["caps"] = list(result.get("judge_caps") or [])
     # AA-691: A1 grounding — what was found, what the sentence repair changed, what is still
     # unsupported (those sent the tour to manual_check) and the reviewer's soft notes. Omitted when
     # grounding did not run (T2, HITL branch, older rows) — same guard style as ``judge``.
@@ -1012,7 +1018,8 @@ async def _revalidate_tour(content_id: str) -> dict:
                    gc.brand_rules_version, gc.metadata,
                    rt.src_name, rt.country, rt.duration,
                    rt.src_subtitle, rt.src_summary, rt.src_description, rt.src_highlights,
-                   rt.src_itineraries, rt.price_raw, rt.inclusions, rt.exclusions
+                   rt.src_itineraries, rt.price_raw, rt.inclusions, rt.exclusions,
+                   rt.group_size, rt.best_time_to_go
             FROM silver_aa_internal.generated_content gc
             JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = gc.tour_id
             WHERE gc.id = $1::uuid
@@ -1109,6 +1116,11 @@ async def _revalidate_tour(content_id: str) -> dict:
             # reviewer edit too (validate / judge read is_v2 from this key). None for v1 and T2 versions.
             "writer_version": (_meta or {}).get("writer_version") if isinstance(_meta, dict) else None,
         }
+        if initial_state["writer_version"]:
+            # AA-645 (S249): the agency fields the v2 fact sheet reads — the brand-fit rubric v2 judges within the same
+            # source the writer saw (a stated group size is a source fact, not an unsupported specific).
+            initial_state["tour_agency"] = {"group_size": gc.get("group_size"),
+                                            "best_time_to_go": gc.get("best_time_to_go")}
 
         graph = build_revalidation_graph()
 

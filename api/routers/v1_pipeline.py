@@ -270,6 +270,10 @@ async def _rewrite_tour(
             "judge_mission_present":      result.get("judge_mission_present"),
             "judge_feedback":             result.get("judge_feedback"),
             "judge_score":                result.get("judge_score"),
+            # AA-645 (S249): rubric-v2 verdict details (None on a v1 verdict; the metadata guard skips them).
+            "judge_rubric":               result.get("judge_rubric"),
+            "judge_unsupported":          result.get("judge_unsupported"),
+            "judge_caps":                 result.get("judge_caps"),
             # AA-213: propagate fallback_used so metadata.fallback_used isn't always-False (graph
             # declares it but _rewrite_tour rebuilds the dict — same strip class as the judge_* fix).
             "fallback_used":   result.get("fallback_used", False),
