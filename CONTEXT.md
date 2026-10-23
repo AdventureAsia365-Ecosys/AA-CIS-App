@@ -2009,8 +2009,12 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   `generated_content.metadata.writer_version`): validate keeps ITINERARY_STILL_COMPRESSED and DFS_INTENT_UNDERUSED
   report-only for it (in `quality_shadow`, detector `s1_writer_v2`: v2 has no length target and no nudge, and uses a
   keyword only when it fits), and the A1 judge computes and logs brand fit but does not gate it (gate label
-  `brand_fit_report_only`: no min() into the score, no tie-break, no feedback into the retry). Every other gate
-  (validate, grounding, brand audit, flag_fix, revalidate, the day oracle) is unchanged. `raw_tours.group_size` /
+  `brand_fit_report_only`: no min() into the score, no tie-break, no feedback into the retry). The same holds on a
+  reviewer edit / admin revalidate of a v2 version (`_revalidate_tour` seeds `writer_version` from the metadata).
+  When the AA voice-rubric LLM brand audit runs on a v2 draft (only when the judge did not), its voice codes and a
+  bare not-publish-ready verdict are report-only too (`quality_shadow`, detector `s1_writer_v2_brand_audit`); the
+  pre-audit codes, product-truth codes and a `manual_check` verdict still gate. Every other gate (validate,
+  grounding, flag_fix, revalidate, the day oracle) is unchanged. `raw_tours.group_size` /
   `best_time_to_go` reach the v2 fact sheet as `tour_agency` (A1 only).
 - **Per-wave quality report** (AA-645 step 0, d13): `scripts/aa645/wave_report.py` (read-only, $0) compares, per
   country, the version a rerun wave wrote with the version that was live before it: outcome (published / stayed v1 /
@@ -2060,7 +2064,9 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   - **Publish dates** (AA-645 d06, CIS 273): `published_tours.published_at` is the FIRST publish — a new version of a
     published tour (re-export, a rerun wave, a promote) keeps it, so the tenant Browse pool and TripPlanner's browse
     order do not move; `published_tours.updated_at` records the last change, and `catalog.v_tour.updated_at` follows
-    it (`catalog._live_tour.master_updated_at`).
+    it (`catalog._live_tour.master_updated_at`). Anything that means "changed recently / in this wave" reads
+    `updated_at`: the rerun-wave report (`services/waves/report.py`, `published_in_wave`), the admin library
+    `published_last_30d` / `stale_count` / `last_published` and the overview funnel `published_7d`.
   - **Promote = per-tour rollback** (AA-645 step 0, C2): `POST /admin/tours/{id}/versions/{n}/promote` publishes an
     `approved` version through `process_export` (every text / SEO field, the score pointer, the live-source rule) and
     re-atomizes it with `dedupe=False` + `force=True` (the version's job key and day fingerprints are already spent);
