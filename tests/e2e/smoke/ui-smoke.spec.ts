@@ -50,6 +50,8 @@ const ADMIN_PAGES: PageSpec[] = [
   { id: 'atom-curation', label: 'Social Content', path: '/admin/atom-curation', readySelector: '[data-testid="admin-content-ready"]', viewerRefused: true },
   { id: 'decisions', label: 'Jev Decisions', path: '/admin/decisions', viewerRefused: true },
   { id: 'jobs', label: 'Jobs', path: '/admin/jobs', viewerRefused: true },
+  // AA-839 — Jobs › Data erasure (admin only; DRY RUN by default, apply needs the env flag + a Cognito sign-in).
+  { id: 'data-erasure', label: 'Data erasure', path: '/admin/data-erasure', readySelector: '[data-testid="data-erasure-ready"]', viewerRefused: true },
   { id: 'llm-usage', label: 'External Spend', path: '/admin/llm-usage', viewerRefused: true },
   { id: 'master-content', label: 'Master Content', path: '/admin/master-content' },
   { id: 'overview', label: 'Overview', path: '/admin/overview', viewerRefused: true },
