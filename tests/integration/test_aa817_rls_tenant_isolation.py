@@ -80,6 +80,7 @@ TENANT_TABLES = {
     "acp_shared.quarter_plan": False,       # 265
     "acp_shared.year_plan": False,          # 265
     "acp_deliver.tenant_tour_pages": False,  # 265, text tenant_id (+ master read, own test below)
+    "shared.notifications": False,          # 274 (AA-986 L3): tenant-facing rows only (restrictive audience policy)
 }
 # tables the tenant role writes through column grants only (241: connect / test-connection columns; 237:
 # DELETE; 262: the brand POST's columns): the generic `SET tenant_id = tenant_id` write tests do not apply, the
@@ -87,7 +88,7 @@ TENANT_TABLES = {
 # 265: the pick / cut / trip-reallocation columns; tenant_tour_pages is read only for the tenant role
 COLUMN_WRITE_TABLES = {"shared.tenant_integrations", "shared.tenant_brand_rules", "shared.tenant_seo_config",
                        "acp_shared.subject", "acp_shared.quarter_plan", "acp_shared.year_plan",
-                       "acp_deliver.tenant_tour_pages"}
+                       "acp_deliver.tenant_tour_pages", "shared.notifications"}
 # tables the tenant role may DELETE from (237: the disconnect route); the others have no DELETE grant
 DELETE_TABLES = {"shared.tenant_integrations"}
 # RLS tables without a tenant column: table -> (primary key, the row's tenant through its parent). The
@@ -198,6 +199,10 @@ def _seed(c, tid):
               "VALUES (%s, 1, '{}'::jsonb, 'standard', 'pending')", (plan,))
     c.execute("INSERT INTO acp_deliver.tenant_tour_pages (tenant_id, tour_id, url) VALUES (%s, %s, %s)",
               (tid, str(uuid.uuid4()), f"https://example.invalid/{tid[:8]}"))
+    # 274 (AA-986 L3): a tenant-facing notification (the admin-only rows of a tenant are hidden: own test in
+    # test_aa986_migration_274.py)
+    c.execute("INSERT INTO shared.notifications (tenant_id, event_type, entity_type, entity_id, target_roles) "
+              "VALUES (%s, 'tour.discontinued', 'tour', 'x', ARRAY['tenant'])", (tid,))
 
 
 @pytest.fixture
@@ -592,9 +597,10 @@ def _ours(tenants, a, b):
 
 
 def test_every_rls_table_is_covered(cur):
-    """The 24 RLS tables of Dev after 266 (AA-817 plan §0 + angle_gate_option + tenant_brand_rules /
-    tenant_seo_config + the five 265 tables + tour_atoms) all have RLS here, and none is owned by the tenant role."""
-    assert len(ALL_RLS_TABLES) == 24
+    """The 25 RLS tables of Dev after 274 (AA-817 plan §0 + angle_gate_option + tenant_brand_rules /
+    tenant_seo_config + the five 265 tables + tour_atoms + notifications) all have RLS here, and none is owned by the
+    tenant role."""
+    assert len(ALL_RLS_TABLES) == 25
     for table in sorted(ALL_RLS_TABLES):
         cur.execute("SELECT c.relrowsecurity, pg_has_role(%s, c.relowner, 'USAGE') FROM pg_class c "
                     "WHERE c.oid = %s::regclass", (TENANT_ROLE, table))

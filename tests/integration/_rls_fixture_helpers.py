@@ -31,7 +31,8 @@
   revoked, the pre-265 state that 241 guard 4 / 262 guard 5 (V1) expect when a test re-applies them on the fully
   migrated DB.
 * `restore_266_catalog_owner_read(cur)`: the catalog tests drop and re-create catalog_owner (DROP OWNED also drops
-  a policy whose only role it is); this puts 266's keep-alive policy on tour_atoms back.
+  a policy whose only role it is); this puts 266's keep-alive policy on tour_atoms back, and 272's SELECT grants of
+  catalog_owner on gold_aa_internal.v_tour_liveness / tour_lifecycle_event (the 274 catalog views read them).
 """
 import glob
 import os
@@ -223,6 +224,7 @@ def revoke_platform_reads(cur):
 def restore_266_catalog_owner_read(cur):
     """266's keep-alive policy on tour_atoms, when tour_atoms has RLS and the policy is missing (DROP OWNED BY
     catalog_owner removes a policy whose only role it is). A no-op before 266 or when it is in place."""
+    restore_272_catalog_owner_reads(cur)
     cur.execute("SELECT relrowsecurity FROM pg_class WHERE oid = 'acp_contract.tour_atoms'::regclass")
     if not cur.fetchone()[0]:
         return
@@ -232,3 +234,12 @@ def restore_266_catalog_owner_read(cur):
         return
     cur.execute("CREATE POLICY catalog_owner_read ON acp_contract.tour_atoms AS PERMISSIVE FOR SELECT "
                 "TO catalog_owner USING (true)")
+
+
+def restore_272_catalog_owner_reads(cur):
+    """272's SELECT of catalog_owner on gold_aa_internal.v_tour_liveness and tour_lifecycle_event (AA-986), lost when a
+    catalog test re-creates the role. A no-op before 272."""
+    for rel in ("gold_aa_internal.v_tour_liveness", "gold_aa_internal.tour_lifecycle_event"):
+        cur.execute("SELECT to_regclass(%s)", (rel,))
+        if cur.fetchone()[0] is not None:
+            cur.execute(f"GRANT SELECT ON {rel} TO catalog_owner")

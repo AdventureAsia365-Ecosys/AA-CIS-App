@@ -85,7 +85,8 @@ X1_CI_ONLY_LEGACY_RLS = ("acp_deliver.packets", "acp_deliver.pieces", "acp_share
 # x1_244_ci_unshape puts both back.
 X1_POST_244_RLS = ("shared.tenant_brand_rules", "shared.tenant_seo_config",
                    "acp_shared.subject", "acp_shared.quarter_plan", "acp_shared.quarter_plan_version",
-                   "acp_shared.year_plan", "acp_deliver.tenant_tour_pages", "acp_contract.tour_atoms")
+                   "acp_shared.year_plan", "acp_deliver.tenant_tour_pages", "acp_contract.tour_atoms",
+                   "shared.notifications")   # 274 part A (AA-986 L3)
 
 
 def _post_244_rls(cur, on):
@@ -374,6 +375,13 @@ def _apply_schema(conn):
             part1 = sql.split("-- ── 1. The column")[1].split("GRANT CREATE ON SCHEMA catalog")[0]
             part1 = part1.split("\n", 1)[1]
             sql = "BEGIN;\n" + part1 + "COMMIT;\n"
+        if mf.startswith("274_"):
+            # AA-986 L3/L4: 274's part B (the catalog views) needs 253-258 (skipped here) and the catalog recipe.
+            # Replay only part A, shared.notifications under RLS (the tenant-scoped /v1/notifications reads it); not
+            # registered, so test_aa986_migration_274 can apply the whole file the DB Migrate way.
+            part_a = sql.split("-- ── Part A")[1].split("-- ── Part B")[0]
+            part_a = part_a.split("\n", 1)[1]
+            sql = "BEGIN;\n" + part_a + "COMMIT;\n"
         if mf.startswith("262_"):
             # AA-859 wave 3: CI's legacy app_user is a LOGIN role here (ci.yml creates it; Dev has no grant for it)
             # and holds 005's grants on tenant_brand_rules. 262's guard 1 refuses a login role with privileges on
@@ -550,6 +558,8 @@ def _apply_schema(conn):
     # AA-859 wave 3 (262): same for the two tables 262 puts under RLS, so test_aa817_* / test_aa859_migration_262
     # can re-apply 262 (its guard 1 refuses a login role holding privileges there).
     cur.execute("REVOKE ALL ON shared.tenant_brand_rules, shared.tenant_seo_config FROM app_user")
+    # AA-986 L3 (274): same for shared.notifications, so test_aa986_migration_274 can apply the whole file.
+    cur.execute("REVOKE ALL ON shared.notifications FROM app_user")
 
     # Seed pipeline_runs for both tenants (FK required by raw_tours.batch_id)
     # Must set RLS context + use BYPASSRLS or set app.tenant_id
