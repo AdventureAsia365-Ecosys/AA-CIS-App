@@ -139,7 +139,7 @@ def _row(**over):
         "revalidate_passed": None, "requested_tier": None, "status": "hitl", "version_num": 1,
         "failure_codes": None, "brand_audit_codes": None, "brand_audit_status": "pass",
         "src_name": "Raw", "country": "India", "duration": 7, "raw_tours_batch_id": None,
-        "src_itinerary_chars": 2000,
+        "src_itinerary_chars": 2000, "source_live": True,  # AA-986 L1
     }
     base.update(over)
     return base

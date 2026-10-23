@@ -45,6 +45,7 @@ from typing import Iterable, Mapping, Optional
 
 from services.acp_contract.segment_matching import CONNECTORS
 from services.acp_shared.place_cards import core_key, fold, is_generic_name, name_forms, place_norm
+from shared.tour_liveness import served_tour_joins_sql
 
 SKIP_NO_MEMBER = "no_live_member"
 SKIP_NO_TENANT_MEMBER = "no_member_on_tenant_tours"
@@ -197,14 +198,15 @@ def choose_route_anchor(place: Optional[str], members: Iterable[Member], route_t
 # owner's rights (RLS bypassed) and 241 revoked the tenant role on it, while the pick runs on the tenant pool
 # (SUBJECT_DECIDE_FLAG), where 266's policies on tour_atoms and 239's master read on published_tours apply.
 # Same rows as the view for the main pool and the worker (cis_app reads every row of both tables).
-_MEMBERS_SQL = """
+# AA-986 L1 — the rule now also requires a live source (CIS 271 adds it to the view): the served-tour joins come
+# from shared.tour_liveness, the one copy of the rule, instead of a hand copy here. The tenant pool reads raw_tours
+# through 239's AA-master read policy, as it did for `rt.country` before.
+_MEMBERS_SQL = f"""
     SELECT m.segment_id, ta.atom_id, ta.tour_id::text AS tour_id, ta.place, ta.evidence,
            rt.country, apc.card_id::text AS card_id
     FROM acp_contract.atom_segment_member m
     JOIN acp_contract.tour_atoms ta ON ta.atom_id = m.atom_id
-    JOIN gold_aa_internal.published_tours pt
-      ON pt.tour_id = ta.tour_id AND pt.master_status = 'active' AND pt.deleted_at IS NULL
-    LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = ta.tour_id
+    {served_tour_joins_sql("ta.tour_id")}
     LEFT JOIN acp_shared.atom_place_card apc ON apc.atom_id = ta.atom_id
     WHERE m.segment_id = ANY($1::text[]) AND NOT m.is_alias
       AND ta.owner_scope IN ('platform', $2::text) AND NOT ta.deleted AND NOT ta.is_empty_marker

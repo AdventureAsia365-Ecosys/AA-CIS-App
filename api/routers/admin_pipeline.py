@@ -28,6 +28,7 @@ from api.routers.auth import verify_tenant_jwt
 from api.routers.v1_pipeline import _rewrite_tour
 from services.content_generation.pipeline_lessons import load_s1_lessons_block
 from shared.aws_client.bronze import bronze_bucket
+from shared.tour_liveness import SourceNotLiveError, live_source_exists_sql, live_source_sql
 from shared.validators.prompt_sanitize import (
     sanitize_text, sanitize_list, MAX_LONG_FIELD_LEN, MAX_SHORT_FIELD_LEN, MAX_SYSTEM_PROMPT_LEN,
     MAX_BRAND_LONG_LEN, MAX_BRAND_MEDIUM_LEN, brand_length_errors,
@@ -177,7 +178,7 @@ def _result_to_gc(result: dict) -> dict:
     }
 
 
-async def _enqueue_review(conn, tour_id, generated_content_id, result) -> None:
+async def _enqueue_review(conn, tour_id, generated_content_id, result, failure_summary=None) -> None:
     """AA-212: enqueue a blocked / low-quality tour into review_queue for HITL review.
 
     Idempotent: the NOT EXISTS guard skips re-insert when a pending row already exists for this
@@ -188,19 +189,25 @@ async def _enqueue_review(conn, tour_id, generated_content_id, result) -> None:
     'dismissed', not 'pending'. Reviewers only work on tours with nothing published; a better
     version of a published tour comes from Regenerate, not from hand-editing a failed one. The
     row is still written (soft) so the failed attempt stays traceable.
+
+    AA-986 L1: the same for a tour whose source is no longer live (trashed / superseded / deleted at S0/A0,
+    for example an S1 run that finished after the trash): its row enters 'dismissed', never 'pending', so
+    nobody can approve a deleted tour back into Master Content. `failure_summary` overrides the summary built
+    from `result` (the S1 auto-export passes the source_not_live message: that version passed every gate).
     """
-    await conn.execute("""
+    await conn.execute(f"""
         INSERT INTO silver_aa_internal.review_queue (
             tour_id, generated_content_id, tenant_id,
             failure_summary, score_overall, review_status, reviewed_at
         )
         SELECT $1::uuid, $2::uuid, $3::uuid, $4, $5,
-               (CASE WHEN pub.live THEN 'dismissed' ELSE 'pending' END)::review_status_enum,
-               CASE WHEN pub.live THEN NOW() END
+               (CASE WHEN pub.live OR NOT pub.source_live THEN 'dismissed' ELSE 'pending' END)::review_status_enum,
+               CASE WHEN pub.live OR NOT pub.source_live THEN NOW() END
         FROM (SELECT EXISTS (
                 SELECT 1 FROM gold_aa_internal.published_tours pt
                 WHERE pt.tour_id = $1::uuid AND pt.master_status <> 'trashed'
-             ) AS live) pub
+             ) AS live,
+             {live_source_exists_sql("$1::uuid")} AS source_live) pub
         WHERE NOT EXISTS (
             SELECT 1 FROM silver_aa_internal.review_queue
             WHERE generated_content_id = $2::uuid
@@ -210,7 +217,7 @@ async def _enqueue_review(conn, tour_id, generated_content_id, result) -> None:
         tour_id,
         generated_content_id,
         _MASTER_TENANT_ID,
-        _build_failure_summary(result),
+        failure_summary if failure_summary is not None else _build_failure_summary(result),
         float(result.get("quality_score") or 0.0),
     )
     # AA-653 (S207): one failed version per tour is enough — the reviewer's move is Regenerate,
@@ -834,6 +841,16 @@ async def _execute_run_tour(
             from services.export.handler import process_export
             try:
                 await process_export(str(version_id))
+            except SourceNotLiveError as _dead:
+                # AA-986: the source was trashed / superseded while S1 ran. An expected refusal, not an error
+                # (no Sentry event): process_export already moved the version approved → hitl; file the
+                # attempt as a review row, which _enqueue_review enters 'dismissed' for a dead source.
+                logger.warning("s1_export_refused_source_not_live", tour_id=req.tour_id,
+                               version_id=str(version_id), reason=_dead.state.reason)
+                try:
+                    await _enqueue_review(conn, req.tour_id, version_id, result, failure_summary=str(_dead))
+                except Exception as _rq_err:
+                    logger.warning("review_queue_enqueue_failed", tour_id=req.tour_id, error=str(_rq_err))
             except Exception as _exp_err:
                 logger.error("export_failed", tour_id=req.tour_id, error=str(_exp_err))
         elif version_id and status == "pending":
@@ -2533,7 +2550,9 @@ async def admin_review_queue(
 
     # Shared WHERE for rows, total and facets. $1 = tenant; further params appended in order.
     params: list = [tenant_id]
-    where = ["rq.tenant_id = $1::uuid"]
+    # AA-986 L1: a pending row whose source is no longer live (trashed / superseded / deleted at S0/A0) is
+    # hidden: it cannot be approved (409 source_not_live). Closed rows stay, with `source_live` on each.
+    where = ["rq.tenant_id = $1::uuid", f"(rq.review_status <> 'pending' OR ({live_source_sql('rt')}))"]
     if status == "all":
         # AA-626: hide 'dismissed' from the "all" view too, same as 'superseded' — both are
         # closed-out-without-a-quality-verdict rows the reviewer intentionally cleared.
@@ -2568,7 +2587,8 @@ async def admin_review_queue(
                    gc.requested_tier, gc.status, gc.version_num,
                    qs.failure_codes, qs.brand_audit_codes, qs.brand_audit_status,
                    rt.src_name, rt.country, rt.duration, rt.batch_id AS raw_tours_batch_id,
-                   length(rt.src_itineraries) AS src_itinerary_chars
+                   length(rt.src_itineraries) AS src_itinerary_chars,
+                   ({live_source_sql('rt')}) AS source_live
             FROM silver_aa_internal.review_queue rq
             JOIN silver_aa_internal.generated_content gc ON gc.id = rq.generated_content_id
             -- AA-739: latest evaluation only; a plain LEFT JOIN repeated a row per evaluation.
@@ -2656,6 +2676,8 @@ async def admin_review_queue(
             # the supersede decision on this, never on a client-side score heuristic
             "status":             r["status"],
             # raw-tour context
+            # AA-986 L1: false when the source was trashed / superseded / deleted (only closed rows can be false)
+            "source_live":        bool(r["source_live"]),
             "src_name":           r["src_name"],
             "country":            r["country"],
             "duration":           r["duration"],

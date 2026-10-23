@@ -16,7 +16,8 @@ GC_ROW = {"id": "gc-1", "tour_id": "t-1", "tenant_id": "t-1", "batch_id": None, 
           "aa_subtitle": "s", "aa_summary": "sum", "aa_description": "d", "aa_highlights": "[]",
           "aa_itineraries": "Day 1...", "mobile_card_text": None, "seo_title": "t", "seo_meta": "m" * 150,
           "seo_keywords_used": "[]", "og_tags": "{}", "quality_score_id": None, "quality_score": 9.0,
-          "country": "Vietnam", "duration": "5 days"}
+          "country": "Vietnam", "duration": "5 days",
+          "src_source_status": "active", "src_deleted_at": None}  # AA-986: live source
 
 
 def _dismiss_calls(conn):

@@ -342,20 +342,20 @@ async def test_base_table_member_reads_match_the_view(ctx):
         await conn.execute("INSERT INTO acp_contract.atom_segment_member (segment_id, atom_id) VALUES ($1, $2)",
                            ctx.segment, atom)
         extra.append(atom)
+    # AA-986 L1: the inlined rule is shared.tour_liveness.served_tour_joins_sql (live Master AND live source, CIS 271)
+    from shared.tour_liveness import served_tour_joins_sql
     view_members = subject_seed._MEMBERS_SQL.replace(
-        "JOIN acp_contract.tour_atoms ta ON ta.atom_id = m.atom_id\n"
-        "    JOIN gold_aa_internal.published_tours pt\n"
-        "      ON pt.tour_id = ta.tour_id AND pt.master_status = 'active' AND pt.deleted_at IS NULL",
-        "JOIN acp_contract.v_active_tour_atoms ta ON ta.atom_id = m.atom_id")
+        "JOIN acp_contract.tour_atoms ta ON ta.atom_id = m.atom_id\n    " + served_tour_joins_sql("ta.tour_id"),
+        "JOIN acp_contract.v_active_tour_atoms ta ON ta.atom_id = m.atom_id\n"
+        "    LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = ta.tour_id")
     assert view_members != subject_seed._MEMBERS_SQL
     for tid in (ctx.a, ctx.b):
         new = sorted(map(dict, await conn.fetch(subject_seed._MEMBERS_SQL, [ctx.segment], tid)), key=str)
         old = sorted(map(dict, await conn.fetch(view_members, [ctx.segment], tid)), key=str)
         assert new == old and {r["atom_id"] for r in new} & set(extra) == set()
     view_trip = route_guard._TRIP_MEMBER_SQL.replace(
-        "JOIN acp_contract.tour_atoms ta ON ta.atom_id = m.atom_id\n"
-        "               JOIN gold_aa_internal.published_tours pt\n"
-        "                 ON pt.tour_id = ta.tour_id AND pt.master_status = 'active' AND pt.deleted_at IS NULL",
+        "JOIN acp_contract.tour_atoms ta ON ta.atom_id = m.atom_id\n               "
+        + served_tour_joins_sql("ta.tour_id"),
         "JOIN acp_contract.v_active_tour_atoms ta ON ta.atom_id = m.atom_id")
     assert view_trip != route_guard._TRIP_MEMBER_SQL
     for tour in (ctx.tour, dead_tour):
