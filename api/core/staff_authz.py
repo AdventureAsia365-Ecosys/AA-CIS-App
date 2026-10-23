@@ -153,6 +153,9 @@ POLICY: dict[tuple[str, str], str] = {
     ("POST", "/admin/job-runner/retention/run"): OPS_WRITE,
     ("POST", "/admin/job-runner/retention/schedule"): OPS_WRITE,
     ("POST", "/admin/job-runner/staff-reconcile/schedule"): OPS_WRITE,   # AA-816 C7, daily (MACHINE_ROUTES)
+    # AA-839 — data erasure: tenant accounts and DSARs are admin-only (an apply also needs Cognito + the env flag)
+    ("GET", "/admin/job-runner/erasure"): TENANT_READ,
+    ("POST", "/admin/job-runner/erasure/run"): TENANT_WRITE,
     # ── admin_decisions — Jev question mode/floors, Jev credit ledger
     ("PUT", "/admin/decisions/questions/{question_key}"): AI_ADMIN,
     ("POST", "/admin/decisions/jev-credit/topups"): SPEND_WRITE,

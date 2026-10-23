@@ -325,7 +325,7 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     `s1_seo_prefetch`, `photo_sync`, `s1_rewrite`, `s1_batch_ingest`, `revalidate`, `recompute`,
     `place_cards_build`, `t7_slate`, `t8_angles`, and the place pipeline `place_extract`,
     `place_geocode`, `tour_graph_build` — AA-712, `place_shape`, `place_dedupe` — AA-847, the five `retention_*` kinds — AA-825,
-    `ops_alert_email` — AA-828). Every claim merges `progress.attempt_started_at` (AA-751, F18):
+    `ops_alert_email` — AA-828, `data_erasure` — AA-839). Every claim merges `progress.attempt_started_at` (AA-751, F18):
     `started_at` keeps the first attempt's start, so per-attempt age reads the progress key.
   - **Background kinds (AA-712)**: `@job_kind(..., background=True)` kinds never take the worker's
     last `BACKGROUND_RESERVE` (2) free slots (`Worker.claim_caps`), so a place-pipeline backlog cannot
@@ -354,6 +354,28 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     RUN). Every live run of a rolled-up kind stops with nothing deleted if a day/month older than the
     cutoff is still missing from the rollup, and every archive object is HEAD-verified (Content-MD5 on
     the PUT) before its batch is deleted.
+  - **Data erasure (AA-839, DM-6.7, runbook AA-Ecosys `docs/legal/dsar-erasure-runbook.md`)**: one background
+    kind `data_erasure` (`services/jobs/erasure_job.py`, concurrency 1, no retry) for a **tenant** (`tenant` =
+    tenant id) or a **traveller** (`email_sha256` = sha256 hex of the trimmed, lowercased address; the API
+    refuses anything else, so an address never reaches a payload or a log). `POST /admin/job-runner/erasure/run`
+    (admin, `tenant.write`) enqueues a **DRY RUN** by default: SELECT only, rows per CIS table and action,
+    blockers, the delete order, the tenant's S3 objects/secrets (best-effort) and the per-app checklist
+    (`booking.*`, `tripplanner.*`, `crm.*`, Cognito, mailbox, Sentry), plus a `fingerprint` of the counts.
+    Inventory: `services/erasure/inventory.py` — every CIS table with `tenant_id` has an action (`delete`,
+    `detach` = keep the cost row without the tenant link, `merge` = add into the NULL-tenant rollup row, `keep` =
+    the append-only `acp_shared.audit_log`); a `tenant_id` table without an entry is reported `unregistered` and
+    fails `tests/integration/test_aa839_erasure_job.py`. Rows that reach a tenant only through foreign keys are
+    found from `pg_constraint` at run time (`services/erasure/plan.py`) and deleted children-first; a row of
+    another tenant, a kept row or another owner's row pointing at an erased row is a blocker. CIS holds no
+    traveller data by design (only staff/alert e-mails are tagged in `shared`), so the traveller DRY RUN is a proof
+    of absence (exact hash on the tagged columns, hashed e-mail tokens in notification/job/audit text).
+    **Apply** is in the code but OFF: it needs `ERASURE_APPLY_ENABLED=true` (unset everywhere), a verified Cognito
+    staff session, a succeeded DRY RUN of the same subject <= `ERASURE_DRY_RUN_MAX_AGE_HOURS` (24) old whose
+    fingerprint is passed as `approved_fingerprint`, `approved_by`, `snapshot_id`, and for a tenant an offboard at
+    least `ERASURE_TENANT_RETENTION_DAYS` (default 30, Nghiệp sets it) ago. One transaction: recount = same
+    fingerprint, every statement touches exactly the approved rows, a recount finds 0, one `acp_shared.audit_log`
+    row (`tenant.erased` / `dsar.cis_erased`, counts only); for a traveller the hash is then stripped from both
+    job rows. Inventory and settings: `GET /admin/job-runner/erasure`.
   - **Ops metrics sampler (AA-832, AA-751)**: `api/core/ops_metrics_sampler.py`, a background task of
     the **api** (not the worker) started in `api/main.py`'s lifespan after the main pool, cancelled
     before it closes, off when `ENVIRONMENT=test`, never raises. Every 300 s (first tick 30 s after
@@ -1219,8 +1241,9 @@ PATCH and generate-key on an offboarded tenant return 409. `POST /admin/tenants/
 (Nghiệp, 14/10/2026) brings it back whole: it clears the offboard markers, sets `is_active`,
 re-adds the snapshotted Jev allow-list row and issues a **new** API key (the old one stays
 revoked); plan and settings are unchanged, and cancelled jobs are listed, not re-enqueued. Tenant
-data erasure is not automated (AA-839: a separate step after offboarding plus a retention window, with
-explicit approval).
+data erasure is a separate step after offboarding plus a retention window, with explicit approval: the
+`data_erasure` job (AA-839, see the job runner section) — DRY RUN by default, apply OFF behind
+`ERASURE_APPLY_ENABLED`; after an apply the tenant cannot be restored.
 
 Every admin write to a tenant (create, plan, status, key, brand identity, config, offboard,
 restore) is admin-role only. The BFF enforces this through `lib/rbac.ts` `API_WRITE_RULES`, and the

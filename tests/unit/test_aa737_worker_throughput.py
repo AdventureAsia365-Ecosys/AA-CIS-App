@@ -59,7 +59,9 @@ def test_background_kind_never_claimed_with_two_or_fewer_free_slots(free):
                           "retention_llm_call_log", "retention_tenant_api_usage", "retention_job",
                           "retention_decision_log", "retention_cost_explorer_snapshot",
                           # AA-816 C7 staff directory reconcile (report only, daily)
-                          "staff_directory_reconcile"}
+                          "staff_directory_reconcile",
+                          # AA-839 data erasure (DRY RUN by default, manual only)
+                          "data_erasure"}
     assert bool(background & set(w.claim_caps(free))) == (free > worker.BACKGROUND_RESERVE)
 
 
