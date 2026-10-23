@@ -93,3 +93,8 @@ e054ef56323d9d79dc13864ecd0c8cc7465a3b88:tests/unit/test_aa871_request_id_json_l
 e054ef56323d9d79dc13864ecd0c8cc7465a3b88:tests/unit/test_aa871_request_id_json_logs.py:uri-embedded-credentials:362
 e054ef56323d9d79dc13864ecd0c8cc7465a3b88:tests/unit/test_aa871_request_id_json_logs.py:uri-embedded-credentials:363
 ffa78aefa4e88ec83def8938768c1f3b47bba6dc:tests/integration/test_007_rls_isolation.py:uri-embedded-credentials:26
+
+# AA-981 canary (test/aa981-canary, closed unmerged): a FAKE random value committed on purpose to prove the
+# scan goes red. Its PR head stays fetchable, so it is pinned by commit.
+3b19b6dfdf156956e538fd3c920d4538efa5eab0:canary/aa981-canary.tfvars:credential-key-literal:2
+3b19b6dfdf156956e538fd3c920d4538efa5eab0:canary/aa981-canary.tfvars:terraform-plaintext-secret:2
