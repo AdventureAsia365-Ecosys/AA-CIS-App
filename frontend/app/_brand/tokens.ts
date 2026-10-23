@@ -28,8 +28,8 @@ export const BRAND = {
   ink2:   "#2A333E",
   ink3:   "#3A4453",
   body:   "#33363D",
-  muted:  "#6B7380",
-  muted2: "#9099A6",
+  muted:  "#5A6270", // S248 AA-760: AA on bg / line2 (was #6B7380, 4.43:1 on bg)
+  muted2: "#626A78", // AA-760: AA on card / bg (was #9099A6, 2.9:1)
   bg:     "#F8F6F2",
   card:   "#FFFFFF",
   line:   "#E9E4DB",
