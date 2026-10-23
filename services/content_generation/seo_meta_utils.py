@@ -73,9 +73,19 @@ def meta_complete_sentence(meta: str) -> bool:
     if len(words) < 8:
         return False
     last = re.sub(r"[^a-zA-Z]", "", words[-1].lower()) if words else ""
-    if last in BAD_META_ENDINGS or last in _META_WEAK_ENDINGS:
+    if (last in BAD_META_ENDINGS or last in _META_WEAK_ENDINGS) and not _ends_in_name(words):
         return False
     return True
+
+
+def _ends_in_name(words: list[str]) -> bool:
+    """S248 (S1-first step 1): the final word is the capitalised tail of a place name ("…and Hoi An.", "…to
+    Ko A."), not an article — both words capitalised. Found on the golden set (s1-016), where "An" read as a weak
+    ending."""
+    if len(words) < 2:
+        return False
+    last, prev = words[-1].strip(".\"'’”)"), words[-2].strip(",\"'‘“(")
+    return last[:1].isupper() and prev[:1].isupper() and last.lower() != "the"
 
 
 # AA-925 (S2 shadow detector, struct.truncated): the endings a cut leaves when it drops the noun a modifier
@@ -104,7 +114,7 @@ def meta_cut_signature(meta: str) -> Optional[str]:
     if not words:
         return None
     last = words[-1].lower().strip("\"'’”)")
-    if last in BAD_META_ENDINGS or last in _META_WEAK_ENDINGS:
+    if (last in BAD_META_ENDINGS or last in _META_WEAK_ENDINGS) and not _ends_in_name(words):
         return f"weak ending '{last}'"
     if _NUMBER_COMPOUND_RE.match(last):
         return f"number compound '{last}' with no noun"

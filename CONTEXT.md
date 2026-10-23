@@ -1907,6 +1907,17 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   and changes no score or verdict. A code moves to enforce (`DAY_ORACLE_MODES`) only after a precision read on
   stored tours (`scripts/aa925/day_oracle_report.py`, D5: ≥ 0.70 with the Wilson bound); an enforced code is an
   A1 hard code (`_HARD_BLOCK_CODES`, rewrite class) and stays shadow on a tenant rewrite (T2/T3).
+  A day list in the source ("Day 05 & 06", "Day 11, 12 & 13") is a range (S248). A meta ending in a two-word
+  capitalised place name ("…and Hoi An.") is not a weak ending (S248).
+- **S1 fact table + code checks** (S248, M2a S1-first step 1, Refs AA-645; offline only, not wired into the graph —
+  S1-first freezes new gates): `services/quality/s1_facts.build_fact_table(tour)` builds, by code, the per-tour fact
+  table the step-2 writer will read (duration kind, source days with their places, schedule lines, places, figures
+  with unit / noun, included / excluded / optional lines, conflicts, the "ask the supplier" missing list, do-not-use
+  operator names / contacts); every verbatim value points at its source field (`verify_pointers`).
+  `services/quality/s1_checks.run_checks(tour, page)` measures a written S1 page against it (day oracle, day-place
+  drift, cut / out-of-band meta, truncated body, novel figure, figure with the wrong unit, name not in source,
+  inclusion the source excludes). `scripts/s1_step01/fixture_report.py` runs both over the golden fixture or any
+  page set (A/B arms) and scores them against a ground-truth file; results with tour text go to the private root.
 - **Degraded detectors + repair contract** (AA-925, Q-2, design §4.3/§6.3; `services/quality/`, pure modules —
   gate runners are passed in, no writer module is imported):
   - `degraded[]` (`services/quality/degraded.py`) names every fail-open path that ran on an output: Jev
