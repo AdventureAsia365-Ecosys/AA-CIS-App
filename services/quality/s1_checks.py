@@ -197,7 +197,7 @@ _DANGLING_WORDS = frozenset((
     "on", "at", "for", "by", "from", "into", "onto", "via", "through", "as", "its", "their", "this", "that",
     "these", "those", "before", "after", "while", "where", "which", "who", "is", "are", "was", "were", "be",
 ))
-_DANGLING_TAIL_RE = re.compile(r"[,;:\-–—/&+]$")
+_DANGLING_TAIL_RE = re.compile(r"[,;:\-–—/&]$")   # no "+": "Group size: 10+", "ages 8+" are whole
 
 
 def _cut_mid_phrase(line: str) -> bool:

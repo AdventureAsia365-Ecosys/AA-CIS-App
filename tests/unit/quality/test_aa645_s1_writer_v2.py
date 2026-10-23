@@ -239,3 +239,13 @@ def test_meta_problems_flag_operator_and_brand_names():
 def test_meta_retry_prompt_handles_a_missing_first_answer():
     text = v2.meta_retry_prompt(None, ["the answer is not the JSON object asked for"])
     assert "YOUR PREVIOUS ANSWER was not usable" in text and '"seo_meta"' in text
+
+
+# ------------------------------------------------------------------ review round 2 (S248)
+
+def test_truncation_accepts_a_plus_at_the_end_of_a_count():
+    from services.quality.s1_checks import check_truncation
+    for whole in ("Group size: 10+", "- Suitable for ages 8+"):
+        assert check_truncation({"summary": "At a glance\n" + whole}) == [], whole
+        assert check_truncation({"itineraries": "Day 1 — Paro\nA walk.\n" + whole}) == [], whole
+    assert [f["code"] for f in check_truncation({"summary": "At a glance\n- Bike, helmet &"})] == ["TEXT_TRUNCATED"]
