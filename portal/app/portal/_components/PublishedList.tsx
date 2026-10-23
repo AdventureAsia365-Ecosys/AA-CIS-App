@@ -25,7 +25,7 @@ import {
   useToast,
 } from "@/app/_kit";
 import { T, sans, Card, CardHead } from "./ui";
-import { ServedBadge, type ServedFields } from "./ServedBadge";
+import { ServedBadge, afterUnpublishSentence, type ServedFields } from "./ServedBadge";
 import { formatDate } from "@/app/_kit/tokens";
 
 export interface PublishedRow extends ServedFields {
@@ -190,9 +190,7 @@ function PublishedListInner({ onUnpublished }: { onUnpublished?: () => void }) {
               {confirmRow.channel === "blog" ? " (moved to your WordPress trash)" : ""}.
             </p>
             <p style={{ margin: 0, color: T.muted }}>
-              {confirmRow.served_status === "retired" || confirmRow.served_status === "paused"
-                ? "The piece stays in My Content. Adventure Asia no longer serves this tour, so it cannot be published again."
-                : "The piece stays in My Content and goes back to Ready to Publish, so you can publish it again."}
+              {afterUnpublishSentence(confirmRow)}
             </p>
           </div>
         ) : null}

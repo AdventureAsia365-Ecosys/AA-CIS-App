@@ -7,7 +7,8 @@
     publish of a new post;
   - the Slate drops proposed Subjects of a retired tour and keeps a picked one with the fields; the T7 trips carry
     the served state;
-  - a publish-log row of a live post about a retired tour is flagged (the tenant removes it; AA never does);
+  - a publish-log row of a live post about a retired tour is flagged (the tenant removes it; AA never does), and
+    A4 refuses to mark it unpublished (that would hide the flag and the one-click removal while the post stays live);
   - GET /v1/notifications on the tenant pool shows the tenant its tour.discontinued row written by the real
     lifecycle service, never another tenant's, and the staff bell no longer reads or clears it;
   - GET /v1/trip/{id}: 410 for a retired tour, 301 to the current version for a superseded one, 404 for a paused one.
@@ -33,6 +34,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 from _rls_fixture_helpers import migration_body  # noqa: E402
 from api.routers import admin as admin_mod  # noqa: E402
+from api.routers import admin_a4  # noqa: E402
 from api.routers import v1_marketplace, v1_notifications, v1_publish, v1_tours, v1_trip_page  # noqa: E402
 from services.acp_angle_gate import service as angle_service  # noqa: E402
 from services.acp_content_writing import service as writing_service  # noqa: E402
@@ -242,6 +244,43 @@ async def test_publish_refused_and_live_post_flagged(ctx):
     live = next(r for r in log["data"] if r["piece_id"] == str(piece))
     assert live["live_post_of_discontinued_tour"] is True and live["status"] == "published"
     assert "request_id" not in live
+
+
+@pytest.mark.asyncio
+async def test_a4_keeps_the_tenant_removal_of_a_retired_tour_post(ctx, monkeypatch):
+    """Review round: A4 "Mark unpublished in AA" on a live post about a retired tour would hide the tenant's flag
+    and its one-click Remove post (DELETE takes only 'published' rows) while the post stays live: refused (409).
+    A post about a served tour can still be marked; the note says the tenant must then delete it on the channel."""
+    monkeypatch.setattr(admin_mod, "ADMIN_SECRET", "aa986-a4")
+    req = await _request_row(ctx.conn, ctx.a, ctx.gone, status="approved")
+    piece = await _piece(ctx.conn, ctx.a, req)
+    gone_post = await ctx.conn.fetchval(
+        "INSERT INTO acp_shared.publish_log (piece_id, tenant_id, channel, status, published_at, external_id) "
+        "VALUES ($1, $2::uuid, 'blog', 'published', now(), '101') RETURNING publish_id", piece, ctx.a)
+    with pytest.raises(HTTPException) as e:
+        await admin_a4.force_unpublish(gone_post, _request(ctx.conn, False), x_admin_secret="aa986-a4",
+                                       x_admin_user_id=None)
+    _assert_409(e.value, "tenant_removes_post")
+    assert await ctx.conn.fetchval("SELECT status FROM acp_shared.publish_log WHERE publish_id = $1",
+                                   gone_post) == "published"
+    log = await v1_publish.list_publish_log(_request(ctx.conn, True), {"sub": ctx.a}, limit=50)
+    flagged = next(r for r in log["data"] if r["publish_id"] == str(gone_post))
+    assert flagged["live_post_of_discontinued_tour"] is True        # the tenant keeps the flag + Remove post
+
+    # a paused tour or a served one: A4 marks AA's record and says the post stays live and leaves the portal
+    for tour in (ctx.paused, ctx.served):
+        other = await _piece(ctx.conn, ctx.a, await _request_row(ctx.conn, ctx.a, tour, status="approved"))
+        post = await ctx.conn.fetchval(
+            "INSERT INTO acp_shared.publish_log (piece_id, tenant_id, channel, status, published_at, external_id) "
+            "VALUES ($1, $2::uuid, 'blog', 'published', now(), '102') RETURNING publish_id", other, ctx.a)
+        out = await admin_a4.force_unpublish(post, _request(ctx.conn, False), x_admin_secret="aa986-a4",
+                                             x_admin_user_id=None)
+        assert out["status"] == "unpublished" and out["channel_post_removed"] is False
+        assert "still live" in out["note"] and "delete it there directly" in out["note"]
+        # what the note says: the tenant's one-click removal no longer takes the row
+        with pytest.raises(HTTPException) as e:
+            await v1_publish.unpublish(post, _request(ctx.conn, True), {"sub": ctx.a})
+        assert e.value.status_code == 404
 
 
 # ── Slate, T7 ────────────────────────────────────────────────────────────────────────────────────────────────────

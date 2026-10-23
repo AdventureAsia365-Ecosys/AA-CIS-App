@@ -28,6 +28,35 @@ export function workClosed(f: ServedFields | null | undefined): boolean {
   return f?.served_status === "retired" || f?.served_status === "paused";
 }
 
+/** The line shown instead of the Publish button when publishing is closed (null = open), with the 409's meaning:
+ *  retired = closed for good; paused = for now; a supersede waiting for its new version (paused /
+ *  superseded_pending) = a neutral line, never a discontinuation (Q2). */
+export function publishClosedLabel(f: ServedFields | null | undefined): string | null {
+  if (f?.served_status === "retired") return "Publishing closed: tour no longer served";
+  if (f?.served_status === "paused") {
+    return f.served_reason === "superseded_pending"
+      ? "A new version of this tour is on the way: publish once it is out"
+      : "Publishing paused while Adventure Asia has paused this tour";
+  }
+  return null;
+}
+
+/** The unpublish dialog's sentence about what happens to the piece afterwards, per served state (only `retired`
+ *  says the tour is no longer served; a pause is temporary; a supersede stays neutral, Q2). */
+export function afterUnpublishSentence(f: ServedFields | null | undefined): string {
+  if (f?.served_status === "retired") {
+    return "The piece stays in My Content. Adventure Asia no longer serves this tour, so it cannot be published again.";
+  }
+  if (f?.served_status === "paused") {
+    return f.served_reason === "superseded_pending"
+      ? "The piece stays in My Content and goes back to Ready to Publish; you can publish it again once the new "
+        + "version of this tour is out."
+      : "The piece stays in My Content and goes back to Ready to Publish. Adventure Asia has paused this tour for "
+        + "now, so you can publish it again once the tour is back.";
+  }
+  return "The piece stays in My Content and goes back to Ready to Publish, so you can publish it again.";
+}
+
 export function ServedBadge({ fields }: { fields: ServedFields | null | undefined }) {
   if (!fields?.served_notice) return null;
   return (

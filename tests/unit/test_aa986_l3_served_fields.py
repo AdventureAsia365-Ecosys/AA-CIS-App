@@ -88,3 +88,39 @@ def test_staff_bell_scope_excludes_tenant_only_rows():
 def test_a4_force_unpublish_says_what_it_does():
     src = inspect.getsource(admin_a4.force_unpublish)
     assert '"channel_post_removed": False' in src and "still live" in src
+
+
+def _a4_pool(state):
+    from unittest.mock import AsyncMock, MagicMock
+    conn = MagicMock()
+    conn.fetchval = AsyncMock(return_value=state)
+    conn.fetchrow = AsyncMock(return_value={"publish_id": "p", "tenant_id": "t", "channel": "blog",
+                                            "status": "unpublished", "unpublished_at": None})
+    pool = MagicMock()
+    pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
+    pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+    return pool, conn
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state, refused", [("retired", True), ("paused", False), ("served", False), (None, False)])
+async def test_a4_refuses_a_live_post_of_a_retired_tour(monkeypatch, state, refused):
+    """Review round (Q3): marking a retired tour's live post would hide the tenant's flag and one-click removal."""
+    from types import SimpleNamespace
+    from uuid import uuid4
+    from fastapi import HTTPException
+    monkeypatch.setattr("api.routers.admin.ADMIN_SECRET", "s")
+    pool, conn = _a4_pool(state)
+    req = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(pool=pool)))
+    pid = uuid4()
+    if refused:
+        with pytest.raises(HTTPException) as e:
+            await admin_a4.force_unpublish(pid, req, x_admin_secret="s", x_admin_user_id=None)
+        assert e.value.status_code == 409 and e.value.headers == {"X-Error-Code": "tenant_removes_post"}
+        assert e.value.detail.startswith("tenant_removes_post: ")
+        conn.fetchrow.assert_not_called()
+    else:
+        out = await admin_a4.force_unpublish(pid, req, x_admin_secret="s", x_admin_user_id=None)
+        assert out["channel_post_removed"] is False and "delete it there directly" in out["note"]
+        conn.fetchrow.assert_awaited_once()
+    assert conn.fetchval.call_args[0][1] == str(pid)

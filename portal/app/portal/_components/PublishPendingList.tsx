@@ -22,7 +22,9 @@ import { stripMarkdown } from "./markdownText";
 import { PUBLISH_LOG_QUERY_KEY, channelName } from "./PublishedList";
 import { channelName as channelLabel } from "./channelLabels";
 import { formatDate } from "@/app/_kit/tokens";
-import { ServedBadge, plainError, servedTitle, workClosed, type ServedFields } from "./ServedBadge";
+import {
+  ServedBadge, plainError, publishClosedLabel, servedTitle, workClosed, type ServedFields,
+} from "./ServedBadge";
 
 interface PendingPiece extends ServedFields {
   piece_id: string;
@@ -170,7 +172,7 @@ export function PublishPendingList({ connected, reloadSignal = 0 }: {
                       white on gold at 50% opacity, well under 3:1). */}
                   {workClosed(p) ? (
                     <span title={servedTitle(p)} style={{ flexShrink: 0, fontSize: 12, color: T.muted, alignSelf: "center", maxWidth: 220 }}>
-                      {p.served_status === "retired" ? "Publishing closed: tour no longer served" : "Publishing paused for this tour"}
+                      {publishClosedLabel(p)}
                     </span>
                   ) : channelConnected ? (
                     <Btn

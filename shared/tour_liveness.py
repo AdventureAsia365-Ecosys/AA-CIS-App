@@ -145,8 +145,25 @@ REQUEST_TOURS_SQL = """
      WHERE r.request_id = ANY($1::uuid[]) AND r.tenant_id = $2::uuid
 """
 
+# The served state of the tour a LIVE post (publish_log status 'published') is about, for staff routes on the main
+# pool (A4): the post's piece -> its angle-gate request (same tenant) -> REQUEST_TOURS_SQL's tour rule -> the key's
+# state in v_tour_liveness. NULL when the post is not live, has no tour, or the key has no state (never served).
+LIVE_POST_TOUR_STATE_SQL = """
+    SELECT tl.state
+      FROM acp_shared.publish_log pl
+      JOIN acp_shared.content_piece cp ON cp.piece_id = pl.piece_id
+      JOIN acp_shared.angle_gate_request r ON r.request_id = cp.angle_gate_request_id AND r.tenant_id = pl.tenant_id
+      LEFT JOIN acp_contract.tour_atoms ta ON ta.atom_id = r.atom_id
+      JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = COALESCE(r.trip_id, ta.tour_id)
+      JOIN gold_aa_internal.v_tour_liveness tl
+        ON tl.source_id = (COALESCE(rt.source_group_id, rt.tour_id))::text
+     WHERE pl.publish_id = $1::uuid AND pl.status = 'published'
+"""
+
 TOUR_DISCONTINUED = "tour_discontinued"
 TOUR_PAUSED = "tour_paused"
+# A4 refuses to mark a live post about a retired tour (ADR 0015 Q3: the tenant's flag + one-click removal stay).
+TENANT_REMOVES_POST = "tenant_removes_post"
 
 
 @dataclass(frozen=True)

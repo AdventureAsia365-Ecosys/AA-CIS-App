@@ -220,18 +220,26 @@ export default function ContentTracePage() {
 
   // AA-560 — same confirm-dialog + re-fetch-after-success shape as the old a4-oversight page's
   // handleForceUnpublish(). AA-986 L3 (ADR 0015 Q3): the backend changes AA's record only; the post stays live on
-  // the tenant's WordPress site / Facebook Page until the tenant removes it (portal one-click Unpublish). The
-  // label and the confirm text say exactly that.
+  // the tenant's WordPress site / Facebook Page, and once the row is marked the portal no longer offers the tenant
+  // its one-click removal (they must delete it on the channel). A live post about a tour AA no longer serves is
+  // refused (409 tenant_removes_post): the tenant removes it from the portal. The label, the confirm text and the
+  // error line say exactly that.
   const handleForceUnpublish = useCallback(async (publishId: string) => {
     if (!window.confirm(
-      "Mark this post unpublished in AA's record? This does NOT remove it from the tenant's site or page: "
-      + "it stays live there until the tenant unpublishes it from the portal.",
+      "Mark this post unpublished in AA's record? This does NOT remove it from the tenant's WordPress site or "
+      + "Facebook Page, and afterwards the tenant can no longer remove it from the portal: they must delete it "
+      + "on the channel directly.",
     )) return;
     setUnpublishingId(publishId);
     setUnpublishError(null);
     try {
       const res = await fetch(`/api/admin/a4/publish-log/${publishId}/unpublish`, { method: "POST" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => null) as { detail?: unknown } | null;
+        const detail = typeof body?.detail === "string"
+          ? body.detail.replace(/^tenant_removes_post:\s*/, "") : "";
+        throw new Error(detail || `HTTP ${res.status}`);
+      }
       await load();
     } catch (e) {
       setUnpublishError(String(e instanceof Error ? e.message : e));
