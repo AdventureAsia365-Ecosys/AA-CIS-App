@@ -130,3 +130,67 @@ Decisions taken on the eight findings (details and evidence in the lane handoff)
   `test_x1_cis_app_privileges`), builds the live `tenant_tour_versions` (FKs: tenant, published tour, self, job;
   RLS + cis_app policy) and `review_queue.tenant_tour_version_id` for its own tests and drops them after; the
   handler runs on a pool logged in AS `cis_app`.
+
+## Fingerprint binds the subject (S248, follow-up review finding)
+
+Finding: the DRY RUN fingerprint hashed only the subject kind and the (table, action, rows) list, so two tenants
+(or two travellers) with identical counts shared one fingerprint, and an approval recorded as "fingerprint X" did
+not say which subject it approved.
+
+### Decisions
+- **Fingerprint v2** (`plan.FINGERPRINT_VERSION = 2`): sha256 of `{"v": 2, "subject", "subject_key", "rows"}`.
+  `subject_key` is the tenant id for a tenant, and for a traveller `traveller_key = sha256(salt + ":" + hash)`
+  with a random 128-bit salt drawn by each traveller DRY RUN and kept in that DRY RUN's `result.subject_salt`.
+  A tenant DRY RUN draws no salt (the tenant id is not secret, so its fingerprint needs none).
+- **Why a salt for the traveller, not the bare hash**: after an apply the hash is stripped from every erasure
+  job row, but the fingerprint stays in the job rows and in the `dsar.cis_erased` audit row, next to the per-table
+  counts. An unsalted `sha256(hash + counts)` would let anyone with a guessed address recompute the hash and test
+  it against the kept fingerprint, undoing the strip. `_strip_hash` now removes `result.subject_salt` together with
+  the hash, so the kept fingerprint can no longer be matched. A verification DRY RUN (`verify: true`) never stores
+  its salt (it is never applied and strips its own hash).
+- **The apply reuses its DRY RUN's salt** (read from the DRY RUN job) and recomputes the fingerprint with the
+  subject key from its own payload. Before the claim only the stored DRY RUN fingerprint is compared with
+  `approved_fingerprint` (`apply_refusals`). The recomputed fingerprint is compared inside `_apply`, after the
+  claim: once on the pre-transaction recount and again on the recount inside the write transaction. A count drift
+  therefore burns the DRY RUN (fail-closed): it is claimed, nothing is written, and a new DRY RUN and approval are
+  needed, which matches "one DRY RUN serves one apply". The existing subject check stays: `apply_refusals` still refuses a DRY RUN whose payload subject / tenant / hash differs from the
+  apply's ("the DRY RUN was for another subject").
+- **Old DRY RUN jobs** (v1, no `fingerprint_version`) fail the apply check with "the DRY RUN predates the
+  subject-bound fingerprint; run a new DRY RUN and approve it". They expire after
+  `ERASURE_DRY_RUN_MAX_AGE_HOURS` (24 h) anyway, and no apply has ever run (the flag is off everywhere). A traveller
+  DRY RUN without a salt is refused the same way.
+
+### Changed
+- `services/erasure/plan.py`: `FINGERPRINT_VERSION`, `traveller_key()`, `fingerprint(subject, subject_key, rows)`
+  (raises on an empty key).
+- `services/jobs/erasure_job.py`: `subject_key()`, salt drawn per DRY RUN, `fingerprint_version` +
+  `subject_salt` in the DRY RUN result, the apply reads the DRY RUN's salt, `_apply` recount uses the key,
+  `apply_refusals` refuses v1 / salt-less DRY RUNs, `_strip_hash` drops the salt.
+- Tests: unit (same counts / other tenant → other fingerprint; traveller bound to hash and salt; apply with
+  another subject's fingerprint refused, incl. the case v1 accepted; v1 DRY RUN refused; salt-less traveller DRY
+  RUN refused; strip drops the salt; mutation "no subject key" turns 3 tests red); integration
+  `test_same_counts_for_two_tenants_give_two_fingerprints` and the salt check in `test_traveller_dry_run_then_apply`.
+
+### Tradeoffs
+- Considered requiring an `approved_tenant_id` field instead: it would change the API and the admin page (#960)
+  for the same guarantee. Binding inside the fingerprint keeps the API and the page unchanged (they only copy the
+  64-hex value).
+- Considered the DRY RUN job id as the binding: it stays in the rows after the strip, so it would not protect the
+  traveller case.
+
+### Review round 2 (PR #961)
+- Tests: the verification DRY RUN returns no `subject_salt` and its stored row holds none; no row whose hash was
+  replaced by a `stripped*` marker keeps a salt (mutation: storing the salt on a verification run turns
+  `test_traveller_dry_run_then_apply` red); a v1 DRY RUN is refused before the claim, so its row has no
+  `used_by_apply` (`test_a_v1_dry_run_is_refused_and_not_claimed`).
+- `_strip_hash` removes `subject_salt` only from an object result (`CASE WHEN jsonb_typeof(result) = 'object'`)
+  and rewrites only object payloads: `jsonb - key` raises on a scalar, and a raise there would leave the hash in
+  place (`test_strip_hash_leaves_a_non_object_result_alone`, red on the bare `result - 'subject_salt'`).
+- The salt is drawn only for a traveller DRY RUN; tenant fingerprints are unchanged
+  (`test_same_counts_for_two_tenants_give_two_fingerprints` fails if a tenant DRY RUN draws one).
+
+### Should know
+- The admin page (#960) only checks the fingerprint is 64 hex; it opens the apply panel for a v1 DRY RUN and the
+  backend refuses it with the message above. Run a new DRY RUN after deploying this change.
+- `subject_salt` is visible in the full job view (tenant.read callers) while the hash is also there; it is not in
+  the redacted view.

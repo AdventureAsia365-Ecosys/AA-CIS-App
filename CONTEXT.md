@@ -360,7 +360,9 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     refuses anything else, so an address never reaches a payload or a log). `POST /admin/job-runner/erasure/run`
     (admin, `tenant.write`) enqueues a **DRY RUN** by default: SELECT only, rows per CIS table and action,
     blockers, the delete order, the tenant's S3 objects/secrets (best-effort) and the per-app checklist
-    (`booking.*`, `tripplanner.*`, `crm.*`, Cognito, mailbox, Sentry), plus a `fingerprint` of the counts.
+    (`booking.*`, `tripplanner.*`, `crm.*`, Cognito, mailbox, Sentry), plus a `fingerprint` of the subject and
+    the counts (v2: the tenant id, or the address hash with a per-DRY-RUN salt that is stripped with the hash;
+    a v1 DRY RUN, counts only, cannot be applied).
     Inventory: `services/erasure/inventory.py` — every CIS table with a tenant key has an action (`delete`,
     `detach` = keep the cost row without the tenant link, `merge` = add into the NULL-tenant rollup row, `keep` =
     the append-only `acp_shared.audit_log`). A tenant key is `tenant_id`, `tenant` (`shared.pipeline_jobs`),

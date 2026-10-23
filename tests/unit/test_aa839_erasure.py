@@ -169,10 +169,10 @@ def test_identifiers_are_quoted():
 
 def test_fingerprint_is_order_free_and_count_sensitive():
     a = [{"table": "x", "action": "delete", "rows": 2}, {"table": "y", "action": "detach", "rows": 1}]
-    assert pl.fingerprint("tenant", a) == pl.fingerprint("tenant", list(reversed(a)))
-    assert pl.fingerprint("tenant", a) != pl.fingerprint("traveller", a)
+    assert pl.fingerprint("tenant", TID, a) == pl.fingerprint("tenant", TID, list(reversed(a)))
+    assert pl.fingerprint("tenant", TID, a) != pl.fingerprint("traveller", TID, a)
     b = [dict(a[0], rows=3), a[1]]
-    assert pl.fingerprint("tenant", a) != pl.fingerprint("tenant", b)
+    assert pl.fingerprint("tenant", TID, a) != pl.fingerprint("tenant", TID, b)
 
 
 def test_traveller_predicates_hash_the_value_never_take_an_address():
@@ -224,6 +224,7 @@ def _dry_job(**kw):
     j = {"kind": ej.KIND, "status": "succeeded", "payload": {"subject": "tenant", "tenant": TID, "mode": "dry_run"},
          "result": {"mode": "dry_run", "fingerprint": FP, "blocked": False}, "finished_at": NOW - timedelta(hours=1)}
     j.update(kw)
+    j["result"] = {"fingerprint_version": pl.FINGERPRINT_VERSION, **j["result"]}
     return j
 
 
@@ -643,3 +644,78 @@ def test_review_failed_erasure_job_reaches_sentry_without_the_hash(json_lines, s
     (event,) = [e for e in sentry_events if e["logentry"]["message"] == "job_failed"]
     assert event["exception"]["values"][-1]["type"] == "RuntimeError"
     assert H not in _json.dumps(event, default=str)
+
+
+# ── fingerprint v2: bound to the subject (AA-839 review: v1 hashed the subject kind and the counts only) ────────
+
+TID2 = "99999999-2222-4333-8444-555555555555"
+SALT = "0" * 32
+ROWS = [{"table": "shared.tenants", "action": "delete", "rows": 1},
+        {"table": "acp_shared.audit_log", "action": "keep", "rows": 3}]
+
+
+def test_fp_same_counts_for_another_tenant_is_another_fingerprint():
+    assert pl.fingerprint("tenant", TID, ROWS) != pl.fingerprint("tenant", TID2, ROWS)
+    assert pl.fingerprint("tenant", TID, ROWS) == pl.fingerprint("tenant", TID, list(reversed(ROWS)))
+    with pytest.raises(ValueError):
+        pl.fingerprint("tenant", "", ROWS)
+
+
+def test_fp_traveller_is_bound_to_the_hash_and_the_dry_run_salt():
+    a = pl.fingerprint("traveller", pl.traveller_key(H, SALT), ROWS)
+    assert a != pl.fingerprint("traveller", pl.traveller_key("c" * 64, SALT), ROWS)     # another traveller
+    assert a != pl.fingerprint("traveller", pl.traveller_key(H, "1" * 32), ROWS)       # another DRY RUN
+    assert H not in pl.traveller_key(H, SALT)
+
+
+def test_fp_subject_key_is_the_tenant_id_or_the_salted_traveller_key():
+    assert ej.subject_key({"subject": "tenant", "tenant": TID}, None) == TID
+    assert ej.subject_key({"subject": "traveller", "email_sha256": H}, SALT) == pl.traveller_key(H, SALT)
+
+
+def test_fp_apply_with_a_fingerprint_from_another_subject_is_refused():
+    fp_a, fp_b = pl.fingerprint("tenant", TID, ROWS), pl.fingerprint("tenant", TID2, ROWS)
+    dry_a = _dry_job(result={"mode": "dry_run", "fingerprint": fp_a, "blocked": False})
+    dry_b = _dry_job(payload={"subject": "tenant", "tenant": TID2, "mode": "dry_run"},
+                     result={"mode": "dry_run", "fingerprint": fp_b, "blocked": False})
+    # tenant A's DRY RUN and approval used for tenant B: refused on the subject (as before)
+    out = ej.apply_refusals(_apply_payload(tenant=TID2, approved_fingerprint=fp_a), dry_a, OFFBOARDED, NOW, ON)
+    assert any("another subject" in r for r in out), out
+    # tenant B's own DRY RUN with the same counts, but the approval names tenant A's fingerprint: v1 matched here
+    out = ej.apply_refusals(_apply_payload(tenant=TID2, approved_fingerprint=fp_a), dry_b, OFFBOARDED, NOW, ON)
+    assert out == ["approved_fingerprint differs from the DRY RUN's fingerprint"]
+    assert ej.apply_refusals(_apply_payload(tenant=TID2, approved_fingerprint=fp_b), dry_b, OFFBOARDED, NOW, ON) == []
+
+
+def test_fp_a_v1_dry_run_cannot_be_applied():
+    import hashlib
+    import json
+    v1 = hashlib.sha256(json.dumps({"subject": "tenant", "rows": sorted(
+        (r["table"], r["action"], r["rows"]) for r in ROWS)}).encode()).hexdigest()
+    dry = _dry_job(result={"mode": "dry_run", "fingerprint": v1, "blocked": False})
+    del dry["result"]["fingerprint_version"]
+    out = ej.apply_refusals(_apply_payload(approved_fingerprint=v1), dry, OFFBOARDED, NOW, ON)
+    assert any("predates the subject-bound fingerprint" in r for r in out), out
+
+
+def test_fp_a_traveller_dry_run_without_its_salt_cannot_be_applied():
+    payload = ej.validate_payload({"subject": "traveller", "email_sha256": H, "mode": "apply", "dry_run_job_id": TID,
+                                   "approved_fingerprint": FP, "approved_by": "N", "snapshot_id": "s"})
+    tp = {"subject": "traveller", "email_sha256": H, "mode": "dry_run"}
+    dry = _dry_job(payload=tp, result={"mode": "dry_run", "fingerprint": FP, "blocked": False})
+    out = ej.apply_refusals(payload, dry, None, NOW, ON)
+    assert any("no subject salt" in r for r in out), out
+    dry = _dry_job(payload=tp, result={"mode": "dry_run", "fingerprint": FP, "blocked": False, "subject_salt": SALT})
+    assert ej.apply_refusals(payload, dry, None, NOW, ON) == []
+
+
+@pytest.mark.asyncio
+async def test_fp_strip_hash_drops_the_salt_too():
+    pool = _Pool()
+    await ej._strip_hash(pool, [TID], H, ej.STRIPPED)
+    ((sql, args),) = pool.executed
+    assert args[2] == H
+    # the key is removed only from an object result (a scalar or array result would make `-` remove an element
+    # or raise), and only object payloads are rewritten
+    assert "CASE WHEN jsonb_typeof(result) = 'object' THEN result - 'subject_salt' ELSE result END" in sql
+    assert "jsonb_typeof(payload) = 'object'" in sql

@@ -18,7 +18,7 @@ import { Notice, Section, hintStyle, inputStyle, labelStyle } from "./erasureUi"
 export type SendResult = { ok: true; data: Record<string, unknown> } | { ok: false; status: number; message: string };
 
 // Mount with key={job.id}: the form must start empty for every DRY RUN, so an approval typed for one subject can
-// never carry over to another one with the same counts (the fingerprint hashes the counts, not the subject).
+// never carry over to another one (the fingerprint binds the subject since #961; this keeps the operator's intent too).
 export default function ApplyPanel({ job, settings, now, history, subjectName, send, onStarted }: {
   job: ErasureJob;
   settings: ErasureSettings | undefined;
