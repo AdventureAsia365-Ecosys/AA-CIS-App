@@ -1,9 +1,19 @@
 # gitleaks ignore list for AA-CIS-App (AA-981 follow-up): one finding fingerprint per line, for a single known false
 # positive that a narrow allowlist entry in .gitleaks.toml cannot express. Read by .github/workflows/secret-scan.yml.
 #
-# Fingerprint format (printed by gitleaks with --redact, never the value itself):
-#   PR / history scan:  <commit sha>:<file>:<rule id>:<line>
-#   working-tree scan:  <file>:<rule id>:<line>
+# Fingerprint formats (printed by gitleaks with --redact, never the value itself):
+#   <commit sha>:<file>:<rule id>:<line>   pinned: that finding in that one commit only. Use this format.
+#   <file>:<rule id>:<line>                global: that file, rule and line in EVERY commit. gitleaks 8.28 honours it
+#                                          in git mode too, so it suppresses the PR job and the full-history job
+#                                          for any later commit, a real secret at the same place included. Avoid
+#                                          it; if one is unavoidable, put it in its own block with a comment why.
+# Squash merges: a pinned fingerprint names the PR's commit, and the squash merge writes the same line in a new
+# commit on main. The PR job is green with the PR-commit pin, but the full-history job then reports the squash
+# commit (and keeps scanning the PR commit through refs/pull/N/head). For a false positive that a PR adds:
+#   1. prefer a narrow allowlist entry (regex or path) in .gitleaks.toml: it matches every commit;
+#   2. otherwise pin the PR commit in the PR, then pin the squash commit in a follow-up PR right after the merge.
+# An inline gitleaks:allow comment on the line also survives the squash, but it hides that line from both jobs, so
+# the PR job treats it like a change to this file (label needed).
 # Add a short comment above each entry: what the value is and why it is not a secret. Never write the value here.
 # A real secret is never ignored here: remove it, rotate it, then pin the old commit.
 # A change to this file needs the PR label `secret-scan-baseline-reviewed` (see the workflow header).
