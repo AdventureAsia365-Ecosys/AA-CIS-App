@@ -284,6 +284,32 @@ def derive_status(failure_codes: list[str], publish_ready, model_status=None) ->
         return "flagged"
     return "pass"
 
+def _is_v2_draft(state: dict) -> bool:
+    from services.content_generation.s1_writer_v2_live import is_v2
+    return is_v2(state)
+
+
+# AA-645 step 0 (d02): on an A1 draft of the S1 writer v2 the AA voice rubric of the LLM audit is report-only, like
+# brand fit in the judge. What still gates: the deterministic pre-audit codes (editorial format, meal/clock-time
+# claims, elephant riding = FACT_CHECK_MANUAL_CHECK), the product-truth codes (_MANUAL_CHECK_CODES) and a model
+# "manual_check" verdict (a human must look: product truth, not voice). FORBIDDEN_WORD is validate's hard code and is
+# not touched here. The other LLM codes and a bare publish_ready=false / "flagged" go to quality_shadow.
+V2_BRAND_AUDIT_DETECTOR = "s1_writer_v2_brand_audit"
+
+
+def _v2_report_only_voice(all_codes: list[str], pre_codes: list[str], model_status,
+                          publish_ready=None) -> tuple[list, str, list]:
+    hard = [c for c in all_codes if c in pre_codes or c in _MANUAL_CHECK_CODES]
+    voice = [c for c in all_codes if c not in hard]
+    status = derive_status(hard, None, "manual_check" if model_status == "manual_check" else None)
+    report = [{"code": c, "detector": V2_BRAND_AUDIT_DETECTOR, "mode": "report",
+               "detail": "AA voice rubric (report-only on a v2 draft, AA-645 d02)"} for c in voice]
+    if not voice and status == "pass" and (model_status == "flagged" or publish_ready is False):
+        report.append({"code": "BRAND_AUDIT_FLAGGED", "detector": V2_BRAND_AUDIT_DETECTOR, "mode": "report",
+                       "detail": "the audit model flagged the draft without a code (report-only on v2)"})
+    return hard, status, report
+
+
 def _audit_from_judge(state: dict, generated: dict) -> dict:
     """AA-206: build the brand-audit result from the GPT-4.1 judge fields instead of a second LLM
     call. Deterministic pre-audit codes still fire (they drive flag_fix's field targeting) and the
@@ -438,9 +464,14 @@ Return JSON only per schema."""
 
         # Merge deterministic pre-codes into LLM codes
         all_codes = list(dict.fromkeys(result["failure_codes"] + pre_codes))
-        result["failure_codes"] = all_codes
+        model_status = result.get("status")
         # AA-714: derive status ourselves (do not depend on the model emitting it — Luna drops it).
-        status = derive_status(all_codes, result.get("publish_ready"), result.get("status"))
+        status = derive_status(all_codes, result.get("publish_ready"), model_status)
+        voice_report: list[dict] = []
+        if _is_v2_draft(state):
+            all_codes, status, voice_report = _v2_report_only_voice(all_codes, pre_codes, model_status,
+                                                                    result.get("publish_ready"))
+        result["failure_codes"] = all_codes
         result["status"] = status
 
         in_tok, out_tok = resp.input_tokens, resp.output_tokens
@@ -460,7 +491,7 @@ Return JSON only per schema."""
             fallback_used=resp.fallback_used, provider=resp.provider,
         )
         logged = True
-        return {
+        out = {
             **state,
             "brand_audit_status": result["status"],
             "brand_audit_codes":  result["failure_codes"],
@@ -469,6 +500,9 @@ Return JSON only per schema."""
             "lessons_extracted":  result["lessons_extracted"],
             "cost_usd": state.get("cost_usd", 0) + cost,
         }
+        if voice_report:
+            out["quality_shadow"] = list(state.get("quality_shadow") or []) + voice_report
+        return out
 
     except Exception as e:
         # AA-714: fail closed. A model/schema error used to return "pass", so a tour the audit

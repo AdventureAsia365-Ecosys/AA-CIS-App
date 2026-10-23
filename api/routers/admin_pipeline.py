@@ -1105,6 +1105,9 @@ async def _revalidate_tour(content_id: str) -> dict:
             "brand_audit_status": "", "brand_audit_codes": [], "brand_audit_issues": [],
             "brand_audit_fields": [], "lessons_extracted": [],
             "fix_pass_applied": False, "fix_pass_fields": [],
+            # AA-645 d02: a v2 draft keeps brand fit report-only and its two v2 validate codes report-only on a
+            # reviewer edit too (validate / judge read is_v2 from this key). None for v1 and T2 versions.
+            "writer_version": (_meta or {}).get("writer_version") if isinstance(_meta, dict) else None,
         }
 
         graph = build_revalidation_graph()
@@ -4263,19 +4266,23 @@ async def get_library_metrics(request: Request, x_admin_secret: str = Header(Non
             SELECT rt.country,
                    COUNT(pt.id)                            AS total,
                    ROUND(AVG(pt.quality_score)::numeric,2) AS avg_score,
-                   MAX(pt.published_at)                    AS last_published
+                   MAX(pt.updated_at)                      AS last_published
             FROM gold_aa_internal.published_tours pt
             LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
             WHERE pt.tenant_id = '00000000-0000-0000-0000-000000000001'::uuid
               AND pt.master_status <> 'trashed'
             GROUP BY rt.country ORDER BY total DESC
         """)
+        # AA-645 d06 (migration 273): published_at is a tour's FIRST publish and stays put on a rewrite; updated_at
+        # moves on every publish / promote. "Published in 30 days", "stale" and "last published" are about the last
+        # change (updated_at); first_published_last_30d counts tours new to Master.
         stats = await conn.fetchrow("""
             SELECT
                 COUNT(*)                                  AS total,
                 ROUND(AVG(quality_score)::numeric, 2)     AS avg_score,
-                COUNT(CASE WHEN published_at >= NOW() - INTERVAL '30 days' THEN 1 END) AS published_last_30d,
-                COUNT(CASE WHEN published_at < NOW() - INTERVAL '180 days' THEN 1 END) AS stale_count
+                COUNT(CASE WHEN updated_at >= NOW() - INTERVAL '30 days' THEN 1 END) AS published_last_30d,
+                COUNT(CASE WHEN published_at >= NOW() - INTERVAL '30 days' THEN 1 END) AS first_published_last_30d,
+                COUNT(CASE WHEN updated_at < NOW() - INTERVAL '180 days' THEN 1 END) AS stale_count
             FROM gold_aa_internal.published_tours
             WHERE tenant_id = '00000000-0000-0000-0000-000000000001'::uuid
               AND master_status <> 'trashed'
@@ -4298,8 +4305,9 @@ async def get_library_metrics(request: Request, x_admin_secret: str = Header(Non
     return {
         "total":              stats["total"],
         "avg_score":          float(stats["avg_score"] or 0),
-        "published_last_30d": stats["published_last_30d"],
-        "stale_count":        stats["stale_count"],
+        "published_last_30d": stats["published_last_30d"],              # published or re-published (updated_at)
+        "first_published_last_30d": stats["first_published_last_30d"],  # new to Master (published_at)
+        "stale_count":        stats["stale_count"],                     # not re-published in 180 days
         "by_country":         [dict(r) for r in by_country],
         "score_distribution": [dict(r) for r in score_dist],
     }

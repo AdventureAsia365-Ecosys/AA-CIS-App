@@ -1,5 +1,6 @@
 """AA-645 step 0 (d13) — scripts/aa645/wave_report.py: the per-wave before/after quality read, per country, $0."""
 import datetime as dt
+import json
 
 from scripts.aa645 import wave_report as wr
 
@@ -9,8 +10,10 @@ TOUR = {"src_name": "Hanoi and Halong Bay", "src_summary": "Two days.", "src_hig
         "group_size": "2-12", "best_time_to_go": None}
 
 
-def _version(vid, *, gate=(), unsupported=0, brand_fit=7.0, cost=0.08, writer="v1", days=(1, 2), codes=()):
+def _version(vid, *, gate=(), unsupported=0, brand_fit=7.0, cost=0.08, writer="v1", days=(1, 2), codes=(),
+             audit="pass", report_only=()):
     return {"version_id": vid, "status": "approved", "review_status": None, "writer_version": writer,
+            "brand_audit_status": audit, "brand_audit_report_only": list(report_only),
             "gate_codes": list(gate), "report_codes": [], "figure_coverage": 0.5, "failure_codes": [],
             "brand_audit_codes": list(codes), "grounding_found": unsupported, "grounding_unsupported": unsupported,
             "brand_fit": brand_fit, "score": 8.0, "cost_usd": cost, "days": list(days), "canonical_days": bool(days)}
@@ -81,3 +84,34 @@ def test_markdown_and_args():
     report = wr.build(tours, args)
     md = wr.markdown(report["countries"], report["stop_conditions"])
     assert "| Vietnam | 1 | 1 | 0 |" in md and "Stop conditions" in md
+
+
+def test_stayed_v1_is_broken_down_by_the_brand_audit_and_fact_check_holds_count():
+    """AA-645 review round: a stayed_v1 driven by the brand audit shows (status + codes), the v2 report-only voice
+    codes are counted, and an elephant hold (FACT_CHECK_MANUAL_CHECK) is counted (an exact `in` never matched it)."""
+    rows = [_tour("Laos", "stayed_v1", _version("b1"),
+                  _version("a1", writer="v2", audit="manual_check", codes=["FACT_CHECK_MANUAL_CHECK"])),
+            _tour("Laos", "stayed_v1", _version("b2"),
+                  _version("a2", writer="v2", audit="flagged", codes=["SUBTITLE_CITY_LIST"])),
+            _tour("Laos", "published", _version("b3"), _version("a3", writer="v2", report_only=["BRAND_TONE_HYPE"]),
+                  atoms={"fingerprint_days": 2, "atoms_off_days": 0})]
+    lao = wr.aggregate(rows)["Laos"]
+    assert lao["stayed_v1_by_brand_audit"] == {"flagged": 1, "manual_check": 1}
+    assert lao["stayed_v1_brand_audit_codes"] == {"FACT_CHECK_MANUAL_CHECK": 1, "SUBTITLE_CITY_LIST": 1}
+    assert lao["brand_audit_report_only_codes_after"] == {"BRAND_TONE_HYPE": 1}
+    assert lao["fact_check_holds"] == 1
+
+
+def test_version_facts_reads_the_audit_status_and_the_v2_report_only_codes():
+    tour = wr.source_tour(TOUR)
+    from services.quality.s1_facts import build_fact_table
+    shadow = [{"code": "BRAND_TONE_HYPE", "detector": "s1_writer_v2_brand_audit"},
+              {"code": "DFS_INTENT_UNDERUSED", "detector": "s1_writer_v2"}]
+    stored = {"id": "v9", "status": "hitl",
+              "metadata": json.dumps({"writer_version": "v2", "quality_shadow": shadow}),
+              "aa_name": "Hanoi", "aa_subtitle": "s", "aa_summary": "s", "aa_description": "", "aa_highlights": "[]",
+              "aa_itineraries": "Day 1 — Hanoi\nWalk.", "seo_title": "t", "seo_meta": "m", "failure_codes": None,
+              "brand_audit_status": "flagged", "brand_audit_codes": '["SUBTITLE_CITY_LIST"]', "score_overall": 7.0,
+              "review_status": "pending"}
+    v = wr.version_facts(stored, tour, build_fact_table(tour))
+    assert v["brand_audit_status"] == "flagged" and v["brand_audit_report_only"] == ["BRAND_TONE_HYPE"]

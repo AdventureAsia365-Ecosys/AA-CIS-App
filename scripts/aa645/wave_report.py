@@ -16,6 +16,8 @@ For every tour with an A1 version (silver_aa_internal.generated_content) created
 * code checks on both pages, the same ones the A/B used ($0, ``services.quality.s1_checks.run_checks`` against the raw
   source + ``scripts/aa645/gates.py``): pages with a gate code (the serious-error proxy), gate codes by bucket,
   report-only codes, figure coverage;
+* why a tour stayed on v1: the new version's brand-audit status and codes (``stayed_v1_by_brand_audit``), and the
+  AA voice-rubric codes the audit recorded report-only on a v2 draft (d02, ``brand_audit_report_only_codes_after``);
 * the stored verdicts of each version: validate failure codes (latest quality_scores row), grounding found /
   still-unsupported (metadata.grounding), brand fit (metadata.judge — report-only on a v2 version), writer version,
   cost (metadata.llm_cost_usd);
@@ -52,6 +54,7 @@ sys.path.insert(0, os.getcwd())
 STAYED_V1_MAX = 0.10
 COST_PER_TOUR_MAX = 0.12
 CLEARLY_BETTER_POINTS = 0.10
+V2_AUDIT_DETECTOR = "s1_writer_v2_brand_audit"   # brand_audit_node.V2_BRAND_AUDIT_DETECTOR (no app import here)
 
 VERSIONS_SQL = """
 WITH win AS (
@@ -82,12 +85,12 @@ ORDER BY rt.country, win.tour_id
 PAGES_SQL = """
 SELECT gc.id::text AS id, gc.status::text AS status, gc.metadata, gc.aa_name, gc.aa_subtitle, gc.aa_summary,
        gc.aa_description, gc.aa_highlights, gc.aa_itineraries, gc.seo_title, gc.seo_meta,
-       qs.failure_codes, qs.brand_audit_codes, qs.score_overall,
+       qs.failure_codes, qs.brand_audit_status, qs.brand_audit_codes, qs.score_overall,
        (SELECT rq.review_status::text FROM silver_aa_internal.review_queue rq
          WHERE rq.generated_content_id = gc.id ORDER BY rq.created_at DESC LIMIT 1) AS review_status
 FROM silver_aa_internal.generated_content gc
 LEFT JOIN LATERAL (
-    SELECT q.failure_codes, q.brand_audit_codes, q.score_overall
+    SELECT q.failure_codes, q.brand_audit_status, q.brand_audit_codes, q.score_overall
     FROM silver_aa_internal.quality_scores q
     WHERE q.generated_content_id = gc.id
     ORDER BY q.evaluated_at DESC, q.id DESC LIMIT 1
@@ -166,7 +169,11 @@ def version_facts(p: Optional[dict], tour: dict, facts: dict) -> Optional[dict]:
         "report_codes": sorted({f["code"] for f in findings if is_report(f["code"])}),
         "figure_coverage": figure_coverage(facts, page),
         "failure_codes": list(_json(p.get("failure_codes")) or []),
+        "brand_audit_status": p.get("brand_audit_status"),
         "brand_audit_codes": list(_json(p.get("brand_audit_codes")) or []),
+        # AA-645 d02: the AA voice-rubric codes the brand audit recorded report-only on a v2 draft
+        "brand_audit_report_only": sorted({f.get("code") for f in (meta.get("quality_shadow") or [])
+                                           if isinstance(f, dict) and f.get("detector") == V2_AUDIT_DETECTOR}),
         "grounding_found": grounding.get("found"),
         "grounding_unsupported": len(grounding.get("violations") or []) if grounding else None,
         "brand_fit": judge.get("brand_fit"),
@@ -185,6 +192,12 @@ def outcome(row: dict) -> str:
     if row.get("live_id"):
         return "other_live_version"
     return "not_published"
+
+
+def _fact_check(v: dict) -> bool:
+    """Held on the elephant-riding rule: brand_audit stores FACT_CHECK_MANUAL_CHECK (an exact `in` on "FACT_CHECK"
+    never matched it)."""
+    return any(str(c).startswith("FACT_CHECK") for c in v.get("brand_audit_codes") or [])
 
 
 def _mean(xs: list) -> Optional[float]:
@@ -211,6 +224,7 @@ def aggregate(tours: list[dict]) -> dict:
         b_uns = sum(t["before"]["grounding_unsupported"] or 0 for t in paired)
         a_uns = sum(t["after"]["grounding_unsupported"] or 0 for t in paired)
         published = [t for t in rows if t["outcome"] == "published"]
+        stayed = [t for t in rows if t["outcome"] == "stayed_v1"]
         gate_after, gate_before = Counter(), Counter()
         for t in paired:
             gate_before.update(t["before"]["gate_codes"])
@@ -235,7 +249,15 @@ def aggregate(tours: list[dict]) -> dict:
             "cost_per_tour_after": _mean([t["after"]["cost_usd"] for t in rows if t["after"]]),
             "published_not_atomized": sum(1 for t in published if not (t.get("atoms") or {}).get("fingerprint_days")),
             "atoms_off_days": sum((t.get("atoms") or {}).get("atoms_off_days") or 0 for t in published),
-            "fact_check_holds": sum(1 for t in rows if t["after"] and "FACT_CHECK" in t["after"]["brand_audit_codes"]),
+            "fact_check_holds": sum(1 for t in rows if t["after"] and _fact_check(t["after"])),
+            # AA-645 review round: why a tour stayed on v1 — the new version's brand-audit status and codes (a
+            # stayed_v1 driven by the audit, not by validate/judge, shows here before the flag goes wider).
+            "stayed_v1_by_brand_audit": dict(sorted(Counter(
+                (t["after"].get("brand_audit_status") or "none") for t in stayed if t["after"]).items())),
+            "stayed_v1_brand_audit_codes": dict(sorted(Counter(
+                c for t in stayed if t["after"] for c in t["after"].get("brand_audit_codes") or []).items())),
+            "brand_audit_report_only_codes_after": dict(sorted(Counter(
+                c for t in rows if t["after"] for c in t["after"].get("brand_audit_report_only") or []).items())),
             "legacy_itinerary_pages": sum(1 for t in rows if t["after"] and not t["after"]["canonical_days"]),
             "clearly_better": clearly_better,
         }
@@ -303,6 +325,14 @@ def markdown(countries: dict, stops: dict) -> str:
             f"{r['brand_fit_before']} → {r['brand_fit_after_report_only']} | {r['cost_per_tour_after']} | "
             f"{'yes' if r['clearly_better'] else 'no'} |")
     lines.append("")
+    all_row = countries.get("ALL") or {}
+    if all_row.get("outcomes", {}).get("stayed_v1"):
+        lines.append("Stayed v1 by the new version's brand audit (ALL): "
+                     + json.dumps(all_row.get("stayed_v1_by_brand_audit") or {}) + ", codes "
+                     + json.dumps(all_row.get("stayed_v1_brand_audit_codes") or {}))
+    if all_row.get("brand_audit_report_only_codes_after"):
+        lines.append("Brand-audit voice codes recorded report-only on v2 (ALL): "
+                     + json.dumps(all_row["brand_audit_report_only_codes_after"]))
     lines.append("Stop conditions (true = stop and report): "
                  + ", ".join(f"{k}={'TRUE' if v else 'false'}" for k, v in stops.items()))
     return "\n".join(lines)

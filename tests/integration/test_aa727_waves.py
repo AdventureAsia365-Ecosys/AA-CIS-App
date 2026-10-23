@@ -137,3 +137,30 @@ async def test_wave_completes_when_every_tour_is_terminal(pool):
                    (tour_id, generated_content_id, tenant_id, aa_name, master_status, published_at)
                VALUES ($1::uuid, $2::uuid, $3::uuid, 'X', 'active', now())""", t, str(uuid.uuid4()), MASTER)
         assert (await wr.check(conn, wave_id))["status"] == "complete"
+
+
+@pytest.mark.asyncio
+async def test_a_republished_tour_counts_as_master_by_updated_at(pool):
+    """AA-645 d06: a rewrite keeps the FIRST published_at (months before the wave) and moves updated_at (mig 273).
+    The wave must classify the tour by updated_at, else every rewritten tour would read 'unclassified'."""
+    async with pool.acquire() as conn:
+        t_new, t_untouched = await _raw(conn, "Rewritten"), await _raw(conn, "Not republished")
+        wave_id = await conn.fetchval(
+            "INSERT INTO shared.rerun_wave (name, expected_tour_ids) VALUES ('d06', $1::uuid[]) "
+            "RETURNING id::text", [t_new, t_untouched])
+        for t in (t_new, t_untouched):
+            await _job(conn, "s1_rewrite", t, "succeeded")
+            await conn.execute(
+                """INSERT INTO gold_aa_internal.published_tours
+                       (tour_id, generated_content_id, tenant_id, aa_name, master_status, published_at, updated_at)
+                   VALUES ($1::uuid, $2::uuid, $3::uuid, 'X', 'active', now() - interval '120 days',
+                           now() - interval '120 days')""", t, str(uuid.uuid4()), MASTER)
+        # the publish of the wave's new version (PublishedCatalogRepository.insert ON CONFLICT): updated_at only
+        await conn.execute("UPDATE gold_aa_internal.published_tours SET updated_at = now() WHERE tour_id = $1::uuid",
+                           t_new)
+        rep = await wr.report(conn, wave_id)
+        states = {r["name"]: r["state"] for r in rep["tours"]}
+        assert states == {"Rewritten": "master", "Not republished": "unclassified"}
+        pub = await conn.fetchval("SELECT published_at FROM gold_aa_internal.published_tours WHERE tour_id = $1::uuid",
+                                  t_new)
+        assert pub < await conn.fetchval("SELECT created_at FROM shared.rerun_wave WHERE id = $1::uuid", wave_id)

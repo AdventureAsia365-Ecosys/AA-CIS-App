@@ -6,7 +6,9 @@ writes, so no job has to carry a wave id:
 
   jobs        shared.job of kind s1_rewrite / a3_atomize / revalidate whose payload tour_id is in
               the expected set and that were created inside the window
-  master      published_tours.master_status = 'active' AND published_at inside the window
+  master      published_tours.master_status = 'active' AND updated_at inside the window (the last
+              publish/promote; published_at is the FIRST publish and stays put on a rewrite — AA-645 d06,
+              migration 273)
   review      latest review_queue row of the tour created inside the window, status 'pending'
   trashed     raw_tours.source_status = 'trashed' (or soft-deleted)
   Jev         a decision_log row without error written by one of the tour's wave jobs
@@ -69,8 +71,9 @@ TOURS_SQL = f"""
            EXISTS (SELECT 1 FROM jobs j JOIN jev_jobs jj ON jj.job_id = j.id
                     WHERE j.tour_id = e.tour_id::text) AS jev,
            pt.master_status::text AS master_status,
-           coalesce(pt.published_at >= w.created_at
-                    AND (w.closed_at IS NULL OR pt.published_at <= w.closed_at), false) AS published_in_wave,
+           -- updated_at, not published_at: a re-publish keeps the first published_at (AA-645 d06, mig 273)
+           coalesce(pt.updated_at >= w.created_at
+                    AND (w.closed_at IS NULL OR pt.updated_at <= w.closed_at), false) AS published_in_wave,
            rq.review_status::text AS review_status, rq.failure_summary, rq.score_overall::float AS score
       FROM exp e CROSS JOIN w
       LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = e.tour_id

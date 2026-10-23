@@ -79,7 +79,9 @@ rev_c AS (
 pub_c AS (
     SELECT rt.country,
            count(DISTINCT pt.tour_id) AS published,
-           count(DISTINCT pt.tour_id) FILTER (WHERE pt.published_at >= now() - interval '7 days') AS published_7d
+           -- published or re-published in 7 days: published_at is the FIRST publish and stays put on a rewrite
+           -- (AA-645 d06, migration 273); updated_at moves on every publish / promote.
+           count(DISTINCT pt.tour_id) FILTER (WHERE pt.updated_at >= now() - interval '7 days') AS published_7d
     FROM gold_aa_internal.published_tours pt
     JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
     WHERE pt.tenant_id = $1::uuid AND pt.master_status <> 'trashed' AND {_ACTIVE_RAW}

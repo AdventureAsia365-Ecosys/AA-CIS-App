@@ -216,8 +216,14 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
             # AA-645 step 0 (T13): the T7 Debate brand-fit cache scored these Segments (and the Routes through
             # them) on their atoms' old text; drop those rows when this run changed the tour's atoms, so the
             # next Slate re-judges them on the new text (lazy, cached again on first use).
+            # Best effort on its own: a failed DELETE must not stop the Score/Route recompute below.
             if result.get("status") != "skipped" or result.get("orphan_atoms_deleted"):
-                outcome["brand_fit_cache_cleared"] = await clear_brand_fit_cache(pool, segment_ids)
+                try:
+                    outcome["brand_fit_cache_cleared"] = await clear_brand_fit_cache(pool, segment_ids)
+                except Exception as cache_exc:
+                    outcome["brand_fit_cache_cleared"] = (
+                        f"failed: {type(cache_exc).__name__}: {str(cache_exc)[:200]}")
+                    logger.warning("a3_brand_fit_cache_clear_failed", tour_id=tour_id, exc_info=True)
             job_id, created = await enqueue_recompute(
                 pool, scope="platform", reason=f"a3_atomize:{tour_id}", segment_ids=segment_ids,
                 debounce_s=WAVE_DEBOUNCE_S, created_by="a3_atomize")
