@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Optional
 
 from services.acp_content_writing.hygiene import (
@@ -721,8 +722,22 @@ _SMALL = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven
           "ten": 10}
 
 
-# where the role went: '… until 1955, when the capital was moved to Thimphu'
-_SUCCESSOR_RE = re.compile(r"\b(?:moved|transferred|relocated|shifted)\s+to\s+([A-Z][\w’'-]+(?:\s+[A-Z][\w’'-]+)?)")
+# where the role went: '… until 1955, when the capital was moved to Thimphu'; review round — also 'when Thonburi
+# became the capital', 'replaced by Hanoi', 'the capital is now Naypyidaw'
+_SUCC_NAME = r"([A-ZÀ-ÖØ-Þ][\w’'-]+(?:\s+[A-ZÀ-ÖØ-Þ][\w’'-]+)?)"
+_SUCCESSOR_RE = re.compile(
+    rf"\b(?:moved|transferred|relocated|shifted)\s+to\s+{_SUCC_NAME}"
+    rf"|\breplaced\s+by\s+{_SUCC_NAME}"
+    rf"|\b{_SUCC_NAME}\s+(?:became|was\s+made|was\s+declared)\s+the\s+(?:new\s+)?(?:national\s+)?capital"
+    rf"|\bthe\s+(?:new\s+)?capital\s+(?:is\s+now|has\s+since\s+been|became)\s+{_SUCC_NAME}")
+
+
+def _successor(text: str) -> Optional[str]:
+    for m in _SUCCESSOR_RE.finditer(text):
+        name = next(g for g in m.groups() if g)
+        if fold(name.split()[0]) not in COMMON_CAPS:
+            return name
+    return None
 
 
 @dataclass(frozen=True)
@@ -780,26 +795,50 @@ def _name_aliases(name: str) -> list[str]:
         out.append(part)
         words = part.split()
         if len(words) >= 2 and words[-1].lower() in _PLACE_KINDS and words[-2][:1].isupper():
-            out.append(" ".join(words[:-1]))
+            short = " ".join(words[:-1])
+            # 'Imperial City' → not 'Imperial': a lone generic adjective names nothing (review round)
+            if not (len(words) == 2 and (fold(short) in COMMON_CAPS or fold(short) in _GENERIC_NAME_WORDS)):
+                out.append(short)
     return out
+
+
+_GENERIC_NAME_WORDS = frozenset({"imperial", "royal", "grand", "great", "old", "new", "holy", "sacred", "forbidden",
+                                 "golden", "ancient", "national", "central", "upper", "lower", "main", "inner",
+                                 "outer", "summer", "winter", "historic", "historical"})
+
+
+def _location_parts(m: "Moment") -> list[str]:
+    return [p.strip() for p in re.sub(r"\(.*?\)", "", m.location[len("Location:"):]).split(",") if p.strip()]
+
+
+def _moment_names(m: "Moment") -> list[str]:
+    """The moment's own names: its label name, the first part of its Location line, its quoted Naming aliases."""
+    names = _name_aliases(m.name)
+    parts = _location_parts(m)
+    if parts:
+        names += _name_aliases(parts[0])
+    names += [q for q in re.findall(r"'([^']+)'", m.naming) if q[:1].isupper()]
+    return names
 
 
 def _role_entity(m: "Moment", before_until: str) -> tuple[Optional[str], tuple]:
     """Who held the ended role: the proper-noun subject of the line that dates it ('Punakha Dzong served as …
     until 1955'); when that line opens on a pronoun ('It served as …'), the moment itself (its label name, the
-    first part of its Location line, its quoted Naming aliases)."""
+    first part of its Location line, its quoted Naming aliases). Review round: when the proper subject IS the moment
+    or the place the moment sits in ('Hue served as …' for the Imperial City, Location '…, Hue, …'), the moment's
+    own names are names for the entity too."""
+    own = _moment_names(m)
     for sm in _ROLE_SUBJECT_RE.finditer(before_until):
         words = sm.group(1).split()
         while words and fold(words[0]) in COMMON_CAPS:
             words = words[1:]
         if words:
             name = " ".join(words)
-            return name, tuple(dict.fromkeys(_name_aliases(name)))
-    names = _name_aliases(m.name)
-    if m.location:
-        names += _name_aliases(m.location[len("Location:"):].split(",")[0])
-    names += [q for q in re.findall(r"'([^']+)'", m.naming) if q[:1].isupper()]
-    return (m.name if names else None), tuple(dict.fromkeys(names))
+            aliases = _name_aliases(name)
+            if fold(name) in {fold(n) for n in own} | {fold(p) for p in _location_parts(m)}:
+                aliases += own
+            return name, tuple(dict.fromkeys(aliases))
+    return (m.name if own else None), tuple(dict.fromkeys(own))
 
 
 def ended_roles(seed: Optional[str]) -> list[EndedRole]:
@@ -816,10 +855,10 @@ def ended_roles(seed: Optional[str]) -> list[EndedRole]:
                 continue
             rm = re.search(r"\b(?:served|was|acted)\s+as\s+(.+?)\s+until\b", ln, re.I)
             role = rm.group(1).strip() if rm else "the seat of government"
-            sm = _SUCCESSOR_RE.search(ln[um.end():])
+            successor = _successor(ln[um.end():])
             entity, aliases = _role_entity(m, ln[:um.start()])
             out.append(EndedRole(role=role, start=start, end=int(um.group(1)),
-                                 successor=sm.group(1) if sm else None, entity=entity, aliases=aliases))
+                                 successor=successor, entity=entity, aliases=aliases))
     return out
 
 
@@ -986,38 +1025,72 @@ _CLASS_RE = re.compile(
 _SPAN_ABOUT_RE = re.compile(rf"{_GOV_RE.pattern}|\bserved\b", re.I)
 _RELATIVE_RE = re.compile(r",\s+(?=(?:which|where|who|whose)\b)", re.I)
 _WORD_RE = re.compile(r"[\w’'-]+|[,;:]")
-_GOV_VERB_RE = re.compile(
-    r"\b(?:is|are|was|were|remains?|remained|sits?|meets?|holds?|houses?|stands?|lies|governs?|rules?|operates?"
-    r"|moved|has|have|had|continues?|works?|serves?|functions?|occupies|resides?|convenes?|uses?|keeps?|shares?"
-    r"|hosts?|retains?|became|becomes|produces?|offers?|can|could|will|would|may|might|must|does|do|did)\b", re.I)
-
-
 _EMBEDDED_IT_RE = re.compile(
     r"\bit\s+(?:is|remains|still|continues|serves|houses|functions|stays|retains|keeps|holds|hosts)\b", re.I)
 _APPOSITIVE_NAME_RE = re.compile(rf"^[^,]{{1,60}},\s+((?:{_NAME_WORD}\s+){{0,4}}{_NAME_WORD})\s*,")
+# review round — an alias run on into another capitalised word is a longer, different name ('Punakha Tshechu')
+_CAP_NEXT_RE = re.compile(r"[ \t]+[A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ]")
+_UPPER_RE = re.compile(r"[A-ZÀ-ÖØ-Þ]")
 
 
 def _possessive_base(word: str) -> str:
-    return re.sub(r"(?:'s|’s|'|’)$", "", word)
+    return re.sub(r"(?:'s|’s|'|’)$", "", word, flags=re.I)
+
+
+@lru_cache(maxsize=2048)
+def _fold_map(text: str) -> tuple[str, tuple]:
+    """`fold(text)` and, for each folded character, the index of the original character it came from."""
+    out, idx = [], []
+    for i, c in enumerate(text):
+        f = fold(c)
+        out.append(f)
+        idx.extend([i] * len(f))
+    return "".join(out), tuple(idx)
 
 
 @dataclass(frozen=True)
 class _Binder:
-    """What a sentence may call the entity (`alias_re`), the other places it may mention instead (`other_re`), the
-    entity's own kind word ('dzong'), and the country (a subject 'Bhutan's government' is the government)."""
+    """What a sentence may call the entity (`alias_re`, over fold()ed text), the other places it may mention instead
+    (`other_re`), the entity's own kind word ('dzong'), and the country (a subject 'Bhutan's government' is the
+    government)."""
     alias_re: Optional[re.Pattern]
     other_re: Optional[re.Pattern]
     kind: Optional[str]
     country: Optional[str]
     other_names: frozenset = frozenset()
 
+    def alias_spans(self, text: str) -> list[tuple[int, int]]:
+        """(start, end) of every entity alias in `text`, matched blind to case and accents ('Huế', 'Kyōto',
+        'PUNAKHA DZONG'). A lower-case match of a one-word alias counts only in all-lower-case text ('the hue of
+        the river' is not Hue); an alias run on into another capitalised word is another name ('Punakha
+        Tshechu', 'Punakha Valley')."""
+        if not self.alias_re or not text:
+            return []
+        folded, idx = _fold_map(text)
+        lower_text = not _UPPER_RE.search(text)
+        out = []
+        for m in self.alias_re.finditer(folded):
+            a, z = idx[m.start()], idx[m.end() - 1] + 1
+            span = text[a:z]
+            if not (span[:1].isupper() or " " in span or lower_text):
+                continue
+            if not span.isupper() and _CAP_NEXT_RE.match(text, z):
+                continue
+            out.append((a, z))
+        return out
+
+    def starts_with_alias(self, text: str) -> bool:
+        return any(a == 0 for a, _z in self.alias_spans(text.lstrip()))
+
     def is_alias(self, words: list[str]) -> bool:
-        return bool(self.alias_re and self.alias_re.match(" ".join(_possessive_base(w) for w in words)))
+        """The name run `words` is the entity: it opens on an alias, or ends on one ('Hue Imperial City')."""
+        text = " ".join(_possessive_base(w) for w in words)
+        return any(a == 0 or z == len(text) for a, z in self.alias_spans(text))
 
     def mentions(self, text: str) -> list[tuple[int, int, str, str]]:
         """(start, end, kind, matched text) of every entity / other-place mention, in order; an other-place match
         overlapping an entity match is the entity ('Punakha Dzong' is both)."""
-        ent = [(m.start(), m.end()) for m in self.alias_re.finditer(text)] if self.alias_re else []
+        ent = self.alias_spans(text)
         found = [(a, z, ENTITY, text[a:z]) for a, z in ent]
         for m in self.other_re.finditer(text) if self.other_re else ():
             start, words = m.start(), m.group(0).split()
@@ -1033,9 +1106,9 @@ class _Binder:
 
 def _binder(seed: Optional[str], role: EndedRole, country: Optional[str]) -> _Binder:
     aliases = [a for a in role.aliases if a]
-    alias_re = (re.compile(r"\b(?:" + "|".join(re.escape(a) for a in sorted(aliases, key=len, reverse=True))
-                           + r")(?![\w-])") if aliases else None)
     folded = {fold(a) for a in aliases}
+    alias_re = (re.compile(r"(?<![\w-])(?:" + "|".join(re.escape(a) for a in sorted(folded, key=len, reverse=True))
+                           + r")(?![\w-])") if aliases else None)
     others = [role.successor] if role.successor else []
     for m in parse_moments(seed):
         others += [n for n in _name_aliases(m.name) if fold(n) not in folded]
@@ -1049,9 +1122,9 @@ def _binder(seed: Optional[str], role: EndedRole, country: Optional[str]) -> _Bi
 
 
 def _strip_lead(clause: str) -> tuple[str, bool]:
-    """The clause without its leading non-subject phrases, and whether one of them was a class comparison
-    ('Like all dzongs in Bhutan, it houses …'). 'Unlike other dzongs, Punakha Dzong …' is a contrast, not a
-    class statement."""
+    """The clause without its leading non-subject phrases (always a suffix of `clause.strip()`), and whether one of
+    them was a class comparison ('Like all dzongs in Bhutan, it houses …'). 'Unlike other dzongs, Punakha Dzong …'
+    is a contrast, not a class statement."""
     s = clause.strip()
     generic = False
     for _ in range(4):
@@ -1072,19 +1145,24 @@ def _strip_lead(clause: str) -> tuple[str, bool]:
             continue
         # no comma: the phrase's object runs until a pronoun, a determiner or a new name after it
         # ('For nearly three centuries it …', 'In 1955 the capital …', 'Inside Punakha Dzong the government …')
-        toks = s.split()
+        toks = list(re.finditer(r"\S+", s))
         k = 1
         while k < len(toks) and k <= 8:
-            w = toks[k]
+            w = toks[k].group(0)
             lw = w.lower().strip(",")
             if k >= 2 and (lw in _PRON_SINGULAR | _PRON_PLURAL | _PRON_PERSON | _DET_DEFINITE | {"a", "an"}
-                           or (w[:1].isupper() and not toks[k - 1][:1].isupper())):
+                           or (w[:1].isupper() and not toks[k - 1].group(0)[:1].isupper())):
                 break
             k += 1
         if k >= len(toks) or k > 8:
             break
-        s = " ".join(toks[k:])
+        s = s[toks[k].start():]
     return s, generic
+
+
+def _of_alias(toks: list[str], b: _Binder) -> bool:
+    """'… in Kyoto' / '… of Luang Prabang' right after a named head: the head is part of the entity."""
+    return len(toks) >= 2 and toks[0].lower() in ("in", "of") and b.starts_with_alias(" ".join(toks[1:7]))
 
 
 def _subject(s: str, b: _Binder) -> tuple[str, Optional[str]]:
@@ -1094,6 +1172,8 @@ def _subject(s: str, b: _Binder) -> tuple[str, Optional[str]]:
     toks = _WORD_RE.findall(s)
     if not toks or toks[0] in ",;:":
         return "topic", None
+    if b.starts_with_alias(s):  # any case, any accents: 'Huế is …', 'punakha dzong is …'
+        return ENTITY, None
     first, lw = toks[0], toks[0].lower()
     # a descriptive subject named by an appositive: 'The capital's dzong, Tashichho Dzong, still houses …',
     # 'Bhutan's oldest dzong, Punakha Dzong, is …' — the name decides
@@ -1114,12 +1194,19 @@ def _subject(s: str, b: _Binder) -> tuple[str, Optional[str]]:
             np.append(t)
         if not np:
             return "topic", None  # 'This is …', 'That remains …'
+        # the NP ends at a (non-possessive) government head: 'the national government works from …'
+        gov_at = next((n for n, t in enumerate(np) if t.lower() in _GOV_HEADS), None)
+        if gov_at is not None:
+            np = np[:gov_at + 1]
         low = [_possessive_base(t).lower() for t in np]
         if any(w in _PLACE_KIND_PLURALS or w in _CLASS_NOUNS for w in low):
             return GENERIC, None
         names = [t for t in np if t[:1].isupper() and _possessive_base(t).lower() not in _PLACE_KINDS]
         if names:
-            return (ENTITY if b.is_alias(np[np.index(names[0]):]) else OTHER), None
+            # 'The Imperial Palace in Kyoto', 'The Royal Palace of Luang Prabang' (review round)
+            if b.is_alias(np[np.index(names[0]):]) or _of_alias(toks[1 + len(np):], b):
+                return ENTITY, None
+            return OTHER, None
         if low[-1] in _GOV_HEADS:
             return "gov", None
         kinds = [w for w in low if w in _PLACE_KINDS]
@@ -1148,6 +1235,8 @@ def _subject(s: str, b: _Binder) -> tuple[str, Optional[str]]:
             return "gov", None
         if base in _PLACE_KINDS:
             return "topic", base
+        if _of_alias(toks[len(run):], b):  # 'Imperial Palace in Kyoto is …'
+            return ENTITY, None
         return OTHER, None
     if lw in _PLACE_KIND_PLURALS:
         return GENERIC, None
@@ -1158,16 +1247,78 @@ def _subject(s: str, b: _Binder) -> tuple[str, Optional[str]]:
     return OTHER, None
 
 
+# review round — a contrast or adjunct lead names a place the main clause is NOT about: 'Unlike Mongar Dzong, it
+# remains …', 'After visiting Mongar Dzong, you will see it is …'; its names are never an antecedent
+_CONTRAST_LEAD_RE = re.compile(
+    r"^\s*(?:unlike|like|compared\s+(?:with|to)|in\s+contrast\s+(?:to|with)|contrary\s+to|apart\s+from|besides"
+    r"|(?:after|before|when|while)\s+(?:visiting|seeing|leaving|exploring|touring))\s+[^,]{1,80},\s*", re.I)
+_CHUNK_RE = re.compile(r"[^.!?\n]+[.!?]*")
+
+
+def _subject_name(chunk: str, b: _Binder) -> Optional[str]:
+    """The proper noun that opens a sentence / clause as its subject ('Hanoi lies …', 'Vientiane sits …'), when it
+    is not the entity, the country, a common capitalised word, a government word or a place-kind word."""
+    s, _generic = _strip_lead(chunk)
+    run = []
+    for t in _WORD_RE.findall(s)[:6]:
+        if t in ",;:" or not t[:1].isupper():
+            break
+        if not run and fold(t) in COMMON_CAPS:  # 'The', 'Visitors'
+            continue
+        run.append(t)
+        if _possessive_base(t) != t:
+            break
+    if not run:
+        return None
+    first = fold(_possessive_base(run[0]))
+    if first in COMMON_CAPS or first in _GOV_HEADS or first in _PLACE_KINDS or first in _PLACE_KIND_PLURALS:
+        return None
+    name = " ".join(_possessive_base(t) for t in run)
+    if b.is_alias(run) or (b.country and fold(name) == fold(b.country)):
+        return None
+    # the clause still talks about 'it' ('Zhabdrung founded it in 1637'): the subject is an agent, the topic
+    # carries on from before
+    if re.search(r"\b(?:it|its)\b", s[len(run[0]):], re.I):
+        return None
+    return name
+
+
+def _antecedents(text: str, b: _Binder) -> list[tuple[int, str, str, int, bool]]:
+    """(position, kind, text, chunk, is_subject) of every place `text` names, in order: the binder's names, plus
+    (review round) the proper-noun subject that opens each sentence / clause, so a paragraph naming the new capital
+    in one plain word ('Hanoi lies 700 km to the north. It is …') is not read as being about the entity. Names
+    inside a contrast lead are left out. `is_subject`: a name the binder knows (the entity, the successor, a seed
+    moment, a named place) standing as the chunk's subject."""
+    out, chunk = [], 0
+    for cm in _CHUNK_RE.finditer(text or ""):
+        for at, clause in _clauses(cm.group(0)):
+            lead = _CONTRAST_LEAD_RE.match(clause)
+            skip = lead.end() if lead else 0
+            body, off = clause[skip:], cm.start() + at + skip
+            s, _generic = _strip_lead(body)
+            subj = len(body) - len(body.lstrip()) + len(body.strip()) - len(s)
+            out += [(off + f[0], f[2], f[3], chunk, f[0] - subj <= 4 and f[0] >= subj) for f in b.mentions(body)]
+            name = _subject_name(body, b)
+            if name:
+                out.append((off, OTHER, name, chunk, False))
+            chunk += 1
+    return sorted(out)
+
+
 def _resolve(preceding: str, kind: Optional[str], heading: Optional[str], b: _Binder) -> str:
-    """The antecedent of a pronoun / definite NP: the last place the text before it names, in the same paragraph
-    (a definite 'the dzong' prefers the last name ending in 'Dzong'); then the section heading; then, with
-    nothing named at all, the entity (the piece is about the seed's moment — the rule fails closed)."""
-    found = b.mentions(preceding)
+    """The antecedent of a pronoun / definite NP: in the same paragraph, the last sentence / clause that names a
+    place — its subject when that is a known place ('Tokyo replaced Kyoto in 1869. It is …' is Tokyo), else the
+    last place it names ('Zhabdrung founded Punakha Dzong in 1637. It …' is the dzong); a definite 'the dzong'
+    prefers names ending in 'Dzong'. Then the section heading; then, with nothing named at all, the entity (the
+    piece is about the seed's moment — the rule fails closed)."""
+    found = _antecedents(preceding, b)
     if kind:
-        same = [f for f in found if f[3].lower().endswith(kind)]
+        same = [f for f in found if f[2].lower().endswith(kind)]
         found = same or found
     if found:
-        return found[-1][2]
+        last = [f for f in found if f[3] == found[-1][3]]
+        subject = next((f for f in last if f[4]), None)
+        return (subject or last[-1])[1]
     if heading:
         kinds = {f[2] for f in b.mentions(heading)}
         if kinds == {OTHER}:
@@ -1175,10 +1326,114 @@ def _resolve(preceding: str, kind: Optional[str], heading: Optional[str], b: _Bi
     return ENTITY
 
 
-_LOCATIVE_RE = re.compile(
-    rf"\b(?:here|there)\b|\bwithin\s+(?:these|those|its|the)\s+walls\b|^\s*(?:inside|within)\s*,"
-    rf"|\b(?:in|inside|within|at)\s+(?:it\b|its\b|this\s+[\w-]+|the\s+(?:[\w-]+\s+)?(?:{'|'.join(_PLACE_KINDS)})\b)",
-    re.I)
+# the government as subject (review round): the words around the verb that place the government somewhere
+_GOV_OF_SKIP = frozenset({"the", "its", "this", "that", "national", "royal", "central", "federal", "whole", "kingdom",
+                          "country", "nation", "state", "realm", "and"}) | _GOV_HEADS
+_ADVERBS = frozenset({"still", "now", "today", "also", "always", "even", "again", "currently", "nowadays", "actually",
+                      "continues", "continue", "to", "presently", "officially", "formally", "largely", "mostly",
+                      "only", "partly"})
+_LOC_PREPS = frozenset({"in", "at", "inside", "within", "from"})
+_OCCUPY_VERBS = frozenset({"occupies", "occupy", "fills", "fill"})
+_COPULA = frozenset({"is", "are", "remains", "remain", "stays", "stay"})
+_PART_NOUNS = frozenset({"hall", "halls", "wall", "walls", "courtyard", "courtyards", "chamber", "chambers", "room",
+                         "rooms", "tower", "towers", "precinct", "precincts", "grounds", "compound", "utse"})
+
+
+def _ref(toks: list[str], j: int, preceding: str, heading: Optional[str], b: _Binder) -> Optional[str]:
+    """ENTITY / OTHER when `toks[j:]` opens on a reference to a place ('Punakha Dzong', 'it', 'the dzong', 'these
+    halls', 'here', 'Thimphu'); None when it is not a place ('restoring Punakha Dzong', 'the road')."""
+    if j >= len(toks):
+        return None
+    if b.starts_with_alias(" ".join(toks[j:j + 7])):
+        return ENTITY
+    t = toks[j].lower()
+    if t in ("it", "its", "here", "there"):
+        return _resolve(preceding, None, heading, b)
+    if t in ("the", "this", "that", "these", "those"):
+        if b.starts_with_alias(" ".join(toks[j + 1:j + 8])):
+            return ENTITY
+        for w in toks[j + 1:j + 4]:
+            lw = _possessive_base(w).lower()
+            if lw in _PLACE_KINDS or lw in _PART_NOUNS:
+                return _resolve(preceding, lw if lw in _PLACE_KINDS else None, heading, b)
+            if w in ",;:" or lw in _NP_STOPS:
+                break
+        return None
+    if toks[j][:1].isupper() and fold(toks[j]) not in COMMON_CAPS:
+        return OTHER
+    return None
+
+
+def _bare_locative(toks: list[str], k: int) -> bool:
+    """'here' / 'there', or 'inside' / 'within' with nothing after it ('Inside, the government …', '… sits
+    inside.')."""
+    t = toks[k].lower()
+    return t in ("here", "there") or (t in ("inside", "within") and (k + 1 == len(toks) or toks[k + 1] in ",;:"))
+
+
+def _gov_binding(p: str, s: str, preceding: str, heading: Optional[str], b: _Binder) -> str:
+    """The government / the capital is the subject (review round). It is bound to the entity only by a LOCATIVE
+    relation — never by which verb it has:
+    - a locative lead: 'Here the national government …', 'Inside, the government …', 'Inside Punakha Dzong …';
+    - a place right after the verb: 'meets inside Punakha Dzong', 'is housed in the dzong', 'still sits here';
+    - the place as the object of 'occupies' / 'fills' or of a copula: 'occupies the dzong', 'is still Punakha
+      Dzong';
+    - 'from' the place anywhere: 'governs Bhutan from the dzong / from these halls'.
+    With no finite verb at all it is an appositive or a bullet ('Still the seat of Bhutan's government'): the
+    antecedent decides. What the government does TO or AT the place ('maintains the dzong', 'sponsors festivals at
+    Punakha Dzong', 'restricts photography inside') does not say the government sits there."""
+    ps = p.strip()
+    lead = ps[:len(ps) - len(s)] if s and ps.endswith(s) else ""
+    ltoks = _WORD_RE.findall(lead)
+    for j, t in enumerate(ltoks):
+        if _bare_locative(ltoks, j):
+            return _resolve(preceding, None, heading, b)
+        if t.lower() in _LOC_PREPS:
+            r = _ref(ltoks, j + 1, preceding, heading, b)
+            if r is not None:
+                return r
+    toks = _WORD_RE.findall(s)
+    i = 0
+    while i < len(toks) and i < 8 and _possessive_base(toks[i]).lower() not in _GOV_HEADS:
+        i += 1
+    if i >= len(toks) or i >= 8:
+        return OTHER
+    i += 1
+    if i < len(toks) and toks[i].lower() == "of":  # 'the seat of Bhutan's government', 'the government of the kingdom'
+        i += 1
+        while i < len(toks) and toks[i] not in ",;:" and (toks[i].lower() in _GOV_OF_SKIP or toks[i][:1].isupper()
+                                                          or _possessive_base(toks[i]) != toks[i]):
+            i += 1
+    while i < len(toks) and toks[i].lower() in _ADVERBS:
+        i += 1
+    if i >= len(toks) or toks[i] in ",;:":
+        return _resolve(preceding, None, heading, b)  # no finite verb: an appositive / a bullet
+    verb = toks[i].lower()
+    k = i + 1
+    while k < len(toks) and toks[k].lower() in _ADVERBS:
+        k += 1
+    if verb in _OCCUPY_VERBS or verb in _COPULA:
+        r = _ref(toks, k, preceding, heading, b)
+        if r is not None:
+            return r
+    if k < len(toks) and re.fullmatch(r"[a-z]+(?:ed|en)", toks[k]):  # 'is housed in', 'is based at'
+        k += 1
+        while k < len(toks) and toks[k].lower() in _ADVERBS:
+            k += 1
+    if k < len(toks):
+        if _bare_locative(toks, k):
+            return _resolve(preceding, None, heading, b)
+        if toks[k].lower() in _LOC_PREPS:
+            r = _ref(toks, k + 1, preceding, heading, b)
+            if r is not None:
+                return r
+    if verb not in _COPULA:  # 'The capital is still a drive from the dzong' places the capital, not the government
+        for n in range(i + 1, len(toks)):
+            if toks[n].lower() == "from":
+                r = _ref(toks, n + 1, preceding, heading, b)
+                if r is not None:
+                    return r
+    return OTHER
 
 
 def _piece_binding(piece: str, preceding: str, heading: Optional[str], b: _Binder,
@@ -1189,31 +1444,29 @@ def _piece_binding(piece: str, preceding: str, heading: Optional[str], b: _Binde
     rel = re.match(r"(which|who|whose|where)\b\s*", piece, re.I)
     if rel and relative_np is not None and rel.group(1).lower() != "where":
         return _np_binding(relative_np, preceding, heading, b)
-    s, generic = _strip_lead(piece[rel.end():] if rel else piece)
+    p = piece[rel.end():] if rel else piece
+    s, generic = _strip_lead(p)
     if generic:
         return GENERIC
     cat, kind = _subject(s, b)
-    if cat in (OTHER, GENERIC) and _EMBEDDED_IT_RE.search(s, 1):
-        # the claim sits in a complement clause: 'Visitors rarely realise it is still the seat of government'
-        return _resolve(preceding + " " + piece[:len(piece) - len(s)], None, heading, b)
-    if cat in (ENTITY, OTHER, GENERIC):
+    if cat in (OTHER, GENERIC):
+        em = _EMBEDDED_IT_RE.search(s, 1)
+        if em:  # the claim sits in a complement clause: 'Visitors rarely realise it is still the seat of government'
+            return _resolve(f"{preceding} {s[:em.start()]}", None, heading, b)
         return cat
-    if cat == "topic":
-        return _resolve(preceding + " " + piece[:len(piece) - len(s)], kind, heading, b)
-    # the government / the seat of government is the subject: bound only by a reference to the place
-    if b.alias_re and b.alias_re.search(piece):
+    if cat == ENTITY:
         return ENTITY
+    if cat == "topic":
+        # review round: the stripped lead is not the antecedent ('Unlike Mongar Dzong, it remains …')
+        return _resolve(preceding, kind, heading, b)
     if rel and relative_np is not None:  # 'Punakha Dzong, where Bhutan's government still sits'
         return _np_binding(relative_np, preceding, heading, b)
-    if _LOCATIVE_RE.search(piece):
-        return _resolve(preceding, None, heading, b)
-    if not _GOV_VERB_RE.search(s):  # an appositive: 'Punakha Dzong, still the seat of Bhutan's government'
-        return _resolve(preceding, None, heading, b)
-    return OTHER
+    return _gov_binding(p, s, preceding, heading, b)
 
 
 def _np_binding(np_text: str, preceding: str, heading: Optional[str], b: _Binder) -> str:
-    """The binding of the noun phrase a relative pronoun refers to (the end of the piece before ', which')."""
+    """The binding of the noun phrase a relative pronoun or an appositive refers to (the end of the text before
+    ', which' / ', still the …')."""
     tail = " ".join(np_text.split()[-5:]).rstrip(" .")
     last = tail.split()[-3:]
     if any(w.lower() in _PLACE_KIND_PLURALS or w.lower() in _CLASS_NOUNS for w in last):
@@ -1227,19 +1480,52 @@ def _np_binding(np_text: str, preceding: str, heading: Optional[str], b: _Binder
 
 
 def binds_entity(clause: str, preceding: str, heading: Optional[str], b: _Binder,
-                 about=_GOV_RE) -> bool:
+                 about=_GOV_RE, appositive_np: Optional[str] = None) -> bool:
     """AA-985 round 2 — is this clause ABOUT the entity whose role ended? Judged on each piece that names the role
-    (`about`): a relative piece (', which …', ', where …') has its own subject."""
+    (`about`): a relative piece (', which …', ', where …') has its own subject. `appositive_np` (review round):
+    the clause was split off at ', still the …' and describes that noun phrase ('Punakha Dzong, still the capital
+    of Bhutan, sits …')."""
     starts = [0] + [m.end() for m in _RELATIVE_RE.finditer(clause)]
     bounds = list(zip(starts, starts[1:] + [len(clause)]))
     for k, (a, z) in enumerate(bounds):
         piece = clause[a:z].strip().rstrip(",")
         if not about.search(piece):
             continue
-        rel_np = clause[bounds[k - 1][0]:a].rstrip(", ") if k else None
-        if _piece_binding(piece, preceding + " " + clause[:a], heading, b, rel_np) == ENTITY:
+        if k == 0 and appositive_np:
+            binding = _np_binding(appositive_np, preceding, heading, b)
+            if binding == OTHER and not appositive_np.split()[-1][:1].isupper():
+                # after a full clause ('Punakha Dzong sits where two rivers meet, still the seat of …') the
+                # appositive describes that clause's subject
+                binding = _piece_binding(appositive_np, preceding, heading, b)
+        else:
+            rel_np = clause[bounds[k - 1][0]:a].rstrip(", ") if k else None
+            binding = _piece_binding(piece, preceding + " " + clause[:a], heading, b, rel_np)
+        if binding == ENTITY:
             return True
     return False
+
+
+# a clause split off at ', still the …' / ', still Bhutan's …' is an appositive to the noun phrase before it
+_APPOSITIVE_HEAD_RE = re.compile(r"(?i:still|today|now)\s+(?:(?i:the|an?|its|one)\b|[A-ZÀ-ÖØ-Þ])")
+
+
+def _clause_units(sentence: str) -> list[tuple[int, str, Optional[str]]]:
+    """`_clauses` with, for an appositive clause ('Punakha Dzong, still the capital of Bhutan, sits …'), the clause
+    before it as the noun phrase it describes."""
+    out, prev = [], None
+    for at, clause in _clauses(sentence):
+        appos = None
+        if prev is not None and re.search(r",\s*$", sentence[:at]) and _APPOSITIVE_HEAD_RE.match(clause.lstrip()):
+            appos = prev.rstrip(", ")
+        out.append((at, clause, appos))
+        prev = clause
+    return out
+
+
+def _main_clause(clause: str) -> str:
+    """The clause without a contrast lead: 'Unlike Thimphu, it is still …' is not about Thimphu."""
+    m = _CONTRAST_LEAD_RE.match(clause)
+    return clause[m.end():] if m else clause
 
 
 def _clauses(sentence: str) -> list[tuple[int, str]]:
@@ -1286,13 +1572,14 @@ def date_authority_claims(text: str, seed: Optional[str], cta: Optional[str] = N
     out = []
     for sentence, prefix, para, heading in units:
         problem = None
-        for at, clause in _clauses(sentence):
+        for at, clause, appos in _clause_units(sentence):
             # a clause about where the role went is about the successor, not this place: 'In 1955 the
-            # capital moved to Thimphu, where it remains today' / 'Today Thimphu is Bhutan's capital'
-            if role.successor and re.search(rf"\b{re.escape(role.successor)}\b", clause):
+            # capital moved to Thimphu, where it remains today' / 'Today Thimphu is Bhutan's capital' — but not
+            # a contrast lead naming it ('Unlike Thimphu, it is still the capital', review round)
+            if role.successor and re.search(rf"\b{re.escape(role.successor)}\b", _main_clause(clause)):
                 continue
             if (role_claim(clause, country, role) and _PRESENT_RE.search(clause) and not _PAST_RE.search(clause)
-                    and binds_entity(clause, f"{para} {sentence[:at]}", heading, binder)):
+                    and binds_entity(clause, f"{para} {sentence[:at]}", heading, binder, appositive_np=appos)):
                 problem = (f"says it still holds a role the source dates as ended ({role.role}, until {role.end}) — "
                            "put it in the past")
                 break
@@ -1300,8 +1587,9 @@ def date_authority_claims(text: str, seed: Optional[str], cta: Optional[str] = N
         # 'for nearly four centuries it has housed the district administration' counts the building's
         # local role to today, not the national role's 1637–1955 — and (round 2) about that entity
         if (problem is None and role.start and _span_about_role(sentence, country, role)
-                and any(binds_entity(c, f"{para} {sentence[:at]}", heading, binder, about=_SPAN_ABOUT_RE)
-                        for at, c in _clauses(sentence))):
+                and any(binds_entity(c, f"{para} {sentence[:at]}", heading, binder, about=_SPAN_ABOUT_RE,
+                                     appositive_np=ap)
+                        for at, c, ap in _clause_units(sentence))):
             years = role.end - role.start
             for m in _SPAN_RE.finditer(sentence):
                 if re.match(r"\s+ago\b", sentence[m.end():]):
