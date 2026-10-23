@@ -55,6 +55,7 @@ export const PAGE_RULES: PageRule[] = [
   { prefix: "/admin/tenants", roles: ["admin"] },
   { prefix: "/admin/llm-usage", roles: ["admin"] },         // AA-505
   { prefix: "/admin/jobs", roles: ["admin"] },              // AA-650
+  { prefix: "/admin/data-erasure", roles: ["admin"] },      // AA-839 — DSAR / tenant erasure (DRY RUN, apply)
   { prefix: "/admin/decisions", roles: ["admin"] },         // AA-660
   { prefix: "/admin/photos", roles: ["admin"] },            // AA-708
   { prefix: "/admin/places", roles: ["admin"] },            // AA-847 — coverage + content validity, fixes
@@ -119,6 +120,9 @@ export const API_WRITE_RULES: { prefix: string; roles: StaffRole[] }[] = [
   // AA-847 — place fixes (merge duplicates, hide trails, area precision) change the map every app reads;
   // the backend re-checks (ops.write). "places/" covers backfill and validity/fix.
   { prefix: "places/", roles: ["admin"] },
+  // AA-839 — data erasure runs (DRY RUN and the apply); the backend re-checks (tenant.write, and for an apply the
+  // env flag and a Cognito session).
+  { prefix: "job-runner/erasure", roles: ["admin"] },
 ];
 
 // AA-577 follow-up — /api/admin/ paths that NO method may reach unless the role is listed (reads
@@ -132,6 +136,9 @@ export const API_READ_RULES: { prefix: string; roles: StaffRole[] }[] = [
   // AA-894 — backend /admin/data-model (the live ERD of every schema, PII tags included): admin only, re-checked by
   // the backend (staff_policy, capability ops.read).
   { prefix: "data-model", roles: ["admin"] },
+  // AA-839 — backend /admin/job-runner/erasure (inventory + apply settings) and /erasure/run: admin only, re-checked
+  // by the backend (staff_policy, tenant.read / tenant.write).
+  { prefix: "job-runner/erasure", roles: ["admin"] },
 ];
 
 /** May `role` call backend /admin/{path} at all (any method)? (path without the leading slash) */
