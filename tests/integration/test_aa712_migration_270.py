@@ -9,7 +9,10 @@ owner here, so the migration's REVOKE removes them like cis_owner's does on Dev)
     acp_shared / shared outside the three gateway tables;
   * USAGE on gold_aa_internal and acp_contract gone; USAGE on shared and catalog kept;
   * kept: the gateway grants (CIS 173) and the catalog view reads;
-  * registered once.
+  * registered once;
+  * the guards refuse (review round, S248): a schema USAGE granted by another grantor, which cis_owner's REVOKE
+    leaves in place, and a leftover TRUNCATE / REFERENCES / TRIGGER table privilege; nothing changes (the file's
+    transaction rolls back).
 """
 import os
 import sys
@@ -49,10 +52,10 @@ SELECT n.nspname || '.' || c.relname
   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
  WHERE n.nspname IN ('gold_aa_internal', 'silver_aa_internal', 'acp_contract', 'acp_shared', 'shared')
    AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
-   AND (has_table_privilege('tripplanner', c.oid, 'SELECT, INSERT, UPDATE, DELETE')
+   AND (has_table_privilege('tripplanner', c.oid, 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
         OR EXISTS (SELECT 1 FROM pg_attribute a
                     WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
-                      AND has_column_privilege('tripplanner', c.oid, a.attnum, 'SELECT, INSERT, UPDATE')))
+                      AND has_column_privilege('tripplanner', c.oid, a.attnum, 'SELECT, INSERT, UPDATE, REFERENCES')))
  ORDER BY 1
 """
 
@@ -134,3 +137,51 @@ def test_registered_once(cur):
     k, _, _, _ = cur
     k.execute("SELECT count(*) FROM shared.schema_versions WHERE version = '270'")
     assert k.fetchone()[0] == 1
+
+
+def _apply_expecting_failure(k, setup, cleanup):
+    """Runs `setup`, then the migration (must raise), rolls the failed transaction back, then `cleanup`; returns the
+    error text and whether 270's work was undone (USAGE on shared still there, i.e. nothing else changed)."""
+    for q in setup:
+        k.execute(q)
+    error = None
+    try:
+        k.execute(open(MIGRATION, encoding="utf-8").read())
+    except psycopg2.Error as e:
+        error = str(e)
+        k.execute("ROLLBACK")                             # autocommit: the file's BEGIN block is left aborted
+    finally:
+        for q in cleanup:
+            k.execute(q)
+    return error
+
+
+def test_a_schema_usage_by_another_grantor_fails_the_apply(cur):
+    k, _, _, _ = cur
+    k.execute("SELECT to_regnamespace('gold_aa_internal') IS NOT NULL")
+    if not k.fetchone()[0]:
+        pytest.skip("schema gold_aa_internal not in this database")
+    error = _apply_expecting_failure(
+        k,
+        ["CREATE ROLE aa712_other_grantor NOLOGIN",
+         "GRANT USAGE ON SCHEMA gold_aa_internal TO aa712_other_grantor WITH GRANT OPTION",
+         "SET ROLE aa712_other_grantor",
+         "GRANT USAGE ON SCHEMA gold_aa_internal TO tripplanner",
+         "RESET ROLE"],
+        ["REVOKE USAGE ON SCHEMA gold_aa_internal FROM aa712_other_grantor CASCADE",
+         "DROP ROLE aa712_other_grantor"])
+    assert error and "still holds USAGE on schema gold_aa_internal" in error and "aa712_other_grantor" in error, error
+    k.execute("SELECT has_schema_privilege('tripplanner', 'gold_aa_internal', 'USAGE')")
+    assert k.fetchone()[0] is False                       # the cleanup's CASCADE removed the out-of-band grant
+
+
+@pytest.mark.parametrize("privilege", ["TRUNCATE", "REFERENCES", "TRIGGER"])
+def test_a_leftover_non_dml_privilege_fails_the_apply(cur, privilege):
+    k, _, _, _ = cur
+    if not _exists(k, "relation", "silver_aa_internal.raw_tours"):
+        pytest.skip("silver_aa_internal.raw_tours not in this database")
+    error = _apply_expecting_failure(
+        k,
+        [f"GRANT {privilege} ON silver_aa_internal.raw_tours TO tripplanner"],
+        [f"REVOKE {privilege} ON silver_aa_internal.raw_tours FROM tripplanner"])
+    assert error and "still holds privileges on" in error and "silver_aa_internal.raw_tours" in error, error
