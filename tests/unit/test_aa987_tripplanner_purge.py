@@ -28,8 +28,9 @@ VECTOR_SECRET = "aa987-test-secret"
 VECTOR_TS = 1_761_200_000
 VECTOR_BODY = (b'{"contract":"catalog.tour.lifecycle.v1","events":[{"event":"retired","event_id":42,'
                b'"idempotency_key":"trash_master:t1:retired:abc","occurred_at":"2026-10-23T14:33:41+00:00",'
-               b'"reason":"master_trashed","replaced_by_tour_id":null,"source_id":"3f0c2a8e-0000-4000-8000-'
-               b'000000000001","source_system":"cis","tour_id":"00000000-0000-4000-8000-0000000000t1"}]}')
+               b'"reason":"master_trashed","replaced_by_tour_id":null,"source_id":'
+               b'"3f0c2a8e-0000-4000-8000-000000000001","source_system":"cis",'
+               b'"tour_id":"00000000-0000-4000-8000-0000000000t1"}]}')
 # Pinned literal (the same string is in the TripPlanner test): a change on either side breaks one of the two suites.
 VECTOR_SIGNATURE = "t=1761200000,v1=0ea3fd2093eca674137f8046bd84405dcd77280f4d7b2dad4ae8a52bff80d41a"
 
