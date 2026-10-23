@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.7.0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/compare/v0.6.0...v0.7.0) (2026-10-23)
+
+
+### Features
+
+* AA-645 step 0 — publish dates, promote rollback, atomize cleanup, writer v2 flag, wave report ([#965](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/965)) ([89b31fb](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/89b31fbbb0e4b37ba750a701b5d793b6117755e8))
+* admin page for data erasure (DRY RUN, approved apply, history) ([#960](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/960)) ([4d432be](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/4d432be59d990e7295677be42306f98eaaa242e0))
+* CIS 272 tour lifecycle record, Master status reason and v_tour_liveness ([#962](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/962)) ([841e310](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/841e3109615dfc5bb32615e6096d7bffa4812bbe))
+* CIS 274 tenant reads its tour notifications, catalog tombstone and lifecycle outbox views ([#966](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/966)) ([5950ee8](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/5950ee819e1f2ed68b2f3b93b78a6cbd06ea7fbd))
+* migration 270 revokes TripPlanner's remaining direct reads of CIS ([#952](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/952)) ([6a13dd8](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/6a13dd853341a53688387be6b91ad4a78f9afc01))
+* migration 273 — published_tours.updated_at; v_tour.updated_at follows the Master row ([#963](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/963)) ([38f13ea](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/38f13ea8dfa4ab6c6abe064f4b6a151efbe17bb5))
+* one served-tour rule for atoms and publish gates (live source required) ([#959](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/959)) ([563a6da](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/563a6da5b3b8a341db59b936a6c0f6c5d75613f9))
+* one tour lifecycle service for every writer of a tour's served state ([#964](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/964)) ([89bbbd9](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/89bbbd961c5382657f26570a02b9cfd2602690f2))
+* tenants see and are stopped on tours AA no longer serves; trip page 410 / 301 ([#967](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/967)) ([5543d1f](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/5543d1fc83705bec0499fba5dc9b36a6e0c8220b))
+
+
+### Bug Fixes
+
+* AA-982 check reads the stored place_paa count and the job chain ([#949](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/949)) ([cb8d357](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/cb8d357b8f546a32291f8fb35e5eb6f6aef09f68))
+* blog F9 heading claims are repairable; over-long blogs are trimmed into the band ([#951](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/951)) ([7f0b2fd](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/7f0b2fd845807031d1cd2511e3bc686f15d36ad1))
+* erasure fingerprint binds the subject (tenant id or salted traveller hash) ([#961](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/961)) ([a54cdda](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/a54cddaf58113740d16d29bd62aeb7eb58254ca8))
+* F17 ended-role check binds the claim to the entity whose role ended ([#956](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/956)) ([40bada6](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/40bada6acf73e7ea49e81acbdebac61cb47c6f85))
+* F17 ended-role check matches role identity, not place identity ([#955](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/955)) ([3473038](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/347303879f8b7026feb53f94f8ba6906c367f2e2))
+* question headings repair as headings; trim keeps cited paragraphs inside the band ([#953](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/953)) ([1a30cc0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/1a30cc0c12dae8092dcba4ee18c1ef9e8a1b178d))
+
 ## [0.6.0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/compare/v0.5.0...v0.6.0) (2026-10-23)
 
 
