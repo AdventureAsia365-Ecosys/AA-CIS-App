@@ -647,7 +647,11 @@ async def publish(conn, data: dict, *, tenant_slug: str = "aa_internal", actor: 
 
     The caller checked the source is live (L1) before its own reads; this re-checks it under FOR SHARE inside the
     transaction (409 source_not_live), so a retire / supersede that commits between that check and this insert is
-    refused here, and one that starts after the lock waits for this commit and then switches the new Master off."""
+    refused here, and one that starts after the lock waits for this commit and then switches the new Master off.
+
+    Publish dates (AA-645 d06, CIS 273): a first publish gets published_at and updated_at from their defaults; a
+    re-publish of the key's Master (a rewrite, a rerun wave, the admin promote of an older version) keeps the first
+    published_at and sets updated_at = now() — the repository's ON CONFLICT branch, which only this function runs."""
     from shared.repository.published_catalog_repository import PublishedCatalogRepository
     async with conn.transaction():
         tour_id = str(data["tour_id"])

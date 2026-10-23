@@ -2071,7 +2071,10 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     `approved` version through `process_export` (every text / SEO field, the score pointer, the live-source rule) and
     re-atomizes it with `dedupe=False` + `force=True` (the version's job key and day fingerprints are already spent);
     atom ids are content hashes, so the old text brings the old atoms back. A version that is not `approved` → 409
-    (approve it in the Review Queue); a dead source → 409 `source_not_live`.
+    (approve it in the Review Queue); a dead source → 409 `source_not_live`. The Master write is the tour lifecycle
+    service's `publish` (AA-986 L2, see Served state): it locks the source FOR SHARE and re-checks it, so a retire that
+    lands between promote's check and the publish is refused too (process_export's L1 refusal, 409). The publish-date
+    rule above is the ON CONFLICT branch of the repository insert that only that service runs.
   - **Atomize retires what the new text no longer has** (AA-645 step 0): the per-day path soft-deletes live atoms on a
     day the itinerary no longer has (and day-less legacy rows), also on an all-skipped run (C6); the legacy path (no
     `Day N —` headers, random ids) soft-deletes the tour's earlier atoms after a good read (L1). An atomize that changed

@@ -2903,6 +2903,12 @@ async def promote_tour_version(
     brings the old atoms back and the replaced version's atoms are soft-deleted. published_at is kept (d06); the
     change is recorded in published_tours.updated_at.
 
+    AA-986 L2: process_export writes the Master through the tour lifecycle service (`services.tour_lifecycle.publish`,
+    the only writer of published_tours inserts): the source row is locked FOR SHARE and re-checked there, so a retire
+    that commits between the check below and the publish is refused (process_export turns it into the L1 refusal,
+    SourceNotLiveError → 409 source_not_live). The d06 rule (first published_at kept, updated_at = now()) is the
+    ON CONFLICT branch of the repository insert that service runs.
+
     Only an `approved` version can be promoted (the publish gate of every other path): a version that never passed
     the gate goes through the Review Queue. 404 unknown tour / version, 409 not approved or source not live."""
     verify_admin_secret(x_admin_secret)
@@ -2927,14 +2933,17 @@ async def promote_tour_version(
                                 headers={"X-Error-Code": SOURCE_NOT_LIVE})
 
     from services.export.handler import process_export
+    from services.tour_lifecycle import LifecycleError
     try:
         exported = await process_export(gc["id"], atomize_dedupe=False, atomize_force=True,
                                         atomize_created_by="admin:promote_version")
-    except SourceNotLiveError as e:   # the source was trashed between the check and the publish
+    except SourceNotLiveError as e:   # the source was retired between the check and the (locked) publish
         raise HTTPException(status_code=409, detail=source_not_live_message(e.state, "promote this version"),
                             headers={"X-Error-Code": SOURCE_NOT_LIVE})
     except ValueError:                # the version left 'approved' between the check and the publish
         raise HTTPException(status_code=409, detail=f"v{version_num} is no longer approved")
+    except LifecycleError as e:       # any other refusal of the lifecycle service's publish
+        raise _lifecycle_http(e)
     logger.info("tour_version_promoted", tour_id=tour_id, version_num=version_num, version_id=gc["id"],
                 atomize_job_id=exported.get("atomize_job_id"))
     return {"promoted": True, "published_tour_id": exported["catalog_id"], "version_num": version_num,

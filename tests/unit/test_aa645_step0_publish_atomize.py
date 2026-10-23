@@ -136,7 +136,28 @@ async def test_promote_refuses_a_dead_source_before_touching_the_version():
 
 
 @pytest.mark.asyncio
-async def test_process_export_passes_the_atomize_options_and_returns_the_job(monkeypatch):
+async def test_promote_maps_the_locked_publish_refusal_and_other_lifecycle_refusals():
+    """AA-986 L2: the publish runs in the lifecycle service; a retire that lands between promote's check and the
+    locked publish comes back from process_export as SourceNotLiveError (409 source_not_live), and any other
+    LifecycleError keeps its status, code and detail."""
+    from services.tour_lifecycle import LifecycleError
+    from shared.tour_liveness import SourceNotLiveError, SourceState
+    conn = AsyncMock()
+    conn.fetchrow.return_value = {"id": VERSION_ID, "status": "approved"}
+    dead = SourceState(tour_id=TOUR_ID, exists=True, source_status="trashed", deleted_at=None)
+    with pytest.raises(HTTPException) as e:
+        await _promote(conn, export=AsyncMock(side_effect=SourceNotLiveError(dead)))
+    assert e.value.status_code == 409 and e.value.headers["X-Error-Code"] == "source_not_live"
+    with pytest.raises(HTTPException) as e:
+        await _promote(conn, export=AsyncMock(side_effect=LifecycleError(409, "master_trashed", "it is trashed")))
+    assert e.value.status_code == 409 and e.value.headers["X-Error-Code"] == "master_trashed"
+    assert e.value.detail == "master_trashed: it is trashed"
+
+
+@pytest.mark.asyncio
+async def test_process_export_passes_the_atomize_options_and_returns_the_job(monkeypatch, plain_publish):
+    # AA-986 L2: process_export publishes through services.tour_lifecycle.publish; plain_publish
+    # (tests/unit/conftest.py) stands in with the repository insert only (the real publish: integration suite).
     monkeypatch.setenv("DATABASE_URL", "postgresql://test/test")
     row = {"id": VERSION_ID, "tour_id": TOUR_ID, "tenant_id": TOUR_ID, "batch_id": None, "aa_name": "Tour",
            "aa_subtitle": "s", "aa_summary": "sum", "aa_description": "d", "aa_highlights": "[]",
