@@ -60,7 +60,8 @@ import pytest
 sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER, TTV_STANDIN_DDL  # noqa: E402
 from _rls_fixture_helpers import (  # noqa: E402
-    NO_PRIVILEGE_WITHOUT_RLS_SQL_V2, PLATFORM_READ_ALLOWLIST, PLATFORM_READ_COLUMNS, migration_body,
+    NO_PRIVILEGE_WITHOUT_RLS_SQL_V2, NO_PRIVILEGE_WITHOUT_RLS_SQL_V3, PLATFORM_READ_ALLOWLIST, PLATFORM_READ_COLUMNS,
+    migration_body,
     undo_241_for_239_reapply,
 )
 
@@ -667,7 +668,7 @@ def test_tenant_role_has_no_privilege_on_any_relation_without_rls(cur):
     it holds none (table or column level), the catalog contract (SELECT on catalog_owner's catalog.*
     views, 225 / 228) and (wave 4, 265) the table-level SELECT on the platform read allowlist excepted. Also holds
     after test_aa679 / test_aa712_228 re-apply 225 / 228 with commit: they grant only that contract."""
-    cur.execute(NO_PRIVILEGE_WITHOUT_RLS_SQL_V2)
+    cur.execute(NO_PRIVILEGE_WITHOUT_RLS_SQL_V3)   # AA-986 L2: v2 + 272's v_tour_liveness read
     assert cur.fetchall() == []
     for rel in PLATFORM_READ_ALLOWLIST:        # the allowlist is used, and nothing beyond SELECT
         cur.execute("SELECT has_table_privilege(%s, %s, 'SELECT'), "

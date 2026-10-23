@@ -27,9 +27,10 @@ import pytest
 sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 from _rls_fixture_helpers import (  # noqa: E402
-    NO_PRIVILEGE_WITHOUT_RLS_SQL, NO_PRIVILEGE_WITHOUT_RLS_SQL_V2, PLATFORM_READ_ALLOWLIST, migration_body,
+    NO_PRIVILEGE_WITHOUT_RLS_SQL, NO_PRIVILEGE_WITHOUT_RLS_SQL_V2, NO_PRIVILEGE_WITHOUT_RLS_SQL_V3,
+    PLATFORM_READ_ALLOWLIST, TOUR_LIVENESS_VIEW, migration_body,
     platform_read_privileges, platform_read_v1_rows,
-    migration_path, revoke_platform_reads,
+    migration_path, revoke_platform_reads, revoke_tour_liveness_read,
 )
 
 TENANT_ROLE = "aa_app_user"
@@ -100,6 +101,8 @@ def _to_pre_265(c):
 
 
 def _apply(c):
+    # AA-986 L2: guard 5 is invariant v2, which 272's v_tour_liveness read (applied later) breaks by design.
+    revoke_tour_liveness_read(c)
     c.execute(migration_body(265))
 
 
@@ -174,10 +177,14 @@ def test_invariant_v2_is_the_migration_guard():
 
 
 def test_committed_db_meets_invariant_v2_and_v1_only_misses_the_allowlist(cur):
-    cur.execute(NO_PRIVILEGE_WITHOUT_RLS_SQL_V2)
+    # AA-986 L2: the committed DB is past 272, whose v_tour_liveness read is the one row V3 adds over V2
+    cur.execute(NO_PRIVILEGE_WITHOUT_RLS_SQL_V3)
     assert cur.fetchall() == []
+    cur.execute(NO_PRIVILEGE_WITHOUT_RLS_SQL_V2)
+    assert {(r[0], r[1], r[2]) for r in cur.fetchall()} <= {(TOUR_LIVENESS_VIEW, "SELECT", None)}
     cur.execute(NO_PRIVILEGE_WITHOUT_RLS_SQL)
-    assert {(r[0], r[1], r[2]) for r in cur.fetchall()} <= platform_read_v1_rows()
+    assert {(r[0], r[1], r[2]) for r in cur.fetchall()} <= platform_read_v1_rows() | {
+        (TOUR_LIVENESS_VIEW, "SELECT", None)}
 
 
 # ── cis_app parity ────────────────────────────────────────────────────────────

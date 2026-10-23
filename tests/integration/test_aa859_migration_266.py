@@ -22,7 +22,9 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
-from _rls_fixture_helpers import NO_PRIVILEGE_WITHOUT_RLS_SQL_V2, migration_body, migration_path  # noqa: E402
+from _rls_fixture_helpers import (  # noqa: E402
+    NO_PRIVILEGE_WITHOUT_RLS_SQL_V2, migration_body, migration_path, revoke_tour_liveness_read,
+)
 
 TENANT_ROLE = "aa_app_user"
 ATOMS = "acp_contract.tour_atoms"
@@ -66,6 +68,8 @@ def _privileges(c):
 
 
 def _apply(c):
+    # AA-986 L2: guard 5 is invariant v2, which 272's v_tour_liveness read (applied later) breaks by design.
+    revoke_tour_liveness_read(c)
     c.execute(migration_body(266))
 
 

@@ -36,8 +36,8 @@ import pytest
 sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 from _rls_fixture_helpers import (  # noqa: E402
-    NO_PRIVILEGE_WITHOUT_RLS_SQL, NO_PRIVILEGE_WITHOUT_RLS_SQL_V2, migration_body, migration_path,
-    revoke_platform_reads, undo_241_for_239_reapply, undo_265_year_plan,
+    NO_PRIVILEGE_WITHOUT_RLS_SQL, NO_PRIVILEGE_WITHOUT_RLS_SQL_V2, NO_PRIVILEGE_WITHOUT_RLS_SQL_V3, migration_body,
+    migration_path, revoke_platform_reads, undo_241_for_239_reapply, undo_265_year_plan,
 )
 
 TENANT_ROLE = "aa_app_user"
@@ -194,8 +194,8 @@ def test_applied_by_conftest():
         c.execute("SELECT 1 FROM pg_policies WHERE schemaname = 'acp_shared' AND tablename = 'angle_gate_option' "
                   "AND policyname = 'tenant_isolation'")
         assert c.fetchone()
-        # the committed DB is past 265: the invariant there is v2 (the platform read allowlist)
-        c.execute(NO_PRIVILEGE_WITHOUT_RLS_SQL_V2)
+        # the committed DB is past 272: the invariant there is v3 (the platform read allowlist + v_tour_liveness)
+        c.execute(NO_PRIVILEGE_WITHOUT_RLS_SQL_V3)
         assert c.fetchall() == []
         c.execute("SELECT count(*) FROM acp_shared.angle_gate_request WHERE atom_id = 'aa241-guard'")
         assert c.fetchone()[0] == 0
