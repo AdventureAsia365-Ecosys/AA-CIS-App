@@ -69,14 +69,16 @@ smoke on it.
 
 Secret scan (`.github/workflows/secret-scan.yml`, AA-981 follow-up): check **gitleaks** on every PR
 (the lines the PR adds; rules and baseline read from the base branch) and **gitleaks full history**
-nightly, on push to `main` and on demand (every branch, tag and pull request head). Rules in
+(`secret-scan-history.yml`) nightly, on push to `main` and on demand (every branch, tag and pull request head). Rules in
 `.gitleaks.toml` (same as the root repo), reviewed findings pinned by commit in `.gitleaksignore`. A
-PR that changes either file or `secret-scan.yml`, or adds an inline `gitleaks:allow` comment, fails until a
+PR that changes either file, either secret scan workflow, `.github/CODEOWNERS` or any `.gitattributes`, or adds
+an inline `gitleaks:allow` comment, fails until a
 reviewer adds the label `secret-scan-baseline-reviewed` after the last push (any later push, reopen or label
 change removes it). For a false
 positive prefer a narrow allowlist in `.gitleaks.toml`: a commit fingerprint does not survive the squash
-merge (header of `.gitleaksignore`).
-Local commands are in the workflow header.
+merge (header of `.gitleaksignore`). A red result means the value is public already: rotate it, even if it
+was force-pushed away.
+Local commands are in the header of `secret-scan.yml`.
 
 ## Deploy
 

@@ -634,10 +634,12 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
 - **CI gate parity (AA-879)**: `ci.yml` also runs **Frontend Build** and **Portal Build** (`tsc --noEmit` +
   `next build` of `frontend/` and `portal/`, no secret needed; meant to be required checks next to the 5).
 - **Secret scan (AA-981 follow-up)**: `secret-scan.yml`, check **gitleaks** on every PR (lines the PR adds, rules
-  and baseline from the base branch; a change to `.gitleaks.toml` / `.gitleaksignore` / `secret-scan.yml` or a new
-  inline `gitleaks:allow` needs the label `secret-scan-baseline-reviewed`, added after the last push: any later
-  push, reopen or label change removes it) and **gitleaks full history** nightly / on push to `main` (branches,
-  tags and pull request heads, merge commits included; historical findings pinned by commit in `.gitleaksignore`).
+  and baseline from the base branch; a change to `.gitleaks.toml` / `.gitleaksignore` / either secret scan workflow /
+  `.github/CODEOWNERS` / any `.gitattributes`, or a new inline `gitleaks:allow`, needs the label `secret-scan-baseline-reviewed`, added after the last push: any later
+  push, reopen or label change removes it) and **gitleaks full history** (`secret-scan-history.yml`) nightly / on push to `main`
+  (branches, tags and pull request heads; merge commits, renames and type changes included, every file read as
+  text; historical findings pinned by commit in `.gitleaksignore`). A red result means the value is public: rotate
+  it, even if it was force-pushed away.
   The image scan in **Docker Build Check** is blocking: Trivy fails on any fixable CRITICAL/HIGH finding
   (`ignore-unfixed`); an accepted one goes into `.trivyignore` with a `# reason` line and `exp:YYYY-MM-DD`
   ≤ 90 days ahead (`.github/scripts/check_trivyignore.py`). **Unit Tests** enforces a coverage ratchet

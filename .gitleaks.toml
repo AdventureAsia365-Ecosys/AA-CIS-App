@@ -1,5 +1,5 @@
-# gitleaks config for AA-CIS-App (AA-981 follow-up). Used by .github/workflows/secret-scan.yml and by the local
-# commands in the header of that workflow.
+# gitleaks config for AA-CIS-App (AA-981 follow-up). Used by .github/workflows/secret-scan.yml (PR check),
+# .github/workflows/secret-scan-history.yml (full history) and by the local commands in the header of secret-scan.yml.
 #
 # The rules are a copy of the AA-Ecosys root / AA-CIS-Infra .gitleaks.toml (keep them in step; a rule change lands in
 # every repo that carries this file): the default gitleaks rules plus a DSN with an embedded password, a plaintext
@@ -8,7 +8,8 @@
 # sat in history unseen until an external scanner flagged them after that repo went public (AA-981).
 #
 # The same rule set is used by the PR scan (lines a PR adds) and by the full-history scan (every commit of every
-# branch, tag and pull request head, nightly + on push to main); see .github/workflows/secret-scan.yml.
+# branch, tag and pull request head, nightly + on push to main); see .github/workflows/secret-scan.yml
+# and secret-scan-history.yml.
 #
 # Known false positives: prefer a narrow allowlist entry here (path or exact placeholder regex) for a class of values;
 # use .gitleaksignore (one fingerprint per line) for a single finding.

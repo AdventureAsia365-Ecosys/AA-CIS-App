@@ -1,9 +1,10 @@
 # gitleaks ignore list for AA-CIS-App (AA-981 follow-up): one finding fingerprint per line, for a single known false
-# positive that a narrow allowlist entry in .gitleaks.toml cannot express. Read by .github/workflows/secret-scan.yml.
+# positive that a narrow allowlist entry in .gitleaks.toml cannot express. Read by .github/workflows/secret-scan.yml
+# and secret-scan-history.yml.
 #
 # Fingerprint formats (printed by gitleaks with --redact, never the value itself):
 #   <commit sha>:<file>:<rule id>:<line>   pinned: that finding in that one commit only. Use this format.
-#   <file>:<rule id>:<line>                global: that file, rule and line in EVERY commit. gitleaks 8.28 honours it
+#   <file>:<rule id>:<line>                global: that file, rule and line in EVERY commit. gitleaks 8.30 honours it
 #                                          in git mode too, so it suppresses the PR job and the full-history job
 #                                          for any later commit, a real secret at the same place included. Avoid
 #                                          it; if one is unavoidable, put it in its own block with a comment why.
