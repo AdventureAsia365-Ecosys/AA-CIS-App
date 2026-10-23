@@ -44,6 +44,25 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+      # AA-899: the release carries the API reference of its commit. docs/api/openapi.json is current on every main
+      # commit (Unit Tests fails a stale one), so only the version is stamped in. No Python, no install.
+      - name: Check out the released commit
+        if: steps.release.outputs.release_created == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.release.outputs.sha }}
+          persist-credentials: false
+      - name: Attach the OpenAPI document to the release
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/aa-cis-openapi-${TAG}.json"
+          jq --arg v "${TAG#v}" '.info.version = $v' docs/api/openapi.json > "$out"
+          gh release upload "$TAG" "$out" --clobber --repo "$GITHUB_REPOSITORY"
+          echo "Attached $(basename "$out") to ${TAG}" >> "$GITHUB_STEP_SUMMARY"
       - name: Summary
         if: always()
         env:

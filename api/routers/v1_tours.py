@@ -8,6 +8,7 @@ from api.core.aa544_tenant_pool import (
     T2_VERSION_DETAIL_READS_FLAG, T2_VERSION_READS_FLAG, T2_VERSION_WRITE_FLAG, acquire_scoped_conn,
 )
 from api.routers.auth import verify_tenant_jwt
+from api.schemas.public_api import Quota  # AA-899
 from api.core.secret_compare import secrets_equal
 from api.routers.admin import PLAN_LIMITS
 from api.routers._billing import no_plan_usage, usage_row_to_dict
@@ -283,7 +284,7 @@ async def _check_and_consume_rewrite_quota(conn, tenant_id: str) -> None:
 # trigger_rewrite() below, does that, on an actual attempt). `rewrites_remaining` kept as the
 # field name the old removed UI already expected, so a future UI rebuild (the issue's own "nếu
 # muốn") can reuse this shape as-is.
-@quota_router.get("/quota")
+@quota_router.get("/quota", response_model=Quota)  # AA-899: model
 async def get_quota(request: Request, tenant=Depends(get_tenant)):
     tenant_id = tenant["sub"]
     pool = request.app.state.pool
