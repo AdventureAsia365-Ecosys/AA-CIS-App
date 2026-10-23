@@ -93,6 +93,9 @@ interface StagingItem {
   staging_id: string;
   matched_tour_id: string | null;
   decision: string;
+  // AA-986 L2 (Q6): the matched tour was deleted at S0/A0 (no live version left).
+  matched_deleted?: boolean;
+  matched_deleted_at?: string | null;
   incoming: Record<string, string | null>;
   existing: {
     src_name: string | null;
@@ -101,6 +104,8 @@ interface StagingItem {
     price_raw: string | null;
     provider: string | null;
     ingest_at: string | null;
+    source_status?: string | null;
+    deleted_at?: string | null;
   };
 }
 
@@ -705,13 +710,25 @@ function UploadHistorySection({ history, loading, onRefresh }: {
 
 // ─── DuplicateReview (Step 5) ─────────────────────────────────────────────────
 
-type Decision = "bypass" | "replace" | "keep_both";
+type Decision = "bypass" | "replace" | "keep_both" | "restore" | "create_new";
 
-const DECISION_LABELS: Record<Decision, string> = {
+const DECISION_LABELS: Record<"bypass" | "replace" | "keep_both", string> = {
   bypass:    "Bypass — discard incoming",
   replace:   "Replace — incoming overwrites existing",
   keep_both: "Keep both — add as extra version",
 };
+
+// AA-986 L2 (Q6, ADR 0015) — a re-upload of a tour deleted at S0/A0 never revives it silently: staff choose to
+// restore the deleted tour (tenants that were warned are told it is back) or to start a new tour from the row.
+const DELETED_DECISION_LABELS: Record<"bypass" | "restore" | "create_new", string> = {
+  bypass:     "Bypass — discard incoming",
+  restore:    "Restore — bring the deleted tour back (incoming discarded)",
+  create_new: "Create a new tour — add incoming as a separate tour",
+};
+
+function decisionLabels(item: StagingItem): Record<string, string> {
+  return item.matched_deleted ? DELETED_DECISION_LABELS : DECISION_LABELS;
+}
 
 function DuplicateReviewStep({
   batchIds,
@@ -753,6 +770,7 @@ function DuplicateReviewStep({
     setSubmitting(true);
     setError("");
     const results: Record<string, boolean> = {};
+    const failures: string[] = [];
     for (const item of items) {
       if (submitted[item.staging_id]) continue;
       const dec = decisions[item.staging_id] || "bypass";
@@ -763,13 +781,17 @@ function DuplicateReviewStep({
           body: JSON.stringify({ decision: dec }),
         });
         results[item.staging_id] = res.ok;
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          failures.push(`${item.incoming.src_name || "—"}: ${typeof body.detail === "string" ? body.detail : res.status}`);
+        }
       } catch {
         results[item.staging_id] = false;
       }
     }
     setSubmitted(prev => ({ ...prev, ...results }));
     const allOk = Object.values(results).every(Boolean);
-    if (!allOk) setError("Some decisions failed. Check console and retry.");
+    if (!allOk) setError(failures.length ? `Some decisions failed — ${failures.join("; ")}` : "Some decisions failed. Retry.");
     setSubmitting(false);
     if (allOk) onDone();
   }
@@ -829,6 +851,16 @@ function DuplicateReviewStep({
                   <Badge color="green">Done</Badge>
                 )}
               </div>
+
+              {item.matched_deleted && (
+                <div style={{
+                  padding: "8px 16px", background: A.redTint, borderBottom: `1px solid ${A.line}`,
+                  fontSize: 12, color: A.red, fontWeight: 600,
+                }}>
+                  This tour was deleted on {item.matched_deleted_at ? item.matched_deleted_at.slice(0, 10) : "an earlier date"}.
+                  Choose Restore to bring it back, or Create a new tour.
+                </div>
+              )}
 
               {/* Side-by-side */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr" }}>
@@ -913,7 +945,7 @@ function DuplicateReviewStep({
                       fontFamily: sans, background: A.card, flex: 1,
                     }}
                   >
-                    {(Object.entries(DECISION_LABELS) as [Decision, string][]).map(([val, label]) => (
+                    {(Object.entries(decisionLabels(item)) as [Decision, string][]).map(([val, label]) => (
                       <option key={val} value={val}>{label}</option>
                     ))}
                   </select>

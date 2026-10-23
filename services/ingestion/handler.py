@@ -240,7 +240,25 @@ async def process_file(s3_bucket: str, s3_key: str, seo_mode: str = "standard") 
                     str(existing["source_group_id"]) if existing["source_group_id"] else None,
                 )
                 staged_ids.append(staging_id)
-            elif (near := await near_dups.check(r)).duplicate is not None:
+            elif (near := await near_dups.check(r)).duplicate is not None and near.duplicate.deleted_at is not None:
+                # AA-986 L2 (Q6): a near-duplicate of a tour deleted at S0/A0 is neither skipped nor a new tour on
+                # its own: it goes to Duplicate Review, which shows "deleted on <date>" and offers Restore or Create
+                # a new tour.
+                staging_id = await conn.fetchval("""
+                    INSERT INTO silver_aa_internal.upload_staging
+                        (batch_id, tenant_id, parsed_payload,
+                         matched_tour_id, matched_source_group_id, decision)
+                    VALUES ($1::uuid, $2::uuid, $3::jsonb, $4::uuid, $5, 'pending')
+                    RETURNING id::text
+                """,
+                    batch_id_new,
+                    tenant_uuid,
+                    json.dumps(r, default=str),
+                    near.duplicate.tour_id,
+                    near.duplicate.source_group_id,
+                )
+                staged_ids.append(staging_id)
+            elif near.duplicate is not None:
                 in_file_drops.append({
                     "identifier": r.get("src_name") or "unknown",
                     "reason": "duplicate_of_existing",
@@ -260,7 +278,9 @@ async def process_file(s3_bucket: str, s3_key: str, seo_mode: str = "standard") 
                 r["source_status"]   = "active"
                 new_records.append(r)
 
-        ids, insert_failures = await tour_repo.insert_batch(new_records)
+        # AA-986 L2: new keys only (version 1, live): a plain insert with no lifecycle event (ADR 0015 decision 2).
+        from services.tour_lifecycle import insert_new_sources
+        ids, insert_failures = await insert_new_sources(tour_repo, new_records)
         await source_repo.update_status(source_id, "done", row_count=len(ids) + len(staged_ids))
 
         drops = _summarize_drops(insert_failures + in_file_drops)

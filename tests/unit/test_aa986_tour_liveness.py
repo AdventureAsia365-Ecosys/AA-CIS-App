@@ -22,6 +22,12 @@ from fastapi import HTTPException
 
 from shared import tour_liveness as tl
 
+
+@pytest.fixture(autouse=True)
+def _aa986_plain_publish(plain_publish):
+    """AA-986 L2: process_export publishes through services.tour_lifecycle (tests/unit/conftest.py plain_publish)."""
+
+
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 MIGRATION = os.path.join(ROOT, "api", "migrations", "271_v_active_tour_atoms_live_source.sql")
 INFRA_COPY = os.path.join(ROOT, "..", "..", "infra", "AA-CIS-Infra", "db", "migrations", "cis",
@@ -187,6 +193,53 @@ def test_process_export_publishes_a_live_source(_db_url):
     assert out["status"] == "exported"
     insert = conn.fetchrow.await_args_list[1].args
     assert "INSERT INTO gold_aa_internal.published_tours" in insert[0]
+
+
+def test_process_export_treats_the_services_locked_refusal_like_its_own(_db_url, monkeypatch):
+    """AA-986 L2 review: the source is retired between process_export's read and the publish. The service re-checks
+    it under FOR SHARE and answers 409 source_not_live; process_export then does exactly its L1 refusal (version
+    approved → hitl, SourceNotLiveError with the state read after the lock), and never reaches the atomize step."""
+    from services.export import handler
+    from services.tour_lifecycle import LifecycleError
+
+    async def _refused(conn, data, *, tenant_slug="aa_internal", actor="pipeline"):
+        raise LifecycleError(409, "source_not_live", "cannot publish to Master Content: the source tour was deleted")
+
+    monkeypatch.setattr("services.tour_lifecycle.publish", _refused)
+    conn = AsyncMock()
+    conn.fetchrow = AsyncMock(side_effect=[_gc_row("active"),
+                                           {"source_status": "trashed", "deleted_at": datetime(2026, 10, 23)}])
+    conn.execute = AsyncMock()
+    conn.close = AsyncMock()
+    with patch("services.export.handler.asyncpg.connect", AsyncMock(return_value=conn)), \
+         patch("services.jobs.a3_atomize_job.enqueue_a3_atomize", AsyncMock()) as atomize:
+        with pytest.raises(tl.SourceNotLiveError) as e:
+            asyncio.run(handler.process_export(GCID))
+    assert e.value.state.reason == "trashed"
+    conn.execute.assert_awaited_once()
+    demote = " ".join(conn.execute.await_args.args[0].split())
+    assert demote == ("UPDATE silver_aa_internal.generated_content SET status = 'hitl' "
+                      "WHERE id = $1::uuid AND status = 'approved'")
+    atomize.assert_not_called()
+    conn.close.assert_awaited_once()
+
+
+def test_process_export_lets_other_lifecycle_errors_through(_db_url, monkeypatch):
+    from services.export import handler
+    from services.tour_lifecycle import LifecycleError
+
+    async def _refused(conn, data, *, tenant_slug="aa_internal", actor="pipeline"):
+        raise LifecycleError(409, "something_else", "x")
+
+    monkeypatch.setattr("services.tour_lifecycle.publish", _refused)
+    conn = AsyncMock()
+    conn.fetchrow = AsyncMock(side_effect=[_gc_row("active")])
+    conn.execute = AsyncMock()
+    conn.close = AsyncMock()
+    with patch("services.export.handler.asyncpg.connect", AsyncMock(return_value=conn)):
+        with pytest.raises(LifecycleError):
+            asyncio.run(handler.process_export(GCID))
+    conn.execute.assert_not_awaited()
 
 
 # ── approve_review ──────────────────────────────────────────────────────────────────────────────────────────────────

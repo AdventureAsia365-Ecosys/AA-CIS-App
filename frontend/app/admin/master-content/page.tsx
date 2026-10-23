@@ -14,6 +14,7 @@ import { can, staffErrorMessage } from "@/lib/rbac";
 import { BarChart2, Star, DollarSign } from "lucide-react";
 import { TourDetailPanelV2 } from "../_components/TourDetailPanelV2";
 import { CompareModal } from "../_components/CompareModal";
+import { RetireTourDialog, type RetireAction } from "../_components/RetireTourDialog";
 import { Pagination } from "../_components/Pagination";
 
 const AA_INTERNAL_ID = "00000000-0000-0000-0000-000000000001";
@@ -827,6 +828,8 @@ function MasterContentPageInner() {
   const [versionFilter, setVersionFilter] = useState("");
   const [exporting, setExporting]       = useState(false);
   const [trashing, setTrashing]         = useState<string | null>(null);
+  // AA-986 L2 (Q8) — retire / trash go through a confirm dialog with a dry run of what they affect.
+  const [retireTarget, setRetireTarget] = useState<{ id: string; name: string; action: RetireAction } | null>(null);
   const [restoring, setRestoring]       = useState<string | null>(null);
   const [toggling, setToggling]         = useState<string | null>(null);
   const [masterStatusFilter, setMasterStatusFilter] = useState<string>("");
@@ -1036,21 +1039,15 @@ function MasterContentPageInner() {
     }
   }
 
-  async function trashMaster(tourId: string, tourName: string) {
-    if (!confirm(`Trash "${tourName}"? It will be hidden from the pipeline and B2B output.`)) return;
-    setTrashing(tourId);
-    try {
-      const r = await fetch(`/api/admin/master/${tourId}/trash`, { method: "PATCH" });
-      if (!r.ok) {
-        const err = await r.json().catch(() => ({}));
-        alert(staffErrorMessage(r.status, err.detail, "Failed to trash tour"));
-        return;
-      }
-      refetch();
-      showToast(`"${tourName}" moved to trash`);
-    } finally {
-      setTrashing(null);
-    }
+  function trashMaster(tourId: string, tourName: string) {
+    // AA-986 L2 — the confirm dialog shows the dry run (tenants warned, posts, jobs) before the trash.
+    setTrashing(null);
+    setRetireTarget({ id: tourId, name: tourName, action: "trash_master" });
+  }
+
+  function retireTour(tourId: string, tourName: string) {
+    // AA-986 L2 — retire at the source (S0/A0): the tour stops being served everywhere; restore brings it back.
+    setRetireTarget({ id: tourId, name: tourName, action: "retire_source" });
   }
 
   async function restoreMaster(tourId: string, tourName: string) {
@@ -1340,6 +1337,12 @@ function MasterContentPageInner() {
                           </button>
                         )}
                         {canLifecycle && t.tour_id && t.master_status !== "trashed" && (
+                          <button onClick={() => retireTour(t.tour_id!, t.tour_name)} title="Retire the tour at the source (S0/A0): stops serving it everywhere"
+                            style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.redBorder}`, borderRadius: 5, background: A.card, cursor: "pointer", color: A.red, fontWeight: 600 }}>
+                            Retire
+                          </button>
+                        )}
+                        {canLifecycle && t.tour_id && t.master_status !== "trashed" && (
                           <button onClick={() => trashMaster(t.tour_id!, t.tour_name)} disabled={trashing === t.tour_id} title="Move to trash"
                             style={{ padding: "3px 6px", fontSize: 11, border: `1px solid ${A.redBorder}`, borderRadius: 5, background: A.redTint, cursor: "pointer", color: A.red, display: "flex", alignItems: "center", gap: 3 }}>
                             <Trash2 size={11} />{trashing === t.tour_id ? "…" : "Trash"}
@@ -1486,6 +1489,15 @@ function MasterContentPageInner() {
                                   style={{ padding: "3px 8px", fontSize: 11, border: "1px solid var(--aa-green-border2)", borderRadius: 5, background: "var(--aa-green-bg2)", cursor: "pointer", color: A.green, fontWeight: 600 }}
                                 >
                                   {toggling === t.tour_id ? "…" : "Set Active"}
+                                </button>
+                              )}
+                              {canLifecycle && t.tour_id && t.master_status !== "trashed" && (
+                                <button
+                                  onClick={() => retireTour(t.tour_id!, t.tour_name)}
+                                  title="Retire the tour at the source (S0/A0): stops serving it everywhere"
+                                  style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.redBorder}`, borderRadius: 5, background: A.card, cursor: "pointer", color: A.red, fontWeight: 600 }}
+                                >
+                                  Retire
                                 </button>
                               )}
                               {canLifecycle && t.tour_id && t.master_status !== "trashed" && (
@@ -1680,6 +1692,18 @@ function MasterContentPageInner() {
           tourId={detailTourId}
           tourName={detailTourName}
           onClose={() => setDetailTourId(null)}
+        />
+      )}
+
+      {/* AA-986 L2 — retire / trash confirm with the dry run (Q8) */}
+      {retireTarget && (
+        <RetireTourDialog
+          key={`${retireTarget.id}:${retireTarget.action}`}
+          tourId={retireTarget.id}
+          tourName={retireTarget.name}
+          action={retireTarget.action}
+          onClose={() => setRetireTarget(null)}
+          onDone={(msg) => { setRetireTarget(null); refetch(); showToast(msg); }}
         />
       )}
 

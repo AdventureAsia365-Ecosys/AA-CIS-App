@@ -31,6 +31,12 @@ import pytest
 from services.acp_contract.a3_atomize import _llm_log_tenant_id
 from services.export import handler as export_handler
 
+
+@pytest.fixture(autouse=True)
+def _aa986_plain_publish(plain_publish):
+    """AA-986 L2: process_export publishes through services.tour_lifecycle (tests/unit/conftest.py plain_publish)."""
+
+
 TOUR_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 GC_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 

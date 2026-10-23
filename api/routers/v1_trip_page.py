@@ -186,6 +186,39 @@ async def publish_trip_page(
     return {"status": "published", "tour_id": tour_id, "url": real_url}
 
 
+async def _recheck_rows(conn, rows) -> dict:
+    """Set url_alive / last_checked_at on the given tenant_tour_pages rows from the page rule (_fetch_page_data)."""
+    now = _dt.datetime.now(_dt.timezone.utc)
+    flipped_dead = 0
+    checked = 0
+    for r in rows:
+        data = await _fetch_page_data(conn, r["tour_id"])
+        alive = data is not None
+        if not alive:
+            flipped_dead += 1
+        await conn.execute("""
+            UPDATE acp_deliver.tenant_tour_pages
+            SET url_alive = $3, last_checked_at = $4
+            WHERE tenant_id = $1 AND tour_id = $2::uuid
+        """, r["tenant_id"], r["tour_id"], alive, now)
+        checked += 1
+    return {"checked": checked, "flipped_dead": flipped_dead}
+
+
+async def recheck_trip_pages_for(conn, tour_ids) -> dict:
+    """AA-986 L2 (ADR 0015 decision 2, last paragraph): the same D5 recheck for the pages of the given tours only.
+    The tour lifecycle service calls it after a served-state change commits, so url_alive (read by the T10 gate F6)
+    follows a retire / pause / restore at once instead of at the next batch recheck or page render."""
+    ids = sorted({str(t) for t in tour_ids if _is_uuid(str(t))})
+    if not ids:
+        return {"checked": 0, "flipped_dead": 0}
+    rows = await conn.fetch(
+        "SELECT tenant_id, tour_id::text FROM acp_deliver.tenant_tour_pages WHERE tour_id = ANY($1::uuid[])", ids)
+    out = await _recheck_rows(conn, rows)
+    logger.info("trip_pages_rechecked_for_tours", tours=len(ids), **out)
+    return out
+
+
 @admin_router.post("/recheck")
 async def recheck_trip_pages(request: Request, x_admin_secret: str = Header(None)):
     """D5 liveness check, batch form -- re-verifies every existing tenant_tour_pages row's
@@ -193,24 +226,11 @@ async def recheck_trip_pages(request: Request, x_admin_secret: str = Header(None
     the pages ourselves), not an HTTP round-trip against our own domain."""
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
-    now = _dt.datetime.now(_dt.timezone.utc)
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT tenant_id, tour_id::text FROM acp_deliver.tenant_tour_pages"
         )
-        flipped_dead = 0
-        checked = 0
-        for r in rows:
-            data = await _fetch_page_data(conn, r["tour_id"])
-            alive = data is not None
-            if not alive:
-                flipped_dead += 1
-            await conn.execute("""
-                UPDATE acp_deliver.tenant_tour_pages
-                SET url_alive = $3, last_checked_at = $4
-                WHERE tenant_id = $1 AND tour_id = $2::uuid
-            """, r["tenant_id"], r["tour_id"], alive, now)
-            checked += 1
+        out = await _recheck_rows(conn, rows)
 
-    logger.info("trip_pages_rechecked", checked=checked, flipped_dead=flipped_dead)
-    return {"checked": checked, "flipped_dead": flipped_dead}
+    logger.info("trip_pages_rechecked", **out)
+    return out

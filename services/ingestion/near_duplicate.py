@@ -22,6 +22,8 @@ _NAME_STOP = {"tour", "tours", "trip", "days", "day", "the", "and", "of", "to", 
 
 DUPLICATE_MESSAGE = ("Same provider, name and itinerary as the existing tour '{name}' ({duration}) — "
                      "this row will be skipped on Commit.")
+DELETED_DUPLICATE_MESSAGE = ("Same provider, name and itinerary as the tour '{name}' ({duration}), deleted on {date} — "
+                             "Duplicate Review will offer Restore or Create a new tour.")
 VARIANT_NOTE = "Similar to the existing tour '{name}' ({duration}) from the same provider — a variant?"
 
 
@@ -53,6 +55,9 @@ class Match:
     duration: Optional[str]
     name_sim: float
     itinerary_sim: float
+    # AA-986 L2 (Q6): set when the matched tour's key was deleted at S0/A0 (no live version, this one trashed).
+    deleted_at: Optional[object] = None
+    source_group_id: Optional[str] = None
 
 
 @dataclass
@@ -61,8 +66,13 @@ class NearDup:
     variant: Optional[Match] = None
 
     def message(self) -> Optional[str]:
-        return DUPLICATE_MESSAGE.format(name=self.duplicate.src_name, duration=self.duplicate.duration or "?") \
-            if self.duplicate else None
+        if not self.duplicate:
+            return None
+        if self.duplicate.deleted_at is not None:
+            when = getattr(self.duplicate.deleted_at, "date", lambda: self.duplicate.deleted_at)()
+            return DELETED_DUPLICATE_MESSAGE.format(name=self.duplicate.src_name,
+                                                    duration=self.duplicate.duration or "?", date=when)
+        return DUPLICATE_MESSAGE.format(name=self.duplicate.src_name, duration=self.duplicate.duration or "?")
 
     def note(self) -> Optional[str]:
         return VARIANT_NOTE.format(name=self.variant.src_name, duration=self.variant.duration or "?") \
@@ -86,11 +96,15 @@ def classify(row: dict, candidates: list[dict]) -> NearDup:
         its = _jaccard(itin, _text_tokens(c.get("src_itineraries")))
         cdays = duration_days(c.get("duration"))
         m = Match(str(c["tour_id"]) if c.get("tour_id") else None, c.get("src_name") or "",
-                  c.get("duration"), round(ns, 2), round(its, 2))
+                  c.get("duration"), round(ns, 2), round(its, 2),
+                  deleted_at=c.get("key_deleted_at"), source_group_id=c.get("source_group_id"))
         if ns >= NAME_MIN and its >= ITINERARY_MIN and (days is None or cdays is None or days == cdays):
-            if out.duplicate is None or (ns, its) > (out.duplicate.name_sim, out.duplicate.itinerary_sim):
+            # a live tour wins over a deleted one (AA-986 L2): the row is then a plain duplicate, skipped
+            rank = (m.deleted_at is None, m.name_sim, m.itinerary_sim)
+            cur = out.duplicate
+            if cur is None or rank > (cur.deleted_at is None, cur.name_sim, cur.itinerary_sim):
                 out.duplicate = m
-        elif ns >= VARIANT_NAME_MIN or its >= ITINERARY_MIN:
+        elif m.deleted_at is None and (ns >= VARIANT_NAME_MIN or its >= ITINERARY_MIN):
             if best_variant is None or (ns + its) > (best_variant.name_sim + best_variant.itinerary_sim):
                 best_variant = m
     if out.duplicate is None:
@@ -98,12 +112,21 @@ def classify(row: dict, candidates: list[dict]) -> NearDup:
     return out
 
 
+# AA-986 L2 (Q6): trashed rows are candidates too. A trashed row whose key has no live version carries
+# key_deleted_at (the re-upload of a deleted tour is staged for Restore / Create a new tour, never silently a new
+# tour); a trashed row of a key that is still live is skipped (the live version is the candidate).
 _CANDIDATES_SQL = """
-    SELECT tour_id::text AS tour_id, src_name, country, duration, src_itineraries
-    FROM silver_aa_internal.raw_tours
-    WHERE tenant_id = $1::uuid
-      AND regexp_replace(lower(coalesce(provider, '')), '[^a-z0-9]', '', 'g') = $2
-      AND coalesce(source_status, 'active') <> 'trashed'
+    SELECT rt.tour_id::text AS tour_id, rt.src_name, rt.country, rt.duration, rt.src_itineraries,
+           rt.source_group_id::text AS source_group_id,
+           CASE WHEN rt.source_status = 'trashed' OR rt.deleted_at IS NOT NULL
+                THEN COALESCE(rt.deleted_at, now()) END AS key_deleted_at
+    FROM silver_aa_internal.raw_tours rt
+    WHERE rt.tenant_id = $1::uuid
+      AND regexp_replace(lower(coalesce(rt.provider, '')), '[^a-z0-9]', '', 'g') = $2
+      AND (NOT (rt.source_status = 'trashed' OR rt.deleted_at IS NOT NULL)
+           OR NOT EXISTS (SELECT 1 FROM silver_aa_internal.raw_tours k
+                           WHERE COALESCE(k.source_group_id, k.tour_id) = COALESCE(rt.source_group_id, rt.tour_id)
+                             AND k.source_status = 'active' AND k.deleted_at IS NULL))
 """
 
 

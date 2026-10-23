@@ -7,9 +7,8 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 from typing import List, Optional
-import asyncpg
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from api.core.staff_authz import OPS_READ, TENANT_READ, has_perm, staff_policy
+from api.core.staff_authz import MASTER_ADMIN, OPS_READ, TENANT_READ, has_perm, staff_policy
 from pydantic import BaseModel, Field
 from api.core.secret_compare import secrets_equal
 from api.core.staff_credential import principal_verified
@@ -17,7 +16,6 @@ from api.core.staff_credential import principal_verified
 from services.acp_publish import daily_limit
 from services.acp_shared.audit_log import AdminTenantAuditAction, write_audit_log
 from services.acp_shared.e2e_tenant_key_sync import sync_note, sync_test_tenant_key
-from services.notifications import NotificationService, EventType
 from shared.validators.prompt_sanitize import (
     sanitize_text, sanitize_list, MAX_LONG_FIELD_LEN, MAX_SHORT_FIELD_LEN, MAX_SYSTEM_PROMPT_LEN,
     MAX_BRAND_LONG_LEN, MAX_BRAND_MEDIUM_LEN, brand_length_errors,
@@ -37,63 +35,46 @@ _log = structlog.get_logger()
 
 
 async def _recompute_after_status_change(pool, tour_id: str, new_status: str) -> None:
-    """AA-713 / AA-723 — when a master tour leaves (inactive/trashed) or re-enters (active) the
-    active set, its atoms must leave/re-enter the Score + Route caches the tenant Slate reads
-    (both read atoms through `v_active_tour_atoms`, migration 203). The recompute now runs as a
-    durable `recompute` job on the worker (scope=platform) instead of a fire-and-forget asyncio
-    task that died on deploy and was invisible (ADR 0003). Debounced: a burst of status flips
-    reuses one pending job. Best-effort to enqueue — a status change must not fail if the queue
-    insert does.
+    """AA-713 / AA-723 / AA-743 recompute after a Master leaves or re-enters the active set. The body moved to
+    services.tour_lifecycle.effects (AA-986 L2); this alias stays so the lifecycle routes (and the tests that patch
+    it) keep one name."""
+    from services.tour_lifecycle.effects import recompute_after_status_change
+    await recompute_after_status_change(pool, tour_id, new_status)
 
-    AA-743 — scoped: a tour leaving the active set has its ranking/route rows superseded right
-    away (no platform pass), and the debounced platform job re-lands questions only for the
-    Segments this tour touched."""
+
+def _lifecycle_actor(x_admin_user_id: Optional[str]) -> str:
+    """Who asked, for the lifecycle record: the staff user id the BFF sends, else 'admin'."""
+    return x_admin_user_id[:64] if isinstance(x_admin_user_id, str) and x_admin_user_id else "admin"
+
+
+async def _run_lifecycle(request: Request, action, tour_id: str, **kwargs):
+    """AA-986 L2: run one tour lifecycle action (services/tour_lifecycle, ADR 0015 decision 2) in its own
+    transaction, map a refusal to its HTTP status (detail starts with the code, header X-Error-Code), then run the
+    post-commit work (recompute, place graph, cancelled jobs' hooks)."""
+    from services.tour_lifecycle import LifecycleError, run_after_commit
+    pool = request.app.state.pool
     try:
-        from services.export.handler import remove_tour_from_caches, tour_segment_ids
-        from services.jobs.recompute_job import STATUS_DEBOUNCE_S, enqueue_recompute
         async with pool.acquire() as conn:
-            if new_status != "active":
-                await remove_tour_from_caches(conn, tour_id)
-            segment_ids = await tour_segment_ids(conn, tour_id)
-        job_id, created = await enqueue_recompute(
-            pool, scope="platform", reason=f"master_status={new_status}:{tour_id}",
-            created_by="admin:status_change", segment_ids=segment_ids, debounce_s=STATUS_DEBOUNCE_S)
-        _log.info("aa713_recompute_enqueued", tour_id=tour_id, new_status=new_status,
-                  job_id=job_id, created=created, segments=len(segment_ids))
-    except Exception:
-        _log.warning("aa713_recompute_enqueue_failed", tour_id=tour_id, exc_info=True)
-    # AA-712 — the tour graph follows the live set; a tour (re-)entering also gets its places.
-    try:
-        from services.places.enqueue import after_liveness_change
-        await after_liveness_change(pool, tour_id=str(tour_id), new_status=new_status,
-                                    created_by="admin:status_change")
-    except Exception:
-        _log.warning("aa712_place_enqueue_failed", tour_id=tour_id, exc_info=True)
+            out = await action(conn, tour_id, **kwargs)
+    except LifecycleError as e:
+        raise HTTPException(e.status, detail=e.detail, headers={"X-Error-Code": e.code})
+    await run_after_commit(pool, out, recompute=_recompute_after_status_change)
+    return out
 
 
-async def _notify_adopting_tenants(conn, tour_id: str, event_type, tour_name: str) -> None:
-    """AA-716 — emit one tenant-facing notification per tenant that adopted this tour (its own
-    rewrite in gold_aa_internal.tenant_tour_versions). Runs inside the caller's transaction so the
-    warnings are atomic with the discontinuation. A tour with no adopting tenant emits nothing."""
-    tenant_ids = await conn.fetch(
-        """
-        SELECT DISTINCT ttv.tenant_id
-        FROM gold_aa_internal.tenant_tour_versions ttv
-        JOIN gold_aa_internal.published_tours pt ON pt.id = ttv.published_tour_id
-        WHERE pt.tour_id = $1::uuid
-        """,
-        tour_id,
-    )
-    svc = NotificationService(conn)
-    for r in tenant_ids:
-        await svc.emit(
-            event_type=event_type,
-            entity_type="tour",
-            entity_id=tour_id,
-            tenant_id=str(r["tenant_id"]),
-            payload={"tour_name": tour_name, "changed_by": "admin"},
-            actor_type="admin",
-        )
+async def _require_master_admin_if_published(request: Request, tour_id: str, x_admin_role: Optional[str]) -> None:
+    """Q8 (ADR 0015): retiring a tour that was ever published (some version of its key has a Master) needs Master
+    Content rights (master.admin: admins). A tour still in S0/A0 only (no Master) keeps content.write. A machine
+    caller (no role header) never reaches these routes: staff_policy refuses it."""
+    if x_admin_role is None or has_perm(x_admin_role, MASTER_ADMIN):
+        return
+    from services.tour_lifecycle import key_was_published
+    async with request.app.state.pool.acquire() as conn:
+        published = await key_was_published(conn, tour_id)
+    if published:
+        raise HTTPException(403, detail=f"Role '{x_admin_role}' lacks the 'master.admin' permission: this tour is "
+                                        "published, retiring it needs Master Content rights (admin)",
+                            headers={"X-Error-Code": "master_admin_required"})
 
 
 PLAN_LIMITS = {
@@ -1665,50 +1646,17 @@ async def toggle_master_status(
     tour_id: str,
     request: Request,
     x_admin_secret: str = Header(None),
+    x_admin_user_id: Optional[str] = Header(None),
 ):
     verify_admin_secret(x_admin_secret)
     body = await request.json()
     status = body.get("master_status")
     if status not in ("active", "inactive"):
         raise HTTPException(400, "master_status must be 'active' or 'inactive'")
-
-    pool = request.app.state.pool
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT aa_name FROM gold_aa_internal.published_tours WHERE tour_id=$1::uuid",
-            tour_id,
-        )
-        if not row:
-            raise HTTPException(404, "Tour not found")
-
-        event_type = (
-            EventType.MASTER_ACTIVATED if status == "active"
-            else EventType.MASTER_DEACTIVATED
-        )
-
-        async with conn.transaction():
-            result = await conn.execute(
-                """
-                UPDATE gold_aa_internal.published_tours
-                SET master_status = $1::gold_aa_internal.master_status_enum
-                WHERE tour_id = $2::uuid
-                """,
-                status, tour_id,
-            )
-            if result == "UPDATE 0":
-                raise HTTPException(404, "Tour not found or not updated")
-
-            await NotificationService(conn).emit(
-                event_type=event_type,
-                entity_type="tour",
-                entity_id=tour_id,
-                tenant_id=AA_INTERNAL_TENANT,
-                payload={"tour_name": row["aa_name"], "new_status": status, "changed_by": "admin"},
-                actor_type="admin",
-            )
-
-    await _recompute_after_status_change(pool, tour_id, status)   # AA-713
-    return {"tour_id": tour_id, "master_status": status}
+    from services.tour_lifecycle import activate_master, pause_master
+    out = await _run_lifecycle(request, activate_master if status == "active" else pause_master, tour_id,
+                               actor=_lifecycle_actor(x_admin_user_id))
+    return {"tour_id": tour_id, "master_status": status, "lifecycle": out.summary()}
 
 
 # ── GET /admin/catalog — staff content review list (AA-580) ────────────────────
@@ -1774,88 +1722,34 @@ async def list_catalog_tours(
     }
 
 
-# ── PATCH /admin/tours/{tour_id}/trash — Soft-delete source tour ───────────────
+# ── Tour lifecycle routes (AA-716, AA-986 L2) ─────────────────────────────────────
+# Every route below is a thin wrapper over services/tour_lifecycle (ADR 0015 decision 2): the service changes the
+# status columns, cascades (Masters, reviews, queued tenant jobs, lifecycle record, tenant notifications) in one
+# transaction; the route maps refusals to HTTP and runs the post-commit recompute.
 
 
-@router.patch("/tours/{tour_id}/trash", summary="Soft-delete source tour (source_status=trashed)")
+# ── PATCH /admin/tours/{tour_id}/trash — retire a source tour (S0/A0) ───────────
+
+
+@router.patch("/tours/{tour_id}/trash", summary="Retire a source tour (source_status=trashed, cascades)")
 async def trash_source_tour(
     tour_id: str,
     request: Request,
     x_admin_secret: str = Header(None),
+    x_admin_role: Optional[str] = Header(None),
+    x_admin_user_id: Optional[str] = Header(None),
 ):
     verify_admin_secret(x_admin_secret)
-    pool = request.app.state.pool
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """SELECT src_name, tenant_id FROM silver_aa_internal.raw_tours
-               WHERE tour_id=$1::uuid AND source_status != 'trashed'""",
-            tour_id,
-        )
-        if not row:
-            raise HTTPException(404, "Tour not found or already trashed")
-
-        async with conn.transaction():
-            result = await conn.fetchrow(
-                """
-                UPDATE silver_aa_internal.raw_tours
-                SET source_status = 'trashed'::silver_aa_internal.source_status_enum,
-                    deleted_at = NOW(),
-                    deleted_by = 'admin'
-                WHERE tour_id = $1::uuid AND source_status != 'trashed'
-                RETURNING tour_id, source_status::text, deleted_at
-                """,
-                tour_id,
-            )
-            if not result:
-                raise HTTPException(404, "Tour not found or already trashed")
-
-            # AA-716 — cascade the discontinuation. AA-713 wired master_status -> atoms; this adds
-            # the missing upstream link raw_tours -> master. All in the same transaction so the
-            # trash is atomic; the Score/Route recompute runs after commit (reads committed state).
-            # 1. Inactivate the Master Content tour (if one was published). v_active_tour_atoms
-            #    (migration 203) gates on master_status='active', so this drops the atoms from the
-            #    view immediately; the post-commit recompute rebuilds the caches that held them.
-            master_inactivated = await conn.execute(
-                """
-                UPDATE gold_aa_internal.published_tours
-                SET master_status = 'inactive'::gold_aa_internal.master_status_enum
-                WHERE tour_id = $1::uuid AND master_status = 'active'
-                """,
-                tour_id,
-            )
-            # 2. Dismiss any pending review_queue rows for this tour — a discontinued source tour
-            #    must not stay an open review item (AA-653 found live S212). Same SQL discipline.
-            await conn.execute(
-                """
-                UPDATE silver_aa_internal.review_queue
-                SET review_status = 'dismissed'::review_status_enum, reviewed_at = NOW(),
-                    reviewer_notes = 'AA-716: source tour discontinued'
-                WHERE tour_id = $1::uuid AND review_status = 'pending'
-                """,
-                tour_id,
-            )
-            # 3. Admin/content-facing event (unchanged).
-            await NotificationService(conn).emit(
-                event_type=EventType.SOURCE_TRASHED,
-                entity_type="tour",
-                entity_id=tour_id,
-                tenant_id=str(row["tenant_id"]),
-                payload={"tour_name": row["src_name"], "changed_by": "admin"},
-                actor_type="admin",
-            )
-            # 4. Warn every tenant that adopted this tour (tenant_tour_versions) — one tenant-facing
-            #    notification each. Their work with the OTHER active tours is untouched.
-            await _notify_adopting_tenants(
-                conn, tour_id, EventType.TOUR_DISCONTINUED, row["src_name"])
-
-    # AA-713 chain — recompute Score/Route platform-wide on the remaining active tours (after commit).
-    await _recompute_after_status_change(pool, tour_id, "trashed")
-
+    await _require_master_admin_if_published(request, tour_id, x_admin_role)
+    from services.tour_lifecycle import retire_source
+    out = await _run_lifecycle(request, retire_source, tour_id, actor=_lifecycle_actor(x_admin_user_id),
+                               deleted_by="admin")
     return {
-        "tour_id": tour_id,
+        "tour_id": out.tour_id,
         "source_status": "trashed",
-        "master_inactivated": master_inactivated != "UPDATE 0",
-        "deleted_at": result["deleted_at"].isoformat(),
+        "master_inactivated": any(t == out.tour_id for t, _ in out.masters_off),
+        "deleted_at": out.extra["deleted_at"].isoformat(),
+        "lifecycle": out.summary(),
     }
 
 
@@ -1867,76 +1761,36 @@ async def restore_source_tour(
     tour_id: str,
     request: Request,
     x_admin_secret: str = Header(None),
+    x_admin_user_id: Optional[str] = Header(None),
 ):
     verify_admin_secret(x_admin_secret)
-    pool = request.app.state.pool
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """SELECT src_name, tenant_id FROM silver_aa_internal.raw_tours
-               WHERE tour_id=$1::uuid AND source_status='trashed'""",
-            tour_id,
-        )
-        if not row:
-            raise HTTPException(404, "Tour not found or not in trashed state")
-
-        async with conn.transaction():
-            try:
-                result = await conn.fetchrow(
-                    """
-                    UPDATE silver_aa_internal.raw_tours
-                    SET source_status = 'active'::silver_aa_internal.source_status_enum,
-                        deleted_at = NULL,
-                        deleted_by = NULL
-                    WHERE tour_id = $1::uuid AND source_status = 'trashed'
-                    RETURNING tour_id, source_status::text
-                    """,
-                    tour_id,
-                )
-            except asyncpg.UniqueViolationError:
-                raise HTTPException(
-                    409,
-                    "Another active tour exists in the same source group. "
-                    "Set it to superseded first, then restore.",
-                )
-            if not result:
-                raise HTTPException(404, "Tour not found or not in trashed state")
-
-            # AA-716 — reverse the cascade. Bring the Master Content tour back to active (only the
-            # rows this cascade had inactivated; a tour an admin deliberately trashed at the master
-            # level stays trashed). The post-commit recompute re-admits its atoms to Score/Route.
-            master_reactivated = await conn.execute(
-                """
-                UPDATE gold_aa_internal.published_tours
-                SET master_status = 'active'::gold_aa_internal.master_status_enum
-                WHERE tour_id = $1::uuid AND master_status = 'inactive'
-                """,
-                tour_id,
-            )
-            # Dismissed review_queue rows are NOT auto-reopened — dismissal is one-way, same as the
-            # publish-based dismiss (AA-653). A reinstated tour re-enters the normal pipeline fresh.
-            await NotificationService(conn).emit(
-                event_type=EventType.SOURCE_RESTORED,
-                entity_type="tour",
-                entity_id=tour_id,
-                tenant_id=str(row["tenant_id"]),
-                payload={"tour_name": row["src_name"], "changed_by": "admin"},
-                actor_type="admin",
-            )
-            # Tell adopting tenants the tour is back.
-            await _notify_adopting_tenants(
-                conn, tour_id, EventType.TOUR_REINSTATED, row["src_name"])
-
-    # AA-713 chain — recompute so the restored tour's atoms re-enter Score/Route (after commit).
-    # AA-986 L1: "active" when the Master came back (was "inactive", which superseded the restored tour's
-    # ranking / route rows again and skipped its place extraction); a tour whose Master stays off keeps "inactive".
-    await _recompute_after_status_change(
-        pool, tour_id, "active" if master_reactivated != "UPDATE 0" else "inactive")
-
+    from services.tour_lifecycle import restore_source
+    out = await _run_lifecycle(request, restore_source, tour_id, actor=_lifecycle_actor(x_admin_user_id))
     return {
-        "tour_id": tour_id,
+        "tour_id": out.tour_id,
         "source_status": "active",
-        "master_reactivated": master_reactivated != "UPDATE 0",
+        "master_reactivated": bool(out.masters_on),
+        "lifecycle": out.summary(),
     }
+
+
+# ── GET /admin/tours/{tour_id}/lifecycle-preview — dry run for the confirm dialog (Q8) ──
+
+
+@router.get("/tours/{tour_id}/lifecycle-preview", summary="Dry run of a retire / trash / pause (counts only)")
+async def lifecycle_preview(
+    tour_id: str,
+    request: Request,
+    action: str = Query("retire_source"),
+    x_admin_secret: str = Header(None),
+):
+    verify_admin_secret(x_admin_secret)
+    from services.tour_lifecycle import LifecycleError, preview
+    try:
+        async with request.app.state.pool.acquire() as conn:
+            return await preview(conn, tour_id, action)
+    except LifecycleError as e:
+        raise HTTPException(e.status, detail=e.detail, headers={"X-Error-Code": e.code})
 
 
 # ── PATCH /admin/master/{tour_id}/trash — Soft-delete master tour ─────────────
@@ -1947,47 +1801,16 @@ async def trash_master_tour(
     tour_id: str,
     request: Request,
     x_admin_secret: str = Header(None),
+    x_admin_user_id: Optional[str] = Header(None),
 ):
     verify_admin_secret(x_admin_secret)
-    pool = request.app.state.pool
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """SELECT aa_name FROM gold_aa_internal.published_tours
-               WHERE tour_id=$1::uuid AND master_status != 'trashed'""",
-            tour_id,
-        )
-        if not row:
-            raise HTTPException(404, "Tour not found or already trashed")
-
-        async with conn.transaction():
-            result = await conn.fetchrow(
-                """
-                UPDATE gold_aa_internal.published_tours
-                SET master_status = 'trashed'::gold_aa_internal.master_status_enum,
-                    deleted_at = NOW(),
-                    deleted_by = 'admin'
-                WHERE tour_id = $1::uuid AND master_status != 'trashed'
-                RETURNING tour_id, master_status::text, deleted_at
-                """,
-                tour_id,
-            )
-            if not result:
-                raise HTTPException(404, "Tour not found or already trashed")
-
-            await NotificationService(conn).emit(
-                event_type=EventType.MASTER_TRASHED,
-                entity_type="tour",
-                entity_id=tour_id,
-                tenant_id=AA_INTERNAL_TENANT,
-                payload={"tour_name": row["aa_name"], "changed_by": "admin"},
-                actor_type="admin",
-            )
-
-    await _recompute_after_status_change(pool, tour_id, "trashed")   # AA-713
+    from services.tour_lifecycle import trash_master
+    out = await _run_lifecycle(request, trash_master, tour_id, actor=_lifecycle_actor(x_admin_user_id))
     return {
-        "tour_id": tour_id,
+        "tour_id": out.tour_id,
         "master_status": "trashed",
-        "deleted_at": result["deleted_at"].isoformat(),
+        "deleted_at": out.extra["deleted_at"].isoformat(),
+        "lifecycle": out.summary(),
     }
 
 
@@ -1999,48 +1822,12 @@ async def restore_master_tour(
     tour_id: str,
     request: Request,
     x_admin_secret: str = Header(None),
+    x_admin_user_id: Optional[str] = Header(None),
 ):
     verify_admin_secret(x_admin_secret)
-    pool = request.app.state.pool
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """SELECT aa_name FROM gold_aa_internal.published_tours
-               WHERE tour_id=$1::uuid AND master_status='trashed'""",
-            tour_id,
-        )
-        if not row:
-            raise HTTPException(404, "Tour not found or not in trashed state")
-
-        async with conn.transaction():
-            result = await conn.fetchrow(
-                """
-                UPDATE gold_aa_internal.published_tours
-                SET master_status = 'inactive'::gold_aa_internal.master_status_enum,
-                    deleted_at = NULL,
-                    deleted_by = NULL
-                WHERE tour_id = $1::uuid AND master_status = 'trashed'
-                RETURNING tour_id, master_status::text
-                """,
-                tour_id,
-            )
-            if not result:
-                raise HTTPException(404, "Tour not found or not in trashed state")
-
-            await NotificationService(conn).emit(
-                event_type=EventType.MASTER_RESTORED,
-                entity_type="tour",
-                entity_id=tour_id,
-                tenant_id=AA_INTERNAL_TENANT,
-                payload={
-                    "tour_name": row["aa_name"],
-                    "new_status": "inactive",
-                    "changed_by": "admin",
-                },
-                actor_type="admin",
-            )
-
-    await _recompute_after_status_change(pool, tour_id, "inactive")   # AA-713 (restore -> inactive)
-    return {"tour_id": tour_id, "master_status": "inactive"}
+    from services.tour_lifecycle import restore_master
+    out = await _run_lifecycle(request, restore_master, tour_id, actor=_lifecycle_actor(x_admin_user_id))
+    return {"tour_id": out.tour_id, "master_status": "inactive", "lifecycle": out.summary()}
 
 
 # ── PATCH /admin/master/{tour_id}/activate ────────────────────────────────────
@@ -2051,42 +1838,14 @@ async def activate_master_tour(
     tour_id: str,
     request: Request,
     x_admin_secret: str = Header(None),
+    x_admin_user_id: Optional[str] = Header(None),
 ):
+    """409 source_not_live when the source version was deleted or replaced at S0/A0 (AA-986 L2): restore the
+    source tour instead (its Master comes back with it)."""
     verify_admin_secret(x_admin_secret)
-    pool = request.app.state.pool
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT aa_name FROM gold_aa_internal.published_tours WHERE tour_id=$1::uuid",
-            tour_id,
-        )
-        if not row:
-            raise HTTPException(404, "Tour not found")
-
-        async with conn.transaction():
-            result = await conn.execute(
-                """
-                UPDATE gold_aa_internal.published_tours
-                SET master_status = 'active'::gold_aa_internal.master_status_enum
-                WHERE tour_id = $1::uuid
-                """,
-                tour_id,
-            )
-            if result == "UPDATE 0":
-                raise HTTPException(404, "Tour not found or not updated")
-
-            await NotificationService(conn).emit(
-                event_type=EventType.MASTER_ACTIVATED,
-                entity_type="tour",
-                entity_id=tour_id,
-                tenant_id=AA_INTERNAL_TENANT,
-                payload={
-                    "tour_name": row["aa_name"], "new_status": "active", "changed_by": "admin",
-                },
-                actor_type="admin",
-            )
-
-    await _recompute_after_status_change(pool, tour_id, "active")   # AA-713
-    return {"tour_id": tour_id, "master_status": "active"}
+    from services.tour_lifecycle import activate_master
+    out = await _run_lifecycle(request, activate_master, tour_id, actor=_lifecycle_actor(x_admin_user_id))
+    return {"tour_id": out.tour_id, "master_status": "active", "lifecycle": out.summary()}
 
 
 # ── PATCH /admin/master/{tour_id}/deactivate ──────────────────────────────────
@@ -2097,42 +1856,12 @@ async def deactivate_master_tour(
     tour_id: str,
     request: Request,
     x_admin_secret: str = Header(None),
+    x_admin_user_id: Optional[str] = Header(None),
 ):
     verify_admin_secret(x_admin_secret)
-    pool = request.app.state.pool
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT aa_name FROM gold_aa_internal.published_tours WHERE tour_id=$1::uuid",
-            tour_id,
-        )
-        if not row:
-            raise HTTPException(404, "Tour not found")
-
-        async with conn.transaction():
-            result = await conn.execute(
-                """
-                UPDATE gold_aa_internal.published_tours
-                SET master_status = 'inactive'::gold_aa_internal.master_status_enum
-                WHERE tour_id = $1::uuid
-                """,
-                tour_id,
-            )
-            if result == "UPDATE 0":
-                raise HTTPException(404, "Tour not found or not updated")
-
-            await NotificationService(conn).emit(
-                event_type=EventType.MASTER_DEACTIVATED,
-                entity_type="tour",
-                entity_id=tour_id,
-                tenant_id=AA_INTERNAL_TENANT,
-                payload={
-                    "tour_name": row["aa_name"], "new_status": "inactive", "changed_by": "admin",
-                },
-                actor_type="admin",
-            )
-
-    await _recompute_after_status_change(pool, tour_id, "inactive")   # AA-713 (deactivate)
-    return {"tour_id": tour_id, "master_status": "inactive"}
+    from services.tour_lifecycle import pause_master
+    out = await _run_lifecycle(request, pause_master, tour_id, actor=_lifecycle_actor(x_admin_user_id))
+    return {"tour_id": out.tour_id, "master_status": "inactive", "lifecycle": out.summary()}
 
 
 # ── The notification bell: what a role may see and clear ─────────────────────

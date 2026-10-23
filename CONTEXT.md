@@ -1472,6 +1472,21 @@ Distinct from Facts Entry (tenant scope) below — same table (`acp_shared.facts
 tells them apart, never merged.
 _Avoid_: Fact (bare), reference data.
 
+**Served state (tour liveness, AA-986, root ADR 0015)**:
+Whether AA serves a tour, per catalog key (`raw_tours.source_key` = `COALESCE(source_group_id, tour_id)`):
+`served` (live source version + live Master), `paused` (Master inactive, or a supersede waiting for the new
+version's Master), `retired` (source deleted at S0/A0, Master trashed, or every version superseded). Derived, never
+stored: read it from `gold_aa_internal.v_tour_liveness` (CIS 272). Every change goes through ONE write service,
+`services/tour_lifecycle` (retire / restore source, supersede, set-active, Master pause / activate / trash /
+restore, the publish insert): in one transaction it changes the status columns with the reason
+(`published_tours.master_status_reason`), switches off any Master over a dead source (never two active Masters per
+key), dismisses pending reviews, cancels queued T2 / T8 / T9 jobs, writes `gold_aa_internal.tour_lifecycle_event`
+(append-only) and notifies every tenant with a derivative (`tour.discontinued` / `tour.reinstated`). A unit guard
+(`tests/unit/test_aa986_l2_lifecycle_guard.py`) fails any other code that writes `source_status` / `master_status` /
+`deleted_at` or inserts into `raw_tours` / `published_tours`. Retiring a published tour needs `master.admin` (Q8).
+_Avoid_: "delete" for a published tour (it is retired and can be restored); `raw_tours.lifecycle_stage` as a
+deletion signal (it is the sales phase).
+
 ### Platform-derived content (computed once from the Master Content pool, shared by all tenants)
 
 **Segment**:

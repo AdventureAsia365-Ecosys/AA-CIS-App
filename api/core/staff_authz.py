@@ -186,6 +186,10 @@ POLICY: dict[tuple[str, str], str] = {
     ("PATCH", "/admin/master/{tour_id}/status"): MASTER_ADMIN,
     ("PATCH", "/admin/master/{tour_id}/trash"): MASTER_ADMIN,
     ("PATCH", "/admin/master/{tour_id}/restore"): MASTER_ADMIN,
+    # AA-986 L2: the Retire / Trash confirm dialog's dry run. Admin-only like the actions it previews: it runs the
+    # real action in a rolled-back transaction (row locks, job and notification writes) and returns per-tenant
+    # derivative counts.
+    ("GET", "/admin/tours/{tour_id}/lifecycle-preview"): MASTER_ADMIN,
     # admin — source tours (Upload page, every staff role)
     ("PATCH", "/admin/tours/{tour_id}/trash"): CONTENT_WRITE,
     ("PATCH", "/admin/tours/{tour_id}/restore"): CONTENT_WRITE,

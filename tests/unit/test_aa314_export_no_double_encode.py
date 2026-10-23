@@ -23,6 +23,12 @@ import pytest
 
 from services.export import handler as export_handler
 
+
+@pytest.fixture(autouse=True)
+def _aa986_plain_publish(plain_publish):
+    """AA-986 L2: process_export publishes through services.tour_lifecycle (tests/unit/conftest.py plain_publish)."""
+
+
 FAKE_UUID = "22222222-2222-2222-2222-222222222222"
 FAKE_TOUR_ID = "33333333-3333-3333-3333-333333333333"
 

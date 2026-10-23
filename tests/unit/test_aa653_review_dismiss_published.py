@@ -12,6 +12,12 @@ import pytest
 from api.routers.admin_pipeline import _enqueue_review
 from services.export import handler
 
+
+@pytest.fixture(autouse=True)
+def _aa986_plain_publish(plain_publish):
+    """AA-986 L2: process_export publishes through services.tour_lifecycle (tests/unit/conftest.py plain_publish)."""
+
+
 GC_ROW = {"id": "gc-1", "tour_id": "t-1", "tenant_id": "t-1", "batch_id": None, "aa_name": "Tour",
           "aa_subtitle": "s", "aa_summary": "sum", "aa_description": "d", "aa_highlights": "[]",
           "aa_itineraries": "Day 1...", "mobile_card_text": None, "seo_title": "t", "seo_meta": "m" * 150,

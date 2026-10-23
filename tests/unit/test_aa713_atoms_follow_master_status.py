@@ -34,9 +34,13 @@ def test_migration_203_defines_the_view_with_the_status_gate():
 
 def test_all_status_endpoints_trigger_a_recompute():
     admin = _src("api/routers/admin.py")
-    # one helper call per endpoint: master toggle/trash/restore/activate/deactivate (5),
-    # plus AA-716 source trash/restore cascade (2).
-    assert admin.count("_recompute_after_status_change(") >= 8  # 7 calls + the def
+    # AA-986 L2: every status endpoint (master toggle/trash/restore/activate/deactivate, source trash/restore) runs
+    # one tour lifecycle action through _run_lifecycle, which runs the post-commit recompute with this module's
+    # helper (services/tour_lifecycle/effects.run_after_commit).
+    assert admin.count("await _run_lifecycle(") >= 7
+    assert "run_after_commit(pool, out, recompute=_recompute_after_status_change)" in admin
+    effects = _src("services/tour_lifecycle/effects.py")
+    assert "for tour_id, new_status in outcome.recompute:" in effects
 
 
 @pytest.mark.asyncio
