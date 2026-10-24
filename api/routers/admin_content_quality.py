@@ -290,11 +290,14 @@ def highlights(content_text: str, gate_ledger: list, flags: list) -> list[dict]:
                 span = sentence_repair.locate_sentence(text, quote)
                 if span:
                     out.append({"start": span[0], "end": span[1], **mark, "problem": problem[:300]})
-    # A non-blocking gate sits in both gate_ledger and flags: keep one highlight per span + gate.
+    # A non-blocking gate sits in both gate_ledger and flags: keep one highlight per span + finding. AA-924 — a
+    # merged entry (F2_lexicon, F15_voice) holds several sources' findings, so two problems on one sentence are two
+    # highlights: the key is the span, the entry, the source and the problem, not the span and entry alone.
     seen, unique = set(), []
     for h in sorted(out, key=lambda h: (h["start"], h["end"])):
-        if (h["start"], h["end"], h["gate"]) not in seen:
-            seen.add((h["start"], h["end"], h["gate"]))
+        key = (h["start"], h["end"], h["gate"], h.get("source") or h["gate"], h["problem"])
+        if key not in seen:
+            seen.add(key)
             unique.append(h)
     # S234 — edit-ready: the exact span text (the client sends it back so a stale offset can never
     # cut the wrong words) and the whole sentence around a phrase hit, which is what cut/rewrite act on.

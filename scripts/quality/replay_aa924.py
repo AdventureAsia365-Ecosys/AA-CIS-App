@@ -4,8 +4,11 @@ Runs `run_quality_gates` on stored final texts with the gate inputs rebuilt the 
 (`scripts/aa729/score.py::t9_gate_replay`), once on a BASE tree (AA-926 merged, before AA-924) and once on HEAD,
 and diffs the routing decisions. The F9 judge is never called: `gate_brand_voice` returns the F9 entries stored in
 each piece's own ledger (the real verdicts), or a pass when none is stored. The cross-tenant similarity lookup is
-not run: a stored failing F10 entry is turned back into its match. Every piece is replayed twice, as attempt 1
-(`stock_blocking=True`: F15 stock / frames block) and as a later attempt (`stock_blocking=False`: they warn).
+not run: a stored failing F10 entry is turned back into its match. Every piece is replayed as attempt 1
+(`stock_blocking=True`: F15 stock / frames block) and as a later attempt (`stock_blocking=False`: they warn), each on
+the stored text and on the stored text after `hygiene.fix_dashes` (the `_dashfix` modes; review round). Most stored
+texts predate AA-778 and hold on F2 em-dashes, which makes every later routing step trivially equal; the writer now
+fixes dashes before the gates, so the dash-fixed modes are the ones that reach F15, the waive and the style-only paths.
 
 Inputs
   --golden PATH   root docs/eval/aa729/fixture-1.1.0.json: the 30 T9 samples (15 t9_blog + 15 t9_linkedin, frozen
@@ -16,8 +19,9 @@ Inputs
 
 Per piece and mode it records: passed, status (approved / held, as service._hold_or_ship decides), the held gate
 (mapped to the stored entry name), first_failure and hold_failure (legacy source names), the sentence-repair route
-(repair / rewrite / none), the style-only stage, the blocking failures of the legacy view, the flags (stored names
-and legacy view) and the number of results in the ledger.
+(repair / rewrite / none), what each sentence repair is told (`plan_problems`: gate, sentence and problem per item),
+the style-only stage, the blocking failures of the legacy view, the flags (stored names and legacy view) and the
+number of results in the ledger.
 
 Usage (from a CIS checkout; the BASE tree is a worktree at the AA-926-merged main):
     python -m scripts.quality.replay_aa924 all --base-tree /path/to/base-worktree \\
@@ -43,7 +47,9 @@ from typing import Any, Optional
 from unittest.mock import patch
 
 SCHEMA = "aa924-replay/1"
-MODES = {"attempt1": True, "later": False}
+# mode → (stock_blocking, run hygiene.fix_dashes on the stored text first)
+MODES = {"attempt1": (True, False), "later": (False, False), "attempt1_dashfix": (True, True),
+         "later_dashfix": (False, True)}
 _F10_RE = re.compile(r"content is ([0-9.]+) cosine-similar .*?piece_id=([0-9a-fA-F-]+)", re.DOTALL)
 
 
@@ -145,8 +151,9 @@ def _route(plan) -> str:
     return "rewrite" if plan is None else "none" if plan == [] else "repair"
 
 
-def replay_one(piece: dict, stock_blocking: bool) -> dict:
+def replay_one(piece: dict, stock_blocking: bool, dash_fix: bool = False) -> dict:
     from scripts.aa729 import score
+    from services.acp_content_writing import hygiene
     from services.acp_content_writing import quality_gates as qg
     from services.acp_content_writing import sentence_repair
     from services.acp_content_writing import service as svc
@@ -154,6 +161,9 @@ def replay_one(piece: dict, stock_blocking: bool) -> dict:
 
     expand = getattr(qg, "expand_ledger", lambda ledger: list(ledger or []))
     stored = piece["output"].get("gate_ledger") or []
+    output = piece["output"]
+    if dash_fix:
+        output = {**output, "content_text": hygiene.fix_dashes(output.get("content_text") or "")[0]}
     f9 = _stored_f9(stored)
     match = _stored_match(stored)
     real_gates = svc.run_quality_gates
@@ -167,7 +177,7 @@ def replay_one(piece: dict, stock_blocking: bool) -> dict:
         return real_gates(*a, **{**k, "stock_blocking": stock_blocking, "cannibalization_match": match})
 
     with patch.object(qg, "gate_brand_voice", side_effect=voice), patch.object(svc, "run_quality_gates", gates):
-        outcome = asyncio.run(score.t9_gate_replay(piece["context"], piece["output"]))
+        outcome = asyncio.run(score.t9_gate_replay(piece["context"], output))
     ledger, flags = outcome["gate_ledger"], outcome["flags"]
     view = expand(ledger)
     if outcome["passed"]:
@@ -176,13 +186,15 @@ def replay_one(piece: dict, stock_blocking: bool) -> dict:
         status, reason, _ = svc._hold_or_ship(ledger, list(flags))
         held = reason.split(":", 1)[0] if reason else None
     hold = qg.hold_failure(ledger)
-    plan = sentence_repair.plan(piece["output"].get("content_text") or "", ledger)
+    plan = sentence_repair.plan(output.get("content_text") or "", ledger)
     findings = Counter(f"{g['gate']}|{f.get('source')}|{f.get('severity')}" for g in ledger
                        if isinstance(g.get("findings"), list) for f in g["findings"])
     return {
         "passed": bool(outcome["passed"]), "status": status, "held_gate": held,
         "first_failure": (outcome.get("first_failure") or {}).get("gate"), "hold_failure": (hold or {}).get("gate"),
         "route": _route(plan), "plan_items": len(plan or []), "style_only_repair": svc._style_only_repair(ledger),
+        "plan_problems": sorted(f"{i.get('gate')} | {str(i.get('sentence'))[:80]} | {i.get('problem')}"
+                                for i in plan or []),
         "blocking_failures": sorted(g["gate"] for g in view if not g["passed"] and g.get("blocking", True)),
         "flags_stored": dict(Counter(g.get("gate") for g in flags if isinstance(g, dict))),
         "flags_legacy": dict(Counter(g.get("gate") for g in expand(flags) if isinstance(g, dict))),
@@ -195,9 +207,9 @@ def run(pieces: list[dict], skipped: list[str]) -> dict:
 
     rows = []
     for p in pieces:
-        for mode, sb in MODES.items():
+        for mode, (sb, dash_fix) in MODES.items():
             try:
-                res = replay_one(p, sb)
+                res = replay_one(p, sb, dash_fix)
             except Exception as e:  # noqa: BLE001 — reported, never hidden
                 res = {"error": f"{type(e).__name__}: {e}"[:300]}
             rows.append({"id": p["id"], "source": p["source"], "stratum": p.get("stratum"), "mode": mode,
@@ -209,7 +221,7 @@ def run(pieces: list[dict], skipped: list[str]) -> dict:
 # ------------------------------------------------------------------------------------------- diff + report
 
 _COMPARED = ("passed", "status", "first_failure", "hold_failure", "route", "style_only_repair", "blocking_failures",
-             "flags_legacy")
+             "flags_legacy", "plan_problems")
 
 
 def diff(base: dict, head: dict) -> list[dict]:
@@ -226,9 +238,15 @@ def diff(base: dict, head: dict) -> list[dict]:
             if f == "held_gate" and ov is not None:
                 ov = rename.get(ov, ov)
             if ov != nv:
+                if f == "plan_problems":  # only what changed: the items one side has and the other has not
+                    ov, nv = sorted(set(ov or []) - set(nv or [])), sorted(set(nv or []) - set(ov or []))
                 out.append({"id": r["id"], "source": r["source"], "mode": r["mode"], "field": f, "base": ov,
                             "head": nv})
     return out
+
+
+def _cell(v: Any) -> str:
+    return str(v).replace("|", "/").replace("\n", " ")[:400]
 
 
 def _confusion(base: dict, head: dict, source: str, mode: str) -> dict:
@@ -248,7 +266,8 @@ def report(base: dict, head: dict, *, golden_path: Optional[str], s234_path: Opt
     lines = ["# AA-924 replay — T10 gate fold (F2_lexicon, F15_voice) on stored T9 pieces", "",
              f"Base tree commit `{base.get('commit')}`, head commit `{head.get('commit')}`. $0: no LLM call (F9 "
              "verdicts replayed from each piece's stored ledger), no DB, no network. Each piece is replayed as "
-             "attempt 1 (`stock_blocking=True`) and as a later attempt (`stock_blocking=False`).", "",
+             "attempt 1 (`stock_blocking=True`) and as a later attempt (`stock_blocking=False`), on the stored text "
+             "and (`_dashfix`) on the stored text after `hygiene.fix_dashes`.", "",
              "Inputs:", ""]
     if golden_path:
         lines.append(f"- golden: `{golden_path}` (the AA-729 T9 samples)")
@@ -276,12 +295,13 @@ def report(base: dict, head: dict, *, golden_path: Optional[str], s234_path: Opt
         lines.append("None: passed / status / first failure / hold / repair route / stage are identical.")
     other = [d for d in diffs if d not in decision]
     lines += ["", f"## Other differences ({len(other)})", "",
-              "Blocking failures of the legacy view, legacy-view flags and the held gate (base name mapped through "
-              "the fold). Expected: none, except a word that was judged in two gates (now judged once).", ""]
+              "Blocking failures of the legacy view, legacy-view flags, what each sentence repair is told "
+              "(`plan_problems`: only the items one side has) and the held gate (base name mapped through the fold). "
+              "Expected: none, except a word that was judged in two gates (now judged once).", ""]
     if other:
         lines += ["| piece | source | mode | field | base | head |", "|---|---|---|---|---|---|"]
-        lines += [f"| {d['id']} | {d.get('source')} | {d['mode']} | {d['field']} | {d['base']} | {d['head']} |"
-                  for d in other]
+        lines += [f"| {d['id']} | {d.get('source')} | {d['mode']} | {d['field']} | {_cell(d['base'])} | "
+                  f"{_cell(d['head'])} |" for d in other]
     else:
         lines.append("None.")
     fb, fh = Counter(), Counter()
@@ -306,6 +326,13 @@ def report(base: dict, head: dict, *, golden_path: Optional[str], s234_path: Opt
                      f"{dict(sorted((k[1], v) for k, v in counts.items() if k[0] == src))} |")
     agree = Counter((r["source"], r.get("stored_status") == r.get("status")) for r in head["rows"]
                     if r["mode"] == "later" and r.get("stored_status") in ("approved", "held"))
+    reach = Counter((r["source"], r["mode"], r.get("first_failure") or "none") for r in head["rows"]
+                    if "error" not in r)
+    lines += ["", "## Head: first failure (legacy source) per mode", "",
+              "How much of the routing the replay exercises: a first failure on F2_banned_patterns stops every later "
+              "step, so the `_dashfix` modes are the ones that reach F15, the waive and the style-only paths.", "",
+              "| source | mode | first failure | rows |", "|---|---|---|---|"]
+    lines += [f"| {k[0]} | {k[1]} | {k[2]} | {v} |" for k, v in sorted(reach.items())]
     lines += ["", "## Context: head (later-attempt mode) vs the stored status", "",
               "Not a test of AA-924 (the stored status came from older code and the full repair loop); shown so a "
               "reader can see how close the replay inputs are to production.", "", "| source | same | different |",

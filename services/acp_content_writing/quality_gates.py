@@ -2533,13 +2533,15 @@ def _hit_key(text: str) -> str:
     return " ".join(re.findall(r"\w+", fold(strip_citation_tags(text or ""))))
 
 
-def _same_hit(a: tuple[str, str], b: tuple[str, str]) -> bool:
-    """Two (phrase, sentence) hits are one word judged twice: one phrase holds the other and the two sentences
-    are the same (their first 120 folded characters; a quote may run on into the next sentence)."""
-    pa, pb = _hit_key(a[0]), _hit_key(b[0])
-    if not pa or not pb or not (f" {pa} " in f" {pb} " or f" {pb} " in f" {pa} "):
+def _same_hit(hit: tuple[str, str], kept: tuple[str, str]) -> bool:
+    """A (phrase, sentence) hit is a word already judged by a `kept` hit: the kept phrase holds the hit's phrase
+    and the two sentences are the same (their first 120 folded characters; a quote may run on into the next
+    sentence). One-way: a hit whose phrase is LONGER than the kept one ('worth sitting with' beside a forbidden
+    'sitting') is a second problem, and the repair is told both."""
+    pa, pb = _hit_key(hit[0]), _hit_key(kept[0])
+    if not pa or not pb or f" {pa} " not in f" {pb} ":
         return False
-    sa, sb = _hit_key(a[1]), _hit_key(b[1])
+    sa, sb = _hit_key(hit[1]), _hit_key(kept[1])
     n = min(len(sa), len(sb), _SAME_SENTENCE_CHARS)
     return n > 0 and sa[:n] == sb[:n]
 
@@ -2550,8 +2552,9 @@ def lexicon_sources(content_text: str, f2_source: str, brand_pack: Optional[dict
     """AA-924 — the legacy source results the lexicon gate folds, each word judged once: [F2_banned_patterns,
     F2_brand_forbidden] plus, with `voice` (gate_voice's result), F15_voice. A tenant-forbidden word already found
     as a banned pattern in the same sentence is dropped, and so is a stock finding a banned or forbidden hit already
-    covers (the highest severity is kept: both of those block). `f2_source` exempts banned patterns (seed + CTA +
-    trip name), `atom_text` the tenant's words (as before: the seed only; `f2_source` when None)."""
+    covers (the highest severity is kept: both of those block). Only a hit the kept phrase contains is dropped: a
+    longer phrase around a shorter kept word is its own problem (`_same_hit`). `f2_source` exempts banned patterns
+    (seed + CTA + trip name), `atom_text` the tenant's words (as before: the seed only; `f2_source` when None)."""
     banned = _banned_hits(content_text, f2_source)
     kept = [(p, sent) for p, sent, _ in banned]
     forbidden: list[str] = []

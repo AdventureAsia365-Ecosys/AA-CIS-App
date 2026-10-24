@@ -128,6 +128,26 @@ def test_stock_phrase_on_the_tenant_list_is_judged_once_at_block():
         assert [(f["source"], f["severity"]) for f in lex["findings"]] == [(qr.F2_BRAND_FORBIDDEN, qg.BLOCK)], sb
 
 
+def test_longer_stock_phrase_around_a_forbidden_word_keeps_both_problems():
+    # review round: only a hit the kept phrase contains is dropped. 'worth sitting with' around a forbidden
+    # 'sitting' is a second problem, and the sentence repair is told both (as the legacy stack did on attempt 1).
+    pack = {**fs.PACK, "forbidden_words": ["sitting"]}
+    text = "Rice terraces at dawn are worth sitting with on this trip. " + fs.CLEAN
+    out = _run(text, pack=pack)
+    lex = _entry(out, qr.F2_LEXICON)
+    assert [(f["source"], f["severity"]) for f in lex["findings"]] == [(qr.F2_BRAND_FORBIDDEN, qg.BLOCK),
+                                                                       (qr.F15_VOICE, qg.BLOCK)]
+    items = sentence_repair.plan(text, [lex])  # the lexicon entry alone (this short post also fails F14's band)
+    [item] = items  # one sentence: its problems are joined ("…; ALSO: …")
+    assert "'sitting', which the brand forbids" in item["problem"], item
+    assert "stock phrase 'worth sitting with'" in item["problem"], item
+    # one-way: a hit is dropped only when the kept phrase holds it (and the sentence is the same)
+    assert not qg._same_hit(("worth sitting with", "a b"), ("sitting", "a b"))
+    assert qg._same_hit(("sitting", "a b"), ("worth sitting with", "a b"))
+    assert qg._same_hit(("Worth  sitting with", "a b"), ("worth sitting with", "a b"))
+    assert not qg._same_hit(("sitting", "a b"), ("worth sitting with", "c d"))
+
+
 def test_platform_truth_skips_the_tenants_own_word():
     pack = {**fs.PACK, "forbidden_words": ["cheap"]}
     out = _run("Cheap flights are not part of this. " + fs.CLEAN, channel="facebook", pack=pack)
@@ -210,3 +230,22 @@ def test_highlights_read_each_findings_own_severity():
            "violations": ["uses 'hidden gem', which the brand forbids: 'Sod Camp is a hidden gem.'"]}
     [h] = [h for h in cq.highlights(text, [old], []) if h["gate"] == qr.F2_BRAND_FORBIDDEN]
     assert h["blocking"] and h["severity"] == qg.BLOCK and "source" not in h
+
+
+def test_highlights_keep_two_sources_on_one_sentence():
+    # review round: one merged entry, two findings quoting the same sentence → two highlights, one drawer item
+    from api.routers import admin_content_quality as cq
+
+    pack = {**fs.PACK, "forbidden_words": ["breathtaking"]}
+    text = "The breathtaking lake at dawn is worth sitting with on this trip. " + fs.CLEAN
+    out = _run(text, pack=pack)
+    lex = _entry(out, qr.F2_LEXICON)
+    assert {f["source"] for f in lex["findings"]} == {qr.F2_BRAND_FORBIDDEN, qr.F15_VOICE}
+    hs = [h for h in cq.highlights(text, out["gate_ledger"], out["flags"]) if h["gate"] == qr.F2_LEXICON]
+    assert {h["source"] for h in hs} == {qr.F2_BRAND_FORBIDDEN, qr.F15_VOICE}
+    [item] = [it for it in cq.flagged_sentences(text, hs)]
+    assert {p["source"] for p in item["problems"]} == {qr.F2_BRAND_FORBIDDEN, qr.F15_VOICE}
+    # a warn entry sitting in both the ledger and the flags still gives one highlight per finding
+    warn = {"gate": qr.F15_VOICE_WARN, "passed": False, "repairable": False, "blocking": False,
+            "violations": ["generic opener: 'A quiet lake waits.'"]}
+    assert len(cq.highlights("A quiet lake waits. " + fs.CLEAN, [warn], [warn])) == 1

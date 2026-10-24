@@ -2069,10 +2069,10 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 break
 
             first_failure = outcome["first_failure"]
+            # AA-924 — the stored entry's name (F2_lexicon), not the retired source name
+            targeted = ledger_gate(first_failure) if ledger_is_merged(gate_ledger) else first_failure["gate"]
             repair_log.append({
-                # AA-924 — the stored entry's name (F2_lexicon), not the retired source name
-                "attempt": attempt, "gate_targeted": ledger_gate(first_failure) if ledger_is_merged(gate_ledger)
-                else first_failure["gate"],
+                "attempt": attempt, "gate_targeted": targeted,
                 "violations": first_failure["violations"], "repairable": first_failure["repairable"],
                 # AA-768 — what the rewrite is actually told: every blocking failure, not one gate.
                 "feedback": _repair_feedback(gate_ledger, channel),
@@ -2081,7 +2081,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             })
             logger.info(
                 "t9_attempt_failed_quality_check", request_id=str(request_id), attempt=attempt,
-                gate=first_failure["gate"], repairable=first_failure["repairable"],
+                gate=targeted, repairable=first_failure["repairable"],
+                **({"source": first_failure["gate"]} if targeted != first_failure["gate"] else {}),
             )
 
             # AA-528 gate-regression-guard — a full rewrite (not a targeted field fix) can break a

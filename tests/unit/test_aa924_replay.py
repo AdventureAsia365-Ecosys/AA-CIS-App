@@ -68,3 +68,26 @@ def test_diff_maps_the_held_gate_and_reports_decision_changes():
     assert {"passed", "status", "held_gate"} <= fields
     text = rp.report(base, changed, golden_path=None, s234_path="x.json")
     assert "| s234 | later | 1 | 0 | 0 | 0 | 1 | 0 |" in text
+
+
+def test_dash_fixed_mode_reaches_past_the_em_dash():
+    # review round: a stored pre-AA-778 text holds on F2 em-dashes; the _dashfix mode replays it after fix_dashes
+    text = "Sod Camp sits opposite a mountain range — a quiet first night. " + fs.CLEAN
+    path_piece = {"id": "p1", "source": "s234", "channel": "facebook",
+                  "context": rp.context_from_writer_input(WRITER_INPUT, "facebook"),
+                  "output": {"content_text": text, "gate_ledger": F9, "flags": []}}
+    raw = rp.replay_one(path_piece, True)
+    fixed = rp.replay_one(path_piece, True, dash_fix=True)
+    assert raw["first_failure"] == qr.F2_BANNED_PATTERNS
+    assert fixed["first_failure"] != qr.F2_BANNED_PATTERNS
+    assert set(rp.MODES) == {"attempt1", "later", "attempt1_dashfix", "later_dashfix"}
+
+
+def test_diff_reports_what_the_sentence_repair_is_told():
+    row = {"id": "p1", "source": "s234", "mode": "attempt1", "passed": False, "status": "held",
+           "route": "repair", "plan_problems": ["F2_brand_forbidden | s | uses 'sitting'",
+                                                "F15_voice | s | stock phrase 'worth sitting with'"]}
+    head = {**row, "plan_problems": row["plan_problems"][:1]}
+    [d] = rp.diff({"rows": [row]}, {"rows": [head]})
+    assert d["field"] == "plan_problems" and d["base"] == row["plan_problems"][1:] and d["head"] == []
+    assert "plan_problems" in rp.report({"rows": [row]}, {"rows": [head]}, golden_path="g", s234_path=None)

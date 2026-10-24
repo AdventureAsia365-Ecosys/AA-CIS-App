@@ -1712,8 +1712,8 @@ results, LinkedIn 22 and the other channels 21 (AA-787 had 25 / 24 / 23; count t
 AA-924 — **per-finding severity and two merged entries.** The gates still run as their legacy source checks;
 the stored ledger folds F2_banned_patterns + F2_brand_forbidden + F15_voice's stock findings (STOCK_PATTERNS,
 template lines) into one **F2_lexicon** entry (at F2_banned_patterns' place; one finding per word and sentence,
-so a word on two lists is judged once), and F15_voice + F15_voice_warn into one **F15_voice** entry. A merged
-entry carries `findings: [{text, severity: block|warn, source}]` (source = the legacy gate, a retired name),
+so a word on two lists is judged once; a longer phrase around a shorter word is a second finding), and F15_voice +
+F15_voice_warn into one **F15_voice** entry. A merged entry carries `findings: [{text, severity: block|warn, source}]` (source = the legacy gate, a retired name),
 `severity` (the worst), and `parts` (one legacy record per source); `violations` and `blocking` (worst is block)
 stay for older readers. `quality_gates.expand_ledger` rebuilds the legacy entries and every routing step reads
 that view (first failure, hold, sentence-repair plan, waive, regression guard keyed by source), so routing is
