@@ -1057,6 +1057,15 @@ entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
   from the CRM contract `crm.ops.v1` `GET /crm/ops/v1/jobs/summary`, called with the signed-in staff member's own
   Cognito Bearer (the CRM's OPS route class accepts WORKFORCE `cis-admin` tokens only; a legacy session gets
   `cognito_session_required` and no call). Not cached (per person). The cost page has a `crm` row from the App tag.
+  The token comes from `platform_apps.relay_authorization(request)`: StaffBearerMiddleware drops the Authorization
+  header after verifying it and keeps the token in `scope["state"]["staff_access_token"]` (AA-941; never logged).
+- `/admin/platform/crm/*` (AA-941, CRM-13a S-01; GET `tenant.read`, writes `tenant.write`) —
+  `api/routers/admin_crm_console.py` + `api/services/crm_console.py`: the partner CRM's AA L1 console (agency list and
+  meters, create agency, lock / unlock, first-owner invite, allowed features, insights opt-out, AA-raised data
+  requests, owner recovery, member disable, failed-job retry). A relay only: each route mirrors one `crm.ops.v1` route
+  with the staff member's own Cognito token, inside a path allow-list (`ALLOWED`); the CRM's status and body pass
+  through (it decides crm-platform-admin writes and filters L1 keys); bodies are never logged (the owner invite
+  carries an e-mail). Page `/admin/platform/agencies` (nav Platform › Tenants › Agencies (CRM)).
   **One health definition (S243):** a card's `status` is `overall.status` from `api/services/app_health.py`
   `overall_status(probe, traffic)` — the worst known signal of the app's own check (`probe`; none for TripPlanner) and
   its CloudWatch traffic of the last 24 h (`traffic_section`, the AA-858 health section and its Redis key, shared by

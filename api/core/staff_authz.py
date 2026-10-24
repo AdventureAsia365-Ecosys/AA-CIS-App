@@ -338,6 +338,27 @@ POLICY: dict[tuple[str, str], str] = {
     ("GET", "/admin/platform/audit"): AUDIT_READ,
     ("GET", "/admin/platform/audit/verify"): AUDIT_READ,
     ("GET", "/admin/platform/cost"): SPEND_READ,
+    # ── admin_crm_console (AA-941, CRM-13a S-01) — the partner CRM's L1 console, relayed with the staff member's own
+    # Cognito token; the CRM re-checks its own groups (cis-admin / crm-platform-admin read, crm-platform-admin writes).
+    ("GET", "/admin/platform/crm/console"): TENANT_READ,
+    ("GET", "/admin/platform/crm/agencies"): TENANT_READ,
+    ("POST", "/admin/platform/crm/agencies"): TENANT_WRITE,
+    ("GET", "/admin/platform/crm/agencies/{tenant_id}"): TENANT_READ,
+    ("GET", "/admin/platform/crm/agencies/{tenant_id}/usage"): TENANT_READ,
+    ("GET", "/admin/platform/crm/agencies/{tenant_id}/entitlements"): TENANT_READ,
+    ("GET", "/admin/platform/crm/agencies/{tenant_id}/data-requests"): TENANT_READ,
+    ("GET", "/admin/platform/crm/agencies/{tenant_id}/members"): TENANT_READ,
+    ("GET", "/admin/platform/crm/agencies/{tenant_id}/jobs"): TENANT_READ,
+    ("POST", "/admin/platform/crm/agencies/{tenant_id}/lock"): TENANT_WRITE,
+    ("POST", "/admin/platform/crm/agencies/{tenant_id}/unlock"): TENANT_WRITE,
+    ("POST", "/admin/platform/crm/agencies/{tenant_id}/owner-invite"): TENANT_WRITE,
+    ("POST", "/admin/platform/crm/agencies/{tenant_id}/data-requests"): TENANT_WRITE,
+    ("POST", "/admin/platform/crm/agencies/{tenant_id}/owner-recovery"): TENANT_WRITE,
+    ("POST", "/admin/platform/crm/agencies/{tenant_id}/owner-recovery/{request_id}/complete"): TENANT_WRITE,
+    ("POST", "/admin/platform/crm/agencies/{tenant_id}/members/{member_id}/deactivate"): TENANT_WRITE,
+    ("PUT", "/admin/platform/crm/agencies/{tenant_id}/entitlements-allowed"): TENANT_WRITE,
+    ("PUT", "/admin/platform/crm/agencies/{tenant_id}/insights-opt-out"): TENANT_WRITE,
+    ("POST", "/admin/platform/crm/agencies/{tenant_id}/jobs/{job_id}/retry"): TENANT_WRITE,
 
     # ── admin_alert_recipients (AA-913) — Platform › Alert recipients. Reads ops.read (admin); changes alerts.write
     # (admin) and, in the router, a Cognito session for add / remove / resend / test (not for the status refresh).

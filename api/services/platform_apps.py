@@ -180,6 +180,21 @@ async def _crm_card(client: Optional[httpx.AsyncClient] = None) -> dict:
     return await _http_health_card("crm", client)
 
 
+def relay_authorization(request: Any) -> Optional[str]:
+    """AA-941 — the ``Authorization`` value to relay to crm.ops.v1: the staff member's own verified Cognito access
+    token. StaffBearerMiddleware drops the request's Authorization header once it has verified it (so the routes'
+    own guards see a plain staff request) and keeps the token in ``scope["state"]["staff_access_token"]``; a request
+    it did not verify (legacy session, secret only) falls back to the header, which ``_cognito_bearer`` then refuses
+    when it is not a Cognito token."""
+    from api.middleware.staff_bearer import STAFF_ACCESS_TOKEN
+
+    state = request.scope.get("state")
+    token = state.get(STAFF_ACCESS_TOKEN) if isinstance(state, dict) else None
+    if isinstance(token, str) and token:
+        return f"Bearer {token}"
+    return request.headers.get("authorization")
+
+
 def _cognito_bearer(authorization: Optional[str]) -> Optional[str]:
     """The request's Bearer when it is a Cognito access token (has ``iss``); the legacy HS256 admin JWT has none and
     the CRM would refuse it. The signature is not checked here: the CRM verifies it (route class OPS)."""
