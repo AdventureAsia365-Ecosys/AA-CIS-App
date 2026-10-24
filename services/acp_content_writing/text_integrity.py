@@ -22,7 +22,7 @@ import re
 from typing import Optional
 
 from services.acp_content_writing.hygiene import (
-    CTA_WINDOW, _FAQ_HEADING_RE, _HASHTAG_LINE_RE, _HEADING_RE, _cta_brand_word, _is_cta_invite, _safe_to_delete,
+    CTA_WINDOW, _FAQ_HEADING_RE, _HEADING_RE, _cta_brand_word, _is_cta_invite, _safe_to_delete,
     brand_words, cta_norm, dedupe, has_cta_literal, sentence_spans, tidy_after_cut,
 )
 from services.acp_shared.citation_tags import strip_citation_tags
@@ -71,7 +71,7 @@ def _body_prose(text: str) -> list[dict]:
     end = _body_end(text)
     return [s for s in sentence_spans(text or "")
             if s["end"] <= end and not s["in_faq"] and s["kind"] in ("prose", "bullet")
-            and not _HASHTAG_LINE_RE.fullmatch(s["clean"] or "-")]
+            and not _is_hashtag_line(s["clean"] or "-")]
 
 
 def _literal_groups(spans: list[dict], want: str) -> list[dict]:
@@ -284,11 +284,82 @@ _CONTINUATION_OPENERS = frozenset({
     "although", "though", "unless", "until", "than", "that", "so",
 })
 _TERMINAL_TAIL_RE = re.compile(r"[.!?…:;][\"'”’)*\]]*$")
-_LAST_WORD_RE = re.compile(r"([A-Za-zÀ-ÖØ-öø-ÿ']+)\W*$")
 _FIRST_WORD_RE = re.compile(r"^[\W_]*([A-Za-zÀ-ÖØ-öø-ÿ']+)")
 _SMALL_WORDS = frozenset({"a", "an", "the", "and", "or", "of", "in", "on", "at", "to", "for", "with", "by", "from"})
 # A last token that is a link or an address: 'https://trailpulse.travel/laos', 'www.x.com', 'hello@wild.travel'.
-_LINK_TAIL_RE = re.compile(r"(?:\S*://\S+|www\.\S+|\S+@\S+\.\w+|\S+\.(?:com|travel|net|org|io|co|asia)\S*)$", re.I)
+# CodeQL py/polynomial-redos (PR #992): the old single regex searched for a '$'-anchored suffix with leading \S*
+# / \S+ runs, O(n^2) on a long token ('!!!…', '://://…'). `_is_link_token` checks the same language with one
+# scan per alternative; the old pattern is pinned in tests/unit/test_aa912_codeql.py.
+_WWW_RE = re.compile(r"www\.", re.I)
+_LINK_TLD_RE = re.compile(r"\.(?:com|travel|net|org|io|co|asia)", re.I)
+_WORD_CHARS_RE = re.compile(r"\w+")
+# The word-character class of the last-word rule: ASCII letters, Latin-1 letters (no × ÷) and the apostrophe.
+_WORD_CLASS_RE = re.compile(r"[A-Za-zÀ-ÖØ-öø-ÿ']")
+_HASHTAG_BODY = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")
+
+
+def _is_link_token(token: str) -> bool:
+    r"""True when the whitespace-free `token` ends in a link or an address — the language of the old
+    (?:\S*://\S+|www\.\S+|\S+@\S+\.\w+|\S+\.(?:com|travel|net|org|io|co|asia)\S*)$ (re.I) searched in it, in
+    linear time. The token has no whitespace, so every \S run is just "any characters"."""
+    n = len(token)
+    i = token.find("://")  # \S*://\S+$ — the first '://' leaves the most characters after it
+    if i != -1 and i + 3 < n:
+        return True
+    m = _WWW_RE.search(token)  # www\.\S+$
+    if m and m.end() < n:
+        return True
+    d = token.rfind(".")  # \S+@\S+\.\w+$ — only the last '.' can be followed by word characters to the end
+    if d != -1 and _WORD_CHARS_RE.fullmatch(token, d + 1) and token.find("@", 1, d - 1) != -1:
+        return True
+    return _LINK_TLD_RE.search(token, 1) is not None  # \S+\.(?:tld)\S*$ — a '.tld' after the first character
+
+
+def _last_word(clean: str) -> Optional[str]:
+    r"""The last word of `clean` the way the old ([A-Za-zÀ-ÖØ-öø-ÿ']+)\W*$ search found it, in linear time (CodeQL
+    py/polynomial-redos, PR #992: the search was O(n^2) on a long run of word letters or apostrophes): the
+    leftmost run of word-class characters that only non-word characters (\W) follow. Scans from the end."""
+    n = len(clean)
+    r = n  # start of the trailing \W run
+    while r > 0 and not (clean[r - 1].isalnum() or clean[r - 1] == "_"):
+        r -= 1
+    if r > 0 and _WORD_CLASS_RE.match(clean[r - 1]):
+        p = r - 1
+        while p > 0 and _WORD_CLASS_RE.match(clean[p - 1]):
+            p -= 1
+        q = r  # the greedy run goes on through apostrophes in the \W tail
+    else:
+        p = clean.find("'", r)  # no word-class run reaches the tail: an apostrophe inside the tail is the word
+        if p == -1:
+            return None
+        q = p
+    while q < n and clean[q] == "'":
+        q += 1
+    return clean[p:q]
+
+
+def _is_hashtag_line(line: str) -> bool:
+    r"""`hygiene._HASHTAG_LINE_RE.fullmatch(line)` — (?:#[A-Za-z][A-Za-z0-9]+[\s,]*)+ — as one left-to-right scan
+    (CodeQL py/polynomial-redos, PR #992: the regex was flagged on long runs of '\t'). The parse is
+    deterministic: each tag is '#', an ASCII letter, 1+ ASCII letters or digits, then any whitespace or commas."""
+    n, i = len(line), 0
+    if n == 0:
+        return False
+    while i < n:
+        if line[i] != "#":
+            return False
+        i += 1
+        if i >= n or not ("A" <= line[i] <= "Z" or "a" <= line[i] <= "z"):
+            return False
+        i += 1
+        start = i
+        while i < n and line[i] in _HASHTAG_BODY:
+            i += 1
+        if i == start:
+            return False
+        while i < n and (line[i].isspace() or line[i] == ","):
+            i += 1
+    return True
 
 
 def _ends_open(clean: str) -> bool:
@@ -298,7 +369,7 @@ def _ends_open(clean: str) -> bool:
     clean = clean.rstrip()
     if not clean or _TERMINAL_TAIL_RE.search(clean) or not clean[-1].isalnum():
         return False
-    return _LINK_TAIL_RE.search(clean.split()[-1]) is None
+    return not _is_link_token(clean.split()[-1])
 
 
 def _prose_paragraph(para: str, cta: Optional[str]) -> Optional[str]:
@@ -310,7 +381,7 @@ def _prose_paragraph(para: str, cta: Optional[str]) -> Optional[str]:
         return None
     first, last = lines[0], lines[-1]
     if (_HEADING_RE.match(first) or _HEADING_RE.match(last) or _LIST_LINE_RE.match(last + " ")
-            or _HASHTAG_LINE_RE.fullmatch(last) or last.startswith(("**Q:", "A:", "Q:"))
+            or _is_hashtag_line(last) or last.startswith(("**Q:", "A:", "Q:"))
             or (last.startswith("**") and last.endswith("**"))):
         return None
     clean = " ".join(_drop_tags(" ".join(lines)).split())
@@ -336,7 +407,7 @@ def split_paragraphs(text: Optional[str], cta: Optional[str] = None) -> list[dic
             continue
         b_lines = [ln.strip() for ln in nxt.strip().splitlines() if ln.strip()]
         if not b_lines or _HEADING_RE.match(b_lines[0]) or _LIST_LINE_RE.match(b_lines[0] + " ") \
-                or _HASHTAG_LINE_RE.fullmatch(b_lines[0]) or b_lines[0].startswith(("**", "A:", "Q:")):
+                or _is_hashtag_line(b_lines[0]) or b_lines[0].startswith(("**", "A:", "Q:")):
             continue
         b = " ".join(_drop_tags(" ".join(b_lines)).split())
         m = _FIRST_WORD_RE.match(b)
@@ -383,10 +454,9 @@ def dangling_tails(text: Optional[str]) -> list[dict]:
     for s in sentence_spans(text or ""):
         if s["kind"] not in ("prose", "bullet", "faq_a"):
             continue
-        m = _LAST_WORD_RE.search(s["clean"])
-        if not m or len(s["clean"].split()) < 3:
+        word = _last_word(s["clean"])
+        if not word or len(s["clean"].split()) < 3:
             continue
-        word = m.group(1)
         if word.islower() and word in _TAIL_WORDS:
             out.append({"text": s["clean"], "why": f"ends mid-clause on '{word}'", "kind": "dangling_tail",
                         "span": None})
