@@ -10,9 +10,10 @@ tracking and every route below see the verified identity, never the client's.
   ``x-admin-user-id`` (``admin_users.id``) are REWRITTEN from the verified principal and whatever the client sent
   under those names is dropped; the ``Authorization`` header is dropped too, so the routes' own guards (which read a
   Bearer as a tenant HS256 JWT) see a plain staff request. The identity is put in the
-  ``staff_identity.current_staff`` contextvar and ``scope["state"]["staff_identity"]``; one
-  ``staff_bearer_verified`` line is logged. Refused: 401 (bad token, unknown / inactive user), 403 (no ``cis-*``
-  group), 503 (verifier, JWKS or directory unavailable). The request never reaches the route.
+  ``staff_identity.current_staff`` contextvar and ``scope["state"]["staff_identity"]``; the verified token itself
+  goes to ``scope["state"]["staff_access_token"]`` (AA-941: the crm.ops.v1 relays send the staff member's own token
+  on; never logged); one ``staff_bearer_verified`` line is logged. Refused: 401 (bad token, unknown / inactive
+  user), 403 (no ``cis-*`` group), 503 (verifier, JWKS or directory unavailable). The request never reaches the route.
 - **Any other Bearer** (legacy HS256 staff or tenant JWT without ``iss``, a JWT from another issuer such as a
   future EXTERNAL ``cis-portal`` token or the CIS-minted Booking RS256 token, or not a JWT) and **no Bearer**:
   passed through untouched; the route's own guard decides (``/admin/brand-identity`` and ``/admin/atoms`` take
@@ -44,6 +45,8 @@ from api.core.staff_authz import STAFF_PATH_PREFIXES, _is_valid_secret, main_sec
 logger = structlog.get_logger()
 
 _DROPPED = frozenset({b"authorization", b"x-admin-role", b"x-admin-user-id"})
+# AA-941: scope["state"] key holding the verified Cognito access token (see __call__).
+STAFF_ACCESS_TOKEN = "staff_access_token"
 _ROLE = b"x-admin-role"
 
 
@@ -121,6 +124,10 @@ class StaffBearerMiddleware:
                     client_id=identity.client_id, method=method, path=path)
         state = dict(scope.get("state") or {})
         state["staff_identity"] = identity
+        # AA-941: the verified access token itself, for the routes that relay the staff member's own token to another
+        # app (crm.ops.v1: api/services/platform_apps.relay_authorization). The Authorization header is dropped
+        # below, so without this those relays never had a token (AA-936 jobs card). Never logged.
+        state[STAFF_ACCESS_TOKEN] = token
         inner = dict(scope, headers=_rewritten(headers, identity), state=state)
         reset = staff_identity.current_staff.set(identity)
         try:

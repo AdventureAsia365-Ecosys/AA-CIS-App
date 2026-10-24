@@ -53,6 +53,8 @@ SAMPLES = [
     ("admin_platform_ops", "GET", "/admin/platform/cost", None),
     ("admin_alert_recipients", "GET", "/admin/platform/alert-recipients", None),      # AA-913
     ("admin_alert_recipients", "POST", "/admin/platform/alert-recipients/refresh", None),
+    ("admin_crm_console", "GET", "/admin/platform/crm/agencies", None),      # AA-941
+    ("admin_crm_console", "POST", "/admin/platform/crm/agencies/{tenant_id}/lock", {"ticket_ref": "AA-941"}),
     ("admin_data_model", "GET", "/admin/data-model", None),      # AA-894
     ("v1_trip_page", "POST", "/admin/trip-pages/{tour_id}/publish", None),
     ("v1_pipeline", "POST", "/v1/pipeline/review-queue/{review_id}/approve", {}),
