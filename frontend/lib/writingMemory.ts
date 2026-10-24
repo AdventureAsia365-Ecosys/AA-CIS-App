@@ -14,7 +14,7 @@ export interface Summary {
   budget: { month_cap_usd: number; month_spent_usd: number; run_cap_usd: number; max_calls_per_run: number };
   mine_trigger: {
     auto_refused: string | null; runs_this_month: number; auto_runs_this_month: number; new_pass: number;
-    open_waves: number; last_run_at: string | null;
+    open_waves: number; last_run_at: string | null; auto_enabled?: boolean;
     thresholds: { min_new_pass: number; max_auto_runs_per_month: number; max_runs_per_month: number };
   };
   last_jobs: Record<string, { job_id: string; status: string; created_at: string | null; finished_at: string | null }>;

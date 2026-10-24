@@ -2113,8 +2113,11 @@ reviewers, or a gate failing on ≥ 5% of the last 30 days' A1 pieces; `services
 drafter call on stage `writing_memory_mine` (judge route, masked text only, ≤ 50 calls / ≤ $1 a run, ≤ $25 a
 calendar month over every writing-memory stage). The draft is linted (`lint.py`: only constrains, a lexicon
 replacement adds no specific, no 5-gram of tenant text or tenant brand in a platform rule, PREDICT: explains ≥ 2
-held-out edits) and stored `candidate` (or `rejected` by the lint) with its provenance. Automatic runs: ≥ 10 new
-pass signals since the last run, ≤ 2 a month, never during an open rerun wave; a manual run (admin) is the 3rd.
+held-out edits) and stored `candidate` (or `rejected` by the lint) with its provenance; a rejected draft is clamped
+to the 280 limits, stored redacted when it held tenant text, and not redrafted until new signals join its cluster.
+Automatic runs are off unless the worker sets `WRITING_MEMORY_AUTO_MINE`; when on: ≥ 10 new pass signals since the
+last run, ≤ 2 a month, never during an open rerun wave. A manual run (admin, after a confirm step) is the 3rd. A
+failed run that spent money counts as a run.
 Signals reach `pass` through the fact filter (`writing_signal_fact_filter`, `fact_filter.py`, $0, daily from the
 api ops sampler while signals are pending): an edit that adds a number, time, price or promise word the text and
 the source lack fails (quarantined), an added name is grey (admin confirms), a style edit passes. The backfill

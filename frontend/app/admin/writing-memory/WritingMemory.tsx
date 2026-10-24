@@ -8,8 +8,10 @@
 //               for the admin's pass / fail.
 //   Candidates  the rules the miner drafted: text, scope, support, lint result; a drawer with the provenance
 //               (every signal, with its source), edit (the lint runs again) and reject (with a reason).
-// Header actions queue a job: backfill, fact filter, or a manual mining run (the paid one, refused with its reason
-// when the trigger does not hold). Approval is not here: a rule reaches a writer only through a release (AA-919).
+// Header actions queue a job: backfill (or its dry run), fact filter, or a manual mining run (the paid one: a confirm
+// step shows the month's spend against the cap first; the API refuses it with its reason when the trigger does not
+// hold). Automatic runs are off unless the worker sets WRITING_MEMORY_AUTO_MINE. Approval is not here: a rule reaches a
+// writer only through a release (AA-919).
 //
 // API through the BFF (/api/admin/writing-memory/*; admin only: lib/rbac.ts PAGE_RULES, API_READ_RULES and
 // API_WRITE_RULES; backend tenant.read / ai.admin).
@@ -18,7 +20,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Play, RefreshCw } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
-  Badge, Button, DataTable, Drawer, ErrorState, K, PageHeader, StatusBadge, TableSkeleton, Tabs, apiGet,
+  Badge, Button, ConfirmModal, DataTable, Drawer, ErrorState, K, PageHeader, StatusBadge, TableSkeleton, Tabs, apiGet,
   formatDateTime, mono, useToast, type ColumnDef,
 } from "../../_kit";
 import {
@@ -61,7 +63,7 @@ function SummaryBar({ s }: { s: Summary }) {
         hint={`${Object.values(s.rules.rejected || {}).reduce((a, b) => a + b, 0)} rejected`} />
       <Stat label="Learning-loop spend this month" value={usd(s.budget.month_spent_usd)}
         hint={`cap ${usd(s.budget.month_cap_usd)} · ${usd(s.budget.run_cap_usd)} / run`} />
-      <Stat label="Next automatic run" value={t.auto_refused ? "waiting" : "due"}
+      <Stat label="Next automatic run" value={t.auto_enabled === false ? "off" : t.auto_refused ? "waiting" : "due"}
         hint={t.auto_refused ?? `${t.new_pass} new pass signals`} />
     </div>
   );
@@ -342,12 +344,15 @@ export default function WritingMemory() {
   const qc = useQueryClient();
   const [tab, setTab] = useState("signals");
   const [busy, setBusy] = useState<string | null>(null);
+  const [confirmMine, setConfirmMine] = useState(false);
   const summary = useQuery({ queryKey: ["wm", "summary"], queryFn: () => apiGet<Summary>(`${WM_API}/summary`) });
+  const budget = summary.data?.budget;
 
-  async function run(kind: "backfill" | "fact_filter" | "mine") {
+  async function run(kind: "backfill" | "fact_filter" | "mine", dryRun = false) {
     setBusy(kind);
-    const r = await wmSend<{ job_id: string }>("/run", "POST", { kind });
+    const r = await wmSend<{ job_id: string }>("/run", "POST", dryRun ? { kind, dry_run: true } : { kind });
     setBusy(null);
+    setConfirmMine(false);
     if (r.ok) toast.success(`Queued (job ${r.data.job_id.slice(0, 8)}); see Platform › Jobs`);
     else toast.error(r.message);
     qc.invalidateQueries({ queryKey: ["wm"] });
@@ -362,12 +367,24 @@ export default function WritingMemory() {
         actions={<>
           <Button variant="ghost" onClick={() => qc.invalidateQueries({ queryKey: ["wm"] })}>
             <RefreshCw size={14} /> Refresh</Button>
+          <Button variant="ghost" onClick={() => run("backfill", true)} disabled={!!busy}
+            title="Counts what the backfill would copy, per source and tenant; inserts nothing">
+            Backfill (dry run)</Button>
           <Button onClick={() => run("backfill")} disabled={!!busy}>Backfill signals</Button>
           <Button onClick={() => run("fact_filter")} disabled={!!busy}>Run fact filter</Button>
-          <Button variant="primary" onClick={() => run("mine")} disabled={!!busy}
+          <Button variant="primary" onClick={() => setConfirmMine(true)} disabled={!!busy}
             title="A paid run: at most 50 calls and $1, within the $25 month cap">
             <Play size={14} /> Mine rules</Button>
         </>} />
+      <ConfirmModal open={confirmMine} onClose={() => setConfirmMine(false)} onConfirm={() => run("mine")}
+        busy={busy === "mine"} title="Start a paid mining run?" confirmLabel="Mine rules"
+        body={<div style={{ fontSize: 13, lineHeight: 1.5 }}>
+          <p style={{ margin: "0 0 8px" }}>One run drafts a rule per cluster over threshold on the judge model: at most
+            {" "}{budget?.max_calls_per_run ?? 50} calls and {usd(budget?.run_cap_usd ?? 1)}.</p>
+          <p style={{ margin: 0 }}>Spent this month: <strong>{usd(budget?.month_spent_usd ?? 0)}</strong> of the
+            {" "}{usd(budget?.month_cap_usd ?? 25)} cap. A run is refused when the month is over the cap or 3 runs
+            already ran this month.</p>
+        </div>} />
       {summary.data && <SummaryBar s={summary.data} />}
       {summary.data?.last_jobs && (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14, fontSize: 12, color: K.muted }}>

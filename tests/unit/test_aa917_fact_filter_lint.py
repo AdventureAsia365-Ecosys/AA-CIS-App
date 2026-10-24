@@ -8,6 +8,7 @@ import pytest
 
 from services.writing_memory import fact_filter as ff
 from services.writing_memory import lint as L
+from services.writing_memory import rules as R
 from services.writing_memory.masking import contains_phrase, excerpt, mask, removed_phrases
 
 
@@ -109,11 +110,12 @@ def test_lexicon_replacement_may_add_no_specific():
 def test_five_gram_overlap_and_names():
     corpus = L.ngrams(mask("Our riverside lodge serves warm noodle soup at dawn every morning."))
     hit = L.five_gram_overlap(["Do not write serves warm noodle soup at dawn."], corpus, [])
-    assert not hit["ok"] and "noodle" in hit["detail"]
+    assert not hit["ok"] and hit["leak"] and "noodle" not in hit["detail"]      # the stored detail quotes nothing
     hashed = {hash(g) for g in corpus}                               # the miner keeps hashes
     assert not L.five_gram_overlap(["Do not write serves warm noodle soup at dawn."], hashed, [])["ok"]
     assert L.five_gram_overlap(["Cut stock openers from every post."], corpus, [])["ok"]
-    assert not L.five_gram_overlap(["Never call it mekong dreams travel."], set(), ["Mekong Dreams"])["ok"]
+    brand = L.five_gram_overlap(["Never call it mekong dreams travel."], set(), ["Mekong Dreams"])
+    assert not brand["ok"] and brand["leak"] and "mekong" not in brand["detail"].lower()
 
 
 def test_predict_needs_two_explained_held_out_edits():
@@ -134,3 +136,47 @@ def test_run_lint_shape_and_overall():
     bad = L.run_lint(kind="writer_instruction", rule_text=long_rule, replacement=None, match_phrases=["x"],
                      scope="platform", held_out=held, corpus_ngrams=set(), names=[])
     assert not bad["ok"] and not bad["shape"]["ok"] and not bad["predict"]["ok"]
+
+
+def test_shape_checks_the_store_sizes():
+    assert not L.shape("lexicon", "x", "y" * 201, ["x"])["ok"]
+    assert not L.shape("writer_instruction", "Cut " + "a" * 1000, None, ["x"])["ok"]
+    assert not L.shape("writer_instruction", "Cut it.", None, ["p" * 150] * 3)["ok"]      # 450 characters together
+    assert L.shape("writer_instruction", "Cut it.", None, ["p" * 100] * 3)["ok"]
+
+
+def test_run_lint_fails_closed_when_the_corpus_is_unavailable():
+    held = [{"before_text": "Truly breathtaking views.", "after_text": "Views."}] * 2
+    out = L.run_lint(kind="lexicon", rule_text="breathtaking", replacement=None, match_phrases=["breathtaking"],
+                     scope="platform", held_out=held, corpus_ngrams=set(), names=[], corpus_unavailable="corpus")
+    assert not out["ok"] and not out["five_gram_overlap"]["ok"] and not out["five_gram_overlap"].get("leak")
+    assert "unavailable" in out["five_gram_overlap"]["detail"]
+
+
+# ── fit_to_store: every draft fits CIS 280, a leaking one is stored redacted (S250 review) ─────────────────────────
+
+def test_fit_to_store_clamps_a_30_word_draft():
+    words = " ".join(f"w{i}" for i in range(30))
+    text, rep, phrases, lint = R.fit_to_store(kind="writer_instruction", rule_text=words, replacement="ignored",
+                                              match_phrases=["p" * 300, "q" * 300, "r"], lint={"ok": False})
+    assert len(text.split()) == 25 and rep is None and lint["clamped"]
+    assert sum(len(p) for p in phrases) <= 400 and len(phrases) == 2
+    summary = " ".join(["One."] * 8)
+    text, *_ = R.fit_to_store(kind="preference_summary", rule_text=summary, replacement=None, match_phrases=["x"],
+                              lint={})
+    assert text.count(".") == 5
+    text, rep, phrases, lint = R.fit_to_store(kind="lexicon", rule_text="  ", replacement="r" * 250,
+                                              match_phrases=["x"], lint={})
+    assert text == "[empty draft]" and len(rep) == 200
+
+
+def test_fit_to_store_redacts_a_draft_with_tenant_text():
+    lint = {"ok": False, "five_gram_overlap": {"ok": False, "detail": "shares 1 5-word run(s)", "leak": True},
+            "constraint_only": {"ok": False, "detail": "tells the writer to say something ('say warm noodle soup')"}}
+    text, rep, phrases, out = R.fit_to_store(kind="lexicon", rule_text="serves warm noodle soup at dawn",
+                                             replacement="soup", match_phrases=["warm noodle soup"], lint=lint)
+    assert (text, rep, phrases) == (R.REDACTED_TEXT, None, []) and out["redacted"]
+    assert "noodle" not in str(out)
+    ok_text = "Cut stock openers."
+    assert R.fit_to_store(kind="writer_instruction", rule_text=ok_text, replacement=None, match_phrases=["x"],
+                          lint={"ok": True})[:3] == (ok_text, None, ["x"])

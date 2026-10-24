@@ -11,6 +11,7 @@ approved rules past `expires_at`; an active rule only leaves through a release, 
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Iterable, Optional
 from uuid import UUID
 
@@ -20,6 +21,7 @@ from services.writing_memory.signals import PLATFORM_TENANT_ID, WRITERS
 KINDS = ("lexicon", "writer_instruction", "repair_hint", "preference_summary")
 STATUSES = ("candidate", "rejected", "approved", "active", "expired")
 OPEN_STATUSES = ("candidate", "approved", "active")
+MAX_SIGNAL_IDS = 500             # cardinality(signal_ids) <= 500 (CIS 280)
 
 _COLUMNS = """
     rule_id::text AS rule_id, kind, scope, tenant_id::text AS tenant_id, writer, applies_to, reason_code, gate_class,
@@ -55,6 +57,64 @@ def owner_filter(tenant_id) -> tuple[str, Optional[str]]:
     return ("platform", None) if t is None or t == PLATFORM_TENANT_ID else ("tenant", t)
 
 
+REDACTED_TEXT = "[redacted: the draft shared text with a tenant's text or named a tenant brand]"
+# lint details that quote the rule's own text (a redacted row keeps only their ok flag)
+_QUOTING_CHECKS = ("constraint_only", "lexicon_specifics")
+
+
+def _clamp_words(text: str, max_words: int) -> str:
+    words = text.split()
+    return " ".join(words[:max_words]) if len(words) > max_words else text
+
+
+def _clamp_sentences(text: str, max_sentences: int) -> str:
+    """Drop the sentence marks after the max-th run of [.!?] (the CIS 280 count), keeping the words."""
+    seen = 0
+
+    def keep(m):
+        nonlocal seen
+        seen += 1
+        return m.group(0) if seen <= max_sentences else ""
+    return re.sub(r"[.!?]+", keep, text)
+
+
+def fit_to_store(*, kind: str, rule_text: str, replacement: Optional[str], match_phrases: Iterable[str],
+                 lint: dict) -> tuple[str, Optional[str], list[str], dict]:
+    """(rule_text, replacement, match_phrases, lint) as CIS 280 accepts them for any status.
+
+    A draft whose overlap lint found tenant text (`leak`) is stored redacted: no text, no phrases, and the quoting
+    lint details dropped, so a platform row never holds tenant text (ADR 0010 decision 10). Any other draft is
+    clamped to the store limits (25 words / 1000 characters; a summary 125 words and 5 sentences; replacement 200
+    characters and lexicon only; 5 phrases, 400 characters together); a passing lint already keeps them, so only a
+    lint-rejected draft is ever cut (`lint.clamped`)."""
+    lint = dict(lint or {})
+    overlap = lint.get("five_gram_overlap")
+    if isinstance(overlap, dict) and overlap.get("leak"):
+        for k in _QUOTING_CHECKS:
+            if isinstance(lint.get(k), dict):
+                lint[k] = {"ok": bool(lint[k].get("ok")), "detail": "redacted"}
+        lint["redacted"] = True
+        return REDACTED_TEXT, None, [], lint
+    text = (rule_text or "").strip() or "[empty draft]"
+    if kind == "preference_summary":
+        text = _clamp_sentences(_clamp_words(text, cfg.SUMMARY_MAX_WORDS), cfg.SUMMARY_MAX_SENTENCES)
+    else:
+        text = _clamp_words(text, cfg.RULE_MAX_WORDS)
+    text = text[: cfg.RULE_MAX_CHARS].strip() or "[empty draft]"
+    rep = (replacement or None) if kind == "lexicon" else None
+    rep = rep[: cfg.REPLACEMENT_MAX_CHARS] if rep else rep
+    phrases, used = [], 0
+    for p in list(match_phrases or [])[: cfg.MAX_MATCH_PHRASES]:
+        p = (p or "")[: cfg.MATCH_PHRASES_MAX_CHARS - used]
+        if not p:
+            break
+        phrases.append(p)
+        used += len(p)
+    if (text, rep, phrases) != ((rule_text or "").strip(), replacement or None, list(match_phrases or [])):
+        lint["clamped"] = True
+    return text, rep, phrases, lint
+
+
 async def insert_candidate(conn, *, kind: str, scope: str, tenant_id, writer: str, cluster_key: str, rule_text: str,
                            replacement: Optional[str] = None, match_phrases: Iterable[str] = (),
                            applies_to: Iterable[str] = (), reason_code: Optional[str] = None,
@@ -62,8 +122,9 @@ async def insert_candidate(conn, *, kind: str, scope: str, tenant_id, writer: st
                            support: Optional[dict] = None, lint: Optional[dict] = None,
                            drafted_by: Optional[str] = None, mine_job_id=None) -> Optional[str]:
     """INSERT one drafted rule. A rule whose lint failed is stored `rejected` (rejected_by 'lint'), so the admin sees
-    it and the cluster may be drafted again next run; a passing one is a `candidate`. Returns the id, or None when the
-    cluster already has an open rule."""
+    it and the cluster is drafted again only when new signals join it; a passing one is a `candidate`. The text goes
+    through `fit_to_store` (redacted on a tenant-text leak, else clamped to the CIS 280 limits). Returns the id, or None
+    when the cluster already has an open rule."""
     if kind not in KINDS or writer not in WRITERS:
         raise ValueError(f"writing rule: kind {kind!r} / writer {writer!r}")
     if (scope == "platform") != (tenant_id is None):
@@ -71,11 +132,13 @@ async def insert_candidate(conn, *, kind: str, scope: str, tenant_id, writer: st
     lint = lint or {}
     ok = bool(lint.get("ok"))
     failed = [k for k, v in lint.items() if isinstance(v, dict) and not v.get("ok")]
+    rule_text, replacement, phrases, lint = fit_to_store(kind=kind, rule_text=rule_text, replacement=replacement,
+                                                         match_phrases=match_phrases, lint=lint)
     s = support or {}
     return await conn.fetchval(
         _INSERT_SQL, kind, scope, _uuid(tenant_id), writer, list(applies_to)[:8], reason_code,
         (gate_class or None) and gate_class[:128], cluster_key[:200], rule_text, replacement,
-        list(match_phrases)[: cfg.MAX_MATCH_PHRASES], "candidate" if ok else "rejected", list(signal_ids)[:500],
+        phrases, "candidate" if ok else "rejected", list(signal_ids)[:MAX_SIGNAL_IDS],
         int(s.get("signals", 0)), int(s.get("pieces", 0)), int(s.get("tenants", 0)), int(s.get("reviewers", 0)),
         json.dumps(lint, default=str), drafted_by, _uuid(mine_job_id), None if ok else "lint",
         None if ok else ("lint: " + ", ".join(failed))[:500], cfg.RULE_TTL_DAYS)
@@ -86,6 +149,18 @@ async def open_cluster_keys(conn) -> set[tuple[str, str, Optional[str], str]]:
     rows = await conn.fetch("SELECT writer, scope, tenant_id::text AS tenant_id, cluster_key FROM shared.writing_rule "
                             "WHERE status = ANY($1::text[])", list(OPEN_STATUSES))
     return {(r["writer"], r["scope"], r["tenant_id"], r["cluster_key"]) for r in rows}
+
+
+async def lint_rejected_signal_sets(conn) -> dict[tuple[str, str, Optional[str], str], frozenset]:
+    """(writer, scope, tenant_id, cluster_key) -> the signal ids of the newest lint-rejected rule of that cluster: the
+    miner does not pay to redraft a cluster whose evidence has not changed since its draft failed the lint."""
+    rows = await conn.fetch(
+        "SELECT DISTINCT ON (writer, scope, tenant_id, cluster_key) writer, scope, tenant_id::text AS tenant_id, "
+        "cluster_key, signal_ids::text[] AS signal_ids FROM shared.writing_rule "
+        "WHERE status = 'rejected' AND rejected_by = 'lint' "
+        "ORDER BY writer, scope, tenant_id, cluster_key, created_at DESC")
+    return {(r["writer"], r["scope"], r["tenant_id"], r["cluster_key"]): frozenset(r["signal_ids"] or [])
+            for r in rows}
 
 
 async def rules_for(conn, writer: str, tenant_id, statuses: Iterable[str] = ("active",)) -> list[dict]:
@@ -125,9 +200,14 @@ async def get_rule(conn, rule_id: str) -> Optional[dict]:
 
 
 async def edit_candidate(conn, rule_id: str, *, rule_text: str, replacement: Optional[str],
-                         match_phrases: list[str], lint: dict, actor: str) -> Optional[dict]:
-    """Replace the text of a candidate (the admin's edit) with its new lint result; a failing lint rejects it."""
+                         match_phrases: list[str], lint: dict, actor: str,
+                         kind: str) -> Optional[dict]:
+    """Replace the text of a candidate (the admin's edit) with its new lint result; a failing lint rejects it. The
+    router refuses a leaking or oversized edit before this; `fit_to_store` is the backstop. `kind` is the row's."""
     ok = bool(lint.get("ok"))
+    rule_text, replacement, match_phrases, lint = fit_to_store(kind=kind, rule_text=rule_text,
+                                                               replacement=replacement, match_phrases=match_phrases,
+                                                               lint=lint)
     row = await conn.fetchrow(
         f"""UPDATE shared.writing_rule
                SET rule_text = $2, replacement = $3, match_phrases = $4::text[], lint = $5::jsonb,
@@ -169,5 +249,6 @@ def serialise(rule: dict) -> dict[str, Any]:
     return out
 
 
-__all__ = ["KINDS", "OPEN_STATUSES", "STATUSES", "edit_candidate", "expire_stale", "get_rule", "insert_candidate",
-           "list_rules", "open_cluster_keys", "owner_filter", "reject", "rules_for", "serialise"]
+__all__ = ["KINDS", "MAX_SIGNAL_IDS", "OPEN_STATUSES", "REDACTED_TEXT", "STATUSES", "edit_candidate", "expire_stale",
+           "fit_to_store", "get_rule", "insert_candidate", "lint_rejected_signal_sets", "list_rules",
+           "open_cluster_keys", "owner_filter", "reject", "rules_for", "serialise"]

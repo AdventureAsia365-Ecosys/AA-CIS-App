@@ -9,6 +9,10 @@ replayed by conftest). The drafter (the only paid call) is replaced by a stub; n
     lint failure is stored rejected; reject / expire;
   * WM-12: a run over 3 tenant edits stores one candidate with its provenance and support; a second run skips the open
     cluster; a month over the $25 cap makes no call; the trigger counts succeeded runs and new pass signals.
+  * S250 review round: a 30-word draft is stored rejected inside the CIS 280 limits (the paid run never crashes) and
+    is not redrafted while its evidence is unchanged; a failed run that spent money counts against the monthly
+    limits; the automatic trigger is off unless WRITING_MEMORY_AUTO_MINE is set; a platform draft that copies tenant
+    text is stored redacted, and an admin edit into tenant text is refused without a write.
 Each test runs in one transaction that is rolled back.
 """
 import json
@@ -255,7 +259,8 @@ async def test_mine_run_makes_no_call_over_the_month_cap(conn):
 
 
 @pytest.mark.asyncio
-async def test_run_gate_counts_runs_and_new_pass_signals(conn):
+async def test_run_gate_counts_runs_and_new_pass_signals(conn, monkeypatch):
+    monkeypatch.setenv("WRITING_MEMORY_AUTO_MINE", "true")
     await conn.execute("DELETE FROM shared.job WHERE kind = 'writing_memory_mine'")
     t = str(uuid.uuid4())
     for i in range(10):
@@ -269,6 +274,103 @@ async def test_run_gate_counts_runs_and_new_pass_signals(conn):
     refusal, facts = await mining.run_gate(conn, "auto")
     assert facts["runs_this_month"] == 2 and "automatic runs" in refusal
     assert (await mining.run_gate(conn, "manual"))[0] is None
+
+
+def _long_draft(**kw):
+    words = " ".join(f"word{i}" for i in range(30))
+    return drafter.Draft(kind="writer_instruction", rule_text=f"Cut {words}", replacement=None,
+                         match_phrases=["breathtaking"], model="stub", cost_usd=0.001)
+
+
+@pytest.mark.asyncio
+async def test_over_long_draft_is_stored_rejected_and_not_redrafted(conn):
+    t = str(uuid.uuid4())
+    for i in range(4):
+        await _signal(conn, tenant=t, piece=f"p{i}", before=f"Trip {i} has truly breathtaking views.",
+                      after=f"Trip {i} has views.")
+    pool = _OneConnPool(conn)
+    with patch.object(drafter, "draft_rule", AsyncMock(side_effect=lambda pool, **kw: _long_draft())) as draft:
+        out = await mining.run_mine(pool, None, trigger="manual")
+    assert draft.await_count >= 1 and out["store_refused"] == 0 and out["lint_rejected"] == draft.await_count
+    rows = await conn.fetch("SELECT status, rejected_by, rule_text, lint FROM shared.writing_rule")
+    assert rows and all(r["status"] == "rejected" and r["rejected_by"] == "lint" for r in rows)
+    assert all(len(r["rule_text"].split()) <= 25 and json.loads(r["lint"])["clamped"] for r in rows)
+    with patch.object(drafter, "draft_rule", AsyncMock(side_effect=lambda pool, **kw: _long_draft())) as draft:
+        again = await mining.run_mine(pool, None, trigger="manual")
+    draft.assert_not_awaited()                                  # same evidence: no paid redraft
+    assert again["skipped_lint_same"] == len(rows)
+    await _signal(conn, tenant=t, piece="p9", before="Trip 9 has truly breathtaking views.", after="Trip 9 has views.")
+    with patch.object(drafter, "draft_rule", AsyncMock(side_effect=lambda pool, **kw: _long_draft())) as draft:
+        await mining.run_mine(pool, None, trigger="manual")
+    assert draft.await_count >= 1                               # a new signal joined: drafted again
+
+
+async def _mine_job(c, *, status, trigger="auto", cost=0.0, calls=None, result=None):
+    await c.execute("INSERT INTO shared.job (kind, payload, status, result, cost_usd, progress, finished_at) VALUES "
+                    "('writing_memory_mine', $1::jsonb, $2, $3::jsonb, $4, $5::jsonb, now())",
+                    json.dumps({"trigger": trigger}), status, json.dumps(result) if result is not None else None,
+                    cost, json.dumps({"calls": calls} if calls is not None else {}))
+
+
+@pytest.mark.asyncio
+async def test_failed_paid_runs_count_and_the_auto_switch(conn, monkeypatch):
+    await conn.execute("DELETE FROM shared.job WHERE kind = 'writing_memory_mine'")
+    t = str(uuid.uuid4())
+    for i in range(12):
+        await _signal(conn, tenant=t, piece=f"p{i}")
+    monkeypatch.delenv("WRITING_MEMORY_AUTO_MINE", raising=False)
+    refusal, facts = await mining.run_gate(conn, "auto")
+    assert "off" in refusal and facts["auto_enabled"] is False
+    assert (await mining.run_gate(conn, "manual"))[0] is None
+    monkeypatch.setenv("WRITING_MEMORY_AUTO_MINE", "true")
+    await _mine_job(conn, status="failed", cost=0.0)                         # crashed before any call: not a run
+    refusal, facts = await mining.run_gate(conn, "auto")
+    assert refusal is None and facts["runs_this_month"] == 0
+    await _mine_job(conn, status="failed", cost=0.4, calls=3)                # crashed after paid calls: a run
+    await _mine_job(conn, status="failed", calls=2)                          # calls made, cost not saved: a run
+    refusal, facts = await mining.run_gate(conn, "auto")
+    assert facts["runs_this_month"] == 2 and facts["auto_runs_this_month"] == 2 and "automatic runs" in refusal
+    me = await conn.fetchval("INSERT INTO shared.job (kind, payload, status, locked_by, locked_until) VALUES "
+                             "('writing_memory_mine', '{\"trigger\": \"manual\"}'::jsonb, 'running', 'w', "
+                             "now() + interval '5 minutes') RETURNING id::text")
+    assert (await mining.run_gate(conn, "manual", exclude_job_id=me))[1]["runs_this_month"] == 2
+    assert (await mining.run_gate(conn, "manual"))[1]["runs_this_month"] == 3     # seen by any other caller
+
+
+def _leaky_draft(**kw):
+    return drafter.Draft(kind="writer_instruction", rule_text="Do not write serves warm noodle soup at dawn.",
+                         replacement=None, match_phrases=["warm noodle soup"], model="stub", cost_usd=0.001)
+
+
+@pytest.mark.asyncio
+async def test_platform_draft_with_tenant_text_is_stored_redacted(conn):
+    from fastapi import HTTPException
+
+    from api.routers import admin_writing_memory as r
+    for i in range(3):                                          # 3 tenants: a platform cluster from tenant evidence
+        await _signal(conn, tenant=str(uuid.uuid4()), piece=f"p{i}",
+                      before=f"Lodge {i} truly serves warm noodle soup at dawn.",
+                      after=f"Lodge {i} serves warm noodle soup at dawn.")
+    with patch.object(drafter, "draft_rule", AsyncMock(side_effect=lambda pool, **kw: _leaky_draft())) as draft:
+        out = await mining.run_mine(_OneConnPool(conn), None, trigger="manual")
+    assert draft.await_count >= 1 and out["redacted"] >= 1 and out["store_refused"] == 0
+    rows = await conn.fetch("SELECT scope, status, rule_text, replacement, match_phrases, lint::text AS lint "
+                            "FROM shared.writing_rule WHERE scope = 'platform'")
+    assert rows and all(r_["status"] == "rejected" and r_["rule_text"] == rules_mod.REDACTED_TEXT
+                        and r_["match_phrases"] == [] and r_["replacement"] is None for r_ in rows)
+    assert not any("noodle" in (r_["lint"] + r_["rule_text"]).lower() for r_ in rows)
+
+    # an admin edit of a platform candidate into tenant text is refused and writes nothing
+    rid = await rules_mod.insert_candidate(conn, kind="writer_instruction", scope="platform", tenant_id=None,
+                                           writer="t9_blog", cluster_key="t9_blog|reason:edit-probe",
+                                           rule_text="Cut stock openers.", match_phrases=["truly"], lint={"ok": True})
+    body = r.CandidateEdit(rule_text="Never write serves warm noodle soup at dawn.", match_phrases=["truly"])
+    with pytest.raises(HTTPException) as e:
+        await r.edit_candidate(rid, body, _request(conn), x_admin_user_id="7")
+    assert e.value.status_code == 422 and e.value.detail["code"] == "tenant_text"
+    assert "noodle" not in e.value.detail["detail"]
+    kept = await rules_mod.get_rule(conn, rid)
+    assert kept["status"] == "candidate" and kept["rule_text"] == "Cut stock openers."
 
 
 # ── WM-14 the admin API (route functions on the real DB; the policy is checked by the AA-882 route test) ────────────

@@ -15,7 +15,9 @@
   GET   /admin/writing-memory/candidates?status=&writer=&scope=&tenant_id=&limit=&offset=   the rules
   GET   /admin/writing-memory/candidates/{rule_id}    one rule with its provenance (the signals, with their source)
   PATCH /admin/writing-memory/candidates/{rule_id}    edit a candidate {rule_text, replacement, match_phrases}: the
-                                                      lint runs again (a failing edit rejects it)
+                                                      lint runs again (a failing edit rejects it; an edit with tenant
+                                                      text, a tenant brand or over the size rules is a 422 and
+                                                      nothing is written)
   POST  /admin/writing-memory/candidates/{rule_id}/reject   {reason}
   POST  /admin/writing-memory/run                     {kind: backfill | fact_filter | mine, dry_run?}: queue a job
                                                       (mine = a manual run: the paid one, under its caps)
@@ -322,16 +324,26 @@ async def edit_candidate(rule_id: str, body: CandidateEdit, request: Request,
                 raise HTTPException(status_code=409, detail={"detail": f"A {rule['status']} rule cannot be edited",
                                                              "code": "not_candidate"})
             sigs = [dict(r) for r in await conn.fetch(_PROVENANCE_SQL, rule["signal_ids"] or [])]
-            grams, names = await mining._corpora(conn)
+            grams, names, missing = await mining._corpora(conn)
             cluster = mining.Cluster(rule["writer"], rule["scope"], rule["tenant_id"], rule["cluster_key"], "edit")
             corpus, banned = mining.lint_context(cluster, set().union(*grams.values()) if grams else set(), names)
             lint = lint_mod.run_lint(kind=rule["kind"], rule_text=body.rule_text.strip(),
                                      replacement=(body.replacement or "").strip() or None, match_phrases=phrases,
-                                     scope=rule["scope"], held_out=sigs, corpus_ngrams=corpus, names=banned)
+                                     scope=rule["scope"], held_out=sigs, corpus_ngrams=corpus, names=banned,
+                                     corpus_unavailable=mining.corpus_gap(rule["scope"], missing))
+            # An edit that leaks tenant text (or another tenant's brand) or breaks the store's size rules is refused
+            # and nothing is written: the candidate keeps its text, and the stored lint never quotes tenant text.
+            if lint["five_gram_overlap"].get("leak"):
+                raise HTTPException(status_code=422, detail={
+                    "detail": f"The edit {lint['five_gram_overlap']['detail']}; rewrite it in general words",
+                    "code": "tenant_text"})
+            if not lint["shape"]["ok"]:
+                raise HTTPException(status_code=422, detail={"detail": f"The edit is too long: "
+                                                                       f"{lint['shape']['detail']}", "code": "shape"})
             lint["edited_by"] = actor
             row = await rules_mod.edit_candidate(conn, rid, rule_text=body.rule_text.strip(),
                                                  replacement=(body.replacement or "").strip() or None,
-                                                 match_phrases=phrases, lint=lint, actor=actor)
+                                                 match_phrases=phrases, lint=lint, actor=actor, kind=rule["kind"])
     except asyncpg.UndefinedTableError as e:
         raise _unavailable(e)
     except asyncpg.CheckViolationError as e:

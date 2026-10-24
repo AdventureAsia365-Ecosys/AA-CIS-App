@@ -12,7 +12,9 @@ Clusters (counted in code over the fetched pass signals, deterministic, unit-tes
              reviewers, or A1 system gate failures on >= 5% of the A1 pieces of the last 30 days (D9: A1 only).
   Tenant system signals (T9 attempts the job rewrote) are evidence for R0 (AA-918), not mined (D9 counts edits).
 A cluster with an open rule is skipped; one smaller than 3 signals cannot pass PREDICT (1 shown + 2 held out), so it
-waits without a paid call. At most 50 drafter calls per run, under the run ($1, spend_budget) and month ($25) caps.
+waits without a paid call; one whose last draft the lint rejected waits until new signals join it. At most 50 drafter
+calls per run, under the run ($1, spend_budget) and month ($25) caps. Every mine job that spent money counts as a run
+(a failed one too), and automatic runs are off unless WRITING_MEMORY_AUTO_MINE is set (config.auto_mine_enabled).
 """
 from __future__ import annotations
 
@@ -23,6 +25,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, Optional
 
+import asyncpg
 import structlog
 
 from services.quality import registry as qr
@@ -250,17 +253,20 @@ async def a1_piece_count(conn) -> int:
         return 0
 
 
-async def _corpora(conn) -> tuple[dict[str, set], dict[str, list[str]]]:
-    """(tenant -> masked 5-grams of its text, tenant -> brand names and forbidden words). Best-effort per query: a
-    table this DB lacks gives nothing for that part (and is logged)."""
+async def _corpora(conn) -> tuple[dict[str, set], dict[str, list[str]], list[str]]:
+    """(tenant -> masked 5-grams of its text, tenant -> brand names and forbidden words, the parts that failed to
+    load). A part that fails is logged and returned in the third item: `corpus_gap` then fails the overlap lint closed
+    for the rules that needed it."""
     grams: dict[str, set] = defaultdict(set)
     names: dict[str, list[str]] = defaultdict(list)
+    missing: list[str] = []
     for sql, kind in ((_CORPUS_SQL, "corpus"), (_NAMES_SQL, "names"), (_FORBIDDEN_SQL, "forbidden")):
         try:
             async with conn.transaction():                  # a savepoint when the caller holds a transaction
                 rows = await conn.fetch(sql)
-        except Exception as e:  # noqa: BLE001 — the lint runs with what exists; a missing part is logged
+        except Exception as e:  # noqa: BLE001 — recorded as missing: the lint then fails closed (corpus_gap)
             logger.warning("aa917_mine_corpus_part_missing", part=kind, error=f"{type(e).__name__}: {str(e)[:200]}")
+            missing.append(kind)
             continue
         for r in rows:
             if kind == "corpus":
@@ -276,7 +282,15 @@ async def _corpora(conn) -> tuple[dict[str, set], dict[str, list[str]]]:
                     except ValueError:
                         fw = [fw]
                 names[r["tenant_id"]] += [str(w) for w in (fw or []) if w]
-    return grams, names
+    return grams, names, missing
+
+
+def corpus_gap(scope: str, missing: Iterable[str]) -> Optional[str]:
+    """The corpus parts a rule of this scope needed but could not get (None = complete). A platform rule needs every
+    part (tenant text, names, forbidden words); a tenant rule needs the names and forbidden words of the others."""
+    need = ("corpus", "names", "forbidden") if scope == "platform" else ("names", "forbidden")
+    gap = [m for m in missing if m in need]
+    return ", ".join(gap) or None
 
 
 def lint_context(cluster: Cluster, all_grams: set, names: dict[str, list[str]]) -> tuple[set, list[str]]:
@@ -287,14 +301,22 @@ def lint_context(cluster: Cluster, all_grams: set, names: dict[str, list[str]]) 
     return set(), [n for t, v in names.items() if t != cluster.tenant_id for n in v]
 
 
+# A run is every mine job that is queued / running (another one is on its way), succeeded with ran = true, or ended
+# failed / stopped / cancelled after it spent money or made a call (S250 review: a run that crashed after paid calls
+# must count, or the next daily fact filter starts the same paid run again). $1 = the asking job, never counted.
 _RUNS_SQL = """
     SELECT count(*) FILTER (WHERE created_at >= date_trunc('month', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc')
                AS this_month,
            count(*) FILTER (WHERE created_at >= date_trunc('month', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'
-                              AND result ->> 'trigger' = 'auto') AS auto_this_month,
+                              AND coalesce(result ->> 'trigger', payload ->> 'trigger') = 'auto') AS auto_this_month,
            max(created_at) AS last_run_at
       FROM shared.job
-     WHERE kind = 'writing_memory_mine' AND status = 'succeeded' AND (result ->> 'ran')::boolean IS TRUE
+     WHERE kind = 'writing_memory_mine' AND ($1::uuid IS NULL OR id <> $1::uuid)
+       AND (status IN ('queued', 'running')
+            OR (status = 'succeeded' AND (result ->> 'ran')::boolean IS TRUE)
+            OR (status IN ('failed', 'stopped_budget', 'cancelled')
+                AND (cost_usd > 0 OR (result ->> 'ran')::boolean IS TRUE
+                     OR coalesce(progress ->> 'calls', '') ~ '^[1-9][0-9]*$')))
 """
 _NEW_PASS_SQL = """
     SELECT count(*) FROM shared.writing_signal
@@ -305,12 +327,15 @@ TRIGGERS = ("auto", "manual")
 
 
 def decide_run(trigger: str, *, runs_this_month: int, auto_runs_this_month: int, new_pass: int,
-               open_waves: int) -> Optional[str]:
-    """Why a run must not happen (None = it may). Pure (cost-cuts #6): an automatic run needs >= 10 new pass signals
-    since the last run, at most 2 automatic runs a month and no open rerun wave (C5.4d: paid background work stays off
-    a wave); a manual run (the admin, e.g. before the monthly release close) is the 3rd run of the month at most."""
+               open_waves: int, auto_enabled: bool = True) -> Optional[str]:
+    """Why a run must not happen (None = it may). Pure (cost-cuts #6): an automatic run needs the env switch
+    (`auto_enabled`, default off in run_gate), >= 10 new pass signals since the last run, at most 2 automatic runs a
+    month and no open rerun wave (C5.4d: paid background work stays off a wave); a manual run (the admin, e.g. before
+    the monthly release close) is the 3rd run of the month at most."""
     if trigger not in TRIGGERS:
         return f"unknown trigger {trigger!r}"
+    if trigger == "auto" and not auto_enabled:
+        return f"automatic mining is off ({cfg.AUTO_MINE_ENV} is not set)"
     if runs_this_month >= cfg.MINE_MAX_RUNS_PER_MONTH:
         return f"{runs_this_month} runs this month already (max {cfg.MINE_MAX_RUNS_PER_MONTH})"
     if trigger == "auto":
@@ -323,9 +348,10 @@ def decide_run(trigger: str, *, runs_this_month: int, auto_runs_this_month: int,
     return None
 
 
-async def run_gate(conn, trigger: str) -> tuple[Optional[str], dict]:
-    """decide_run over the live counts; (refusal or None, the counts)."""
-    runs = await conn.fetchrow(_RUNS_SQL)
+async def run_gate(conn, trigger: str, *, exclude_job_id: Optional[str] = None) -> tuple[Optional[str], dict]:
+    """decide_run over the live counts; (refusal or None, the counts). `exclude_job_id`: the mine job asking (its own
+    row is running and must not count against itself)."""
+    runs = await conn.fetchrow(_RUNS_SQL, exclude_job_id)
     new_pass = int(await conn.fetchval(_NEW_PASS_SQL, runs["last_run_at"]) or 0)
     try:
         async with conn.transaction():
@@ -333,10 +359,10 @@ async def run_gate(conn, trigger: str) -> tuple[Optional[str], dict]:
     except Exception:  # noqa: BLE001 — no rerun_wave table in this DB: no wave
         waves = 0
     facts = {"runs_this_month": int(runs["this_month"] or 0), "auto_runs_this_month": int(runs["auto_this_month"] or 0),
-             "new_pass": new_pass, "open_waves": waves,
+             "new_pass": new_pass, "open_waves": waves, "auto_enabled": cfg.auto_mine_enabled(),
              "last_run_at": runs["last_run_at"].isoformat() if runs["last_run_at"] else None}
     return decide_run(trigger, **{k: facts[k] for k in ("runs_this_month", "auto_runs_this_month", "new_pass",
-                                                       "open_waves")}), facts
+                                                       "open_waves", "auto_enabled")}), facts
 
 
 async def run_mine(pool, ctx, *, trigger: str, max_calls: int = cfg.MINE_MAX_CALLS) -> dict:
@@ -350,18 +376,24 @@ async def run_mine(pool, ctx, *, trigger: str, max_calls: int = cfg.MINE_MAX_CAL
         sigs = [dict(r) for r in await conn.fetch(_SIGNALS_SQL, cfg.SIGNAL_WINDOW_DAYS)]
         a1_pieces = await a1_piece_count(conn)
         open_keys = await rules_mod.open_cluster_keys(conn)
+        rejected_sets = await rules_mod.lint_rejected_signal_sets(conn)
         month = await load_month_budget(conn)
-        grams, names = await _corpora(conn)
+        grams, names, missing = await _corpora(conn)
     run_budget = await load_run_budget(pool, "bedrock", "writing_memory_mine", day_scope="kind")
 
     all_grams: set = set().union(*grams.values()) if grams else set()
     clusters = build_clusters(sigs, a1_pieces_30d=a1_pieces)
     result: dict = {"trigger": trigger, "signals": len(sigs), "clusters": len(clusters), "expired": expired,
-                    "skipped_open": 0, "waiting_small": 0, "drafted": 0, "candidates": 0, "lint_rejected": 0,
-                    "none": 0, "unusable": 0, "calls": 0, "cost_usd": 0.0, "stopped": None, "rules": []}
+                    "skipped_open": 0, "skipped_lint_same": 0, "waiting_small": 0, "drafted": 0, "candidates": 0,
+                    "lint_rejected": 0, "redacted": 0, "store_refused": 0, "none": 0, "unusable": 0, "calls": 0,
+                    "cost_usd": 0.0, "stopped": None, "corpus_missing": missing, "rules": []}
     for c in clusters:
-        if (c.writer, c.scope, c.tenant_id, c.cluster_key) in open_keys:
+        key = (c.writer, c.scope, c.tenant_id, c.cluster_key)
+        if key in open_keys:
             result["skipped_open"] += 1
+            continue
+        if rejected_sets.get(key) == frozenset(s["signal_id"] for s in c.signals[:rules_mod.MAX_SIGNAL_IDS]):
+            result["skipped_lint_same"] += 1    # same evidence as the draft the lint rejected: no new paid call
             continue
         if len(c.signals) < cfg.MIN_CLUSTER_FOR_DRAFT:
             result["waiting_small"] += 1
@@ -401,24 +433,35 @@ async def run_mine(pool, ctx, *, trigger: str, max_calls: int = cfg.MINE_MAX_CAL
         lint = lint_mod.run_lint(kind=draft.kind, rule_text=draft.rule_text, replacement=draft.replacement,
                                  match_phrases=draft.match_phrases, scope=c.scope,
                                  held_out=[{"before_text": s.get("before_text"), "after_text": s.get("after_text")}
-                                           for s in held], corpus_ngrams=corpus, names=banned)
+                                           for s in held], corpus_ngrams=corpus, names=banned,
+                                 corpus_unavailable=corpus_gap(c.scope, missing))
         lint["basis"] = c.basis
         reason = c.label.partition(":")[2] if c.label.startswith("reason:") else None
         gcls = c.label.partition(":")[2] if c.label.startswith("class:") else None
-        async with pool.acquire() as conn:
-            rid = await rules_mod.insert_candidate(
-                conn, kind=draft.kind, scope=c.scope, tenant_id=c.tenant_id, writer=c.writer,
-                cluster_key=c.cluster_key, rule_text=draft.rule_text, replacement=draft.replacement,
-                match_phrases=draft.match_phrases, applies_to=c.channels(), reason_code=reason, gate_class=gcls,
-                signal_ids=[s["signal_id"] for s in c.signals], support=c.support(), lint=lint,
-                drafted_by=draft.model, mine_job_id=getattr(ctx, "job_id", None))
+        try:
+            async with pool.acquire() as conn:
+                rid = await rules_mod.insert_candidate(
+                    conn, kind=draft.kind, scope=c.scope, tenant_id=c.tenant_id, writer=c.writer,
+                    cluster_key=c.cluster_key, rule_text=draft.rule_text, replacement=draft.replacement,
+                    match_phrases=draft.match_phrases, applies_to=c.channels(), reason_code=reason, gate_class=gcls,
+                    signal_ids=[s["signal_id"] for s in c.signals], support=c.support(), lint=lint,
+                    drafted_by=draft.model, mine_job_id=getattr(ctx, "job_id", None))
+        except (asyncpg.CheckViolationError, asyncpg.StringDataRightTruncationError) as e:
+            # fit_to_store keeps every draft inside CIS 280; a store rule it missed costs this one cluster, never the
+            # paid run (the drafts before and after it are kept)
+            result["store_refused"] += 1
+            logger.warning("aa917_mine_store_refused", cluster_key=c.cluster_key,
+                           error=f"{type(e).__name__}: {str(e)[:200]}")
+            continue
         if rid:
             result["candidates" if lint["ok"] else "lint_rejected"] += 1
+            if (lint.get("five_gram_overlap") or {}).get("leak"):
+                result["redacted"] += 1
             result["rules"].append({"rule_id": rid, "cluster_key": c.cluster_key, "scope": c.scope, "ok": lint["ok"]})
     result["month"] = month.summary()
     result["run_budget"] = run_budget.summary()
     return result
 
 
-__all__ = ["Cluster", "TRIGGERS", "a1_piece_count", "build_clusters", "decide_run", "example_of", "gate_class",
-           "label_meaning", "labels_of", "lint_context", "run_gate", "run_mine", "split_examples"]
+__all__ = ["Cluster", "TRIGGERS", "a1_piece_count", "build_clusters", "corpus_gap", "decide_run", "example_of",
+           "gate_class", "label_meaning", "labels_of", "lint_context", "run_gate", "run_mine", "split_examples"]

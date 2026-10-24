@@ -5,6 +5,8 @@ read the same numbers. Plain constants: changing one is a reviewed code change, 
 """
 from __future__ import annotations
 
+import os
+
 # ── cluster thresholds (D9; counted in code, $0, before any model call) ────────────────────────────────────────────
 TENANT_MIN_SIGNALS = 2           # a tenant rule: >= 2 edits ...
 TENANT_MIN_PIECES = 2            # ... on >= 2 pieces of that tenant
@@ -19,6 +21,10 @@ SIGNAL_WINDOW_DAYS = 90          # the miner reads pass signals of the last 90 d
 MINE_MIN_NEW_PASS = 10           # an automatic run needs >= 10 new pass signals since the last run
 MINE_MAX_AUTO_RUNS_PER_MONTH = 2
 MINE_MAX_RUNS_PER_MONTH = 3      # 2 automatic + the run before the monthly release close (manual)
+# The automatic chain (daily fact filter -> writing_memory_mine) is OFF until Nghiep approves paid unattended runs
+# (S250 review): with the flag unset the fact filter only reports the trigger state; a manual run from the admin page
+# still works. Set WRITING_MEMORY_AUTO_MINE=true on the worker to switch it on.
+AUTO_MINE_ENV = "WRITING_MEMORY_AUTO_MINE"
 
 # ── the drafter (WM-12 scope 3) ─────────────────────────────────────────────────────────────────────────────────────
 MINE_STAGE = "writing_memory_mine"
@@ -39,9 +45,19 @@ MEMORY_STAGES = ("writing_memory_mine", "writing_memory_eval", "writing_memory_s
 # ── the rule store (CIS 280; the DB enforces the same numbers) ─────────────────────────────────────────────────────
 RULE_TTL_DAYS = 60
 RULE_MAX_WORDS = 25
+SUMMARY_MAX_WORDS = 125
+RULE_MAX_CHARS = 1000
+REPLACEMENT_MAX_CHARS = 200
+MATCH_PHRASES_MAX_CHARS = 400   # all phrases together (char_length(array_to_string(match_phrases, '')))
 SUMMARY_MAX_SENTENCES = 5
 PLATFORM_TOKEN_CAP = 400
 TENANT_TOKEN_CAP = 250
 MAX_MATCH_PHRASES = 5
 
-__all__ = [n for n in dir() if n.isupper()]
+
+def auto_mine_enabled() -> bool:
+    """True only when the worker env opts in (default off: no unattended paid run)."""
+    return os.getenv(AUTO_MINE_ENV, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+__all__ = [n for n in dir() if n.isupper()] + ["auto_mine_enabled"]

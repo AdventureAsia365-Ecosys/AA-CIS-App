@@ -128,6 +128,23 @@ def test_decide_run():
     assert M.decide_run("manual", **{**ok, "new_pass": 0, "runs_this_month": 2, "open_waves": 1}) is None
     assert "runs this month" in M.decide_run("manual", **{**ok, "runs_this_month": 3})
     assert "unknown" in M.decide_run("weekly", **ok)
+    # S250 review: the automatic chain is off unless the worker opts in; a manual run is not affected
+    assert "off" in M.decide_run("auto", **ok, auto_enabled=False)
+    assert M.decide_run("manual", **ok, auto_enabled=False) is None
+
+
+def test_auto_mine_flag_defaults_off(monkeypatch):
+    monkeypatch.delenv(cfg.AUTO_MINE_ENV, raising=False)
+    assert not cfg.auto_mine_enabled()
+    monkeypatch.setenv(cfg.AUTO_MINE_ENV, "true")
+    assert cfg.auto_mine_enabled()
+
+
+def test_corpus_gap_fails_closed_per_scope():
+    assert M.corpus_gap("platform", []) is None
+    assert M.corpus_gap("platform", ["corpus"]) == "corpus"
+    assert M.corpus_gap("tenant", ["corpus"]) is None              # a tenant rule is not checked against text
+    assert M.corpus_gap("tenant", ["names"]) == "names"
 
 
 # ── the budget guard ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -179,8 +196,9 @@ class _Pool:
 @pytest.mark.asyncio
 async def test_run_mine_makes_no_call_when_the_month_is_over_cap():
     rows = [sig(piece=f"p{i}") for i in range(6)]
-    conn = SimpleNamespace(execute=AsyncMock(return_value="UPDATE 0"), fetch=AsyncMock(side_effect=[rows, [], [], [],
-                                                                                                     []]),
+    # fetch: signals, open rules, lint-rejected rules, corpus, names, forbidden words
+    conn = SimpleNamespace(execute=AsyncMock(return_value="UPDATE 0"),
+                           fetch=AsyncMock(side_effect=[rows, [], [], [], [], []]),
                            fetchval=AsyncMock(side_effect=[0, 30.0]), transaction=_Tx)
     run_budget = SimpleNamespace(check=lambda e: None, charge=lambda u: None, summary=lambda: {})
     with patch("shared.cost_guard.load_run_budget", AsyncMock(return_value=run_budget)), \

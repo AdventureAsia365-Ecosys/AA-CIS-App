@@ -8,7 +8,9 @@ decision 3: rules only constrain; decision 10: platform rows never hold tenant t
                         (repair_contract.new_specifics + the fact filter's promise words): "lunch" -> "lunch
                         included" fails.
   five_gram_overlap     a platform rule shares no 5-word run with any tenant text it may have learned from, and names
-                        no tenant brand or forbidden word (a tenant rule: no other tenant's brand).
+                        no tenant brand or forbidden word (a tenant rule: no other tenant's brand). A failure is a
+                        `leak`: the detail quotes nothing and the store keeps the draft redacted. When the caller could
+                        not load the corpus the check fails closed.
   predict               the rule explains >= 2 held-out edits of its cluster: one of its match_phrases is in the
                         masked text before the edit and gone after it.
 
@@ -82,13 +84,15 @@ def five_gram_overlap(rule_texts: Iterable[str], corpus_ngrams: set, names: Iter
     # the corpus holds the n-gram tuples or their hash() (the miner keeps ints: a corpus of every tenant's text)
     hits = [g for g in ngrams(joined) if (g in corpus_ngrams or hash(g) in corpus_ngrams)
             and not all(w in STOPWORDS or w.startswith("[") for w in g)]
+    # The detail never quotes the hit: it is stored on the rule row (lint), and a platform row holds no tenant text.
+    # `leak` tells the store to redact the draft (rules.fit_to_store).
     if hits:
-        return _check(False, f"shares '{' '.join(hits[0])}' with tenant text")
+        return {**_check(False, f"shares {len(hits)} 5-word run(s) with tenant text"), "leak": True}
     low = " \n ".join(raw).lower()
     for name in names:
         n = (name or "").strip().lower()
         if len(n) >= 3 and re.search(r"(?<![a-z0-9])" + re.escape(n) + r"(?![a-z0-9])", low):
-            return _check(False, f"names '{name}' (a tenant brand or forbidden word)")
+            return {**_check(False, "names a tenant brand or forbidden word"), "leak": True}
     return _check(True)
 
 
@@ -116,23 +120,33 @@ def shape(kind: str, rule_text: str, replacement: Optional[str], match_phrases: 
             return _check(False, f"{sentences} sentences / {words} words")
     elif words > cfg.RULE_MAX_WORDS:
         return _check(False, f"{words} words (max {cfg.RULE_MAX_WORDS})")
+    if len(rule_text) > cfg.RULE_MAX_CHARS:
+        return _check(False, f"{len(rule_text)} characters (max {cfg.RULE_MAX_CHARS})")
     if replacement and kind != "lexicon":
         return _check(False, "a replacement on a non-lexicon rule")
+    if replacement and len(replacement) > cfg.REPLACEMENT_MAX_CHARS:
+        return _check(False, f"a {len(replacement)}-character replacement (max {cfg.REPLACEMENT_MAX_CHARS})")
     if not match_phrases or len(match_phrases) > cfg.MAX_MATCH_PHRASES:
         return _check(False, f"{len(match_phrases or [])} match phrases (1..{cfg.MAX_MATCH_PHRASES})")
+    if sum(len(p) for p in match_phrases) > cfg.MATCH_PHRASES_MAX_CHARS:
+        return _check(False, f"match phrases over {cfg.MATCH_PHRASES_MAX_CHARS} characters together")
     return _check(True)
 
 
 def run_lint(*, kind: str, rule_text: str, replacement: Optional[str], match_phrases: list[str], scope: str,
-             held_out: list[dict], corpus_ngrams: set, names: Iterable[str]) -> dict:
-    """Every check; `ok` is True only when all pass."""
+             held_out: list[dict], corpus_ngrams: set, names: Iterable[str],
+             corpus_unavailable: Optional[str] = None) -> dict:
+    """Every check; `ok` is True only when all pass. `corpus_unavailable` (the parts the caller could not load) fails
+    the overlap check closed: no rule passes it unchecked."""
+    overlap = five_gram_overlap([rule_text, replacement or "", *match_phrases], corpus_ngrams, names)
+    if corpus_unavailable and overlap["ok"]:
+        overlap = _check(False, f"tenant corpus unavailable ({corpus_unavailable})")
     out = {
         "shape": shape(kind, rule_text, replacement, match_phrases),
         "constraint_only": constraint_only(rule_text),
         "lexicon_specifics": lexicon_specifics(rule_text if kind == "lexicon" else "", replacement)
         if kind == "lexicon" else _check(True),
-        "five_gram_overlap": five_gram_overlap([rule_text, replacement or "", *match_phrases], corpus_ngrams,
-                                               names),
+        "five_gram_overlap": overlap,
         "predict": predict(match_phrases, held_out),
     }
     out["ok"] = all(v["ok"] for k, v in out.items() if isinstance(v, dict))

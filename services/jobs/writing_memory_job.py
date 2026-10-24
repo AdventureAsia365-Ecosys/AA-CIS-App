@@ -3,7 +3,8 @@
   writing_signal_backfill     WM-10: copy the existing learning material into shared.writing_signal (idempotent,
                               insert-only, $0), then queue the fact filter. Payload {"dry_run": bool, "sources": [..]}.
   writing_signal_fact_filter  WM-11: classify the `pending` signals (pass / grey / fail, $0), then queue an automatic
-                              mining run when its trigger holds. Payload {"limit": int}.
+                              mining run when its trigger holds. The trigger needs WRITING_MEMORY_AUTO_MINE on the
+                              worker (default off: the result only reports `mine_gate`). Payload {"limit": int}.
   writing_memory_mine         WM-12: one mining run (the only paid kind: <= 50 judge-route calls, <= $1, month cap
                               $25). Payload {"trigger": "auto" | "manual", "requested_by": "<admin id>"}. A refused
                               trigger ends the job as succeeded with `ran: false` and the reason (nothing to retry).
@@ -64,14 +65,15 @@ async def run_mine_job(ctx: JobContext) -> dict:
     if trigger not in TRIGGERS:
         raise NonRetryable(f"unknown trigger {trigger!r}")
     async with ctx.pool.acquire() as conn:
-        refusal, facts = await run_gate(conn, trigger)
+        refusal, facts = await run_gate(conn, trigger, exclude_job_id=ctx.job_id)
     if refusal is not None:
         logger.info("aa917_mine_refused", trigger=trigger, reason=refusal, **facts)
         return {"ran": False, "trigger": trigger, "refused": refusal, **facts}
     result = await run_mine(ctx.pool, ctx, trigger=trigger)
     result.update({"ran": True, "requested_by": ctx.payload.get("requested_by"), "gate": facts})
     logger.info("aa917_mine_done", **{k: result[k] for k in ("trigger", "clusters", "calls", "candidates",
-                                                              "lint_rejected", "cost_usd", "stopped")})
+                                                              "lint_rejected", "redacted", "store_refused",
+                                                              "cost_usd", "stopped")})
     return result
 
 
