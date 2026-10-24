@@ -433,7 +433,9 @@ def _contract_revert(before: dict, after: dict, keys, forbidden, tour: dict) -> 
     replaces the AA-641 revert below, keeping its behaviour: invariant 1's gate runner is the forbidden-word
     scan, so a field whose repair ADDED a forbidden word gets its pre-repair value back. It also reverts a field
     whose repair added a figure the field and the source lack, cut its last sentence short ("...a
-    20-kilometre."), or broke a bracket / bold pair. Mutates `after`; returns {field: [why]}.
+    20-kilometre."), broke a bracket / bold pair, or (AA-645, ``days_kept``) changed the itinerary's "Day N" blocks —
+    the S249 shadow's generic pass, asked to fix one meal line, returned Rajasthan with 10 of its 15 days. Mutates
+    `after`; returns {field: [why]}.
 
     Names are not checked here (flag_fix rewrites whole fields for brand reasons; background about a named place
     is allowed by the writer policy) — only the grounding fact editor and the T3 sentence repair check them."""

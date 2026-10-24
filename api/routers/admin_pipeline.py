@@ -98,9 +98,12 @@ _REWRITE_CLASS_HARD_CODES = frozenset({
 def _surviving_hard_codes(result: dict) -> set:
     """AA-736: hard-block codes still present in a run's failure_codes. Mirrors the set
     human_edit_gate_node already enforces (graph._HARD_BLOCK_CODES), but applied to the
-    automated rewrite->publish path, which historically never consulted it."""
-    from services.content_generation.graph import _HARD_BLOCK_CODES
-    return set(result.get("failure_codes", []) or []) & set(_HARD_BLOCK_CODES)
+    automated rewrite->publish path, which historically never consulted it.
+
+    AA-645 (S249): ``hard_block_codes(result)`` — an A1 writer-v2 draft also counts ITINERARY_DAY_COUNT_MISMATCH
+    (graph.V2_HARD_BLOCK_CODES); v1 and tenant runs are unchanged."""
+    from services.content_generation.graph import hard_block_codes
+    return set(result.get("failure_codes", []) or []) & set(hard_block_codes(result))
 
 
 def _is_publishable(result: dict) -> bool:

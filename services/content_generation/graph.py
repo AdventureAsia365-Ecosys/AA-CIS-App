@@ -221,7 +221,30 @@ HARD_CODE_REPAIR = {
     **{code: "llm: one haiku->sonnet rewrite (AA-736), else review" for code in day_oracle.enforced_codes()},
     # AA-925: no model can clear an outage; the reviewer re-runs the tour once the detector is healthy.
     degraded.HOLD_CODE:         "review: re-run the tour once the detector is healthy",
+    # AA-645 (S249): hard on an A1 writer-v2 draft only (V2_HARD_BLOCK_CODES). flag_fix can no longer cause it
+    # (repair contract invariant days_kept); a v2 writer is already on Sonnet, so AA-736's haiku->sonnet retry
+    # does not apply.
+    "ITINERARY_DAY_COUNT_MISMATCH": ("review: regenerate the tour (a writer-v2 draft dropped a source day), or "
+                                     "promote the stored page back"),
 }
+
+# AA-645 (S249, S1 go/no-go memo §3.1b option 1a): on an A1 writer-v2 draft a source day missing from the output
+# blocks Master. v2 days are planned by code from the same source "Day N" markers validate compares against, so a
+# missing source day is a lost day, never a planning choice: in the S249 shadow 49/50 pages match their plan and the
+# 50th (India "Rajasthan Adventure", 15 -> 10 days) scored 9.75 and was publishable, because the code only takes 1.0
+# off structure. Same code, same detector, no new gate: for v1 drafts and tenant (T2) rewrites it stays the soft
+# structure deduction it was. Readers use ``hard_block_codes(state)``, never this set alone.
+V2_HARD_BLOCK_CODES = frozenset({"ITINERARY_DAY_COUNT_MISMATCH"})
+
+
+def hard_block_codes(state: Optional[dict] = None) -> frozenset:
+    """The hard-block codes for this run: ``_HARD_BLOCK_CODES``, plus ``V2_HARD_BLOCK_CODES`` when the draft was
+    written by the S1 writer v2 on A1 (``s1_writer_v2_live.is_v2``: never a tenant rewrite)."""
+    from .s1_writer_v2_live import is_v2   # lazy, like validate_node's import (keeps graph import-light)
+
+    if state and is_v2(state):
+        return _HARD_BLOCK_CODES | V2_HARD_BLOCK_CODES
+    return _HARD_BLOCK_CODES
 
 class ContentState(TypedDict):
     tour:                   dict
@@ -1260,7 +1283,7 @@ def human_edit_gate_node(state: ContentState) -> ContentState:
     score = state.get("quality_score", 0.0)
     audit_status = state.get("brand_audit_status", "")
     codes = state.get("failure_codes", []) or []
-    hard_hits = sorted(set(codes) & _HARD_BLOCK_CODES)
+    hard_hits = sorted(set(codes) & hard_block_codes(state))   # AA-645: v2 drafts add V2_HARD_BLOCK_CODES
     passed = (
         score >= MIN_QUALITY
         and audit_status != "manual_check"
