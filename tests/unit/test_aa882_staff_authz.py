@@ -155,6 +155,7 @@ def test_content_work_routes_are_the_every_staff_pages():
         "/admin/tours/{tour_id}/versions/{version_num}/promote",
         "/admin/tours/{tour_id}/trash", "/admin/tours/{tour_id}/restore",
         "/admin/notifications/read-all", "/admin/notifications/{notif_id}/read",
+        "/admin/aa-content", "/admin/aa-content/{content_id}/draft",      # AA-977: drafts are content work
         "/v1/pipeline/run", "/v1/pipeline/review-queue/{review_id}/approve",
         "/v1/pipeline/review-queue/{review_id}/reject",
     }

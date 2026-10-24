@@ -665,6 +665,217 @@
         "title": "BudgetUpdate",
         "type": "object"
       },
+      "CatalogAaAppliesTo": {
+        "additionalProperties": false,
+        "properties": {
+          "country_codes": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Country Codes",
+            "type": "array"
+          },
+          "tours": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CatalogAaTourKey"
+            },
+            "title": "Tours",
+            "type": "array"
+          }
+        },
+        "title": "CatalogAaAppliesTo",
+        "type": "object"
+      },
+      "CatalogAaContent": {
+        "additionalProperties": false,
+        "description": "GET /catalog/v1/aa-content/{content_id}/versions/{version} — one published version (ETag = ``content_hash``);\nserved also after a newer version is published or the item is retired (AA-977).",
+        "properties": {
+          "applies_to": {
+            "$ref": "#/components/schemas/CatalogAaAppliesTo"
+          },
+          "body_markdown": {
+            "title": "Body Markdown",
+            "type": "string"
+          },
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "content_id": {
+            "title": "Content Id",
+            "type": "string"
+          },
+          "group_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Key"
+          },
+          "kind": {
+            "enum": [
+              "prep_pack",
+              "starter_template",
+              "campaign_block"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "locale": {
+            "enum": [
+              "en",
+              "vi"
+            ],
+            "title": "Locale",
+            "type": "string"
+          },
+          "published_at": {
+            "title": "Published At",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "content_id",
+          "kind",
+          "version",
+          "locale",
+          "title",
+          "body_markdown",
+          "applies_to",
+          "published_at",
+          "content_hash"
+        ],
+        "title": "CatalogAaContent",
+        "type": "object"
+      },
+      "CatalogAaContentPage": {
+        "additionalProperties": false,
+        "description": "GET /catalog/v1/aa-content — one page ordered by content_id; ``next_cursor`` null on the last page.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogAaContentSummary"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "CatalogAaContentPage",
+        "type": "object"
+      },
+      "CatalogAaContentSummary": {
+        "additionalProperties": false,
+        "description": "One item in a ``listAaContent`` page: the latest published version of an item that is not retired (AA-977).",
+        "properties": {
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "content_id": {
+            "title": "Content Id",
+            "type": "string"
+          },
+          "group_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Key"
+          },
+          "kind": {
+            "enum": [
+              "prep_pack",
+              "starter_template",
+              "campaign_block"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "locale": {
+            "enum": [
+              "en",
+              "vi"
+            ],
+            "title": "Locale",
+            "type": "string"
+          },
+          "published_at": {
+            "title": "Published At",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "content_id",
+          "kind",
+          "version",
+          "locale",
+          "title",
+          "published_at",
+          "content_hash"
+        ],
+        "title": "CatalogAaContentSummary",
+        "type": "object"
+      },
+      "CatalogAaTourKey": {
+        "additionalProperties": false,
+        "properties": {
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_system": {
+            "const": "cis",
+            "title": "Source System",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_system",
+          "source_id"
+        ],
+        "title": "CatalogAaTourKey",
+        "type": "object"
+      },
       "CatalogDestination": {
         "additionalProperties": false,
         "description": "GET /catalog/v1/destinations/{destination_id} — one destination with its IANA time zone.",
@@ -1172,6 +1383,63 @@
         "title": "CountryUpdateRequest",
         "type": "object"
       },
+      "CreateBody": {
+        "additionalProperties": false,
+        "properties": {
+          "applies_to": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applies To"
+          },
+          "body_markdown": {
+            "anyOf": [
+              {
+                "maxLength": 40000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body Markdown"
+          },
+          "group_key": {
+            "maxLength": 80,
+            "title": "Group Key",
+            "type": "string"
+          },
+          "kind": {
+            "maxLength": 32,
+            "title": "Kind",
+            "type": "string"
+          },
+          "locale": {
+            "maxLength": 8,
+            "title": "Locale",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 1000,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "locale",
+          "group_key",
+          "title"
+        ],
+        "title": "CreateBody",
+        "type": "object"
+      },
       "CreateStaffBody": {
         "additionalProperties": false,
         "properties": {
@@ -1388,6 +1656,51 @@
         "title": "DedupeRunRequest",
         "type": "object"
       },
+      "DraftBody": {
+        "additionalProperties": false,
+        "properties": {
+          "applies_to": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applies To"
+          },
+          "body_markdown": {
+            "anyOf": [
+              {
+                "maxLength": 40000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body Markdown"
+          },
+          "expected_updated_at": {
+            "maxLength": 64,
+            "title": "Expected Updated At",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 1000,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "expected_updated_at"
+        ],
+        "title": "DraftBody",
+        "type": "object"
+      },
       "ErasureRunRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1535,6 +1848,21 @@
           "status"
         ],
         "title": "ExecutionStatus",
+        "type": "object"
+      },
+      "ExpectedBody": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_updated_at": {
+            "maxLength": 64,
+            "title": "Expected Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_updated_at"
+        ],
+        "title": "ExpectedBody",
         "type": "object"
       },
       "FactEdit": {
@@ -4603,6 +4931,856 @@
         "summary": "Get Review Log",
         "tags": [
           "admin-a4"
+        ]
+      }
+    },
+    "/admin/aa-content": {
+      "get": {
+        "operationId": "list_aa_content_admin_aa_content_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "locale",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Locale"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "country",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Country"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "AA-977 — AA-authored content, one page (filters kind, locale, status, country)",
+        "tags": [
+          "admin-aa-content"
+        ]
+      },
+      "post": {
+        "operationId": "create_aa_content_admin_aa_content_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "AA-977 — create an item (draft v1)",
+        "tags": [
+          "admin-aa-content"
+        ]
+      }
+    },
+    "/admin/aa-content/groups/{group_key}": {
+      "get": {
+        "operationId": "get_aa_content_group_admin_aa_content_groups__group_key__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_key",
+            "required": true,
+            "schema": {
+              "title": "Group Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "AA-977 — every locale of one group (EN and VI side by side)",
+        "tags": [
+          "admin-aa-content"
+        ]
+      }
+    },
+    "/admin/aa-content/{content_id}": {
+      "get": {
+        "operationId": "get_aa_content_admin_aa_content__content_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "content_id",
+            "required": true,
+            "schema": {
+              "title": "Content Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "AA-977 — one item with every version",
+        "tags": [
+          "admin-aa-content"
+        ]
+      }
+    },
+    "/admin/aa-content/{content_id}/draft": {
+      "delete": {
+        "operationId": "discard_aa_content_draft_admin_aa_content__content_id__draft_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "content_id",
+            "required": true,
+            "schema": {
+              "title": "Content Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_updated_at",
+            "required": true,
+            "schema": {
+              "title": "Expected Updated At",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "AA-977 — discard the draft",
+        "tags": [
+          "admin-aa-content"
+        ]
+      },
+      "put": {
+        "operationId": "save_aa_content_draft_admin_aa_content__content_id__draft_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "content_id",
+            "required": true,
+            "schema": {
+              "title": "Content Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "AA-977 — save the draft (starts the next version after a publish)",
+        "tags": [
+          "admin-aa-content"
+        ]
+      }
+    },
+    "/admin/aa-content/{content_id}/publish": {
+      "post": {
+        "operationId": "publish_aa_content_admin_aa_content__content_id__publish_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "content_id",
+            "required": true,
+            "schema": {
+              "title": "Content Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExpectedBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "AA-977 — publish the draft (admin)",
+        "tags": [
+          "admin-aa-content"
+        ]
+      }
+    },
+    "/admin/aa-content/{content_id}/restore": {
+      "post": {
+        "operationId": "restore_aa_content_admin_aa_content__content_id__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "content_id",
+            "required": true,
+            "schema": {
+              "title": "Content Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExpectedBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "AA-977 — show a retired item again (admin)",
+        "tags": [
+          "admin-aa-content"
+        ]
+      }
+    },
+    "/admin/aa-content/{content_id}/retire": {
+      "post": {
+        "operationId": "retire_aa_content_admin_aa_content__content_id__retire_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "content_id",
+            "required": true,
+            "schema": {
+              "title": "Content Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExpectedBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "AA-977 — hide the item from the served list (admin)",
+        "tags": [
+          "admin-aa-content"
+        ]
+      }
+    },
+    "/admin/aa-content/{content_id}/versions/{version}": {
+      "get": {
+        "operationId": "get_aa_content_version_admin_aa_content__content_id__versions__version__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "content_id",
+            "required": true,
+            "schema": {
+              "title": "Content Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "title": "Version",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "AA-977 — one version (draft or published), preview",
+        "tags": [
+          "admin-aa-content"
         ]
       }
     },
@@ -25571,6 +26749,154 @@
         "summary": "Verify Tenant",
         "tags": [
           "auth"
+        ]
+      }
+    },
+    "/catalog/v1/aa-content": {
+      "get": {
+        "operationId": "list_aa_content_catalog_v1_aa_content_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "locale",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Locale"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogAaContentPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Aa Content",
+        "tags": [
+          "catalog-http"
+        ]
+      }
+    },
+    "/catalog/v1/aa-content/{content_id}/versions/{version}": {
+      "get": {
+        "operationId": "get_aa_content_version_catalog_v1_aa_content__content_id__versions__version__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "content_id",
+            "required": true,
+            "schema": {
+              "title": "Content Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "title": "Version",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogAaContent"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Aa Content Version",
+        "tags": [
+          "catalog-http"
         ]
       }
     },

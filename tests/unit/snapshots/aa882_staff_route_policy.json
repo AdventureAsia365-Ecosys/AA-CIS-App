@@ -1,4 +1,8 @@
 {
+  "DELETE /admin/aa-content/{content_id}/draft": {
+    "capability": "content.write",
+    "module": "api.routers.admin_aa_content"
+  },
   "DELETE /admin/brands/{brand_name}": {
     "capability": "content.settings.write",
     "module": "api.routers.admin_pipeline"
@@ -38,6 +42,22 @@
   "GET /admin/a4/review-log": {
     "capability": "tenant.read",
     "module": "api.routers.admin_a4"
+  },
+  "GET /admin/aa-content": {
+    "capability": null,
+    "module": "api.routers.admin_aa_content"
+  },
+  "GET /admin/aa-content/groups/{group_key}": {
+    "capability": null,
+    "module": "api.routers.admin_aa_content"
+  },
+  "GET /admin/aa-content/{content_id}": {
+    "capability": null,
+    "module": "api.routers.admin_aa_content"
+  },
+  "GET /admin/aa-content/{content_id}/versions/{version}": {
+    "capability": null,
+    "module": "api.routers.admin_aa_content"
   },
   "GET /admin/atoms": {
     "capability": "tenant.read",
@@ -659,6 +679,22 @@
     "capability": "a4.unpublish",
     "module": "api.routers.admin_a4"
   },
+  "POST /admin/aa-content": {
+    "capability": "content.write",
+    "module": "api.routers.admin_aa_content"
+  },
+  "POST /admin/aa-content/{content_id}/publish": {
+    "capability": "master.admin",
+    "module": "api.routers.admin_aa_content"
+  },
+  "POST /admin/aa-content/{content_id}/restore": {
+    "capability": "master.admin",
+    "module": "api.routers.admin_aa_content"
+  },
+  "POST /admin/aa-content/{content_id}/retire": {
+    "capability": "master.admin",
+    "module": "api.routers.admin_aa_content"
+  },
   "POST /admin/atoms/atomize": {
     "capability": "atoms.write",
     "module": "api.routers.admin_atoms"
@@ -1002,6 +1038,10 @@
   "POST /v1/social/batch-review": {
     "capability": "atoms.write",
     "module": "api.routers.v1_social"
+  },
+  "PUT /admin/aa-content/{content_id}/draft": {
+    "capability": "content.write",
+    "module": "api.routers.admin_aa_content"
   },
   "PUT /admin/brands/{brand_name}": {
     "capability": "content.settings.write",

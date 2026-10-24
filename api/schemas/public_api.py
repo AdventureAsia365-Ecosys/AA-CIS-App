@@ -73,7 +73,7 @@ class Quota(BaseModel):
 # ── catalog.http.v1 (AA-976) — documentation only ──────────────────────────────
 # The /catalog/v1 handlers (api/routers/catalog_http.py) return their own JSONResponse (ETag, Cache-Control, 304),
 # so these models are declared with ``responses={200: {"model": ...}}`` and never validate or filter a body. They
-# mirror the root contract docs/contracts/catalog.http.v1.openapi.yaml (v1.1), which stays the source of truth (its
+# mirror the root contract docs/contracts/catalog.http.v1.openapi.yaml (v1.2), which stays the source of truth (its
 # test: tests/unit/test_aa976_catalog_http_contract.py). Prefixed ``Catalog`` so no other CIS schema name collides.
 
 class _CatalogModel(BaseModel):
@@ -154,3 +154,46 @@ class CatalogDestination(_CatalogModel):
     time_zone: str
     lat: Optional[float] = None
     lng: Optional[float] = None
+
+
+class CatalogAaContentSummary(_CatalogModel):
+    """One item in a ``listAaContent`` page: the latest published version of an item that is not retired (AA-977)."""
+    content_id: str
+    kind: Literal["prep_pack", "starter_template", "campaign_block"]
+    version: int
+    locale: Literal["en", "vi"]
+    group_key: Optional[str] = None
+    title: str
+    published_at: str
+    content_hash: str
+
+
+class CatalogAaContentPage(_CatalogModel):
+    """GET /catalog/v1/aa-content — one page ordered by content_id; ``next_cursor`` null on the last page."""
+    items: List[CatalogAaContentSummary]
+    next_cursor: Optional[str] = None
+
+
+class CatalogAaTourKey(_CatalogModel):
+    source_system: Literal["cis"]
+    source_id: str
+
+
+class CatalogAaAppliesTo(_CatalogModel):
+    country_codes: List[str] = []
+    tours: List[CatalogAaTourKey] = []
+
+
+class CatalogAaContent(_CatalogModel):
+    """GET /catalog/v1/aa-content/{content_id}/versions/{version} — one published version (ETag = ``content_hash``);
+    served also after a newer version is published or the item is retired (AA-977)."""
+    content_id: str
+    kind: Literal["prep_pack", "starter_template", "campaign_block"]
+    version: int
+    locale: Literal["en", "vi"]
+    group_key: Optional[str] = None
+    title: str
+    body_markdown: str
+    applies_to: CatalogAaAppliesTo
+    published_at: str
+    content_hash: str

@@ -56,6 +56,10 @@ SAMPLES = [
     ("admin_crm_console", "GET", "/admin/platform/crm/agencies", None),      # AA-941
     ("admin_crm_console", "POST", "/admin/platform/crm/agencies/{tenant_id}/lock", {"ticket_ref": "AA-941"}),
     ("admin_data_model", "GET", "/admin/data-model", None),      # AA-894
+    ("admin_aa_content", "PUT", "/admin/aa-content/{content_id}/draft",      # AA-977
+     {"title": "t", "expected_updated_at": "2026-10-24T08:00:00Z"}),
+    ("admin_aa_content", "POST", "/admin/aa-content/{content_id}/publish",
+     {"expected_updated_at": "2026-10-24T08:00:00Z"}),
     ("v1_trip_page", "POST", "/admin/trip-pages/{tour_id}/publish", None),
     ("v1_pipeline", "POST", "/v1/pipeline/review-queue/{review_id}/approve", {}),
     ("v1_rules", "PATCH", "/v1/rules/{rule_id}", {"is_active": False}),
