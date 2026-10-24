@@ -27,7 +27,7 @@ data_erasure job row that holds it.
 Single use, no retry (AA-839 review): an apply claims its DRY RUN (`result.used_by_apply`) before it starts, so
 neither a second apply nor a retried one can reuse that approval; POST /jobs/{id}/retry refuses an apply
 (`retry_refusal`). A traveller job that ends without success has its hash replaced by a marker (`on_terminal`),
-and Sentry events of this kind carry no frame locals (shared/sentry_init.py SCRUB_LOCALS_KINDS).
+and Sentry events carry no frame locals (AA-941: none at all, shared/sentry_init.py).
 """
 from __future__ import annotations
 
