@@ -12,6 +12,18 @@ AA-613: cost, gate verdicts and research coverage stay on admin routes):
   tenant's tours, the planning markets (acp_shared.tenant_config), and this tenant's
   unmapped_market_requests rows (read-only).
 
+AA-978 adds the Members routes over the CIS membership directory (``shared.tenant_members``, CIS 276):
+
+* ``GET  /admin/tenants/{id}/members``                     — every membership, removed ones last; the identity only
+  as a short fingerprint, never the raw (iss, sub).
+* ``PATCH /admin/tenants/{id}/members/{membership_id}``     — change the Content studio role (owner / editor / viewer)
+  only; CRM roles are managed in the CRM.
+* ``POST /admin/tenants/{id}/members/{membership_id}/remove`` — remove the membership (final). The CIS 276 trigger
+  writes the tenant.membership.v1 event in the same transaction; the partner CRM disables the member and signs them
+  out within a minute, and locks the agency when that was its last owner.
+
+Both writes need tenant.write (staff_authz POLICY) and write an acp_shared.audit_log row with the change.
+
 Cost definition is the AA-798 one (migration 223): ``shared.llm_call_log.cost_usd`` for the
 tenant, current calendar month (``date_trunc('month', now())``), Jev included, shadow rows
 (``quality_signal @> {"shadow": true}``) excluded — so the totals here add up to the
@@ -20,15 +32,19 @@ tenant, current calendar month (``date_trunc('month', now())``), Jev included, s
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from uuid import UUID
 
+import asyncpg
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from pydantic import BaseModel, ConfigDict
+
 from api.core.staff_authz import staff_policy
 
 from api.routers._billing import usage_row_to_dict
-from api.routers.admin import verify_admin_secret
+from api.routers.admin import _admin_actor, verify_admin_secret
+from services.tenant_membership import writer as members_writer
 
 logger = structlog.get_logger()
 
@@ -411,3 +427,79 @@ async def get_tenant_markets(tenant_id: UUID, request: Request, x_admin_secret: 
             "requested_at": _iso(r["requested_at"]), "resolved_at": _iso(r["resolved_at"]),
         } for r in unmapped_rows],
     }
+
+
+# ── members (AA-978) ──────────────────────────────────────────────────────────────────────────
+
+class MemberRoleChange(BaseModel):
+    """PATCH body: the Content studio role only. A CRM role has no field here (CIS can never grant one)."""
+    model_config = ConfigDict(extra="forbid")
+    content_studio_role: Literal["owner", "editor", "viewer"]
+
+
+def _members_unavailable(exc: Exception) -> HTTPException:
+    logger.error("tenant_members_unavailable", reason=type(exc).__name__)
+    return HTTPException(status_code=503, detail="Memberships need migration 276 (shared.tenant_members).")
+
+
+@router.get("/{tenant_id}/members", summary="AA-978 — the tenant's CIS memberships (Content studio roles)")
+async def get_tenant_members(tenant_id: UUID, request: Request, x_admin_secret: str = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        await _require_tenant(conn, tenant_id)
+        try:
+            members = await members_writer.list_members(conn, str(tenant_id))
+        except asyncpg.UndefinedTableError as exc:
+            raise _members_unavailable(exc) from exc
+    return {
+        "tenant_id": str(tenant_id),
+        "members": members,
+        "note": "CRM roles are managed in the partner CRM. Removing a member here also signs them out of the CRM "
+                "within a minute.",
+    }
+
+
+async def _member_write(request: Request, tenant_id: UUID, op) -> dict:
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        await _require_tenant(conn, tenant_id)
+        try:
+            row, changed = await op(conn)
+        except members_writer.MemberNotFound as exc:
+            raise HTTPException(status_code=404, detail="Membership not found") from exc
+        except members_writer.MemberRemoved as exc:
+            raise HTTPException(status_code=409, detail="This membership is removed; removal is final.") from exc
+        except asyncpg.UndefinedTableError as exc:
+            raise _members_unavailable(exc) from exc
+    return {"tenant_id": str(tenant_id), "member": row, "changed": changed}
+
+
+@router.patch("/{tenant_id}/members/{membership_id}",
+              summary="AA-978 — change a member's Content studio role (owner / editor / viewer)")
+async def patch_tenant_member(
+    tenant_id: UUID, membership_id: UUID, body: MemberRoleChange, request: Request,
+    x_admin_secret: str = Header(None), x_admin_user_id: str = Header(None),
+):
+    verify_admin_secret(x_admin_secret)
+    actor = _admin_actor(x_admin_user_id)
+    result = await _member_write(request, tenant_id, lambda conn: members_writer.change_role(
+        conn, str(tenant_id), str(membership_id), body.content_studio_role, actor))
+    logger.info("tenant_member_role_changed", tenant_id=str(tenant_id), membership_id=str(membership_id),
+                role=body.content_studio_role, changed=result["changed"])
+    return result
+
+
+@router.post("/{tenant_id}/members/{membership_id}/remove",
+             summary="AA-978 — remove a member (final; the partner CRM signs them out within a minute)")
+async def remove_tenant_member(
+    tenant_id: UUID, membership_id: UUID, request: Request,
+    x_admin_secret: str = Header(None), x_admin_user_id: str = Header(None),
+):
+    verify_admin_secret(x_admin_secret)
+    actor = _admin_actor(x_admin_user_id)
+    result = await _member_write(request, tenant_id, lambda conn: members_writer.remove(
+        conn, str(tenant_id), str(membership_id), actor))
+    logger.info("tenant_member_removed", tenant_id=str(tenant_id), membership_id=str(membership_id),
+                changed=result["changed"])
+    return result

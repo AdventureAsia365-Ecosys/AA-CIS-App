@@ -65,10 +65,12 @@ from api.routers.admin_tenant360 import router as admin_tenant360_router  # AA-7
 from api.routers.admin_platform_ops import router as admin_platform_ops_router  # AA-884
 from api.routers.admin_crm_console import router as admin_crm_console_router  # AA-941
 from api.routers.admin_alert_recipients import router as admin_alert_recipients_router  # AA-913
+from api.routers.admin_aa_content import router as admin_aa_content_router  # AA-977
 from api.routers.v1_progress import router as v1_progress_router  # AA-637
 from api.routers.catalog_http import (  # AA-976 — catalog.http.v1 for the partner CRM (M2M)
     CatalogProblem, catalog_problem_handler, router as catalog_http_router,
 )
+from api.routers.tenant_membership import router as tenant_membership_router  # AA-978 — tenant.membership.v1
 from api.middleware.rate_limit import rate_limit_middleware
 from api.middleware.sentry_context import sentry_context_middleware
 from api.middleware.staff_bearer import StaffBearerMiddleware  # AA-816 C3
@@ -306,6 +308,7 @@ app.include_router(admin_platform_router)  # AA-883 — /admin/platform/staff (r
 app.include_router(admin_platform_ops_router)  # AA-884 — /admin/platform/{apps,audit,cost}
 app.include_router(admin_crm_console_router)  # AA-941 — /admin/platform/crm/* (CRM L1 console relay, no include prefix)
 app.include_router(admin_alert_recipients_router)  # AA-913 — /admin/platform/alert-recipients (no include prefix)
+app.include_router(admin_aa_content_router)  # AA-977 — /admin/aa-content (AA content editor, no include prefix)
 app.include_router(admin_photos_router)  # AA-708 — /admin/photos (Drive photo sync, matching)
 app.include_router(admin_places_router)  # AA-712 — /admin/places/backfill (place pipeline)
 app.include_router(admin_search_router)  # AA-752 — GET /admin/search (global ⌘K palette)
@@ -315,6 +318,7 @@ app.include_router(admin_tenant360_router)  # AA-766 — /admin/tenants/{id}/{co
 app.include_router(photos_public_router)  # AA-708 — /content/photos/{id} (public image redirect)
 app.include_router(v1_progress_router)  # AA-637 — GET /v1/progress/{kind}/{job_id}
 app.include_router(catalog_http_router)  # AA-976 — /catalog/v1 (catalog.http.v1, M2M cis.catalog/read)
+app.include_router(tenant_membership_router)  # AA-978 — /tenant/membership/v1 (M2M cis.tenant/read)
 
 app.middleware("http")(rate_limit_middleware)
 # AA-816 C3 — registered after the rate limiter so it wraps it (Starlette: last registered = outermost): a
@@ -333,7 +337,9 @@ app.middleware("http")(sentry_context_middleware)
 # answered outside all user middleware, so its handler adds the header itself.
 # AA-986 L3 — new tenant work on a tour AA no longer serves: 409 tour_discontinued / tour_paused, plain sentence.
 app.add_exception_handler(TourNotServedError, tour_not_served_handler)
-app.add_exception_handler(CatalogProblem, catalog_problem_handler)  # AA-976 — contract Problem body
+# AA-976 / AA-978 — contract Problem body; CatalogProblem is api.core.m2m_auth.M2MProblem, also raised by
+# /tenant/membership/v1.
+app.add_exception_handler(CatalogProblem, catalog_problem_handler)
 app.add_exception_handler(Exception, unhandled_error_handler)
 app.add_middleware(RequestIdMiddleware)
 

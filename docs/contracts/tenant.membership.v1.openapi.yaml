@@ -1,0 +1,210 @@
+openapi: 3.1.0
+info:
+  title: tenant.membership.v1 (AA-CIS-App → AA-Partner CRM, agency membership feed)
+  version: "1.0"
+  description: >-
+    CIS is the directory of agencies (tenants) and of who belongs to them. This contract tells the partner CRM only
+    "identity (iss, sub) belongs to agency X" plus the person's Content studio role (owner / editor / viewer) and the
+    agency lifecycle (root ADR 0006b decision 4, ADR 0010 decision 5). It never carries a CRM role (owner / agent /
+    assistant): the CRM owns those, and a CIS change can never grant one (AA-978 refusal case). It carries no email
+    and no display name (AA-813 data-standards addendum, S238); (iss, sub) is tagged pii online_id there and here.
+    Served by the CIS API from CIS's own tables shared.tenant_members and shared.tenant_membership_event (AA-978),
+    keyed by (iss, sub), never sub alone (ADR 0006 decision 9). No catalog view: the CRM reads CIS over HTTP only and
+    holds no database grant (root ADR 0008a), so catalog.v_tenant_member is deferred (AA-813 addendum option 2).
+    Snapshot with ETag plus a cursor feed. The CRM uses CIS as a revocation and lifecycle source, not as a positive
+    gate: members that exist only in the CRM have no CIS row, so a missing CIS membership never refuses a CRM request.
+    The CRM applies a membership.removed event and every agency lifecycle event (locked, unlocked, deleted) within
+    60 s (tenant.unlocked only lifts a lock that a CIS lifecycle event set); created, invited, activated and
+    role_changed never create a CRM member or change a CRM role. Removing the last owner locks the agency in the CRM
+    until owner recovery. Feed cursor: opaque, oldest first; the feed only
+    returns events whose writing transaction is older than every transaction still open (a transaction-id snapshot
+    horizon), so an event committed out of order is delivered later, never skipped (contracts rule 4); a consumer
+    stores event_id and applies each event once. Auth: M2M token of the aa-m2m pool, scope cis.tenant/read (root ADR
+    0006b decision 7). Path prefix /tenant/membership/v1 is provisional until ADR 0013 (AA-899).
+  x-aa-contract: tenant.membership.v1
+  x-aa-producer: AA-CIS-App
+  x-aa-consumers: [AA-Partner]
+  x-aa-issues: [AA-928, AA-978, AA-813]
+servers:
+  - url: /tenant/membership/v1
+security:
+  - m2m: [cis.tenant/read]
+paths:
+  /tenants/{tenant_id}/members:
+    parameters:
+      - name: tenant_id
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+      - name: If-None-Match
+        in: header
+        required: false
+        schema: {type: string, maxLength: 100}
+    get:
+      operationId: getTenantMembers
+      summary: Snapshot of one agency's memberships
+      responses:
+        "200":
+          description: Snapshot
+          headers:
+            ETag:
+              schema: {type: string, maxLength: 100}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/TenantMembers"}
+        "304":
+          description: Not modified
+        "404": {$ref: "#/components/responses/Problem"}
+  /memberships:
+    get:
+      operationId: findMemberships
+      summary: Memberships of one identity (the CRM's check on sign-in)
+      parameters:
+        - name: iss
+          in: query
+          required: true
+          schema: {type: string, format: uri, maxLength: 300}
+        - name: sub
+          in: query
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 128}
+      responses:
+        "200":
+          description: Active and invited memberships of that identity
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/IdentityMemberships"}
+  /events:
+    get:
+      operationId: listMembershipEvents
+      summary: Cursor feed of membership and agency changes, oldest first
+      parameters:
+        - name: after
+          in: query
+          required: false
+          schema: {type: string, maxLength: 200}
+        - name: limit
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, maximum: 500, default: 200}
+      responses:
+        "200":
+          description: Events
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/MembershipEventPage"}
+components:
+  securitySchemes:
+    m2m:
+      type: oauth2
+      description: Cognito M2M pool aa-m2m-<env>, client credentials.
+      flows:
+        clientCredentials:
+          tokenUrl: https://m2m-auth.example.invalid/oauth2/token
+          scopes:
+            cis.tenant/read: Read tenants and memberships
+  responses:
+    Problem:
+      description: Error
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Problem"}
+  schemas:
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [error, message]
+      properties:
+        error: {type: string, enum: [unauthorized, forbidden, not_found, invalid]}
+        message: {type: string, maxLength: 500}
+    Identity:
+      type: object
+      additionalProperties: false
+      required: [iss, sub]
+      properties:
+        iss:
+          type: string
+          format: uri
+          maxLength: 300
+          x-pii: online_id
+          description: Issuer of the person's partner-pool token (as published by the pool, never hand-built).
+        sub:
+          type: string
+          minLength: 1
+          maxLength: 128
+          x-pii: online_id
+    ContentStudioRole:
+      type: string
+      enum: [owner, editor, viewer]
+      description: CIS Content studio role. Not a CRM role; the CRM ignores it for CRM authorisation.
+    MembershipStatus:
+      type: string
+      enum: [invited, active, removed]
+    Membership:
+      type: object
+      additionalProperties: false
+      required: [membership_id, tenant_id, identity, content_studio_role, status, updated_at]
+      properties:
+        membership_id: {type: string, format: uuid}
+        tenant_id: {type: string, format: uuid}
+        identity:
+          oneOf:
+            - {$ref: "#/components/schemas/Identity"}
+            - {type: "null"}
+          description: Null while status is invited (the identity binds at activation, ADR 0006b decision 5).
+        content_studio_role: {$ref: "#/components/schemas/ContentStudioRole"}
+        status: {$ref: "#/components/schemas/MembershipStatus"}
+        invitation_id:
+          type: [string, "null"]
+          format: uuid
+          description: Set for invited and for memberships that came from an invitation (crm.ops.v1 first-owner bind).
+        updated_at: {type: string, format: date-time}
+    TenantState:
+      type: string
+      enum: [active, locked, deleted]
+    TenantMembers:
+      type: object
+      additionalProperties: false
+      required: [tenant_id, tenant_state, members, as_of]
+      properties:
+        tenant_id: {type: string, format: uuid}
+        tenant_state: {$ref: "#/components/schemas/TenantState"}
+        members:
+          type: array
+          items: {$ref: "#/components/schemas/Membership"}
+        as_of: {type: string, format: date-time}
+    IdentityMemberships:
+      type: object
+      additionalProperties: false
+      required: [identity, memberships]
+      properties:
+        identity: {$ref: "#/components/schemas/Identity"}
+        memberships:
+          type: array
+          items: {$ref: "#/components/schemas/Membership"}
+    MembershipEvent:
+      type: object
+      additionalProperties: false
+      required: [event_id, cursor, type, occurred_at, tenant_id]
+      properties:
+        event_id: {type: string, format: uuid}
+        cursor: {type: string, maxLength: 200}
+        type:
+          type: string
+          enum: [tenant.created, tenant.locked, tenant.unlocked, tenant.deleted, membership.invited,
+                 membership.activated, membership.role_changed, membership.removed]
+        occurred_at: {type: string, format: date-time}
+        tenant_id: {type: string, format: uuid}
+        membership:
+          oneOf:
+            - {$ref: "#/components/schemas/Membership"}
+            - {type: "null"}
+    MembershipEventPage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: {$ref: "#/components/schemas/MembershipEvent"}
+        next_cursor: {type: string, maxLength: 200}

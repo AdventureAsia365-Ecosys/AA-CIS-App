@@ -1,9 +1,11 @@
 """Service-to-service tokens of the Cognito M2M pool ``aa-m2m-<env>`` on CIS (root ADR 0006b decision 7, AA-976).
 
-CIS serves ``catalog.http.v1`` (``/catalog/v1``, ``api/routers/catalog_http.py``) to the partner CRM (AA-Partner),
-which holds no grant on any CIS schema (root ADR 0008a decision 1). That route class accepts exactly one kind of
-caller: the M2M pool issuer x the AA-Partner (CRM) app client, OAuth client-credentials access tokens carrying the
-scope ``cis.catalog/read``.
+CIS serves two contracts to the partner CRM (AA-Partner), which holds no grant on any CIS schema (root ADR 0008a
+decision 1): ``catalog.http.v1`` (``/catalog/v1``, ``api/routers/catalog_http.py``, scope ``cis.catalog/read``) and
+``tenant.membership.v1`` (``/tenant/membership/v1``, ``api/routers/tenant_membership.py``, scope
+``cis.tenant/read``, AA-978). Both route classes accept exactly one kind of caller: the M2M pool issuer x the
+AA-Partner (CRM) app client, OAuth client-credentials access tokens carrying the route class's scope. Each router
+depends on :func:`require_m2m` with its scope (a token holding only the other scope gets 403).
 
 Same pattern as AA-Booking ``app/auth/m2m.py`` (AA-972): the shared multi-issuer verifier
 (``api/core/identity_verifier.py``, never edited here) with a Cognito access-token profile whose "groups" claim is
@@ -42,8 +44,12 @@ from typing import Optional
 
 import structlog
 
+from fastapi import Request
+from fastapi.responses import JSONResponse
+
 from api.core.identity_config import workforce_issuer
 from api.core.identity_verifier import (
+    AuthUnavailable,
     InvalidToken,
     IssuerConfig,
     JwksFetcher,
@@ -64,6 +70,8 @@ ENV_M2M_CRM_CLIENT_ID = "COGNITO_M2M_CRM_CLIENT_ID"
 # Resource server "cis.catalog" of the M2M pool (AA-CIS-Infra identity_m2m.tf); scope string as in the contract
 # catalog.http.v1 components.securitySchemes.m2m.
 SCOPE_CATALOG_READ = "cis.catalog/read"
+# Resource server "cis.tenant" (AA-978, AA-CIS-Infra identity_m2m.tf); contract tenant.membership.v1.
+SCOPE_TENANT_READ = "cis.tenant/read"
 
 # The shared verifier's message for a validly signed token of a client this route class does not accept.
 CLIENT_NOT_ALLOWED = "client not allowed"
@@ -177,3 +185,74 @@ async def stop_m2m_jwks_prefetch(task: Optional[asyncio.Task]) -> None:
         return
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
+
+
+# ── the route-class dependency (AA-978: shared by catalog.http.v1 and tenant.membership.v1) ─────────────────────────
+
+class M2MProblem(Exception):
+    """An error answered with the contracts' Problem body ``{error, message[, reason]}`` (handler registered in
+    api/main.py). ``api.routers.catalog_http.CatalogProblem`` is this class."""
+
+    def __init__(self, status: int, error: str, message: str, reason: Optional[str] = None,
+                 headers: Optional[dict[str, str]] = None) -> None:
+        super().__init__(status, error, message, reason, headers)
+        self.status, self.error, self.message, self.reason = status, error, message, reason
+        self.headers = headers or {}
+
+
+def problem_response(exc: M2MProblem) -> JSONResponse:
+    body: dict[str, object] = {"error": exc.error, "message": exc.message[:500]}
+    if exc.reason is not None:
+        body["reason"] = exc.reason
+    return JSONResponse(status_code=exc.status, content=body, headers=exc.headers)
+
+
+async def m2m_problem_handler(_request: Request, exc: M2MProblem) -> JSONResponse:
+    return problem_response(exc)
+
+
+def bearer_token(request: Request) -> Optional[str]:
+    value = (request.headers.get("authorization") or "").strip()
+    if value[:7].lower() != "bearer ":
+        return None
+    token = value[7:].strip()
+    return token or None
+
+
+def require_m2m(scope: str, *, realm: str, refused: str, log_prefix: str):
+    """A FastAPI dependency for one M2M route class: the verified CRM caller holding ``scope``, or an M2MProblem.
+
+    401 no / bad token (``WWW-Authenticate: Bearer realm="<realm>"``), 403 another client, a user token or a token
+    without ``scope`` (``refused`` is the message for the first two), 503 key set or configuration unavailable.
+    ``log_prefix`` keeps each route class's log events (``<prefix>_refused``, ``<prefix>_unauthorized``, ...)."""
+    unauthorized_headers = {"WWW-Authenticate": f'Bearer realm="{realm}"'}
+
+    async def dependency(request: Request) -> M2MCaller:
+        token = bearer_token(request)
+        if token is None:
+            raise M2MProblem(401, "unauthorized", "An M2M bearer token is required.", headers=unauthorized_headers)
+        try:
+            verifier = get_m2m_verifier()
+        except ValueError as exc:
+            log.error(f"{log_prefix}_m2m_config_invalid", error=str(exc))
+            raise M2MProblem(503, "unavailable", "Token verification is not configured.") from exc
+        try:
+            caller = await verify_caller(verifier, token)
+        except CallerRefused as exc:
+            log.info(f"{log_prefix}_refused", reason=str(exc))
+            raise M2MProblem(403, "forbidden", refused) from exc
+        except InvalidToken as exc:
+            log.info(f"{log_prefix}_unauthorized", reason=str(exc))
+            raise M2MProblem(401, "unauthorized", "The bearer token is not valid.",
+                             headers=unauthorized_headers) from exc
+        except AuthUnavailable as exc:
+            log.error(f"{log_prefix}_jwks_unavailable")
+            raise M2MProblem(503, "unavailable", "Token verification is unavailable; retry later.",
+                             headers={"Retry-After": "5"}) from exc
+        if not caller.has(scope):
+            log.info(f"{log_prefix}_refused", reason="missing scope", client_id=caller.client_id)
+            raise M2MProblem(403, "forbidden", f"The token lacks the scope {scope}.")
+        return caller
+
+    dependency.__name__ = f"require_m2m_{log_prefix}"
+    return dependency

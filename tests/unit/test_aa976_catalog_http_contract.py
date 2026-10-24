@@ -25,9 +25,9 @@ from tests.unit.aa976_m2m import OTHER_CLIENT, install_m2m
 
 CONTRACT = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "catalog.http.v1.openapi.yaml"
 DOC = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
-# sha256 of AA-Ecosys docs/contracts/catalog.http.v1.openapi.yaml (info.version 1.1). Update the root file first,
+# sha256 of AA-Ecosys docs/contracts/catalog.http.v1.openapi.yaml (info.version 1.2). Update the root file first,
 # copy it here byte for byte, then set this to `sha256sum` of the root file.
-ROOT_CONTRACT_SHA256 = "855d609b3e9234a56b3111212cdd20ed9c9324af20772adc7bd611286164ea3e"
+ROOT_CONTRACT_SHA256 = "3a90bebd161593684e67899e3e2f91d4daaf07a0046bfc30dc5c71b559d3f23c"
 
 
 def test_copy_is_the_pinned_root_contract():
@@ -35,11 +35,13 @@ def test_copy_is_the_pinned_root_contract():
         "docs/contracts/catalog.http.v1.openapi.yaml differs from the pinned root contract: change the AA-Ecosys "
         "root file first, copy it here unchanged, then update ROOT_CONTRACT_SHA256")
 
-# The operations this card serves (the /aa-content ones are AA-977).
+# The operations the router serves (the /aa-content ones are AA-977, checked in test_aa977_catalog_aa_content.py).
 SERVED = {
     "listTours": ("/tours", "get"),
     "getTour": ("/tours/{source_system}/{source_id}", "get"),
     "getDestination": ("/destinations/{destination_id}", "get"),
+    "listAaContent": ("/aa-content", "get"),
+    "getAaContentVersion": ("/aa-content/{content_id}/versions/{version}", "get"),
 }
 
 

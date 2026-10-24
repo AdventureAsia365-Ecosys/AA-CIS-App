@@ -73,7 +73,7 @@ class Quota(BaseModel):
 # ── catalog.http.v1 (AA-976) — documentation only ──────────────────────────────
 # The /catalog/v1 handlers (api/routers/catalog_http.py) return their own JSONResponse (ETag, Cache-Control, 304),
 # so these models are declared with ``responses={200: {"model": ...}}`` and never validate or filter a body. They
-# mirror the root contract docs/contracts/catalog.http.v1.openapi.yaml (v1.1), which stays the source of truth (its
+# mirror the root contract docs/contracts/catalog.http.v1.openapi.yaml (v1.2), which stays the source of truth (its
 # test: tests/unit/test_aa976_catalog_http_contract.py). Prefixed ``Catalog`` so no other CIS schema name collides.
 
 class _CatalogModel(BaseModel):
@@ -154,3 +154,98 @@ class CatalogDestination(_CatalogModel):
     time_zone: str
     lat: Optional[float] = None
     lng: Optional[float] = None
+
+
+class CatalogAaContentSummary(_CatalogModel):
+    """One item in a ``listAaContent`` page: the latest published version of an item that is not retired (AA-977)."""
+    content_id: str
+    kind: Literal["prep_pack", "starter_template", "campaign_block"]
+    version: int
+    locale: Literal["en", "vi"]
+    group_key: Optional[str] = None
+    title: str
+    published_at: str
+    content_hash: str
+
+
+class CatalogAaContentPage(_CatalogModel):
+    """GET /catalog/v1/aa-content — one page ordered by content_id; ``next_cursor`` null on the last page."""
+    items: List[CatalogAaContentSummary]
+    next_cursor: Optional[str] = None
+
+
+class CatalogAaTourKey(_CatalogModel):
+    source_system: Literal["cis"]
+    source_id: str
+
+
+class CatalogAaAppliesTo(_CatalogModel):
+    country_codes: List[str] = []
+    tours: List[CatalogAaTourKey] = []
+
+
+class CatalogAaContent(_CatalogModel):
+    """GET /catalog/v1/aa-content/{content_id}/versions/{version} — one published version (ETag = ``content_hash``);
+    served also after a newer version is published or the item is retired (AA-977)."""
+    content_id: str
+    kind: Literal["prep_pack", "starter_template", "campaign_block"]
+    version: int
+    locale: Literal["en", "vi"]
+    group_key: Optional[str] = None
+    title: str
+    body_markdown: str
+    applies_to: CatalogAaAppliesTo
+    published_at: str
+    content_hash: str
+
+
+# ── tenant.membership.v1 (AA-978) — documentation only ─────────────────────────
+# The /tenant/membership/v1 handlers (api/routers/tenant_membership.py) return their own JSONResponse (ETag, 304,
+# Cache-Control), so these models are declared with ``responses={200: {"model": ...}}`` and never validate a body.
+# They mirror the root contract docs/contracts/tenant.membership.v1.openapi.yaml (v1.0), the source of truth (its
+# test: tests/unit/test_aa978_tenant_membership_contract.py). Prefixed ``Membership``.
+
+class MembershipIdentity(_CatalogModel):
+    iss: str
+    sub: str
+
+
+class MembershipItem(_CatalogModel):
+    """One CIS membership: the Content studio role, never a CRM role; no e-mail or name."""
+    membership_id: str
+    tenant_id: str
+    identity: Optional[MembershipIdentity] = None
+    content_studio_role: Literal["owner", "editor", "viewer"]
+    status: Literal["invited", "active", "removed"]
+    invitation_id: Optional[str] = None
+    updated_at: str
+
+
+class MembershipTenantMembers(_CatalogModel):
+    """GET /tenant/membership/v1/tenants/{tenant_id}/members — invited and active members (ETag, 304)."""
+    tenant_id: str
+    tenant_state: Literal["active", "locked", "deleted"]
+    members: List[MembershipItem]
+    as_of: str
+
+
+class MembershipIdentityMemberships(_CatalogModel):
+    """GET /tenant/membership/v1/memberships?iss=&sub= — the identity's memberships that are not removed."""
+    identity: MembershipIdentity
+    memberships: List[MembershipItem]
+
+
+class MembershipEvent(_CatalogModel):
+    event_id: str
+    cursor: str
+    type: Literal["tenant.created", "tenant.locked", "tenant.unlocked", "tenant.deleted", "membership.invited",
+                  "membership.activated", "membership.role_changed", "membership.removed"]
+    occurred_at: str
+    tenant_id: str
+    membership: Optional[MembershipItem] = None
+
+
+class MembershipEventPage(_CatalogModel):
+    """GET /tenant/membership/v1/events — oldest first; ``next_cursor`` is always set (store it and send it back)."""
+    items: List[MembershipEvent]
+    next_cursor: str

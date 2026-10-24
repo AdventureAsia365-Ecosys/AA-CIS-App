@@ -200,6 +200,10 @@ POLICY: dict[tuple[str, str], str] = {
     ("GET", "/admin/tenants/{tenant_id}/cost"): TENANT_READ,
     ("GET", "/admin/tenants/{tenant_id}/quality"): TENANT_READ,
     ("GET", "/admin/tenants/{tenant_id}/markets"): TENANT_READ,
+    # AA-978 — Tenant 360 Members (CIS memberships; a removal also signs the person out of the partner CRM)
+    ("GET", "/admin/tenants/{tenant_id}/members"): TENANT_READ,
+    ("PATCH", "/admin/tenants/{tenant_id}/members/{membership_id}"): TENANT_WRITE,
+    ("POST", "/admin/tenants/{tenant_id}/members/{membership_id}/remove"): TENANT_WRITE,
 
     # ── admin_pipeline — Upload (S0), every staff role
     ("POST", "/admin/upload-url"): CONTENT_WRITE,
@@ -368,6 +372,16 @@ POLICY: dict[tuple[str, str], str] = {
     ("POST", "/admin/platform/alert-recipients/test-email"): ALERTS_WRITE,
     ("DELETE", "/admin/platform/alert-recipients/{recipient_id}"): ALERTS_WRITE,
     ("POST", "/admin/platform/alert-recipients/{recipient_id}/resend"): ALERTS_WRITE,
+
+    # ── admin_aa_content (AA-977, CRM-B5) — AA-authored content for the partner CRM. Reads open (content.read, the
+    # viewer reads); drafts are content work (content.write: the content team); publish / retire / restore change
+    # what agencies receive over catalog.http.v1, so admin only (master.admin, the Master Content lifecycle tier).
+    ("POST", "/admin/aa-content"): CONTENT_WRITE,
+    ("PUT", "/admin/aa-content/{content_id}/draft"): CONTENT_WRITE,
+    ("DELETE", "/admin/aa-content/{content_id}/draft"): CONTENT_WRITE,
+    ("POST", "/admin/aa-content/{content_id}/publish"): MASTER_ADMIN,
+    ("POST", "/admin/aa-content/{content_id}/retire"): MASTER_ADMIN,
+    ("POST", "/admin/aa-content/{content_id}/restore"): MASTER_ADMIN,
 
     # ── admin_data_model (AA-894 scope 2) — Developer › Data model: the live ERD from the nightly schema dump
     # (every schema of the shared RDS, PII tags included), admin only.

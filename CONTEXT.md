@@ -865,7 +865,8 @@ write CIS schemas. Owners per schema: `AA-Ecosys/docs/database/schema-ownership.
 | AA-TripPlanner-Web | the Model Gateway config `shared.llm_role_config` / `shared.llm_model_catalog`; all content through the `catalog.*` views (row below) | `shared.llm_call_log` (rows tagged `quality_signal.app = "tripplanner"`) | CIS migration 173 (gateway tables + log) to role `tripplanner`. The pilot's direct reads are revoked: 254 (AA-847) `raw_tours` (179) and `tour_atoms` (180); 270 (AA-712 X4) `gold_aa_internal.published_tours`, `shared.destinations` (201), the photo views `shared.v_destination_photos` / `v_tour_photos` (201), `acp_contract.v_active_tour_atoms` (216) and USAGE on `gold_aa_internal` / `acp_contract` |
 | AA-TripPlanner-Web | Model Gateway config `shared.llm_role_config`, `shared.llm_model_catalog` (stages `tp_*`) | — | CIS 173 |
 | AA-Booking, AA-TripPlanner-Web | **Catalog read model**, schema `catalog` (AA-679): `v_tour` (live AA tours, key `(source_system, source_id)` = `('cis', raw_tours.source_group_id)`, `content_hash`), `v_tour_day` (parsed canonical itinerary), `v_tour_place` (active-atom places + place card + destination lat/lng), `v_tour_photo`, `v_destination`, `v_destination_photo`. **Coordinates carry an attribution duty**: wherever a consumer shows `lat`/`lng` from these views (map pins, area circles), it must show "Powered by Geoapify" (link) + "© OpenStreetMap contributors" (AA-712, Geoapify Free-plan + ODbL terms); the place views of migration 228 expose `located_by` / `geo_precision` so a consumer draws `area` points as areas, not pins. Contract `AA-Ecosys/docs/contracts/catalog.tour.v1.json`; `catalog.tour.v1.3` (CIS 274, AA-986 L4) adds `v_tour_retired` (tombstone: retired / paused / restored per key, derived from the served state) and `v_tour_lifecycle_outbox` (served-state events, cursor `event_id`). New consumers read only `catalog.*`; since CIS 270 TripPlanner does too (plus the Model Gateway). Events `catalog.tour.published/updated/trashed` (outbox) are the next AA-679 slice | its own `booking.*` | CIS 225 to roles `aa_app_user`, `tripplanner`, `booking` (unguarded). Views owned by NOLOGIN role `catalog_owner` (no BYPASSRLS, no members), which reads `published_tours` / `raw_tours` through RLS policy `catalog_owner_aa_master_read` (AA master tenant only); consumers need not set `app.tenant_id`. 225 also makes `tenant_isolation` on those two tables treat `app.tenant_id = ''` as no tenant (NULLIF) instead of raising |
-| AA-Partner (partner CRM) | **`catalog.http.v1` over HTTP** (AA-976, CRM-B4; root ADR 0010 decision 4: the CRM holds no grant on any CIS schema): `GET /catalog/v1/tours` (keyset cursor by `source_id`, `updated_since`, `country_code`, `limit` ≤ 50), `GET /catalog/v1/tours/cis/{source_id}` (days with per-day and per-place IANA `time_zone`, inclusions, exclusions classified for pay-on-arrival R25, facets for system tags R29, photos), `GET /catalog/v1/destinations/{id}`. Served from the `catalog` views read as `aa_app_user` on the tenant pool (one connection per api task at most, READ ONLY, `app.tenant_id` = ''), so it shows exactly what Booking / TripPlanner see. Liveness per root ADR 0015 decision 5: `retired` → 410 `gone` + `reason` (the CRM marks lines "no longer offered"), `paused` → 404 + `reason`, never served → 404. Strong `ETag` (a tour's `content_hash` = sha256 over the served body), `Cache-Control: private, max-age=60`, 304 on `If-None-Match`. Code: `api/routers/catalog_http.py`, `services/catalog_http/`; contract copy `docs/contracts/catalog.http.v1.openapi.yaml` (byte-identical to the root file, conformance test `tests/unit/test_aa976_catalog_http_contract.py`). `/aa-content` is AA-977 | — | M2M client-credentials token of the `aa-m2m-<env>` pool, CRM client + scope `cis.catalog/read` (root ADR 0006b decision 7, `api/core/m2m_auth.py`, same shared verifier as staff tokens); API Gateway route `/catalog/{proxy+}` (AA-CIS-Infra) |
+| AA-Partner (partner CRM) | **`catalog.http.v1` over HTTP** (AA-976, CRM-B4; root ADR 0010 decision 4: the CRM holds no grant on any CIS schema): `GET /catalog/v1/tours` (keyset cursor by `source_id`, `updated_since`, `country_code`, `limit` ≤ 50), `GET /catalog/v1/tours/cis/{source_id}` (days with per-day and per-place IANA `time_zone`, inclusions, exclusions classified for pay-on-arrival R25, facets for system tags R29, photos), `GET /catalog/v1/destinations/{id}`. Served from the `catalog` views read as `aa_app_user` on the tenant pool (one connection per api task at most, READ ONLY, `app.tenant_id` = ''), so it shows exactly what Booking / TripPlanner see. Liveness per root ADR 0015 decision 5: `retired` → 410 `gone` + `reason` (the CRM marks lines "no longer offered"), `paused` → 404 + `reason`, never served → 404. Strong `ETag` (a tour's `content_hash` = sha256 over the served body), `Cache-Control: private, max-age=60`, 304 on `If-None-Match`. Code: `api/routers/catalog_http.py`, `services/catalog_http/`; contract copy `docs/contracts/catalog.http.v1.openapi.yaml` (byte-identical to the root file, conformance test `tests/unit/test_aa976_catalog_http_contract.py`). **AA-authored content** (AA-977, contract 1.2): `GET /catalog/v1/aa-content` (latest published version of each item that is not retired; `kind`, `locale`, keyset cursor by `content_id`, `limit` ≤ 50; ETag / 304) and `GET /catalog/v1/aa-content/{content_id}/versions/{version}` (any published version, also after a newer publish or retire; a draft / unknown version → 404), read from `gold_aa_internal.v_aa_content_published` on the main pool (cis_app); see "AA-authored content" below | — | M2M client-credentials token of the `aa-m2m-<env>` pool, CRM client + scope `cis.catalog/read` (root ADR 0006b decision 7, `api/core/m2m_auth.py`, same shared verifier as staff tokens); API Gateway route `/catalog/{proxy+}` (AA-CIS-Infra) |
+| AA-Partner (partner CRM) | **`tenant.membership.v1` over HTTP** (AA-978, CRM-P1; root ADR 0006b decision 4, ADR 0010 decision 5): `GET /tenant/membership/v1/tenants/{id}/members` (invited + active members and `tenant_state` active / locked / deleted; ETag over the body without `as_of`, 304), `GET /tenant/membership/v1/memberships?iss=&sub=` (keyed by iss AND sub), `GET /tenant/membership/v1/events?after=&limit=` (cursor feed, `limit` ≤ 500, ordered by `(txid, seq)` below the snapshot horizon so a late commit is never skipped). Ids, identity and the Content studio role only: no e-mail, name or CRM role. Read from `shared.tenant_members` / `shared.tenant_membership_event` (CIS 276) on the main pool (cis_app); see "Tenant membership directory" below. Code: `api/routers/tenant_membership.py`, `services/tenant_membership/`; contract copy `docs/contracts/tenant.membership.v1.openapi.yaml` (test `tests/unit/test_aa978_tenant_membership_contract.py`) | — | M2M token of the `aa-m2m-<env>` pool, CRM client + scope `cis.tenant/read` (`api/core/m2m_auth.require_m2m`, the same dependency factory as `/catalog/v1`); API Gateway route `/tenant/membership/{membership_proxy+}` (AA-CIS-Infra, AA-978 S1) |
 | Ops-probe Lambda (AA-CIS-Infra) | `POST /admin/dfs-balance/check`, `/admin/jev-canary/check`, `/admin/jev/402-sweep`, `/admin/waves/check` daily | — | admin secret |
 
 CIS as a consumer (AA-858): the `/admin/overview` business view reads `booking.v_ops_funnel_daily`,
@@ -878,6 +879,39 @@ Platform services other apps may reuse (already used by TripPlanner where noted)
 and `llm_call_log` (TripPlanner), the durable job runner `shared.job` (CIS only for now — a second
 enqueuing repo is AA-751), the cost guard `shared.spend_budget`, the Jev decision layer, and rerun
 waves (`/admin/waves`, AA-727).
+
+### AA-authored content (AA-977, CRM-B5)
+
+AA staff write "Before you go" prep packs (R38), starter templates (R9) and campaign content blocks (R14) in CIS;
+the partner CRM reads them over `catalog.http.v1` (row above) once published. CIS 275:
+`gold_aa_internal.aa_content_item` (one locale of one piece; the EN and VI copies share `group_key`, same kind) and
+`aa_content_version` (at most one draft, always the newest; published versions never change and are never deleted:
+trigger `aa_content_version_guard`, rule E), view `v_aa_content_published` (published versions only: rule R). Grants:
+`cis_app` only (no RLS: no tenant column, no personal data). Editor API `/admin/aa-content`
+(`api/routers/admin_aa_content.py`, `services/aa_content/store.py`): drafts need `content.write`, publish / retire /
+restore `master.admin`; every write carries the item's `updated_at` as `expected_updated_at` (409 `stale` otherwise).
+At publish a prep pack whose visa section has no https link is refused (422 `visa_needs_official_link`: visa = an
+official link only). Retire hides an item from the served list; its published versions stay fetchable by version.
+`content_hash` = sha256 over the served AaContent body, computed once at publish (the ETag).
+
+### Tenant membership directory (AA-978, CRM-P1)
+
+Who belongs to which agency, with the CIS Content studio role (owner / editor / viewer; never a CRM role). CIS 276:
+`shared.tenant_members` (identity `(cognito_iss, cognito_sub)` tagged `pii:online_id`, NULL while invited and bound
+once at activation; status invited -> active -> removed, removed is final; one live row per identity and agency) and
+the append-only `shared.tenant_membership_event`, written ONLY by triggers: on `shared.tenant_members` (invited /
+activated / role_changed / removed) and on `shared.tenants` (created, and locked / unlocked / deleted when
+`is_active` / `cancelled_at` change the agency state), so every admin tenant write path feeds it with no code
+change. Deletes only 90 days after removal / occurrence or for an offboarded tenant (DM-7, AA-839 erasure). Grants:
+`cis_app` only, no RLS, nothing for `aa_app_user`; the triggers run as the writer (not SECURITY DEFINER, MIG-6), so
+a new writer of `shared.tenants` needs INSERT on the event table (migration guard + standing test). Staff routes
+(Tenant 360 Members, `api/routers/admin_tenant360.py`, `services/tenant_membership/writer.py`): `GET
+/admin/tenants/{id}/members` (identity shown as a 12-hex fingerprint only), `PATCH .../members/{membership_id}`
+(Content studio role) and `POST .../members/{membership_id}/remove`, both `tenant.write`, audited
+(`tenant.member_role_changed` / `tenant.member_removed`). The partner CRM applies a removal (member disabled and
+signed out; last owner -> agency locked until owner recovery) and agency lifecycle within a minute; it never takes a
+CRM role from CIS. Invitation and activation of identities come with AA-979 (partner-pool re-enrolment); until then
+rows are created only by staff tooling / the Dev seed.
 
 ## Staff roles and permissions (AA-656)
 
@@ -1211,7 +1245,8 @@ what they may call there is narrowed by the backend capabilities below (AA-882),
 capabilities: `content.read/write` and `review.act` for every staff role; `master.admin`,
 `atoms.write`, `photos.write`, `a4.unpublish`, `quality.write`, `content.settings.write`, `tenant.*`,
 `ops.*`, `ai.admin`, `spend.*`, `staff.read`, `audit.read`, `alerts.write` (AA-913; the alert-recipient changes
-also need a Cognito session, checked in their router) for admin; `staff.write` is an owner flag,
+also need a Cognito session, checked in their router) for admin (AA-977: AA-authored content drafts need
+`content.write`, its publish / retire / restore `master.admin`); `staff.write` is an owner flag,
 not a role permission) and `POLICY` keyed by `(method, route template)`. The router-level dependency
 `staff_policy` (secret check, then policy) refuses with 403 a role that lacks the route's capability;
 `staff_policy_if_staff` does the same only for a request carrying a staff credential (the valid secret, or since

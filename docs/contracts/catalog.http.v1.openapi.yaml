@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: catalog.http.v1 (AA-CIS-App → AA-Partner CRM, published tour content and AA-authored content)
-  version: "1.1"
+  version: "1.2"
   description: >-
     Read-only HTTP view of CIS published content for the partner CRM (root ADR 0010 decision 4), because the CRM
     holds no grant on the catalog schema (root ADR 0008a decision 1). Two parts: (1) published tours with days,
@@ -25,6 +25,14 @@ info:
     is bound to the filters it was issued with. TourDay gains `time_zone` (the day's IANA zone: its last place, else
     the tour's country); Destination.country_code may be null (a place outside the countries CIS knows).
     content_hash is `sha256:<hex>` over the served body, so it also changes when places, time zones or photos change.
+    v1.2 (AA-977, additive): AA-authored content is served. One content_id holds one locale, so the EN and VI copies
+    of one pack are two items that share a `group_key` (AaContentSummary and AaContent); the CRM pairs them by
+    group_key, never by title. `listAaContent` returns the latest published version of each item that is not retired,
+    takes `limit` (1–50, default 20), orders by content_id with a cursor bound to its filters, and carries ETag,
+    Cache-Control and 304 like `listTours`. `getAaContentVersion` serves any published version, also after a newer
+    version is published and after the item is retired (the CRM keeps the version it uses; only the list hides a
+    retired item); a draft, an unknown version or a never-published item answers 404 `not_found`. A bad kind,
+    locale, version or cursor answers 400 `invalid`.
   x-aa-contract: catalog.http.v1
   x-aa-producer: AA-CIS-App
   x-aa-consumers: [AA-Partner]
@@ -146,12 +154,21 @@ paths:
           required: false
           schema: {$ref: "#/components/schemas/Locale"}
         - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/IfNoneMatch"
       responses:
         "200":
-          description: One page of content summaries (latest published version of each)
+          description: >-
+            One page of content summaries (latest published version of each item that is not retired), ordered by
+            content_id
+          headers:
+            ETag: {$ref: "#/components/headers/ETag"}
+            Cache-Control: {$ref: "#/components/headers/CacheControl"}
           content:
             application/json:
               schema: {$ref: "#/components/schemas/AaContentPage"}
+        "304":
+          description: Not modified
         "400": {$ref: "#/components/responses/Problem"}
         "401": {$ref: "#/components/responses/Problem"}
         "403": {$ref: "#/components/responses/Problem"}
@@ -172,17 +189,23 @@ paths:
       summary: One published version; the CRM keeps the version in use when a newer one is published
       responses:
         "200":
-          description: Content version
+          description: A published version, also after a newer publish or the item's retirement
           headers:
             ETag: {$ref: "#/components/headers/ETag"}
+            Cache-Control: {$ref: "#/components/headers/CacheControl"}
           content:
             application/json:
               schema: {$ref: "#/components/schemas/AaContent"}
         "304":
           description: Not modified
+        "400": {$ref: "#/components/responses/Problem"}
         "401": {$ref: "#/components/responses/Problem"}
         "403": {$ref: "#/components/responses/Problem"}
-        "404": {$ref: "#/components/responses/Problem"}
+        "404":
+          description: A draft, an unknown version or an item never published (no reason)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Problem"}
         "503": {$ref: "#/components/responses/Problem"}
 components:
   securitySchemes:
@@ -364,6 +387,12 @@ components:
     AaContentKind:
       type: string
       enum: [prep_pack, starter_template, campaign_block]
+    AaContentGroupKey:
+      type: string
+      pattern: "^[a-z0-9][a-z0-9-]{1,79}$"
+      description: >-
+        v1.2: the same piece of content in each locale shares one group_key (one item per locale). The CRM finds the
+        other-language copy by group_key.
     AaContentSummary:
       type: object
       additionalProperties: false
@@ -373,6 +402,7 @@ components:
         kind: {$ref: "#/components/schemas/AaContentKind"}
         version: {type: integer, minimum: 1}
         locale: {$ref: "#/components/schemas/Locale"}
+        group_key: {$ref: "#/components/schemas/AaContentGroupKey"}
         title: {type: string, maxLength: 300}
         published_at: {type: string, format: date-time}
         content_hash: {type: string}
@@ -394,6 +424,7 @@ components:
         kind: {$ref: "#/components/schemas/AaContentKind"}
         version: {type: integer, minimum: 1}
         locale: {$ref: "#/components/schemas/Locale"}
+        group_key: {$ref: "#/components/schemas/AaContentGroupKey"}
         title: {type: string, maxLength: 300}
         body_markdown:
           type: string

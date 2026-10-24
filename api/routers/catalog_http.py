@@ -7,12 +7,20 @@ schema (ADR 0008a decision 1), so it reads published content here.
   GET /catalog/v1/tours                                  served tours, keyset cursor, updated_since, country_code
   GET /catalog/v1/tours/{source_system}/{source_id}      one tour: 200 served, 410 retired, 404 paused / never served
   GET /catalog/v1/destinations/{destination_id}          one destination with its IANA time zone
+  GET /catalog/v1/aa-content                             AA-authored content: latest published version of each item
+                                                         that is not retired (kind, locale, cursor, limit)
+  GET /catalog/v1/aa-content/{content_id}/versions/{v}   one published version (also after a newer publish or retire)
 
 ``updated_since`` filters ``catalog.v_tour.updated_at`` only (the published Master row). Place, time-zone, photo and
 component changes move ``content_hash`` without moving it, so the contract tells an incremental CRM sync to also run
 a periodic full pass and compare ``content_hash``.
 
-The AA-authored content paths of the same contract (``/aa-content``) arrive with AA-977 (CRM-B5).
+AA-authored content (AA-977, CRM-B5, contract 1.2): prep packs, starter templates and campaign blocks that AA staff
+write and publish in CIS (``/admin/aa-content``). Read from ``gold_aa_internal.v_aa_content_published`` on the main
+pool (cis_app), which holds published versions only: a draft, an unknown version or an item never published is a 404
+``not_found`` without reason (rule R). A published version never changes (CIS 275 trigger), so the CRM keeps fetching
+the version it uses after a newer publish and after the item is retired (rule E); only the list hides a retired item.
+The version's ETag is its stored ``content_hash``. See ``services/aa_content/reader.py``.
 
 Auth: an M2M client-credentials token of the ``aa-m2m-<env>`` pool, client = AA-Partner (CRM), scope
 ``cis.catalog/read`` (root ADR 0006b decision 7; ``api/core/m2m_auth.py``). 401 no / bad token, 403 another client or
@@ -42,8 +50,11 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
 
 from api.core import m2m_auth
-from api.core.identity_verifier import AuthUnavailable, InvalidToken
-from api.schemas.public_api import CatalogDestination, CatalogTour, CatalogTourPage  # AA-899: doc only
+from api.schemas.public_api import (  # AA-899: doc only
+    CatalogAaContent, CatalogAaContentPage, CatalogDestination, CatalogTour, CatalogTourPage,
+)
+from services.aa_content import reader as aa_reader
+from services.aa_content import validate as aa_validate
 from services.catalog_http import reader
 from services.catalog_http.mapping import destination_body, tour_summary
 from services.photos.sync import public_base
@@ -55,67 +66,18 @@ CACHE_CONTROL = "private, max-age=60"
 MAX_SOURCE_ID = 128
 
 
-class CatalogProblem(Exception):
-    """An error answered with the contract Problem body (registered in api/main.py)."""
-
-    def __init__(self, status: int, error: str, message: str, reason: Optional[str] = None,
-                 headers: Optional[dict[str, str]] = None) -> None:
-        super().__init__(status, error, message, reason, headers)
-        self.status, self.error, self.message, self.reason = status, error, message, reason
-        self.headers = headers or {}
-
-
-def problem_response(exc: CatalogProblem) -> JSONResponse:
-    body: dict[str, Any] = {"error": exc.error, "message": exc.message[:500]}
-    if exc.reason is not None:
-        body["reason"] = exc.reason
-    return JSONResponse(status_code=exc.status, content=body, headers=exc.headers)
-
-
-async def catalog_problem_handler(_request: Request, exc: CatalogProblem) -> JSONResponse:
-    return problem_response(exc)
-
+# AA-978: the Problem exception, its handler and the M2M dependency live in api/core/m2m_auth.py, shared with
+# tenant.membership.v1. The names below stay for the existing imports (api/main.py, tests).
+CatalogProblem = m2m_auth.M2MProblem
+problem_response = m2m_auth.problem_response
+catalog_problem_handler = m2m_auth.m2m_problem_handler
 
 # ── auth ──────────────────────────────────────────────────────────────────────
 
-_UNAUTHORIZED_HEADERS = {"WWW-Authenticate": 'Bearer realm="catalog.http.v1"'}
-
-
-def _bearer(request: Request) -> Optional[str]:
-    value = (request.headers.get("authorization") or "").strip()
-    if value[:7].lower() != "bearer ":
-        return None
-    token = value[7:].strip()
-    return token or None
-
-
-async def require_catalog_reader(request: Request) -> m2m_auth.M2MCaller:
-    """The verified CRM caller with scope cis.catalog/read, or a Problem (401 / 403 / 503)."""
-    token = _bearer(request)
-    if token is None:
-        raise CatalogProblem(401, "unauthorized", "An M2M bearer token is required.", headers=_UNAUTHORIZED_HEADERS)
-    try:
-        verifier = m2m_auth.get_m2m_verifier()
-    except ValueError as exc:
-        logger.error("catalog_http_m2m_config_invalid", error=str(exc))
-        raise CatalogProblem(503, "unavailable", "Token verification is not configured.") from exc
-    try:
-        caller = await m2m_auth.verify_caller(verifier, token)
-    except m2m_auth.CallerRefused as exc:
-        logger.info("catalog_http_refused", reason=str(exc))
-        raise CatalogProblem(403, "forbidden", "This client may not read the catalog.") from exc
-    except InvalidToken as exc:
-        logger.info("catalog_http_unauthorized", reason=str(exc))
-        raise CatalogProblem(401, "unauthorized", "The bearer token is not valid.",
-                             headers=_UNAUTHORIZED_HEADERS) from exc
-    except AuthUnavailable as exc:
-        logger.error("catalog_http_jwks_unavailable")
-        raise CatalogProblem(503, "unavailable", "Token verification is unavailable; retry later.",
-                             headers={"Retry-After": "5"}) from exc
-    if not caller.has(m2m_auth.SCOPE_CATALOG_READ):
-        logger.info("catalog_http_refused", reason="missing scope", client_id=caller.client_id)
-        raise CatalogProblem(403, "forbidden", f"The token lacks the scope {m2m_auth.SCOPE_CATALOG_READ}.")
-    return caller
+require_catalog_reader = m2m_auth.require_m2m(
+    m2m_auth.SCOPE_CATALOG_READ, realm="catalog.http.v1", refused="This client may not read the catalog.",
+    log_prefix="catalog_http")
+"""The verified CRM caller with scope cis.catalog/read, or a Problem (401 / 403 / 503)."""
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -265,3 +227,68 @@ async def get_destination(destination_id: str, request: Request,
         raise CatalogProblem(404, "not_found", "No destination has this id.")
     body = destination_body(row)
     return _cached(request, body, _body_hash(body))
+
+
+# ── AA-authored content (AA-977) ──────────────────────────────────────────────
+
+def _aa_unavailable(exc: Exception) -> CatalogProblem:
+    logger.error("catalog_http_aa_content_unavailable", reason=str(exc))
+    return CatalogProblem(503, "unavailable", "AA content is unavailable; retry later.", headers={"Retry-After": "5"})
+
+
+def _aa_filter(value: Optional[str], allowed: tuple[str, ...], name: str) -> Optional[str]:
+    if value is None or value == "":
+        return None
+    if value not in allowed:
+        raise reader.InvalidRequest(f"{name} must be one of {', '.join(allowed)}")
+    return value
+
+
+@router.get("/aa-content", responses={200: {"model": CatalogAaContentPage}})
+async def list_aa_content(request: Request, kind: Optional[str] = None, locale: Optional[str] = None,
+                          cursor: Optional[str] = None, limit: Optional[str] = None,
+                          caller: m2m_auth.M2MCaller = Depends(require_catalog_reader)) -> Response:
+    try:
+        kind_value = _aa_filter(kind, aa_validate.KINDS, "kind")
+        locale_value = _aa_filter(locale, aa_validate.LOCALES, "locale")
+        page_size = _parse_limit(limit)
+        after = aa_reader.decode_cursor(cursor, kind_value, locale_value, page_size) if cursor else None
+    except (reader.InvalidRequest, aa_reader.InvalidRequest) as exc:
+        raise CatalogProblem(400, "invalid", str(exc)) from exc
+    try:
+        async with aa_reader.content_connection(getattr(request.app.state, "pool", None)) as conn:
+            page = await aa_reader.list_published(conn, after=after, kind=kind_value, locale=locale_value,
+                                                  limit=page_size)
+    except aa_reader.ContentUnavailable as exc:
+        raise _aa_unavailable(exc) from exc
+    body = {
+        "items": page.items,
+        "next_cursor": (aa_reader.encode_cursor(page.next_after, kind_value, locale_value, page_size)
+                        if page.next_after else None),
+    }
+    logger.info("catalog_http_served", op="listAaContent", client_id=caller.client_id, items=len(body["items"]),
+                more=body["next_cursor"] is not None)
+    return _cached(request, body, _body_hash(body))
+
+
+@router.get("/aa-content/{content_id}/versions/{version}", responses={200: {"model": CatalogAaContent}})
+async def get_aa_content_version(content_id: str, version: str, request: Request,
+                                 caller: m2m_auth.M2MCaller = Depends(require_catalog_reader)) -> Response:
+    try:
+        key = uuid.UUID(content_id)
+    except ValueError as exc:
+        raise CatalogProblem(400, "invalid", "content_id must be a UUID") from exc
+    # One spelling per version (no leading zero: '0001' would be a second cache key for version 1).
+    if (len(version) > 10 or not version.isascii() or not version.isdigit() or version.startswith("0")
+            or not 1 <= int(version) <= 2_147_483_647):
+        raise CatalogProblem(400, "invalid", "version must be a positive integer")
+    try:
+        async with aa_reader.content_connection(getattr(request.app.state, "pool", None)) as conn:
+            body = await aa_reader.get_published_version(conn, key, int(version))
+    except aa_reader.ContentUnavailable as exc:
+        raise _aa_unavailable(exc) from exc
+    logger.info("catalog_http_served", op="getAaContentVersion", client_id=caller.client_id, content_id=str(key),
+                version=int(version), found=body is not None)
+    if body is None:
+        raise CatalogProblem(404, "not_found", f"No published version {int(version)} of this content.")
+    return _cached(request, body, body["content_hash"])
