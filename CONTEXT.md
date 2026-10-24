@@ -893,6 +893,9 @@ restore `master.admin`; every write carries the item's `updated_at` as `expected
 At publish a prep pack whose visa section has no https link is refused (422 `visa_needs_official_link`: visa = an
 official link only). Retire hides an item from the served list; its published versions stay fetchable by version.
 `content_hash` = sha256 over the served AaContent body, computed once at publish (the ETag).
+Editor page `/admin/aa-content` (CIS Content › Assets › AA content (CRM); every staff role reads, controls by
+`can()`): a server-paged list, and a drawer per `group_key` with the EN and VI copies side by side (draft form, plain
+preview, visa guidance mirrored from `validate.py` in `frontend/lib/aaContent.ts`, version history).
 
 ### Tenant membership directory (AA-978, CRM-P1)
 
