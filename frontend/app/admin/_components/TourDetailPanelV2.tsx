@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import { X, ChevronRight } from "lucide-react";
 import { A, alpha, serif, sans, mono, Badge } from "./adminUi";
 import { formatDate } from "../../_kit";
+import { SCORE_BANDS } from "@/lib/quality-registry.generated";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -103,8 +104,8 @@ interface VersionContent {
 
 export function scoreColor(s: number | null | undefined): string {
   if (s == null) return A.muted2;
-  if (s >= 9) return A.green;
-  if (s >= 7) return A.amber;
+  if (s >= SCORE_BANDS.top) return A.green;
+  if (s >= SCORE_BANDS.pass) return A.amber;
   return A.red;
 }
 
@@ -568,7 +569,7 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                   </Badge>
                 )}
                 {gen?.score_overall != null && (
-                  <Badge color={gen.score_overall >= 9 ? "green" : gen.score_overall >= 7 ? "amber" : "red"}>
+                  <Badge color={gen.score_overall >= SCORE_BANDS.top ? "green" : gen.score_overall >= SCORE_BANDS.pass ? "amber" : "red"}>
                     ★ {gen.score_overall.toFixed(1)}
                   </Badge>
                 )}

@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from api.core.error_ref import log_exception_ref, new_error_ref, public_error
 from api.core.staff_authz import staff_policy
+from services.quality.registry import threshold
 from api.routers.admin import verify_admin_secret
 from shared.aws_client.cost_explorer import (
     CostExplorerUnavailable,
@@ -386,9 +387,9 @@ _SHADOW_REPORT_SQL = """
 """
 
 
-# Mirrors services/content_generation/judge_node.py::_MIN_QUALITY (kept in sync by a unit test;
-# not imported, to keep the LLM pipeline out of this router's import graph).
-_JUDGE_PASS_LINE = 7.0
+# The judge pass line judge_node._MIN_QUALITY reads (thresholds.yaml a1.judge_pass; AA-926). The registry
+# imports nothing from the LLM pipeline, so this router's import graph stays small.
+_JUDGE_PASS_LINE = threshold("a1.judge_pass")
 
 
 def _parse_judge_output(stage: str, raw: Optional[str]) -> Optional[dict]:

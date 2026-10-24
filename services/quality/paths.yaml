@@ -1,0 +1,50 @@
+# Quality System v1 — path → tier map (AA-926; design Appendix A with this repo's real paths).
+# Read by .github/scripts/quality_paths.py (CI job `quality-paths`: reports the tiers a PR touches and a
+# hash of the diff on those paths; non-blocking until AA-919) and by the lint (every glob must match a
+# tracked file). Tiers: Q0 (CI, every PR), Q2 (judge re-score before merge), R0 (post-merge replay on
+# stored output), Q3 (monthly writer train; the value is the affected tier).
+# artefact: selector — a path that picks inputs (keywords, FAQ questions, day counts); design §3.4 #6 wants
+# a keep/drop set for it in the Q0 corpus (`q0_set`). Missing → lint warning until the Q-2 corpus exists.
+version: qpaths-v1
+
+paths:
+  - globs: [services/content_generation/prompts.py, services/content_generation/batch_prompt.py]
+    tiers: {Q0: true, Q3: "A1 (+T2 when T2_SYSTEM_PROMPT changes)"}
+  - globs: [services/content_generation/graph.py, services/content_generation/forbidden_strip.py,
+            services/content_generation/seo_meta_utils.py]
+    tiers: {Q0: true, R0: "day oracle", Q3: "A1+T2 when a writer or repair node changes"}
+  - globs: [services/content_generation/judge_node.py, services/content_generation/brand_fit.py,
+            services/content_generation/brand_audit_node.py]
+    tiers: {Q0: true, Q2: "A1, T2, T7"}
+  - globs: [services/content_generation/grounding.py, services/acp_shared/grounding.py]
+    tiers: {Q0: true, Q2: "when a question or route changes", R0: true}
+  - globs: [services/content_generation/flag_fix_node.py, services/acp_content_writing/sentence_repair.py,
+            services/content_generation/t2_repair.py]
+    tiers: {Q0: true, R0: true, Q3: "repair replay"}
+  - globs: [services/acp_content_writing/prompts.py, services/acp_shared/channel_spec.py,
+            services/acp_content_writing/generate.py]
+    tiers: {Q0: true, Q3: "T9 channels affected"}
+  - globs: [services/acp_content_writing/quality_gates.py, services/acp_content_writing/hygiene.py,
+            services/acp_content_writing/trip_facts.py, services/acp_content_writing/text_integrity.py,
+            services/acp_content_writing/authenticity.py]
+    tiers: {Q0: true, Q2: "when F9 changes", R0: true}
+  - globs: [services/acp_content_writing/service.py]
+    note: "design names run_write_background (the T9 write + repair loop) in this file"
+    tiers: {Q0: true, R0: true, Q3: "T9 repair replay"}
+  - globs: [services/acp_shared/signature_vocabulary.py, services/content_generation/forbidden_words.py]
+    tiers: {Q0: true, R0: true, Q3: "A1+T2+T9 small sample"}
+  - globs: [services/acp_shared/real_questions.py, services/seo_intelligence/seed_builder.py,
+            services/seo_intelligence/s1_prefetch.py, services/acp_shared/dfs_relevance.py]
+    artefact: selector
+    note: "FAQ question selector, seed builder and the injected search_demand keywords"
+    tiers: {Q0: "two-way keep/drop set + generator", R0: "SERP/PAA cache, ~150 real questions"}
+  - globs: [services/content_generation/prompts.py]
+    artefact: selector
+    note: "_estimate_day_count (the day-count selector) lives in this file"
+    tiers: {Q0: "two-way keep/drop set + generator"}
+  - globs: [shared/llm_client/decide.py, "api/migrations/*_jev*.sql", api/migrations/211_a1_promise_unsupported.sql]
+    note: "Jev decide() and the migrations that seed shared.decision_question"
+    tiers: {Q0: true, Q2: true}
+  - globs: [services/quality/*.yaml, services/quality/*.py]
+    note: "the taxonomy, thresholds and this map"
+    tiers: {Q0: true}

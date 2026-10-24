@@ -16,6 +16,7 @@ import { TourDetailPanelV2 } from "../_components/TourDetailPanelV2";
 import { CompareModal } from "../_components/CompareModal";
 import { RetireTourDialog, type RetireAction } from "../_components/RetireTourDialog";
 import { Pagination } from "../_components/Pagination";
+import { SCORE_BANDS } from "@/lib/quality-registry.generated";
 
 const AA_INTERNAL_ID = "00000000-0000-0000-0000-000000000001";
 const PAGE_SIZE = 20;
@@ -156,8 +157,8 @@ interface VersionDetail {
 
 function scoreColor(s: number | null | undefined): string {
   if (s == null) return A.muted2;
-  if (s >= 9) return A.green;
-  if (s >= 7) return A.amber;
+  if (s >= SCORE_BANDS.top) return A.green;
+  if (s >= SCORE_BANDS.pass) return A.amber;
   return A.red;
 }
 

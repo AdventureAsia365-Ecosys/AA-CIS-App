@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { X } from "lucide-react";
 import { A, serif, sans, mono, Badge } from "./adminUi";
 import { scoreColor } from "./TourDetailPanelV2";
+import { SCORE_BANDS } from "@/lib/quality-registry.generated";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -203,7 +204,7 @@ export function CompareModal({ tourIds, onClose }: {
                       </Badge>
                     )}
                     {gen?.score_overall != null && (
-                      <Badge color={gen.score_overall >= 9 ? "green" : gen.score_overall >= 7 ? "amber" : "red"}>
+                      <Badge color={gen.score_overall >= SCORE_BANDS.top ? "green" : gen.score_overall >= SCORE_BANDS.pass ? "amber" : "red"}>
                         ★ {gen.score_overall.toFixed(1)}
                       </Badge>
                     )}

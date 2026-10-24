@@ -77,6 +77,8 @@ from services.acp_planning.tenant_pool import fetch_tenant_trips, fetch_tenant_t
 from services.acp_produce.brand import fetch_brand_rubric_text
 from services.acp_content_writing.gate_eval import ledger_snapshot  # AA-791
 from services.quality import degraded  # AA-925
+from services.quality import registry as qr
+from services.quality.registry import threshold
 
 logger = structlog.get_logger()
 
@@ -90,7 +92,7 @@ MAX_ATTEMPTS = 3
 # flag (AA-499) and the cross-tenant `F10_cannibalization_cross_tenant` BLOCKING gate (AA-484) —
 # a shared threshold for the same underlying question ("is this near-duplicate content?") is
 # more defensible than inventing a second number for the softer, flag-only case.
-_REUSE_SIMILARITY_THRESHOLD = 0.92
+_REUSE_SIMILARITY_THRESHOLD = threshold("t10.reuse_similarity")
 
 
 class ContentWritingError(Exception):
@@ -406,12 +408,12 @@ F9_CUT_NOT_HOLD_CHANNELS = frozenset({"linkedin"})
 # repaired again (attempt 2 stays the sentence repair). S233+S234: sentence repair fixes F9 49%, a full
 # rewrite 0/6, and a second repair adds new blocking fails the regression guard then reverts (16×).
 BLOG_TRUTH_CUT_ATTEMPT = MAX_ATTEMPTS
-TRUTH_CUT_GATES = frozenset({"F1_grounding", "F9_cta_fact"})
+TRUTH_CUT_GATES = frozenset({qr.F1_GROUNDING, qr.F9_CTA_FACT})
 # AA-777 (r6 fix 6) — an F17_trip_fact item the blog's attempt 3 cuts too, when F17 was already sent to a
 # sentence repair once: deterministic findings whose own instruction is to cut (a time / position / pace /
 # background base the source lacks, an optional activity sold as fixed, an interpreted thin-moment coda).
 # Never the family caveat ('add ONE', never a cut) or a played-down hazard ('keep the hazard').
-F17_CUT_GATE = "F17_trip_fact"
+F17_CUT_GATE = qr.F17_TRIP_FACT
 _F17_CUT_RE = re.compile(r"\bcut it\b|cut the added clause")
 
 
@@ -568,7 +570,7 @@ def _cut_truth_items(content_text: str, gate_ledger: list, flags: list, *, chann
     or ledger. The blog has its own cut, before the gates of its attempt 3 (`_cut_blog_truth_items`, AA-777)."""
     if channel not in F9_CUT_NOT_HOLD_CHANNELS:
         return content_text, gate_ledger, flags, None
-    f9 = next((g for g in gate_ledger if g["gate"] == "F9_cta_fact" and not g["passed"]
+    f9 = next((g for g in gate_ledger if g["gate"] == qr.F9_CTA_FACT and not g["passed"]
                and g.get("blocking", True)), None)
     if f9 is None or not sentence_repair.f9_truth_only(f9):
         return content_text, gate_ledger, flags, None
@@ -604,7 +606,7 @@ def _cut_truth_items(content_text: str, gate_ledger: list, flags: list, *, chann
     new_f9 = ({**f9, **marks, "blocking": False, "waived": True, "waived_reason": reason} if all_cut
               else {**f9, **marks, "cut_reason": reason})
     ledger = [fresh.get(g["gate"], new_f9 if g is f9 else g) for g in gate_ledger]
-    entry = {"gate_targeted": "F9_cta_fact", "repair_mode": "f9_truth_cut" if n_cut else "f9_cut_refused",
+    entry = {"gate_targeted": qr.F9_CTA_FACT, "repair_mode": "f9_truth_cut" if n_cut else "f9_cut_refused",
              **marks, "violations": [reason], "repairable": False}
     return content_text, ledger, _refresh_flags(flags, fresh) + ([new_f9] if all_cut else []), entry
 
@@ -663,7 +665,7 @@ def _enforce_authenticity(content_text: str, gate_ledger: list, flags: list, sta
     return cut_text, ledger, flags, status, held_reason, entry
 
 
-F15_STOCK_CUT_FLAG = "F15_stock_cut"
+F15_STOCK_CUT_FLAG = qr.F15_STOCK_CUT
 
 
 def _cut_stock_lines(content_text: str, gate_ledger: list, flags: list, *, channel: str, spec=None,
@@ -715,7 +717,7 @@ def _cut_stock_lines(content_text: str, gate_ledger: list, flags: list, *, chann
         return v[len("stock phrase '"):].split("' — ", 1)[0].lower() in folded_after
 
     def trim_f15(g: dict) -> dict:
-        if g.get("gate") != "F15_voice" or g.get("passed"):
+        if g.get("gate") != qr.F15_VOICE or g.get("passed"):
             return g
         left = [v for v in g.get("violations") or [] if still_there(v)]
         if left == list(g.get("violations") or []):
@@ -727,7 +729,7 @@ def _cut_stock_lines(content_text: str, gate_ledger: list, flags: list, *, chann
     fresh = {length["gate"]: length, shape["gate"]: shape}
     ledger = [trim_f15(fresh.get(g["gate"], g)) for g in gate_ledger]
     new_flags = [trim_f15(f) for f in _refresh_flags(flags, fresh)]
-    new_flags = [f for f in new_flags if not (f.get("gate") == "F15_voice" and f.get("passed"))]
+    new_flags = [f for f in new_flags if not (f.get("gate") == qr.F15_VOICE and f.get("passed"))]
     note = [f"cut stock line '{it['phrase']}': '{it['sentence'][:200]}'" for it in gone]
     new_flags.append({"gate": F15_STOCK_CUT_FLAG, "passed": False, "blocking": False, "repairable": False,
                       "violations": note})
@@ -958,7 +960,7 @@ def _final_integrity(content_text: str, hyg: hygiene.HygieneContext, gate_ledger
     an approved piece. Returns (content_text, gate_ledger, flags, status, held_reason)."""
     content_text, log, residue = text_integrity.final_pass(content_text, hyg)
     if log:
-        flags = list(flags) + [{"gate": "F13_final_pass", "passed": False, "blocking": False, "repairable": False,
+        flags = list(flags) + [{"gate": qr.F13_FINAL_PASS, "passed": False, "blocking": False, "repairable": False,
                                 "violations": log}]
     if not residue:
         return content_text, gate_ledger, flags, status, held_reason
@@ -1135,9 +1137,9 @@ async def _apply_faq_answer_fit(content_text: str, flags: list[dict], *, context
     context["faq_answer_fit"] = record
     lines = faq_answer_fit.fit_log_lines(record)
     if lines:
-        entry = next((f for f in flags if f.get("gate") == "F7_faq_autofix"), None)
+        entry = next((f for f in flags if f.get("gate") == qr.F7_FAQ_AUTOFIX), None)
         if entry is None:
-            flags = flags + [{"gate": "F7_faq_autofix", "passed": False, "blocking": False, "repairable": False,
+            flags = flags + [{"gate": qr.F7_FAQ_AUTOFIX, "passed": False, "blocking": False, "repairable": False,
                               "violations": lines}]
         else:
             entry["violations"] = list(entry.get("violations") or []) + lines
@@ -1268,7 +1270,7 @@ def _repair_feedback(gate_ledger: list[dict], channel: Optional[str] = None) -> 
     so another channel (max 6,000) never gets it (S248 review)."""
     target = F4_OVER_MAX_TARGET if channel == "blog" else ""
     return [
-        f"{g['gate']}: {v}" + (target if g["gate"] == "F4_extreme_length" and _F4_OVER_RE.search(v) else "")
+        f"{g['gate']}: {v}" + (target if g["gate"] == qr.F4_EXTREME_LENGTH and _F4_OVER_RE.search(v) else "")
         for g in gate_ledger if not g["passed"] and g.get("blocking", True)
         for v in g["violations"]
     ]
@@ -2036,10 +2038,10 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             faq_log = ([f"{faq_dropped} FAQ pair(s) that copied a body sentence were removed"] if faq_dropped else []) \
                 + faq_unanswerable
             if faq_log:
-                flags.append({"gate": "F7_faq_autofix", "passed": False, "blocking": False, "repairable": False,
+                flags.append({"gate": qr.F7_FAQ_AUTOFIX, "passed": False, "blocking": False, "repairable": False,
                               "violations": faq_log})
             if hygiene_log or first_line_log:  # S234 — every in-place edit, shown in the admin drawer
-                flags.append({"gate": "F13_autofix", "passed": False, "blocking": False, "repairable": False,
+                flags.append({"gate": qr.F13_AUTOFIX, "passed": False, "blocking": False, "repairable": False,
                               "violations": hygiene_log + first_line_log})
 
             if outcome["passed"]:
@@ -2243,7 +2245,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             match = next((s for s in similar if s.atom_id != atom_id), None)
             if match and match.similarity >= _REUSE_SIMILARITY_THRESHOLD:
                 flags.append({
-                    "gate": "within_tenant_reuse", "blocking": False,
+                    "gate": qr.WITHIN_TENANT_REUSE, "blocking": False,
                     "similarity": round(match.similarity, 4), "similar_piece_id": match.piece_id,
                     "violations": [
                         f"This piece reads very similar (cosine similarity "
