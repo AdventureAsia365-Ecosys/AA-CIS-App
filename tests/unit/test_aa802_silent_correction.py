@@ -3,6 +3,7 @@ tenant's unpublished copy changes in place (no new version, no flag), with the v
 the audit row; and the "tenant has an older copy" indicator for a published / exported T9 piece.
 """
 import datetime as dt
+import hashlib
 import json
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -61,7 +62,7 @@ class _Conn:
 
     def __init__(self, row, update_result="UPDATE 1", edits=()):
         self.row, self.update_result, self.edits = row, update_result, list(edits)
-        self.fetchrows, self.executes = [], []
+        self.fetchrows, self.executes, self.signals = [], [], []
         tx = MagicMock()
         tx.__aenter__ = AsyncMock(return_value=None)
         tx.__aexit__ = AsyncMock(return_value=False)
@@ -77,6 +78,11 @@ class _Conn:
         if "acp_shared.audit_log" in sql:
             return self.edits
         return []
+
+    async def fetchval(self, sql, *args):
+        """AA-916: the writing signal's INSERT … RETURNING signal_id."""
+        self.signals.append((sql, args))
+        return uuid.UUID(int=len(self.signals))
 
     async def execute(self, sql, *args):
         self.executes.append((sql, args))
@@ -180,11 +186,23 @@ async def test_apply_cut_updates_the_tenants_row_in_place_and_audits():
     assert (tenant, actor, action, rtype, rid) == (str(TENANT_ID), "admin:u1", AdminAuditAction.TOUR_SENTENCE_CUT,
                                                    "tenant_tour_version", VERSION_ID)
     d = json.loads(details)
-    assert d["before"] == BAD and d["after"] == "" and d["field"] == "summary"
-    assert d["section_before"] == SUMMARY and d["section_after"] == new_rc["summary"]  # version history
-    assert d["version_number"] == 1 and d["status"] == "needs_review"
-    # Done-when "history has both versions": the whole version before and after the edit
-    assert d["content_before"] == RC and d["content_after"] == new_rc
+    assert d["field"] == "summary" and d["version_number"] == 1 and d["status"] == "needs_review"
+    # AA-916 (ADR 0010 decision 11): the sentence text is in the writing signal (tenant scope, writer t2); the
+    # version history keeps the hashes of the section and of the whole version before / after, no text
+    [(sig_sql, sig)] = conn.signals
+    assert "INSERT INTO shared.writing_signal" in sig_sql
+    assert sig[:5] == ("t2", "tour", "tenant", str(TENANT_ID), "summary")
+    assert sig[6:8] == (BAD, "") and sig[12] == "sentence_cut" and sig[17:19] == ("tenant_tour_version", VERSION_ID)
+    sha = lambda t: hashlib.sha256(t.encode()).hexdigest()  # noqa: E731
+    assert d["signal_id"] == str(uuid.UUID(int=1)) and d["before_sha256"] == sha(BAD)
+    assert d["section_before_sha256"] == sha(SUMMARY) and d["section_after_sha256"] == sha(new_rc["summary"])
+    assert d["content_before_sha256"] == sha(json.dumps(RC, sort_keys=True))
+    assert d["content_after_sha256"] == sha(json.dumps(new_rc, sort_keys=True))
+    # review round 1: the problem text is on the signal only, the audit row keeps its sha256
+    assert sig[19] == "number not in source" and "problem" not in d
+    assert sig[14] == "unknown"                         # x-admin-user-id "u1" is not an id: never stored as given
+    assert d["problem_sha256"] == sha("number not in source")
+    assert not {"before", "after", "section_before", "section_after", "content_before", "content_after"} & set(d)
     assert out["warnings"] == [] and out["editable"] is True
 
 
@@ -237,7 +255,7 @@ async def test_apply_refuses_a_version_the_tenant_owns_or_superseded(row):
 @pytest.mark.parametrize("replacement,gate", [
     ("The trek climbs 900 steps to the monastery.", "F1_grounding"),
     ("The trek climbs to a stunning monastery.", "FORBIDDEN_WORD"),
-    ("The trek climbs to a cosy monastery.", "F2_brand_forbidden"),
+    ("The trek climbs to a cosy monastery.", "F2_lexicon"),  # AA-924 (the brand's forbidden word)
     ("Adventure Asia leads the trek to the monastery.", "F11_brand_name"),
 ])
 async def test_apply_rewrite_blocked_by_checks(replacement, gate):

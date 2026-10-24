@@ -231,7 +231,7 @@ def test_run_quality_gates_treats_cta_and_trip_name_as_source():
     with patch.object(qg, "invoke_judge", side_effect=[raw(**f9)]):
         out = qg.run_quality_gates(content_text=text, atom_text=SEED, cta=cta,
                                    brand_rubric_text="r", channel="linkedin", hygiene_ctx=_ctx(cta=cta))
-    f2 = next(g for g in out["gate_ledger"] if g["gate"] == "F2_banned_patterns")
+    f2 = next(g for g in qg.expand_ledger(out["gate_ledger"]) if g["gate"] == "F2_banned_patterns")  # AA-924
     assert f2["passed"], f2
 
 

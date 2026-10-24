@@ -381,7 +381,7 @@ class TestBroetry:
         with patch.object(qg, "gate_brand_voice", return_value=f9):
             out = qg.run_quality_gates(content_text=R4_7, atom_text="seed", cta="Get the full itinerary.",
                                        brand_rubric_text="r", channel="linkedin", brand_pack=TRAIL)
-        warn = next(g for g in out["gate_ledger"] if g["gate"] == "F15_voice_warn")
+        warn = next(g for g in qg.expand_ledger(out["gate_ledger"]) if g["gate"] == "F15_voice_warn")  # AA-924
         assert any(v.startswith("broetry") for v in warn["violations"]) and not warn["blocking"]
 
     def test_no_spec_skips(self):

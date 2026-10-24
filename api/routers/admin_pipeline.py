@@ -33,6 +33,7 @@ from shared.tour_liveness import (
     source_state,
 )
 from services.quality.registry import threshold
+from services.writing_memory.reason_codes import ReasonCode  # AA-916 WM-06
 from shared.validators.prompt_sanitize import (
     sanitize_text, sanitize_list, MAX_LONG_FIELD_LEN, MAX_SHORT_FIELD_LEN, MAX_SYSTEM_PROMPT_LEN,
     MAX_BRAND_LONG_LEN, MAX_BRAND_MEDIUM_LEN, brand_length_errors,
@@ -430,6 +431,10 @@ class TourRunRequest(BaseModel):
     brand_name: Optional[str] = None
     brand_identity_id: Optional[str] = None
     allow_auto_upgrade: bool = False  # AA-237: opt-in haiku→sonnet auto-upgrade (default OFF)
+    # AA-916 WM-06 — Regenerate from the A1 review: the review row it answers and why (a reason-only signal).
+    # Not part of the job payload.
+    review_id: Optional[str] = None
+    reason_code: Optional[ReasonCode] = None
 
 
 class UploadUrlRequest(BaseModel):
@@ -1281,7 +1286,7 @@ async def run_tour_async(req: TourRunRequest, request: Request, x_admin_secret: 
     from fastapi.responses import JSONResponse
     from shared.jobs.registry import enqueue
 
-    payload = req.model_dump()
+    payload = req.model_dump(exclude={"review_id", "reason_code"})
     # Dedup key = the same triple find_active_duplicate used (tour + model_tier + batch), so a
     # double-click or an overlapping wave reuses the in-flight job instead of writing a 2nd version.
     idem = f"s1_rewrite:{payload.get('tour_id')}:{payload.get('model_tier')}:{payload.get('batch_id')}"
@@ -1289,6 +1294,9 @@ async def run_tour_async(req: TourRunRequest, request: Request, x_admin_secret: 
         request.app.state.pool, "s1_rewrite", payload,
         idempotency_key=idem, created_by=f"admin:{x_admin_user_id or 'unknown'}")
 
+    if created and req.review_id and _is_uuid(req.review_id):  # AA-916: one signal per real regeneration
+        await _record_review_reason(request.app.state.pool, req.review_id, "regenerate", req.reason_code,
+                                    x_admin_user_id)
     return JSONResponse(status_code=202, content={
         "job_id": job_id,
         "status": "queued" if created else "running",
@@ -2871,15 +2879,50 @@ async def admin_label_review_claim(review_id: str, body: ClaimLabelBody, request
             "rows_updated": updated}
 
 
+class ReviewReasonBody(BaseModel):
+    """AA-916 WM-06 — optional body of reject / dismiss: why (one-click chip). An unknown code is a 422."""
+    reason_code: Optional[ReasonCode] = None
+
+
+async def _record_review_reason(pool, review_id: str, action: str, reason_code: Optional[str],
+                                actor_id: Optional[str]) -> None:
+    """AA-916 WM-06 — a reason-only writing signal (no text) for an admin action on a review row: writer a1, or
+    t2 for a tenant tour version's row; the row's tenant decides the scope (the AA master's rows are platform).
+    Best-effort, after the action committed: a lost signal never fails the reject / dismiss / regenerate. The
+    whole-version Jev write stays off (S245 scope change in grounding.record_rejected_outcome)."""
+    if not reason_code:
+        return
+    from services.writing_memory import signals as wm
+    try:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT tenant_id, tenant_tour_version_id FROM silver_aa_internal.review_queue WHERE id = $1::uuid",
+                review_id)
+            if row is None:
+                return
+            scope, tenant = wm.scope_for_tenant(row["tenant_id"])
+            await wm.record_writer_feedback_safe(
+                conn, writer="t2" if row["tenant_tour_version_id"] else "a1", scope=scope, tenant_id=tenant,
+                reason_code=reason_code, action=action, actor_type="admin", actor_id=wm.admin_actor_id(actor_id),
+                source_table="review_queue", source_id=review_id)
+    except Exception as exc:  # noqa: BLE001 — best-effort by contract
+        logger.warning("aa916_signal_failed", action=action, review_id=review_id, error=str(exc)[:200])
+
+
 @router.post("/review-queue/{review_id}/reject")
 async def admin_reject_review(
     review_id: str,
     request: Request,
+    body: Optional[ReviewReasonBody] = None,
     x_admin_secret: str = Header(None),
+    x_admin_user_id: Optional[str] = Header(None),
 ):
     verify_admin_secret(x_admin_secret)
     from api.routers.v1_pipeline import reject_review
-    return await reject_review(review_id=review_id, request=request, tenant=None)
+    out = await reject_review(review_id=review_id, request=request, tenant=None)
+    await _record_review_reason(request.app.state.pool, review_id, "reject", body.reason_code if body else None,
+                                x_admin_user_id)
+    return out
 
 
 @router.post("/review-queue/{review_id}/supersede")
@@ -2908,7 +2951,9 @@ async def admin_supersede_review(
 async def admin_dismiss_review(
     review_id: str,
     request: Request,
+    body: Optional[ReviewReasonBody] = None,
     x_admin_secret: str = Header(None),
+    x_admin_user_id: Optional[str] = Header(None),
 ):
     """AA-626: drop a stale failed version from the review queue WITHOUT editing content or
     publishing. Used when a tour already has an approved version in the Master Content pool and
@@ -2929,6 +2974,7 @@ async def admin_dismiss_review(
         """, review_id)
     if result == "UPDATE 0":
         raise HTTPException(status_code=409, detail="review row not pending or not found")
+    await _record_review_reason(pool, review_id, "dismiss", body.reason_code if body else None, x_admin_user_id)
     return {"status": "dismissed", "review_id": review_id}
 
 
@@ -3937,6 +3983,48 @@ _ALLOWED_GC_FIELDS = {
 _JSONB_GC_FIELDS = {"aa_highlights", "seo_keywords_used", "og_tags"}
 
 
+# AA-916 WM-05: fields that are writer text. seo_keywords_used is the DataForSEO keyword list the writer was given
+# (metadata, not writing), so an edit of it is no writing signal.
+_SIGNAL_GC_FIELDS = _ALLOWED_GC_FIELDS - {"seo_keywords_used"}
+
+
+def _gc_text(field: str, value) -> Optional[str]:
+    """A generated_content value as signal text: a text column as is, a JSONB column as canonical JSON (sorted
+    keys; asyncpg hands jsonb back as its JSON text, the body as a list / dict)."""
+    if value is None or field not in _JSONB_GC_FIELDS:
+        return value
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return value
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
+
+
+async def _record_field_edit_signals(conn, content_id: str, before, body: dict, fields: list[str],
+                                     actor_id: str) -> list[str]:
+    """AA-916 WM-05 — one writing signal per writer-text field whose value the admin changed: writer a1, the
+    field name, before / after (JSONB as canonical JSON). The AA master's versions are platform signals; a
+    tenant's own tour (generated_content.tenant_id another tenant) is tenant text and stays tenant scope (ADR
+    0010 decision 10). Same transaction as the UPDATE: the signal is the edit's history, a failure fails the
+    edit (no text is lost)."""
+    from services.writing_memory import signals as wm
+    scope, tenant = wm.scope_for_tenant(before["tenant_id"])
+    ids = []
+    for f in fields:
+        if f not in _SIGNAL_GC_FIELDS:
+            continue
+        old, new = _gc_text(f, before[f]), _gc_text(f, body[f])
+        if old == new:
+            continue
+        ref = await wm.record_writer_feedback(
+            conn, writer="a1", scope=scope, tenant_id=tenant, channel="master", field=f, before_text=old,
+            after_text=new, action="field_edit", actor_type="admin", actor_id=str(actor_id)[:128],
+            source_table="generated_content", source_id=content_id)
+        ids.append(ref.signal_id)
+    return ids
+
+
 @router.patch("/tours/{tour_id}/generated/{content_id}")
 async def update_generated_content_fields(
     tour_id: str,
@@ -3986,12 +4074,25 @@ async def update_generated_content_fields(
                  % (len(fields) + 1, len(fields) + 2))
     pool = request.app.state.pool
     async with pool.acquire() as conn:
-        updated = await conn.fetchval(
-            f"UPDATE silver_aa_internal.generated_content SET {set_clause}{audit_sql}"
-            f" WHERE id = ${len(fields)+3}::uuid AND tour_id = ${len(fields)+4}::uuid RETURNING id",
-            *values, reviewed_by_value, _j_gc.dumps({"fields": fields, "reviewer_handle": reviewer_handle}),
-            content_id, tour_id,
-        )
+        async with conn.transaction():
+            # AA-916 WM-05 — the values before the edit, locked, for one writing signal per changed field.
+            before = await conn.fetchrow(
+                f"SELECT tenant_id, {', '.join(fields)} FROM silver_aa_internal.generated_content"
+                f" WHERE id = $1::uuid AND tour_id = $2::uuid FOR UPDATE",
+                content_id, tour_id)
+            if before is None:
+                raise HTTPException(status_code=404, detail=f"Content {content_id} not found")
+            signal_ids = await _record_field_edit_signals(conn, content_id, before, body, fields,
+                                                          reviewed_by_value or reviewer_handle)
+            edit_diff = {"fields": fields, "reviewer_handle": reviewer_handle}
+            if signal_ids:
+                edit_diff["signal_ids"] = signal_ids
+            updated = await conn.fetchval(
+                f"UPDATE silver_aa_internal.generated_content SET {set_clause}{audit_sql}"
+                f" WHERE id = ${len(fields)+3}::uuid AND tour_id = ${len(fields)+4}::uuid RETURNING id",
+                *values, reviewed_by_value, _j_gc.dumps(edit_diff),
+                content_id, tour_id,
+            )
     if not updated:
         raise HTTPException(status_code=404, detail=f"Content {content_id} not found")
     return {"content_id": content_id, "updated": fields, "human_edited": True,

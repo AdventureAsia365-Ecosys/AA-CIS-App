@@ -1707,15 +1707,26 @@ per (Subject, Channel, Goal) — the tenant picks one before Write runs.
 _Avoid_: approach, take, framing (used loosely elsewhere; Angle is the specific picked object).
 
 **Gate**:
-An automated check run inline right after Write (T9/T10). Since AA-787 (S245) a blog gets 25 gate
-results, LinkedIn 24 and the other channels 23 (count them in `run_quality_gates`). Since AA-613 each failure has a **severity**: `block` (product truth —
+An automated check run inline right after Write (T9/T10). Since AA-924 (S250) a blog gets 23 gate
+results, LinkedIn 22 and the other channels 21 (AA-787 had 25 / 24 / 23; count them in `run_quality_gates`).
+AA-924 — **per-finding severity and two merged entries.** The gates still run as their legacy source checks;
+the stored ledger folds F2_banned_patterns + F2_brand_forbidden + F15_voice's stock findings (STOCK_PATTERNS,
+template lines) into one **F2_lexicon** entry (at F2_banned_patterns' place; one finding per word and sentence,
+so a word on two lists is judged once; a longer phrase around a shorter word is a second finding), and F15_voice +
+F15_voice_warn into one **F15_voice** entry. A merged entry carries `findings: [{text, severity: block|warn, source}]` (source = the legacy gate, a retired name),
+`severity` (the worst), and `parts` (one legacy record per source); `violations` and `blocking` (worst is block)
+stay for older readers. `quality_gates.expand_ledger` rebuilds the legacy entries and every routing step reads
+that view (first failure, hold, sentence-repair plan, waive, regression guard keyed by source), so routing is
+the legacy one; `held_reason` and `repair_log[].gate_targeted` name the stored entry (`F2_lexicon: …`). The
+AA-800 layers stay their own gates and skip the tenant's own forbidden words. Ledgers stored before AA-924 keep
+the old names and read as before. Since AA-613 each failure has a **severity**: `block` (product truth —
 facts, grounding, CTA), `warn` (brand/style, e.g. generic AI wording, brand-fit) or `note`. Only
 `block` triggers a rewrite (max 2 retries). Never assume "failed a gate" means "held" — check
 the severity first. S233: blog shape gates F3/F5/F7 are `warn` (F7 auto-drops FAQ pairs that
 restate the body). AA-787 (S245) removed `promises_an_option` (F17_trip_fact owns offered moments, ADR
 0009), F8_framework (its LLM call), F3 and F5; F7 folded into F16_faq (the restate fixer runs before
 the gates, logged as `F7_faq_autofix`). Old ledgers keep those names. S233 also added the blocking
-gates F0_complete (cut-off text), F2_brand_forbidden (the tenant's own forbidden words) and F11_brand_name (another brand / the platform speaking). An F9
+gates F0_complete (cut-off text), F2_brand_forbidden (the tenant's own forbidden words; inside F2_lexicon since AA-924) and F11_brand_name (another brand / the platform speaking). An F9
 judge outage is never a blocking gate (no rewrite on it), but since AA-925 (Q-2, reversing S233's "warn, not a
 hold") it **holds** the piece: the F9 result carries a `degraded` marker and, when the FINAL attempt has it,
 the last step after `_final_integrity` labels an approved piece `held` (`held_reason` "degraded:
@@ -1744,7 +1755,7 @@ word band 120–250 (editorial 300), ≤3 hashtags, first line ≤140 chars; hyg
 rewrite; AA-780: under the band's floor blocks on attempt 1 only → one full rewrite to the target, and never
 holds a piece — `quality_gates.never_holds`; the AA-528 regression guard keeps a repairable rewrite of a floor-only attempt 1 for the attempt-3 repair, and on a revert waives the floor block), **F15_voice** (stock-phrase hard list; blocks on attempt 1 only, for one sentence repair, and
 never holds a piece — `hold_failure` skips it; AA-780 S246: a STOCK_PATTERNS sentence still in the final attempt's text is cut in code after the loop, `service._cut_stock_lines` — never the hook or the CTA, never below the word band; shown as the non-blocking `F15_stock_cut` flag) and **F15_voice_warn** (trade register, audience-number leak,
-generic or repeated opener, AA-780 broetry — ≥2 consecutive prose sentences of ≤5 words, bullets and emoji-only lines excluded; warn only, never repaired). All pass for every other channel. The F9 judge
+generic or repeated opener, AA-780 broetry — ≥2 consecutive prose sentences of ≤5 words, bullets and emoji-only lines excluded; warn only, never repaired; stored as warn findings of F15_voice since AA-924, whose stock-list findings sit in F2_lexicon). All pass for every other channel. The F9 judge
 gets the brand's voice adjectives and no longer favours a calm house voice.
 S234 round 2 (AA-768): **F13_leak** (blocking, sentence-repairable) — writer-instruction wording ("A Sentence
 on…", "This guide covers…", the SCOPE's day span), the brand pack's audience ranges ("25–40", "seven-to-sixteen")
@@ -1881,7 +1892,8 @@ attempt 3 is a sentence-level repair only, on the same row — the AA-485 buffer
 (`approved`/`held`/`failed`), and (blog only) a `publish_log` row once T11 ships it.
 Each failed attempt's `repair_log` entry also keeps that attempt's own trimmed ledger
 (`repair_log[].gate_ledger`: gate, passed, blocking, at most 5 violations; AA-791,
-`gate_eval.ledger_snapshot`), so gate precision and recall can be measured across attempts; pieces
+`gate_eval.ledger_snapshot`; AA-924: a merged entry also keeps `severity` and at most 5 `findings`
+{text, severity, source}), so gate precision and recall can be measured across attempts; pieces
 written before AA-791 have only the persisted attempt's ledger. A **Label** is an admin's human
 verdict on one Piece (`acp_shared.content_piece_label`, migration 231, one row per Piece and
 labeller: `as_is`/`light`/`heavy`/`reject`, per-class defects, minutes to fix, reason, and the
@@ -2028,6 +2040,14 @@ tenant (T2 / T9, `tenant_id` set); RLS ENABLE + FORCE with `tenant_isolation` fo
 SELECT + INSERT only) and the X1 parity policies for `cis_app` / `cis_owner`, so every `cis_app` read filters
 `tenant_id` explicitly. Tenant rows are deleted by the AA-839 tenant erasure (`services/erasure/inventory.py`);
 `acp_shared.audit_log` keeps only the signal id and the sha256 hashes.
+Captured by `services/writing_memory/signals.py` `record_writer_feedback` (AA-916) on: the tenant's T9 hand edit
+(PATCH /v1/content-writing/pieces/{id}, best-effort, on the tenant pool), the admin A1 field edit (PATCH
+/admin/tours/{tour_id}/generated/{content_id}, one signal per changed field), the admin sentence cut / rewrite / edit
+of a T9 piece or a T2 version (with an optional reason code; `fact_not_in_source` on a T2 sentence also labels Jev
+`a1_claim_supported` truth=false), and reject / dismiss / regenerate of a review row (reason-only, no text). The admin
+history reads the text back from the signal (legacy audit rows keep their own text, D16). Reason codes and the chip
+preselected for a gate: `services/writing_memory/reason_codes.py`. Every discarded T9 attempt is kept in
+`content_piece.discarded_attempts`, and `writer_input.writer_prompt_version` stamps the T9 system prompt.
 _Avoid_: lesson, feedback (alone), training data.
 
 **Writing Rule**:
@@ -2199,7 +2219,17 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     text (soft `degraded: repair_contract`). Spliced at flag_fix (replaces the AA-641 per-field revert, same
     behaviour), the A1 grounding repair, revalidate's strip + fit, the T3 sentence repair + meta regenerate and
     T9 `splice_checked`. The T9 AA-528/AA-780 regression guard of full rewrites stays in
-    `run_write_background` and already covers invariant 1 there.
+    `run_write_background` and already covers invariant 1 there. Invariant 7 (AA-790 `integrity_kept`,
+    `enforce_step`): every deterministic edit of the T9 attempt loop (`hygiene.autofix`, the family caveat, the
+    FAQ droppers, `real_first_faq`, `fix_trip_facts`, `trim_to_band`; `ensure_cta` is must-keep) is reverted when
+    it leaves a new repeat, orphan, dangling opener, fragment, split or unfinished paragraph, or a sentence cut
+    on 'the' / 'and' (`hygiene.integrity_problems` + `text_integrity.new_structure_findings`: a paragraph is
+    unfinished only when it stops on a letter or digit, and paragraph kinds are new by count; steps before the
+    final pass are compared as `text_integrity.settle` leaves them). The revert lines go to F13_autofix and the
+    kept attempt's reverts count as soft `degraded: repair_contract` (detector `t9_step`); no gate or registry
+    entry is added (gate freeze).
+    The tenant-voice rubric (`acp_content_writing/voice_rubric.py`) is an offline scorer only
+    (`scripts/aa790/voice_rubric_replay.py`): no pipeline reads it until the freeze ends and κ ≥ 0.6.
   - **Writer-v2 hard code** (AA-645, S249): on an A1 writer-v2 draft `ITINERARY_DAY_COUNT_MISMATCH` (a source day
     missing from the output) blocks Master — `graph.V2_HARD_BLOCK_CODES`, read through `graph.hard_block_codes(state)`
     by `_is_publishable` and the human-edit gate; v1 drafts and tenant rewrites keep the soft structure deduction. A
