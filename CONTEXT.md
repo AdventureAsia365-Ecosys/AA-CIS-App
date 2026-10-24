@@ -1356,7 +1356,12 @@ Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`
   connect / test, `angle_gate_option.chosen`), so a tenant cannot move a row to another tenant or
   channel even inside its own rows.
 - **Routes on the tenant pool** (flag in `api/core/aa544_tenant_pool.py`, `fail_closed=True`, one log
-  line per request with `used_tenant_pool=`). All ON on Dev since S240 (16/10/2026).
+  line per request with `used_tenant_pool=`). All ON on Dev since S240 (16/10/2026), **except GET
+  `/v1/publish-log`**: `aa544:publish_log_list_pool` was pinned to `"false"` in Redis before the S241 D-12
+  merge (#792, to keep its pre-D-12 OFF default) and never switched back, so that route runs on the admin pool
+  (Logs Insights 22–24/10/2026, AA-874). To end the pin: `SET aa544:publish_log_list_pool true`, confirm
+  `publish_log_listed` with `used_tenant_pool=true`, then drop `publish_log_listed` from
+  `tenant_pool_known_rollback_events` in AA-CIS-Infra `accounts/aa365/tenant_pool_alarms.tf` and this note.
   **Flags fail closed (S241 D-12):** only an explicit OFF value puts a route back on the main pool;
   `true`, a missing key, any other value, a Redis error or a read slower than 0.5 s all mean the tenant
   pool (`aa817_tenant_flag_read_failed` at ERROR on a failed read, `aa817_tenant_flag_unrecognized` at
@@ -1383,9 +1388,12 @@ Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`
   token without TLS is dropped with one ERROR `aa874_redis_auth_without_tls`. The target node is an
   ElastiCache replication group with in-transit TLS (required), AUTH and at-rest encryption (AA-CIS-Infra).
   AA-CIS-Infra alarms (e-mail on ALARM and on OK) on any `aa817_tenant_flag_read_failed`,
-  `aa817_tenant_flag_unrecognized`, `aa817_tenant_pool_unavailable` line and on any JSON line with
-  `used_tenant_pool: false` (a route running on the admin pool, which RLS does not filter: expected only while
-  a route is rolled back on purpose).
+  `aa817_tenant_flag_unrecognized`, `aa817_tenant_pool_unavailable`, `aa817_tenant_guc_not_applied` line and on
+  any JSON line with `used_tenant_pool: false` (a route running on the admin pool, which RLS does not filter),
+  except the events of routes rolled back on purpose listed in `tenant_pool_known_rollback_events` there (today
+  `publish_log_listed`, the pin above). A deliberate rollback that is not listed holds that alarm in ALARM, and
+  CloudWatch e-mails only on a state change: list it, or a second rollback goes unseen. Renaming any of these
+  events silently disables its alarm.
 
   | Route(s) | Flag | Notes |
   |---|---|---|
