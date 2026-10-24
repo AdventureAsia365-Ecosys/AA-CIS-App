@@ -10,7 +10,9 @@ shared.tenant_brand_rules and shared.tenant_seo_config (the AA-859 wave-3 brand 
 migration 262), acp_shared.subject / quarter_plan / year_plan and acp_deliver.tenant_tour_pages (the AA-859 wave-4
 Slate / planning / review routes, migration 265; tenant_tour_pages compares text and shows the AA master's pages).
 acp_shared.quarter_plan_version goes through its parent quarter_plan (CHILD_RLS_TABLES), and acp_contract.tour_atoms
-(266) shows every platform atom plus the tenant's own, read only (ATOMS).
+(266) shows every platform atom plus the tenant's own, read only (ATOMS). shared.writing_signal (277, AA-916, FORCE
+RLS) shows the own tenant rows only, never a platform (A1) row; the tenant role may only read and insert there
+(INSERT_ONLY_TABLES).
 acp_shared.angle_gate_option has no tenant column: migration 241 puts it under RLS through its parent
 angle_gate_request (CHILD_RLS_TABLES, checked by the key expression, not by tenant_id).
 The CI DB does not create tenant_tour_versions (migration 001 is skipped), so each test creates
@@ -81,6 +83,7 @@ TENANT_TABLES = {
     "acp_shared.year_plan": False,          # 265
     "acp_deliver.tenant_tour_pages": False,  # 265, text tenant_id (+ master read, own test below)
     "shared.notifications": False,          # 274 (AA-986 L3): tenant-facing rows only (restrictive audience policy)
+    "shared.writing_signal": False,         # 277 (AA-916): tenant rows only, platform rows hidden; FORCE RLS
 }
 # tables the tenant role writes through column grants only (241: connect / test-connection columns; 237:
 # DELETE; 262: the brand POST's columns): the generic `SET tenant_id = tenant_id` write tests do not apply, the
@@ -91,6 +94,9 @@ COLUMN_WRITE_TABLES = {"shared.tenant_integrations", "shared.tenant_brand_rules"
                        "acp_deliver.tenant_tour_pages", "shared.notifications"}
 # tables the tenant role may DELETE from (237: the disconnect route); the others have no DELETE grant
 DELETE_TABLES = {"shared.tenant_integrations"}
+# tables the tenant role may only read and INSERT into (277: the T9 edit signal); no UPDATE grant, so the generic
+# `SET tenant_id = tenant_id` write test does not apply; the insert tests (_INSERT_FOR) and the platform-row test do
+INSERT_ONLY_TABLES = {"shared.writing_signal"}
 # RLS tables without a tenant column: table -> (primary key, the row's tenant through its parent). The
 # key is evaluated by the (unfiltered) superuser, never by the tenant role, whose RLS on the parent
 # would turn a leaked row's tenant into NULL.
@@ -160,6 +166,12 @@ def _tenant(c):
     return tid
 
 
+_SIGNAL_INSERT = ("INSERT INTO shared.writing_signal (writer, channel, scope, tenant_id, field, before_text, "
+                  "after_text, before_sha256, after_sha256, action, actor_type, source_table, source_id) "
+                  "VALUES ('t9_blog', 'blog', %s, %s, 'content_text', 'b', 'a', repeat('a', 64), repeat('b', 64), "
+                  "'tenant_edit', 'tenant', 'content_piece', 'aa817-test')")
+
+
 def _seed(c, tid):
     """One row per tenant table (and one angle_gate_option under the request) for this tenant."""
     c.execute("INSERT INTO acp_shared.angle_gate_request (tenant_id, atom_id, status) "
@@ -203,6 +215,8 @@ def _seed(c, tid):
     # test_aa986_migration_274.py)
     c.execute("INSERT INTO shared.notifications (tenant_id, event_type, entity_type, entity_id, target_roles) "
               "VALUES (%s, 'tour.discontinued', 'tour', 'x', ARRAY['tenant'])", (tid,))
+    # 277 (AA-916): a tenant edit signal of a T9 piece
+    c.execute(_SIGNAL_INSERT, ("tenant", tid))
 
 
 @pytest.fixture
@@ -212,6 +226,8 @@ def two_tenants(cur):
     _seed(cur, b)
     cur.execute("INSERT INTO acp_shared.facts (fact_id, scope, tenant_id, title, body, provenance) "
                 "VALUES (%s, 'platform', NULL, 't', 'b', 'aa817-test')", (f"fact_{uuid.uuid4().hex[:10]}",))
+    # 277: an A1 (platform) signal, which no tenant may read
+    cur.execute(_SIGNAL_INSERT.replace("'t9_blog', 'blog'", "'a1', 'master'"), ("platform", None))
     return a, b
 
 
@@ -280,7 +296,7 @@ def test_owner_still_sees_every_tenant(cur, two_tenants):
 # Write side. Every policy here is FOR ALL TO aa_app_user with an explicit WITH CHECK (229), so a
 # WHERE-less UPDATE touches only the own tenant's rows and a row can neither be written for nor handed
 # to another tenant. facts is split: tenant rows like the others, platform rows read-only.
-WRITE_TABLES = sorted(set(TENANT_TABLES) - COLUMN_WRITE_TABLES)
+WRITE_TABLES = sorted(set(TENANT_TABLES) - COLUMN_WRITE_TABLES - INSERT_ONLY_TABLES)
 _INSERT_FOR = {
     "acp_shared.angle_gate_request": ("INSERT INTO acp_shared.angle_gate_request (tenant_id, atom_id, status) "
                                       "VALUES (%s, 'aa817-atom', 'approved')"),
@@ -288,6 +304,8 @@ _INSERT_FOR = {
                          "VALUES ('fact_' || substr(md5(random()::text), 1, 10), 'tenant', %s, 't', 'b', 'p')"),
     "gold_aa_internal.tenant_tour_versions": ("INSERT INTO gold_aa_internal.tenant_tour_versions "
                                               "(tenant_id, edit_source) VALUES (%s, 'ai_generated')"),
+    "shared.writing_signal": _SIGNAL_INSERT.replace("VALUES ('t9_blog', 'blog', %s, %s,",
+                                                    "VALUES ('t9_blog', 'blog', 'tenant', %s,"),
 }
 
 
@@ -313,6 +331,25 @@ def test_forged_tenant_cannot_insert_for_another_tenant(cur, two_tenants, table)
     with _as_tenant(cur, a) as c:              # the own tenant still can (the stage-2 rewrite INSERT)
         c.execute(_INSERT_FOR[table], (a,))
         assert c.rowcount == 1
+
+
+@pytest.mark.parametrize("table", sorted(INSERT_ONLY_TABLES))
+def test_insert_only_tables_refuse_update_and_delete(cur, two_tenants, table):
+    """277: the tenant role reads and inserts writing signals, nothing else (no grant: 42501, not an RLS refusal)."""
+    a, _ = two_tenants
+    for sql in (f"UPDATE {table} SET tenant_id = tenant_id", f"DELETE FROM {table}"):
+        with _as_tenant(cur, a) as c:
+            with pytest.raises(psycopg2.errors.InsufficientPrivilege, match="permission denied"):
+                c.execute(sql)
+
+
+def test_tenant_role_cannot_write_platform_signals(cur, two_tenants):
+    """277: a platform (A1) signal cannot be written by the tenant pool, with or without a tenant id."""
+    a, _ = two_tenants
+    with _as_tenant(cur, a) as c:
+        _rls_violation(c, _SIGNAL_INSERT, ("platform", None))
+    with _as_tenant(cur, a) as c:              # a platform row naming the own tenant: the policy refuses it first
+        _rls_violation(c, _SIGNAL_INSERT, ("platform", a))
 
 
 def test_tenant_role_cannot_write_platform_facts(cur, two_tenants):
@@ -597,10 +634,10 @@ def _ours(tenants, a, b):
 
 
 def test_every_rls_table_is_covered(cur):
-    """The 25 RLS tables of Dev after 274 (AA-817 plan §0 + angle_gate_option + tenant_brand_rules /
-    tenant_seo_config + the five 265 tables + tour_atoms + notifications) all have RLS here, and none is owned by the
-    tenant role."""
-    assert len(ALL_RLS_TABLES) == 25
+    """The 26 RLS tables of Dev after 277 (AA-817 plan §0 + angle_gate_option + tenant_brand_rules /
+    tenant_seo_config + the five 265 tables + tour_atoms + notifications + writing_signal) all have RLS here, and none
+    is owned by the tenant role."""
+    assert len(ALL_RLS_TABLES) == 26
     for table in sorted(ALL_RLS_TABLES):
         cur.execute("SELECT c.relrowsecurity, pg_has_role(%s, c.relowner, 'USAGE') FROM pg_class c "
                     "WHERE c.oid = %s::regclass", (TENANT_ROLE, table))
