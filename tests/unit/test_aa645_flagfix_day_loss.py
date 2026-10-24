@@ -146,6 +146,51 @@ def test_lower_case_enumeration_is_not_a_meal_code():
     assert ba.meal_set("full board") == {"B", "L", "D"} and ba.meal_set("HB") == {"B", "D"}
 
 
+# Review fixes: negation scoped to the meal it governs; an empty page meal set needs more than "included".
+AMBER_FORT = "Day 2: Amber Fort (B)\nWe visit the fort. Lunch and dinner not included. Free evening, no plans.\n"
+FREE_DAY = "Day 2: Free day.\n"
+LEISURE_DAY = "Day 2: All day at leisure.\n"
+
+
+@pytest.mark.parametrize("source,line", [
+    (AMBER_FORT, "Meals: breakfast and dinner (lunch not included)."),   # dinner claimed; the source excludes it
+    (AMBER_FORT, "Meals: dinner and no lunch."),                          # a meal outside the negated run
+    (FREE_DAY, "Meals: included."),
+    (FREE_DAY, "Meals: provided."),
+    (FREE_DAY, "Meals: all included."),
+    (LEISURE_DAY, "Meals: all meals."),                                   # "All day" in the prose backs nothing
+], ids=["paren-negation", "dinner-and-no-lunch", "included", "provided", "all-included", "all-meals"])
+def test_inclusion_claims_without_a_source_meal_list_stay_flagged(source, line):
+    assert not ba.source_backed_meal_line(line, source)
+    codes, _ = _codes(f"Day 2 — The day\nThe group spends the day in town. {line}", source)
+    assert MEAL in codes      # not cleared by the shortcut; Jev (grey here) or the AA-803 no-unit rule keeps it
+
+
+@pytest.mark.parametrize("source,line", [
+    (AMBER_FORT, "Meals: breakfast (lunch not included)."),
+    (FREE_DAY, "Meals: none included."),
+    ("Day 2: Hike\nMeals: picnic meals\n", "Meals: picnic meals."),
+    ("Day 2: Old town\nLunch optional, payable directly.\n", "Meals: lunch optional, payable directly."),
+])
+def test_negative_or_content_word_lines_the_day_backs_are_still_cleared(source, line):
+    assert ba.source_backed_meal_line(line, source)
+
+
+def test_page_meal_set_scopes_negation():
+    assert ba.page_meal_set("lunch and dinner not included") == set()
+    assert ba.page_meal_set("dinner at own expense") == set()
+    assert ba.page_meal_set("breakfast, lunch optional") == {"B"}
+    assert ba.page_meal_set("breakfast and dinner (lunch not included)") == {"B", "D"}
+    assert ba.page_meal_set("dinner and no lunch") is None
+    assert ba.page_meal_set("dinner but not lunch") is None
+
+
+def test_a_prose_meal_label_line_is_not_a_meal_list():
+    assert ba._source_day_meals("Meal times are flexible; dinner on the boat.") == set()
+    assert ba._source_day_meals("Meals  L D") == {"L", "D"}
+    assert ba._source_day_meals("Meals: Dinner on the boat") == {"D"}
+
+
 # ── 2. repair contract: days_kept ────────────────────────────────────────────────────────────────
 
 def _itin(days):
@@ -192,6 +237,26 @@ def test_no_day_headings_before_or_another_field_is_not_checked():
                     {"itineraries": "Day 1 — Old town\nA short walk in the old town."}).ok
     assert rc.check({"summary": "Day 1 — A\nx.\n\nDay 2 — B\ny."}, {"summary": "Day 1 — A\nx."}).ok
     assert "days_kept" in rc.INVARIANTS
+
+
+@pytest.mark.parametrize("tail", [
+    "\n\nDay 11-15 — Trek\nFive days of trekking.",
+    "\n\nDays 11–15 — Trek\nFive days of trekking.",
+    "\n\n" + "\n".join(f"Day {d}: Trek stage {d}." for d in range(11, 16)),
+], ids=["range-heading", "days-range-heading", "loose-after-canonical"])
+def test_mixed_canonical_and_range_or_loose_headings(tail):
+    mixed = _itin(range(1, 11)) + tail
+    lost = rc.check({"itineraries": mixed}, {"itineraries": _itin(range(1, 11))})
+    assert lost.invariants() == ["days_kept"]
+    assert "dropped Day 11, 12, 13, 14, 15" in lost.violations[0]["detail"]
+    # turning the mixed page into canonical Days 1-15 keeps every day: not a days_kept violation (the new "12, 13,
+    # 14" of the test filler text is invariant 2's business)
+    full = rc.check({"itineraries": mixed}, {"itineraries": _itin(range(1, 16))})
+    assert "days_kept" not in full.invariants()
+
+
+def test_removing_a_duplicated_day_keeps_the_days():
+    assert rc.check({"itineraries": _itin([1, 2, 2, 3])}, {"itineraries": _itin([1, 2, 3])}).ok
 
 
 def test_flag_fix_contract_revert_keeps_the_15_days():

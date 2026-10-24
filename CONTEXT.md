@@ -2094,7 +2094,8 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     short (incl. the cut signature "…a 20-kilometre." that `meta_complete_sentence` accepts — a modifier left
     without its noun; dropping a whole trailing clause before "and / with / to …" is the fact editor's job and
     is kept), touch an unflagged field, break a tag / bold / bracket pair, or (AA-645 `days_kept`) change the
-    itinerary's ordered "Day N" headings — drop, add, renumber or duplicate a day (the S249 shadow: flag_fix's
+    days the itinerary's line-initial "Day N" headings cover (ranges expanded) — drop, add or renumber a day, repeat
+    one more often than before, or break the order (the S249 shadow: flag_fix's
     whole-itinerary rewrite returned Rajasthan with 10 of 15 days). The fit's fact tail may state the
     day count `tour_days()` derives ("8 nights" → 9 days). A violating field or sentence keeps its pre-repair
     text (soft `degraded: repair_contract`). Spliced at flag_fix (replaces the AA-641 per-field revert, same
@@ -2105,7 +2106,9 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     missing from the output) blocks Master — `graph.V2_HARD_BLOCK_CODES`, read through `graph.hard_block_codes(state)`
     by `_is_publishable` and the human-edit gate; v1 drafts and tenant rewrites keep the soft structure deduction. A
     meal fact line that copies the same source day's meal list ("Meals: dinner." from "(D)" / "Meals included:
-    Dinner") is source-backed in the A1 brand pre-audit and is not sent to Jev.
+    Dinner") is source-backed in the A1 brand pre-audit and is not sent to Jev. A page meal line where a negation sits
+    next to a claimed meal ("dinner and no lunch"), or that names no meal and only says "included" / "all meals", is
+    not source-backed and goes to Jev.
   - **AA-740 fitter**: `fit_seo_meta_final` no longer cuts a too-long meta mid-clause; it salvages at a
     sentence boundary, appends a facts-only clause to a short one, closes an uncut in-band clause, and
     otherwise leaves the length code to the LLM (A1 flag_fix seo_meta repair + `_rerepair_meta`; T3 a

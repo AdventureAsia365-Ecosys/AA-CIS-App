@@ -20,12 +20,13 @@ replaced sentence (T9 sentence repair):
                           clause ("…Paro Dzong." from "…Paro Dzong and hike for 3 hours…") is not a cut.
 4. ``scope_kept``       — only the flagged fields (A1 / T3) change.
 5. ``tags_balanced``    — ``[R:…]``/``[F:…]`` tags, ``**`` and brackets stay balanced when they were.
-6. ``days_kept``        — (AA-645, S249) an itinerary keeps its day blocks: the ordered list of "Day N" headings
-                          after the repair equals the list before it — no day dropped, added, renumbered or
-                          duplicated. The S249 shadow: the generic flag_fix pass, asked to fix one meal line, sent
-                          back India "Rajasthan Adventure" with Days 1–10 of 15, ending on a full sentence, and
-                          invariants 1–5 all passed. Only the itinerary field is read (``DAY_FIELDS``); a field with
-                          no "Day N" heading before the repair has nothing to keep.
+6. ``days_kept``        — (AA-645, S249) an itinerary keeps its day blocks: the days its line-initial "Day N"
+                          headings cover (ranges expanded) are the same after the repair — no day dropped, added or
+                          renumbered, none repeated more than before, no order broken. The S249 shadow: the
+                          generic flag_fix pass, asked to fix one meal line, sent back India "Rajasthan Adventure"
+                          with Days 1–10 of 15, ending on a full sentence, and invariants 1–5 all passed. Only the
+                          itinerary field is read (``DAY_FIELDS``); a field with no "Day N" heading before the
+                          repair has nothing to keep.
 
 The design's sixth idea, "no blanding" (a repair may not lower the source fact coverage), needs the fact
 coverage measure of Q-LEARN and is left to that issue.
@@ -165,20 +166,19 @@ def balanced(text: str) -> bool:
     return all(plain.count(o) == plain.count(c) for o, c in _OPEN_CLOSE)
 
 
-# A "Day N" heading at the start of a line, for an itinerary not in the canonical "Day N — Title" form
-# ("Day 3: Agra", "**Day 3** Agra", "- Day 3 - Agra").
-_LOOSE_DAY_RE = re.compile(r"^[ \t]*(?:[#>*\-•]+[ \t]*)?\**[ \t]*Day[ \t]+(\d{1,3})\b", re.IGNORECASE | re.MULTILINE)
-
-
 def day_headings(text: str) -> list[int]:
-    """The day numbers of an itinerary's "Day N" headings, in order, duplicates kept: the canonical "Day N — Title"
-    blocks (``day_parse.output_days``, what validate and the day oracle read) when there are any, else any
-    line-initial "Day N"."""
-    from services.content_generation.day_parse import output_days  # lazy: a leaf module, keeps load-time pure
+    """The days an itinerary's "Day N" headings cover, in order, duplicates kept: every line that starts with a day
+    marker (``day_parse.source_day_markers``: canonical "Day N — Title", "Day 3: Agra", "**Day 3**", spelled-out
+    numbers, and a range or list heading "Days 11–15 — Trek" / "Day 11, 12 & 13" expanded to each day), plus any
+    canonical block (``day_parse.output_days``) the line reader missed. Review fix: a page that mixes canonical blocks
+    with a loose or range heading no longer hides the loose days."""
+    from services.content_generation.day_parse import output_days, source_day_markers  # lazy: leaf module
 
     t = text or ""
-    days = [d for d, _title, _first in output_days(t)]
-    return days or [int(m.group(1)) for m in _LOOSE_DAY_RE.finditer(t)]
+    days = [d for first, last, _idx in source_day_markers(t) for d in range(first, last + 1)]
+    seen = set(days)
+    days += [d for d, _title, _first in output_days(t) if d not in seen]
+    return days
 
 
 def _day_text(value) -> str:
@@ -191,16 +191,24 @@ def _day_text(value) -> str:
 
 
 def days_problem(before: str, after: str) -> Optional[str]:
-    """Why ``after`` does not keep ``before``'s day blocks (invariant 6), or None."""
+    """Why ``after`` does not keep ``before``'s day blocks (invariant 6), or None: a day the headings covered is gone,
+    a day is new, a day is repeated more often than before, or the order is broken where it was in order. Days are
+    compared as the set the headings cover, so turning "Days 11–15" into five blocks, or removing a duplicate block
+    (AA-329c), keeps the days."""
+    from collections import Counter
+
     b = day_headings(before)
     if not b:
         return None
     a = day_headings(after)
-    if a == b:
+    bc, ac = Counter(b), Counter(a)
+    dropped = sorted(d for d in bc if d not in ac)
+    added = sorted(d for d in ac if d not in bc)
+    repeated = any(n > max(1, bc.get(d, 0)) for d, n in ac.items())
+    reordered = a != sorted(a) and b == sorted(b)
+    if not (dropped or added or repeated or reordered):
         return None
-    dropped = [d for d in dict.fromkeys(b) if d not in a]
-    added = [d for d in dict.fromkeys(a) if d not in b]
-    detail = f"{len(b)} day blocks before, {len(a)} after"
+    detail = f"{len(bc)} day blocks before, {len(ac)} after"
     if dropped:
         detail += "; dropped Day " + ", ".join(str(d) for d in dropped)
     if added:
