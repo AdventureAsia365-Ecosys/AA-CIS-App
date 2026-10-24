@@ -665,8 +665,9 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
 - **Quality registry lint (AA-926)**: the required **Lint** job also runs `python -m services.quality.lint --report`
   (PyYAML only): no gate-name or 7.0 pass-line literal outside `services/quality/` (api/, services/, shared/,
   worker/, scripts/aa729/ and the frontend/portal TS; docstrings, comments, `__all__`, tests and migrations
-  exempt; escape `# qlint: allow <reason>`, counted), every gate / chip / Jev key / A1 code mapped to a class,
-  the three YAML schemas, every `paths.yaml` glob matching a file, the generated TS fresh. The non-required job
+  exempt; escape `# qlint: allow <reason>`, counted), every gate / chip / Jev key / A1 code mapped to a class
+  (incl. the day-oracle, S1-first code-check and degraded codes in `services/quality/`), every Q0 corpus case's
+  `class_id` and `detector` resolving through the registry, the three YAML schemas, every `paths.yaml` glob matching a file, the generated TS fresh. The non-required job
   **Quality Paths (report)** prints the quality tiers a change touches and a hash of its diff on
   `services/quality/paths.yaml` paths (AA-919 will enforce `quality/q2` with it).
 - **Frontend (Vercel)**: deploys are created by CI, not the Vercel Git integration (S241 — Hobby
@@ -1803,8 +1804,12 @@ and an empty repair of a hazard sentence is not spliced; a multi-sentence cut ch
 Quality registry (qtax-v1, AA-926): every gate, flag and gate log name is a constant in
 `services/quality/registry.py`, with its label, class(es), kind (`gate` / `flag` / `telemetry`), channels and
 `retired` flag in `services/quality/taxonomy.yaml`. The same file maps every Jev question key, admin chip and A1
-validate / brand-audit code to an error class (17 classes + `other.*` at warn; Writing Memory hard stop 1 = every
-`fact.*` class with `severity: hard`). The 7.0 pass line and the other score cut-offs live only in
+validate / brand-audit / day-oracle / S1-first code-check code to an error class (17 classes + `other.*` at warn;
+Writing Memory hard stop 1 = every `fact.*` class with `severity: hard`). `code_checks` names the detector modules
+(`repair_contract`, `degraded`, `day_oracle`) and `aliases` maps each Q0 corpus class id (`other.length`,
+`other.cta`, …) to its canonical class, so the Q0 cases are never relabelled to fit the taxonomy.
+`python -m scripts.quality.redundancy_census` lists enforcing detectors whose classes another code check already
+enforces (input for gate removals, AA-924). The 7.0 pass line and the other score cut-offs live only in
 `services/quality/thresholds.yaml` (one `pass_line`, one key per consumer: A1 retry, judge, T2 status, T3, T7,
 admin views, golden-set eval); Jev floors stay per question in `shared.decision_question`. Names are persisted
 (ledger, `repair_log`, `held_reason`, flags, `llm_call_log.quality_signal`): never rename one; a removed gate stays
