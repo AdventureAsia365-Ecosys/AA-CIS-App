@@ -43,11 +43,6 @@ def get_database_url() -> str:
     return _get_cached("db_url", lambda: _fetch_secret_sdk(arn))
 
 
-def get_redis_url() -> str:
-    """Get REDIS_URL from env (not sensitive, no need for Secrets Manager)."""
-    return os.environ.get("REDIS_URL", "redis://localhost:6379")
-
-
 def get_dataforseo_creds() -> tuple[str, str]:
     """Get DataForSEO login + password from Secrets Manager or env."""
     arn = os.environ.get("SECRET_DATAFORSEO_ARN")

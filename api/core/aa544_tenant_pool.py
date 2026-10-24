@@ -389,9 +389,9 @@ async def acquire_scoped_conn(request: Request, tenant_id: str, flag_key: str, *
                     conn = await stack.enter_async_context(
                         tenant_pool.acquire(timeout=TENANT_POOL_ACQUIRE_TIMEOUT_S))
                 except _POOL_UNAVAILABLE_ERRORS as e:
-                    # One event for every "no tenant connection" case. The api logs are structlog console
-                    # lines, so a CloudWatch metric filter on the plain term "aa817_tenant_pool_unavailable"
-                    # counts them (alarm on any count > 0); `reason=` says which case.
+                    # One event for every "no tenant connection" case; `reason=` says which case. The api
+                    # logs are JSON lines (shared/log_config.py), and the AA-CIS-Infra metric filter on the
+                    # term "aa817_tenant_pool_unavailable" alarms on any count > 0 (AA-874).
                     logger.error("aa817_tenant_pool_unavailable", flag_key=flag_key, stage="acquire",
                                  reason=_unavailable_reason(e), error=repr(e), fail_closed=fail_closed,
                                  wait_ms=_ms(time.monotonic() - started))
