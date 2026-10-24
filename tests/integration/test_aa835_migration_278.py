@@ -169,7 +169,8 @@ def test_table_privileges_exact(cur):
         cur.execute("SELECT has_table_privilege('catalog_owner', %s, 'SELECT')", (f"shared.{table}",))
         assert cur.fetchone()[0] is (table in ("supply_entity", "supply_content_version", "supply_media")), table
     # booking reads the view, never the tables behind it
-    _raises(cur, "SET LOCAL ROLE booking; SELECT 1 FROM shared.supply_entity", exc=psycopg2.errors.InsufficientPrivilege)
+    _raises(cur, "SET LOCAL ROLE booking; SELECT 1 FROM shared.supply_entity",
+            exc=psycopg2.errors.InsufficientPrivilege)
 
 
 def test_view_serves_only_published_text_and_rights_cleared_photos(cur):
