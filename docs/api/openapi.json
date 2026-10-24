@@ -3044,6 +3044,34 @@
         "title": "RetentionRunRequest",
         "type": "object"
       },
+      "ReviewReasonBody": {
+        "description": "AA-916 WM-06 — optional body of reject / dismiss: why (one-click chip). An unknown code is a 422.",
+        "properties": {
+          "reason_code": {
+            "anyOf": [
+              {
+                "enum": [
+                  "fact_not_in_source",
+                  "optional_as_included",
+                  "wrong_place_or_time",
+                  "voice_off_brand",
+                  "ai_phrasing",
+                  "format_channel",
+                  "repair_residue",
+                  "style_only"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason Code"
+          }
+        },
+        "title": "ReviewReasonBody",
+        "type": "object"
+      },
       "RewriteRequest": {
         "properties": {
           "custom_notes": {
@@ -3216,6 +3244,27 @@
               }
             ],
             "title": "Problem"
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "enum": [
+                  "fact_not_in_source",
+                  "optional_as_included",
+                  "wrong_place_or_time",
+                  "voice_off_brand",
+                  "ai_phrasing",
+                  "format_channel",
+                  "repair_residue",
+                  "style_only"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason Code"
           },
           "replacement": {
             "default": "",
@@ -3833,10 +3882,42 @@
             ],
             "title": "Model Tier"
           },
+          "reason_code": {
+            "anyOf": [
+              {
+                "enum": [
+                  "fact_not_in_source",
+                  "optional_as_included",
+                  "wrong_place_or_time",
+                  "voice_off_brand",
+                  "ai_phrasing",
+                  "format_channel",
+                  "repair_residue",
+                  "style_only"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason Code"
+          },
           "retry_count": {
             "default": 0,
             "title": "Retry Count",
             "type": "integer"
+          },
+          "review_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Id"
           },
           "rewrite_language": {
             "default": "en-US",
@@ -3927,6 +4008,27 @@
               }
             ],
             "title": "Problem"
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "enum": [
+                  "fact_not_in_source",
+                  "optional_as_included",
+                  "wrong_place_or_time",
+                  "voice_off_brand",
+                  "ai_phrasing",
+                  "format_channel",
+                  "repair_residue",
+                  "style_only"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason Code"
           },
           "replacement": {
             "default": "",
@@ -21669,6 +21771,22 @@
           },
           {
             "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
             "name": "x-admin-role",
             "required": false,
             "schema": {
@@ -21684,6 +21802,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ReviewReasonBody"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -21741,6 +21876,22 @@
           },
           {
             "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
             "name": "x-admin-role",
             "required": false,
             "schema": {
@@ -21756,6 +21907,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ReviewReasonBody"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {

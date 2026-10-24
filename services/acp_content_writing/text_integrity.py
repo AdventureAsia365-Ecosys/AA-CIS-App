@@ -22,7 +22,7 @@ import re
 from typing import Optional
 
 from services.acp_content_writing.hygiene import (
-    CTA_WINDOW, _FAQ_HEADING_RE, _HASHTAG_LINE_RE, _HEADING_RE, _cta_brand_word, _is_cta_invite, _safe_to_delete,
+    CTA_WINDOW, _FAQ_HEADING_RE, _HEADING_RE, _cta_brand_word, _is_cta_invite, _safe_to_delete,
     brand_words, cta_norm, dedupe, has_cta_literal, sentence_spans, tidy_after_cut,
 )
 from services.acp_shared.citation_tags import strip_citation_tags
@@ -71,7 +71,7 @@ def _body_prose(text: str) -> list[dict]:
     end = _body_end(text)
     return [s for s in sentence_spans(text or "")
             if s["end"] <= end and not s["in_faq"] and s["kind"] in ("prose", "bullet")
-            and not _HASHTAG_LINE_RE.fullmatch(s["clean"] or "-")]
+            and not _is_hashtag_line(s["clean"] or "-")]
 
 
 def _literal_groups(spans: list[dict], want: str) -> list[dict]:
@@ -272,6 +272,228 @@ def fix_fragments(text: str, cta: Optional[str] = None) -> tuple[str, list[str]]
     return text, log
 
 
+# ---------------------------------------------------------------- split / open paragraphs, dangling tails (AA-790)
+
+# A word a sentence never ends on: the article, conjunction or possessive a cut left behind ('…the trail
+# climbs to the.', '…swim and.'). Prepositions are left out on purpose: English strands them ('a place worth
+# coming back to.', 'what the dzong is made of.', 'the people you travel with.').
+_TAIL_WORDS = frozenset({"a", "an", "the", "and", "or", "but", "nor", "than", "its", "their", "your", "our", "my"})
+# A paragraph that opens on one of these (or lower-case) after a paragraph with no end mark continues it.
+_CONTINUATION_OPENERS = frozenset({
+    "and", "but", "or", "nor", "which", "whose", "whom", "who", "where", "while", "whereas", "because",
+    "although", "though", "unless", "until", "than", "that", "so",
+})
+_TERMINAL_TAIL_RE = re.compile(r"[.!?…:;][\"'”’)*\]]*$")
+_FIRST_WORD_RE = re.compile(r"^[\W_]*([A-Za-zÀ-ÖØ-öø-ÿ']+)")
+_SMALL_WORDS = frozenset({"a", "an", "the", "and", "or", "of", "in", "on", "at", "to", "for", "with", "by", "from"})
+# A last token that is a link or an address: 'https://trailpulse.travel/laos', 'www.x.com', 'hello@wild.travel'.
+# CodeQL py/polynomial-redos (PR #992): the old single regex searched for a '$'-anchored suffix with leading \S*
+# / \S+ runs, O(n^2) on a long token ('!!!…', '://://…'). `_is_link_token` checks the same language with one
+# scan per alternative; the old pattern is pinned in tests/unit/test_aa912_codeql.py.
+_WWW_RE = re.compile(r"www\.", re.I)
+_LINK_TLD_RE = re.compile(r"\.(?:com|travel|net|org|io|co|asia)", re.I)
+_WORD_CHARS_RE = re.compile(r"\w+")
+# The word-character class of the last-word rule: ASCII letters, Latin-1 letters (no × ÷) and the apostrophe.
+_WORD_CLASS_RE = re.compile(r"[A-Za-zÀ-ÖØ-öø-ÿ']")
+_HASHTAG_BODY = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")
+
+
+def _is_link_token(token: str) -> bool:
+    r"""True when the whitespace-free `token` ends in a link or an address — the language of the old
+    (?:\S*://\S+|www\.\S+|\S+@\S+\.\w+|\S+\.(?:com|travel|net|org|io|co|asia)\S*)$ (re.I) searched in it, in
+    linear time. The token has no whitespace, so every \S run is just "any characters"."""
+    n = len(token)
+    i = token.find("://")  # \S*://\S+$ — the first '://' leaves the most characters after it
+    if i != -1 and i + 3 < n:
+        return True
+    m = _WWW_RE.search(token)  # www\.\S+$
+    if m and m.end() < n:
+        return True
+    d = token.rfind(".")  # \S+@\S+\.\w+$ — only the last '.' can be followed by word characters to the end
+    if d != -1 and _WORD_CHARS_RE.fullmatch(token, d + 1) and token.find("@", 1, d - 1) != -1:
+        return True
+    return _LINK_TLD_RE.search(token, 1) is not None  # \S+\.(?:tld)\S*$ — a '.tld' after the first character
+
+
+def _last_word(clean: str) -> Optional[str]:
+    r"""The last word of `clean` the way the old ([A-Za-zÀ-ÖØ-öø-ÿ']+)\W*$ search found it, in linear time (CodeQL
+    py/polynomial-redos, PR #992: the search was O(n^2) on a long run of word letters or apostrophes): the
+    leftmost run of word-class characters that only non-word characters (\W) follow. Scans from the end."""
+    n = len(clean)
+    r = n  # start of the trailing \W run
+    while r > 0 and not (clean[r - 1].isalnum() or clean[r - 1] == "_"):
+        r -= 1
+    if r > 0 and _WORD_CLASS_RE.match(clean[r - 1]):
+        p = r - 1
+        while p > 0 and _WORD_CLASS_RE.match(clean[p - 1]):
+            p -= 1
+        q = r  # the greedy run goes on through apostrophes in the \W tail
+    else:
+        p = clean.find("'", r)  # no word-class run reaches the tail: an apostrophe inside the tail is the word
+        if p == -1:
+            return None
+        q = p
+    while q < n and clean[q] == "'":
+        q += 1
+    return clean[p:q]
+
+
+def _is_hashtag_line(line: str) -> bool:
+    r"""`hygiene._HASHTAG_LINE_RE.fullmatch(line)` — (?:#[A-Za-z][A-Za-z0-9]+[\s,]*)+ — as one left-to-right scan
+    (CodeQL py/polynomial-redos, PR #992: the regex was flagged on long runs of '\t'). The parse is
+    deterministic: each tag is '#', an ASCII letter, 1+ ASCII letters or digits, then any whitespace or commas."""
+    n, i = len(line), 0
+    if n == 0:
+        return False
+    while i < n:
+        if line[i] != "#":
+            return False
+        i += 1
+        if i >= n or not ("A" <= line[i] <= "Z" or "a" <= line[i] <= "z"):
+            return False
+        i += 1
+        start = i
+        while i < n and line[i] in _HASHTAG_BODY:
+            i += 1
+        if i == start:
+            return False
+        while i < n and (line[i].isspace() or line[i] == ","):
+            i += 1
+    return True
+
+
+def _ends_open(clean: str) -> bool:
+    """AA-790 review — a paragraph is unfinished only when it stops on a letter or a digit ('…where the water',
+    '…on Day 2'). A line that ends in an emoji, an arrow, a symbol, a closing quote or bracket, or a link is a
+    social-post or quote style, not a cut (S250 review: 'That's a pilgrimage, and you feel it in your legs 🌄')."""
+    clean = clean.rstrip()
+    if not clean or _TERMINAL_TAIL_RE.search(clean) or not clean[-1].isalnum():
+        return False
+    return not _is_link_token(clean.split()[-1])
+
+
+def _prose_paragraph(para: str, cta: Optional[str]) -> Optional[str]:
+    """The paragraph as one clean line when it is prose a reader reads as running text, else None: not a
+    heading, a list item, a hashtag line, a FAQ question / answer line, a bold-only line, a short title-like
+    line ('Why Day 2 matters', 'Kuang Si Falls') or the configured CTA line."""
+    lines = [ln.strip() for ln in para.strip().splitlines() if ln.strip()]
+    if not lines:
+        return None
+    first, last = lines[0], lines[-1]
+    if (_HEADING_RE.match(first) or _HEADING_RE.match(last) or _LIST_LINE_RE.match(last + " ")
+            or _is_hashtag_line(last) or last.startswith(("**Q:", "A:", "Q:"))
+            or (last.startswith("**") and last.endswith("**"))):
+        return None
+    clean = " ".join(_drop_tags(" ".join(lines)).split())
+    words = re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ']+", clean)
+    if len(words) < 4 or all(w[0].isupper() or w.lower() in _SMALL_WORDS for w in words):
+        return None
+    if cta_norm(cta) and cta_norm(cta) in cta_norm(clean):
+        return None
+    return clean
+
+
+def split_paragraphs(text: Optional[str], cta: Optional[str] = None) -> list[dict]:
+    """S234 r4 #18 — a sentence broken across a blank line: a prose paragraph that ends with no end mark,
+    followed by a prose paragraph that continues it (opens lower-case, or on 'And' / 'But' / 'Which' /
+    'Because' …); the first one must stop on a letter or a digit (`_ends_open`). [{"text", "why", "kind",
+    "span": None}] — the two halves, joined. Paragraph-level, like an unbalanced bracket: never a sentence a
+    repair can locate or `fix_fragments` can cut."""
+    paras = [p for p in re.split(r"\n\s*\n", text or "") if p.strip()]
+    out: list[dict] = []
+    for prev, nxt in zip(paras, paras[1:]):
+        a = _prose_paragraph(prev, cta)
+        if a is None or not _ends_open(a):
+            continue
+        b_lines = [ln.strip() for ln in nxt.strip().splitlines() if ln.strip()]
+        if not b_lines or _HEADING_RE.match(b_lines[0]) or _LIST_LINE_RE.match(b_lines[0] + " ") \
+                or _is_hashtag_line(b_lines[0]) or b_lines[0].startswith(("**", "A:", "Q:")):
+            continue
+        b = " ".join(_drop_tags(" ".join(b_lines)).split())
+        m = _FIRST_WORD_RE.match(b)
+        if not m:
+            continue
+        word = m.group(1)
+        if not (word[0].islower() or word.lower() in _CONTINUATION_OPENERS):
+            continue
+        out.append({"text": f"{a[-150:]} ¶ {b[:150]}", "why": "splits one sentence across two paragraphs",
+                    "kind": "split_paragraph", "span": None})
+    return out
+
+
+def open_paragraphs(text: Optional[str], cta: Optional[str] = None) -> list[dict]:
+    """A prose paragraph that stops on a letter or a digit with no end mark (`_ends_open`) and is not continued
+    by the next one (that is `split_paragraphs`): what is left when the final pass cuts the lower-case half of a
+    split, or a trim drops the paragraph that finished the sentence. Left out (AA-790 review): the piece's
+    first paragraph when it is one line (a hook or title line, 'Bhutan's quietest valley, and why we keep going
+    back') and a lead-in followed by a list ('Here's what to pack' + '- a swimsuit'). 0 of the 70 local stored
+    pieces (AA-729 fixture + S234 label pack) have one. [{"text", "why", "kind", "span": None}]."""
+    paras = [p for p in re.split(r"\n\s*\n", text or "") if p.strip()]
+    split = {f["text"].split(" ¶ ")[0] for f in split_paragraphs(text, cta)}
+    out: list[dict] = []
+    for k, para in enumerate(paras):
+        a = _prose_paragraph(para, cta)
+        if a is None or not _ends_open(a) or a[-150:] in split:
+            continue
+        if k == 0 and len([ln for ln in para.splitlines() if ln.strip()]) == 1:
+            continue
+        nxt = paras[k + 1].strip() if k + 1 < len(paras) else ""
+        if nxt and _LIST_LINE_RE.match(nxt.splitlines()[0].strip() + " "):
+            continue
+        out.append({"text": a[-300:], "why": "stops with no end mark (an unfinished paragraph)",
+                    "kind": "open_paragraph", "span": None})
+    return out
+
+
+def dangling_tails(text: Optional[str]) -> list[dict]:
+    """S234 r4 #4 / #12 — a prose, bullet or FAQ-answer sentence cut mid-clause: it ends on an article, a
+    conjunction or a possessive ('…before lunch at the.', '…time to swim and'), with or without its end
+    mark. [{"text", "why", "kind", "span": None}] — reported, never cut in code (the sentence still carries
+    content)."""
+    out: list[dict] = []
+    for s in sentence_spans(text or ""):
+        if s["kind"] not in ("prose", "bullet", "faq_a"):
+            continue
+        word = _last_word(s["clean"])
+        if not word or len(s["clean"].split()) < 3:
+            continue
+        if word.islower() and word in _TAIL_WORDS:
+            out.append({"text": s["clean"], "why": f"ends mid-clause on '{word}'", "kind": "dangling_tail",
+                        "span": None})
+    return out
+
+
+def structure_findings(text: Optional[str], cta: Optional[str] = None) -> list[dict]:
+    """AA-790 — the structure defects a deterministic edit can leave that `fragments` does not see:
+    `split_paragraphs` + `open_paragraphs` + `dangling_tails`. One function for the repair contract
+    (new-vs-before, through `hygiene.integrity_problems`), the census script and the tests (lesson: one value,
+    one function). Not read by a gate: under the S247 gate freeze a finding the writer itself made stays a
+    census number."""
+    return split_paragraphs(text, cta) + open_paragraphs(text, cta) + dangling_tails(text)
+
+
+_PARAGRAPH_KINDS = ("split_paragraph", "open_paragraph")
+
+
+def new_structure_findings(before: Optional[str], after: Optional[str], cta: Optional[str] = None) -> list[dict]:
+    """The `structure_findings` of ``after`` an edit added to ``before`` (read by `hygiene.integrity_problems`).
+
+    A dangling tail is a sentence: new when its text is new, like `fragments`. A split or open paragraph is a
+    paragraph: new only when ``after`` has MORE of that kind than ``before`` (AA-790 review). Matched by text, an
+    edit anywhere inside a paragraph that was already open (a sentence repair, a rewritten hook) would read as a
+    new problem and be reverted for a defect it did not make. When the count grows, the findings whose text
+    ``before`` lacks are reported, as many as the count grew by."""
+    old, new = structure_findings(before, cta), structure_findings(after, cta)
+    old_texts = {f["text"] for f in old}
+    out = [f for f in new if f["kind"] not in _PARAGRAPH_KINDS and f["text"] not in old_texts]
+    for kind in _PARAGRAPH_KINDS:
+        grew = sum(f["kind"] == kind for f in new) - sum(f["kind"] == kind for f in old)
+        if grew > 0:
+            cand = [f for f in new if f["kind"] == kind]
+            out += ([f for f in cand if f["text"] not in old_texts] or cand)[:grew]
+    return out
+
+
 # ---------------------------------------------------------------- the pass
 
 def integrity_findings(text: str, cta: Optional[str]) -> list[str]:
@@ -308,7 +530,20 @@ def final_pass(text: str, hyg, *, cta: Optional[str] = None) -> tuple[str, list[
     F13_repeat findings left (the caller holds the piece on them)."""
     from services.acp_content_writing.hygiene import find_issues
     cta = cta if cta is not None else getattr(hyg, "cta", None)
-    ignore = brand_words(getattr(hyg, "brand_name", None))
+    text, log = _fix_all(text, cta, brand_words(getattr(hyg, "brand_name", None)))
+    residue = find_issues(text, hyg)["repeat"] if hyg is not None else integrity_findings(text, cta)
+    return text, log, residue
+
+
+def settle(text: str, hyg, *, cta: Optional[str] = None) -> str:
+    """AA-790 — the text `final_pass` would leave, without its residue read: what the gates see of an edit made
+    before the final pass. The repair contract compares two settled texts, so a step is not reverted for a
+    duplicate or a fragment the final pass deletes anyway."""
+    cta = cta if cta is not None else getattr(hyg, "cta", None)
+    return _fix_all(text, cta, brand_words(getattr(hyg, "brand_name", None)))[0]
+
+
+def _fix_all(text: str, cta: Optional[str], ignore: frozenset) -> tuple[str, list[str]]:
     text, log = normalise(text)
     text, more = fix_cta(text, cta)
     log += more
@@ -318,9 +553,10 @@ def final_pass(text: str, hyg, *, cta: Optional[str] = None) -> tuple[str, list[
     log += more
     text, more = normalise(text)
     log += [m for m in more if m not in log]
-    residue = find_issues(text, hyg)["repeat"] if hyg is not None else integrity_findings(text, cta)
-    return text, log, residue
+    return text, log
 
 
-__all__ = ["cta_findings", "cta_occurrences", "edit_findings", "final_pass", "fix_cta", "fix_fragments", "fragments",
-           "integrity_findings", "normalise", "unbalanced_findings"]
+__all__ = ["cta_findings", "cta_occurrences", "dangling_tails", "edit_findings", "final_pass", "fix_cta",
+           "fix_fragments", "fragments", "integrity_findings", "new_structure_findings", "normalise", "open_paragraphs",
+           "settle",
+           "split_paragraphs", "structure_findings", "unbalanced_findings"]

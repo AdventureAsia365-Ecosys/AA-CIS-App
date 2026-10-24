@@ -28,7 +28,7 @@ from services.acp_content_writing.hygiene import (
     integrity_problems, is_sentence_end, near_duplicates, restates, sentence_spans, sentence_tail_end,
     tidy_after_cut,
 )
-from services.acp_content_writing.quality_gates import OWNED_BY_FIX_STEP
+from services.acp_content_writing.quality_gates import OWNED_BY_FIX_STEP, expand_ledger
 from services.acp_shared.citation_tags import TAG as _TAG
 from services.acp_shared.citation_tags import strip_citation_tags, trailing_tags
 from services.quality import repair_contract
@@ -315,8 +315,10 @@ def plan(content_text: str, gate_ledger: list[dict]) -> Optional[list[dict]]:
     """The sentences to repair, [] when the only failures are a title/meta scope violation the SEO
     fit owns (nothing to change in the text — the attempt re-runs the fit and the gates), or None
     when this attempt needs the full rewrite instead.
-    Each item: {"start", "end", "sentence" (tag-stripped), "problem", "gate" (the failed gate, AA-777)}."""
-    blocking = [g for g in gate_ledger if not g["passed"] and g.get("blocking", True)]
+    Each item: {"start", "end", "sentence" (tag-stripped), "problem", "gate" (the failed gate, AA-777)}.
+    AA-924 — reads the legacy view of the ledger (quality_gates.expand_ledger): an item's gate is the source that
+    found it (F2_brand_forbidden, F15_voice…), so the routing sets below keep their membership."""
+    blocking = [g for g in expand_ledger(gate_ledger) if not g["passed"] and g.get("blocking", True)]
     # F4_seo_surface is fixed by the SEO title/meta fit that runs after every attempt
     # (service._fit_seo_meta), not by the text — it never forces a full rewrite (S233). S234 review:
     # the same for an F12_scope whose violations are all in the title/meta.
@@ -840,8 +842,8 @@ def check_replacement(replacement: str, grounding: str, brand_pack: Optional[dic
     """The deterministic checks on a replacement sentence before it is saved (lesson AA-641: a
     repair needs a guard after it). Returns [{gate, violations, blocking}] — empty means clean.
 
-    Blocking (plan section 4, PR4 — the admin cannot save it): F1 (no number the source lacks), F2
-    banned patterns, the brand's forbidden words, F11 (no foreign brand / platform name), F19 (no
+    Blocking (plan section 4, PR4 — the admin cannot save it): F1 (no number the source lacks), F2_lexicon (F2
+    banned patterns and the brand's forbidden words, AA-924), F11 (no foreign brand / platform name), F19 (no
     review, testimonial, customer first person or independence claim — AA-819), and a
     near-verbatim copy of one of its ±4 neighbours (hygiene.near_verbatim — the rule the pipeline
     auto-deletes on; `splice` would otherwise have turned it into a silent cut).
@@ -859,9 +861,10 @@ def check_replacement(replacement: str, grounding: str, brand_pack: Optional[dic
     pack = brand_pack or {}
     results = [
         qg.gate_grounding(sentence, grounding),
-        qg.gate_banned_patterns(sentence, grounding),
-        qg.gate_brand_forbidden_words(sentence, grounding, pack.get("forbidden_words")),
-        qg.gate_platform_truth(sentence, grounding),  # AA-800
+        # AA-924 — banned patterns + the brand's forbidden words, one F2_lexicon result (no stock list: a
+        # sentence the admin wrote is not held to the writer's style list)
+        qg.gate_lexicon(sentence, grounding, pack, include_stock=False),
+        qg.gate_platform_truth(sentence, grounding, pack.get("forbidden_words")),  # AA-800
         qg.gate_brand_name(sentence, grounding, pack.get("brand_name")),
         # AA-819 — an admin suggestion (t9_repair) or edit never puts a review / customer voice in
         qg.gate_authenticity(sentence, (writer_input or {}).get("cta")),

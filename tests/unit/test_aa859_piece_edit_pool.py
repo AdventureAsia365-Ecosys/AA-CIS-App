@@ -31,6 +31,13 @@ async def _call(request, tenant_id):
                                                    request=request)
 
 
+@pytest.fixture(autouse=True)
+def _no_writing_signal(monkeypatch):
+    """AA-916: the writing signal of the edit has its own tests (test_aa916_capture_edits.py); here the pool
+    and audit behaviour of AA-859 only."""
+    monkeypatch.setattr(service, "_record_piece_edit_signal", AsyncMock(return_value=None))
+
+
 def _audit_calls(request):
     return [c for c in request.app.state.pool.execute.call_args_list if "acp_shared.audit_log" in c[0][0]]
 

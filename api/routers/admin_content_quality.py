@@ -33,6 +33,7 @@ from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
+import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from api.core.staff_authz import staff_policy
 from pydantic import BaseModel, Field
@@ -48,6 +49,10 @@ from services.acp_shared.audit_log import AdminAuditAction, PlatformAuditAction,
 from services.acp_shared.brand_pack import fetch_brand_pack_conn
 from services.acp_shared.grounding import find_novel_numeric_claims
 from services.quality import registry as qr
+from services.writing_memory import signals as wm  # AA-916
+from services.writing_memory.reason_codes import FACT_NOT_IN_SOURCE, ReasonCode, suggested_reason
+
+logger = structlog.get_logger()
 
 # AA-882 (GĐ3): staff_policy narrows every route listed in api/core/staff_authz.py POLICY by role.
 router = APIRouter(prefix="/admin/content-quality", tags=["admin-content-quality"],
@@ -215,32 +220,56 @@ async def list_pieces(
 _F9_PHRASE_RE = re.compile(r'exact flagged phrase\(s\): (.+)$')
 _QUOTED_RE = re.compile(r'"([^"]{3,})"')
 _BRAND_RE = re.compile(r"^(.+?): '(.+)'\s*$", re.DOTALL)
+_BANNED_PHRASE_RE = re.compile(r"^banned pattern /.*/ -> '(.+)'$", re.DOTALL)
+
+
+def _findings(g: dict) -> list[tuple[str, str, bool, str]]:
+    """(parse shape, violation, blocking, severity) per violation of a ledger / flag entry. AA-924 — a merged entry
+    (F2_lexicon, F15_voice) gives each finding with its own severity, parsed in the shape of the source gate that
+    found it; an older entry gives every violation with the gate's own `blocking`."""
+    if isinstance(g.get("findings"), list):
+        return [(f.get("source"), f.get("text"), f.get("severity") == "block", f.get("severity") or "warn")
+                for f in g["findings"] if isinstance(f, dict) and isinstance(f.get("text"), str)]
+    blocking = g.get("blocking", True)
+    return [(g.get("gate"), v, blocking, "block" if blocking else "warn")
+            for v in g.get("violations") or [] if isinstance(v, str)]
 
 
 def highlights(content_text: str, gate_ledger: list, flags: list) -> list[dict]:
-    """[{start, end, gate, blocking, problem}] for every flagged sentence or phrase found in the
+    """[{start, end, gate, blocking, severity, problem}] for every flagged sentence or phrase found in the
     final text. Parses the same violation shapes sentence_repair.py reads; a quote that cannot
-    be found (rewritten later, or too short) is left out."""
+    be found (rewritten later, or too short) is left out. AA-924 — `blocking` / `severity` are the finding's own
+    (a warn stock phrase inside a blocking F2_lexicon entry reads warn); `gate` is the stored entry, `source` the
+    gate that found it when they differ."""
     out: list[dict] = []
     text = content_text or ""
     for g in list(gate_ledger or []) + list(flags or []):
         if not isinstance(g, dict) or g.get("passed", False):
             continue
-        gate, blocking = g.get("gate"), g.get("blocking", True)
-        for v in g.get("violations") or []:
-            if not isinstance(v, str):
-                continue
+        gate = g.get("gate")
+        for shape, v, blocking, severity in _findings(g):
+            mark = {"gate": gate, "blocking": blocking, "severity": severity,
+                    **({"source": shape} if shape != gate else {})}
             spans: list[tuple[str, str]] = []
-            if gate == qr.F1_GROUNDING:
+            if shape == qr.F1_GROUNDING:
                 m = sentence_repair._F1_QUOTE_RE.search(v)
                 if m:
                     spans.append((m.group(1), v.split(" not present", 1)[0]))
-            elif gate in (qr.F2_BRAND_FORBIDDEN, qr.F11_BRAND_NAME):
+            elif shape == qr.F2_BANNED_PATTERNS:
+                # AA-924 — "banned pattern /…/ -> '<phrase>'" is highlighted as a phrase; the em-dash one quotes
+                # its sentence
+                m = _BANNED_PHRASE_RE.search(v)
+                i = text.lower().find(m.group(1).lower()) if m else -1
+                if i >= 0:
+                    out.append({"start": i, "end": i + len(m.group(1)), **mark, "problem": "banned phrase"})
+                elif not m and (m := _BRAND_RE.search(v)):
+                    spans.append((m.group(2), m.group(1)))
+            elif shape in (qr.F2_BRAND_FORBIDDEN, qr.F11_BRAND_NAME):
                 m = _BRAND_RE.search(v)
                 if m:
                     spans.append((m.group(2), m.group(1)))
-            elif gate in (qr.F12_SCOPE, qr.F13_HYGIENE, qr.F13_LEAK, qr.F13_REPEAT, qr.F14_SOCIAL_SHAPE,
-                          qr.F14_FIRST_LINE, qr.F15_VOICE, qr.F15_VOICE_WARN, qr.F17_TRIP_FACT, qr.F18_RARITY):
+            elif shape in (qr.F12_SCOPE, qr.F13_HYGIENE, qr.F13_LEAK, qr.F13_REPEAT, qr.F14_SOCIAL_SHAPE,
+                           qr.F14_FIRST_LINE, qr.F15_VOICE, qr.F15_VOICE_WARN, qr.F17_TRIP_FACT, qr.F18_RARITY):
                 # S234 — "<problem>: '<sentence>'"; a title/meta scope hit is not in the text. F14's
                 # word-count line quotes nothing and is left out; its first line / hashtags are quoted.
                 # F15_voice quotes its sentence the same way (plan C4).
@@ -249,30 +278,31 @@ def highlights(content_text: str, gate_ledger: list, flags: list) -> list[dict]:
                     quote = m.group(2)
                     if sentence_repair.locate_sentence(text, quote) is None and quote in text:
                         i = text.find(quote)  # a short quote (a hashtag) is highlighted as a phrase
-                        out.append({"start": i, "end": i + len(quote), "gate": gate, "blocking": blocking,
-                                    "problem": m.group(1)[:300]})
+                        out.append({"start": i, "end": i + len(quote), **mark, "problem": m.group(1)[:300]})
                     else:
                         spans.append((quote, m.group(1)))
-            elif gate == qr.F9_CTA_FACT and "unsupported claim(s):" in v:
+            elif shape == qr.F9_CTA_FACT and "unsupported claim(s):" in v:
                 for sent, claim, why in sentence_repair._F9_CLAIM_RE.findall(v.split("unsupported claim(s):", 1)[1]):
                     spans.append((sent, f"{claim.strip()} — {why.strip()}"))
-            elif gate == qr.F9_BRAND_STYLE:
+            elif shape == qr.F9_BRAND_STYLE:
                 m = _F9_PHRASE_RE.search(v)
                 for phrase in _QUOTED_RE.findall(m.group(1)) if m else []:
                     i = text.find(phrase)
                     if i >= 0:
-                        out.append({"start": i, "end": i + len(phrase), "gate": gate, "blocking": blocking,
+                        out.append({"start": i, "end": i + len(phrase), **mark,
                                     "problem": v.split(" — ", 1)[0][:200]})
             for quote, problem in spans:
                 span = sentence_repair.locate_sentence(text, quote)
                 if span:
-                    out.append({"start": span[0], "end": span[1], "gate": gate, "blocking": blocking,
-                                "problem": problem[:300]})
-    # A non-blocking gate sits in both gate_ledger and flags: keep one highlight per span + gate.
+                    out.append({"start": span[0], "end": span[1], **mark, "problem": problem[:300]})
+    # A non-blocking gate sits in both gate_ledger and flags: keep one highlight per span + finding. AA-924 — a
+    # merged entry (F2_lexicon, F15_voice) holds several sources' findings, so two problems on one sentence are two
+    # highlights: the key is the span, the entry, the source and the problem, not the span and entry alone.
     seen, unique = set(), []
     for h in sorted(out, key=lambda h: (h["start"], h["end"])):
-        if (h["start"], h["end"], h["gate"]) not in seen:
-            seen.add((h["start"], h["end"], h["gate"]))
+        key = (h["start"], h["end"], h["gate"], h.get("source") or h["gate"], h["problem"])
+        if key not in seen:
+            seen.add(key)
             unique.append(h)
     # S234 — edit-ready: the exact span text (the client sends it back so a stale offset can never
     # cut the wrong words) and the whole sentence around a phrase hit, which is what cut/rewrite act on.
@@ -306,9 +336,14 @@ def flagged_sentences(content_text: str, hls: list[dict]) -> list[dict]:
                                 "gates": [], "problems": [], "blocking": False}
         if h["gate"] not in it["gates"]:
             it["gates"].append(h["gate"])
-        it["problems"].append({"gate": h["gate"], "problem": h["problem"], "blocking": h["blocking"]})
+        it["problems"].append({"gate": h["gate"], "problem": h["problem"], "blocking": h["blocking"],
+                               "severity": h.get("severity"), **({"source": h["source"]} if h.get("source") else {})})
         it["blocking"] = it["blocking"] or bool(h["blocking"])
-    return [items[k] for k in sorted(items)]
+    # AA-916 WM-06 — the reason chip the admin UI preselects (first gate of the sentence). AA-924: a finding inside a
+    # merged entry (F2_lexicon, F15_voice) names its legacy source; the chip follows the source (a banned pattern is
+    # ai_phrasing, a tenant-forbidden word voice_off_brand), as it did before the fold.
+    return [{**items[k], "suggested_reason": suggested_reason(items[k]["problems"][0].get("source")
+                                                             or items[k]["gates"][0])} for k in sorted(items)]
 
 
 # AA-802 — when the tenant last took a copy of the piece away: published to a channel
@@ -369,7 +404,9 @@ async def _load_piece_detail(conn, piece_id: str) -> dict:
     piece["flagged_sentences"] = flagged_sentences(piece["content_text"] or "", piece["highlights"])
     piece["cost_by_stage"] = [_row(r) for r in cost_rows]
     piece["other_pieces_for_request"] = [_row(r) for r in siblings]
-    piece["admin_edits"] = [{**_row(r), "details": _j(r["details"]) or {}} for r in edits]
+    # AA-916 — a row written since WM-06 holds no text: before / after come from its writing signal.
+    piece["admin_edits"] = await wm.with_signal_texts(
+        conn, [{**_row(r), "details": _j(r["details"]) or {}} for r in edits], row["tenant_id"])
     piece["exported"] = row["exported_at"] is not None
     piece["tenant_copy"] = tenant_copy_state(row["published_at"], row["exported_at"],
                                              [r["created_at"] for r in edits])
@@ -492,6 +529,25 @@ class SentenceApplyBody(BaseModel):
     suggestion: Optional[str] = Field(None, max_length=3000)
     suggestion_model: Optional[str] = Field(None, max_length=200)
     suggestion_cost_usd: Optional[float] = None
+    # AA-916 WM-06 — why the admin acted (one-click chip); an unknown code is a 422.
+    reason_code: Optional[ReasonCode] = None
+
+
+# AA-916 — the writing-signal action of each mode.
+_SIGNAL_ACTION_BY_MODE = {"cut": "sentence_cut", "rewrite": "sentence_rewrite", "manual": "sentence_manual"}
+
+
+def _sentence_audit(body: "SentenceApplyBody", ref: "wm.SignalRef", warnings: list[dict]) -> dict:
+    """AA-916 (ADR 0010 decision 11) — the audit details both sentence applies share: the action, the gate, the
+    chip, the signal id and the hashes. No tenant text: the sentence, the suggestion, the warning texts and the
+    `problem` (the gate's diagnostic quotes the flagged fact / number / claim, and the admin may type up to 1000
+    characters there) live in the writing signal / the response only; the drawer reads `problem` back from the
+    signal (`wm.with_signal_texts`)."""
+    return {"mode": body.mode, "gate": body.gate, "problem_sha256": wm.text_sha256(body.problem),
+            "suggestion_model": body.suggestion_model, "suggestion_cost_usd": body.suggestion_cost_usd,
+            "suggestion_sha256": wm.text_sha256(body.suggestion),
+            "warning_gates": [w.get("gate") for w in warnings],
+            **wm.audit_details(ref, body.reason_code)}
 
 
 _ACTION_BY_MODE = {"cut": AdminAuditAction.SENTENCE_CUT, "rewrite": AdminAuditAction.SENTENCE_REWRITTEN,
@@ -583,16 +639,22 @@ async def apply_sentence(piece_id: str, body: SentenceApplyBody, request: Reques
             await conn.execute(
                 "UPDATE acp_shared.content_piece SET content_text = $2 WHERE piece_id = $1::uuid",
                 piece_id, new_text)
+            # AA-916 WM-06 — the sentence before / after as a writing signal (same transaction: it is the
+            # edit's history now). A T9 piece has no Jev claim question, so fact_not_in_source is kept on the
+            # signal only (fact_status fail).
+            scope, owner = wm.scope_for_tenant(row["tenant_id"])
+            ref = await wm.record_writer_feedback(
+                conn, writer=wm.writer_for_channel(row["channel"]), scope=scope, tenant_id=owner,
+                channel=row["channel"], field="content_text", locator={"start": start, "end": end},
+                before_text=old_text[start:end], after_text=replacement, gate=body.gate, problem=body.problem,
+                reason_code=body.reason_code, action=_SIGNAL_ACTION_BY_MODE[body.mode], actor_type="admin",
+                actor_id=wm.admin_actor_id(x_admin_user_id), source_table="content_piece", source_id=piece_id)
             await write_audit_log(
                 conn, tenant_id=str(row["tenant_id"]), actor=f"admin:{x_admin_user_id or 'unknown'}",
                 action=_ACTION_BY_MODE[body.mode], resource_type="content_piece", resource_id=piece_id,
-                details={"start": start, "end": end, "before": old_text[start:end], "after": replacement,
-                         "mode": body.mode, "gate": body.gate, "problem": body.problem,
-                         "suggestion": body.suggestion, "suggestion_model": body.suggestion_model,
-                         "suggestion_cost_usd": body.suggestion_cost_usd,
+                details={"start": start, "end": end, **_sentence_audit(body, ref, warnings),
                          "length_before": len(old_text), "length_after": len(new_text),
-                         "published": bool(row["published"]), "exported": bool(row.get("exported")),
-                         "warnings": warnings},
+                         "published": bool(row["published"]), "exported": bool(row.get("exported"))},
             )
         piece = await _load_piece_detail(conn, piece_id)
     # S234 review: F12_scope / F13 hygiene hits on the admin's text are warnings, not refusals.
@@ -1024,9 +1086,9 @@ def t2_flag(sections: list[dict], tour: dict, pack_or_words) -> list[dict]:
                 s["problems"].append({"gate": qr.T2_FORBIDDEN_WORD, "blocking": True,
                                       "problem": f"forbidden word(s): {', '.join(hits)}"})
             if s["problems"]:
-                flagged.append({**s, "field": sec["field"], "index": sec["index"],
-                                "gates": list(dict.fromkeys(p["gate"] for p in s["problems"])),
-                                "blocking": True})
+                gates = list(dict.fromkeys(p["gate"] for p in s["problems"]))
+                flagged.append({**s, "field": sec["field"], "index": sec["index"], "gates": gates,
+                                "blocking": True, "suggested_reason": suggested_reason(gates[0])})  # AA-916
     return flagged
 
 
@@ -1116,7 +1178,8 @@ async def _load_version_detail(conn, version_id: str) -> dict:
     out["cost_by_stage"] = [_row(r) for r in cost_rows]
     out["flagged_sentences"] = t2_flag(sections, source_tour_dict(row), pack)
     out["sections"] = sections
-    out["admin_edits"] = [{**_row(r), "details": _j(r["details"]) or {}} for r in edits]
+    out["admin_edits"] = await wm.with_signal_texts(
+        conn, [{**_row(r), "details": _j(r["details"]) or {}} for r in edits], row["tenant_id"])  # AA-916
     block = t2_edit_block(row["status"], row["version_number"], row["latest_version_number"],
                           row["edit_source"])
     out["editable"], out["edit_block_reason"] = block is None, block
@@ -1261,24 +1324,64 @@ async def apply_tour_sentence(version_id: str, body: TourSentenceApplyBody, requ
             if not str(res).endswith(" 1"):
                 raise HTTPException(status_code=409, detail="The version was not updated (it changed or is no "
                                                             "longer editable) — reload and try again")
+            # AA-916 WM-06 — the sentence before / after as a writing signal of the T2 writer (tenant text:
+            # scope tenant), same transaction.
+            scope, owner = wm.scope_for_tenant(row["tenant_id"])
+            sentence = old_text[start:end]
+            ref = await wm.record_writer_feedback(
+                conn, writer="t2", scope=scope, tenant_id=owner, channel="tour", field=body.field,
+                locator={"field": body.field, "index": body.index, "start": start, "end": end},
+                before_text=sentence, after_text=replacement, gate=body.gate, problem=body.problem,
+                reason_code=body.reason_code, action=_SIGNAL_ACTION_BY_MODE[body.mode], actor_type="admin",
+                actor_id=wm.admin_actor_id(x_admin_user_id), source_table="tenant_tour_version",
+                source_id=str(row["id"]))
+            # ADR 0010 decision 11: the version history keeps hashes of the section and of the whole version
+            # before / after (AA-802 kept their text; that is tenant text, which only deletable tables hold).
             await write_audit_log(
                 conn, tenant_id=str(row["tenant_id"]), actor=f"admin:{x_admin_user_id or 'unknown'}",
                 action=_TOUR_ACTION_BY_MODE[body.mode], resource_type="tenant_tour_version",
                 resource_id=str(row["id"]),  # canonical form: the detail reads by ttv.id::text
                 details={"field": body.field, "index": body.index, "start": start, "end": end,
-                         "before": old_text[start:end], "after": replacement, "mode": body.mode,
-                         "gate": body.gate, "problem": body.problem, "suggestion": body.suggestion,
-                         "suggestion_model": body.suggestion_model,
-                         "suggestion_cost_usd": body.suggestion_cost_usd,
+                         **_sentence_audit(body, ref, warnings),
                          "version_number": row["version_number"], "status": row["status"],
-                         "section_before": old_text, "section_after": new_text,
-                         # the whole version before / after: the history holds both versions
-                         # (AA-802 Done-when), not only the section that changed
-                         "content_before": rc, "content_after": new_rc,
-                         "exported": row["exported_at"] is not None, "warnings": warnings},
+                         "section_before_sha256": wm.text_sha256(old_text),
+                         "section_after_sha256": wm.text_sha256(new_text),
+                         "content_before_sha256": wm.text_sha256(json.dumps(rc, sort_keys=True)),
+                         "content_after_sha256": wm.text_sha256(json.dumps(new_rc, sort_keys=True)),
+                         "exported": row["exported_at"] is not None},
             )
         detail = await _load_version_detail(conn, version_id)
+    if body.reason_code == FACT_NOT_IN_SOURCE:
+        await _record_fact_not_in_source(pool, tour, sentence, ref, x_admin_user_id)
     return {**detail, "warnings": warnings}
+
+
+async def _record_fact_not_in_source(pool, tour: dict, sentence: str, ref: "wm.SignalRef",
+                                     admin_id: Optional[str]) -> int:
+    """AA-916 WM-06 — the admin says this T2 sentence states a fact the source does not have: truth=false on
+    the Jev question T3 asks about it (`a1_claim_supported`, the subject key of tenant_pipeline.t3_jev_clear:
+    the whole source tour + the sentence). After the edit committed, on the pool: record_outcome is best-effort
+    and returns the rows it labelled (0 when T3 never asked Jev about this sentence)."""
+    from services.acp_produce.tenant_pipeline import T3_JEV_Q
+    from services.content_generation.grounding import source_text, subject_key
+    from shared.llm_client.decide import record_outcome
+    source = source_text(tour or {})
+    if not source or not sentence.strip():
+        return 0
+    try:
+        by = str(UUID(admin_id)) if admin_id else None
+    except ValueError:
+        by = None
+    key = subject_key(source, sentence.strip())
+    rows = await record_outcome(pool, T3_JEV_Q, key, truth=False,
+                                source="admin_reason_fact_not_in_source", ref=ref.signal_id, by=by)
+    if rows:
+        logger.info("aa916_fact_not_in_source_outcome", signal_id=ref.signal_id, rows=rows)
+    else:
+        # T3 never asked Jev about this sentence (Jev off for the tenant, or a hit T3 never had), or the key drifted
+        # from T3's (segmentation / source dict): the admin's truth=false labelled nothing. Visible, not silent.
+        logger.warning("aa916_fact_not_in_source_unlabelled", signal_id=ref.signal_id, subject_key=key)
+    return rows
 
 
 # ── Place cards (AA-772) ───────────────────────────────────────────────────────────────────────

@@ -1020,9 +1020,12 @@ def integrity_problems(before: str, after: str, ignore: frozenset = frozenset(),
     out += [f"opens on a pronoun with no referent: '{s[:200]}'" for s in dangling_openers(after, before)]
     # S234 round 4 (r3 panel §4 fix 1c) — a repair that leaves a broken sentence (lower-case start,
     # an unbalanced bracket or quote) is reverted
-    from services.acp_content_writing.text_integrity import fragments
+    from services.acp_content_writing.text_integrity import fragments, new_structure_findings
     old_frag = {f["text"] for f in fragments(before)}
     out += [f"{f['why']}: '{f['text'][:200]}'" for f in fragments(after) if f["text"] not in old_frag]
+    # AA-790 — a sentence split across two paragraphs, a paragraph left unfinished, or one cut mid-clause on
+    # 'the' / 'and' (r4 #18, #4, #12); paragraph kinds by count, so an edit inside an open paragraph is not new
+    out += [f"{f['why']}: '{f['text'][:200]}'" for f in new_structure_findings(before, after, cta)]
     return list(dict.fromkeys(out))
 
 
