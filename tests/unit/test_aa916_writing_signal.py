@@ -50,7 +50,7 @@ async def test_one_insert_with_hashes_and_the_returned_id():
     assert ref == wm.SignalRef(str(SID), sha("Old text."), sha("New text."))
     assert args[:4] == ["t9_blog", None, "tenant", TENANT] and json.loads(args[5]) == {"start": 1, "end": 4}
     assert args[6:10] == ["Old text.", "New text.", sha("Old text."), sha("New text.")]
-    assert args[15] == "pending" and args[17:] == ["content_piece", "p1", None]
+    assert args[15] == "pending" and args[17:] == ["content_piece", "p1", None, None]   # AA-917: created_at
 
 
 def test_sha256_is_lower_hex_of_utf8():
@@ -119,8 +119,8 @@ async def test_problem_is_stored_on_the_signal_and_the_caps_refuse_in_code():
     await wm.record_writer_feedback(conn, writer="t2", scope="tenant", tenant_id=TENANT, action="sentence_cut",
                                     actor_type="admin", source_table="tenant_tour_version", source_id="v",
                                     problem="number(s) ['4,200'] not in the source tour")
-    assert conn.fetchval.await_args.args[-1] == "number(s) ['4,200'] not in the source tour"
-    assert "problem)" in conn.fetchval.await_args.args[0] and "$20" in conn.fetchval.await_args.args[0]
+    assert conn.fetchval.await_args.args[-2] == "number(s) ['4,200'] not in the source tour"
+    assert "problem," in conn.fetchval.await_args.args[0] and "$20" in conn.fetchval.await_args.args[0]
     for kw in ({"problem": "p" * (wm.MAX_PROBLEM + 1)}, {"actor_id": "a" * 129}):
         with pytest.raises(ValueError, match="longer than"):
             await wm.record_writer_feedback(conn, writer="a1", scope="platform", tenant_id=None, action="reject",

@@ -84,7 +84,7 @@ async def test_tenant_edit_writes_one_signal_inside_the_tenant_transaction():
     args = call.args[1:]
     assert args[:5] == ("t9_blog", "blog", "tenant", str(TENANT_ID), "content_text")
     assert args[6:8] == ("Old body", TEXT) and args[12:15] == ("tenant_edit", "tenant", f"tenant:{TENANT_ID}")
-    assert args[17:] == ("content_piece", str(PIECE_ID), None)
+    assert args[17:] == ("content_piece", str(PIECE_ID), None, None)   # AA-917: created_at (now())
     audit_sql, *params = request.app.state.pool.execute.await_args.args
     assert "INSERT INTO acp_shared.audit_log" in audit_sql
     details = json.loads(params[5])
@@ -301,7 +301,7 @@ async def test_a1_field_edit_writes_one_platform_signal_per_changed_field():
     assert got == {("aa_summary", "Old summary.", "New summary."), ("aa_highlights", '["b", "a"]', '["c"]')}
     for a in conn.signals:
         assert a[:4] == ("a1", "master", "platform", None) and a[12:14] == ("field_edit", "admin")
-        assert a[14] == str(uuid.UUID(int=7)) and a[17:] == ("generated_content", content_id, None)
+        assert a[14] == str(uuid.UUID(int=7)) and a[17:] == ("generated_content", content_id, None, None)
     [(sql, args)] = conn.updates
     assert "human_edited = true" in sql and "revalidate_passed = NULL" in sql
     edit_diff = json.loads(args[-3])
@@ -374,7 +374,7 @@ async def test_dismiss_with_a_code_writes_a_reason_only_signal(ttv, writer, head
     a = call.args[1:]
     assert a[0] == writer and a[2:4] == ("platform", None) and a[6:8] == (None, None)    # no text
     assert a[11:15] == ("voice_off_brand", "dismiss", "admin", actor)
-    assert a[17:] == ("review_queue", review, None)
+    assert a[17:] == ("review_queue", review, None, None)
 
 
 @pytest.mark.asyncio

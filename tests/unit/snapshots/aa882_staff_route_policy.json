@@ -583,6 +583,30 @@
     "capability": "ops.read",
     "module": "api.routers.admin_waves"
   },
+  "GET /admin/writing-memory/candidates": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "GET /admin/writing-memory/candidates/{rule_id}": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "GET /admin/writing-memory/signals": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "GET /admin/writing-memory/signals/clusters": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "GET /admin/writing-memory/signals/{signal_id}": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "GET /admin/writing-memory/summary": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_writing_memory"
+  },
   "GET /v1/pipeline/execution/{execution_id:path}": {
     "capability": null,
     "module": "api.routers.v1_pipeline"
@@ -690,6 +714,14 @@
   "PATCH /admin/tours/{tour_id}/trash": {
     "capability": "content.write",
     "module": "api.routers.admin"
+  },
+  "PATCH /admin/writing-memory/candidates/{rule_id}": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "PATCH /admin/writing-memory/signals/{signal_id}/fact": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_writing_memory"
   },
   "PATCH /v1/rules/{rule_id}": {
     "capability": "content.settings.write",
@@ -1066,6 +1098,14 @@
   "POST /admin/waves/{wave_id}/close": {
     "capability": "ops.write",
     "module": "api.routers.admin_waves"
+  },
+  "POST /admin/writing-memory/candidates/{rule_id}/reject": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "POST /admin/writing-memory/run": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_writing_memory"
   },
   "POST /v1/pipeline/review-queue/{review_id}/approve": {
     "capability": "review.act",

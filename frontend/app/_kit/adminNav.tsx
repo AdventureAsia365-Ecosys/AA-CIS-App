@@ -97,6 +97,7 @@ export const NAV_GROUPS: NavGroup[] = [
     { href: "/admin/tenant-activity", icon: <Radio size={16} />,       label: "Content Trace" },
     { href: "/admin/platform-stats",  icon: <BarChart3 size={16} />,   label: "A4 Quality" },
     { href: "/admin/content-quality", icon: <ShieldCheck size={16} />, label: "Content Quality" },
+    { href: "/admin/writing-memory", icon: <BookOpen size={16} />, label: "Writing memory" },  // AA-917
   ] },
 ];
 

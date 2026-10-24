@@ -42,9 +42,10 @@ PLATFORM_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 _INSERT_SQL = """
     INSERT INTO shared.writing_signal
         (writer, channel, scope, tenant_id, field, locator, before_text, after_text, before_sha256, after_sha256,
-         gate, reason_code, action, actor_type, actor_id, fact_status, audit_log_id, source_table, source_id, problem)
+         gate, reason_code, action, actor_type, actor_id, fact_status, audit_log_id, source_table, source_id, problem,
+         created_at)
     VALUES ($1, $2, $3, $4::uuid, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::uuid, $18, $19,
-            $20)
+            $20, coalesce($21::timestamptz, now()))
     RETURNING signal_id
 """
 
@@ -94,14 +95,15 @@ async def record_writer_feedback(
     channel: Optional[str] = None, field: Optional[str] = None, locator: Optional[dict[str, Any]] = None,
     before_text: Optional[str] = None, after_text: Optional[str] = None, gate: Optional[str] = None,
     reason_code: Optional[str] = None, actor_id: Optional[str] = None, fact_status: Optional[str] = None,
-    audit_log_id=None, problem: Optional[str] = None,
+    audit_log_id=None, problem: Optional[str] = None, created_at=None,
 ) -> SignalRef:
     """INSERT one signal on `conn` and return its id and the text hashes. Raises ValueError on an argument the
     table would refuse (a platform row naming a tenant, a tenant row without one, an unknown code …).
 
     `fact_status` defaults to 'fail' for reason `fact_not_in_source` (the admin says the fact is not in the source)
     and to 'pending' otherwise. `problem` is the gate's diagnostic of the edited sentence (it quotes the flagged
-    text, so it is kept here and the audit row keeps only its sha256)."""
+    text, so it is kept here and the audit row keeps only its sha256). `created_at` (AA-917 backfill only) keeps the
+    time of the original edit; the live paths leave it to now()."""
     _check("writer", writer, WRITERS)
     _check("scope", scope, SCOPES)
     _check("action", action, ACTIONS)
@@ -125,7 +127,7 @@ async def record_writer_feedback(
         _INSERT_SQL, writer, channel, scope, str(tenant_id) if tenant_id is not None else None, field,
         json.dumps(locator) if locator is not None else None, before_text, after_text, before_h, after_h, gate,
         reason_code, action, actor_type, actor_id, fact_status, str(audit_log_id) if audit_log_id else None,
-        source_table, str(source_id), problem)
+        source_table, str(source_id), problem, created_at)
     return SignalRef(str(signal_id), before_h, after_h)
 
 

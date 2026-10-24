@@ -383,6 +383,20 @@ POLICY: dict[tuple[str, str], str] = {
     ("POST", "/admin/aa-content/{content_id}/retire"): MASTER_ADMIN,
     ("POST", "/admin/aa-content/{content_id}/restore"): MASTER_ADMIN,
 
+    # ── admin_writing_memory (AA-917 WM-14) — Quality › Writing memory: signals and tenant rules hold tenant text, so
+    # every read is admin only (tenant.read); every write (fact verdict, candidate edit / reject, a job run — the mining
+    # run is paid) is ai.admin, the tier of the LLM stage config. No approval here: rules activate through releases.
+    ("GET", "/admin/writing-memory/summary"): TENANT_READ,
+    ("GET", "/admin/writing-memory/signals"): TENANT_READ,
+    ("GET", "/admin/writing-memory/signals/clusters"): TENANT_READ,
+    ("GET", "/admin/writing-memory/signals/{signal_id}"): TENANT_READ,
+    ("PATCH", "/admin/writing-memory/signals/{signal_id}/fact"): AI_ADMIN,
+    ("GET", "/admin/writing-memory/candidates"): TENANT_READ,
+    ("GET", "/admin/writing-memory/candidates/{rule_id}"): TENANT_READ,
+    ("PATCH", "/admin/writing-memory/candidates/{rule_id}"): AI_ADMIN,
+    ("POST", "/admin/writing-memory/candidates/{rule_id}/reject"): AI_ADMIN,
+    ("POST", "/admin/writing-memory/run"): AI_ADMIN,
+
     # ── admin_data_model (AA-894 scope 2) — Developer › Data model: the live ERD from the nightly schema dump
     # (every schema of the shared RDS, PII tags included), admin only.
     ("GET", "/admin/data-model"): OPS_READ,

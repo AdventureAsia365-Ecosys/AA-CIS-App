@@ -61,6 +61,8 @@ SAMPLES = [
      {"title": "t", "expected_updated_at": "2026-10-24T08:00:00Z"}),
     ("admin_aa_content", "POST", "/admin/aa-content/{content_id}/publish",
      {"expected_updated_at": "2026-10-24T08:00:00Z"}),
+    ("admin_writing_memory", "GET", "/admin/writing-memory/signals", None),      # AA-917
+    ("admin_writing_memory", "POST", "/admin/writing-memory/candidates/{rule_id}/reject", {"reason": "not useful"}),
     ("v1_trip_page", "POST", "/admin/trip-pages/{tour_id}/publish", None),
     ("v1_pipeline", "POST", "/v1/pipeline/review-queue/{review_id}/approve", {}),
     ("v1_rules", "PATCH", "/v1/rules/{rule_id}", {"is_active": False}),

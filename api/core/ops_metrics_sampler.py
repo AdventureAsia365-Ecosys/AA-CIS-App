@@ -39,6 +39,10 @@ samples fire the `*-sampling-stopped` alarms, so a dead api (or a dead loop) is 
   `supply_content_draft` job per applied facts version), DB only. Field `supply_pull_applied` (the batch counts, when
   it had events) or `supply_pull_error`. Off with SUPPLY_FEED_PULL=off; skipped while the draft kind is not
   registered.
+- AA-917: each tick also queues the writing-memory fact filter (`writing_signal_fact_filter`, $0) once per UTC day
+  while signals wait as `pending` (one count; idempotency key per day). The filter queues an automatic mining run only
+  when its trigger holds (services/writing_memory/mining.decide_run). Field `writing_memory_fact_filter` (the job
+  id) or `writing_memory_error`.
 - AA-913: each tick also reconciles the platform alert recipients with SNS
   (shared/alert_recipients.periodic_reconcile: one ListSubscriptionsByTopic, throttled like a page view; a no-op
   when ALERTS_TOPIC_ARN / ALERT_BOOTSTRAP_EMAIL are unset). An address removed on the admin page while its
@@ -213,6 +217,25 @@ async def _supply_pull_part(pool, kinds: dict, out: dict) -> None:
     result = await pull_once(pool)
     if result.get("events"):
         out["supply_pull_applied"] = result
+_PENDING_SIGNALS_SQL = "SELECT count(*) FROM shared.writing_signal WHERE fact_status = 'pending'"
+
+
+async def _writing_memory_part(pool, kinds: dict, ts: datetime, out: dict) -> None:
+    """AA-917: one fact-filter job a UTC day while signals are pending (a new signal is captured `pending` on the
+    edit path; the filter runs here, never on the request path). Only while the kind is registered."""
+    from services.jobs.writing_memory_job import FACT_FILTER
+    from shared.jobs.registry import enqueue
+
+    if FACT_FILTER not in kinds:
+        return
+    pending = int(await pool.fetchval(_PENDING_SIGNALS_SQL) or 0)
+    if not pending:
+        return
+    job_id, created = await enqueue(pool, FACT_FILTER, {"trigger": "daily"},
+                                    idempotency_key=f"{FACT_FILTER}:day:{ts.date().isoformat()}",
+                                    created_by="scheduler:aa-917")
+    if created:
+        out["writing_memory_fact_filter"] = job_id
 
 
 async def _alert_recipients_part(pool, redis, out: dict) -> None:
@@ -235,9 +258,9 @@ def _err(e: BaseException) -> str:
 async def sample_once(pool, client, kinds: Optional[dict] = None,
                       part_timeout_s: float = PART_TIMEOUT_S, redis: Any = None) -> dict:
     """One tick: AA/RDS, the alert-recipient reconcile (AA-913), the retired-kind sweep, the TripPlanner purge sweep
-    (AA-987), the Booking supply feed pull (AA-835), then AA/Jobs/CIS, each
-    part on its own and under part_timeout_s (one failing or hanging never blocks the others). Returns the fields
-    of the `ops_metrics_sampled` line. Never raises (except CancelledError)."""
+    (AA-987), the Booking supply feed pull (AA-835), the daily writing-memory fact filter (AA-917), then
+    AA/Jobs/CIS, each part on its own and under part_timeout_s (one failing or hanging never blocks the others).
+    Returns the fields of the `ops_metrics_sampled` line. Never raises (except CancelledError)."""
     ts = datetime.now(timezone.utc)
     out: dict[str, Any] = {"sampled_at": ts.isoformat()}
 
@@ -272,6 +295,9 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
         await asyncio.wait_for(_supply_pull_part(pool, kinds, out), timeout=part_timeout_s)
     except Exception as e:
         out["supply_pull_error"] = _err(e)
+        await asyncio.wait_for(_writing_memory_part(pool, kinds, ts, out), timeout=part_timeout_s)
+    except Exception as e:
+        out["writing_memory_error"] = _err(e)
 
     try:
         await asyncio.wait_for(_jobs_part(pool, client, kinds, ts, out), timeout=part_timeout_s)
@@ -295,7 +321,7 @@ async def jev_credit_tick(pool, part_timeout_s: float = PART_TIMEOUT_S) -> Optio
 
 def _log(out: dict) -> None:
     if any(k in out for k in ("rds_error", "retired_error", "jobs_error", "alert_recipients_error",
-                              "tripplanner_purge_error", "supply_pull_error")):
+                              "tripplanner_purge_error", "supply_pull_error", "writing_memory_error")):
         logger.warning("ops_metrics_sampled", **out)
     else:
         logger.info("ops_metrics_sampled", **out)

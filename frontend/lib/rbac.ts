@@ -64,6 +64,7 @@ export const PAGE_RULES: PageRule[] = [
   { prefix: "/admin/tenant-activity", roles: ["admin"] },   // AA-551
   { prefix: "/admin/platform-stats", roles: ["admin"] },    // AA-560
   { prefix: "/admin/content-quality", roles: ["admin"] },   // AA-769
+  { prefix: "/admin/writing-memory", roles: ["admin"] },    // AA-917 — signals and candidate rules (tenant text)
   { prefix: "/admin/api-docs", roles: ["admin"] },          // AA-577 follow-up — OpenAPI reader
   { prefix: "/admin/data-model", roles: ["admin"] },        // AA-894 — live ERD from the nightly schema dump
   // AA-883 — Platform pages (staff directory first). Matches /admin/platform and /admin/platform/…
@@ -126,6 +127,9 @@ export const API_WRITE_RULES: { prefix: string; roles: StaffRole[] }[] = [
   // AA-839 — data erasure runs (DRY RUN and the apply); the backend re-checks (tenant.write, and for an apply the
   // env flag and a Cognito session).
   { prefix: "job-runner/erasure", roles: ["admin"] },
+  // AA-917 — writing memory writes (fact verdict, candidate edit / reject, job runs incl. the paid mining run); the
+  // backend re-checks (ai.admin).
+  { prefix: "writing-memory", roles: ["admin"] },
 ];
 
 // AA-577 follow-up — /api/admin/ paths that NO method may reach unless the role is listed (reads
@@ -142,6 +146,9 @@ export const API_READ_RULES: { prefix: string; roles: StaffRole[] }[] = [
   // AA-839 — backend /admin/job-runner/erasure (inventory + apply settings) and /erasure/run: admin only, re-checked
   // by the backend (staff_policy, tenant.read / tenant.write).
   { prefix: "job-runner/erasure", roles: ["admin"] },
+  // AA-917 — backend /admin/writing-memory/* (signals and rules hold tenant text): admin only, re-checked by the
+  // backend (staff_policy, tenant.read / ai.admin).
+  { prefix: "writing-memory", roles: ["admin"] },
 ];
 
 /** May `role` call backend /admin/{path} at all (any method)? (path without the leading slash) */
