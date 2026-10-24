@@ -61,7 +61,11 @@ def test_background_kind_never_claimed_with_two_or_fewer_free_slots(free):
                           # AA-816 C7 staff directory reconcile (report only, daily)
                           "staff_directory_reconcile",
                           # AA-839 data erasure (DRY RUN by default, manual only)
-                          "data_erasure"}
+                          "data_erasure",
+                          # AA-835 supply content LLM draft (one per Booking facts version, capped per day)
+                          "supply_content_draft",
+                          # AA-835 removal of the CIS copies of a withdrawn Booking supply photo
+                          "supply_media_purge"}
     assert bool(background & set(w.claim_caps(free))) == (free > worker.BACKGROUND_RESERVE)
 
 
