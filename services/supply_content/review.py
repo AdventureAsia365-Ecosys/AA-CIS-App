@@ -20,7 +20,7 @@ import uuid
 from typing import Any, Optional
 
 from services.supply_content import writer
-from services.supply_content.pull import DRAFT_KIND, DRAFT_MAX_ATTEMPTS, draft_key
+from services.supply_content.pull import DRAFT_KIND, DRAFT_MAX_ATTEMPTS, PURGE_KIND, draft_key
 
 MAX_DESCRIPTION_CHARS = 2000
 MAX_LIST = 50
@@ -132,9 +132,10 @@ async def feed_status(pool) -> dict:
                    oldest_pending_at=_iso(lag["oldest_pending_at"]))
     except Exception as exc:   # bk-023 not applied / no grant: the board says so instead of failing
         out.update(feed_available=False, feed_error=type(exc).__name__)
-    jobs = await pool.fetch("SELECT status, count(*) AS n FROM shared.job WHERE kind = $1 "
-                            "AND created_at > now() - interval '7 days' GROUP BY 1", DRAFT_KIND)
-    out["draft_jobs_7d"] = {r["status"]: int(r["n"]) for r in jobs}
+    jobs = await pool.fetch("SELECT kind, status, count(*) AS n FROM shared.job WHERE kind = ANY($1::text[]) "
+                            "AND created_at > now() - interval '7 days' GROUP BY 1, 2", [DRAFT_KIND, PURGE_KIND])
+    out["draft_jobs_7d"] = {r["status"]: int(r["n"]) for r in jobs if r["kind"] == DRAFT_KIND}
+    out["photo_purge_jobs_7d"] = {r["status"]: int(r["n"]) for r in jobs if r["kind"] == PURGE_KIND}
     out["llm_cost_today_usd"] = float(await pool.fetchval(
         "SELECT coalesce(sum(cost_usd), 0) FROM shared.llm_call_log WHERE stage = $1 "
         "AND created_at >= date_trunc('day', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'", writer.STAGE) or 0)
@@ -249,7 +250,7 @@ async def insert_llm_draft(conn, entity_id: str, supply_version: int, content: d
         if not entity["active"] or int(entity["applied_supply_version"]) != supply_version:
             return None
         await conn.execute("UPDATE shared.supply_content_version SET status = 'superseded' "
-                           "WHERE entity_id = $1::uuid AND status = 'draft' AND supply_version < $2",
+                           "WHERE entity_id = $1::uuid AND status = 'draft' AND origin = 'llm' AND supply_version < $2",
                            entity_id, supply_version)
         return await _insert_version(conn, entity, origin="llm", content=content, created_by=created_by,
                                      llm_job_id=job_id)

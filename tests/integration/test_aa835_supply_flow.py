@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 
 from services.jobs import supply_content_draft_job as draft_job  # noqa: E402
+from services.jobs import supply_media_purge_job as purge_job  # noqa: E402
 from services.supply_content import pull, review, writer  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
@@ -63,7 +64,7 @@ class _OneConnPool:
 
 class _FakeS3:
     def __init__(self, objects):
-        self.objects, self.puts = objects, {}
+        self.objects, self.puts, self.deletes = objects, {}, []
 
     def get_object(self, Bucket, Key):
         data = self.objects[(Bucket, Key)]
@@ -71,6 +72,19 @@ class _FakeS3:
 
     def put_object(self, Bucket, Key, Body, **kw):
         self.puts[Key] = Body
+
+    def delete_object(self, Bucket, Key):
+        self.deletes.append(Key)
+        self.puts.pop(Key, None)
+
+
+class _FakeCloudFront:
+    def __init__(self):
+        self.batches = []
+
+    def create_invalidation(self, DistributionId, InvalidationBatch):
+        self.batches.append((DistributionId, InvalidationBatch))
+        return {"Invalidation": {"Id": "I1"}}
 
 
 def _jpeg() -> bytes:
@@ -252,8 +266,75 @@ async def test_pull_error_is_recorded_and_the_cursor_stays(conn):
     assert row["last_feed_seq"] == 0 and "outside the contract" in row["last_error"]
 
 
+async def _copy_columns(c, media_id):
+    return await c.fetchrow("SELECT cis_key_1600, cis_key_600, url_1600, url_600, copied_sha256, copied_at "
+                            "FROM shared.supply_media WHERE booking_media_id = $1", media_id)
+
+
+async def _purge_jobs(c, media_id):
+    return await c.fetch("SELECT idempotency_key, payload::text AS payload FROM shared.job WHERE kind = $1 "
+                         "AND payload->>'media_id' = $2", purge_job.KIND, str(media_id))
+
+
+@pytest.mark.asyncio
+async def test_withdrawn_rights_and_removed_entity_purge_the_cis_copies(conn, monkeypatch):
+    c, pool = conn, _OneConnPool(conn)
+    monkeypatch.setenv("PHOTO_CDN_DISTRIBUTION_ID", "EDIST")
+    hotel, photo = uuid.uuid4(), uuid.uuid4()
+    image = _jpeg()
+    sha = hashlib.sha256(image).hexdigest()
+    key = f"supply-media/hotel/{hotel}/{photo}.jpg"
+    await c.execute("INSERT INTO booking.v_supply_media VALUES ($1, 'hotel', $2, true, $3, $4, $5, 'image/jpeg')",
+                    photo, hotel, BUCKET, key, sha)
+    s3 = _FakeS3({(BUCKET, key): image})
+    media = [{"media_id": str(photo), "usage_rights": True, "content_type": "image/jpeg", "sha256": sha}]
+
+    await _hotel(c, hotel, 1, media=media)
+    await _event(c, hotel, 201, 1)
+    await pull.pull_once(pool)
+    await _run_job(c, hotel, 1, monkeypatch, s3)
+    copies = sorted(s3.puts)
+    assert len(copies) == 2 and (await _copy_columns(c, photo))["copied_sha256"] == sha
+
+    # usage rights withdrawn in Booking: one purge job, the view-facing flags already off
+    await _hotel(c, hotel, 2, media=[{**media[0], "usage_rights": False}])
+    await _event(c, hotel, 202, 2)
+    out = await pull.pull_once(pool)
+    assert out["purges_queued"] == 1
+    jobs = await _purge_jobs(c, photo)
+    assert len(jobs) == 1 and jobs[0]["idempotency_key"].startswith(f"supply_media_purge:{photo}:")
+
+    # the same state seen again (replayed cursor, another event) queues nothing new
+    await _event(c, hotel, 203, 2)
+    assert (await pull.pull_once(pool))["purges_queued"] == 0
+
+    cf = _FakeCloudFront()
+    ctx = SimpleNamespace(pool=pool, payload=json.loads(jobs[0]["payload"]), job_id=str(uuid.uuid4()),
+                          job=SimpleNamespace(attempt=1), add_cost=lambda x: None)
+    result = await purge_job.run(ctx, s3=s3, cf=cf)
+    assert sorted(s3.deletes) == copies and not s3.puts
+    row = await _copy_columns(c, photo)
+    assert all(row[k] is None for k in row.keys())
+    assert result["invalidation"] == "I1"
+    assert cf.batches[0][1]["Paths"]["Items"] == [f"/supply/hotel/{photo}-*"]
+    assert (await purge_job.run(ctx, s3=s3, cf=cf))["skipped"] == "copy_gone"    # a retry is a no-op
+
+    # rights restored: copied again on the next draft; then the hotel leaves the facts view -> purged again
+    await _hotel(c, hotel, 3, media=media)
+    await _event(c, hotel, 204, 3)
+    await pull.pull_once(pool)
+    await _run_job(c, hotel, 3, monkeypatch, s3)
+    assert (await _copy_columns(c, photo))["copied_sha256"] == sha
+    await c.execute("DELETE FROM booking.v_supply_hotels WHERE id = $1", hotel)
+    await _event(c, hotel, 205, 4)
+    out = await pull.pull_once(pool)
+    assert out["missing"] == 1 and out["purges_queued"] == 1
+    assert len(await _purge_jobs(c, photo)) == 2                                 # a new key for the new copy
+    assert not await c.fetchval("SELECT active FROM shared.supply_media WHERE booking_media_id = $1", photo)
+
+
 def test_job_kind_registered():
     from shared.jobs.registry import get_kind
 
-    assert get_kind(draft_job.KIND).background
+    assert get_kind(draft_job.KIND).background and get_kind(purge_job.KIND).background
     assert asyncio.iscoroutinefunction(draft_job.run)

@@ -24,3 +24,4 @@ from . import staff_invite_email_job  # noqa: F401  AA-816 (S242 invitation e-ma
 from . import erasure_job  # noqa: F401  AA-839 (data erasure DRY RUN / approved apply)
 from . import tripplanner_purge_job  # noqa: F401  AA-987 (TripPlanner cache purge on a lifecycle event)
 from . import supply_content_draft_job  # noqa: F401  AA-835 (LLM draft of Booking supply content)
+from . import supply_media_purge_job  # noqa: F401  AA-835 (CIS copies of a withdrawn Booking photo)

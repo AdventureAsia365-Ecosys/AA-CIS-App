@@ -8,8 +8,10 @@ the CON photo sync (services/photos/sync.make_sizes) under ``photos/supply/<enti
 the CIS photo bucket, served by the img. CDN (cdn_url, cache-busted with the sha). The CIS task role reads the
 Booking bucket through its s3:GetObject grant (Infra AA-835 S2 bucket policy); it never writes there.
 
-A photo that fails (missing object, hash mismatch, bad image) is reported in the result and stays uncopied: a
-version that uses it cannot be published (review.publish refuses uncopied photos).
+A photo that fails (missing object, hash mismatch, bad image, more than MAX_PIXELS, photo CDN switched off) is
+reported in the result and stays uncopied, so the next draft job tries it again: a version that uses it cannot be
+published (review.publish refuses uncopied photos). The copies of a photo whose rights Booking withdraws later are
+removed by the supply_media_purge job (services/jobs/supply_media_purge_job.py).
 """
 from __future__ import annotations
 
@@ -21,11 +23,15 @@ from typing import Any, Optional
 
 import structlog
 
-from services.photos.sync import cdn_url, make_sizes, photo_bucket
+from services.photos.sync import cdn_url, make_sizes, photo_bucket, photo_cdn_base
 
 logger = structlog.get_logger()
 
 MAX_BYTES = 10 * 1024 * 1024
+# Decoded size bound, checked from the header before any decode: a small PNG / WebP can still expand to hundreds of MB
+# (Booking accepts up to 20000x20000), which is the S207 OOM. JPEGs are decoded at a reduced scale by make_sizes, but
+# the same bound keeps one rule for every format.
+MAX_PIXELS = 50_000_000
 BOOKING_BUCKET_RE = re.compile(r"^aa-booking-[a-z0-9]+-supply-media-[0-9]{12}$")
 _UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 SOURCE_KEY_RE = re.compile(rf"^supply-media/(hotel|service)/({_UUID})/({_UUID})\.(jpg|png|webp)$")
@@ -42,9 +48,11 @@ SOURCE_SQL = """
       FROM booking.v_supply_media m
      WHERE m.media_id = ANY($1::uuid[])
 """
+# copied_at names this copy in the supply_media_purge job key; clock_timestamp() so two copies in one transaction differ
 COPIED_SQL = """
     UPDATE shared.supply_media
-       SET cis_key_1600 = $2, cis_key_600 = $3, url_1600 = $4, url_600 = $5, copied_sha256 = $6, copied_at = now(),
+       SET cis_key_1600 = $2, cis_key_600 = $3, url_1600 = $4, url_600 = $5, copied_sha256 = $6,
+           copied_at = clock_timestamp(),
            updated_at = now()
      WHERE booking_media_id = $1::uuid AND sha256 = $6
 """
@@ -80,6 +88,21 @@ def check_source(row: Any, *, source_id: str, sha256: str) -> None:
         raise PhotoRefused("source key does not match the media row")
 
 
+def check_pixels(data: bytes) -> None:
+    """Raise PhotoRefused when the image header announces more than MAX_PIXELS (no pixel data is decoded)."""
+    import io
+
+    from PIL import Image
+
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            w, h = im.size
+    except Exception as exc:
+        raise PhotoRefused(f"not a readable image: {type(exc).__name__}") from exc
+    if w * h > MAX_PIXELS:
+        raise PhotoRefused(f"image is {w}x{h}, more than {MAX_PIXELS} pixels")
+
+
 def _get(s3, bucket: str, key: str) -> bytes:
     obj = s3.get_object(Bucket=bucket, Key=key)
     if int(obj.get("ContentLength") or 0) > MAX_BYTES:
@@ -105,6 +128,10 @@ async def copy_rights_cleared(pool, entity_id: str, source_id: str, *, s3=None) 
     if not pending:
         return {"copied": 0, "failed": []}
     sources = {r["media_id"]: r for r in await pool.fetch(SOURCE_SQL, [p["media_id"] for p in pending])}
+    if photo_cdn_base() is None:
+        # a copy without a CDN URL would count as copied (never retried) yet unusable; leave every photo pending
+        return {"copied": 0, "failed": [{"media_id": p["media_id"], "error": "PhotoRefused: photo CDN off"}
+                                        for p in pending]}
     s3 = s3 or await asyncio.to_thread(_s3)
     bucket = photo_bucket()
     copied, failed = 0, []
@@ -118,6 +145,7 @@ async def copy_rights_cleared(pool, entity_id: str, source_id: str, *, s3=None) 
             data = await asyncio.to_thread(_get, s3, row["s3_bucket"], row["s3_key"])
             if hashlib.sha256(data).hexdigest() != sha:
                 raise PhotoRefused("bytes do not match the sha256 Booking recorded")
+            await asyncio.to_thread(check_pixels, data)
             sizes, _, _ = await asyncio.to_thread(make_sizes, data)
             keys = {w: cis_key(row["entity_type"], media_id, w) for w in SIZES}
             for w, name in SIZES.items():

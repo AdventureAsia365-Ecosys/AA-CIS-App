@@ -138,3 +138,138 @@ def test_writes_need_a_content_role(method, route):
         reason = staff_authz.denial_reason(staff_authz.principal_from_role(role), method, route)
         assert (reason is None) is allowed, (role, route, reason)
     assert staff_authz.denial_reason(staff_authz.MACHINE, method, route) is not None
+
+
+# ── review round: photo purge, decode bound, CDN off, the paid-call cap ─────────────────────────────────────────────
+from services.jobs import supply_media_purge_job as purge  # noqa: E402
+from shared.jobs.registry import NonRetryable  # noqa: E402
+
+
+def test_purge_key_names_the_copy_and_the_kind_is_background():
+    from shared.jobs.registry import get_kind
+
+    assert pull.purge_key(MEDIA, 1700000000123456) == f"supply_media_purge:{MEDIA}:1700000000123456"
+    kind = get_kind(purge.KIND)
+    assert kind is not None and kind.background and kind.concurrency == 1
+
+
+def test_invalidation_path_covers_both_sizes_and_every_version():
+    assert purge.invalidation_path(f"photos/supply/hotel/{MEDIA}-1600.webp") == f"/supply/hotel/{MEDIA}-*"
+
+
+class _PurgePool:
+    def __init__(self, row):
+        self.row, self.executed = row, []
+
+    async def fetchrow(self, sql, *args):
+        return self.row
+
+    async def execute(self, sql, *args):
+        self.executed.append(args)
+
+
+class _S3:
+    def __init__(self, error=None):
+        self.error, self.deleted = error, []
+
+    def delete_object(self, Bucket, Key):
+        if self.error:
+            raise self.error
+        self.deleted.append(Key)
+
+
+class _Denied(Exception):
+    response = {"Error": {"Code": "AccessDenied"}}
+
+
+def _purge_row(**over):
+    row = {"usage_rights": False, "active": True, "cis_key_1600": f"photos/supply/hotel/{MEDIA}-1600.webp",
+           "cis_key_600": f"photos/supply/hotel/{MEDIA}-600.webp", "copied_sha256": "a" * 64, "copied_at_us": 7}
+    row.update(over)
+    return row
+
+
+def _purge_ctx(pool):
+    return SimpleNamespace(pool=pool, payload={"media_id": MEDIA, "copied_sha256": "a" * 64, "copied_at_us": 7},
+                           job_id="j1", job=SimpleNamespace(attempt=1))
+
+
+def test_purge_skips_a_restored_or_replaced_copy():
+    s3 = _S3()
+    assert asyncio.run(purge.run(_purge_ctx(_PurgePool(_purge_row(usage_rights=True))), s3=s3))["skipped"] \
+        == "rights_restored"
+    assert asyncio.run(purge.run(_purge_ctx(_PurgePool(_purge_row(copied_at_us=8))), s3=s3))["skipped"] \
+        == "copy_gone"
+    assert asyncio.run(purge.run(_purge_ctx(_PurgePool(None)), s3=s3))["skipped"] == "copy_gone"
+    assert s3.deleted == []
+
+
+def test_purge_deletes_then_clears_and_invalidation_is_optional(monkeypatch):
+    monkeypatch.delenv("PHOTO_CDN_DISTRIBUTION_ID", raising=False)
+    pool, s3 = _PurgePool(_purge_row()), _S3()
+    result = asyncio.run(purge.run(_purge_ctx(pool), s3=s3))
+    assert len(s3.deleted) == 2 and pool.executed == [(MEDIA, "a" * 64, 7)]
+    assert result["invalidation"] == "not_configured"
+
+    class _BrokenCf:
+        def create_invalidation(self, **kw):
+            raise RuntimeError("throttled")
+
+    monkeypatch.setenv("PHOTO_CDN_DISTRIBUTION_ID", "EDIST")
+    result = asyncio.run(purge.run(_purge_ctx(_PurgePool(_purge_row())), s3=_S3(), cf=_BrokenCf()))
+    assert "throttled" in result["invalidation"]["error"]          # best effort: the copy is gone either way
+
+
+def test_purge_access_denied_is_not_retried_and_keeps_the_row():
+    pool = _PurgePool(_purge_row())
+    with pytest.raises(NonRetryable):
+        asyncio.run(purge.run(_purge_ctx(pool), s3=_S3(_Denied())))
+    assert pool.executed == []
+
+
+def test_purge_refuses_a_key_outside_the_supply_prefix():
+    with pytest.raises(NonRetryable):
+        asyncio.run(purge.run(_purge_ctx(_PurgePool(_purge_row(cis_key_600="photos/vietnam/x-600.webp"))),
+                              s3=_S3()))
+
+
+def test_photo_pixel_bound_reads_the_header_only():
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("1", (8000, 7000)).save(buf, "PNG")              # 56 MP, a few kB on disk
+    with pytest.raises(photos.PhotoRefused):
+        photos.check_pixels(buf.getvalue())
+    small = io.BytesIO()
+    Image.new("RGB", (40, 30)).save(small, "PNG")
+    photos.check_pixels(small.getvalue())
+    with pytest.raises(photos.PhotoRefused):
+        photos.check_pixels(b"not an image")
+
+
+def test_photo_copy_waits_while_the_cdn_is_off(monkeypatch):
+    class _Pool:
+        async def fetch(self, sql, *args):
+            return [{"media_id": MEDIA, "sha256": "a" * 64}]
+
+    monkeypatch.setenv("PHOTO_CDN_BASE", "off")
+    out = asyncio.run(photos.copy_rights_cleared(_Pool(), ENTITY, ENTITY, s3=object()))
+    assert out["copied"] == 0 and "CDN off" in out["failed"][0]["error"]
+
+
+def test_daily_cap_counts_paid_writer_calls(monkeypatch):
+    seen = {}
+
+    class _CapPool(_Pool):
+        async def fetchval(self, sql, *args):
+            seen["sql"], seen["args"] = sql, args
+            return 5
+
+    payload = {"source_id": ENTITY, "supply_version": 2, "trigger": "feed"}
+    monkeypatch.delenv("SUPPLY_CONTENT_LLM", raising=False)
+    monkeypatch.setenv("SUPPLY_CONTENT_MAX_DRAFTS_PER_DAY", "5")
+    with pytest.raises(BudgetExceeded):
+        asyncio.run(job.run(_ctx(_CapPool(ENT), payload)))
+    assert "shared.llm_call_log" in seen["sql"] and seen["args"] == ("supply_content_writer",)

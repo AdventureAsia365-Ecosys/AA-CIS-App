@@ -15,7 +15,10 @@ as cis_app, DB only:
   5. an applied upsert stores the facts, syncs shared.supply_media and queues one ``supply_content_draft`` job
      (key supply_content_draft:<source_id>:<supply_version>); a deactivate (or a missing entity) sets active false
      and content_status unpublished, rows kept. Content that was published becomes ``stale`` (Booking bumps
-     supply_version only on a material change, so every applied version is material);
+     supply_version only on a material change, so every applied version is material). A media whose CIS copies
+     exist but whose usage_rights went off, or which Booking removed (or whose entity left the facts view), gets one
+     ``supply_media_purge`` job (key supply_media_purge:<media_id>:<copied_at>): the copies leave the photo bucket
+     and the CDN (services/jobs/supply_media_purge_job.py, DM-7 row "supply_media");
   6. advance the cursor and stamp last_pull_at / last_success_at, all in the same transaction.
 
 A failure rolls the batch back and records last_error / last_error_at (the admin status board shows them); the next
@@ -38,6 +41,8 @@ CONTRACTS = {"hotel": "supply.hotel.v1", "service": "supply.service.v1"}
 EVENT_TYPES = ("supply.upsert", "supply.deactivate")
 DRAFT_KIND = "supply_content_draft"
 DRAFT_MAX_ATTEMPTS = 2
+PURGE_KIND = "supply_media_purge"
+PURGE_MAX_ATTEMPTS = 3
 
 ENSURE_CURSOR_SQL = """
     INSERT INTO shared.supply_feed_cursor (consumer) VALUES ($1) ON CONFLICT (consumer) DO NOTHING
@@ -112,6 +117,17 @@ MEDIA_DEACTIVATE_SQL = """
     UPDATE shared.supply_media SET active = false, updated_at = now()
      WHERE entity_id = $1::uuid AND active AND NOT (booking_media_id = ANY($2::uuid[]))
 """
+MEDIA_DEACTIVATE_ALL_SQL = """
+    UPDATE shared.supply_media SET active = false, updated_at = now() WHERE entity_id = $1::uuid AND active
+"""
+# Copies that must go: rights withdrawn or media removed in Booking. copied_at (epoch microseconds) names the copy, so
+# a later re-copy of the same bytes that loses its rights again gets a new purge job, not the finished old one.
+MEDIA_TO_PURGE_SQL = """
+    SELECT booking_media_id::text AS media_id, copied_sha256,
+           (extract(epoch FROM copied_at) * 1000000)::bigint AS copied_at_us
+      FROM shared.supply_media
+     WHERE entity_id = $1::uuid AND copied_sha256 IS NOT NULL AND NOT (usage_rights AND active)
+"""
 CURSOR_ADVANCE_SQL = """
     UPDATE shared.supply_feed_cursor
        SET last_feed_seq = $2, last_pull_at = now(), last_success_at = now(), last_error = NULL, last_error_at = NULL
@@ -134,6 +150,10 @@ class EntityState:
 
 def draft_key(source_id: str, supply_version: int) -> str:
     return f"{DRAFT_KIND}:{source_id}:{supply_version}"
+
+
+def purge_key(media_id: str, copied_at_us: int) -> str:
+    return f"{PURGE_KIND}:{media_id}:{copied_at_us}"
 
 
 def outcome_for(entity: Optional[EntityState], facts_version: Optional[int]) -> str:
@@ -203,14 +223,29 @@ async def _enqueue_draft(conn, source_id: str, version: int) -> bool:
     return created
 
 
-async def _pull_batch(conn, limit: int, enqueue_drafts: bool) -> dict[str, Any]:
+async def _enqueue_purges(conn, entity_id: str) -> int:
+    """One purge job per CIS copy that lost its rights or its media (idempotent: the key names the copy)."""
+    from shared.jobs import queue
+
+    n = 0
+    for r in await conn.fetch(MEDIA_TO_PURGE_SQL, entity_id):
+        _, created = await queue.enqueue(conn, PURGE_KIND, {"media_id": r["media_id"],
+                                                            "copied_sha256": r["copied_sha256"],
+                                                            "copied_at_us": int(r["copied_at_us"])},
+                                         idempotency_key=purge_key(r["media_id"], int(r["copied_at_us"])),
+                                         max_attempts=PURGE_MAX_ATTEMPTS, created_by="system:supply_feed")
+        n += int(bool(created))
+    return n
+
+
+async def _pull_batch(conn, limit: int, enqueue_jobs: bool) -> dict[str, Any]:
     await conn.execute(ENSURE_CURSOR_SQL, CONSUMER)
     cursor = await conn.fetchval(LOCK_CURSOR_SQL, CONSUMER)
     if cursor is None:
         return {"busy": True}
     events = await conn.fetch(OUTBOX_SQL, cursor, limit)
     counts = {"events": len(events), "applied": 0, "skipped_older": 0, "missing": 0, "duplicate": 0,
-              "drafts_queued": 0, "unpublished": 0}
+              "drafts_queued": 0, "unpublished": 0, "purges_queued": 0}
     if not events:
         await conn.execute(CURSOR_ADVANCE_SQL, CONSUMER, cursor)
         return {**counts, "cursor": cursor}
@@ -244,13 +279,20 @@ async def _pull_batch(conn, limit: int, enqueue_drafts: bool) -> dict[str, Any]:
             entities[source_id] = entity
             if not active:
                 counts["unpublished"] += 1
-            elif enqueue_drafts and await _enqueue_draft(conn, source_id, version):
+            elif enqueue_jobs and await _enqueue_draft(conn, source_id, version):
                 counts["drafts_queued"] += 1
-        elif outcome == "missing" and entity is not None and (entity.active or entity.content_status != "unpublished"):
-            await conn.execute(ENTITY_UNPUBLISH_SQL, entity.id)
-            entities[source_id] = EntityState(entity.id, entity.applied_supply_version, False, "unpublished",
-                                              entity.published_version_id)
-            counts["unpublished"] += 1
+            if enqueue_jobs:
+                counts["purges_queued"] += await _enqueue_purges(conn, entity.id)
+        elif outcome == "missing" and entity is not None:
+            if entity.active or entity.content_status != "unpublished":
+                await conn.execute(ENTITY_UNPUBLISH_SQL, entity.id)
+                entities[source_id] = EntityState(entity.id, entity.applied_supply_version, False, "unpublished",
+                                                  entity.published_version_id)
+                counts["unpublished"] += 1
+            # the entity left the facts view, so its media did too
+            await conn.execute(MEDIA_DEACTIVATE_ALL_SQL, entity.id)
+            if enqueue_jobs:
+                counts["purges_queued"] += await _enqueue_purges(conn, entity.id)
         await conn.execute(INBOX_INSERT_SQL, contract, e["event_id"], source_id, e["event_type"],
                            int(e["supply_version"]), current[0] if current else None, int(e["feed_seq"]), outcome)
         counts[outcome] += 1
@@ -260,12 +302,12 @@ async def _pull_batch(conn, limit: int, enqueue_drafts: bool) -> dict[str, Any]:
     return {**counts, "cursor": last}
 
 
-async def pull_once(pool, *, limit: int = BATCH, enqueue_drafts: bool = True) -> dict[str, Any]:
+async def pull_once(pool, *, limit: int = BATCH, enqueue_jobs: bool = True) -> dict[str, Any]:
     """One batch of the feed (see the module docstring). Returns the counts; raises after recording last_error."""
     async with pool.acquire() as conn:
         try:
             async with conn.transaction():
-                return await _pull_batch(conn, limit, enqueue_drafts)
+                return await _pull_batch(conn, limit, enqueue_jobs)
         except Exception as exc:
             message = f"{type(exc).__name__}: {str(exc)[:300]}"
             try:

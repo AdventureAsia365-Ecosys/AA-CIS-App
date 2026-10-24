@@ -6,14 +6,17 @@ Payload: ``{"source_id", "supply_version", "trigger": "feed" | "manual"}``.
 
   1. Skips (succeeds with ``skipped``) when SUPPLY_CONTENT_LLM=off (kill switch), the entity is inactive, or its facts
      moved past this version (the newer version has its own job).
-  2. Cost: at most SUPPLY_CONTENT_MAX_DRAFTS_PER_DAY (default 20) llm drafts a UTC day across all entities, and the
-     cost guard row bedrock / job:supply_content_draft (CIS 278: $0.10 a run, $1.00 a day, this kind's own spend).
-     Either limit stops the job with status stopped_budget (BudgetExceeded), before any paid call.
+  2. Cost: at most SUPPLY_CONTENT_MAX_DRAFTS_PER_DAY (default 20) paid writer calls a UTC day across all entities
+     (counted in shared.llm_call_log, stage supply_content_writer, so an unusable reply or a draft discarded because
+     the facts moved on counts too), and the cost guard row bedrock / job:supply_content_draft (CIS 278: $0.10 a run,
+     $1.00 a day, this kind's own spend). Either limit stops the job with status stopped_budget (BudgetExceeded),
+     before any paid call. A stopped job is not re-queued the next day: the entity keeps its status (stale / draft,
+     no text for Booking) until Booking changes it again or a reviewer presses regenerate.
   3. Copies the rights-cleared photos (services/supply_content/photos.py), so the draft can use them.
   4. One LLM call (services/supply_content/writer.py, stage supply_content_writer, logged to shared.llm_call_log
      with this job's id), in a thread.
-  5. Writes a new llm draft version (review.insert_llm_draft); never touches a published or human version and never
-     publishes: a human reviews every draft in /admin/supply-content.
+  5. Writes a new llm draft version (review.insert_llm_draft), superseding only older open llm drafts; it never
+     touches an approved or human version and never publishes: a human reviews every draft in /admin/supply-content.
 
 Background kind (never takes the worker's last free slots, so it cannot starve a wave), concurrency 1, 2 attempts.
 Observable: the Jobs page (result: version, cost, photos), the admin status board (draft jobs per status, LLM cost
@@ -42,9 +45,10 @@ ENTITY_SQL = """
     SELECT id::text AS id, entity_type, title, facts::text AS facts, applied_supply_version, active
       FROM shared.supply_entity WHERE source_system = 'booking' AND source_id = $1
 """
+# Paid calls, not written drafts: every writer call (usable or not) has its llm_call_log row (writer.py).
 DRAFTS_TODAY_SQL = """
-    SELECT count(*) FROM shared.supply_content_version
-     WHERE origin = 'llm' AND created_at >= date_trunc('day', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'
+    SELECT count(*) FROM shared.llm_call_log
+     WHERE stage = $1 AND created_at >= date_trunc('day', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'
 """
 USABLE_PHOTOS_SQL = """
     SELECT booking_media_id::text AS media_id FROM shared.supply_media
@@ -94,9 +98,9 @@ async def run(ctx: JobContext) -> dict:
         return {**base, "skipped": "superseded", "current_supply_version": int(entity["applied_supply_version"])}
 
     cap = max_drafts_per_day()
-    today = int(await ctx.pool.fetchval(DRAFTS_TODAY_SQL) or 0)
+    today = int(await ctx.pool.fetchval(DRAFTS_TODAY_SQL, writer.STAGE) or 0)
     if today >= cap:
-        raise BudgetExceeded(f"supply content draft cap reached: {today} of {cap} llm drafts today (UTC)",
+        raise BudgetExceeded(f"supply content draft cap reached: {today} of {cap} writer calls today (UTC)",
                              "bedrock", "per_day_drafts")
     budget = await load_run_budget(ctx.pool, "bedrock", KIND, day_scope="kind")
     budget.check(CALL_ESTIMATE_USD)

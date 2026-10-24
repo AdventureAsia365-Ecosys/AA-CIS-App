@@ -885,10 +885,13 @@ Booking bk-023 grants the four `booking.v_supply_*` views to `cis_app`). `servic
   `skipped_older`; `missing` when the entity left the view). An applied version stores the facts in
   `shared.supply_entity`, syncs `shared.supply_media` and queues one `supply_content_draft` job
   (`supply_content_draft:<source_id>:<supply_version>`); published content turns `stale` (no text served); a
-  deactivated or missing entity turns `unpublished` (rows kept). Lag and the last error: `GET
-  /admin/supply-content/status`.
+  deactivated or missing entity turns `unpublished` (rows kept). A CIS photo copy whose media lost its usage rights
+  or left Booking gets one `supply_media_purge` job (`services/jobs/supply_media_purge_job.py`: deletes both WebP
+  objects, clears the copy columns, invalidates `/supply/<type>/<media_id>-*` on the photos CDN when
+  `PHOTO_CDN_DISTRIBUTION_ID` is set; needs the task role's `s3:DeleteObject` on `photos/supply/*`). Lag, the last
+  error and the purge jobs: `GET /admin/supply-content/status`.
 - `supply_content_draft` job (`services/jobs/supply_content_draft_job.py`, background, concurrency 1, 2 attempts):
-  kill switch `SUPPLY_CONTENT_LLM=off`, at most `SUPPLY_CONTENT_MAX_DRAFTS_PER_DAY` (20) llm drafts a UTC day plus
+  kill switch `SUPPLY_CONTENT_LLM=off`, at most `SUPPLY_CONTENT_MAX_DRAFTS_PER_DAY` (20) paid writer calls a UTC day plus
   the cost guard row `bedrock / job:supply_content_draft`; copies rights-cleared photos (`photos.py`: source bucket /
   key from `booking.v_supply_media`, checked against the bk-023 naming rule and the sha256; WebP 1600 / 600 under
   `photos/supply/` + the img. CDN); one call on stage `supply_content_writer` (`writer.py`: facts quoted as untrusted
@@ -897,7 +900,8 @@ Booking bk-023 grants the four `booking.v_supply_*` views to `cis_app`). `servic
 - Review (`review.py`, `/admin/supply-content`): an edit is a new `human` version; publish (review.act) refuses an
   inactive entity, a version written against older facts (409 `outdated`) and a photo without usage rights or copy
   (409 `photo_rights`); reject, unpublish, regenerate (content.write). Version content is immutable in the DB (CIS
-  278 guard trigger). The admin page itself is a follow-up (AA-835 S6 UI).
+  278 guard trigger). The admin page itself is a follow-up (AA-835 S6 UI) and must ship before Booking's "Edit in
+  CIS" link (`edit_url`) is shown: until then that link opens a 404.
 
 Platform services other apps may reuse (already used by TripPlanner where noted): the Model Gateway
 and `llm_call_log` (TripPlanner), the durable job runner `shared.job` (CIS only for now — a second
