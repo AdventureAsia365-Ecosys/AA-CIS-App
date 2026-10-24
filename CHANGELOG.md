@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.8.0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/compare/v0.7.0...v0.8.0) (2026-10-24)
+
+
+### Features
+
+* A1 brand-fit rubric v2 (voice within the source) + re-measure and shadow harnesses ([#969](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/969)) ([bd75b14](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/bd75b14e364efd5745640472fece0572ae370ec9))
+* CIS admin S-01 console for the partner CRM agencies (crm.ops.v1 L1) ([#978](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/978)) ([053488f](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/053488f4a9031a21afac131f4b147856ae71f076))
+* OpenAPI export and breaking-change check ([#974](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/974)) ([e7b3813](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/e7b38130cf4d1438ced6f83a3179fa4c0ff6aaa5))
+* Platform Apps and the cost page show the partner CRM (AppInfo crm, jobs and LLM spend from crm.ops.v1) ([#975](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/975)) ([50fd625](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/50fd625800d63a5574398dbb62bea9212a8f12ab))
+* portal sidebar links to the Partner CRM ([#972](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/972)) ([d070acf](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/d070acfecc29696fb201b94275032b6ca3a1c0dd))
+* serve catalog.http.v1 tours and destinations to the partner CRM over M2M ([#973](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/973)) ([07f625e](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/07f625eb7eacc675ad69de557028654a3103cbfc))
+* TripPlanner cache purge job on every tour lifecycle event ([#971](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/971)) ([853a6ac](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/853a6ac020e994ecf1e3cb46d3fdec7e0defcbfd))
+
+
+### Bug Fixes
+
+* drop Sentry frame locals and redact tokens and e-mails in events ([#979](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/979)) ([aeca5cd](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/aeca5cd8ffc934efa4b961f707c266ec6fa00566))
+* stop flag_fix dropping itinerary days on writer-v2 drafts ([#976](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/976)) ([969d221](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/969d221b6c6ea8d66f47e6544538991df1484139))
+
 ## [0.7.0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/compare/v0.6.0...v0.7.0) (2026-10-23)
 
 
