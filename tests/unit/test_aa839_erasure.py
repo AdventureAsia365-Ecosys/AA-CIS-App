@@ -617,7 +617,7 @@ def test_review_sentry_drops_frame_locals_of_erasure_events():
     out = sentry_init.before_send(ev("other", module="services.erasure.plan"), {})
     assert "vars" not in out["exception"]["values"][0]["stacktrace"]["frames"][0]
     out = sentry_init.before_send(ev("other"), {})
-    assert out["exception"]["values"][0]["stacktrace"]["frames"][0]["vars"]            # other kinds keep locals
+    assert "vars" not in out["exception"]["values"][0]["stacktrace"]["frames"][0]      # AA-941: no kind keeps locals
 
 
 def test_review_failed_erasure_job_reaches_sentry_without_the_hash(json_lines, sentry_events,  # noqa: F811

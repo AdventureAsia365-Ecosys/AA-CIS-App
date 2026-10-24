@@ -119,7 +119,8 @@ Decisions taken on the eight findings (details and evidence in the lane handoff)
   the DRY RUN's read-only transaction and inside the apply's write transaction).
 - **Hash leaving the store.** Sentry: `before_send` drops every frame's locals for events tagged
   `job_kind=data_erasure` or touching an erasure module (targeted, not a global `include_local_variables=False`:
-  the other kinds keep their debugging value). Plus `on_terminal`, strip-all at apply, `verify` DRY RUN. Refusals
+  the other kinds keep their debugging value). Superseded by the AA-941 security review (S249): no event keeps locals
+  (`docs/implementation-notes/sentry-frame-locals.md`). Plus `on_terminal`, strip-all at apply, `verify` DRY RUN. Refusals
   still raise (a failed job is the honest status); the scrub makes that safe.
 - **Locked re-check.** `_apply` locks the tenant row `FOR UPDATE` and re-runs `tenant_refusals` before the
   recount.
