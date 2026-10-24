@@ -272,6 +272,113 @@ def fix_fragments(text: str, cta: Optional[str] = None) -> tuple[str, list[str]]
     return text, log
 
 
+# ---------------------------------------------------------------- split / open paragraphs, dangling tails (AA-790)
+
+# A word a sentence never ends on: the article, conjunction or possessive a cut left behind ('…the trail
+# climbs to the.', '…swim and.'). Prepositions are left out on purpose: English strands them ('a place worth
+# coming back to.', 'what the dzong is made of.', 'the people you travel with.').
+_TAIL_WORDS = frozenset({"a", "an", "the", "and", "or", "but", "nor", "than", "its", "their", "your", "our", "my"})
+# A paragraph that opens on one of these (or lower-case) after a paragraph with no end mark continues it.
+_CONTINUATION_OPENERS = frozenset({
+    "and", "but", "or", "nor", "which", "whose", "whom", "who", "where", "while", "whereas", "because",
+    "although", "though", "unless", "until", "than", "that", "so",
+})
+_TERMINAL_TAIL_RE = re.compile(r"[.!?…:;][\"'”’)*\]]*$")
+_LAST_WORD_RE = re.compile(r"([A-Za-zÀ-ÖØ-öø-ÿ']+)\W*$")
+_FIRST_WORD_RE = re.compile(r"^[\W_]*([A-Za-zÀ-ÖØ-öø-ÿ']+)")
+_SMALL_WORDS = frozenset({"a", "an", "the", "and", "or", "of", "in", "on", "at", "to", "for", "with", "by", "from"})
+
+
+def _prose_paragraph(para: str, cta: Optional[str]) -> Optional[str]:
+    """The paragraph as one clean line when it is prose a reader reads as running text, else None: not a
+    heading, a list item, a hashtag line, a FAQ question / answer line, a bold-only line, a short title-like
+    line ('Why Day 2 matters', 'Kuang Si Falls') or the configured CTA line."""
+    lines = [ln.strip() for ln in para.strip().splitlines() if ln.strip()]
+    if not lines:
+        return None
+    first, last = lines[0], lines[-1]
+    if (_HEADING_RE.match(first) or _HEADING_RE.match(last) or _LIST_LINE_RE.match(last + " ")
+            or _HASHTAG_LINE_RE.fullmatch(last) or last.startswith(("**Q:", "A:", "Q:"))
+            or (last.startswith("**") and last.endswith("**"))):
+        return None
+    clean = " ".join(_drop_tags(" ".join(lines)).split())
+    words = re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ']+", clean)
+    if len(words) < 4 or all(w[0].isupper() or w.lower() in _SMALL_WORDS for w in words):
+        return None
+    if cta_norm(cta) and cta_norm(cta) in cta_norm(clean):
+        return None
+    return clean
+
+
+def split_paragraphs(text: Optional[str], cta: Optional[str] = None) -> list[dict]:
+    """S234 r4 #18 — a sentence broken across a blank line: a prose paragraph that ends with no end mark,
+    followed by a prose paragraph that continues it (opens lower-case, or on 'And' / 'But' / 'Which' /
+    'Because' …). [{"text", "why", "span": None}] — the two halves, joined. Paragraph-level, like an unbalanced
+    bracket: never a sentence a repair can locate or `fix_fragments` can cut."""
+    paras = [p for p in re.split(r"\n\s*\n", text or "") if p.strip()]
+    out: list[dict] = []
+    for prev, nxt in zip(paras, paras[1:]):
+        a = _prose_paragraph(prev, cta)
+        if a is None or _TERMINAL_TAIL_RE.search(a):
+            continue
+        b_lines = [ln.strip() for ln in nxt.strip().splitlines() if ln.strip()]
+        if not b_lines or _HEADING_RE.match(b_lines[0]) or _LIST_LINE_RE.match(b_lines[0] + " ") \
+                or _HASHTAG_LINE_RE.fullmatch(b_lines[0]) or b_lines[0].startswith(("**", "A:", "Q:")):
+            continue
+        b = " ".join(_drop_tags(" ".join(b_lines)).split())
+        m = _FIRST_WORD_RE.match(b)
+        if not m:
+            continue
+        word = m.group(1)
+        if not (word[0].islower() or word.lower() in _CONTINUATION_OPENERS):
+            continue
+        out.append({"text": f"{a[-150:]} ¶ {b[:150]}", "why": "splits one sentence across two paragraphs",
+                    "span": None})
+    return out
+
+
+def open_paragraphs(text: Optional[str], cta: Optional[str] = None) -> list[dict]:
+    """A prose paragraph that stops with no end mark and is not continued by the next one (that is
+    `split_paragraphs`): what is left when the final pass cuts the lower-case half of a split, or a trim drops
+    the paragraph that finished the sentence. 0 of the 70 local stored pieces (AA-729 fixture + S234 label
+    pack) have one. [{"text", "why", "span": None}]."""
+    paras = [p for p in re.split(r"\n\s*\n", text or "") if p.strip()]
+    split = {f["text"].split(" ¶ ")[0] for f in split_paragraphs(text, cta)}
+    out: list[dict] = []
+    for para in paras:
+        a = _prose_paragraph(para, cta)
+        if a is None or _TERMINAL_TAIL_RE.search(a) or a[-150:] in split:
+            continue
+        out.append({"text": a[-300:], "why": "stops with no end mark (an unfinished paragraph)", "span": None})
+    return out
+
+
+def dangling_tails(text: Optional[str]) -> list[dict]:
+    """S234 r4 #4 / #12 — a prose, bullet or FAQ-answer sentence cut mid-clause: it ends on an article, a
+    conjunction or a possessive ('…before lunch at the.', '…time to swim and'), with or without its end
+    mark. [{"text", "why", "span": None}] — reported, never cut in code (the sentence still carries content)."""
+    out: list[dict] = []
+    for s in sentence_spans(text or ""):
+        if s["kind"] not in ("prose", "bullet", "faq_a"):
+            continue
+        m = _LAST_WORD_RE.search(s["clean"])
+        if not m or len(s["clean"].split()) < 3:
+            continue
+        word = m.group(1)
+        if word.islower() and word in _TAIL_WORDS:
+            out.append({"text": s["clean"], "why": f"ends mid-clause on '{word}'", "span": None})
+    return out
+
+
+def structure_findings(text: Optional[str], cta: Optional[str] = None) -> list[dict]:
+    """AA-790 — the structure defects a deterministic edit can leave that `fragments` does not see:
+    `split_paragraphs` + `open_paragraphs` + `dangling_tails`. One function for the repair contract
+    (new-vs-before, through `hygiene.integrity_problems`), the census script and the tests (lesson: one value,
+    one function). Not read by a gate: under the S247 gate freeze a finding the writer itself made stays a
+    census number."""
+    return split_paragraphs(text, cta) + open_paragraphs(text, cta) + dangling_tails(text)
+
+
 # ---------------------------------------------------------------- the pass
 
 def integrity_findings(text: str, cta: Optional[str]) -> list[str]:
@@ -308,7 +415,20 @@ def final_pass(text: str, hyg, *, cta: Optional[str] = None) -> tuple[str, list[
     F13_repeat findings left (the caller holds the piece on them)."""
     from services.acp_content_writing.hygiene import find_issues
     cta = cta if cta is not None else getattr(hyg, "cta", None)
-    ignore = brand_words(getattr(hyg, "brand_name", None))
+    text, log = _fix_all(text, cta, brand_words(getattr(hyg, "brand_name", None)))
+    residue = find_issues(text, hyg)["repeat"] if hyg is not None else integrity_findings(text, cta)
+    return text, log, residue
+
+
+def settle(text: str, hyg, *, cta: Optional[str] = None) -> str:
+    """AA-790 — the text `final_pass` would leave, without its residue read: what the gates see of an edit made
+    before the final pass. The repair contract compares two settled texts, so a step is not reverted for a
+    duplicate or a fragment the final pass deletes anyway."""
+    cta = cta if cta is not None else getattr(hyg, "cta", None)
+    return _fix_all(text, cta, brand_words(getattr(hyg, "brand_name", None)))[0]
+
+
+def _fix_all(text: str, cta: Optional[str], ignore: frozenset) -> tuple[str, list[str]]:
     text, log = normalise(text)
     text, more = fix_cta(text, cta)
     log += more
@@ -318,9 +438,9 @@ def final_pass(text: str, hyg, *, cta: Optional[str] = None) -> tuple[str, list[
     log += more
     text, more = normalise(text)
     log += [m for m in more if m not in log]
-    residue = find_issues(text, hyg)["repeat"] if hyg is not None else integrity_findings(text, cta)
-    return text, log, residue
+    return text, log
 
 
-__all__ = ["cta_findings", "cta_occurrences", "edit_findings", "final_pass", "fix_cta", "fix_fragments", "fragments",
-           "integrity_findings", "normalise", "unbalanced_findings"]
+__all__ = ["cta_findings", "cta_occurrences", "dangling_tails", "edit_findings", "final_pass", "fix_cta",
+           "fix_fragments", "fragments", "integrity_findings", "normalise", "open_paragraphs", "settle",
+           "split_paragraphs", "structure_findings", "unbalanced_findings"]

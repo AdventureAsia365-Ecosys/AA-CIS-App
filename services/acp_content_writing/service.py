@@ -78,6 +78,7 @@ from services.acp_planning.tenant_pool import fetch_tenant_trips, fetch_tenant_t
 from services.acp_produce.brand import fetch_brand_rubric_text
 from services.acp_content_writing.gate_eval import ledger_snapshot  # AA-791
 from services.quality import degraded  # AA-925
+from services.quality import repair_contract  # AA-790
 from services.quality import registry as qr
 from services.quality.registry import threshold
 
@@ -991,14 +992,55 @@ def _final_integrity(content_text: str, hyg: hygiene.HygieneContext, gate_ledger
     return content_text, ledger, flags, status, held_reason
 
 
+class _StepGuard:
+    """AA-790 — repair-contract invariant 7 (``repair_contract.enforce_step``) on the deterministic edits of one T9
+    job's attempt loop. Each call takes the step's own output and log and returns ``(text, log, reverted)``: a
+    clean edit with its log unchanged, or ``before`` with the ``reverted <step>: …`` lines in place of the step's
+    own log (the step's edits are gone, so its log would no longer be true). ``reverts`` collects every reverted
+    step of the job for ``_degraded_final`` (``degraded: repair_contract``, soft). Steps before the final pass are
+    compared as ``text_integrity.settle`` leaves them (``settle=True``); one memo per job keeps that to one
+    settle per distinct text."""
+
+    def __init__(self, hyg: hygiene.HygieneContext, *, ignore: frozenset, cta: Optional[str]):
+        self.hyg, self.ignore, self.cta = hyg, ignore, cta
+        self.reverts: list[str] = []
+        self._memo: dict[str, str] = {}
+
+    def _settle(self, text: str) -> str:
+        if text not in self._memo:
+            if len(self._memo) >= 16:
+                self._memo.clear()
+            self._memo[text] = text_integrity.settle(text, self.hyg, cta=self.cta)
+        return self._memo[text]
+
+    def __call__(self, step: str, before: str, after: str, step_log: list, *, must_keep: bool = False,
+                 settle: bool = True) -> tuple[str, list, bool]:
+        if after == before:
+            return after, list(step_log), False
+        text, lines, problems = repair_contract.enforce_step(
+            step, before, after, ignore=self.ignore, cta=self.cta, must_keep=must_keep,
+            settle=self._settle if settle else None)
+        if not problems:
+            return text, list(step_log), False
+        if must_keep:
+            return text, list(step_log) + lines, False
+        self.reverts.append(step)
+        logger.warning("t9_step_contract_revert", step=step, problems=problems[:3])
+        return text, lines, True
+
+
 def _degraded_final(gate_ledger: list[dict], flags: list[dict], repair_log: list[dict], status: str,
-                    held_reason: Optional[str], *, piece_id=None) -> tuple:
+                    held_reason: Optional[str], *, piece_id=None, step_reverts: Optional[list[str]] = None) -> tuple:
     """AA-925 — the final attempt's `degraded[]` (services/quality/degraded.py): the F9 outage marker on its
-    ledger result and the job's repair-contract reverts. Adds the admin flag + a repair_log entry, logs one
+    ledger result and the job's repair-contract reverts (sentence repairs, and with ``step_reverts`` the AA-790
+    deterministic-step reverts). Adds the admin flag + a repair_log entry, logs one
     `quality_degraded` event and holds an approved piece on a hard entry. Returns
     (status, held_reason, flags, repair_log)."""
     contract = sum(int(e.get("contract_reverts") or 0) for e in repair_log if isinstance(e, dict))
     lst = degraded.t9_entries(gate_ledger, contract)
+    if step_reverts:  # AA-790 — deterministic edits reverted by repair-contract invariant 7
+        lst = degraded.add(lst, degraded.REPAIR_CONTRACT, detector="t9_step", count=len(step_reverts),
+                           detail=", ".join(dict.fromkeys(step_reverts)))
     if not lst:
         return status, held_reason, flags, repair_log
     degraded.emit(lst, stage="t9", piece_id=str(piece_id) if piece_id else None)
@@ -1782,6 +1824,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
         # this piece passed; run_quality_gates drops a later re-flag of one of them while it is unchanged.
         # AA-865 — an F9PassMemory also keeps the last judged text, so a pass survives a deletion-only repair.
         f9_passed: set[str] = F9PassMemory()
+        # AA-790 — repair-contract invariant 7 on the deterministic edits below (reverts → degraded: repair_contract)
+        step_guard = _StepGuard(hyg, ignore=brand_ignore, cta=cta)
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
             if attempt == 1:
@@ -1972,25 +2016,43 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             faq_dropped, faq_unanswerable = 0, []
             # S234 — deterministic fixes after the last LLM step of this attempt (write/rewrite,
             # sentence splice and SEO fit all ran above), before the gates read the text.
+            # AA-790 — each one under repair-contract invariant 7 (`step_guard`): an edit that leaves a new
+            # repeat, orphan, dangling opener, fragment, split paragraph or cut sentence is reverted and logged.
+            before = content_text
             content_text, hygiene_log = hygiene.autofix(content_text, hyg)
+            content_text, hygiene_log, _ = step_guard("hygiene.autofix", before, content_text, hygiene_log)
             # S234 round 3 (r2 §4 fix 9) — the configured CTA line, word for word, after the last edit
+            # (must keep: never reverted, what it leaves is reported)
+            before = content_text
             content_text, cta_log = hygiene.ensure_cta(content_text, cta)
+            content_text, cta_log, _ = step_guard("hygiene.ensure_cta", before, content_text, cta_log, must_keep=True)
             hygiene_log += cta_log
             # S234 round 3 review — a family brand's missing access caveat goes in from the seed, in
             # code (no repair call that the repeat guard could turn into a cut of the anchor sentence)
+            before = content_text
             content_text, caveat_log = trip_facts.add_family_caveats(content_text, trip_ctx, brand_ignore)
+            content_text, caveat_log, _ = step_guard("add_family_caveats", before, content_text, caveat_log)
             hygiene_log += caveat_log
             if channel == "blog":  # AA-770 — F7 auto-fix instead of a hold/rewrite
                 if fresh_text:  # S245 r7 review — the writer's own FAQ, before any FAQ step
                     context["faq_pairs_before"] = faq_pair_stats(content_text, context)
+                before = content_text
                 content_text, faq_dropped = drop_restated_faq(content_text)
+                content_text, revert_log, undone = step_guard("drop_restated_faq", before, content_text, [])
+                hygiene_log += revert_log
+                faq_dropped = 0 if undone else faq_dropped
                 own_seed = hygiene.split_seed(atom_text)[0]
+                before = content_text
                 content_text, faq_unanswerable = drop_unanswerable_faq(content_text, own_seed, facts_text)
+                content_text, faq_unanswerable, _ = step_guard("drop_unanswerable_faq", before, content_text,
+                                                               faq_unanswerable)
                 # AA-779 — an answer that does not name its question's subject (or only says what is not
                 # the case) goes while more than FAQ_MIN_PAIRS remain; the ones kept at the minimum make
                 # this writer text's one FAQ regeneration rewrite them (never a hold of its own).
+                before = content_text
                 content_text, subject_log, subject_short = drop_subjectless_faq(
                     content_text, f"{own_seed}\n{facts_text}")
+                content_text, subject_log, _ = step_guard("drop_subjectless_faq", before, content_text, subject_log)
                 faq_unanswerable = list(faq_unanswerable) + subject_log
                 # S234 round 2 — FAQ contract: one regeneration per writer text. S234 r2 review: a
                 # sentence repair can cut a FAQ pair (a repeat-guard delete, an emptied answer, an
@@ -2014,11 +2076,16 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     total_cost += faq_cost
                     if content_text != before_regen:
                         # the new FAQ replaced the kept non-answers: report what the new one still has
+                        before = content_text
                         content_text, again_log, _ = drop_subjectless_faq(content_text, f"{own_seed}\n{facts_text}")
+                        content_text, again_log, _ = step_guard("drop_subjectless_faq", before, content_text,
+                                                                again_log)
                         faq_unanswerable = [x for x in faq_unanswerable if not x.startswith("kept FAQ pair")] \
                             + again_log
                     faq_unanswerable = list(faq_unanswerable) + faq_regen
+                before = content_text
                 content_text, real_first_log = real_first_faq(content_text, context)
+                content_text, real_first_log, _ = step_guard("real_first_faq", before, content_text, real_first_log)
                 faq_unanswerable = list(faq_unanswerable) + real_first_log
             first_line_log: list[str] = []
             if spec is not None:  # S234 round 2 — hook line still too long after the deterministic split
@@ -2031,13 +2098,18 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             # (thin-moment heading / coda, a hazard played down, a background place made the base),
             # then the final text-integrity pass (one CTA, no duplicate, no fragment, normalised
             # whitespace). What it cannot fix is F13_repeat in the gates below.
+            before = content_text
             content_text, tf_log = trip_facts.fix_trip_facts(content_text, trip_ctx)
+            content_text, tf_log, _ = step_guard("fix_trip_facts", before, content_text, tf_log)
             content_text, final_log, _ = text_integrity.final_pass(content_text, hyg)
             # AA-984 — an over-long blog is trimmed into its band here (whole low-value paragraphs, never a
             # heading, the FAQ or the CTA), so it is never rewritten or held for length alone (S247 r9 32789658).
+            # AA-790 — after the final pass: compared as the gates read it (no settle).
+            before = content_text
             content_text, trim_log = length_trim.trim_to_band(content_text, channel=channel, cta=cta,
                                                               ignore=brand_ignore, moments=hyg.moments,
                                                               trip_ctx=trip_ctx)
+            content_text, trim_log, _ = step_guard("length_trim", before, content_text, trim_log, settle=False)
             first_line_log = first_line_log + tf_log + final_log + trim_log
             progress_step("check")  # AA-637 live view (no-op without a bound tracker)
             outcome = await asyncio.to_thread(
@@ -2234,7 +2306,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
         # The marker is a non-blocking flag + a repair_log entry, never a blocking ledger gate (that would
         # trigger a rewrite and confuse the AA-528 guard).
         status, held_reason, flags, repair_log = _degraded_final(gate_ledger, flags, repair_log, status,
-                                                                 held_reason, piece_id=piece_id)
+                                                                 held_reason, piece_id=piece_id,
+                                                                 step_reverts=step_guard.reverts)
 
         # AA-570 — the common case: attempt 2 ran and its own gate-regression-guard branch above
         # never fired, so `discarded_attempt` is still None even though a real attempt WAS
