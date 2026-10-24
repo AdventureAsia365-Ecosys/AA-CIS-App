@@ -263,7 +263,9 @@ async def test_llm_failure_on_one_day_keeps_other_days_committed():
     conn = _fake_conn(existing_fingerprints=[])
     pool = _pool_ctx(conn)
 
-    cm, _ = _patch_gateway(side_effect=[
+    # AA-645 S250: a failed day is asked twice (_ask_atoms) before it counts as failed.
+    cm, gen = _patch_gateway(side_effect=[
+        RuntimeError("BedrockError: throttled"),
         RuntimeError("BedrockError: throttled"),
         _FakeLLMResult(_day2_atoms_json())])
     with cm:
@@ -273,6 +275,7 @@ async def test_llm_failure_on_one_day_keeps_other_days_committed():
             pool, country="Vietnam", version_id=VERSION_ID,
         )
 
+    assert gen.call_count == 3
     assert result["status"] == "failed"
     assert result["days_failed"] == [1]
     assert result["days_read"] == 1

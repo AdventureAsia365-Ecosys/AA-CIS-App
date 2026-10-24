@@ -269,6 +269,7 @@ async def test_a3_job_forwards_thread_progress_to_job_context():
     ctx = MagicMock()
     ctx.payload = {"tour_id": "t1", "version_id": "v1", "rewritten": {}}
     ctx.job_id = "job-1"
+    ctx.job.attempt, ctx.job.max_attempts = 1, 2   # AA-645 S250: the job reads its attempt
     ctx.progress = AsyncMock()
 
     async def fake_background(**kw):

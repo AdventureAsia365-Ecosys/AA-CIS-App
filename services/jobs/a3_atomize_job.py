@@ -9,6 +9,12 @@ enqueued in the same transaction scope as the publish, run by the ECS worker.
 Re-running is safe and cheap: run_a3_atomize() skips days whose fingerprint is unchanged (no LLM
 call) and UPSERTs atoms (ON CONFLICT (atom_id)).
 
+AA-645 (S250): a day still failed after run_a3_atomize()'s own second LLM call (malformed or cut JSON, a
+gateway error) fails the attempt with AtomizeIncomplete, a retryable error, so max_attempts applies. Before,
+the job ended "succeeded" with `atomize.status = "failed"` in its result and the day stayed without atoms
+until someone re-ran the tour. A non-final attempt stops right after atomize; the final one still runs the
+Segment/Score/Route and place steps on the days that did succeed, then fails the job (result kept).
+
 Payload: {"tour_id", "version_id", "country", "rewritten": {name, summary, highlights, itineraries}}
 
 Runs in its OWN thread and event loop (not the worker's). The Segment/Score/Route recompute calls
@@ -59,12 +65,14 @@ async def enqueue_a3_atomize(db, *, tour_id: str, version_id: str, country: str,
 # Platform-wide recompute ≈ 5 min after AA-688 (first run after a reset embeds more).
 @job_kind(KIND, concurrency=1, max_attempts=2, expected_seconds=1800)
 async def run(ctx: JobContext) -> Optional[dict]:
+    from services.acp_contract.a3_atomize import AtomizeIncomplete
     from services.export.handler import _run_a3_atomize_background
 
     p = ctx.payload
     if not (p.get("tour_id") and p.get("version_id") and isinstance(p.get("rewritten"), dict)):
         raise NonRetryable("payload needs tour_id, version_id and rewritten")
     await ctx.progress(phase="atomizing", tour_id=p["tour_id"])
+    final_attempt = ctx.job.attempt >= ctx.job.max_attempts
     worker_loop = asyncio.get_running_loop()
 
     def _log_failure(future) -> None:
@@ -80,8 +88,14 @@ async def run(ctx: JobContext) -> Optional[dict]:
         return asyncio.run(_run_a3_atomize_background(
             tour_id=p["tour_id"], rewritten=p["rewritten"], country=p.get("country") or "",
             version_id=p["version_id"], reraise=True, progress=_report, force=bool(p.get("force")),
+            retry_failed_days=not final_attempt,
         ))
 
     outcome = await asyncio.to_thread(_in_own_loop) or {}
+    result = {"tour_id": p["tour_id"], "version_id": p["version_id"], **outcome}
+    atomize = outcome.get("atomize") or {}
+    if atomize.get("status") == "failed":
+        ctx.set_result(result)   # stored on the failed row (queue.fail keeps ctx.result)
+        raise AtomizeIncomplete(atomize)
     await ctx.progress(phase="done")
-    return {"tour_id": p["tour_id"], "version_id": p["version_id"], **outcome}
+    return result

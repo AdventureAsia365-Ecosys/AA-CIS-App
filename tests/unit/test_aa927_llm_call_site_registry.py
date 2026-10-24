@@ -56,10 +56,12 @@ LOGGED_CALL_SITES: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
         "services/acp_content_writing/faq_answer_fit.py", "_fit_call"),
     ("services/acp_content_writing/quality_gates.py", "_gate_brand_voice"): (_F9_LOG, _F9_FAIL),
     ("services/acp_produce/judge_client.py", "invoke_judge"): (_F9_LOG, _F9_FAIL),
-    ("services/acp_contract/a3_atomize.py", "_atomize_whole_tour_legacy"): _self(
-        "services/acp_contract/a3_atomize.py", "_atomize_whole_tour_legacy"),
-    ("services/acp_contract/a3_atomize.py", "_atomize_per_day"): _self(
-        "services/acp_contract/a3_atomize.py", "_atomize_per_day"),
+    # AA-645 S250: both atomize paths call through _ask_atoms (one retry); it writes the billed_unusable rows,
+    # the two paths write the row of the reply they keep.
+    ("services/acp_contract/a3_atomize.py", "_ask_atoms"): (
+        ("services/acp_contract/a3_atomize.py", "_ask_atoms"),
+        ("services/acp_contract/a3_atomize.py", "_atomize_whole_tour_legacy"),
+        ("services/acp_contract/a3_atomize.py", "_atomize_per_day")),
     ("services/acp_contract/segment_research.py", "_research_place"): _self(
         "services/acp_contract/segment_research.py", "_research_place"),
     ("services/acp_contract/segment_research_batch.py", "_propose"): _self(
