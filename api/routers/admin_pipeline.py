@@ -32,6 +32,7 @@ from shared.tour_liveness import (
     SOURCE_NOT_LIVE, SourceNotLiveError, live_source_exists_sql, live_source_sql, source_not_live_message,
     source_state,
 )
+from services.quality.registry import threshold
 from shared.validators.prompt_sanitize import (
     sanitize_text, sanitize_list, MAX_LONG_FIELD_LEN, MAX_SHORT_FIELD_LEN, MAX_SYSTEM_PROMPT_LEN,
     MAX_BRAND_LONG_LEN, MAX_BRAND_MEDIUM_LEN, brand_length_errors,
@@ -106,6 +107,12 @@ def _surviving_hard_codes(result: dict) -> set:
     return set(result.get("failure_codes", []) or []) & set(hard_block_codes(result))
 
 
+# AA-926 — services/quality/thresholds.yaml (the pass line and the review score bands).
+_PUBLISH_FLOOR = threshold("a1.publish_floor")
+_LOW_QUALITY_FLOOR = threshold("review.low_quality_floor")
+_SCORE_BAND_LOW = threshold("review.score_band_low")
+
+
 def _is_publishable(result: dict) -> bool:
     """AA-211: audit-aware publish gate (mirror catalog readiness + v5 spec).
 
@@ -121,11 +128,39 @@ def _is_publishable(result: dict) -> bool:
     """
     audit = result.get("brand_audit_status")
     return (
-        result.get("quality_score", 0.0) >= 7.0
+        result.get("quality_score", 0.0) >= _PUBLISH_FLOOR
         and audit != "manual_check"
         and not (audit == "flagged" and not result.get("fix_pass_applied"))
         and not _surviving_hard_codes(result)
     )
+
+
+def _tour_passed(result: dict) -> bool:
+    """The run-log pass flag (score only; the publish gate is `_is_publishable`). AA-926 seam."""
+    return float(result.get("quality_score") or 0.0) >= _PUBLISH_FLOOR
+
+
+def _score_band_where(score: str):
+    """Review Queue score filter → SQL WHERE fragment (None = no filter). AA-926 seam: the band edges
+    are pinned byte for byte by the gate-outcome snapshot."""
+    if score == "critical":
+        return f"rq.score_overall < {_SCORE_BAND_LOW:g}"
+    if score == "low":
+        return f"rq.score_overall >= {_SCORE_BAND_LOW:g} AND rq.score_overall < {_LOW_QUALITY_FLOOR:g}"
+    if score == "ok":
+        return f"rq.score_overall >= {_LOW_QUALITY_FLOOR:g}"
+    return None
+
+
+def _histogram_case(edges) -> str:
+    """The published-tour score histogram CASE (library metrics): one bucket per edge, top bucket to 10."""
+    pad = "\n" + " " * 20
+    whens = [f"WHEN quality_score >= {e:g} THEN '{e:g}-{u:g}'" for e, u in zip(edges, [10, *edges[:-1]])]
+    return "CASE" + "".join(pad + w for w in whens) + pad + f"ELSE '<{edges[-1]:g}'" + "\n" + " " * 16 + "END"
+
+
+# Published-tour score histogram (/admin/pipeline overview). AA-926: pinned by the snapshot.
+_SCORE_HISTOGRAM_CASE = _histogram_case(threshold("report.score_histogram_edges"))
 
 
 def _build_failure_summary(result: dict) -> str:
@@ -145,8 +180,8 @@ def _build_failure_summary(result: dict) -> str:
         parts.append(f"brand_audit={audit}")
     if codes:
         parts.append("codes=" + ",".join(str(c) for c in codes))
-    if score < 7.0:
-        parts.append(f"low_quality(score={score:.1f}<7.0)")
+    if score < _LOW_QUALITY_FLOOR:
+        parts.append(f"low_quality(score={score:.1f}<{_LOW_QUALITY_FLOOR:.1f})")
 
     # AA-736: surface the surviving hard codes per field, noting the sonnet attempt.
     surviving = _surviving_hard_codes(result)
@@ -883,7 +918,7 @@ async def _execute_run_tour(
         cost_usd    = float(result.get("cost_usd") or 0.0)
         tokens_in   = int(result.get("input_tokens") or 0)
         tokens_out  = int(result.get("output_tokens") or 0)
-        tour_passed = float(result.get("quality_score") or 0.0) >= 7.0
+        tour_passed = _tour_passed(result)
         model_name  = result.get("model_used") or None
         if isinstance(model_name, str) and not model_name:
             model_name = None
@@ -2462,8 +2497,8 @@ def _review_block(score, codes: list, failures: list, brand_audit_status) -> dic
     if hard:
         where = sorted({f"{f['code']} in {f['field']}" for f in (failures or []) if f.get("code") in hard})
         return {"kind": "hard", "label": "Blocked: " + (", ".join(where) or ", ".join(hard))}
-    if score is not None and score < 7.0:
-        return {"kind": "low_quality", "label": f"Low quality: score {score:.1f} < 7.0"}
+    if score is not None and score < _LOW_QUALITY_FLOOR:
+        return {"kind": "low_quality", "label": f"Low quality: score {score:.1f} < {_LOW_QUALITY_FLOOR:.1f}"}
     return {"kind": "other", "label": "Held for review"}
 
 
@@ -2517,7 +2552,7 @@ def _review_failure_class(score, codes: list, failures: list, brand_audit_status
         return {"failure_class": "hard", "retryable": True,
                 "hint": "Regenerate with Sonnet"}
 
-    if score is not None and score < 7.0:
+    if score is not None and score < _LOW_QUALITY_FLOOR:
         return {"failure_class": "low_quality", "retryable": True,
                 "hint": "Low quality — regenerate for a better draft"}
 
@@ -2563,12 +2598,9 @@ async def admin_review_queue(
     if country and country != "all":
         params.append(country)
         where.append(f"rt.country = ${len(params)}")
-    if score == "critical":
-        where.append("rq.score_overall < 5")
-    elif score == "low":
-        where.append("rq.score_overall >= 5 AND rq.score_overall < 7")
-    elif score == "ok":
-        where.append("rq.score_overall >= 7")
+    band_sql = _score_band_where(score)
+    if band_sql:
+        where.append(band_sql)
     if tour_id and _is_uuid(tour_id):
         params.append(tour_id)
         where.append(f"rq.tour_id = ${len(params)}::uuid")
@@ -4311,14 +4343,9 @@ async def get_library_metrics(request: Request, x_admin_secret: str = Header(Non
             WHERE tenant_id = '00000000-0000-0000-0000-000000000001'::uuid
               AND master_status <> 'trashed'
         """)
-        score_dist = await conn.fetch("""
+        score_dist = await conn.fetch(f"""
             SELECT
-                CASE
-                    WHEN quality_score >= 9 THEN '9-10'
-                    WHEN quality_score >= 8 THEN '8-9'
-                    WHEN quality_score >= 7 THEN '7-8'
-                    ELSE '<7'
-                END AS range,
+                {_SCORE_HISTOGRAM_CASE} AS range,
                 COUNT(*) AS count
             FROM gold_aa_internal.published_tours
             WHERE tenant_id = '00000000-0000-0000-0000-000000000001'::uuid

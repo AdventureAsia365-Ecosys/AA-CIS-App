@@ -61,6 +61,7 @@ from services.acp_shared.grounding import find_novel_numeric_claims
 from services.acp_shared.offered import STATUS_PREFIX
 from services.acp_shared.real_questions import is_off_meaning, single_word_places
 from shared.llm_client.call_log import record_billed_failure_sync, record_call_sync
+from services.quality import registry as qr
 
 logger = structlog.get_logger()
 
@@ -216,8 +217,8 @@ def gate_cta_present(cta: Optional[str]) -> GateResultLite:
     the rest of the stack — no reason to pay for the 2 LLM-judge gates below on a piece that was
     always going to hold regardless."""
     if not cta or not cta.strip():
-        return _result("F6_cta_present", ["no CTA available for this request"], repairable=False)
-    return _result("F6_cta_present", [])
+        return _result(qr.F6_CTA_PRESENT, ["no CTA available for this request"], repairable=False)
+    return _result(qr.F6_CTA_PRESENT, [])
 
 
 # ---------------------------------------------------------------- F1-adjusted (grounding)
@@ -245,7 +246,7 @@ def gate_grounding(content_text: str, atom_text: str) -> GateResultLite:
             # this specific violation string is never tagged in the first place.
             quoted = strip_citation_tags(sent.strip())[:100]
             violations.append(f"sentence states {novel} not present in the content seed: '{quoted}'")
-    return _result("F1_grounding", violations)
+    return _result(qr.F1_GROUNDING, violations)
 
 
 # ---------------------------------------------------------------- F2-adjusted (banned patterns)
@@ -273,7 +274,7 @@ def gate_banned_patterns(content_text: str, atom_text: str) -> GateResultLite:
                                   f"'{_sentence_with(content_text, m.group(0))}'")
                 continue
             violations.append(f"banned pattern /{pattern.pattern}/ -> '{m.group(0)}'")
-    return _result("F2_banned_patterns", violations)
+    return _result(qr.F2_BANNED_PATTERNS, violations)
 
 
 # ---------------------------------------------------------------- F2b / F11: tenant brand (AA-771, S233)
@@ -301,14 +302,14 @@ def gate_brand_forbidden_words(content_text: str, atom_text: str,
         if m:
             violations.append(f"uses '{m.group(0)}', which the brand forbids: "
                               f"'{_sentence_with(content_text, m.group(0))}'")
-    return _result("F2_brand_forbidden", violations)
+    return _result(qr.F2_BRAND_FORBIDDEN, violations)
 
 
 # ---------------------------------------------------------------- F2 word layers (AA-800)
 
-F2_PLATFORM_GATE = "F2_platform_truth"
-F2_SUPERLATIVE_GATE = "F2_superlatives"
-F2_STYLE_WARN_GATE = "F2_style_warn"
+F2_PLATFORM_GATE = qr.F2_PLATFORM_TRUTH
+F2_SUPERLATIVE_GATE = qr.F2_SUPERLATIVES
+F2_STYLE_WARN_GATE = qr.F2_STYLE_WARN
 
 
 def _word_hits(text: str, words, exempt_text: str) -> list[tuple[str, str]]:
@@ -370,7 +371,7 @@ def gate_brand_name(content_text: str, atom_text: str, brand_name: Optional[str]
         f"'{_sentence_with(content_text, name)}'"
         for name in dict.fromkeys(foreign_brand_mentions(content_text, brand_name, atom_text))
     ]
-    return _result("F11_brand_name", violations)
+    return _result(qr.F11_BRAND_NAME, violations)
 
 
 # ---------------------------------------------------------------- F19 authenticity (AA-819, AUP 2026-11)
@@ -420,7 +421,7 @@ def gate_cannibalization(match: Optional[dict]) -> GateResultLite:
     a second gate — a tenant with no active brand rules is exactly the group this issue names as
     most likely to drift into generic, convergence-prone copy."""
     if not match:
-        return _result("F10_cannibalization_cross_tenant", [])
+        return _result(qr.F10_CANNIBALIZATION_CROSS_TENANT, [])
     hint = (
         " This tenant has no active brand rules configured — generic, unbranded copy is more "
         "likely to converge with other tenants' content; setting up brand rules may reduce "
@@ -432,7 +433,7 @@ def gate_cannibalization(match: Optional[dict]) -> GateResultLite:
         f"cannibalization threshold. Two tenants publishing near-identical copy risks readers "
         f"noticing duplicate marketing content.{hint}"
     ]
-    return _result("F10_cannibalization_cross_tenant", violations, repairable=True)
+    return _result(qr.F10_CANNIBALIZATION_CROSS_TENANT, violations, repairable=True)
 
 
 # ---------------------------------------------------------------- F4-adjusted (extreme length only)
@@ -478,10 +479,10 @@ def gate_extreme_length(content_text: str, channel: Optional[str] = None) -> Gat
     min_chars, max_chars = _length_bounds_for_channel(channel)
     length = len(content_text or "")
     if length < min_chars:
-        return _result("F4_extreme_length", [f"content is only {length} chars — effectively empty"])
+        return _result(qr.F4_EXTREME_LENGTH, [f"content is only {length} chars — effectively empty"])
     if length > max_chars:
-        return _result("F4_extreme_length", [f"content is {length} chars — far beyond any real channel example"])
-    return _result("F4_extreme_length", [])
+        return _result(qr.F4_EXTREME_LENGTH, [f"content is {length} chars — far beyond any real channel example"])
+    return _result(qr.F4_EXTREME_LENGTH, [])
 
 
 # ---------------------------------------------------------------- F0: complete text (AA-768, S233)
@@ -509,11 +510,11 @@ def gate_complete(content_text: str) -> GateResultLite:
     """F0_complete — blocking, repairable: the piece must not end mid-sentence."""
     text = strip_citation_tags(content_text).rstrip()
     if text.endswith("\\"):
-        return _result("F0_complete", ["the text ends with a stray backslash — it was cut off"])
+        return _result(qr.F0_COMPLETE, ["the text ends with a stray backslash — it was cut off"])
     last = _last_prose_line(text)
     if last is not None and not _END_OK_RE.search(last):
-        return _result("F0_complete", [f"the text stops mid-sentence: '...{last[-80:]}'"])
-    return _result("F0_complete", [])
+        return _result(qr.F0_COMPLETE, [f"the text stops mid-sentence: '...{last[-80:]}'"])
+    return _result(qr.F0_COMPLETE, [])
 
 
 # ---------------------------------------------------------------- F4 family: SEO surface (new, AA-514, blog only)
@@ -619,7 +620,7 @@ def gate_seo_surface(
     elif len(slug) > _SLUG_MAX_CHARS:
         violations.append(f"slug is {len(slug)} characters — over {_SLUG_MAX_CHARS}")
 
-    return _result("F4_seo_surface", violations)
+    return _result(qr.F4_SEO_SURFACE, violations)
 
 
 # ---------------------------------------------------------------- AA-505 judge call logging
@@ -660,7 +661,7 @@ def _log_t10_billed_unusable(raw: dict, *, error: str) -> None:
                  "cost_usd": cost if cost is not None else calc_cost(model, in_tok, out_tok),
                  "stop_reason": raw.get("stop_reason"), "account": raw.get("account"),
                  "fallback_used": raw.get("fallback_used")}],
-        quality_signal_extra={"f9_gate": "F9_brand_voice", "prompt_version": F9_PROMPT_VERSION})
+        quality_signal_extra={"f9_gate": qr.F9_BRAND_VOICE, "prompt_version": F9_PROMPT_VERSION})
 
 
 # ---------------------------------------------------------------- F9-adjusted (brand/CTA/voice judge)
@@ -1164,10 +1165,10 @@ def _gate_brand_voice(
         # AA-925 — but it is a hard fail-open detector: the result carries the `degraded` marker, and
         # service._degraded_final labels the piece held when the FINAL attempt has it (admin-only label;
         # the tenant still receives the piece).
-        unavailable = _result("F9_cta_fact", [f"judge unavailable: {e} — not checked"], repairable=False,
+        unavailable = _result(qr.F9_CTA_FACT, [f"judge unavailable: {e} — not checked"], repairable=False,
                               blocking=False)
         unavailable["degraded"] = "f9_judge_unavailable"
-        return [unavailable, _result("F9_brand_style", [], repairable=False, blocking=False)]
+        return [unavailable, _result(qr.F9_BRAND_STYLE, [], repairable=False, blocking=False)]
 
     status = data.get("status", "manual_check")
     failure_codes = [c for c in (data.get("failure_codes") or []) if c in _BRAND_VOICE_FAILURE_CODES]
@@ -1197,12 +1198,12 @@ def _gate_brand_voice(
         carried = _f9_carry_keys(prev_text, content_text, passed_sentences)
         if carried:
             passed_sentences |= carried
-            logger.info("F9_sticky_carry", carried=len(carried))
+            logger.info(qr.F9_STICKY_CARRY, carried=len(carried))
     if isinstance(passed_sentences, F9PassMemory):
         passed_sentences.last_text = content_text
     claims, sticky = _drop_sticky_claims(content_text, claims, passed_sentences)
     if sticky:
-        logger.info("F9_sticky_pass", dropped=len(sticky), sentences=[s[:160] for s in sticky[:5]])
+        logger.info(qr.F9_STICKY_PASS, dropped=len(sticky), sentences=[s[:160] for s in sticky[:5]])
         if not claims and "FACT_CHECK_MANUAL_CHECK" in failure_codes:
             failure_codes = [c for c in failure_codes if c != "FACT_CHECK_MANUAL_CHECK"]
             if not failure_codes and status != "pass":
@@ -1288,7 +1289,7 @@ def _gate_brand_voice(
     cta_fact_blocking = not reasonless and (
         not cta_fact_viol or any(not v.startswith(("title ", "meta ")) for v in cta_fact_viol))
 
-    _log_t10_judge_call(raw, gate="F9_brand_voice", passed=judge_ok,
+    _log_t10_judge_call(raw, gate=qr.F9_BRAND_VOICE, passed=judge_ok,
                          extra={"status": status, "failure_codes": failure_codes,
                                 "prompt_version": F9_PROMPT_VERSION,
                                 "piece_tag_free": not TAG_RE.search(content_text),
@@ -1302,13 +1303,13 @@ def _gate_brand_voice(
         passed_sentences |= _f9_passed_keys(content_text, flagged_folds | {_cmp_fold(q) for q in integrity},
                                             loose_quotes)
     elif passed_sentences is not None and not reasonless:
-        logger.info("F9_sticky_pass_skipped", truncated=truncated, unlocated_quote=not quotes_complete)
-    cta_fact = _result("F9_cta_fact", cta_fact_viol, blocking=cta_fact_blocking, repairable=not reasonless)
+        logger.info(qr.F9_STICKY_PASS_SKIPPED, truncated=truncated, unlocated_quote=not quotes_complete)
+    cta_fact = _result(qr.F9_CTA_FACT, cta_fact_viol, blocking=cta_fact_blocking, repairable=not reasonless)
     if sticky:
         cta_fact = {**cta_fact, "sticky_pass": sticky}
     return [
         cta_fact,
-        _result("F9_brand_style", brand_style_viol, repairable=False, blocking=False),
+        _result(qr.F9_BRAND_STYLE, brand_style_viol, repairable=False, blocking=False),
     ]
 
 
@@ -1499,7 +1500,7 @@ def drop_unanswerable_faq(content_text: str, own_seed_text: str,
 # FAQ_MIN_PAIRS pairs, counted AFTER drop_restated_faq / drop_unanswerable_faq ran. service.py
 # regenerates a short FAQ once (generate.write_faq, t9_repair) before the gates read the text.
 FAQ_MIN_PAIRS = 3
-F16_GATE = "F16_faq"
+F16_GATE = qr.F16_FAQ
 
 
 def faq_pair_count(content_text: str) -> int:
@@ -1959,12 +1960,12 @@ def gate_scope(content_text: str, hygiene_ctx: Optional[HygieneContext], seo_tit
     """F12_scope — the title, meta, headings or body name a place outside the piece's SCOPE (the
     TRIP name's or another trip's places; hygiene.build_scope_lexicon). No context → passes."""
     if hygiene_ctx is None:
-        return _result("F12_scope", [], blocking=F12_SCOPE_BLOCKING)
+        return _result(qr.F12_SCOPE, [], blocking=F12_SCOPE_BLOCKING)
     found = find_issues(content_text, hygiene_ctx, seo_title=seo_title, meta_description=meta_description)
-    return _result("F12_scope", found["scope"], repairable=True, blocking=F12_SCOPE_BLOCKING)
+    return _result(qr.F12_SCOPE, found["scope"], repairable=True, blocking=F12_SCOPE_BLOCKING)
 
 
-F13_LEAK_GATE = "F13_leak"
+F13_LEAK_GATE = qr.F13_LEAK
 
 
 def gate_leak(content_text: str, hygiene_ctx: Optional[HygieneContext]) -> GateResultLite:
@@ -1981,15 +1982,15 @@ def gate_hygiene(content_text: str, hygiene_ctx: Optional[HygieneContext]) -> Ga
     """F13_hygiene (warn) — what autofix could not fix safely: a source-notes leak, social proof,
     a repeated sentence, a misspelt hashtag, too many hashtags."""
     if hygiene_ctx is None:
-        return _result("F13_hygiene", [], repairable=False, blocking=False)
-    return _result("F13_hygiene", find_issues(content_text, hygiene_ctx)["hygiene"], repairable=False,
+        return _result(qr.F13_HYGIENE, [], repairable=False, blocking=False)
+    return _result(qr.F13_HYGIENE, find_issues(content_text, hygiene_ctx)["hygiene"], repairable=False,
                    blocking=False)
 
 
 # S234 round 3 (r2 §4 fix 2) — near-duplicates hygiene.dedupe / trip_facts.fix_misplaced could not
 # remove safely: a figure told twice, an echoed phrase, an orphan line, a moment repeated under
 # another moment's heading. Blocking and sentence-repairable (an empty replacement deletes it).
-F13_REPEAT_GATE = "F13_repeat"
+F13_REPEAT_GATE = qr.F13_REPEAT
 
 
 def gate_repeat(content_text: str, hygiene_ctx: Optional[HygieneContext]) -> GateResultLite:
@@ -2004,8 +2005,8 @@ def gate_repeat(content_text: str, hygiene_ctx: Optional[HygieneContext]) -> Gat
 # ended written in the present or a wrong span) and rarity / quantifier overclaims. Both blocking and
 # sentence-repairable on the cheap t9_repair stage; a title / meta finding ("meta …") is the SEO
 # fit's (service._fit_seo_meta rejects such a meta). Held only when the repair fails.
-F17_GATE = "F17_trip_fact"
-F18_GATE = "F18_rarity"
+F17_GATE = qr.F17_TRIP_FACT
+F18_GATE = qr.F18_RARITY
 F17_BLOCKING = True
 F18_BLOCKING = True
 
@@ -2038,24 +2039,24 @@ F15_STOCK_BLOCKING = True
 # (the same `stock_blocking` flag): one full rewrite to the target, never a rewrite loop, never a hold
 # (`never_holds`). Both r4 false passes were under it (105 and 113 words, Trail Pulse).
 F14_FLOOR_BLOCKING = True
-F14_GATE = "F14_social_shape"
+F14_GATE = qr.F14_SOCIAL_SHAPE
 # The over-the-band text of the one F14 violation that may hold a piece (> 1.3 × the band's top).
 _F14_FAR_OVER = "far over the"
-F15_GATE = "F15_voice"
-F15_WARN_GATE = "F15_voice_warn"
+F15_GATE = qr.F15_VOICE
+F15_WARN_GATE = qr.F15_VOICE_WARN
 # Gates that may block (to trigger one repair) but never hold a piece on their own.
 # AA-800: a second stock superlative (F2_superlatives) is style too.
-STYLE_ONLY_GATES = frozenset({F15_GATE, "F2_superlatives"})
+STYLE_ONLY_GATES = frozenset({F15_GATE, qr.F2_SUPERLATIVES})
 # S234 round 3 — gates whose sentence repair runs on the cheap t9_repair stage (Haiku) when they are
 # the only blocking failures: style (F15), near-duplicates (F13_repeat), trip facts and rarity
 # (F17/F18 — the repair keeps or cuts a sentence the seed already bounds).
 # AA-819 — F19_authenticity too: the repair rewrites the sentence in the brand's voice or cuts it.
 # AA-800 — the F2 word layers too: the repair swaps or cuts one word.
-CHEAP_REPAIR_GATES = frozenset({F15_GATE, "F13_repeat", "F17_trip_fact", "F18_rarity", "F19_authenticity",
-                                "F2_platform_truth", "F2_superlatives"})
+CHEAP_REPAIR_GATES = frozenset({F15_GATE, qr.F13_REPEAT, qr.F17_TRIP_FACT, qr.F18_RARITY, qr.F19_AUTHENTICITY,
+                                qr.F2_PLATFORM_TRUTH, qr.F2_SUPERLATIVES})
 # S234 round 2 — gates a dedicated deterministic/one-call step in service.py fixes every attempt
 # (like F4_seo_surface and the SEO fit): sentence_repair.plan never turns them into a rewrite.
-OWNED_BY_FIX_STEP = frozenset({"F16_faq", "F14_first_line"})
+OWNED_BY_FIX_STEP = frozenset({qr.F16_FAQ, qr.F14_FIRST_LINE})
 _MIN_QUOTE_WORDS = 4  # sentence_repair.locate_sentence needs 4 words to find a sentence
 OPENER_REPEAT_JACCARD = 0.6
 
@@ -2096,7 +2097,7 @@ def gate_social_shape(content_text: str, spec: Optional[ChannelSpec], *,
     return _result(F14_GATE, violations, repairable=blocking, blocking=blocking)
 
 
-F14_FIRST_LINE_GATE = "F14_first_line"
+F14_FIRST_LINE_GATE = qr.F14_FIRST_LINE
 
 
 def gate_first_line(content_text: str, spec: Optional[ChannelSpec]) -> GateResultLite:

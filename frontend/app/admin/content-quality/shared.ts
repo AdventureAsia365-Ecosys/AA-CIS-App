@@ -2,6 +2,7 @@
 // (GET /admin/content-quality/*). Cross-tenant, admin only.
 
 import type { SeedInfo } from "../_components/SeedLine";
+import { GATE_LABELS, RETIRED_GATES } from "@/lib/quality-registry.generated";
 
 export interface PieceRow {
   piece_id: string;
@@ -269,49 +270,10 @@ export const usd = (n: number | null | undefined) =>
 export const fmtTime = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
 
-/** Plain-language gate names for admins (the codes stay visible next to them). */
-export const GATE_LABELS: Record<string, string> = {
-  F0_complete: "Text cut off",
-  F1_grounding: "Number not in source",
-  F2_banned_patterns: "Cliché / banned phrase",
-  F2_brand_forbidden: "Brand-forbidden word",
-  F11_brand_name: "Wrong brand name",
-  F10_cannibalization_cross_tenant: "Too close to another tenant",
-  promises_an_option: "Optional item stated as included",
-  F4_extreme_length: "Length out of range",
-  F4_seo_surface: "SEO title / meta",
-  F5_atom_density: "Few source citations",
-  F3_structural_variance: "Flat structure",
-  F7_faq_dedup: "FAQ restates body",
-  F7_faq_autofix: "FAQ pairs removed",
-  F6_cta_present: "No CTA",
-  F8_framework: "Goal framework",
-  F9_cta_fact: "Unsupported claim / CTA",
-  F9_brand_style: "Off-brand / AI wording",
-  F12_scope: "Place outside the piece's scope",
-  F13_hygiene: "Leak / social proof / repeat / hashtag",
-  F13_leak: "Instruction / audience leak, broken opener",
-  F13_autofix: "Auto-fixed sentences",
-  F13_final_pass: "Final pass edits (duplicate, CTA, whitespace)",
-  F13_repeat: "Repeat / second CTA / broken sentence",
-  F17_trip_fact: "Trip fact not in source (optional, time, caveat, date, thin moment, hazard, base)",
-  F18_rarity: "Rarity / quantifier overclaim",
-  F14_social_shape: "LinkedIn length / hashtags",
-  F14_first_line: "LinkedIn first line too long",
-  F16_faq: "Blog FAQ under 3 pairs",
-  F15_voice: "Stock phrase",
-  F15_voice_warn: "Trade register / audience leak / opener",
-  within_tenant_reuse: "Repeats this tenant",
-  // AA-802 — T2 tour versions (T3 checks re-run on the current text)
-  T3_grounding: "Number not in the source tour",
-  FORBIDDEN_WORD: "Forbidden word",
-};
-
-/** AA-787 — gates the T10 stack no longer runs. Older pieces still carry them in their ledger, so the
- *  labels stay; the UI marks them retired and keeps them out of the main gate filter. */
-export const RETIRED_GATES: ReadonlySet<string> = new Set([
-  "promises_an_option", "F8_framework", "F3_structural_variance", "F5_atom_density", "F7_faq_dedup",
-]);
+// AA-926 — gate labels and the retired set come from the quality registry (services/quality/taxonomy.yaml),
+// generated into lib/quality-registry.generated.ts. Same 33 labels in the same order, plus labels for four
+// active gates that showed as raw codes (F2_platform_truth, F2_superlatives, F2_style_warn, F19_authenticity).
+export { GATE_LABELS, RETIRED_GATES };
 
 export const gateLabel = (g: string) => {
   const label = GATE_LABELS[g] ?? g;

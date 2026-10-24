@@ -6,8 +6,20 @@ import os
 import structlog
 from shared.secrets import get_database_url
 from shared.validators.rules import validate_content
+from services.quality.registry import threshold
 
 logger = structlog.get_logger()
+_PASS = threshold("legacy_validation.pass")  # services/quality/thresholds.yaml (AA-926)
+
+
+def _validation_route(score: float, retry_count: int) -> tuple[str, str]:
+    """(new_status, route) for a validated version. AA-926: pure seam so the pass line is pinned by
+    the gate-outcome snapshot."""
+    if score >= _PASS:
+        return "approved", "export"
+    if retry_count < 2:
+        return "pending", "regenerate"
+    return "pending", "hitl"
 
 
 async def process_validation(version_id: str) -> dict:
@@ -35,15 +47,7 @@ async def process_validation(version_id: str) -> dict:
         score  = result["score"]
 
         retry_count = row.get("retry_count", 0) or 0
-        if score >= 7.0:
-            new_status = "approved"
-            route      = "export"
-        elif retry_count < 2:
-            new_status = "pending"
-            route      = "regenerate"
-        else:
-            new_status = "pending"
-            route      = "hitl"
+        new_status, route = _validation_route(score, retry_count)
 
         await conn.execute(
             f"""UPDATE silver_{tenant_slug}.generated_content

@@ -100,6 +100,66 @@ def _strip_atom_action(action: str, words: list[str]) -> str:
     return out.get("action", action)
 
 
+# AA-645 (S250) — one atomize read per day (or per tour on the legacy path) gets a second LLM call when the
+# first raises or returns JSON that does not parse. S250 Thailand wave: tour 7dbbc234 lost a day to "Expecting
+# property name enclosed in double quotes: line 183" and the job still ended "succeeded", so it was never retried.
+# A reply cut at the token ceiling is re-asked with more room; the catalog's max_output_tokens still caps it per
+# model (shared/llm_client/client.py), so no model is named here.
+_MAX_TOKENS = 4096
+_TRUNCATION_RETRY_MAX_TOKENS = 8192
+# Anthropic/Converse report "max_tokens"; OpenAI-compatible routes report "length" (same set as T9's writer).
+_TRUNCATED_STOP_REASONS = {"max_tokens", "length"}
+_READ_ATTEMPTS = 2
+
+
+class AtomizeIncomplete(RuntimeError):
+    """A3 atomize ended with day(s) (or the whole legacy read) still failed after the in-call retry. Raised by the
+    `a3_atomize` job so its max_attempts applies: the next attempt re-reads only the failed days (the others
+    already have their fingerprint row). Retryable on purpose (not NonRetryable)."""
+
+    def __init__(self, result: dict):
+        super().__init__(result.get("error") or "a3 atomize failed")
+        self.result = result
+
+
+async def _ask_atoms(prompt: str, role: str, *, event: str, log_fields: dict, signal_extra: dict | None = None):
+    """Up to `_READ_ATTEMPTS` gateway calls for one atomize read. Returns (atoms, llm_result, attempt, error):
+    atoms is None when every attempt failed. Every billed reply that did not parse gets its own billed_unusable
+    llm_call_log row here (AA-927); the caller writes the row of the reply it uses. `event` keeps the log names
+    the paths had before (`<event>_llm_failed`, `<event>_parse_failed`)."""
+    max_tokens = _MAX_TOKENS
+    error = None
+    for attempt in range(1, _READ_ATTEMPTS + 1):
+        try:
+            # AA-757 — through the gateway: stage "a3_atomize" (admin route/fallback/shadow), no model_tier so
+            # the stage config picks the model.
+            llm_result = await asyncio.to_thread(
+                LLMClient().generate,
+                LLMRequest(system_prompt=_SYSTEM_PROMPT, user_prompt=prompt,
+                           stage="a3_atomize", max_tokens=max_tokens),
+            )
+        except Exception as e:
+            error = f"{type(e).__name__}: {e}"
+            logger.error(f"{event}_llm_failed", **log_fields, attempt=attempt,
+                         error_type=type(e).__name__, error=str(e))
+            continue
+        try:
+            atoms = json.loads(_strip_json_fence(llm_result.content))["atoms"]
+            if not isinstance(atoms, list):
+                raise TypeError(f"'atoms' is {type(atoms).__name__}, not a list")
+            return atoms, llm_result, attempt, None
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            error = f"invalid atom JSON from model: {e}"
+            logger.error(f"{event}_parse_failed", **log_fields, attempt=attempt,
+                         stop_reason=llm_result.stop_reason, max_tokens=max_tokens, error=str(e))
+            await record_unusable(llm_result, stage="a3_atomize", role=role, error=e,  # AA-927
+                                  tenant_id=_llm_log_tenant_id(OWNER_SCOPE),
+                                  quality_signal_extra={**(signal_extra or {}), "attempt": attempt})
+            if llm_result.stop_reason in _TRUNCATED_STOP_REASONS:
+                max_tokens = max(max_tokens, _TRUNCATION_RETRY_MAX_TOKENS)
+    return None, None, _READ_ATTEMPTS, error
+
+
 async def run_a3_atomize(
     tour_id: str, rewritten: dict, pool, country: str = "",
     version_id: str | None = None, force: bool = False,
@@ -213,25 +273,10 @@ async def _atomize_whole_tour_legacy(
     # model_tier is passed: the stage config decides the model. _a3_cfg is still read for the
     # record_call role (the call itself no longer reads account_route — the gateway owns routing).
     _a3_cfg = await get_stage_config("a3_atomize")
-    try:
-        llm_result = await asyncio.to_thread(
-            LLMClient().generate,
-            LLMRequest(system_prompt=_SYSTEM_PROMPT, user_prompt=prompt,
-                       stage="a3_atomize", max_tokens=4096),
-        )
-    except Exception as e:
-        logger.error("a3_atomize_llm_failed", tour_id=tour_id, owner_scope=OWNER_SCOPE,
-                     error_type=type(e).__name__, error=str(e))
-        return {"status": "failed", "error": f"{type(e).__name__}: {e}"}
-
-    try:
-        atoms = json.loads(_strip_json_fence(llm_result.content))["atoms"]
-    except (json.JSONDecodeError, KeyError, TypeError) as e:
-        logger.error("a3_atomize_parse_failed", tour_id=tour_id, owner_scope=OWNER_SCOPE, error=str(e))
-        # AA-927: the reply was billed — one billed_unusable row before giving up.
-        await record_unusable(llm_result, stage="a3_atomize", role=_a3_cfg.role, error=e,
-                              tenant_id=_llm_log_tenant_id(OWNER_SCOPE))
-        return {"status": "failed", "error": f"invalid atom JSON from model: {e}"}
+    atoms, llm_result, attempt, error = await _ask_atoms(
+        prompt, _a3_cfg.role, event="a3_atomize", log_fields={"tour_id": tour_id, "owner_scope": OWNER_SCOPE})
+    if atoms is None:
+        return {"status": "failed", "error": error}
     atoms = [a for a in atoms if not _is_logistics_atom(a.get("place") or "", a.get("action") or "")]  # S224
 
     # AA-754 — distinctiveness scoring was removed end-to-end. Atoms no longer carry a
@@ -288,7 +333,7 @@ async def _atomize_whole_tour_legacy(
         tokens_in=llm_result.input_tokens, tokens_out=llm_result.output_tokens,
         cost_usd=llm_result.cost_usd,
         tenant_id=_llm_log_tenant_id(OWNER_SCOPE),
-        quality_signal={"atoms_extracted": inserted, "is_empty_marker": inserted == 0},
+        quality_signal={"atoms_extracted": inserted, "is_empty_marker": inserted == 0, "attempt": attempt},
         stop_reason=llm_result.stop_reason,
         account=llm_result.satellite_account, fallback_used=llm_result.fallback_used,
         provider=llm_result.provider,
@@ -351,8 +396,9 @@ async def _atomize_per_day(
     unverified-safe on this codebase's Bedrock satellite setup; one call at a time keeps this
     inside the pattern already load-tested here. A day that fails does not lose days already read:
     each day's atoms + fingerprint row are written (and committed) before moving to the next day.
-    A day whose LLM call or JSON parse fails simply keeps no fingerprint row for itself, so the
-    next call re-asks exactly that day and only that day.
+    A day whose LLM call or JSON parse fails is asked once more right away (`_ask_atoms`, AA-645 S250); a day
+    that still fails keeps no fingerprint row for itself, so the next call (the `a3_atomize` job's next attempt,
+    see AtomizeIncomplete) re-asks exactly that day and only that day.
     """
     # AA-619 — resolve the stage config ONCE, up front, so the day-fingerprint is keyed to the
     # SAME model the call below actually uses (read from DB config, not a hardcoded constant).
@@ -396,30 +442,16 @@ async def _atomize_per_day(
     inserted = 0
     days_read = 0
     days_failed = []
+    day_errors: dict[str, str] = {}
     for day_num, day, fp in to_ask:
         prompt = _build_day_user_prompt(row, day_num, day["title"], day["body"])
-        try:
-            # AA-757 — through the gateway: stage "a3_atomize" (admin route/fallback/shadow), no
-            # model_tier so the stage config picks the model.
-            llm_result = await asyncio.to_thread(
-                LLMClient().generate,
-                LLMRequest(system_prompt=_SYSTEM_PROMPT, user_prompt=prompt,
-                           stage="a3_atomize", max_tokens=4096),
-            )
-        except Exception as e:
-            logger.error("a3_atomize_day_llm_failed", tour_id=tour_id, version_id=version_id,
-                         day_number=day_num, error_type=type(e).__name__, error=str(e))
+        atoms, llm_result, attempt, error = await _ask_atoms(
+            prompt, _a3_cfg.role, event="a3_atomize_day",
+            log_fields={"tour_id": tour_id, "version_id": version_id, "day_number": day_num},
+            signal_extra={"day_number": day_num})
+        if atoms is None:
             days_failed.append(day_num)
-            continue
-        try:
-            atoms = json.loads(_strip_json_fence(llm_result.content))["atoms"]
-        except (json.JSONDecodeError, KeyError, TypeError) as e:
-            logger.error("a3_atomize_day_parse_failed", tour_id=tour_id, version_id=version_id,
-                         day_number=day_num, error=str(e))
-            await record_unusable(llm_result, stage="a3_atomize", role=_a3_cfg.role, error=e,  # AA-927
-                                  tenant_id=_llm_log_tenant_id(OWNER_SCOPE),
-                                  quality_signal_extra={"day_number": day_num})
-            days_failed.append(day_num)
+            day_errors[str(day_num)] = (error or "")[:300]
             continue
 
         atoms = [a for a in atoms if not _is_logistics_atom(a.get("place") or "", a.get("action") or "")]  # S224
@@ -510,7 +542,7 @@ async def _atomize_per_day(
             cost_usd=llm_result.cost_usd,
             tenant_id=_llm_log_tenant_id(OWNER_SCOPE),
             quality_signal={"atoms_extracted": len(new_atom_ids), "day_number": day_num,
-                             "is_empty_marker": not atoms},
+                             "is_empty_marker": not atoms, "attempt": attempt},
             stop_reason=llm_result.stop_reason,
             account=llm_result.satellite_account, fallback_used=llm_result.fallback_used,
             provider=llm_result.provider,
@@ -528,7 +560,8 @@ async def _atomize_per_day(
             f"({days_read} day(s) succeeded and were kept)"
         )
         result["days_failed"] = days_failed
+        result["day_errors"] = day_errors
     logger.info("a3_atomize_per_day_done", tour_id=tour_id, version_id=version_id, **{
-        k: v for k, v in result.items() if k not in ("error",)
+        k: v for k, v in result.items() if k not in ("error", "day_errors")
     })
     return result

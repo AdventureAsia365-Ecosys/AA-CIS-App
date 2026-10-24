@@ -390,8 +390,9 @@ async def _main() -> None:
     redis = None
     if os.environ.get("REDIS_HOST"):
         import redis.asyncio as aioredis
-        redis = aioredis.from_url(f"redis://{os.environ['REDIS_HOST']}:6379", encoding="utf-8",
-                                  decode_responses=True)
+        from shared.cache.redis_conn import redis_conn_args  # AA-874: TLS + AUTH from env
+        redis_url, redis_kwargs = redis_conn_args()
+        redis = aioredis.from_url(redis_url, encoding="utf-8", decode_responses=True, **redis_kwargs)
     worker = Worker(pool, max_parallel=max_parallel, resources={"redis": redis})
     logger.info("job_worker_config", max_parallel=max_parallel, executor_threads=2 * max_parallel)
     loop = asyncio.get_running_loop()

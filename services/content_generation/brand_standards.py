@@ -1,4 +1,5 @@
 """AA-135: Adventure Asia brand identity constants for LLM-as-Judge audit."""
+from services.quality.registry import threshold
 
 AA_BRAND_IDENTITY_PROMPT = """
 ADVENTURE ASIA BRAND IDENTITY — EDITORIAL STANDARD
@@ -79,7 +80,7 @@ ADVENTURE ASIA PIPELINE STRUCTURE — AUDIT REFERENCE
 Workflow stages:
 1. generate: rewrite via LLMClient (Bedrock Sonnet/Haiku or GPT-4.1)
 2. validate: 29 structural rules, score 0-10
-3. brand_audit: LLM-as-Judge (GPT-4.1) — only runs if score >= 7.0
+3. brand_audit: LLM-as-Judge (GPT-4.1) — only runs if score >= """ + f"{threshold('a1.min_quality'):.1f}" + """
 4. flag_fix: targeted rewrite of flagged fields only
 5. publish: gold layer
 
