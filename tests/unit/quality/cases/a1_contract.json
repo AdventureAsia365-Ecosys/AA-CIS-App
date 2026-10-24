@@ -88,5 +88,51 @@
             "writer_patch": {"seo_meta": "Four days in western Bhutan, from the Paro valley and Taktsang Monastery to the dzongs of Thimphu and Punakha, with local guides and quiet family lodges along the way."}},
   "llm_stub": [{"stage": "s1_flag_fix",
                 "content": {"seo_meta": "Four days in western Bhutan, from the Paro valley and Taktsang Monastery to the dzongs of Thimphu and Punakha, guided by locals in quiet lodges."}}]
+ },
+ {
+  "id": "a1-contract-flagfix-drops-days",
+  "class_id": "struct.day_structure",
+  "severity": "hard",
+  "writer": "A1",
+  "artefact": "output",
+  "chain": "a1",
+  "detector": "repair_contract",
+  "expected": "fire",
+  "note": "AA-645 (S249) repair contract, invariant days_kept: the S249 shadow shape (India 'Rajasthan Adventure', 15 days -> 10). The brand audit flags a meal line, the generic flag_fix pass rewrites the WHOLE itinerary and sends back only Days 1-2 of 4, ending on a full sentence, so invariants 1-5 pass. days_kept reverts the itinerary to its 4 pre-repair days; the output gets a soft degraded repair_contract entry, no ITINERARY_DAY_COUNT_MISMATCH, and stays publishable.",
+  "expect": {
+   "publishable": true,
+   "observed_exclude": [
+    "ITINERARY_DAY_COUNT_MISMATCH"
+   ],
+   "field_contains": {
+    "itineraries": [
+     "Day 3 —",
+     "Day 4 —"
+    ]
+   }
+  },
+  "input": {
+   "base": "a1-bhutan-4d",
+   "brand_audit": {
+    "status": "flagged",
+    "codes": [
+     "ITINERARY_MEAL_TIME_INVENTED"
+    ],
+    "fields": [
+     "aa_itineraries"
+    ],
+    "issues": [
+     "meal line"
+    ]
+   }
+  },
+  "llm_stub": [
+   {
+    "stage": "s1_flag_fix",
+    "content": {
+     "itineraries": "Day 1 — Arrival in Paro\nArrive at Paro airport and drive to the hotel. In the afternoon visit Rinpung Dzong and the National Museum, then walk the old market street.\n\nDay 2 — Taktsang Monastery hike\nHike to Taktsang Monastery, the Tiger's Nest, set on a cliff above the Paro valley, then walk back down to the valley floor."
+    }
+   }
+  ]
  }
 ]

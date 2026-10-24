@@ -1,16 +1,19 @@
 """S218 audit guard: every hard-block code has a declared repair path (lesson in skill/aa-lessons)."""
 import importlib
 
-from services.content_generation.graph import HARD_CODE_REPAIR, _HARD_BLOCK_CODES
+from services.content_generation.graph import HARD_CODE_REPAIR, V2_HARD_BLOCK_CODES, _HARD_BLOCK_CODES
+
+# AA-645: a code that is hard on an A1 writer-v2 draft only (graph.hard_block_codes) needs a repair path too.
+ALL_HARD = set(_HARD_BLOCK_CODES) | set(V2_HARD_BLOCK_CODES)
 
 
 def test_every_hard_code_declares_a_repair_path():
-    missing = set(_HARD_BLOCK_CODES) - set(HARD_CODE_REPAIR)
+    missing = ALL_HARD - set(HARD_CODE_REPAIR)
     assert not missing, f"hard codes without a repair path: {sorted(missing)}"
 
 
 def test_repair_registry_names_only_hard_codes():
-    assert set(HARD_CODE_REPAIR) <= set(_HARD_BLOCK_CODES)
+    assert set(HARD_CODE_REPAIR) <= ALL_HARD
 
 
 def test_deterministic_repairs_point_at_real_functions():

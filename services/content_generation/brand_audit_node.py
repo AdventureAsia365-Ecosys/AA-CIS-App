@@ -123,8 +123,215 @@ def meal_time_claims_supported(itin_text: str, tour: dict, *, tenant_id: str | N
     claims = [u for u in itinerary_claim_sentences(itin_text) if ITIN_MEAL_INVENTED.search(u["sentence"])]
     if not claims:
         return False
+    if not is_tenant_rewrite:
+        # AA-645 (S249): an A1 meal line that copies the same source day's own meal codes is not a claim to check.
+        blocks = source_day_meal_blocks(tour, itin_text)
+        claims = [c for c in claims if not source_backed_meal_line(c["sentence"], blocks.get(c["day"]))]
+        if not claims:
+            return True
     return _jev_clears_meal_claims(claims, itin_text, tour, tenant_id=tenant_id,
                                    is_tenant_rewrite=is_tenant_rewrite)
+
+
+# ── AA-645 (S249): a meal fact line copied from the source day is source-backed ──────────────────
+# The S1 writer v2 ends a day with one fact line holding only what that source day states (rule 7; it reads the day's
+# verbatim source block), e.g. "Overnight: Jaipur. Meals: dinner." from "Meals included: Dinner" or "(L+D)".
+# The "Meals:" branch of ITIN_MEAL_INVENTED matched every such line and only Jev could clear it, so 36/50 v2 drafts of
+# the S249 shadow were flagged and 34 went through the generic flag_fix pass that rewrites the WHOLE itinerary — the
+# rewrite that dropped Days 11–15 of India "Rajasthan Adventure". A meal line is source-backed when (1) every meal it
+# includes is one the SAME source day lists in its own meal line or code, and (2) every other word of it occurs in that
+# source day's text. Anything else — a meal the day does not list, a word the day does not have, a second meal claim
+# in the sentence, a day the source has no block for — still goes to Jev, exactly as before.
+_MEAL_LINE_RE = re.compile(r"\bmeals?\s*(?:included|provided)?\s*[:\-–—]\s*(?P<v>[^.;\n]*)", re.IGNORECASE)
+_PAGE_MEAL_CODE_RE = re.compile(r"\(\s*(?P<v>(?:B|L|D)(?:\s*[,/&+]\s*(?:B|L|D)){0,2})\s*\)")
+_MEAL_TOKEN = {"breakfast": "B", "breakfasts": "B", "b": "B", "bb": "B", "lunch": "L", "lunches": "L", "l": "L",
+               "dinner": "D", "dinners": "D", "supper": "D", "suppers": "D", "d": "D"}
+_BOARD = {"full": {"B", "L", "D"}, "half": {"B", "D"}}
+_BOARD_CODES = {"hb": {"B", "D"}, "fb": {"B", "L", "D"}}
+# A clause that does not include the meal: "lunch not included", "dinner optional, payable directly", "no meals".
+_NOT_INCLUDED_RE = re.compile(r"\b(?:not|no|none|nil|excluded?|own|optional|payable|extra|request|self)\b",
+                              re.IGNORECASE)
+_MEAL_LIST_WORDS = frozenset({"and", "or", "included", "provided", "only", "meal", "meals", "board", "with"})
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_EXPLICIT_NEGATIVE = frozenset({"none", "no", "not", "nil", "without", "excluded"})
+# Words that say "meals are included" without naming one: never enough on their own to back a meal line.
+_WEAK_MEAL_WORDS = frozenset({"all", "every", "each", "daily", "day", "days", "one", "two", "three", "full", "half",
+                              "whole", "entire", "included", "include", "includes", "inclusive", "provided", "served",
+                              "free", "complimentary", "throughout", "yes", "set", "per"})
+
+
+def _token_meals(toks: list[str], i: int) -> set[str]:
+    """The meals token ``toks[i]`` names ("dinner" → D, "HB" → B+D, "full" before "board" → B+L+D), else empty."""
+    t = toks[i]
+    if t in _MEAL_TOKEN:
+        return {_MEAL_TOKEN[t]}
+    if t in _BOARD_CODES:
+        return set(_BOARD_CODES[t])
+    if t in _BOARD and i + 1 < len(toks) and toks[i + 1] == "board":
+        return set(_BOARD[t])
+    return set()
+
+
+def meal_set(value: str) -> set[str]:
+    """The meals ("B", "L", "D") a SOURCE meal-line value includes: "breakfast, lunch" / "B, L, D" / "B/L/D" /
+    "full board" / "HB". A clause with any negation word (``_NOT_INCLUDED_RE``) adds nothing — on the source side
+    leaving a meal out is the safe direction (it can only send a page line to Jev). The page side reads its meal line
+    with the stricter ``page_meal_set``."""
+    out: set[str] = set()
+    for clause in re.split(r"[,;/|]", str(value or "").lower()):    # "lunch and dinner not included" = one clause
+        if _NOT_INCLUDED_RE.search(clause):
+            continue
+        toks = _TOKEN_RE.findall(clause)
+        for i in range(len(toks)):
+            out |= _token_meals(toks, i)
+    return out
+
+
+# Page side (review fix): a negation word governs only the meal run next to it. "not" followed by an inclusion word
+# and the words below negate the meal run BEFORE them ("lunch and dinner not included", "dinner at own expense",
+# "lunch optional"); "no" / "without" / a bare "not" negate the run AFTER them ("no lunch", "but not dinner").
+_POSTFIX_NEG = frozenset({"excluded", "exclude", "optional", "payable", "own", "extra", "request", "self"})
+_PREFIX_NEG = frozenset({"no", "none", "nil", "without"})
+_INCLUSION_AFTER_NOT = frozenset({"included", "include", "including", "inclusive", "provided", "served", "covered",
+                                  "available"})
+_RUN_JOINERS = frozenset({"and", "or", "meal", "meals"})
+_RUN_FILLERS = frozenset({"is", "are", "at", "on", "your", "the", "to", "be", "will", "a", "by", "for"})
+
+
+def _negated_positions(toks: list[str]) -> tuple[set[int], bool]:
+    """(token positions a negation word governs, whether the clause has a negation word at all)."""
+    negated: set[int] = set()
+    has_neg = False
+    for q, t in enumerate(toks):
+        postfix = t in _POSTFIX_NEG or (t == "not" and q + 1 < len(toks) and toks[q + 1] in _INCLUSION_AFTER_NOT)
+        prefix = t in _PREFIX_NEG or (t == "not" and not postfix)
+        if not (postfix or prefix):
+            continue
+        has_neg = True
+        step = -1 if postfix else 1
+        i = q + step
+        while 0 <= i < len(toks) and toks[i] in _RUN_FILLERS:
+            i += step
+        while 0 <= i < len(toks) and (_token_meals(toks, i) or toks[i] in _RUN_JOINERS or toks[i] == "board"):
+            negated.add(i)
+            i += step
+    return negated, has_neg
+
+
+def page_meal_set(value: str) -> set[str] | None:
+    """The meals a PAGE meal-line value includes, or None when that cannot be read safely. Clauses split on , ; / |
+    and on parentheses ("breakfast and dinner (lunch not included)" = B+D, lunch excluded). A clause with a negation
+    word must be wholly negated ("lunch and dinner not included"); a clause where a meal stands outside the negated run
+    ("dinner and no lunch") returns None, so the line goes to Jev instead of losing the meal it does claim."""
+    out: set[str] = set()
+    for clause in re.split(r"[,;/|()]", str(value or "").lower()):
+        toks = _TOKEN_RE.findall(clause)
+        meal_pos = [i for i in range(len(toks)) if _token_meals(toks, i)]
+        negated, has_neg = _negated_positions(toks)
+        if not has_neg:
+            for i in meal_pos:
+                out |= _token_meals(toks, i)
+        elif any(i not in negated for i in meal_pos):
+            return None
+    return out
+
+
+def source_day_meal_blocks(tour: dict, itin_text: str) -> dict:
+    """{page day: that day's source text} for the meal-line check. Source "Day N" blocks (ranges expanded, the first
+    block of a repeated day kept: s1_writer_v2.source_day_blocks, the blocks the v2 plan is built from). A source with
+    no day markers maps to a ONE-day page only (day 1, and None for claims above any day heading); a multi-day page
+    over an unmarked source has no per-day block, so its meal lines are left to Jev."""
+    from services.content_generation.s1_writer_v2 import source_day_blocks
+    from services.quality.s1_facts import field_text
+
+    src = field_text((tour or {}).get("itineraries") or (tour or {}).get("itinerary"))
+    out: dict = {}
+    for first, last, text in source_day_blocks(src):
+        for n in range(first, last + 1):
+            out.setdefault(n, text)
+    if not out and src.strip():
+        from services.content_generation import grounding as g
+        page_days = {int(m.group(1)) for m in (g._GEN_DAY_NUM_RE.match(ln) for ln in str(itin_text or "").splitlines())
+                     if m}
+        if len(page_days) <= 1:
+            out = {1: src, None: src}
+    return out
+
+
+# The source day's own meal list: a meal-label line ("Meals: B, L", "Meals  L D", "Meals included: Breakfast & Dinner")
+# or a meal-code group anywhere on a line ("(B, L)", "(L+D)", "(B/-/D)"). Codes are upper-case only, so an "(a) … (b)"
+# enumeration is never read as breakfast.
+_SRC_MEAL_LABEL_RE = re.compile(r"^\s*[-\u2022*]?\s*meals?(?:\s+included)?\b\s*(?P<sep>[:\-\u2013\u2014])?\s*"
+                                r"(?P<v>\S.*)$", re.IGNORECASE)
+_SRC_MEAL_HEADER_RE = re.compile(r"^\s*meals?(?:\s+included)?\s*:?\s*$", re.IGNORECASE)
+_SRC_BULLET_RE = re.compile(r"^\s*[-\u2022*\u00b7]\s*\S")
+_SRC_CODE = r"(?:BB|HB|FB|B|L|D|[-\u2013\u2014x\u00d7])"
+_SRC_MEAL_CODE_RE = re.compile(r"\((?=[^()]*[BLDHF])\s*(?P<v>" + _SRC_CODE + r"(?:\s*(?:[,/&+|\u00b7]|and)\s*"
+                               + _SRC_CODE + r"){0,3})\s*\)")
+
+
+def _is_bare_meal_list(value: str) -> bool:
+    toks = _TOKEN_RE.findall((value or "").lower())
+    return bool(toks) and all(t in _MEAL_TOKEN or t in _BOARD_CODES or t in _BOARD or t in _MEAL_LIST_WORDS
+                              for t in toks)
+
+
+def _source_day_meals(block: str) -> set[str]:
+    """Meals the source day lists in its own meal line(s) or meal-code group(s) — never a meal its prose mentions
+    ("after breakfast, drive to …" is not a meal list)."""
+    out: set[str] = set()
+    lines = (block or "").splitlines()
+    for i, line in enumerate(lines):
+        if _SRC_MEAL_HEADER_RE.match(line):            # "Meals Included:" with the list as bullets below it
+            for nxt in lines[i + 1:i + 4]:
+                if not _SRC_BULLET_RE.match(nxt):
+                    break
+                out |= meal_set(nxt)
+        else:
+            m = _SRC_MEAL_LABEL_RE.match(line)
+            # With no ":" / "-" after the label the value must be a bare list ("Meals  L D"): a prose line such as
+            # "Meal times are flexible; dinner on the boat." is not the day's meal list.
+            if m and len(line) <= 200 and (m.group("sep") or _is_bare_meal_list(m.group("v"))):
+                out |= meal_set(m.group("v"))
+        for c in _SRC_MEAL_CODE_RE.finditer(line):
+            out |= meal_set(c.group("v"))
+    return out
+
+
+def source_backed_meal_line(sentence: str, block: str | None) -> bool:
+    """True when ``sentence``'s meal claim is a copy of the source day's meal line (see the comment block above)."""
+    if not block or not block.strip():
+        return False
+    m = _MEAL_LINE_RE.search(sentence) or _PAGE_MEAL_CODE_RE.search(sentence)
+    if not m:
+        return False
+    rest = sentence[:m.start()] + " " + sentence[m.end():]
+    if ITIN_MEAL_INVENTED.search(rest):
+        return False                                   # a second meal claim in the same sentence: Jev decides
+    value = m.group("v")
+    page_meals, src_meals = page_meal_set(value), _source_day_meals(block)
+    if page_meals is None:
+        return False                                   # "dinner and no lunch": negation mixed with a claimed meal
+    if not page_meals <= src_meals:
+        return False                                   # a meal the source day does not list
+    allowed = set(_MEAL_TOKEN) | _MEAL_LIST_WORDS | set(_BOARD) | set(_BOARD_CODES)
+    negative_ok = not page_meals and not src_meals
+    if negative_ok:
+        allowed |= _EXPLICIT_NEGATIVE                  # "Meals: none included." on a day that lists no meal
+    src_words = set(_TOKEN_RE.findall(block.lower()))
+    words = _TOKEN_RE.findall(value.lower())
+    for w in words:
+        if w not in allowed and w not in src_words:
+            return False                               # "buffet", "welcome", "3": only when the source day says it
+    if page_meals:
+        return True
+    # No meal named (review fix): only an explicit negative on a day that lists no meal, or a content word the day
+    # itself has ("picnic meals", "lunch optional, payable directly"). "Meals: included." / "provided" / "all meals"
+    # claim inclusion with no source meal list behind them, and "all" / "daily" in the day's prose does not back that.
+    if negative_ok and any(w in _EXPLICIT_NEGATIVE for w in words):
+        return True
+    return any(w not in allowed and w not in _WEAK_MEAL_WORDS and w not in _EXPLICIT_NEGATIVE and not w.isdigit()
+               for w in words)
 
 
 def _jev_clears_meal_claims(claims: list[dict], itin_text: str, tour: dict, *, tenant_id: str | None,
