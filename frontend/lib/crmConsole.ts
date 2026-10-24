@@ -1,8 +1,9 @@
 // frontend/lib/crmConsole.ts
 // AA-941 (card CRM-13a, screen S-01) — types, labels and formatters for Platform › Tenants › Agencies (CRM).
 //
-// The shapes mirror the partner CRM's crm.ops.v1 L1 responses exactly (CIS relays them unchanged:
-// api/routers/admin_crm_console.py → api/services/crm_console.py). L1 data only: agency name, state, meters,
+// The shapes mirror the partner CRM's crm.ops.v1 L1 response models exactly (AA-Partner api/app/routers/ops.py; CIS
+// relays them unchanged: api/routers/admin_crm_console.py → api/services/crm_console.py). Money comes as a decimal
+// STRING (Pydantic Decimal → "0.1234"), never a JSON number: read it with parseUsd() / formatUsd() only. L1 data only: agency name, state, meters,
 // entitlements, member ids/roles/statuses, request statuses and failed job ids. No trip, pipeline, revenue or
 // traveller data exists in these shapes, and none is ever added here.
 
@@ -25,7 +26,7 @@ export interface TenantSummary {
   is_synthetic: boolean;
   has_owner: boolean;
   holds_travellers: boolean;
-  created_at: string | null;
+  created_at: string;
 }
 
 export interface TenantPage {
@@ -34,6 +35,7 @@ export interface TenantPage {
 }
 
 export interface AgencyUsage {
+  tenant_id: string;
   period_start: string;
   period_end: string;
   seats_used: number;
@@ -41,14 +43,16 @@ export interface AgencyUsage {
   active_members_30d: number;
   storage_bytes: number;
   inbound_mail_30d: number;
-  ai_cost_usd_month: number;
-  ai_budget_usd_month: number;
+  /** Decimal string in USD, 4 decimals ("0.1234"): AA's own platform AI spend for the agency this month. */
+  ai_cost_usd_month: string;
+  /** Decimal string in USD, 4 decimals ("2.0000"). */
+  ai_budget_usd_month: string;
   failed_jobs_24h: number;
   last_activity_at: string | null;
 }
 
 export interface AgencyEntitlements {
-  plan: string;
+  plan: "free" | "core" | "pro";
   seats_allowed: number;
   features_allowed: string[];
   insights_opt_out: boolean;
@@ -58,6 +62,7 @@ export type DataRequestKind = "agency_export" | "agency_deletion";
 export type DataRequestStatus =
   | "awaiting_owner_confirmation"
   | "confirmed"
+  | "export_downloaded"
   | "rejected"
   | "cancelled"
   | "failed"
@@ -68,20 +73,29 @@ export interface DataRequest {
   tenant_id: string;
   kind: DataRequestKind;
   status: DataRequestStatus;
-  raised_at: string | null;
+  raised_at: string;
+}
+
+/** GET …/data-requests: the latest agency-scope requests, newest first. */
+export interface DataRequestList {
+  items: DataRequest[];
+}
+
+/** POST …/data-requests (202). */
+export interface DataRequestRaised extends DataRequest {
+  owners_notified: number;
 }
 
 export interface AgencyMember {
   member_id: string;
-  role: string;
+  role: "owner" | "agent" | "assistant";
   status: string;
   joined_at: string | null;
 }
 
 export interface PendingRecovery {
   request_id: string;
-  eligible_at: string;
-  candidate_member_id?: string;
+  eligible_at: string | null;
 }
 
 export interface AgencyMembers {
@@ -99,17 +113,56 @@ export interface FailedJob {
   finished_at: string | null;
 }
 
-/** A list answer: the CRM returns `{items: [...]}` (TenantPage style); older drafts used a named key or a bare
- * array. Read whichever is there so the page does not break on that detail. */
-export function listOf<T>(body: unknown, keys: string[]): T[] {
-  if (Array.isArray(body)) return body as T[];
-  if (body && typeof body === "object") {
-    for (const k of ["items", ...keys]) {
-      const v = (body as Record<string, unknown>)[k];
-      if (Array.isArray(v)) return v as T[];
-    }
-  }
-  return [];
+/** GET …/jobs: the agency's failed jobs of the last 7 days (no payload). */
+export interface FailedJobList {
+  items: FailedJob[];
+}
+
+// Write answers (the CRM's response models).
+export interface OwnerInviteAccepted {
+  tenant_id: string;
+  invitation_id: string;
+  status: "pending";
+  expires_at: string;
+}
+
+export interface InsightsOptOut {
+  opt_out: boolean;
+}
+
+export interface JobRetried {
+  job_id: string;
+  status: "queued";
+}
+
+export interface MemberDeactivated {
+  member_id: string;
+  status: "disabled";
+  signed_out: boolean;
+  active_owners: number;
+}
+
+export interface RecoveryOpened {
+  request_id: string;
+  status: "pending";
+  eligible_at: string | null;
+  owners_notified: number;
+}
+
+export interface RecoveryCompleted {
+  request_id: string;
+  status: "completed";
+  owner_member_id: string;
+}
+
+// Request bodies (the CRM's models are closed: extra="forbid", so a field outside these is a 422).
+export interface TicketBody {
+  ticket_ref: string;
+}
+
+export interface InsightsOptOutBody {
+  opt_out: boolean;
+  owner_request_ref: string;
 }
 
 // ── request vocabularies (exactly the CRM's codes) ─────────────────────────────────────────────
@@ -168,6 +221,8 @@ export function stateLabel(state: string): { label: string; tone: Tone } {
 export const DATA_REQUEST_STATUS_LABEL: Record<DataRequestStatus, { label: string; tone: Tone }> = {
   awaiting_owner_confirmation: { label: "Waiting for the owner", tone: "warning" },
   confirmed: { label: "Confirmed by the owner", tone: "info" },
+  // Still the agency's open request: a new export or deletion is refused (offboarding_open) until the owner closes it.
+  export_downloaded: { label: "Downloaded; the owner has not closed it yet", tone: "warning" },
   rejected: { label: "Declined by the owner", tone: "neutral" },
   cancelled: { label: "Cancelled", tone: "neutral" },
   failed: { label: "Failed", tone: "danger" },
@@ -202,10 +257,12 @@ const ERROR_TEXT: Record<string, string> = {
   tenant_status: "Not possible in the agency's current state.",
   has_travellers: "The agency already holds travellers or inquiries, so AA cannot invite a first owner.",
   owner_exists: "The agency already has an owner.",
+  tenant_exists: "An agency with this id already exists in the CRM. Nothing was changed.",
   owner_invite_pending: "An owner invitation is already pending.",
   member_limit_reached: "The agency has no free seat.",
   invalid_feature: "One of the features is not a known code.",
-  offboarding_open: "The agency already has an open export or deletion request.",
+  offboarding_open:
+    "The agency already has an open export or deletion request (a downloaded export stays open until the owner closes it).",
   legal_hold: "A legal hold is active, so the agency cannot be deleted.",
   recovery_pending: "An owner recovery is already pending.",
   recovery_not_due: "The 14-day waiting period has not ended yet.",
@@ -290,14 +347,29 @@ export function formatBytes(n: number | null | undefined): string {
   return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[i]}`;
 }
 
-export function formatUsd(n: number | null | undefined): string {
-  if (n == null || !Number.isFinite(n)) return "—";
+/** A CRM money value (a decimal string such as "0.1234"; a number is accepted too) as a number, or null when it is
+ * missing or not a finite number. */
+export function parseUsd(v: string | number | null | undefined): number | null {
+  if (v == null) return null;
+  if (typeof v === "string" && v.trim() === "") return null;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+export function formatUsd(v: string | number | null | undefined): string {
+  const n = parseUsd(v);
+  if (n == null) return "—";
   return `$${n < 1 ? n.toFixed(3) : n.toFixed(2)}`;
 }
 
 export function pct(used: number, allowed: number): number {
   if (!allowed || allowed <= 0) return 0;
   return Math.max(0, Math.min(100, Math.round((100 * used) / allowed)));
+}
+
+/** The AI spend bar: cost / budget, both CRM decimal strings; 0 when either is missing. */
+export function usdPct(cost: string | number | null | undefined, budget: string | number | null | undefined): number {
+  return pct(parseUsd(cost) ?? 0, parseUsd(budget) ?? 0);
 }
 
 export const shortId = (id: string | null | undefined) => (id ? id.slice(0, 8) : "—");

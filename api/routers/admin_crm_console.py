@@ -102,7 +102,7 @@ async def get_jobs(request: Request, tenant_id: uuid.UUID):
 
 # ── writes (the CRM requires crm-platform-admin and a ticket reference) ──────────────────────────────
 
-@router.post("/agencies", summary="AA-941 — create a CRM agency (201 created, 200 already there)")
+@router.post("/agencies", summary="AA-941 — create a CRM agency (201; an existing id is 409 tenant_exists)")
 async def create_agency(request: Request, payload: dict[str, Any] = Body(...)):
     return await _relay(request, "POST", "/tenants", json=payload)
 

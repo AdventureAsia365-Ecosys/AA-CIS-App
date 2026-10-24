@@ -46,19 +46,30 @@ import {
   formatBytes,
   formatUsd,
   kindLabel,
-  listOf,
   pct,
   recoveryDue,
   shortId,
   stateLabel,
+  usdPct,
   type AgencyEntitlements,
   type AgencyMember,
   type AgencyMembers,
   type AgencyUsage,
   type DataRequest,
   type DataRequestKind,
+  type DataRequestList,
+  type DataRequestRaised,
   type FailedJob,
+  type FailedJobList,
+  type InsightsOptOut,
+  type InsightsOptOutBody,
+  type JobRetried,
+  type MemberDeactivated,
+  type OwnerInviteAccepted,
+  type RecoveryCompleted,
+  type RecoveryOpened,
   type TenantSummary,
+  type TicketBody,
   type WriteResult,
 } from "@/lib/crmConsole";
 import { Field, InlineError, Section, WriteModal, fieldStyle, noteStyle } from "./consoleUi";
@@ -98,7 +109,7 @@ export default function AgencyDrawer({ agency, canWrite, onClose, onChanged }: P
   });
   const requests = useQuery({
     queryKey: key(tid, "data-requests"),
-    queryFn: async () => listOf<DataRequest>(await apiGet<unknown>(`${base}/data-requests`), ["requests", "data_requests"]),
+    queryFn: async () => (await apiGet<DataRequestList>(`${base}/data-requests`)).items,
     retry: false,
   });
   const members = useQuery({
@@ -106,7 +117,7 @@ export default function AgencyDrawer({ agency, canWrite, onClose, onChanged }: P
   });
   const jobs = useQuery({
     queryKey: key(tid, "jobs"),
-    queryFn: async () => listOf<FailedJob>(await apiGet<unknown>(`${base}/jobs`), ["jobs"]),
+    queryFn: async () => (await apiGet<FailedJobList>(`${base}/jobs`)).items,
     retry: false,
   });
 
@@ -206,7 +217,7 @@ function UsageSection({ q }: { q: Q<AgencyUsage> }) {
           <Tile label="Active members (30 days)" value={u.active_members_30d} />
           <Tile label="Storage" value={formatBytes(u.storage_bytes)} />
           <Tile label="AI spend this month" value={formatUsd(u.ai_cost_usd_month)} sub={`of ${formatUsd(u.ai_budget_usd_month)} budget`}>
-            <Bar value={pct(u.ai_cost_usd_month, u.ai_budget_usd_month)} warn={pct(u.ai_cost_usd_month, u.ai_budget_usd_month) >= 80} />
+            <Bar value={usdPct(u.ai_cost_usd_month, u.ai_budget_usd_month)} warn={usdPct(u.ai_cost_usd_month, u.ai_budget_usd_month) >= 80} />
           </Tile>
           <Tile label="Failed jobs (24 h)" value={<span style={{ color: u.failed_jobs_24h ? K.danger : K.ink }}>{u.failed_jobs_24h}</span>} />
           <Tile label="Inbound mail (30 days)" value={u.inbound_mail_30d || "—"}
@@ -258,7 +269,7 @@ function AccessSection({ agency, canWrite, base, onDone }: { agency: TenantSumma
       </WriteModal>
       <WriteModal<TenantSummary> open={open === "unlock"} onClose={() => setOpen(null)}
         title={`Unlock ${agency.agency_name}?`} confirmLabel="Unlock agency"
-        submit={(ticket) => crmWrite<TenantSummary>("POST", `${path}/unlock`, { ticket_ref: ticket })}
+        submit={(ticket) => crmWrite<TenantSummary>("POST", `${path}/unlock`, { ticket_ref: ticket } satisfies TicketBody)}
         onDone={(r) => { setOpen(null); onDone("Agency unlocked.", r.body); }}>
         <div style={noteStyle}>Members can use the CRM again. Failed jobs can then be retried below.</div>
       </WriteModal>
@@ -296,7 +307,7 @@ function FirstOwnerSection({ agency, canWrite, base, onDone }: { agency: TenantS
       )}
       <WriteModal open={open} onClose={close} title="Invite the first owner" confirmLabel="Send invitation"
         canSubmit={emailOk}
-        submit={(ticket) => crmWrite("POST", `${path}/owner-invite`, { owner_email: email.trim(), ticket_ref: ticket })}
+        submit={(ticket) => crmWrite<OwnerInviteAccepted>("POST", `${path}/owner-invite`, { owner_email: email.trim(), ticket_ref: ticket })}
         onDone={(r) => {
           const expires = typeof r.body?.expires_at === "string" ? ` It expires ${formatDateTime(r.body.expires_at)}.` : "";
           close();
@@ -385,7 +396,7 @@ function InsightsSection({ q, canWrite, base, onDone }: { q: Q<AgencyEntitlement
         title={optedOut ? "Include the agency in AA insights again?" : "Opt the agency out of AA insights?"}
         confirmLabel={optedOut ? "Include" : "Opt out"} ticketLabel="Owner's request reference"
         ticketHint="The ticket holding the owner's written request, for example AA-941."
-        submit={(ref) => crmWrite<{ opt_out?: boolean }>("PUT", `${path}/insights-opt-out`, { opt_out: !optedOut, owner_request_ref: ref })}
+        submit={(ref) => crmWrite<InsightsOptOut>("PUT", `${path}/insights-opt-out`, { opt_out: !optedOut, owner_request_ref: ref } satisfies InsightsOptOutBody)}
         onDone={(r) => { setOpen(false); onDone(r.body?.opt_out ? "The agency is opted out of AA insights." : "The agency is included in AA insights."); }} />
     </Section>
   );
@@ -433,7 +444,7 @@ function DataRequestsSection({ q, canWrite, active, base, onDone }: {
       )}
       <WriteModal open={open} onClose={() => setOpen(false)} title="Raise a data request" confirmLabel="Raise request"
         destructive={kind === "agency_deletion"}
-        submit={(ticket) => crmWrite("POST", `${path}/data-requests`, { kind, ticket_ref: ticket })}
+        submit={(ticket) => crmWrite<DataRequestRaised>("POST", `${path}/data-requests`, { kind, ticket_ref: ticket })}
         onDone={() => { setOpen(false); onDone("Request raised. It waits for the owner's confirmation."); }}>
         <Field label="Request" htmlFor="crm-dr-kind">
           <select id="crm-dr-kind" value={kind} onChange={(e) => setKind(e.target.value as DataRequestKind)} style={fieldStyle}>
@@ -504,7 +515,6 @@ function RecoverySection({ q, canWrite, active, base, onDone }: {
           {pending ? (
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 13 }}>
               <Badge tone="warning">Recovery pending</Badge>
-              {pending.candidate_member_id && <span style={{ fontFamily: mono }}>candidate {shortId(pending.candidate_member_id)}</span>}
               <span style={noteStyle}>can complete from {formatDateTime(pending.eligible_at)}</span>
               {canWrite && (
                 <Button size="sm" variant="primary" disabled={!due || !active} onClick={() => setOpenComplete(true)}
@@ -524,7 +534,7 @@ function RecoverySection({ q, canWrite, active, base, onDone }: {
       ) : null}
       <WriteModal open={openStart} onClose={() => setOpenStart(false)} title="Start an owner recovery"
         confirmLabel="Start recovery" canSubmit={!!candidate}
-        submit={(ticket) => crmWrite("POST", `${path}/owner-recovery`, { candidate_member_id: candidate, reason, ticket_ref: ticket })}
+        submit={(ticket) => crmWrite<RecoveryOpened>("POST", `${path}/owner-recovery`, { candidate_member_id: candidate, reason, ticket_ref: ticket })}
         onDone={(r) => {
           setOpenStart(false);
           const when = typeof r.body?.eligible_at === "string" ? formatDateTime(r.body.eligible_at) : "in 14 days";
@@ -544,14 +554,14 @@ function RecoverySection({ q, canWrite, active, base, onDone }: {
       <WriteModal open={openComplete} onClose={() => setOpenComplete(false)} title="Complete the owner recovery"
         confirmLabel="Promote to owner"
         submit={(ticket) => pending
-          ? crmWrite("POST", `${path}/owner-recovery/${encodeURIComponent(pending.request_id)}/complete`, { ticket_ref: ticket })
-          : Promise.resolve<WriteResult>({ ok: false, status: 0, message: "No pending recovery.", code: null })}
+          ? crmWrite<RecoveryCompleted>("POST", `${path}/owner-recovery/${encodeURIComponent(pending.request_id)}/complete`, { ticket_ref: ticket } satisfies TicketBody)
+          : Promise.resolve<WriteResult<RecoveryCompleted>>({ ok: false, status: 0, message: "No pending recovery.", code: null })}
         onDone={() => { setOpenComplete(false); onDone("The candidate is now an owner."); }}>
         <div style={noteStyle}>The 14 days have passed and no member cancelled. The candidate becomes an owner.</div>
       </WriteModal>
       <WriteModal open={disable !== null} onClose={() => setDisable(null)} destructive
         title={`Disable member ${shortId(disable)}?`} confirmLabel="Disable member"
-        submit={(ticket) => crmWrite("POST", `${path}/members/${encodeURIComponent(disable ?? "")}/deactivate`, { ticket_ref: ticket })}
+        submit={(ticket) => crmWrite<MemberDeactivated>("POST", `${path}/members/${encodeURIComponent(disable ?? "")}/deactivate`, { ticket_ref: ticket } satisfies TicketBody)}
         onDone={() => { setDisable(null); onDone("Member disabled and signed out."); }}>
         <div style={noteStyle}>
           The member can no longer sign in. The last active owner cannot be disabled here: use an owner recovery.
@@ -593,7 +603,7 @@ function JobsSection({ q, canWrite, locked, base, onDone }: {
       )}
       <WriteModal open={retry !== null} onClose={() => setRetry(null)} title={`Retry job ${shortId(retry?.job_id)}?`}
         confirmLabel="Retry job" destructive={retry?.kind === "crm_offboard"}
-        submit={(ticket) => crmWrite("POST", `${path}/jobs/${encodeURIComponent(retry?.job_id ?? "")}/retry`, { ticket_ref: ticket })}
+        submit={(ticket) => crmWrite<JobRetried>("POST", `${path}/jobs/${encodeURIComponent(retry?.job_id ?? "")}/retry`, { ticket_ref: ticket } satisfies TicketBody)}
         onDone={() => { setRetry(null); onDone("Job queued again."); }}>
         {retry?.kind === "crm_offboard" ? (
           <div style={{ ...noteStyle, color: K.danger, display: "flex", gap: 6 }}>

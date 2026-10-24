@@ -5,7 +5,7 @@
 // API (CIS BFF → api/routers/admin_crm_console.py → the CRM's crm.ops.v1 with this staff member's own Cognito token):
 //   GET  /api/admin/platform/crm/console          {can_write, environment}: write buttons only for crm-platform-admin
 //   GET  /api/admin/platform/crm/agencies         keyset pages of TenantSummary ("Load more")
-//   POST /api/admin/platform/crm/agencies         create an agency (201 created, 200 it already existed)
+//   POST /api/admin/platform/crm/agencies         create an agency (201; an existing id is 409 tenant_exists, nothing written)
 //   GET  /api/admin/tenants                       the CIS tenants, to pick the one the agency belongs to
 // The drawer (AgencyDrawer.tsx) holds the meters and every L1 action.
 //
@@ -35,6 +35,7 @@ import {
   LOCALES,
   crmErrorText,
   crmWrite,
+  isTicket,
   stateLabel,
   type CrmConsole,
   type TenantPage,
@@ -216,14 +217,16 @@ function CreateAgencyModal({ open, forceSynthetic, onClose, onCreated }: {
   const [name, setName] = useState("");
   const [locale, setLocale] = useState<string>("en-AU");
   const [synthetic, setSynthetic] = useState(true);
+  const [ticket, setTicket] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isSynthetic = forceSynthetic ? true : synthetic;
-  const canSubmit = !!tenantId && name.trim().length > 0 && !busy;
+  const ticketOk = isTicket(ticket);
+  const canSubmit = !!tenantId && name.trim().length > 0 && ticketOk && !busy;
 
   const reset = () => {
-    setSource("cis"); setTenantId(""); setName(""); setLocale("en-AU"); setSynthetic(true); setError(null);
+    setSource("cis"); setTenantId(""); setName(""); setLocale("en-AU"); setSynthetic(true); setTicket(""); setError(null);
   };
   const close = () => { if (!busy) { reset(); onClose(); } };
 
@@ -239,19 +242,17 @@ function CreateAgencyModal({ open, forceSynthetic, onClose, onCreated }: {
     setError(null);
     const r = await crmWrite<TenantSummary>("POST", "/agencies", {
       tenant_id: tenantId, agency_name: name.trim(), is_synthetic: isSynthetic, default_locale: locale,
+      ticket_ref: ticket.trim(),
     });
     setBusy(false);
     if (!r.ok) {
       setError(r.message);
       return;
     }
-    toast.success(r.status === 201 ? `Created ${name.trim()}.` : `${name.trim()} already existed; nothing changed.`);
-    const created: TenantSummary = r.body?.tenant_id ? r.body : {
-      tenant_id: tenantId, agency_name: name.trim(), state: "active", is_synthetic: isSynthetic, has_owner: false,
-      holds_travellers: false, created_at: null,
-    };
+    // The CRM creates only (201); an id that already exists is refused with 409 tenant_exists above.
+    toast.success(`Created ${r.body.agency_name}.`);
     reset();
-    onCreated(created);
+    onCreated(r.body);
   };
 
   return (
@@ -309,6 +310,13 @@ function CreateAgencyModal({ open, forceSynthetic, onClose, onCreated }: {
             onChange={(e) => setSynthetic(e.target.checked)} />
           Synthetic (test) agency
         </label>
+        <Field label="Ticket reference" htmlFor="crm-create-ticket"
+          hint={ticket && !ticketOk ? "Use a project key, a dash and a number, for example AA-941."
+            : "The support or Jira ticket this agency belongs to. It goes into the agency's access log."}>
+          <input id="crm-create-ticket" data-testid="crm-create-ticket" type="text" autoComplete="off" value={ticket}
+            maxLength={27} placeholder="AA-941" onChange={(e) => setTicket(e.target.value)} style={fieldStyle}
+            aria-invalid={!!ticket && !ticketOk} />
+        </Field>
         <div style={noteStyle}>
           {forceSynthetic
             ? "This environment only accepts synthetic agencies, so the box stays ticked."
