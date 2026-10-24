@@ -26,6 +26,7 @@ Rules
 """
 from __future__ import annotations
 
+import json as _json
 import re
 import time
 from typing import Any, Optional
@@ -85,6 +86,10 @@ def _problem(detail: str, message: str) -> dict[str, Any]:
     return {"detail": detail, "message": message}
 
 
+def _refuse_constant(name: str) -> Any:
+    raise ValueError(f"non-JSON constant {name}")
+
+
 async def crm_ops_call(method: str, path: str, authorization: Optional[str], *, json: Any = None,
                        params: Optional[dict[str, Any]] = None) -> tuple[int, dict[str, Any]]:
     """Relay one L1 call. Never raises; returns the status code and JSON object body to send back."""
@@ -109,7 +114,9 @@ async def crm_ops_call(method: str, path: str, authorization: Optional[str], *, 
         return 503, _problem("crm_unavailable", "The partner CRM did not answer. Try again in a minute.")
     ms = round((time.monotonic() - started) * 1000)
     try:
-        body = r.json()
+        # NaN / Infinity are not JSON objects a response can carry back (JSONResponse refuses them): treat them like
+        # any malformed answer instead of a 500 (AA-941 security review).
+        body = _json.loads(r.content, parse_constant=_refuse_constant)
     except ValueError:
         body = None
     if not isinstance(body, dict):

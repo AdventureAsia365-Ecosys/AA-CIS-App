@@ -135,7 +135,8 @@ async def test_network_error_is_503(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("rec", [Recorder(200, raw=b"<html>proxy</html>"), Recorder(200, body=[1, 2]),
-                                 Recorder(502, raw=b"Bad gateway")])
+                                 Recorder(502, raw=b"Bad gateway"), Recorder(200, raw=b"{\"a\": NaN}"),
+                                 Recorder(200, raw=b"{\"a\": Infinity}")])
 async def test_non_object_body_is_502(monkeypatch, rec):
     _script(monkeypatch, rec)
     status, body = await crm_console.crm_ops_call("GET", "/tenants", f"Bearer {OTHER_ISS}")
