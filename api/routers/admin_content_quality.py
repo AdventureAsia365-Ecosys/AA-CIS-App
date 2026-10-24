@@ -339,8 +339,11 @@ def flagged_sentences(content_text: str, hls: list[dict]) -> list[dict]:
         it["problems"].append({"gate": h["gate"], "problem": h["problem"], "blocking": h["blocking"],
                                "severity": h.get("severity"), **({"source": h["source"]} if h.get("source") else {})})
         it["blocking"] = it["blocking"] or bool(h["blocking"])
-    # AA-916 WM-06 — the reason chip the admin UI preselects (first gate of the sentence).
-    return [{**items[k], "suggested_reason": suggested_reason(items[k]["gates"][0])} for k in sorted(items)]
+    # AA-916 WM-06 — the reason chip the admin UI preselects (first gate of the sentence). AA-924: a finding inside a
+    # merged entry (F2_lexicon, F15_voice) names its legacy source; the chip follows the source (a banned pattern is
+    # ai_phrasing, a tenant-forbidden word voice_off_brand), as it did before the fold.
+    return [{**items[k], "suggested_reason": suggested_reason(items[k]["problems"][0].get("source")
+                                                             or items[k]["gates"][0])} for k in sorted(items)]
 
 
 # AA-802 — when the tenant last took a copy of the piece away: published to a channel

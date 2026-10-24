@@ -484,3 +484,15 @@ def test_flagged_sentences_carry_the_suggested_reason():
             "gate": "F1_grounding", "problem": "q", "blocking": True}]
     [item] = cq.flagged_sentences(text, hls)
     assert item["gates"] == ["F12_scope", "F1_grounding"] and item["suggested_reason"] == "wrong_place_or_time"
+
+
+def test_flagged_sentences_suggested_reason_follows_the_lexicon_source():
+    """AA-924 — an F2_lexicon finding names its legacy source; the chip follows it, not the merged entry."""
+    text = "One. Two sentence here."
+    span = {"key": "k", "sentence_start": 5, "sentence_end": 23, "sentence": "Two sentence here."}
+    banned = [{**span, "gate": "F2_lexicon", "source": "F2_banned_patterns", "problem": "p", "blocking": True}]
+    forbidden = [{**span, "gate": "F2_lexicon", "source": "F2_brand_forbidden", "problem": "p", "blocking": True}]
+    [item] = cq.flagged_sentences(text, banned)
+    assert item["gates"] == ["F2_lexicon"] and item["suggested_reason"] == "ai_phrasing"
+    [item] = cq.flagged_sentences(text, forbidden)
+    assert item["suggested_reason"] == "voice_off_brand"
