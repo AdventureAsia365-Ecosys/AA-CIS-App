@@ -241,6 +241,13 @@ async def _seed(pools, tid: str, stage: str) -> dict:
                         "VALUES ($1::uuid, $2::uuid, $3)", own, tid, v2)
     await admin.execute("INSERT INTO shared.pipeline_jobs (request, tenant) VALUES ('{}'::jsonb, $1), "
                         "('{}'::jsonb, $2)", tid, f"aa839-{tid[:8]}")
+    # AA-916 (277): a tenant edit signal (tenant text, deleted) and an A1 platform signal of the same stage (kept)
+    for scope, tenant in (("tenant", tid), ("platform", None)):
+        await admin.execute("""
+            INSERT INTO shared.writing_signal (writer, scope, tenant_id, before_text, before_sha256, action, actor_type,
+                                               source_table, source_id)
+            VALUES ('t9_blog', $1, $2::uuid, 'text', repeat('a', 64), 'tenant_edit', 'tenant', 'content_piece', $3)""",
+                            scope, tenant, stage)
     return {"plan_id": plan_id, "version_id": version_id, "job_id": job_id, "v1": str(v1), "v2": str(v2),
             "master": master, "own_tour": own}
 
@@ -299,6 +306,7 @@ async def test_tenant_dry_run_counts_and_writes_nothing(pool):
     assert rows[("acp_contract.atomize_day_fingerprint", "delete")] == 1
     assert rows[("acp_contract.tour_atoms", "delete")] == 2            # owned on the master tour + on its own tour
     assert rows[("shared.pipeline_jobs", "delete")] == 2               # tenant id and slug
+    assert rows[("shared.writing_signal", "delete")] == 1              # AA-916: the tenant row, not the platform one
     assert res["tenant_state"] == "offboarded" and res["unregistered"] == []
     assert res["s3"][1] == {"prefix": f"bronze:brand-identity/{tid}/", "objects": 2}
     assert {s["name"]: s["exists"] for s in res["secrets"]} == {f"acp/cms/{tid}": True, f"acp/social/{tid}": False}
@@ -417,8 +425,12 @@ async def test_tenant_apply_erases_children_first_and_leaves_other_tenants(pool)
                                    "AND action = 'tenant.erased'", tid)
     details = json.loads(details) if isinstance(details, str) else details
     assert details["dry_run_job_id"] == dry_id and details["snapshot_id"] == "dsar-test-pre"
+    # AA-916: the tenant's writing signals are gone, the platform one of the same seed stays
+    assert [r["scope"] for r in await admin.fetch("SELECT scope FROM shared.writing_signal WHERE source_id = $1",
+                                                  stage)] == ["platform"]
     # the other tenant is untouched
     assert await admin.fetchval("SELECT count(*) FROM acp_shared.quarter_plan WHERE tenant_id = $1::uuid", other) == 1
+    assert await admin.fetchval("SELECT count(*) FROM shared.writing_signal WHERE tenant_id = $1::uuid", other) == 1
     assert await admin.fetchval("SELECT count(*) FROM shared.llm_call_log WHERE tenant_id = $1::uuid", other) == 2
     assert await admin.fetchval("SELECT count(*) FROM gold_aa_internal.tenant_tour_versions "
                                 "WHERE tenant_id = $1::uuid", other) == 2

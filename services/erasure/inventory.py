@@ -98,6 +98,8 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     # AA-978 (276): the guards allow these deletes only for an offboarded tenant (or after the 90-day retention).
     _d("shared.tenant_members", "the agency's memberships (identities, Content studio roles)"),
     _d("shared.tenant_membership_event", "the agency's tenant.membership.v1 feed events"),
+    # AA-916 (277, ADR 0010 decision 11): tenant text lives only in deletable tables. Platform rows have no tenant.
+    _d("shared.writing_signal", "writing-memory signals (before/after text) of the tenant"),
     _d("shared.pipeline_runs", "tenant pipeline batches (acp_runs and raw rows follow through FKs)"),
     _d("shared.acp_runs", "ACP run rows"),
     _d("shared.tenant_api_usage", "per-request API usage; a CHECK forbids a tenant-actor row without a tenant"),

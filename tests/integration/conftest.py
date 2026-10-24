@@ -86,7 +86,13 @@ X1_CI_ONLY_LEGACY_RLS = ("acp_deliver.packets", "acp_deliver.pieces", "acp_share
 X1_POST_244_RLS = ("shared.tenant_brand_rules", "shared.tenant_seo_config",
                    "acp_shared.subject", "acp_shared.quarter_plan", "acp_shared.quarter_plan_version",
                    "acp_shared.year_plan", "acp_deliver.tenant_tour_pages", "acp_contract.tour_atoms",
-                   "shared.notifications")   # 274 part A (AA-986 L3)
+                   "shared.notifications",   # 274 part A (AA-986 L3)
+                   "shared.writing_signal")  # 277 (AA-916), FORCE: also X1_POST_245_FORCE_RLS
+# FORCE RLS tables of migrations applied on Dev AFTER 245 (CIS 277, AA-916): their own <table>_cis_owner_all policy
+# (X1 S21 standing check). 245's guards and test_aa860_migration_245 know only its 8 FORCE tables, and its teardown
+# (x1_245_undo: DROP OWNED BY cis_owner) drops every policy TO cis_owner: x1_244_ci_shape takes the policy off with
+# the RLS, x1_244_ci_unshape (always after x1_245_undo) puts it back.
+X1_POST_245_FORCE_RLS = ("shared.writing_signal",)
 
 
 def _post_244_rls(cur, on):
@@ -94,11 +100,14 @@ def _post_244_rls(cur, on):
         cur.execute("SELECT to_regclass(%s) IS NOT NULL", (table,))
         if not cur.fetchone()[0]:
             continue
-        policy = f"{table.split('.')[1]}_cis_app_all"
-        cur.execute(f"DROP POLICY IF EXISTS {policy} ON {table}")
-        if on:
-            cur.execute(f"CREATE POLICY {policy} ON {table} AS PERMISSIVE FOR ALL TO cis_app "
-                        "USING (true) WITH CHECK (true)")
+        policies = [(f"{table.split('.')[1]}_cis_app_all", "cis_app")]
+        if table in X1_POST_245_FORCE_RLS:
+            policies.append((f"{table.split('.')[1]}_cis_owner_all", "cis_owner"))
+        for policy, role in policies:
+            cur.execute(f"DROP POLICY IF EXISTS {policy} ON {table}")
+            if on:
+                cur.execute(f"CREATE POLICY {policy} ON {table} AS PERMISSIVE FOR ALL TO {role} "
+                            "USING (true) WITH CHECK (true)")
         cur.execute(f"ALTER TABLE {table} {'ENABLE' if on else 'DISABLE'} ROW LEVEL SECURITY")
 
 
