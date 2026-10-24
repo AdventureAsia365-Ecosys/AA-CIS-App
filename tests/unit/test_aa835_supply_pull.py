@@ -121,7 +121,7 @@ def test_photo_source_refused(over):
 
 def test_photo_source_ok_and_bucket_pin(monkeypatch):
     photos.check_source(_src(), source_id=ENTITY, sha256="a" * 64)
-    monkeypatch.setenv("SUPPLY_MEDIA_BUCKET", "aa-booking-dev-supply-media-000000000000")
+    monkeypatch.setenv("SUPPLY_MEDIA_BUCKET", "aa-booking-dev-supply-media-111122223333")
     with pytest.raises(photos.PhotoRefused):
         photos.check_source(_src(), source_id=ENTITY, sha256="a" * 64)
 
