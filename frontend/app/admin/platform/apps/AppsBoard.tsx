@@ -12,6 +12,9 @@
 //   - CIS: the API's commit + ECS task revision, the live workers' commits (SHA parity = every live worker
 //     runs the API's commit), the deploy gate (same answer as the CI guard), schema readiness (/health/ready).
 //   - Booking: its public /booking/health and /booking/health/ready over HTTP (commit, DB, schema version).
+//   - Partner CRM (AA-936): its public /crm/health and /crm/health/ready like Booking, plus its job backlog per kind
+//     (GET /api/admin/platform/apps/crm/jobs → the CRM's crm.ops.v1 /jobs/summary with this staff member's own
+//     Cognito token; read once on open, never polled).
 //   - TripPlanner: no health endpoint yet; today's customer-facing LLM spend vs the DEFAULT daily cap
 //     (the live cap is a TripPlanner env var CIS cannot see).
 // Frontends report no version yet (deferred): the row only links them.
@@ -47,6 +50,8 @@ import {
   type AppsResp,
   type BookingCard,
   type CisCard,
+  type CrmCard,
+  type CrmJobsResp,
   type TripPlannerCard,
 } from "@/lib/platform";
 
@@ -223,6 +228,7 @@ function AppCardView({ card }: { card: AppCard }) {
       <TrafficLine traffic={card.traffic ?? null} />
       {card.id === "cis" && <CisBody card={card} />}
       {card.id === "booking" && <BookingBody card={card} />}
+      {card.id === "crm" && <CrmBody card={card} />}
       {card.id === "tripplanner" && <TripPlannerBody card={card} />}
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", borderTop: `1px solid ${K.line}`, paddingTop: 10 }}>
         {reg && <ExtLink href={reg.adminUrl}>{reg.adminLabel}</ExtLink>}
@@ -347,41 +353,104 @@ function httpTone(code: number | undefined, status: string | null | undefined): 
   return code >= 500 || code === 0 ? "danger" : "warning";
 }
 
-function BookingBody({ card }: { card: BookingCard }) {
+function BookingBody({ card, name = "Booking", base = "/booking" }: { card: BookingCard | CrmCard; name?: string; base?: string }) {
   if (card.status === "unknown" && card.error) {
     return (
       <>
         <div style={noteStyle}>
-          Could not reach Booking&apos;s health endpoint ({card.error}). The card says unknown, not down: the probe
+          Could not reach {name}&apos;s health endpoint ({card.error}). The card says unknown, not down: the probe
           has a 2 s timeout.
         </div>
-        <ExtLink href={card.health_url} title="Booking's public health endpoint">/booking/health</ExtLink>
+        <ExtLink href={card.health_url} title={`${name}'s public health endpoint`}>{base}/health</ExtLink>
       </>
     );
   }
   return (
     <>
       <Fields>
-        <Field label="Commit" title="git_sha from GET /booking/health">
-          <ShaLink appId="booking" sha={card.git_sha} commitUrl={card.commit_url} />
+        <Field label="Commit" title={`git_sha from GET ${base}/health`}>
+          <ShaLink appId={card.id} sha={card.git_sha} commitUrl={card.commit_url} />
         </Field>
-        <Field label="/health" title="GET /booking/health">
+        <Field label="/health" title={`GET ${base}/health`}>
           <Badge tone={httpTone(card.health?.http_status, card.health?.status)} dot={false}>
             {card.health?.http_status ?? "—"} {card.health?.status ?? ""}
           </Badge>
         </Field>
-        <Field label="/health/ready" title="GET /booking/health/ready (DB + schema)">
+        <Field label="/health/ready" title={`GET ${base}/health/ready (DB + schema)`}>
           <Badge tone={httpTone(card.ready?.http_status, card.ready?.status)} dot={false}>
             {card.ready?.http_status ?? "—"} {card.ready?.status ?? ""}
           </Badge>
           {card.ready?.db && <span style={{ color: K.muted, fontSize: 12 }}>db {card.ready.db}</span>}
         </Field>
-        <Field label="Schema" title="Booking's newest applied migration (bk-NNN)">
+        <Field label="Schema" title={`${name}'s newest applied migration`}>
           <span style={{ fontFamily: mono }}>{card.ready?.schema_version ?? "—"}</span>
         </Field>
       </Fields>
-      <ExtLink href={card.health_url} title="Booking's public health endpoint">/booking/health</ExtLink>
+      <ExtLink href={card.health_url} title={`${name}'s public health endpoint`}>{base}/health</ExtLink>
     </>
+  );
+}
+
+const CRM_JOBS_KEY = ["platform-apps", "crm-jobs"] as const;
+
+function CrmBody({ card }: { card: CrmCard }) {
+  return (
+    <>
+      <BookingBody card={card} name="the CRM" base="/crm" />
+      <CrmJobs />
+    </>
+  );
+}
+
+/** AA-936 — the CRM's job backlog per kind, read with the staff member's own token (no cache, no polling). */
+function CrmJobs() {
+  const jobs = useQuery({
+    queryKey: CRM_JOBS_KEY,
+    queryFn: () => apiGet<CrmJobsResp>(`${APPS_PATH}/crm/jobs`),
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const data = jobs.data;
+  return (
+    <div data-testid="platform-app-crm-jobs" style={{ display: "grid", gap: 6 }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: K.muted, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+        CRM jobs (crm.job)
+      </div>
+      {jobs.isLoading && <SkeletonBar w="60%" />}
+      {jobs.isError && <div style={noteStyle}>The CRM jobs could not be read.</div>}
+      {data && data.status !== "ok" && (
+        <div style={noteStyle}>
+          {data.reason === "cognito_session_required"
+            ? "Sign in with your company email (Cognito) to see the CRM jobs: the CRM accepts staff tokens only."
+            : `The CRM did not answer the jobs request (${data.http_status ?? data.reason ?? data.status}).`}
+        </div>
+      )}
+      {data && data.status === "ok" && data.kinds.length === 0 && <div style={noteStyle}>No queued, running or recently failed job.</div>}
+      {data && data.status === "ok" && data.kinds.length > 0 && (
+        <table style={{ borderCollapse: "collapse", fontSize: 12.5, fontFamily: sans }}>
+          <thead>
+            <tr style={{ color: K.muted, textAlign: "left" }}>
+              <th style={{ padding: "2px 8px 2px 0" }}>Kind</th>
+              <th style={{ padding: "2px 8px" }}>Queued</th>
+              <th style={{ padding: "2px 8px" }}>Running</th>
+              <th style={{ padding: "2px 8px" }}>Failed 24 h</th>
+              <th style={{ padding: "2px 8px" }}>Oldest queued</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.kinds.map((k) => (
+              <tr key={k.kind}>
+                <td style={{ padding: "2px 8px 2px 0", fontFamily: mono }}>{k.kind}</td>
+                <td style={{ padding: "2px 8px" }}>{k.queued}</td>
+                <td style={{ padding: "2px 8px" }}>{k.running}</td>
+                <td style={{ padding: "2px 8px", color: k.failed_24h > 0 ? K.danger : K.body }}>{k.failed_24h}</td>
+                <td style={{ padding: "2px 8px" }}>{k.oldest_queued_age_s == null ? "—" : `${k.oldest_queued_age_s} s`}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
   );
 }
 

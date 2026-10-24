@@ -99,13 +99,15 @@ async def test_build_passes_the_given_traffic_section(monkeypatch):
     monkeypatch.setattr(pa, "_booking_card", AsyncMock(return_value={"id": "booking", "probe": {
         "status": "down", "reason": "/booking/health answered 502"}}))
     monkeypatch.setattr(pa, "_tripplanner_card", AsyncMock(return_value={"id": "tripplanner", "probe": None}))
+    monkeypatch.setattr(pa, "_crm_card", AsyncMock(return_value={"id": "crm", "probe": {
+        "status": "ok", "reason": "Health and readiness endpoints answer 200"}}))
     fetch = AsyncMock(side_effect=AssertionError("must reuse the given section"))
     monkeypatch.setattr(app_health, "traffic_section", fetch)
     section = _section(_traffic("ok", app="cis"), _traffic("ok", app="booking"),
                        _traffic("warn", "x", app="tripplanner"))
     out = await pa.collect_apps(MagicMock(), None, traffic=section)
     status = {a["id"]: a["status"] for a in out["apps"]}
-    assert status == {"cis": "ok", "booking": "down", "tripplanner": "degraded"}
+    assert status == {"cis": "ok", "booking": "down", "tripplanner": "degraded", "crm": "ok"}
     fetch.assert_not_called()
 
 

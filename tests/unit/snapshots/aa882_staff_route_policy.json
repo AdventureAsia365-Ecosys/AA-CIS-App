@@ -339,6 +339,10 @@
     "capability": "ops.read",
     "module": "api.routers.admin_platform_ops"
   },
+  "GET /admin/platform/apps/crm/jobs": {
+    "capability": "ops.read",
+    "module": "api.routers.admin_platform_ops"
+  },
   "GET /admin/platform/apps/{app_id}": {
     "capability": "ops.read",
     "module": "api.routers.admin_platform_ops"

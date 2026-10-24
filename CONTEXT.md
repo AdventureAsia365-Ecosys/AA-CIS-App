@@ -1050,8 +1050,13 @@ entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
   workers' SHA (parity), the deploy gate (`shared/jobs/worker.py` `deploy_gate_status`, same as the CI guard), schema
   readiness. Booking: HTTP `/booking/health` + `/booking/health/ready` (2 s). TripPlanner: no health endpoint yet;
   today's customer-facing LLM spend (TP `ONLINE_STAGES`, `quality_signal->>'app' = 'tripplanner'`) vs the mirrored
-  default cap (5 USD; the live cap is a TP env var). Cached 60 s in Redis, built only on a page view (no poller).
-  No ECS/Lambda describe calls, no cross-schema reads.
+  default cap (5 USD; the live cap is a TP env var). Partner CRM (AA-936, AA-Partner): HTTP `/crm/health` +
+  `/crm/health/ready` on the partner host, like Booking. Cached 60 s in Redis, built only on a page view (no poller).
+  No ECS/Lambda describe calls, no cross-schema reads (CIS never reads schema `crm`).
+- `GET /admin/platform/apps/crm/jobs` (`ops.read`, AA-936) — `platform_apps.crm_jobs()`: the CRM's `crm.job` per kind
+  from the CRM contract `crm.ops.v1` `GET /crm/ops/v1/jobs/summary`, called with the signed-in staff member's own
+  Cognito Bearer (the CRM's OPS route class accepts WORKFORCE `cis-admin` tokens only; a legacy session gets
+  `cognito_session_required` and no call). Not cached (per person). The cost page has a `crm` row from the App tag.
   **One health definition (S243):** a card's `status` is `overall.status` from `api/services/app_health.py`
   `overall_status(probe, traffic)` — the worst known signal of the app's own check (`probe`; none for TripPlanner) and
   its CloudWatch traffic of the last 24 h (`traffic_section`, the AA-858 health section and its Redis key, shared by

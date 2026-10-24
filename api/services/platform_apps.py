@@ -1,7 +1,7 @@
 """AA-884 (S241 GĐ7) — health / version of each ecosystem app, for /admin/platform/apps (and, read-only, AA-858's
 /admin/overview).
 
-    collect_apps(pool, redis, refresh=False, traffic=None) -> {"apps": [cis, booking, tripplanner], "generated_at",
+    collect_apps(pool, redis, refresh=False, traffic=None) -> {"apps": [cis, booking, tripplanner, crm], "generated_at",
                                                                "_cached"}
     collect_app(pool, redis, app_id, refresh=False) -> one card, or None for an unknown id
 
@@ -20,6 +20,9 @@ What each card reads (S241 constraints: no ECS / Lambda describe calls, no new I
   (their git_sha, CIS 248), parity = every live worker runs the API's SHA, the deploy gate (the same helper as
   GET /admin/job-runner/deploy-gate) and the schema readiness of /health/ready.
 - ``booking``: GET {health_base}/booking/health and /booking/health/ready over HTTP (2 s timeout each).
+- ``crm`` (AA-936): GET {health_base}/crm/health and /crm/health/ready over HTTP, the same probe as Booking
+  (``_http_health_card``). Its jobs are a separate, uncached read (``crm_jobs``): ``crm.ops.v1``
+  ``/jobs/summary`` called with the staff member's own Cognito access token (never cached: it is per person).
 - ``tripplanner``: no health endpoint yet, so its status comes from traffic alone (its two Lambdas: invocations,
   errors, throttles, alarms); plus today's customer-facing LLM spend (TP ONLINE_STAGES, rows with
   ``quality_signal->>'app' = 'tripplanner'`` since UTC midnight) against the mirrored default daily cap.
@@ -27,8 +30,9 @@ What each card reads (S241 constraints: no ECS / Lambda describe calls, no new I
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
 import httpx
@@ -40,7 +44,7 @@ from api.services import app_health
 
 logger = structlog.get_logger()
 
-CACHE_KEY = "admin_platform_apps:v2"   # v2 (S243): cards carry probe / traffic / health
+CACHE_KEY = "admin_platform_apps:v3"   # v2 (S243): cards carry probe / traffic / health; v3 (AA-936): + crm
 CACHE_TTL_S = 60
 HTTP_TIMEOUT_S = 2.0
 TP_WARN_PCT = 80.0
@@ -127,17 +131,19 @@ async def _get_json(client: httpx.AsyncClient, url: str) -> dict:
     return {"http_status": r.status_code, "body": body if isinstance(body, dict) else None}
 
 
-async def _booking_card(client: Optional[httpx.AsyncClient] = None) -> dict:
-    info = APPS["booking"]
-    card: dict[str, Any] = {"id": "booking", "label": info.label, "repo_url": info.repo_url,
-                            "health_url": f"{info.health_base}{info.health_paths[0]}"}
+async def _http_health_card(app_id: str, client: Optional[httpx.AsyncClient] = None) -> dict:
+    """An app probed over its public health + readiness paths (Booking, the partner CRM)."""
+    info = APPS[app_id]
+    health_path, ready_path = info.health_paths
+    card: dict[str, Any] = {"id": app_id, "label": info.label, "repo_url": info.repo_url,
+                            "health_url": f"{info.health_base}{health_path}"}
     own = client is None
     client = client or httpx.AsyncClient(timeout=HTTP_TIMEOUT_S)
     try:
         health, ready = await asyncio.gather(
             *(_get_json(client, f"{info.health_base}{p}") for p in info.health_paths))
     except Exception as e:  # timeout, DNS, TLS: the page says unknown, never fails
-        logger.warning("platform_apps_booking_probe_failed", error=repr(e)[:200])
+        logger.warning("platform_apps_http_probe_failed", app=app_id, error=repr(e)[:200])
         card.update(status="unknown", error=type(e).__name__,
                     probe={"status": "unknown", "reason": f"health endpoint did not answer ({type(e).__name__})"})
         return card
@@ -159,11 +165,109 @@ async def _booking_card(client: Optional[httpx.AsyncClient] = None) -> dict:
     else:
         card["status"] = "ok"
     card["probe"] = {"status": card["status"], "reason": {
-        "down": f"/booking/health answered {health['http_status']}",
-        "degraded": f"/booking/health/ready answered {ready['http_status']}",
+        "down": f"{health_path} answered {health['http_status']}",
+        "degraded": f"{ready_path} answered {ready['http_status']}",
         "ok": "Health and readiness endpoints answer 200",
     }[card["status"]]}
     return card
+
+
+async def _booking_card(client: Optional[httpx.AsyncClient] = None) -> dict:
+    return await _http_health_card("booking", client)
+
+
+async def _crm_card(client: Optional[httpx.AsyncClient] = None) -> dict:
+    return await _http_health_card("crm", client)
+
+
+def _cognito_bearer(authorization: Optional[str]) -> Optional[str]:
+    """The request's Bearer when it is a Cognito access token (has ``iss``); the legacy HS256 admin JWT has none and
+    the CRM would refuse it. The signature is not checked here: the CRM verifies it (route class OPS)."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return None
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        part = token.split(".")[1]
+        payload = json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
+    except Exception:
+        return None
+    return token if isinstance(payload, dict) and isinstance(payload.get("iss"), str) and payload["iss"] else None
+
+
+async def _crm_ops_get(authorization: Optional[str], path: str, params: Optional[dict] = None,
+                       client: Optional[httpx.AsyncClient] = None) -> tuple[Optional[dict], dict]:
+    """GET ``crm.ops.v1`` ``path`` with the staff member's own WORKFORCE token. ``(body, {})`` on a 200 JSON object,
+    else ``(None, problem)`` with ``status`` unavailable | refused | error. Never raises."""
+    info = APPS["crm"]
+    token = _cognito_bearer(authorization)
+    if token is None:
+        return None, {"status": "unavailable", "reason": "cognito_session_required"}
+    own = client is None
+    client = client or httpx.AsyncClient(timeout=HTTP_TIMEOUT_S)
+    try:
+        r = await client.get(f"{info.extra['ops_base']}{path}", params=params,
+                             headers={"Authorization": f"Bearer {token}"})
+    except Exception as e:
+        logger.warning("platform_apps_crm_ops_failed", path=path, error=repr(e)[:200])
+        return None, {"status": "unavailable", "reason": type(e).__name__}
+    finally:
+        if own:
+            await client.aclose()
+    if r.status_code != 200:
+        try:
+            detail = r.json().get("detail")
+        except Exception:
+            detail = None
+        return None, {"status": "refused" if r.status_code in (401, 403) else "error", "http_status": r.status_code,
+                      "reason": detail if isinstance(detail, str) else None}
+    try:
+        body = r.json()
+    except Exception as e:  # a 200 that is not JSON (a proxy page): an error, never a 500
+        logger.warning("platform_apps_crm_ops_not_json", path=path, error=type(e).__name__)
+        return None, {"status": "error", "http_status": r.status_code, "reason": "invalid_json"}
+    if not isinstance(body, dict):
+        return None, {"status": "error", "http_status": r.status_code, "reason": "unexpected_shape"}
+    return body, {}
+
+
+async def crm_jobs(authorization: Optional[str], client: Optional[httpx.AsyncClient] = None) -> dict:
+    """AA-936 — the CRM's crm.job backlog per kind (crm.ops.v1 GET /jobs/summary), with the staff member's own
+    WORKFORCE token. Never raises; never cached (the answer depends on the caller's token)."""
+    body, problem = await _crm_ops_get(authorization, "/jobs/summary", client=client)
+    if body is None:
+        return {**problem, "kinds": []}
+    kinds = body.get("kinds")
+    return {"status": "ok", "generated_at": body.get("generated_at"), "kinds": kinds if isinstance(kinds, list) else []}
+
+
+async def crm_llm_usage(authorization: Optional[str], start: date, end_exclusive: date,
+                        client: Optional[httpx.AsyncClient] = None) -> dict:
+    """AA-936 — the CRM's LLM usage for ``[start, end_exclusive)`` from its own gateway rollup (crm.ops.v1
+    GET /llm/usage, ``crm.llm_usage_daily``: summed over every agency, no personal data), totalled per model for the
+    cost page's CRM row. Never raises; ``status`` != ok when the CRM cannot be asked (no Cognito session, refused,
+    down)."""
+    last = end_exclusive - timedelta(days=1)
+    body, problem = await _crm_ops_get(authorization, "/llm/usage",
+                                       {"from": start.isoformat(), "to": max(start, last).isoformat()}, client)
+    if body is None:
+        return {**problem, "calls": 0, "cost_usd": 0.0, "by_model": []}
+    by_model: dict[str, dict[str, Any]] = {}
+    for row in body.get("rows") if isinstance(body.get("rows"), list) else []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            calls, cost = int(row.get("calls") or 0), float(row.get("cost_usd") or 0)
+        except (TypeError, ValueError):
+            continue
+        m = by_model.setdefault(str(row.get("model") or "unknown"), {"model": str(row.get("model") or "unknown"),
+                                                                      "calls": 0, "cost_usd": 0.0})
+        m["calls"] += calls
+        m["cost_usd"] += cost
+    models = sorted(by_model.values(), key=lambda m: -m["cost_usd"])
+    for m in models:
+        m["cost_usd"] = round(m["cost_usd"], 6)
+    return {"status": "ok", "calls": sum(m["calls"] for m in models),
+            "cost_usd": round(sum(m["cost_usd"] for m in models), 6), "by_model": models}
 
 
 async def _tripplanner_card(pool: Any) -> dict:
@@ -206,9 +310,9 @@ async def _build(pool: Any, redis: Any = None, traffic: Optional[dict] = None) -
         return traffic
 
     traffic_call = no_traffic() if traffic is not None else app_health.traffic_section(redis)
-    cis, booking, tp, section = await asyncio.gather(_cis_card(pool), _booking_card(), _tripplanner_card(pool),
-                                                     traffic_call)
-    cards = [apply_health(c, section) for c in (cis, booking, tp)]
+    cis, booking, tp, crm, section = await asyncio.gather(
+        _cis_card(pool), _booking_card(), _tripplanner_card(pool), _crm_card(), traffic_call)
+    cards = [apply_health(c, section) for c in (cis, booking, tp, crm)]
     return {"apps": cards, "generated_at": datetime.now(timezone.utc).isoformat()}
 
 

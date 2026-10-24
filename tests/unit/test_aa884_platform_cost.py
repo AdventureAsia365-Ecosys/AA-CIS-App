@@ -318,5 +318,5 @@ async def test_no_data_at_all(monkeypatch):
     monkeypatch.setattr(ce, "read_cost_range", AsyncMock(return_value=None))
     out = await pc.cost_by_app(_pool([]), "2026-09", redis=None, now=NOW)
     assert out["aws"]["has_data"] is False and out["aws"]["total_usd"] is None
-    assert {r["app"] for r in out["apps"]} == {"cis", "booking", "tripplanner"}
+    assert {r["app"] for r in out["apps"]} == {"cis", "booking", "tripplanner", "crm"}
     assert all(r["total_usd"] == 0.0 for r in out["apps"])

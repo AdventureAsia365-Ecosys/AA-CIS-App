@@ -265,6 +265,12 @@ function DataStatus({ data }: { data: CostResp }) {
         <span style={{ color: K.amber }}>No AWS data stored for {monthLabel(data.month)} yet: the AWS column is empty until a fetch succeeds.</span>
       )}
       {refreshLine}
+      {data.crm_llm && data.crm_llm.status !== "ok" && data.crm_llm.status !== "not_requested" && (
+        <span style={{ color: K.amber }} data-testid="cost-crm-llm-missing">
+          Partner CRM AI spend not included ({data.crm_llm.reason ?? data.crm_llm.status}); it needs a staff Cognito
+          sign-in and the CRM reachable.
+        </span>
+      )}
     </div>
   );
 }

@@ -75,7 +75,10 @@ const GITHUB_ORG_URL = "https://github.com/AdventureAsia365-Ecosys";
 /** The CIS admin console itself (this app, Vercel aa-cis-frontend). */
 export const CIS_ADMIN_URL = "https://aa-cis.lumiguides.it.com";
 
-export type PlatformAppId = "cis" | AppId;
+/** AA-Partner's Dev partner host (CloudFront; the agency CRM web, AA-CIS-Infra crm_edge.tf). AA-936. */
+export const CRM_PARTNER_URL = "https://partner-dev.lumiguides.it.com";
+
+export type PlatformAppId = "cis" | AppId | "crm";
 
 export interface PlatformApp {
   id: PlatformAppId;
@@ -100,9 +103,10 @@ export const APP_REGISTRY: Record<PlatformAppId, PlatformApp> = {
   cis: platformApp("cis", "CIS (content + catalog)", CIS_ADMIN_URL, "CIS admin", "AA-CIS-App"),
   booking: platformApp("booking", "Booking", BOOKING_ADMIN_URL, "Booking admin", "AA-Booking"),
   tripplanner: platformApp("tripplanner", "TripPlanner", TRIPPLANNER_URL, "TripPlanner site", "AA-TripPlanner-Web"),
+  crm: platformApp("crm", "Partner CRM", CRM_PARTNER_URL, "CRM agency app", "AA-Partner"),
 };
 
-export const PLATFORM_APP_IDS: PlatformAppId[] = ["cis", "booking", "tripplanner"];
+export const PLATFORM_APP_IDS: PlatformAppId[] = ["cis", "booking", "tripplanner", "crm"];
 
 export function isPlatformAppId(id: string): id is PlatformAppId {
   return (PLATFORM_APP_IDS as string[]).includes(id);

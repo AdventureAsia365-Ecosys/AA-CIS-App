@@ -237,8 +237,13 @@ def _row(app: str, kind: str, label: str) -> dict:
 
 
 async def cost_by_app(pool: Any, month: Optional[str] = None, *, redis: Any = None, refresh_if_stale: bool = True,
-                      now: Optional[datetime] = None) -> dict:
-    """Cost per app for one UTC month (month-to-date for the current one). See the module docstring."""
+                      now: Optional[datetime] = None, crm_llm: Optional[Any] = None) -> dict:
+    """Cost per app for one UTC month (month-to-date for the current one). See the module docstring.
+
+    ``crm_llm``: an async callable ``(start, end_exclusive) -> dict`` (``platform_apps.crm_llm_usage`` bound to the
+    caller's token, AA-936). The CRM logs its LLM calls in its own gateway (``crm.llm_call``, D12), not in
+    ``shared.llm_call_log``, so its spend reaches the CRM row only through this call; ``crm_llm`` in the answer says
+    whether it worked."""
     now = now or datetime.now(timezone.utc)
     start, end = month_window(month, now.date())
     stored = await ce.read_app_cost_range(pool, start, end)
@@ -286,6 +291,19 @@ async def cost_by_app(pool: Any, month: Optional[str] = None, *, redis: Any = No
         if a["account"] in ("acc1", "acc3") and (a["provider"] or "").startswith("bedrock"):
             sat_estimate[a["account"]] = sat_estimate.get(a["account"], 0.0) + cost
 
+    crm_status: dict[str, Any] = {"status": "not_requested"}
+    if crm_llm is not None and "crm" in rows:
+        usage = await crm_llm(start, end)
+        crm_status = {k: usage.get(k) for k in ("status", "reason", "http_status") if usage.get(k) is not None}
+        if usage.get("status") == "ok":
+            r = rows["crm"]
+            r["ai_usd"] += float(usage.get("cost_usd") or 0.0)
+            r["ai_calls"] += int(usage.get("calls") or 0)
+            # Estimates of the CRM's own gateway; its model calls do not run on acc2 (billed_in_aws_acc2 false).
+            r["ai_by_source"].extend({"provider": f"crm_gateway:{m['model']}", "account": None, "calls": m["calls"],
+                                      "cost_usd": round(m["cost_usd"], 4), "billed_in_aws_acc2": False}
+                                     for m in usage.get("by_model") or [])
+
     out_rows = []
     for r in rows.values():
         for k in ("aws_usd", "aws_bedrock_usd", "ai_usd", "ai_in_aws_acc2_usd"):
@@ -312,10 +330,12 @@ async def cost_by_app(pool: Any, month: Optional[str] = None, *, redis: Any = No
                    "ai_outside_aws_usd": round(sum(r["ai_outside_aws_usd"] for r in out_rows), 4),
                    "total_usd": round(sum(r["total_usd"] for r in out_rows), 4)},
         "llm_satellites": satellites,
+        "crm_llm": crm_status,
         "refresh": refresh,
         "sources": {
             "aws_usd": "AWS Cost Explorer, acc2, UnblendedCost grouped by tag App (shared.cost_explorer_app_snapshot)",
-            "ai_usd": "LLM gateway estimates by app (shared.llm_call_log / shared.llm_call_daily)",
+            "ai_usd": "LLM gateway estimates by app (shared.llm_call_log / shared.llm_call_daily); the CRM row from "
+                      "the CRM's own gateway rollup (crm.ops.v1 GET /llm/usage, crm.llm_usage_daily)",
             "ai_outside_aws_usd": "ai_usd - ai_in_aws_acc2_usd (Bedrock on acc2 is already in aws_usd)",
             "total_usd": "aws_usd + ai_outside_aws_usd",
             "llm_satellites": "acc1/acc3 Bedrock from Cost Explorer (shared.cost_explorer_snapshot) vs the estimate",

@@ -133,7 +133,29 @@ export interface TripPlannerCard extends CardHealth {
   spend_today?: TpSpendToday | null;
 }
 
-export type AppCard = CisCard | BookingCard | TripPlannerCard;
+/** AA-936 — the partner CRM, probed like Booking (/crm/health, /crm/health/ready). */
+export interface CrmCard extends Omit<BookingCard, "id"> {
+  id: "crm";
+}
+
+/** AA-936 — GET /api/admin/platform/apps/crm/jobs: the CRM's crm.job per kind (crm.ops.v1 /jobs/summary). */
+export interface CrmJobKind {
+  kind: string;
+  queued: number;
+  running: number;
+  failed_24h: number;
+  oldest_queued_age_s: number | null;
+}
+
+export interface CrmJobsResp {
+  status: "ok" | "unavailable" | "refused" | "error";
+  reason?: string | null;
+  http_status?: number;
+  generated_at?: string;
+  kinds: CrmJobKind[];
+}
+
+export type AppCard = CisCard | BookingCard | TripPlannerCard | CrmCard;
 
 export interface AppsResp {
   apps: AppCard[];
@@ -300,6 +322,8 @@ export interface CostResp {
     total_usd: number;
   };
   llm_satellites: { acc1?: SatelliteLine; acc3?: SatelliteLine; ce_fetched_at?: string | null };
+  /** AA-936: whether the CRM row's LLM spend (crm.ops.v1 /llm/usage, staff token) could be read. */
+  crm_llm?: { status: string; reason?: string | null; http_status?: number | null };
   refresh: CostRefresh;
   sources: Record<string, string>;
 }

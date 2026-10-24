@@ -16715,6 +16715,69 @@
         ]
       }
     },
+    "/admin/platform/apps/crm/jobs": {
+      "get": {
+        "operationId": "get_crm_jobs_admin_platform_apps_crm_jobs_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "AA-936 — the partner CRM's job backlog per kind (crm.ops.v1)",
+        "tags": [
+          "admin-platform-ops"
+        ]
+      }
+    },
     "/admin/platform/apps/{app_id}": {
       "get": {
         "operationId": "get_app_admin_platform_apps__app_id__get",
