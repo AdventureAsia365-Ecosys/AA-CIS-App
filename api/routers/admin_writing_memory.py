@@ -13,17 +13,28 @@
   PATCH /admin/writing-memory/signals/{signal_id}/fact {status: pass | fail}: the admin's confirmation of a grey
                                                       (or any) verdict; never `pass` for fact_not_in_source
   GET   /admin/writing-memory/candidates?status=&writer=&scope=&tenant_id=&limit=&offset=   the rules
-  GET   /admin/writing-memory/candidates/{rule_id}    one rule with its provenance (the signals, with their source)
+  GET   /admin/writing-memory/candidates/{rule_id}    one rule with its provenance (the signals, with their source);
+                                                      AA-918: `l0_activation` (null, or the code and reason the L0
+                                                      path refuses it now) and `r0_fresh`
   PATCH /admin/writing-memory/candidates/{rule_id}    edit a candidate {rule_text, replacement, match_phrases}: the
                                                       lint runs again (a failing edit rejects it; an edit with tenant
                                                       text, a tenant brand or over the size rules is a 422 and
                                                       nothing is written)
   POST  /admin/writing-memory/candidates/{rule_id}/reject   {reason}
-  POST  /admin/writing-memory/run                     {kind: backfill | fact_filter | mine, dry_run?}: queue a job
-                                                      (mine = a manual run: the paid one, under its caps)
+  POST  /admin/writing-memory/candidates/{rule_id}/r0       AA-918: queue the R0 replay of this rule ($0; the result
+                                                      lands on the rule, `lint.r0`)
+  POST  /admin/writing-memory/candidates/{rule_id}/activate AA-918: the L0 fast path — a lexicon rule of a T9 writer
+                                                      with a fresh passing R0 goes active (the admin's one click;
+                                                      the next T9 write gets it)
+  POST  /admin/writing-memory/candidates/{rule_id}/rollback {reason}: AA-918, an active rule -> rejected (one click;
+                                                      the next write no longer gets it)
+  POST  /admin/writing-memory/run                     {kind: backfill | fact_filter | mine | r0_baseline, dry_run?}:
+                                                      queue a job (mine = a manual run: the paid one, under its caps;
+                                                      r0_baseline = the R0 sanity check alone, $0)
 
 Who may call (api/core/staff_authz.py POLICY): every read needs tenant.read and every write ai.admin (admin only).
-Approval / activation is not here: a rule reaches a writer only through a release (AA-919), one human click.
+Approval of a non-lexicon rule is not here: it reaches a writer only through a release (AA-919), one human click. A
+lexicon rule may take the L0 path (ADR 0010 decision 6, D11): R0 + the activate click, no release.
 Errors: 404 unknown id, 409 the row is not in a state for the action, 422 a bad body, 503 `unavailable` when the CIS
 277 / 280 tables are missing (code deployed before the migration).
 
@@ -45,11 +56,13 @@ from api.core.staff_authz import staff_policy
 from api.routers.admin import verify_admin_secret
 from services.writing_memory import config as cfg
 from services.writing_memory import fact_filter as ff
+from services.writing_memory import l0 as l0_mod
 from services.writing_memory import lint as lint_mod
 from services.writing_memory import mining
 from services.writing_memory import rules as rules_mod
 from services.writing_memory import signals as wm
 from services.writing_memory.masking import excerpt
+from services.writing_memory.replay import rule_sha
 from services.writing_memory.reason_codes import FACT_NOT_IN_SOURCE
 
 logger = structlog.get_logger()
@@ -59,7 +72,7 @@ router = APIRouter(prefix="/admin/writing-memory", tags=["admin-writing-memory"]
 
 PREVIEW_CHARS = 600
 _JOB_KINDS = {"backfill": "writing_signal_backfill", "fact_filter": "writing_signal_fact_filter",
-              "mine": "writing_memory_mine"}
+              "mine": "writing_memory_mine", "r0_baseline": "writing_memory_r0"}
 
 
 def _pool(request: Request):
@@ -110,7 +123,7 @@ async def summary(request: Request):
             rules = [dict(r) for r in await conn.fetch(_RULES_SQL)]
             spent = await month_spend(conn)
             refusal, gate = await mining.run_gate(conn, "auto")
-            jobs = [dict(r) for r in await conn.fetch(_LAST_JOBS_SQL, list(_JOB_KINDS.values()))]
+            jobs = [dict(r) for r in await conn.fetch(_LAST_JOBS_SQL, sorted(set(_JOB_KINDS.values())))]
     except asyncpg.UndefinedTableError as e:
         raise _unavailable(e)
     by: dict[str, Counter] = defaultdict(Counter)
@@ -297,7 +310,14 @@ async def get_candidate(rule_id: str, request: Request):
             sigs = [dict(r) for r in await conn.fetch(_PROVENANCE_SQL, rule["signal_ids"] or [])]
     except asyncpg.UndefinedTableError as e:
         raise _unavailable(e)
-    return {**rules_mod.serialise(rule), "provenance": [_signal_out(s) for s in sigs]}
+    out = rules_mod.serialise(rule)
+    # AA-918 — what stands between this rule and the L0 path now (None = it may be activated), and whether its stored
+    # R0 result is for its current text
+    problem = l0_mod.activation_problem(out)
+    r0 = out.get("lint", {}).get("r0") if isinstance(out.get("lint"), dict) else None
+    return {**out, "provenance": [_signal_out(s) for s in sigs],
+            "l0_activation": None if problem is None else {"code": problem[0], "detail": problem[1]},
+            "r0_fresh": isinstance(r0, dict) and r0.get("rule_sha") == rule_sha(out)}
 
 
 class CandidateEdit(BaseModel):
@@ -378,11 +398,98 @@ async def reject_candidate(rule_id: str, body: RejectBody, request: Request,
     return rules_mod.serialise(row)
 
 
+# ── R0 and the L0 fast path (AA-918) ────────────────────────────────────────────────────────────────────────────────
+
+def _job_stamp() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M")
+
+
+@router.post("/candidates/{rule_id}/r0")
+async def run_rule_r0(rule_id: str, request: Request, x_admin_user_id: Optional[str] = Header(None)):
+    """Queue the R0 replay of one rule ($0, no model call); the result is kept on the rule (`lint.r0`)."""
+    from services.jobs.writing_memory_job import R0
+    from shared.jobs.registry import enqueue
+    rid = _uuid(rule_id, "rule")
+    actor = wm.admin_actor_id(x_admin_user_id)
+    pool = _pool(request)
+    try:
+        async with pool.acquire() as conn:
+            if await rules_mod.get_rule(conn, rid) is None:
+                raise HTTPException(status_code=404, detail="Unknown rule")
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    job_id, created = await enqueue(pool, R0, {"rule_ids": [rid], "requested_by": actor},
+                                    idempotency_key=f"{R0}:{rid}:{_job_stamp()}", created_by=f"admin:{actor}")
+    return {"job_id": job_id, "kind": R0, "created": created}
+
+
+@router.post("/candidates/{rule_id}/activate")
+async def activate_rule(rule_id: str, request: Request, x_admin_user_id: Optional[str] = Header(None)):
+    """The L0 fast path (WM-16): a lexicon rule of a T9 writer whose R0 on its current text passed goes active with
+    the admin's id as approver. 409 with a code when the rule is not ready (not_lexicon, no_l0_reader,
+    not_activatable, lint, phrase, replacement_adds, r0_missing, r0_stale, r0_failed, token_cap); 403 no_actor when
+    the caller has no admin id (an approval is a human's, never a job's)."""
+    rid = _uuid(rule_id, "rule")
+    actor = wm.admin_actor_id(x_admin_user_id)
+    if actor == "unknown":
+        raise HTTPException(status_code=403, detail={"detail": "Activating a rule needs a signed-in admin (no admin id "
+                                                               "on the request)", "code": "no_actor"})
+    try:
+        async with _pool(request).acquire() as conn:
+            rule = await rules_mod.get_rule(conn, rid)
+            if rule is None:
+                raise HTTPException(status_code=404, detail="Unknown rule")
+            rule = rules_mod.serialise(rule)
+            problem = l0_mod.activation_problem(rule)
+            if problem:
+                raise HTTPException(status_code=409, detail={"detail": problem[1], "code": problem[0]})
+            try:
+                async with conn.transaction():
+                    row = await rules_mod.activate_l0(conn, rid, approved_by=actor)
+            except asyncpg.CheckViolationError as e:
+                raise HTTPException(status_code=409, detail={
+                    "detail": f"The writer's active rules would exceed their token cap: {str(e)[:200]}",
+                    "code": "token_cap"})
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    if row is None:
+        raise HTTPException(status_code=409, detail={"detail": "The rule changed meanwhile; reload", "code": "stale"})
+    logger.info("aa918_l0_activated", rule_id=rid, writer=row["writer"], scope=row["scope"], actor=actor)
+    return rules_mod.serialise(row)
+
+
+class RollbackBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(..., min_length=3, max_length=400)
+
+
+@router.post("/candidates/{rule_id}/rollback")
+async def rollback_rule(rule_id: str, body: RollbackBody, request: Request,
+                        x_admin_user_id: Optional[str] = Header(None)):
+    """Roll an active rule back (one click): it becomes `rejected` with `rollback: <reason>`; the next write no longer
+    gets it."""
+    rid = _uuid(rule_id, "rule")
+    actor = wm.admin_actor_id(x_admin_user_id)
+    try:
+        async with _pool(request).acquire() as conn:
+            row = await rules_mod.rollback(conn, rid, actor=f"admin:{actor}", reason=body.reason.strip())
+            if row is None:
+                rule = await rules_mod.get_rule(conn, rid)
+                if rule is None:
+                    raise HTTPException(status_code=404, detail="Unknown rule")
+                raise HTTPException(status_code=409, detail={"detail": f"A {rule['status']} rule is not active",
+                                                             "code": "not_active"})
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    logger.info("aa918_l0_rolled_back", rule_id=rid, actor=actor)
+    return rules_mod.serialise(row)
+
+
 # ── runs ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 class RunBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    kind: Literal["backfill", "fact_filter", "mine"]
+    kind: Literal["backfill", "fact_filter", "mine", "r0_baseline"]
     dry_run: bool = False
 
 
@@ -396,6 +503,8 @@ async def run(body: RunBody, request: Request, x_admin_user_id: Optional[str] = 
     pool = _pool(request)
     if body.kind == "backfill":
         payload["dry_run"] = body.dry_run
+    elif body.kind == "r0_baseline":
+        payload["baseline"] = True
     elif body.kind == "mine":
         payload["trigger"] = "manual"
         try:
@@ -405,7 +514,7 @@ async def run(body: RunBody, request: Request, x_admin_user_id: Optional[str] = 
             raise _unavailable(e)
         if refusal:
             raise HTTPException(status_code=409, detail={"detail": refusal, "code": "trigger", **facts})
-    now = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M")
+    now = _job_stamp()
     job_id, created = await enqueue(pool, kind, payload, idempotency_key=f"{kind}:admin:{now}",
                                     created_by=f"admin:{actor}")
     return {"job_id": job_id, "kind": kind, "created": created}

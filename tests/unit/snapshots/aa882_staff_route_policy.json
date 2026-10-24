@@ -1099,7 +1099,19 @@
     "capability": "ops.write",
     "module": "api.routers.admin_waves"
   },
+  "POST /admin/writing-memory/candidates/{rule_id}/activate": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "POST /admin/writing-memory/candidates/{rule_id}/r0": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_writing_memory"
+  },
   "POST /admin/writing-memory/candidates/{rule_id}/reject": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "POST /admin/writing-memory/candidates/{rule_id}/rollback": {
     "capability": "ai.admin",
     "module": "api.routers.admin_writing_memory"
   },

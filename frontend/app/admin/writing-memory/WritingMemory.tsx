@@ -10,8 +10,11 @@
 //               (every signal, with its source), edit (the lint runs again) and reject (with a reason).
 // Header actions queue a job: backfill (or its dry run), fact filter, or a manual mining run (the paid one: a confirm
 // step shows the month's spend against the cap first; the API refuses it with its reason when the trigger does not
-// hold). Automatic runs are off unless the worker sets WRITING_MEMORY_AUTO_MINE. Approval is not here: a rule reaches a
-// writer only through a release (AA-919).
+// hold), or the R0 baseline (AA-918, $0: the gates re-run on stored T9 texts against their stored ledgers). Automatic
+// runs are off unless the worker sets WRITING_MEMORY_AUTO_MINE.
+// AA-918: the drawer runs R0 on a rule ($0) and shows its result; a lexicon rule of a T9 writer whose R0 passed on its
+// current text can be activated in one click (the L0 fast path: the next T9 write gets it) and rolled back in one
+// click. Every other rule reaches a writer only through a release (AA-919).
 //
 // API through the BFF (/api/admin/writing-memory/*; admin only: lib/rbac.ts PAGE_RULES, API_READ_RULES and
 // API_WRITE_RULES; backend tenant.read / ai.admin).
@@ -24,9 +27,9 @@ import {
   formatDateTime, mono, useToast, type ColumnDef,
 } from "../../_kit";
 import {
-  LINT_CHECKS, LINT_LABEL, WM_API, factTone, lintCheck, owner, ruleTone, usd, wmSend,
-  type Cluster, type ClustersResponse, type Example, type Rule, type RuleDetail, type RulesPage, type Signal,
-  type SignalsPage, type Summary,
+  L0_WRITERS, LINT_CHECKS, LINT_LABEL, WM_API, factTone, lintCheck, owner, r0Of, ruleTone, usd, wmSend,
+  type Cluster, type ClustersResponse, type Example, type R0Result, type Rule, type RuleDetail, type RulesPage,
+  type Signal, type SignalsPage, type Summary,
 } from "@/lib/writingMemory";
 
 const TABS = [{ key: "signals", label: "Signals" }, { key: "candidates", label: "Candidates" }];
@@ -188,6 +191,43 @@ function LintBadges({ rule }: { rule: Rule }) {
   );
 }
 
+function counts(m: Record<string, number>): string {
+  const e = Object.entries(m);
+  return e.length ? e.map(([g, n]) => `${g} ×${n}`).join(", ") : "none";
+}
+
+function R0Panel({ r0, fresh }: { r0: R0Result; fresh: boolean }) {
+  const k = r0.recurrence.k;
+  const have = r0.recurrence.have;
+  const b = r0.baseline;
+  return (
+    <div style={{ display: "grid", gap: 4, fontSize: 12.5, lineHeight: 1.5 }}>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {r0.l0_applicable && <Badge tone={r0.l0_ok ? "success" : "danger"}>L0 {r0.l0_ok ? "passed" : "failed"}</Badge>}
+        <Badge tone={r0.r2_eligible ? "success" : "warning"}>{r0.r2_eligible ? "recurs (R2 eligible)" : "under k"}</Badge>
+        {!fresh && <Badge tone="warning">stale: the rule changed after this run</Badge>}
+        <Badge dot={false}>{formatDateTime(r0.computed_at)} · ${r0.cost_usd.toFixed(2)}</Badge>
+      </div>
+      {r0.l0_reason && <div style={{ color: K.danger }}>{r0.l0_reason}</div>}
+      <div>Phrase in stored text: {r0.phrase.before} → {r0.phrase.after} after the rule · new hard stops:{" "}
+        {counts(r0.new_hard_stops)}</div>
+      <div>Would fire on {r0.pieces.fires} of {r0.pieces.pieces} pieces ({r0.pieces.texts} texts replayed,
+        {" "}{r0.pieces.source_exempt} source-exempt{r0.pieces.errors ? `, ${r0.pieces.errors} errors` : ""})</div>
+      <div>Past failures it would have prevented: {r0.prevented.total} ({r0.prevented.blocking} blocking) —
+        {" "}{counts(r0.prevented.by_gate)}</div>
+      <div>Signals matched: {r0.signals.matched} ({r0.signals.explained_edits} edits, {r0.signals.system} system) ·
+        last {r0.recurrence.window_days} days: {have.signals} signals on {have.pieces} pieces
+        {k.tenants ? `, ${have.tenants}/${k.tenants} tenants` : ""}
+        {k.reviewers ? `, ${have.reviewers}/${k.reviewers} reviewers` : ""}
+        {" "}(k = {k.signals} signals on {k.pieces} pieces, basis {r0.recurrence.basis ?? "none"})</div>
+      <div style={{ color: K.muted }}>Baseline (rule off, stored ledgers):{" "}
+        {b.agreement === null ? "no stored ledger"
+          : `${(b.agreement * 100).toFixed(1)}% of ${b.gate_checks} gate checks agree; `
+            + `${b.pieces_agree}/${b.pieces_compared} texts fully`}</div>
+    </div>
+  );
+}
+
 function RuleDrawer({ ruleId, onClose }: { ruleId: string | null; onClose: () => void }) {
   const toast = useToast();
   const qc = useQueryClient();
@@ -208,6 +248,17 @@ function RuleDrawer({ ruleId, onClose }: { ruleId: string | null; onClose: () =>
       toast[r.data.status === "candidate" ? "success" : "info"](
         r.data.status === "candidate" ? "Saved; the lint passed" : "Saved; the lint failed, so the rule is rejected");
       setDraft(null);
+      qc.invalidateQueries({ queryKey: ["wm"] });
+    } else toast.error(r.message);
+  }
+
+  async function act(path: "r0" | "activate" | "rollback", body?: unknown) {
+    if (!rule) return;
+    const r = await wmSend<{ job_id?: string; status?: string }>(`/candidates/${rule.rule_id}/${path}`, "POST", body);
+    if (r.ok) {
+      toast.success(path === "r0" ? `R0 queued (job ${(r.data.job_id || "").slice(0, 8)}); reopen the rule when it ends`
+        : path === "activate" ? "Active: the next T9 write gets this rule" : "Rolled back: the next write no longer gets it");
+      setReason("");
       qc.invalidateQueries({ queryKey: ["wm"] });
     } else toast.error(r.message);
   }
@@ -275,6 +326,29 @@ function RuleDrawer({ ruleId, onClose }: { ruleId: string | null; onClose: () =>
               </div>
             </div>
           )}
+          <div style={{ display: "grid", gap: 8, borderTop: `1px solid ${K.line}`, paddingTop: 12 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <h3 style={{ fontSize: 13, margin: 0 }}>R0 replay</h3>
+              <Button variant="ghost" onClick={() => act("r0")}
+                title="Replays the rule over stored texts, gate ledgers and signals; no model call, $0">Run R0</Button>
+              {rule.kind === "lexicon" && L0_WRITERS.includes(rule.writer) && rule.status !== "active" && (
+                <Button variant="primary" disabled={!!rule.l0_activation} onClick={() => act("activate")}
+                  title={rule.l0_activation?.detail || "The next T9 write of this owner gets the rule"}>
+                  Activate (L0)</Button>)}
+            </div>
+            {rule.l0_activation && rule.kind === "lexicon" && rule.status !== "active" && (
+              <div style={{ color: K.muted, fontSize: 12 }}>Not activatable yet: {rule.l0_activation.detail}</div>)}
+            {r0Of(rule) ? <R0Panel r0={r0Of(rule) as R0Result} fresh={rule.r0_fresh} />
+              : <div style={{ color: K.muted, fontSize: 12.5 }}>No R0 run on this rule yet.</div>}
+            {rule.status === "active" && (
+              <div style={{ display: "flex", gap: 8 }}>
+                <input placeholder="Why roll it back?" value={reason} onChange={(e) => setReason(e.target.value)}
+                  style={{ flex: 1, fontSize: 13 }} aria-label="Rollback reason" />
+                <Button variant="danger" disabled={reason.trim().length < 3}
+                  onClick={() => act("rollback", { reason })}>Roll back</Button>
+              </div>
+            )}
+          </div>
           <div>
             <h3 style={{ fontSize: 13, margin: "6px 0" }}>Provenance ({rule.provenance.length})</h3>
             <div style={{ display: "grid", gap: 8 }}>
@@ -348,7 +422,7 @@ export default function WritingMemory() {
   const summary = useQuery({ queryKey: ["wm", "summary"], queryFn: () => apiGet<Summary>(`${WM_API}/summary`) });
   const budget = summary.data?.budget;
 
-  async function run(kind: "backfill" | "fact_filter" | "mine", dryRun = false) {
+  async function run(kind: "backfill" | "fact_filter" | "mine" | "r0_baseline", dryRun = false) {
     setBusy(kind);
     const r = await wmSend<{ job_id: string }>("/run", "POST", dryRun ? { kind, dry_run: true } : { kind });
     setBusy(null);
@@ -363,7 +437,7 @@ export default function WritingMemory() {
       <PageHeader title="Writing memory"
         breadcrumbs={[{ label: "Tenant output" }, { label: "Writing memory" }]}
         description="What the writers could learn from edits and repeated gate failures. Rules are drafted here and
-          reach a writer only through an approved release."
+          reach a writer through an approved release; a lexicon rule proven by R0 can go live at once (L0)."
         actions={<>
           <Button variant="ghost" onClick={() => qc.invalidateQueries({ queryKey: ["wm"] })}>
             <RefreshCw size={14} /> Refresh</Button>
@@ -372,6 +446,9 @@ export default function WritingMemory() {
             Backfill (dry run)</Button>
           <Button onClick={() => run("backfill")} disabled={!!busy}>Backfill signals</Button>
           <Button onClick={() => run("fact_filter")} disabled={!!busy}>Run fact filter</Button>
+          <Button variant="ghost" onClick={() => run("r0_baseline")} disabled={!!busy}
+            title="R0 sanity check, $0: re-runs the gates on stored T9 texts and compares with their stored ledgers">
+            R0 baseline</Button>
           <Button variant="primary" onClick={() => setConfirmMine(true)} disabled={!!busy}
             title="A paid run: at most 50 calls and $1, within the $25 month cap">
             <Play size={14} /> Mine rules</Button>

@@ -2620,6 +2620,7 @@ def run_quality_gates(
     brief_texts: Optional[dict] = None,
     taken_titles: Optional[list[str]] = None,
     f9_passed_sentences: Optional[set[str]] = None,
+    f9_results: Optional[list[GateResultLite]] = None,
 ) -> QualityCheckOutcome:
     """Runs the T10 gate stack for ONE attempt. CTA-presence runs first and short-circuits every
     other gate on failure (same "don't pay for a judge call on content that was always going to
@@ -2653,7 +2654,10 @@ def run_quality_gates(
     F2_banned_patterns + F2_brand_forbidden + F15_voice's stock findings → one F2_lexicon entry (at F2_banned_patterns'
     place), F15_voice + F15_voice_warn → one F15_voice entry, each finding with its own block / warn severity
     (merge_ledger). That is 26 → 24 distinct results: 23 on a blog, 22 on LinkedIn, 21 on the other channels.
-    `first_failure` and `flags` are read on the legacy view (expand_ledger), so routing is unchanged."""
+    `first_failure` and `flags` are read on the legacy view (expand_ledger), so routing is unchanged.
+
+    AA-918 (R0 replay, $0) — `f9_results`: the F9 entries to use instead of calling the judge (a replay passes the
+    verdicts stored on the piece). None (every writer path) calls gate_brand_voice as before."""
     cta_result = gate_cta_present(cta)
     ledger = [cta_result]
     if not cta_result["passed"]:
@@ -2722,9 +2726,12 @@ def run_quality_gates(
     # F9_cta_fact + non-blocking F9_brand_style), spread in here.
     seo_kw = {"seo_title": seo_title, "meta_description": meta_description} if channel == "blog" else {}
     # AA-777 — the job's sticky-pass set (sentences an earlier F9 verdict passed); None = no memory.
-    sources += gate_brand_voice(length_check_text, cta or "", brand_rubric_text, source_text=atom_text,
-                                voice=(brand_pack or {}).get("voice"), passed_sentences=f9_passed_sentences,
-                                **seo_kw)
+    if f9_results is not None:
+        sources += [dict(g) for g in f9_results]  # AA-918 — a $0 replay: the stored verdicts, no judge call
+    else:
+        sources += gate_brand_voice(length_check_text, cta or "", brand_rubric_text, source_text=atom_text,
+                                    voice=(brand_pack or {}).get("voice"), passed_sentences=f9_passed_sentences,
+                                    **seo_kw)
     # S234 round 2 — contract gates owned by a dedicated fix step in service.py (FAQ regeneration,
     # first-line rewrite). Last in the ledger and not repairable: when one is the only blocking
     # failure left the piece is held at once; when another gate fails first, that gate's repair

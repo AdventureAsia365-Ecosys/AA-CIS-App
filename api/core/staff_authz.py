@@ -385,7 +385,7 @@ POLICY: dict[tuple[str, str], str] = {
 
     # ── admin_writing_memory (AA-917 WM-14) — Quality › Writing memory: signals and tenant rules hold tenant text, so
     # every read is admin only (tenant.read); every write (fact verdict, candidate edit / reject, a job run — the mining
-    # run is paid) is ai.admin, the tier of the LLM stage config. No approval here: rules activate through releases.
+    # run is paid) is ai.admin, the tier of the LLM stage config. Non-lexicon rules activate through releases (AA-919).
     ("GET", "/admin/writing-memory/summary"): TENANT_READ,
     ("GET", "/admin/writing-memory/signals"): TENANT_READ,
     ("GET", "/admin/writing-memory/signals/clusters"): TENANT_READ,
@@ -396,6 +396,11 @@ POLICY: dict[tuple[str, str], str] = {
     ("PATCH", "/admin/writing-memory/candidates/{rule_id}"): AI_ADMIN,
     ("POST", "/admin/writing-memory/candidates/{rule_id}/reject"): AI_ADMIN,
     ("POST", "/admin/writing-memory/run"): AI_ADMIN,
+    # AA-918 (WM-15 / WM-16) — R0 replay ($0), the L0 lexicon fast path: activation is the one human click of an L0
+    # rule (a prompt change of a live writer: ai.admin, the LLM stage config tier), rollback the same tier.
+    ("POST", "/admin/writing-memory/candidates/{rule_id}/r0"): AI_ADMIN,
+    ("POST", "/admin/writing-memory/candidates/{rule_id}/activate"): AI_ADMIN,
+    ("POST", "/admin/writing-memory/candidates/{rule_id}/rollback"): AI_ADMIN,
 
     # ── admin_data_model (AA-894 scope 2) — Developer › Data model: the live ERD from the nightly schema dump
     # (every schema of the shared RDS, PII tags included), admin only.

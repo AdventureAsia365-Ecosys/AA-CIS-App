@@ -66,8 +66,9 @@ def test_background_kind_never_claimed_with_two_or_fewer_free_slots(free):
                           "supply_content_draft",
                           # AA-835 removal of the CIS copies of a withdrawn Booking supply photo
                           "supply_media_purge",
-                          # AA-917 writing memory: backfill, fact filter, mining (cap 1 each)
-                          "writing_signal_backfill", "writing_signal_fact_filter", "writing_memory_mine"}
+                          # AA-917 writing memory: backfill, fact filter, mining (cap 1 each); AA-918 the R0 replay
+                          "writing_signal_backfill", "writing_signal_fact_filter", "writing_memory_mine",
+                          "writing_memory_r0"}
     assert bool(background & set(w.claim_caps(free))) == (free > worker.BACKGROUND_RESERVE)
 
 

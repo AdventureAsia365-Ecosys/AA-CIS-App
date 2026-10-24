@@ -119,6 +119,40 @@ def _enough(sigs: list[dict]) -> bool:
     return len(sigs) >= cfg.MIN_SUPPORT and len({s["source_id"] for s in sigs}) >= cfg.MIN_SUPPORT
 
 
+BASES = ("tenant", "platform_tenants", "platform_reviewers", "a1_gate_repeat")
+
+
+def cluster_threshold(basis: Optional[str], *, a1_pieces_30d: int = 0) -> dict:
+    """The support a cluster of this basis needs, from the config (D9): {signals, pieces, tenants, reviewers}. One
+    function for the miner (build_clusters) and the R0 candidate filter (AA-918: "k equals the mining threshold", so a
+    config change moves both). An unknown basis (an admin-made rule) needs MIN_SUPPORT signals on MIN_SUPPORT
+    pieces."""
+    th = {"signals": cfg.MIN_SUPPORT, "pieces": cfg.MIN_SUPPORT, "tenants": 0, "reviewers": 0}
+    if basis == "tenant":
+        th.update(signals=max(cfg.MIN_SUPPORT, cfg.TENANT_MIN_SIGNALS), pieces=max(cfg.MIN_SUPPORT,
+                                                                                    cfg.TENANT_MIN_PIECES))
+    elif basis == "platform_tenants":
+        th["tenants"] = cfg.PLATFORM_MIN_TENANTS
+    elif basis == "platform_reviewers":
+        th["reviewers"] = cfg.PLATFORM_MIN_REVIEWERS
+    elif basis == "a1_gate_repeat":
+        th["pieces"] = max(cfg.MIN_SUPPORT, math.ceil(cfg.A1_GATE_REPEAT_SHARE * max(a1_pieces_30d, 0)))
+    return th
+
+
+def support_of(sigs: list[dict]) -> dict:
+    """{signals, pieces, tenants, reviewers} of a signal list (reviewers: distinct known admin ids)."""
+    return {"signals": len(sigs), "pieces": len({s["source_id"] for s in sigs}),
+            "tenants": len({s["tenant_id"] for s in sigs if s.get("tenant_id")}),
+            "reviewers": len({s["actor_id"] for s in sigs
+                              if s.get("actor_type") == "admin" and s.get("actor_id") not in (None, "unknown")})}
+
+
+def meets(sigs: list[dict], threshold: dict) -> bool:
+    have = support_of(sigs)
+    return all(have[k] >= int(threshold.get(k) or 0) for k in ("signals", "pieces", "tenants", "reviewers"))
+
+
 def _dedupe_phrases(clusters: list[Cluster]) -> list[Cluster]:
     """Phrase clusters of one owner with the same signal set: keep the longest phrase; then the top N by support."""
     keep, by_owner = [], defaultdict(list)
@@ -160,23 +194,21 @@ def build_clusters(signals: Iterable[dict], *, a1_pieces_30d: int, now: Optional
                 a1_system[(sig["writer"], label)].append(sig)
 
     out: list[Cluster] = []
+    # AA-918 — every basis reads its threshold from cluster_threshold (the R0 candidate filter reads the same one)
     for (writer, tenant, label), sigs in tenant_groups.items():
-        if _enough(sigs) and len(sigs) >= cfg.TENANT_MIN_SIGNALS \
-                and len({s["source_id"] for s in sigs}) >= cfg.TENANT_MIN_PIECES:
+        if meets(sigs, cluster_threshold("tenant")):
             out.append(Cluster(writer, "tenant", tenant, label, "tenant", sigs))
     for (writer, label), sigs in cross_groups.items():
-        if _enough(sigs) and len({s["tenant_id"] for s in sigs}) >= cfg.PLATFORM_MIN_TENANTS:
+        if meets(sigs, cluster_threshold("platform_tenants")):
             out.append(Cluster(writer, "platform", None, label, "platform_tenants", sigs))
     for (writer, label), sigs in platform_human.items():
-        reviewers = {s["actor_id"] for s in sigs
-                     if s["actor_type"] == "admin" and s["actor_id"] not in (None, "unknown")}
-        if _enough(sigs) and len(reviewers) >= cfg.PLATFORM_MIN_REVIEWERS:
+        if meets(sigs, cluster_threshold("platform_reviewers")):
             out.append(Cluster(writer, "platform", None, label, "platform_reviewers", sigs))
     since = now - timedelta(days=cfg.A1_WINDOW_DAYS)
-    need = max(cfg.MIN_SUPPORT, math.ceil(cfg.A1_GATE_REPEAT_SHARE * max(a1_pieces_30d, 0)))
+    a1_need = cluster_threshold("a1_gate_repeat", a1_pieces_30d=a1_pieces_30d)
     for (writer, label), sigs in a1_system.items():
         recent = [s for s in sigs if s["created_at"] is None or s["created_at"] >= since]
-        if _enough(recent) and len({s["source_id"] for s in recent}) >= need:
+        if meets(recent, a1_need):
             out.append(Cluster(writer, "platform", None, label, "a1_gate_repeat", recent))
 
     # one cluster per (writer, scope, tenant, label): a label can qualify on two platform bases; keep the first
@@ -463,5 +495,6 @@ async def run_mine(pool, ctx, *, trigger: str, max_calls: int = cfg.MINE_MAX_CAL
     return result
 
 
-__all__ = ["Cluster", "TRIGGERS", "a1_piece_count", "build_clusters", "corpus_gap", "decide_run", "example_of",
-           "gate_class", "label_meaning", "labels_of", "lint_context", "run_gate", "run_mine", "split_examples"]
+__all__ = ["BASES", "Cluster", "TRIGGERS", "a1_piece_count", "build_clusters", "cluster_threshold", "corpus_gap",
+           "decide_run", "example_of", "gate_class", "label_meaning", "labels_of", "lint_context", "meets",
+           "run_gate", "run_mine", "split_examples", "support_of"]

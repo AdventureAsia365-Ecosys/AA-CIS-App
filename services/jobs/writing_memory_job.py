@@ -1,4 +1,4 @@
-"""AA-917 — the writing-memory job kinds (app ADR 0010; WM-10, WM-11, WM-12).
+"""AA-917 / AA-918 — the writing-memory job kinds (app ADR 0010; WM-10, WM-11, WM-12, WM-15).
 
   writing_signal_backfill     WM-10: copy the existing learning material into shared.writing_signal (idempotent,
                               insert-only, $0), then queue the fact filter. Payload {"dry_run": bool, "sources": [..]}.
@@ -9,7 +9,12 @@
                               $25). Payload {"trigger": "auto" | "manual", "requested_by": "<admin id>"}. A refused
                               trigger ends the job as succeeded with `ran: false` and the reason (nothing to retry).
 
-All three are background kinds (they never take the worker's reserve slots of a wave) with concurrency 1. The mine
+  writing_memory_r0           AA-918 WM-15: the R0 replay ($0, no model call) of up to 20 rules, each result kept on
+                              its rule (`lint.r0`); or, with {"baseline": true}, the sanity check alone (the gates
+                              re-run on stored T9 texts against their stored ledgers). Payload {"rule_ids": [..],
+                              "requested_by": "<admin id>"} | {"baseline": true}.
+
+All four are background kinds (they never take the worker's reserve slots of a wave) with concurrency 1. The mine
 kind has max_attempts 1: a paid run is never retried by the runner (an admin starts a new one).
 """
 from __future__ import annotations
@@ -77,4 +82,37 @@ async def run_mine_job(ctx: JobContext) -> dict:
     return result
 
 
-__all__ = ["BACKFILL", "FACT_FILTER", "MINE"]
+R0 = "writing_memory_r0"
+R0_MAX_RULES = 20
+
+
+@job_kind(R0, concurrency=1, max_attempts=2, expected_seconds=900, background=True)
+async def run_r0_job(ctx: JobContext) -> dict:
+    from services.writing_memory import rules as rules_mod
+    from services.writing_memory.replay import run_baseline, run_r0
+    if ctx.payload.get("baseline"):
+        return {"baseline": await run_baseline(ctx.pool), "cost_usd": 0.0}
+    ids = [str(i) for i in ctx.payload.get("rule_ids") or []][:R0_MAX_RULES]
+    if not ids:
+        raise NonRetryable("writing_memory_r0 needs rule_ids or baseline: true")
+    out: dict = {"rules": [], "missing": [], "cost_usd": 0.0}
+    cache: dict = {}                     # the rule-off runs of each stored text, shared by the rules of this job
+    for rid in ids:
+        async with ctx.pool.acquire() as conn:
+            rule = await rules_mod.get_rule(conn, rid)
+        if rule is None:
+            out["missing"].append(rid)
+        else:
+            res = await run_r0(ctx.pool, rules_mod.serialise(rule), cache=cache)
+            async with ctx.pool.acquire() as conn:
+                await rules_mod.store_r0(conn, rid, res)
+            out["rules"].append({"rule_id": rid, **{k: res[k] for k in ("l0_ok", "l0_reason", "r2_eligible", "phrase",
+                                                                         "new_hard_stops", "pieces", "prevented")},
+                                 "baseline_agreement": res["baseline"]["agreement"]})
+        await ctx.progress(done=len(out["rules"]) + len(out["missing"]), total=len(ids))
+    logger.info("aa918_r0_done", rules=len(out["rules"]), missing=len(out["missing"]),
+                l0_ok=sum(1 for r in out["rules"] if r["l0_ok"]))
+    return out
+
+
+__all__ = ["BACKFILL", "FACT_FILTER", "MINE", "R0"]

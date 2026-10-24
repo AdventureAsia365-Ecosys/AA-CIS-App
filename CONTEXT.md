@@ -2123,8 +2123,22 @@ api ops sampler while signals are pending): an edit that adds a number, time, pr
 the source lack fails (quarantined), an added name is grey (admin confirms), a style edit passes. The backfill
 (`writing_signal_backfill`, `backfill.py`) copies the pre-AA-916 admin sentence audit rows, T2 tenant-edit versions,
 T9 failed attempts (system signals, evidence for R0) and A1 brand-audit lessons, idempotently. Admin page
-`/admin/writing-memory` (Signals and Candidates tabs; `api/routers/admin_writing_memory.py`, admin only). No
-approval there: a rule reaches a writer only through a release (AA-919).
+`/admin/writing-memory` (Signals and Candidates tabs; `api/routers/admin_writing_memory.py`, admin only). A rule
+reaches a writer through a release (AA-919), except an L0 lexicon rule (below).
+**R0** (AA-918, `services/writing_memory/replay.py`, job `writing_memory_r0`, $0, no model call): the replay of one
+rule over stored T9 texts (final text, discarded attempts, the writer's text before a human edit), gate ledgers,
+repair logs and signals — how often it would fire, which stored failures quote its phrase (prevented), the signals it
+matches, and whether its cluster recurred ≥ k in 30 days, k being the mining threshold of its basis
+(`mining.cluster_threshold`, one function for both). The baseline sanity check re-runs the deterministic T10 gates on
+stored texts against their stored ledgers (F9 verdicts passed through: `run_quality_gates(f9_results=…)`). The
+result (counts and ids only) is kept in `lint.r0`, tied to the rule's text by `rule_sha`.
+**L0 lexicon fast path** (AA-918, `services/writing_memory/l0.py`, ADR 0010 decision 6, D11): an `active` `lexicon`
+rule of `t9_blog` / `t9_social` joins the brand pack's forbidden words at T9 `start_write` (prompt "Never use" line +
+the F2_lexicon gate, source F2_brand_forbidden; a replacement also gets "Write X instead of Y" on the WORDS line), never
+a post-gate substitution; skipped when it is a declared signature word, or in the CTA / brand name / trip name; the
+piece's `writer_input.writing_rules` lists what it got. Activation = an R0 on the current text with `l0_ok` (phrase
+drops to 0, no new hard stop, a replacement adds no number / place / time / price / service) + one admin click;
+rollback = one click (`active` → `rejected`, `rollback: …`). No active rule: the pack and prompt are unchanged.
 _Avoid_: lesson (the frozen AA-132 rows), output rule (the retired N8 table), guideline.
 
 **Pinned Exemplar**:

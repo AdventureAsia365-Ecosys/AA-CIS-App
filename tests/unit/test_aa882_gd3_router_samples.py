@@ -63,6 +63,7 @@ SAMPLES = [
      {"expected_updated_at": "2026-10-24T08:00:00Z"}),
     ("admin_writing_memory", "GET", "/admin/writing-memory/signals", None),      # AA-917
     ("admin_writing_memory", "POST", "/admin/writing-memory/candidates/{rule_id}/reject", {"reason": "not useful"}),
+    ("admin_writing_memory", "POST", "/admin/writing-memory/candidates/{rule_id}/activate", None),      # AA-918
     ("v1_trip_page", "POST", "/admin/trip-pages/{tour_id}/publish", None),
     ("v1_pipeline", "POST", "/v1/pipeline/review-queue/{review_id}/approve", {}),
     ("v1_rules", "PATCH", "/v1/rules/{rule_id}", {"is_active": False}),

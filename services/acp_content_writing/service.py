@@ -80,6 +80,7 @@ from services.acp_content_writing.gate_eval import ledger_snapshot  # AA-791
 from services.quality import degraded  # AA-925
 from services.quality import repair_contract  # AA-790
 from services.quality import registry as qr
+from services.writing_memory import l0 as wm_l0  # AA-918
 from services.writing_memory import signals as wm_signals  # AA-916
 from services.acp_content_writing.prompts import SYSTEM_PROMPT  # AA-916 WM-08 (writer_prompt_version)
 from services.content_generation.batch_prompt import prompt_version_of
@@ -1502,6 +1503,10 @@ async def start_write(
 
     async with pool.acquire() as conn:
         brand_rubric_text = await fetch_brand_rubric_text(conn, str(tenant_id))
+    # AA-918 (WM-16) — the active learned lexicon rules (writing memory L0) join the brand's forbidden words before
+    # the prompt and the gates read them; none active → the pack is unchanged (release 0 is a no-op).
+    brand_audience, writing_rules = await wm_l0.l0_for_write(pool, tenant_id=tenant_id, channel=req["channel"],
+                                                             pack=brand_audience, cta=cta, trip_name=trip_name)
 
     # AA-497 — angle_gate_option_id (migration 124's Decision 2 column, unpopulated until now):
     # denormalized record of WHICH of the 3 options this specific piece was written from, so a
@@ -1578,6 +1583,7 @@ async def start_write(
         **({"a3_question_filter": a3_stats} if a3_stats is not None else {}),  # AA-982 — admin record
         "scope": scope,  # S233
         "trip_places": trip_places,  # S234 round 3 — the full trip's places outside the scope
+        **({"writing_rules": writing_rules} if writing_rules else {}),  # AA-918 — L0 rules applied / skipped
         "tenant_id": str(tenant_id),  # AA-505 — attribution for llm_call_log
         "facts_text": None,  # AA-529 — filled by resolve_facts() in the job ("" when none exist)
         "facts_pending": True,  # AA-764
@@ -2468,6 +2474,9 @@ def writer_input_snapshot(context: dict) -> dict:
         **({"faq_filter": context["faq_filter"]} if context.get("faq_filter") else {}),
         # S247 (AA-779, ADR 0011) — the answer-fit step's mode, verdicts, drops and fallback; absent when it is off.
         **({"faq_answer_fit": context["faq_answer_fit"]} if context.get("faq_answer_fit") else {}),
+        # AA-918 (WM-16) — the learned lexicon rules this piece got (and the ones skipped, with why); absent when no
+        # rule is active for its writer and owner. The rollback drill reads it: the next piece no longer lists it.
+        **({"writing_rules": context["writing_rules"]} if context.get("writing_rules") else {}),
     }
 
 

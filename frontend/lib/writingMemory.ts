@@ -50,12 +50,44 @@ export interface Rule {
   reason_code: string | null; gate_class: string | null; cluster_key: string; rule_text: string;
   replacement: string | null; match_phrases: string[]; token_estimate: number; status: RuleStatus;
   signal_ids: string[]; support_signals: number; support_pieces: number; support_tenants: number;
-  support_reviewers: number; lint: Record<string, LintCheck | string | boolean>; drafted_by: string | null;
-  expires_at: string; rejected_by: string | null; rejected_reason: string | null; created_at: string;
+  support_reviewers: number; lint: Record<string, LintCheck | string | boolean | object>; drafted_by: string | null;
+  expires_at: string; approved_by?: string | null; approved_at?: string | null; rejected_by: string | null;
+  rejected_reason: string | null; created_at: string;
 }
 
+/** AA-918 — the R0 replay result kept on a rule (`lint.r0`): counts and ids only, $0. */
+export interface R0Result {
+  version: number; computed_at: string; rule_sha: string; cost_usd: number;
+  signals: { window_days: number; read: number; usable: number; matched: number; explained_edits: number; system: number };
+  recurrence: { window_days: number; basis: string | null;
+    k: Record<"signals" | "pieces" | "tenants" | "reviewers", number>;
+    have: Record<"signals" | "pieces" | "tenants" | "reviewers", number> };
+  r2_eligible: boolean; r2_reason: string | null;
+  pieces: { pieces: number; with_writer_input: number; texts: number; with_phrase: number; source_exempt: number;
+    fires: number; errors: number };
+  prevented: { by_gate: Record<string, number>; blocking: number; total: number; piece_ids: string[] };
+  phrase: { before: number; after: number };
+  new_hard_stops: Record<string, number>;
+  baseline: { pieces_compared: number; pieces_agree: number; gate_checks: number; gate_agree: number;
+    agreement: number | null;
+    by_gate: Record<string, { compared: number; agree: number; stored_fail: number; replay_fail: number }> };
+  l0_applicable: boolean; l0_ok: boolean; l0_reason: string | null;
+}
+
+export function r0Of(rule: Rule): R0Result | null {
+  const v = rule.lint?.r0 as unknown;
+  return v && typeof v === "object" ? (v as R0Result) : null;
+}
+
+/** The writers with an L0 reader (backend services/writing_memory/l0.py L0_WRITERS). */
+export const L0_WRITERS = ["t9_blog", "t9_social"];
+
 export interface RulesPage { items: Rule[]; total: number; limit: number; offset: number }
-export interface RuleDetail extends Rule { provenance: Signal[] }
+export interface RuleDetail extends Rule {
+  provenance: Signal[];
+  l0_activation: { code: string; detail: string } | null;   // AA-918: null = the L0 path may activate it now
+  r0_fresh: boolean;
+}
 
 export const LINT_CHECKS = ["shape", "constraint_only", "lexicon_specifics", "five_gram_overlap", "predict"] as const;
 

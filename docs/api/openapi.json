@@ -3171,6 +3171,22 @@
         "title": "RewriteRequest",
         "type": "object"
       },
+      "RollbackBody": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 400,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "RollbackBody",
+        "type": "object"
+      },
       "RunBody": {
         "additionalProperties": false,
         "properties": {
@@ -3183,7 +3199,8 @@
             "enum": [
               "backfill",
               "fact_filter",
-              "mine"
+              "mine",
+              "r0_baseline"
             ],
             "title": "Kind",
             "type": "string"
@@ -28536,6 +28553,184 @@
         ]
       }
     },
+    "/admin/writing-memory/candidates/{rule_id}/activate": {
+      "post": {
+        "description": "The L0 fast path (WM-16): a lexicon rule of a T9 writer whose R0 on its current text passed goes active with\nthe admin's id as approver. 409 with a code when the rule is not ready (not_lexicon, no_l0_reader,\nnot_activatable, lint, phrase, replacement_adds, r0_missing, r0_stale, r0_failed, token_cap); 403 no_actor when\nthe caller has no admin id (an approval is a human's, never a job's).",
+        "operationId": "activate_rule_admin_writing_memory_candidates__rule_id__activate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rule_id",
+            "required": true,
+            "schema": {
+              "title": "Rule Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Activate Rule",
+        "tags": [
+          "admin-writing-memory"
+        ]
+      }
+    },
+    "/admin/writing-memory/candidates/{rule_id}/r0": {
+      "post": {
+        "description": "Queue the R0 replay of one rule ($0, no model call); the result is kept on the rule (`lint.r0`).",
+        "operationId": "run_rule_r0_admin_writing_memory_candidates__rule_id__r0_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rule_id",
+            "required": true,
+            "schema": {
+              "title": "Rule Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Rule R0",
+        "tags": [
+          "admin-writing-memory"
+        ]
+      }
+    },
     "/admin/writing-memory/candidates/{rule_id}/reject": {
       "post": {
         "operationId": "reject_candidate_admin_writing_memory_candidates__rule_id__reject_post",
@@ -28629,6 +28824,105 @@
           }
         },
         "summary": "Reject Candidate",
+        "tags": [
+          "admin-writing-memory"
+        ]
+      }
+    },
+    "/admin/writing-memory/candidates/{rule_id}/rollback": {
+      "post": {
+        "description": "Roll an active rule back (one click): it becomes `rejected` with `rollback: <reason>`; the next write no longer\ngets it.",
+        "operationId": "rollback_rule_admin_writing_memory_candidates__rule_id__rollback_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rule_id",
+            "required": true,
+            "schema": {
+              "title": "Rule Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RollbackBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rollback Rule",
         "tags": [
           "admin-writing-memory"
         ]

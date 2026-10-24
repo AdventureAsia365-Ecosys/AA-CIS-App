@@ -6,7 +6,9 @@ own, never another tenant's. The tenant pool has no privilege on the table.
 
 Writes: `insert_candidate` (the miner; one open rule per cluster, a re-run is a no-op), `review` (the admin: edit /
 reject; approve needs a human id and never comes from a job — nothing auto-activates), `expire_stale` (candidates and
-approved rules past `expires_at`; an active rule only leaves through a release, AA-919).
+approved rules past `expires_at`; an active rule only leaves through a release, AA-919, or an L0 rollback).
+AA-918: `store_r0` (the R0 replay result in `lint.r0`), `activate_l0` / `rollback` (the L0 lexicon fast path: one admin
+click each, no release).
 """
 from __future__ import annotations
 
@@ -231,6 +233,38 @@ async def reject(conn, rule_id: str, *, reason: str, actor: str) -> Optional[dic
     return dict(row) if row else None
 
 
+async def store_r0(conn, rule_id: str, r0: dict) -> bool:
+    """AA-918 — keep an R0 result on the rule (`lint.r0`). updated_at is left alone: the result names the text it
+    replayed (`rule_sha`), so an edit makes it stale whatever the clock says."""
+    res = await conn.execute(
+        "UPDATE shared.writing_rule SET lint = lint || jsonb_build_object('r0', $2::jsonb) WHERE rule_id = $1::uuid",
+        _uuid(rule_id), json.dumps(r0, default=str))
+    return str(res).endswith(" 1")
+
+
+async def activate_l0(conn, rule_id: str, *, approved_by: str) -> Optional[dict]:
+    """AA-918 (WM-16) — the one human click of an L0 rule: candidate / approved -> active, with the approver's id
+    (CIS 280 writing_rule_approval_check; the token-cap trigger still applies). The caller checked the rule (lexicon,
+    T9 writer, fresh passing R0). None when the row is no longer activatable."""
+    row = await conn.fetchrow(
+        f"""UPDATE shared.writing_rule
+               SET status = 'active', approved_by = $2, approved_at = now(), updated_at = now()
+             WHERE rule_id = $1::uuid AND status IN ('candidate', 'approved') AND kind = 'lexicon'
+         RETURNING {_COLUMNS}""", _uuid(rule_id), approved_by[:128])
+    return dict(row) if row else None
+
+
+async def rollback(conn, rule_id: str, *, actor: str, reason: str) -> Optional[dict]:
+    """AA-918 — the one-click rollback of an active rule: active -> rejected (`rollback: <reason>`), so the next write
+    no longer gets it and the cluster may be drafted again. The approval stays on the row (who / when)."""
+    row = await conn.fetchrow(
+        f"""UPDATE shared.writing_rule
+               SET status = 'rejected', rejected_by = $2, rejected_reason = $3, updated_at = now()
+             WHERE rule_id = $1::uuid AND status = 'active'
+         RETURNING {_COLUMNS}""", _uuid(rule_id), actor[:128], f"rollback: {reason}"[:500])
+    return dict(row) if row else None
+
+
 async def expire_stale(conn) -> int:
     """Candidates and approved rules past expires_at -> expired. Never an active rule (a release change)."""
     res = await conn.execute("UPDATE shared.writing_rule SET status = 'expired', updated_at = now() "
@@ -249,6 +283,6 @@ def serialise(rule: dict) -> dict[str, Any]:
     return out
 
 
-__all__ = ["KINDS", "MAX_SIGNAL_IDS", "OPEN_STATUSES", "REDACTED_TEXT", "STATUSES", "edit_candidate", "expire_stale",
-           "fit_to_store", "get_rule", "insert_candidate", "lint_rejected_signal_sets", "list_rules",
-           "open_cluster_keys", "owner_filter", "reject", "rules_for", "serialise"]
+__all__ = ["KINDS", "MAX_SIGNAL_IDS", "OPEN_STATUSES", "REDACTED_TEXT", "STATUSES", "activate_l0", "edit_candidate",
+           "expire_stale", "fit_to_store", "get_rule", "insert_candidate", "lint_rejected_signal_sets", "list_rules",
+           "open_cluster_keys", "owner_filter", "reject", "rollback", "rules_for", "serialise", "store_r0"]

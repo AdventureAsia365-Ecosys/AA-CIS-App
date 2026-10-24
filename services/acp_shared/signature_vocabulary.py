@@ -59,6 +59,8 @@ _SERVICE_NOUNS = (
     "dining", "dinner", "dinners", "meal", "meals", "menu", "spa", "itinerary", "itineraries", "programme",
     "program", "schedule",
 )
+# AA-918 — the same nouns name a service a replacement may never add (writing memory L0, ADR 0010 decision 3).
+SERVICE_NOUNS: tuple[str, ...] = _SERVICE_NOUNS
 _CLAIM_WORDS = {
     "luxury": ("luxury", "luxurious", "luxe"),
     "tailored": ("tailored", "tailor-made", "tailor made"),
@@ -278,6 +280,13 @@ def t9_words_line(pack: Optional[dict]) -> str:
     if sig:
         parts.append(f"This brand's own signature words, yours to use where the content seed fits: {_join(sig)}.")
     parts.append("A service-level claim (a luxury lodge, a tailored itinerary) must be stated by the content seed.")
+    # AA-918 — the learned lexicon (writing memory L0): a ban is already on the brand block's "Never use" list (it
+    # joins the forbidden words); a replacement rule also says what to write instead. No learned rule: the line is
+    # byte for byte what it was (ADR 0010 decision 12, release 0 is a no-op).
+    swaps = [(e["phrase"], e["replacement"]) for e in (pack or {}).get("learned_lexicon") or []
+             if isinstance(e, dict) and e.get("phrase") and e.get("replacement")]
+    if swaps:
+        parts.append("Write " + "; ".join(f"'{r}' instead of '{p}'" for p, r in swaps) + ".")
     return " ".join(parts)
 
 
@@ -285,5 +294,5 @@ __all__ = [
     "PLATFORM_TRUTH", "STOCK_SUPERLATIVES", "POSITIONING", "PROMPT_ONLY", "SUPERLATIVE_CAP",
     "explicit_signature_words", "signature_words", "superlative_hits", "over_superlative_cap",
     "undeclared_positioning", "tenant_blocked_words", "service_level_claims", "t2_rule_1", "t9_words_line",
-    "has_word",
+    "has_word", "SERVICE_NOUNS",
 ]
