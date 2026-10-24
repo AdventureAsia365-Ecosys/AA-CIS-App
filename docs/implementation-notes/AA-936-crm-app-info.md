@@ -29,5 +29,5 @@ branch `feat/aa-936-slice1`.
 - Route policy snapshot regenerated (`GET /admin/platform/apps/crm/jobs` -> `ops.read`).
 - Unit: `tests/unit/test_aa936_crm_app_info.py` + the updated Apps / cost / consistency tests (169 passed locally);
   `tsc --noEmit` of the frontend green (first round). Review round (S249): the AA-936 / AA-884 / AA-882 / S243 unit
-  files, 2,396 passed; flake8 (CI flags) clean on the changed Python files. The frontend change is one optional field
+  files, 2,394 passed; flake8 (CI flags) clean on the changed Python files. The frontend change is one optional field
   and one note line; no local build this round (RAM), CI builds it.
