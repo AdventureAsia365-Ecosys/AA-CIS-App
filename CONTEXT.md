@@ -2211,7 +2211,15 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     text (soft `degraded: repair_contract`). Spliced at flag_fix (replaces the AA-641 per-field revert, same
     behaviour), the A1 grounding repair, revalidate's strip + fit, the T3 sentence repair + meta regenerate and
     T9 `splice_checked`. The T9 AA-528/AA-780 regression guard of full rewrites stays in
-    `run_write_background` and already covers invariant 1 there.
+    `run_write_background` and already covers invariant 1 there. Invariant 7 (AA-790 `integrity_kept`,
+    `enforce_step`): every deterministic edit of the T9 attempt loop (`hygiene.autofix`, the family caveat, the
+    FAQ droppers, `real_first_faq`, `fix_trip_facts`, `trim_to_band`; `ensure_cta` is must-keep) is reverted when
+    it leaves a new repeat, orphan, dangling opener, fragment, split or unfinished paragraph, or a sentence cut
+    on 'the' / 'and' (`hygiene.integrity_problems` + `text_integrity.structure_findings`; steps before the final
+    pass are compared as `text_integrity.settle` leaves them). The revert lines go to F13_autofix and count as
+    soft `degraded: repair_contract` (detector `t9_step`); no gate or registry entry is added (gate freeze).
+    The tenant-voice rubric (`acp_content_writing/voice_rubric.py`) is an offline scorer only
+    (`scripts/aa790/voice_rubric_replay.py`): no pipeline reads it until the freeze ends and κ ≥ 0.6.
   - **Writer-v2 hard code** (AA-645, S249): on an A1 writer-v2 draft `ITINERARY_DAY_COUNT_MISMATCH` (a source day
     missing from the output) blocks Master — `graph.V2_HARD_BLOCK_CODES`, read through `graph.hard_block_codes(state)`
     by `_is_publishable` and the human-edit gate; v1 drafts and tenant rewrites keep the soft structure deduction. A
