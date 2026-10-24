@@ -8,8 +8,9 @@ model: R0 is $0 by construction (the F9 verdicts are the stored ones).
     an edit after R0 would make it stale;
   * the writer's read: tenant A's active rule reaches tenant A's T9 social write (the pack and the writer_input record),
     never tenant B's, never a blog write when the rule is for social;
-  * rollback (one click): the next write no longer gets the rule; a rolled-back rule cannot be rolled back twice.
-Each test runs in one transaction that is rolled back.
+  * rollback (one click): the next write no longer gets the rule; a rolled-back rule cannot be rolled back twice;
+  * an admin edit racing the activation click: the click waits for the edit and refuses the edited text (409).
+Each test runs in one transaction that is rolled back (the race test commits and deletes its own row).
 """
 import json
 import os
@@ -210,6 +211,49 @@ async def test_activation_refuses_a_failed_or_stale_r0(conn):
     with pytest.raises(HTTPException) as e:
         await r.activate_rule(rid2, req, x_admin_user_id=ADMIN)
     assert e.value.detail["code"] == "r0_stale"
+
+
+@pytest.mark.asyncio
+async def test_an_edit_racing_the_activation_click_never_goes_active():
+    """Review round: the activation check and its UPDATE are one transaction on a locked row. An admin edit that holds
+    the row when the click lands is waited for, and the click then sees the edited text (its R0 gone) -> 409; before
+    the fix the click checked the old row and its UPDATE activated the edited text R0 never replayed. Two real
+    connections (the edit must commit), so this test cleans up its own row."""
+    import asyncio
+
+    from fastapi import HTTPException
+
+    from api.routers import admin_writing_memory as r
+    c1, c2 = await asyncpg.connect(DSN), await asyncpg.connect(DSN)
+    rid = None
+    try:
+        rid = await rules_mod.insert_candidate(
+            c1, kind="lexicon", scope="platform", tenant_id=None, writer="t9_social",
+            cluster_key=f"t9_social|phrase:race-{uuid.uuid4().hex[:8]}", rule_text="truly special",
+            match_phrases=["truly special"], lint={"ok": True, "basis": "platform"})
+        rule = rules_mod.serialise(await rules_mod.get_rule(c1, rid))
+        assert await rules_mod.store_r0(c1, rid, {"rule_sha": rp.rule_sha(rule), "l0_ok": True})
+        assert l0.activation_problem(rules_mod.serialise(await rules_mod.get_rule(c1, rid))) is None
+
+        tr = c2.transaction()
+        await tr.start()
+        assert await rules_mod.edit_candidate(c2, rid, rule_text="truly special indeed", replacement=None,
+                                              match_phrases=["truly special indeed"], lint={"ok": True},
+                                              actor="admin:race", kind="lexicon")
+        click = asyncio.create_task(r.activate_rule(rid, _request(c1), x_admin_user_id=ADMIN))
+        await asyncio.sleep(0.5)
+        assert not click.done()                    # the click waits on the row the edit holds
+        await tr.commit()
+        with pytest.raises(HTTPException) as e:
+            await click
+        assert e.value.status_code == 409 and e.value.detail["code"] in ("r0_missing", "r0_stale")
+        row = await rules_mod.get_rule(c1, rid)
+        assert row["status"] == "candidate" and row["rule_text"] == "truly special indeed"
+    finally:
+        if rid:
+            await c1.execute("DELETE FROM shared.writing_rule WHERE rule_id = $1::uuid", rid)
+        await c1.close()
+        await c2.close()
 
 
 @pytest.mark.asyncio

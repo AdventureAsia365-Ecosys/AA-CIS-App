@@ -318,14 +318,19 @@ def gate_brand_forbidden_words(content_text: str, atom_text: str,
     return _result(qr.F2_BRAND_FORBIDDEN, [v for _, _, v in _forbidden_hits(content_text, atom_text, forbidden_words)])
 
 
+def forbidden_exempt(phrase: str, source_text: Optional[str]) -> bool:
+    """The F2_brand_forbidden source exemption: a forbidden phrase the source holds (a plain, case-insensitive
+    substring) is never flagged. One predicate for the gate and for the AA-918 R0 replay, so its counts match."""
+    return phrase.strip().lower() in (source_text or "").lower()
+
+
 def _forbidden_hits(content_text: str, atom_text: str,
                     forbidden_words: Optional[list[str]]) -> list[tuple[str, str, str]]:
     """(phrase, its sentence, violation text) for each tenant-forbidden word found, in the brand's list order."""
     hits: list[tuple[str, str, str]] = []
-    atom_lower = (atom_text or "").lower()
     for phrase in forbidden_words or []:
         phrase = phrase.strip()
-        if len(phrase) < 2 or phrase.lower() in atom_lower:
+        if len(phrase) < 2 or forbidden_exempt(phrase, atom_text):
             continue
         pattern = re.compile(rf"(?<!\w){re.escape(phrase)}(?!\w)", re.IGNORECASE)
         m = pattern.search(content_text or "")

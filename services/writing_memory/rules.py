@@ -194,10 +194,13 @@ async def list_rules(conn, *, status: Optional[str] = None, writer: Optional[str
     return [dict(r) for r in rows], int(total or 0)
 
 
-async def get_rule(conn, rule_id: str) -> Optional[dict]:
+async def get_rule(conn, rule_id: str, *, for_update: bool = False) -> Optional[dict]:
+    """One rule. `for_update` (inside the caller's transaction) locks the row, so a check made on what was read holds
+    until the write that depends on it (AA-918 activation: an edit cannot slip between the R0 check and the UPDATE)."""
     if _uuid(rule_id) is None:
         return None
-    row = await conn.fetchrow(f"SELECT {_COLUMNS} FROM shared.writing_rule WHERE rule_id = $1::uuid", _uuid(rule_id))
+    row = await conn.fetchrow(f"SELECT {_COLUMNS} FROM shared.writing_rule WHERE rule_id = $1::uuid"
+                              + (" FOR UPDATE" if for_update else ""), _uuid(rule_id))
     return dict(row) if row else None
 
 
@@ -245,7 +248,8 @@ async def store_r0(conn, rule_id: str, r0: dict) -> bool:
 async def activate_l0(conn, rule_id: str, *, approved_by: str) -> Optional[dict]:
     """AA-918 (WM-16) — the one human click of an L0 rule: candidate / approved -> active, with the approver's id
     (CIS 280 writing_rule_approval_check; the token-cap trigger still applies). The caller checked the rule (lexicon,
-    T9 writer, fresh passing R0). None when the row is no longer activatable."""
+    T9 writer, fresh passing R0) on a row it read with `get_rule(..., for_update=True)` in the same transaction, so
+    the text it checked is the text that goes active. None when the row is no longer activatable."""
     row = await conn.fetchrow(
         f"""UPDATE shared.writing_rule
                SET status = 'active', approved_by = $2, approved_at = now(), updated_at = now()

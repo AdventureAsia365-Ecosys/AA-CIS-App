@@ -330,7 +330,7 @@ function RuleDrawer({ ruleId, onClose }: { ruleId: string | null; onClose: () =>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <h3 style={{ fontSize: 13, margin: 0 }}>R0 replay</h3>
               <Button variant="ghost" onClick={() => act("r0")}
-                title="Replays the rule over stored texts, gate ledgers and signals; no model call, $0">Run R0</Button>
+                title="Replays the rule over stored texts, gate ledgers and signals; no model call, $0. CPU-heavy on the worker: run it outside a wave">Run R0</Button>
               {rule.kind === "lexicon" && L0_WRITERS.includes(rule.writer) && rule.status !== "active" && (
                 <Button variant="primary" disabled={!!rule.l0_activation} onClick={() => act("activate")}
                   title={rule.l0_activation?.detail || "The next T9 write of this owner gets the rule"}>
@@ -340,6 +340,8 @@ function RuleDrawer({ ruleId, onClose }: { ruleId: string | null; onClose: () =>
               <div style={{ color: K.muted, fontSize: 12 }}>Not activatable yet: {rule.l0_activation.detail}</div>)}
             {r0Of(rule) ? <R0Panel r0={r0Of(rule) as R0Result} fresh={rule.r0_fresh} />
               : <div style={{ color: K.muted, fontSize: 12.5 }}>No R0 run on this rule yet.</div>}
+            <div style={{ color: K.muted2, fontSize: 11.5 }}>
+              R0 replays up to 300 stored pieces on the worker&apos;s CPU (minutes, $0): run it outside a wave.</div>
             {rule.status === "active" && (
               <div style={{ display: "flex", gap: 8 }}>
                 <input placeholder="Why roll it back?" value={reason} onChange={(e) => setReason(e.target.value)}
@@ -447,7 +449,7 @@ export default function WritingMemory() {
           <Button onClick={() => run("backfill")} disabled={!!busy}>Backfill signals</Button>
           <Button onClick={() => run("fact_filter")} disabled={!!busy}>Run fact filter</Button>
           <Button variant="ghost" onClick={() => run("r0_baseline")} disabled={!!busy}
-            title="R0 sanity check, $0: re-runs the gates on stored T9 texts and compares with their stored ledgers">
+            title="R0 sanity check, $0: re-runs the gates on stored T9 texts and compares with their stored ledgers. CPU-heavy on the worker for up to ~20 minutes: run it outside a wave">
             R0 baseline</Button>
           <Button variant="primary" onClick={() => setConfirmMine(true)} disabled={!!busy}
             title="A paid run: at most 50 calls and $1, within the $25 month cap">

@@ -427,8 +427,8 @@ async def run_rule_r0(rule_id: str, request: Request, x_admin_user_id: Optional[
 async def activate_rule(rule_id: str, request: Request, x_admin_user_id: Optional[str] = Header(None)):
     """The L0 fast path (WM-16): a lexicon rule of a T9 writer whose R0 on its current text passed goes active with
     the admin's id as approver. 409 with a code when the rule is not ready (not_lexicon, no_l0_reader,
-    not_activatable, lint, phrase, replacement_adds, r0_missing, r0_stale, r0_failed, token_cap); 403 no_actor when
-    the caller has no admin id (an approval is a human's, never a job's)."""
+    not_activatable, lint, phrase, replacement_adds, r0_missing, r0_stale, r0_failed, replacement_forbidden,
+    token_cap); 403 no_actor when the caller has no admin id (an approval is a human's, never a job's)."""
     rid = _uuid(rule_id, "rule")
     actor = wm.admin_actor_id(x_admin_user_id)
     if actor == "unknown":
@@ -436,15 +436,17 @@ async def activate_rule(rule_id: str, request: Request, x_admin_user_id: Optiona
                                                                "on the request)", "code": "no_actor"})
     try:
         async with _pool(request).acquire() as conn:
-            rule = await rules_mod.get_rule(conn, rid)
-            if rule is None:
-                raise HTTPException(status_code=404, detail="Unknown rule")
-            rule = rules_mod.serialise(rule)
-            problem = l0_mod.activation_problem(rule)
-            if problem:
-                raise HTTPException(status_code=409, detail={"detail": problem[1], "code": problem[0]})
             try:
+                # The check and the write are one transaction on a locked row: an edit (PATCH) landing between them
+                # would otherwise send text active that R0 never replayed (review round, WM-16 "R0 on its current
+                # text"). A concurrent edit waits for this commit, or this read waits for the edit and sees r0_stale.
                 async with conn.transaction():
+                    rule = await rules_mod.get_rule(conn, rid, for_update=True)
+                    if rule is None:
+                        raise HTTPException(status_code=404, detail="Unknown rule")
+                    problem = l0_mod.activation_problem(rules_mod.serialise(rule))
+                    if problem:
+                        raise HTTPException(status_code=409, detail={"detail": problem[1], "code": problem[0]})
                     row = await rules_mod.activate_l0(conn, rid, approved_by=actor)
             except asyncpg.CheckViolationError as e:
                 raise HTTPException(status_code=409, detail={

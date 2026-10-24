@@ -62,7 +62,8 @@ def test_a_ban_passes_the_replacement_check():
 
 
 @pytest.mark.parametrize("phrase, ok", [("truly special", True), ("hidden gem", True), ("[NAME] views", False),
-                                        ("", False), ("ab", False),
+                                        ("", False), ("ab", False), ("the", False), ("and you", False),
+                                        ("'You'", False), ("the very best", True),
                                         ("never open a post with a question about the weather", False)])
 def test_phrase_problem(phrase, ok):
     assert (l0.phrase_problem(phrase) is None) == ok
@@ -75,7 +76,7 @@ def test_phrase_of_strips_quotes():
 # ── selection and the pack ──────────────────────────────────────────────────────────────────────────────────────────
 
 def test_select_rules_precedence_and_skips():
-    pack = {**fs.PACK, "custom_validators": None, "signature_words": ["curated"]}
+    pack = {**fs.PACK, "custom_validators": None, "signature_words": ["curated", "Off the beaten path"]}
     rules = [
         _rule("truly special", scope="platform", rid="p1"),
         _rule("truly special", replacement="special", scope="tenant", tenant=TENANT, rid="t1"),
@@ -87,16 +88,74 @@ def test_select_rules_precedence_and_skips():
         _rule("hidden gem", rid="p7", applies_to=["linkedin"]),        # not for facebook
         _rule("dreamy", rid="p8", kind="writer_instruction"),
         _rule("lunch", replacement="lunch included", rid="p9"),        # adds a service
+        _rule("off the beaten path", rid="p10"),     # listed by the tenant in signature_words, not a POSITIONING word
     ]
     applied, skipped = l0.select_rules(rules, pack=pack, cta=fs.CTA, brand_name="Trail Pulse Adventures",
                                        trip_name=fs.TRIP, channel="facebook")
     assert [e["rule_id"] for e in applied] == ["t1"]          # the tenant rule wins over the platform one
     reasons = {e["rule_id"]: e["reason"] for e in skipped}
-    assert set(reasons) == {"p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9"}
+    assert set(reasons) == {"p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10"}
     assert "same phrase" in reasons["p1"] and "signature word" in reasons["p2"]
     assert "CTA" in reasons["p3"] and "brand name" in reasons["p4"] and "trip name" in reasons["p5"]
     assert "masked token" in reasons["p6"] and "linkedin" in reasons["p7"] and "lexicon" in reasons["p8"]
     assert "adds a specific" in reasons["p9"]
+    assert "signature word" in reasons["p10"]
+
+
+# ── a replacement never uses a word the same write forbids (review round) ──────────────────────────────────────────
+
+@pytest.mark.parametrize("phrase, replacement, extra, word", [
+    ("a bargain", "a cheap trip", (), "cheap"),                       # platform truth
+    ("very nice", "stunning", (), "stunning"),                        # stock superlative
+    ("unique", "truly unique", (), "unique"),                         # its own phrase
+    ("hidden gem", "quiet corner", ("quiet",), "quiet"),              # the tenant's list / another applied phrase
+    ("hidden gem", "quiet spot", (), None),
+])
+def test_replacement_forbidden(phrase, replacement, extra, word):
+    assert l0.replacement_forbidden(phrase, replacement, extra) == word
+
+
+def test_a_replacement_on_the_tenants_forbidden_list_is_skipped():
+    pack = {**fs.PACK, "forbidden_words": ["quiet"]}
+    applied, skipped = l0.select_rules([_rule("hidden gem", replacement="quiet spot", rid="a"),
+                                        _rule("a bargain", replacement="a cheap trip", rid="b")],
+                                       pack=pack, channel="facebook")
+    assert applied == []
+    reasons = {e["rule_id"]: e["reason"] for e in skipped}
+    assert "'quiet'" in reasons["a"] and "'cheap'" in reasons["b"]
+
+
+def test_chained_rules_never_contradict_each_other():
+    # A -> B while B is banned by rule b: A is skipped, b applies
+    applied, skipped = l0.select_rules([_rule("hidden gem", replacement="quiet spot", rid="a"),
+                                        _rule("quiet spot", rid="b")], pack=dict(fs.PACK), channel="facebook")
+    assert [e["rule_id"] for e in applied] == ["b"]
+    assert skipped[0]["rule_id"] == "a" and "'quiet spot'" in skipped[0]["reason"]
+    # A -> B -> C with C banned: B is skipped, then A is fine again (B's phrase is no longer forbidden)
+    applied, skipped = l0.select_rules([_rule("hidden gem", replacement="nice place", rid="a"),
+                                        _rule("nice place", replacement="calm place", rid="b"),
+                                        _rule("calm place", rid="c")], pack=dict(fs.PACK), channel="facebook")
+    assert [e["rule_id"] for e in applied] == ["a", "c"] and [e["rule_id"] for e in skipped] == ["b"]
+    # A -> B and B -> A: the first (precedence order) stays
+    applied, skipped = l0.select_rules([_rule("hidden gem", replacement="quiet spot", rid="a"),
+                                        _rule("quiet spot", replacement="hidden gem", rid="b")],
+                                       pack=dict(fs.PACK), channel="facebook")
+    assert [e["rule_id"] for e in applied] == ["a"] and [e["rule_id"] for e in skipped] == ["b"]
+    # what reaches the prompt: no "Write 'X'" line names a word the brand block forbids
+    pack = l0.apply_to_pack(dict(fs.PACK), applied)
+    for e in pack["learned_lexicon"]:
+        assert not any(l0.replacement_forbidden(e["phrase"], e["replacement"], [w])
+                       for w in pack["forbidden_words"])
+
+
+def test_without_learned_undoes_apply_to_pack():
+    own = {**fs.PACK, "forbidden_words": ["luxury", "truly special"]}
+    applied = [{"rule_id": "a", "scope": "platform", "phrase": "truly special", "replacement": None},
+               {"rule_id": "b", "scope": "platform", "phrase": "hidden gem", "replacement": "quiet spot"}]
+    pack = l0.apply_to_pack(own, applied)
+    assert [e["added"] for e in pack["learned_lexicon"]] == [False, True]
+    assert l0.without_learned(pack) == own                  # the tenant's own "truly special" stays
+    assert l0.without_learned(own) is own and l0.without_learned(None) is None
 
 
 def test_release_zero_is_a_no_op():
@@ -207,6 +266,11 @@ def _ready(**kw):
 def test_activation_refuses_what_is_not_ready(change, code):
     r = {**_ready(), **change}
     assert l0.activation_problem(r)[0] == code
+
+
+def test_activation_refuses_a_replacement_the_writer_may_not_use():
+    code, why = l0.activation_problem(_ready(replacement="stunning"))
+    assert code == "replacement_forbidden" and "stunning" in why
 
 
 def test_activation_needs_a_passing_r0():

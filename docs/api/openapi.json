@@ -28555,7 +28555,7 @@
     },
     "/admin/writing-memory/candidates/{rule_id}/activate": {
       "post": {
-        "description": "The L0 fast path (WM-16): a lexicon rule of a T9 writer whose R0 on its current text passed goes active with\nthe admin's id as approver. 409 with a code when the rule is not ready (not_lexicon, no_l0_reader,\nnot_activatable, lint, phrase, replacement_adds, r0_missing, r0_stale, r0_failed, token_cap); 403 no_actor when\nthe caller has no admin id (an approval is a human's, never a job's).",
+        "description": "The L0 fast path (WM-16): a lexicon rule of a T9 writer whose R0 on its current text passed goes active with\nthe admin's id as approver. 409 with a code when the rule is not ready (not_lexicon, no_l0_reader,\nnot_activatable, lint, phrase, replacement_adds, r0_missing, r0_stale, r0_failed, replacement_forbidden,\ntoken_cap); 403 no_actor when the caller has no admin id (an approval is a human's, never a job's).",
         "operationId": "activate_rule_admin_writing_memory_candidates__rule_id__activate_post",
         "parameters": [
           {

@@ -86,7 +86,9 @@ R0 = "writing_memory_r0"
 R0_MAX_RULES = 20
 
 
-@job_kind(R0, concurrency=1, max_attempts=2, expected_seconds=900, background=True)
+# expected_seconds: a cold run is ~0.3 s of CPU per text, up to 300 pieces x 6 texts per T9 writer (the baseline covers
+# both writers), so up to ~20 minutes before the per-job cache helps; the Jobs page flags it only past this.
+@job_kind(R0, concurrency=1, max_attempts=2, expected_seconds=1800, background=True)
 async def run_r0_job(ctx: JobContext) -> dict:
     from services.writing_memory import rules as rules_mod
     from services.writing_memory.replay import run_baseline, run_r0

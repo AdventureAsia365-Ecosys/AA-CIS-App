@@ -216,3 +216,31 @@ def test_a_job_cache_runs_each_stored_text_once_without_the_rule(monkeypatch):
         asyncio.run(rp.run_r0(_Pool(conn), rule, now=NOW, cache=cache))
     # 2 rule-off runs (one per stored text, shared) + 2 for the phrase of the first rule (on + counterfactual)
     assert calls.count(True) == 2 and calls.count(False) == 2
+
+
+def test_a_piece_written_with_the_rule_active_is_replayed_rule_off():
+    # review round: the stored pack of a piece written while an L0 rule was active already forbids the phrase; the
+    # rule-off base drops it (the rule fires), while the baseline still compares the pack the writer ran
+    from services.writing_memory import l0
+    wi = {**WI, "brand_pack": l0.apply_to_pack(dict(fs.PACK), [{"rule_id": "x", "scope": "tenant",
+                                                                 "phrase": "truly special", "replacement": None}])}
+    pr = rp.PieceReplay(wi, "facebook")
+    assert not pr.pack.get("forbidden_words") and "truly special" in pr.stored_pack["forbidden_words"]
+    ledger = pr.run(TEXT, pack=pr.stored_pack, f9=rp._stored_f9([]), stock_blocking=True)
+    piece = {**_piece("p1"), "writer_input": wi, "gate_ledger": ledger}
+    res = asyncio.run(rp.run_r0(_Pool(_Conn([], [piece])), _rule(), now=NOW))
+    assert res["pieces"]["fires"] == 1 and res["l0_ok"]
+    assert res["baseline"]["agreement"] == 1.0
+
+
+def test_source_exemption_is_the_gates_own_predicate():
+    # the gate exempts a forbidden phrase the seed holds as a plain substring (here inside a longer word)
+    wi = {**WI, "seed": fs.SEED + " Truly specialists guide each group."}
+    pr = rp.PieceReplay(wi, "facebook")
+    piece = {**_piece("p1"), "writer_input": wi,
+             "gate_ledger": pr.run(TEXT, pack=pr.pack, f9=rp._stored_f9([]), stock_blocking=True)}
+    res = asyncio.run(rp.run_r0(_Pool(_Conn([], [piece])), _rule(), now=NOW))
+    assert res["pieces"]["source_exempt"] == 1 and res["pieces"]["fires"] == 0
+    on = pr.run(TEXT, pack={**pr.pack, "forbidden_words": ["truly special"]}, f9=rp._stored_f9([]),
+                stock_blocking=True)
+    assert rp._forbidden_violations(on, "truly special") == 0          # what the gate does, R0 counts

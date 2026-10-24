@@ -52,6 +52,9 @@ R0_MAX_PIECES = 300              # the newest stored pieces of the writer and ow
 R0_MAX_TEXTS_PER_PIECE = 6       # final text + discarded attempts + before-edit texts, deduplicated
 RECURRENCE_DAYS = 30             # WM-15 scope 2: "recurred >= k times in 30 days"
 _SAMPLE_IDS = 10                 # piece ids kept per list in the result
+# A pause between pieces: the gate replay is CPU-bound Python in a thread, and the worker's event loop (wave jobs run
+# beside it) gets a clean slot of the GIL each time. 300 pieces cost ~6 s more in all.
+R0_YIELD_SECONDS = 0.02
 
 # gates a replay cannot re-decide: the F9 judge (stored verdicts are passed through) and the cross-tenant lookup
 _NOT_COMPARED_PREFIXES = ("F9_", "F10_")
@@ -202,7 +205,10 @@ class PieceReplay:
             brand_name=ba.get("brand_name"))
         briefs = svc.hygiene.brief_texts(ba, ctx.get("chosen"))
         ctx["writer_trip_name"] = svc.hygiene.scoped_trip_name(ctx.get("trip_name"), ctx.get("scope"), hyg.lexicon)
-        self.pack = ba
+        # The rule-off base: the pack as the tenant wrote it. A piece written while an L0 rule was active stored the
+        # pack with the learned phrases on its forbidden list; replaying with them would count that base as rule-on.
+        self.stored_pack = ba
+        self.pack = l0.without_learned(ba)
         self.atom_text = svc._grounding_text(ctx)
         self.cta = ctx.get("cta")
         self.trip_name = ctx.get("trip_name")
@@ -238,7 +244,9 @@ def replay_piece(piece: dict, rule: Optional[dict], texts: list[tuple[str, str, 
     """One piece: the baseline comparison of each text that has a stored ledger, and, with an L0 `entry`
     ({phrase, replacement}), the base / on / counterfactual runs of each text holding the phrase.
     `texts`: (kind, text, stored ledger or None, stock_blocking). `cache` (one per job): the rebuilt inputs and the
-    rule-off runs of each piece, shared by every rule of the job (a run costs ~0.3 s of CPU)."""
+    rule-off runs of each piece, shared by every rule of the job (a run costs ~0.3 s of CPU).
+    Rule off = the pack without the learned phrases a stored pack may carry (`l0.without_learned`); the baseline
+    compares the stored ledger with a run on the pack as stored (what the writer ran)."""
     out = {"baseline": {}, "texts": 0, "with_phrase": 0, "source_exempt": 0, "fires": 0,
            "before": 0, "after": 0, "new_hard_stops": Counter(), "error": None}
     cache = {} if cache is None else cache
@@ -252,6 +260,7 @@ def replay_piece(piece: dict, rule: Optional[dict], texts: list[tuple[str, str, 
     except Exception as e:  # noqa: BLE001 — a piece whose stored input cannot be rebuilt is counted, never fatal
         out["error"] = f"inputs: {type(e).__name__}: {str(e)[:160]}"
         return out
+    from services.acp_content_writing import quality_gates as qg
     f9 = _stored_f9(piece.get("gate_ledger") or [])
     on_pack = l0.apply_to_pack(pr.pack, [{"rule_id": "r0", "scope": (rule or {}).get("scope"), **entry}]) \
         if entry else None
@@ -266,7 +275,19 @@ def replay_piece(piece: dict, rule: Optional[dict], texts: list[tuple[str, str, 
             out["error"] = f"replay: {type(e).__name__}: {str(e)[:160]}"
             continue
         if stored is not None:
-            for gate, pair in baseline_compare(stored, base).items():
+            # The sanity check replays what the writer ran: with a learned phrase on the stored pack, that pack.
+            as_written = base
+            if pr.stored_pack is not pr.pack:
+                skey = ("stored",) + key[1:]
+                try:
+                    as_written = cache.get(skey)
+                    if as_written is None:
+                        as_written = cache[skey] = pr.run(text, pack=pr.stored_pack, f9=f9,
+                                                          stock_blocking=stock_blocking)
+                except Exception as e:  # noqa: BLE001
+                    out["error"] = f"replay: {type(e).__name__}: {str(e)[:160]}"
+                    as_written = None
+            for gate, pair in (baseline_compare(stored, as_written).items() if as_written is not None else ()):
                 agg = out["baseline"].setdefault(gate, [0, 0, 0, 0])   # compared, agree, stored_fail, replay_fail
                 agg[0] += 1
                 agg[1] += int(pair[0] == pair[1])
@@ -280,9 +301,9 @@ def replay_piece(piece: dict, rule: Optional[dict], texts: list[tuple[str, str, 
             continue
         out["with_phrase"] += 1
         out["before"] += n
-        if phrase_count(pr.atom_text, phrase):
-            out["source_exempt"] += 1     # the seed has it: the gate never flags it, the writer may use it
-            continue
+        if qg.forbidden_exempt(phrase, pr.atom_text):
+            out["source_exempt"] += 1     # the seed has it: the gate never flags it (its own predicate), the writer may
+            continue                      # use it
         try:
             on = pr.run(text, pack=on_pack, f9=f9, stock_blocking=stock_blocking)
             cf_text = counterfactual(text, phrase, entry.get("replacement"))
@@ -448,6 +469,7 @@ async def run_r0(pool, rule: dict, *, a1_pieces_30d: Optional[int] = None,
             continue
         totals["with_writer_input"] += 1
         res = await asyncio.to_thread(replay_piece, p, rule, texts_of(p, by_piece), entry=entry, cache=cache)
+        await asyncio.sleep(R0_YIELD_SECONDS)
         totals["errors"] += int(bool(res["error"]))
         for key in ("texts", "with_phrase", "source_exempt", "fires"):
             totals[key] += res[key]
@@ -508,6 +530,7 @@ async def run_baseline(pool, *, writers: Iterable[str] = l0.L0_WRITERS) -> dict:
     return out
 
 
-__all__ = ["R0_MAX_PIECES", "R0_VERSION", "RECURRENCE_DAYS", "PieceReplay", "baseline_compare", "blocking_failed",
-           "counterfactual", "l0_verdict", "load_evidence", "matches_text", "phrase_count", "phrases_for",
-           "replay_piece", "rule_sha", "run_baseline", "run_r0", "signal_matches", "stored_failures", "texts_of"]
+__all__ = ["R0_MAX_PIECES", "R0_VERSION", "R0_YIELD_SECONDS", "RECURRENCE_DAYS", "PieceReplay", "baseline_compare",
+           "blocking_failed", "counterfactual", "l0_verdict", "load_evidence", "matches_text", "phrase_count",
+           "phrases_for", "replay_piece", "rule_sha", "run_baseline", "run_r0", "signal_matches", "stored_failures",
+           "texts_of"]
