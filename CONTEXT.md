@@ -1981,13 +1981,18 @@ _Avoid_: block (alone), delete, filter.
 ### Writing memory (platform + tenant)
 
 What the writers (A1/S1, T2, T9 blog, T9 social) learn from, under release control. Model weights
-never change. See ADR 0010. Tables are planned for WM-03 onward; none exist yet.
+never change. See ADR 0010. The signal store `shared.writing_signal` exists since CIS 277 (AA-916, WM-03); the
+rule, exemplar and release tables are planned for later WM tasks.
 
 **Writing Signal**:
 One recorded piece of evidence about a writer's output: an admin sentence edit (before / after,
 gate, problem), a tenant edit, or an approve / reject / regenerate, with its reason. Captured
 silently; the tenant portal asks no feedback question (D7). Tenant signals live only in deletable
-tables.
+tables. Stored in `shared.writing_signal` (CIS 277): one row per signal, `scope` platform (A1, `tenant_id` NULL) or
+tenant (T2 / T9, `tenant_id` set); RLS ENABLE + FORCE with `tenant_isolation` for `aa_app_user` (own tenant rows,
+SELECT + INSERT only) and the X1 parity policies for `cis_app` / `cis_owner`, so every `cis_app` read filters
+`tenant_id` explicitly. Tenant rows are deleted by the AA-839 tenant erasure (`services/erasure/inventory.py`);
+`acp_shared.audit_log` keeps only the signal id and the sha256 hashes.
 _Avoid_: lesson, feedback (alone), training data.
 
 **Writing Rule**:
@@ -2433,7 +2438,7 @@ this is the table that resolves Open Question 1 below.
 | 7 | Slate (Subject) | **Tenant** | Per tenant | **No.** `acp_shared.subject.tenant_id UUID NOT NULL` (migration 133:19). The similarly-named but unrelated `acp_contract.route_pick` (the Route-pick snapshot, renamed from `acp_contract.subject` at migration 132 — "a different, unrelated concept," migration 133:8) is also `tenant_id UUID NOT NULL` (migration 131:74, pre-rename) — both fully isolated. |
 | 8 | Goal / Angle / Write / Gate / Review / Publish | **Tenant** | Per tenant, per request/Piece | **Mostly no, one deliberate exception.** `acp_shared.angle_gate_request.tenant_id` (migration 113:36), `content_piece.tenant_id` (migration 115:36), `publish_log.tenant_id` (migration 116:27) all `NOT NULL`. Exception: the T10 cannibalization Gate (F10) deliberately reads EVERY other tenant's approved Pieces — `find_similar_pieces(cross_tenant=True, ...)`, `_CROSS_TENANT_QUERY` has no `tenant_id` filter at all (`services/acp_shared/piece_similarity.py:46-56, 67-95`), consumed by `gate_cannibalization()` at the 0.92 cosine-similarity threshold. This is a cross-tenant **read/compare**, not a cache — the embedding itself is never shared: `compute_embedding()` (`services/acp_shared/content_embedding.py`) makes one fresh Bedrock call per Piece, every time, for every tenant, with no caching layer at all. |
 | 9 | Facts Entry | **Both** (one table, two scopes) | Platform scope: once, by admin. Tenant scope: per tenant | **Yes for `scope='platform'` rows, by design.** `acp_shared.facts` (migration 145:33-46), `scope` column (`'platform'`\|`'tenant'`), `tenant_id IS NULL iff scope='platform'` (CHECK, migration 145:44-46). RLS (migration 229, AA-817, for the tenant pool role `aa_app_user`; the owner/main pool is exempt): `facts_platform_read` FOR SELECT `USING (scope = 'platform')` — platform rows are readable by every tenant — and `tenant_isolation` FOR ALL `USING`/`WITH CHECK (scope = 'tenant' AND tenant_id = NULLIF(app.tenant_id, '')::uuid)` — a tenant reads and writes only its own rows and can never write, delete or re-scope a platform fact (145's FOR ALL policy allowed that). |
-| 10 | Writing memory (Writing Rules, Pinned Exemplars, Releases; ADR 0010) | **Both** (one model, two scopes) | Platform scope: per monthly Release, approved by Nghiệp. Tenant scope: per tenant Release, one human click | **Tenant scope: no** — every `cis_app` read filters `tenant_id = $1` explicitly and the tables carry the `tenant_isolation` RLS policy (FORCE RLS), following the `acp_shared.facts` pattern; a CI test proves tenant A's rules never resolve for tenant B. **Platform scope: yes, by design** — a platform rule may be drawn from ≥ 3 distinct tenants' evidence (D9) and then applies to every tenant's writer, but platform rows never hold tenant text. Tables are CIS-owned in `shared`, planned for WM-03 onward (none exist yet). |
+| 10 | Writing memory (Writing Rules, Pinned Exemplars, Releases; ADR 0010) | **Both** (one model, two scopes) | Platform scope: per monthly Release, approved by Nghiệp. Tenant scope: per tenant Release, one human click | **Tenant scope: no** — every `cis_app` read filters `tenant_id = $1` explicitly and the tables carry the `tenant_isolation` RLS policy (FORCE RLS), following the `acp_shared.facts` pattern; a CI test proves tenant A's rules never resolve for tenant B. **Platform scope: yes, by design** — a platform rule may be drawn from ≥ 3 distinct tenants' evidence (D9) and then applies to every tenant's writer, but platform rows never hold tenant text. Tables are CIS-owned in `shared`: `writing_signal` exists (CIS 277, AA-916; isolation tests `tests/integration/test_aa916_migration_277.py`, `test_aa817_rls_tenant_isolation.py`); the rule / exemplar / release tables come with later WM tasks. |
 
 **Frozen predecessor (AA-915).** The AA-132 lessons loop (`shared.pipeline_lessons`) is frozen
 behind `PIPELINE_LESSONS_ENABLED` (env, default off, no per-tenant override): with the flag off
