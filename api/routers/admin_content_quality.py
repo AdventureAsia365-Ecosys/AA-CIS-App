@@ -33,6 +33,7 @@ from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
+import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from api.core.staff_authz import staff_policy
 from pydantic import BaseModel, Field
@@ -48,6 +49,10 @@ from services.acp_shared.audit_log import AdminAuditAction, PlatformAuditAction,
 from services.acp_shared.brand_pack import fetch_brand_pack_conn
 from services.acp_shared.grounding import find_novel_numeric_claims
 from services.quality import registry as qr
+from services.writing_memory import signals as wm  # AA-916
+from services.writing_memory.reason_codes import FACT_NOT_IN_SOURCE, ReasonCode, suggested_reason
+
+logger = structlog.get_logger()
 
 # AA-882 (GĐ3): staff_policy narrows every route listed in api/core/staff_authz.py POLICY by role.
 router = APIRouter(prefix="/admin/content-quality", tags=["admin-content-quality"],
@@ -334,7 +339,8 @@ def flagged_sentences(content_text: str, hls: list[dict]) -> list[dict]:
         it["problems"].append({"gate": h["gate"], "problem": h["problem"], "blocking": h["blocking"],
                                "severity": h.get("severity"), **({"source": h["source"]} if h.get("source") else {})})
         it["blocking"] = it["blocking"] or bool(h["blocking"])
-    return [items[k] for k in sorted(items)]
+    # AA-916 WM-06 — the reason chip the admin UI preselects (first gate of the sentence).
+    return [{**items[k], "suggested_reason": suggested_reason(items[k]["gates"][0])} for k in sorted(items)]
 
 
 # AA-802 — when the tenant last took a copy of the piece away: published to a channel
@@ -395,7 +401,9 @@ async def _load_piece_detail(conn, piece_id: str) -> dict:
     piece["flagged_sentences"] = flagged_sentences(piece["content_text"] or "", piece["highlights"])
     piece["cost_by_stage"] = [_row(r) for r in cost_rows]
     piece["other_pieces_for_request"] = [_row(r) for r in siblings]
-    piece["admin_edits"] = [{**_row(r), "details": _j(r["details"]) or {}} for r in edits]
+    # AA-916 — a row written since WM-06 holds no text: before / after come from its writing signal.
+    piece["admin_edits"] = await wm.with_signal_texts(
+        conn, [{**_row(r), "details": _j(r["details"]) or {}} for r in edits], row["tenant_id"])
     piece["exported"] = row["exported_at"] is not None
     piece["tenant_copy"] = tenant_copy_state(row["published_at"], row["exported_at"],
                                              [r["created_at"] for r in edits])
@@ -518,6 +526,23 @@ class SentenceApplyBody(BaseModel):
     suggestion: Optional[str] = Field(None, max_length=3000)
     suggestion_model: Optional[str] = Field(None, max_length=200)
     suggestion_cost_usd: Optional[float] = None
+    # AA-916 WM-06 — why the admin acted (one-click chip); an unknown code is a 422.
+    reason_code: Optional[ReasonCode] = None
+
+
+# AA-916 — the writing-signal action of each mode.
+_SIGNAL_ACTION_BY_MODE = {"cut": "sentence_cut", "rewrite": "sentence_rewrite", "manual": "sentence_manual"}
+
+
+def _sentence_audit(body: "SentenceApplyBody", ref: "wm.SignalRef", warnings: list[dict]) -> dict:
+    """AA-916 (ADR 0010 decision 11) — the audit details both sentence applies share: the action, the chip, the
+    signal id and the hashes. The sentence text, the suggestion text and the warning texts live in the writing
+    signal / the response only; `problem` (the gate's own diagnostic) stays."""
+    return {"mode": body.mode, "gate": body.gate, "problem": body.problem,
+            "suggestion_model": body.suggestion_model, "suggestion_cost_usd": body.suggestion_cost_usd,
+            "suggestion_sha256": wm.text_sha256(body.suggestion),
+            "warning_gates": [w.get("gate") for w in warnings],
+            **wm.audit_details(ref, body.reason_code)}
 
 
 _ACTION_BY_MODE = {"cut": AdminAuditAction.SENTENCE_CUT, "rewrite": AdminAuditAction.SENTENCE_REWRITTEN,
@@ -609,16 +634,22 @@ async def apply_sentence(piece_id: str, body: SentenceApplyBody, request: Reques
             await conn.execute(
                 "UPDATE acp_shared.content_piece SET content_text = $2 WHERE piece_id = $1::uuid",
                 piece_id, new_text)
+            # AA-916 WM-06 — the sentence before / after as a writing signal (same transaction: it is the
+            # edit's history now). A T9 piece has no Jev claim question, so fact_not_in_source is kept on the
+            # signal only (fact_status fail).
+            scope, owner = wm.scope_for_tenant(row["tenant_id"])
+            ref = await wm.record_writer_feedback(
+                conn, writer=wm.writer_for_channel(row["channel"]), scope=scope, tenant_id=owner,
+                channel=row["channel"], field="content_text", locator={"start": start, "end": end},
+                before_text=old_text[start:end], after_text=replacement, gate=body.gate, reason_code=body.reason_code,
+                action=_SIGNAL_ACTION_BY_MODE[body.mode], actor_type="admin", actor_id=x_admin_user_id or "unknown",
+                source_table="content_piece", source_id=piece_id)
             await write_audit_log(
                 conn, tenant_id=str(row["tenant_id"]), actor=f"admin:{x_admin_user_id or 'unknown'}",
                 action=_ACTION_BY_MODE[body.mode], resource_type="content_piece", resource_id=piece_id,
-                details={"start": start, "end": end, "before": old_text[start:end], "after": replacement,
-                         "mode": body.mode, "gate": body.gate, "problem": body.problem,
-                         "suggestion": body.suggestion, "suggestion_model": body.suggestion_model,
-                         "suggestion_cost_usd": body.suggestion_cost_usd,
+                details={"start": start, "end": end, **_sentence_audit(body, ref, warnings),
                          "length_before": len(old_text), "length_after": len(new_text),
-                         "published": bool(row["published"]), "exported": bool(row.get("exported")),
-                         "warnings": warnings},
+                         "published": bool(row["published"]), "exported": bool(row.get("exported"))},
             )
         piece = await _load_piece_detail(conn, piece_id)
     # S234 review: F12_scope / F13 hygiene hits on the admin's text are warnings, not refusals.
@@ -1050,9 +1081,9 @@ def t2_flag(sections: list[dict], tour: dict, pack_or_words) -> list[dict]:
                 s["problems"].append({"gate": qr.T2_FORBIDDEN_WORD, "blocking": True,
                                       "problem": f"forbidden word(s): {', '.join(hits)}"})
             if s["problems"]:
-                flagged.append({**s, "field": sec["field"], "index": sec["index"],
-                                "gates": list(dict.fromkeys(p["gate"] for p in s["problems"])),
-                                "blocking": True})
+                gates = list(dict.fromkeys(p["gate"] for p in s["problems"]))
+                flagged.append({**s, "field": sec["field"], "index": sec["index"], "gates": gates,
+                                "blocking": True, "suggested_reason": suggested_reason(gates[0])})  # AA-916
     return flagged
 
 
@@ -1142,7 +1173,8 @@ async def _load_version_detail(conn, version_id: str) -> dict:
     out["cost_by_stage"] = [_row(r) for r in cost_rows]
     out["flagged_sentences"] = t2_flag(sections, source_tour_dict(row), pack)
     out["sections"] = sections
-    out["admin_edits"] = [{**_row(r), "details": _j(r["details"]) or {}} for r in edits]
+    out["admin_edits"] = await wm.with_signal_texts(
+        conn, [{**_row(r), "details": _j(r["details"]) or {}} for r in edits], row["tenant_id"])  # AA-916
     block = t2_edit_block(row["status"], row["version_number"], row["latest_version_number"],
                           row["edit_source"])
     out["editable"], out["edit_block_reason"] = block is None, block
@@ -1287,24 +1319,57 @@ async def apply_tour_sentence(version_id: str, body: TourSentenceApplyBody, requ
             if not str(res).endswith(" 1"):
                 raise HTTPException(status_code=409, detail="The version was not updated (it changed or is no "
                                                             "longer editable) — reload and try again")
+            # AA-916 WM-06 — the sentence before / after as a writing signal of the T2 writer (tenant text:
+            # scope tenant), same transaction.
+            scope, owner = wm.scope_for_tenant(row["tenant_id"])
+            sentence = old_text[start:end]
+            ref = await wm.record_writer_feedback(
+                conn, writer="t2", scope=scope, tenant_id=owner, channel="tour", field=body.field,
+                locator={"field": body.field, "index": body.index, "start": start, "end": end},
+                before_text=sentence, after_text=replacement, gate=body.gate, reason_code=body.reason_code,
+                action=_SIGNAL_ACTION_BY_MODE[body.mode], actor_type="admin", actor_id=x_admin_user_id or "unknown",
+                source_table="tenant_tour_version", source_id=str(row["id"]))
+            # ADR 0010 decision 11: the version history keeps hashes of the section and of the whole version
+            # before / after (AA-802 kept their text; that is tenant text, which only deletable tables hold).
             await write_audit_log(
                 conn, tenant_id=str(row["tenant_id"]), actor=f"admin:{x_admin_user_id or 'unknown'}",
                 action=_TOUR_ACTION_BY_MODE[body.mode], resource_type="tenant_tour_version",
                 resource_id=str(row["id"]),  # canonical form: the detail reads by ttv.id::text
                 details={"field": body.field, "index": body.index, "start": start, "end": end,
-                         "before": old_text[start:end], "after": replacement, "mode": body.mode,
-                         "gate": body.gate, "problem": body.problem, "suggestion": body.suggestion,
-                         "suggestion_model": body.suggestion_model,
-                         "suggestion_cost_usd": body.suggestion_cost_usd,
+                         **_sentence_audit(body, ref, warnings),
                          "version_number": row["version_number"], "status": row["status"],
-                         "section_before": old_text, "section_after": new_text,
-                         # the whole version before / after: the history holds both versions
-                         # (AA-802 Done-when), not only the section that changed
-                         "content_before": rc, "content_after": new_rc,
-                         "exported": row["exported_at"] is not None, "warnings": warnings},
+                         "section_before_sha256": wm.text_sha256(old_text),
+                         "section_after_sha256": wm.text_sha256(new_text),
+                         "content_before_sha256": wm.text_sha256(json.dumps(rc, sort_keys=True)),
+                         "content_after_sha256": wm.text_sha256(json.dumps(new_rc, sort_keys=True)),
+                         "exported": row["exported_at"] is not None},
             )
         detail = await _load_version_detail(conn, version_id)
+    if body.reason_code == FACT_NOT_IN_SOURCE:
+        await _record_fact_not_in_source(pool, tour, sentence, ref, x_admin_user_id)
     return {**detail, "warnings": warnings}
+
+
+async def _record_fact_not_in_source(pool, tour: dict, sentence: str, ref: "wm.SignalRef",
+                                     admin_id: Optional[str]) -> int:
+    """AA-916 WM-06 — the admin says this T2 sentence states a fact the source does not have: truth=false on
+    the Jev question T3 asks about it (`a1_claim_supported`, the subject key of tenant_pipeline.t3_jev_clear:
+    the whole source tour + the sentence). After the edit committed, on the pool: record_outcome is best-effort
+    and returns the rows it labelled (0 when T3 never asked Jev about this sentence)."""
+    from services.acp_produce.tenant_pipeline import T3_JEV_Q
+    from services.content_generation.grounding import source_text, subject_key
+    from shared.llm_client.decide import record_outcome
+    source = source_text(tour or {})
+    if not source or not sentence.strip():
+        return 0
+    try:
+        by = str(UUID(admin_id)) if admin_id else None
+    except ValueError:
+        by = None
+    rows = await record_outcome(pool, T3_JEV_Q, subject_key(source, sentence.strip()), truth=False,
+                                source="admin_reason_fact_not_in_source", ref=ref.signal_id, by=by)
+    logger.info("aa916_fact_not_in_source_outcome", signal_id=ref.signal_id, rows=rows)
+    return rows
 
 
 # ── Place cards (AA-772) ───────────────────────────────────────────────────────────────────────

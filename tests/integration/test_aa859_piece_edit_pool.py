@@ -143,7 +143,48 @@ async def test_owner_edits_approved_and_held_pieces_on_the_tenant_pool(ctx, whic
     audits = await _audit_rows(ctx, piece_id)
     assert len(audits) == 1 and audits[0]["action"] == "content_piece.edited"
     assert audits[0]["tenant_id"] == str(ctx.a) and audits[0]["actor"] == f"tenant:{ctx.a}"
-    assert json.loads(audits[0]["details"]) == {"content_length": len("Edited on the tenant pool")}
+    details = json.loads(audits[0]["details"])
+    # AA-916 WM-04: the audit row names the writing signal and holds hashes, never the text
+    assert details["content_length"] == len("Edited on the tenant pool")
+    assert set(details) == {"content_length", "signal_id", "before_sha256", "after_sha256"}
+    sig = await ctx.conn.fetchrow("SELECT writer, scope, tenant_id, before_text, after_text, actor_type, action, "
+                                  "before_sha256 FROM shared.writing_signal WHERE signal_id = $1::uuid",
+                                  details["signal_id"])
+    assert dict(sig) == {"writer": "t9_blog", "scope": "tenant", "tenant_id": ctx.a, "before_text": f"Body of {ctx.a}",
+                         "after_text": "Edited on the tenant pool", "actor_type": "tenant", "action": "tenant_edit",
+                         "before_sha256": details["before_sha256"]}
+
+
+async def _signals(c, piece_id):
+    return await c.conn.fetch("SELECT tenant_id, before_text, after_text FROM shared.writing_signal "
+                              "WHERE source_table = 'content_piece' AND source_id = $1", str(piece_id))
+
+
+@pytest.mark.asyncio
+async def test_signal_is_written_by_the_tenant_role_and_stays_in_its_tenant(ctx):
+    """AA-916 WM-04: the insert runs on the tenant pool (aa_app_user, RLS WITH CHECK own tenant); tenant B's
+    tenant-pool read sees none of A's signals; an unchanged text writes no signal."""
+    await _edit(ctx, ctx.a, ctx.piece_a, "A's new text", flag_on=True)
+    await _edit(ctx, ctx.a, ctx.piece_a, "A's new text", flag_on=True)              # unchanged: no 2nd signal
+    rows = await _signals(ctx, ctx.piece_a)
+    assert [(r["tenant_id"], r["before_text"], r["after_text"]) for r in rows] == [
+        (ctx.a, f"Body of {ctx.a}", "A's new text")]
+    for tenant, seen in ((ctx.b, 0), (ctx.a, 1)):
+        async with ctx.conn.transaction():
+            await ctx.conn.execute(f"SET LOCAL ROLE {TENANT_ROLE}")
+            await ctx.conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant))
+            n = await ctx.conn.fetchval("SELECT count(*) FROM shared.writing_signal WHERE source_id = $1",
+                                        str(ctx.piece_a))                           # no tenant filter on purpose
+            await ctx.conn.execute("RESET ROLE")
+        assert n == seen, tenant
+
+
+@pytest.mark.asyncio
+async def test_a_foreign_tenant_edit_writes_no_signal(ctx):
+    for flag_on in (True, False):
+        with pytest.raises(service.ContentWritingError):
+            await _edit(ctx, ctx.b, ctx.piece_a, "B was here", flag_on=flag_on)
+    assert await _signals(ctx, ctx.piece_a) == []
 
 
 @pytest.mark.asyncio

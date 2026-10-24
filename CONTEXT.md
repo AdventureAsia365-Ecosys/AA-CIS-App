@@ -2040,6 +2040,14 @@ tenant (T2 / T9, `tenant_id` set); RLS ENABLE + FORCE with `tenant_isolation` fo
 SELECT + INSERT only) and the X1 parity policies for `cis_app` / `cis_owner`, so every `cis_app` read filters
 `tenant_id` explicitly. Tenant rows are deleted by the AA-839 tenant erasure (`services/erasure/inventory.py`);
 `acp_shared.audit_log` keeps only the signal id and the sha256 hashes.
+Captured by `services/writing_memory/signals.py` `record_writer_feedback` (AA-916) on: the tenant's T9 hand edit
+(PATCH /v1/content-writing/pieces/{id}, best-effort, on the tenant pool), the admin A1 field edit (PATCH
+/admin/tours/{tour_id}/generated/{content_id}, one signal per changed field), the admin sentence cut / rewrite / edit
+of a T9 piece or a T2 version (with an optional reason code; `fact_not_in_source` on a T2 sentence also labels Jev
+`a1_claim_supported` truth=false), and reject / dismiss / regenerate of a review row (reason-only, no text). The admin
+history reads the text back from the signal (legacy audit rows keep their own text, D16). Reason codes and the chip
+preselected for a gate: `services/writing_memory/reason_codes.py`. Every discarded T9 attempt is kept in
+`content_piece.discarded_attempts`, and `writer_input.writer_prompt_version` stamps the T9 system prompt.
 _Avoid_: lesson, feedback (alone), training data.
 
 **Writing Rule**:
