@@ -19,8 +19,9 @@ Rules
   ``crm_unavailable``; a body that is not a JSON object -> 502 ``crm_bad_response``.
 - Request and response bodies are never logged (the owner invite carries an e-mail address): one
   ``crm_console_call`` line with method, route pattern, status and duration only. Sentry drops request bodies
-  (shared/sentry_init.py: max_request_body_size "never", before_send pops request.data) and the staff audit middleware
-  stores no body (api/middleware/staff_audit.py).
+  (shared/sentry_init.py: max_request_body_size "never", before_send pops request.data); frame locals, which hold the
+  token and the parsed body on an unhandled error, are dropped by fix/sentry-frame-locals (S249, merged with this);
+  the staff audit middleware stores no body (api/middleware/staff_audit.py).
 - Timeouts: 2 s for reads, 5 s for the agency list (one CRM transaction per agency listed), 10 s for writes (the owner
   invite sends its SES mail inside the CRM transaction).
 """
