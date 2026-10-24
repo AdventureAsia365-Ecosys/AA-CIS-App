@@ -11,7 +11,7 @@ conftest replays 277 like every file. Each test runs in one transaction that is 
     DELETE or TRUNCATE (ADR 0010 decision 10);
   * cis_app (parity policy) and cis_owner (FORCE: its own parity policy, X1 S21) see every row;
   * the CHECKs: scope / tenant_id, writer, action, actor_type, reason codes, fact_status default, exemplar_pref,
-    locator shape, hash required with the text and lower-case hex.
+    locator shape, hash required with the text and lower-case hex, the size caps (problem, actor_id).
 """
 import os
 import sys
@@ -216,3 +216,13 @@ async def test_checks_scope_and_hash_rules(conn):
     # a reason-only signal (reject / dismiss) carries no text and no hash
     await conn.execute(f"INSERT INTO {TABLE} (writer, scope, reason_code, action, actor_type, source_table, source_id) "
                        "VALUES ('a1', 'platform', 'voice_off_brand', 'reject', 'admin', 'review_queue', 'zz916')")
+
+
+@pytest.mark.asyncio
+async def test_size_caps_problem_and_actor_id(conn):
+    # review round: the gate's diagnostic quotes the flagged text, so it lives here (pii:free_text), capped at 2000
+    sid = await _signal(conn, tenant=uuid.uuid4())
+    await conn.execute(f"UPDATE {TABLE} SET problem = $1 WHERE signal_id = $2", "p" * 2000, sid)
+    for column, value in (("problem", "p" * 2001), ("actor_id", "a" * 129)):
+        await _refused(conn, asyncpg.CheckViolationError, f"UPDATE {TABLE} SET {column} = $1 WHERE signal_id = $2",
+                       value, sid)
