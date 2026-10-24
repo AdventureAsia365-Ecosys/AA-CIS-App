@@ -13,8 +13,8 @@ Errors
       `INSERT INTO shared.decision_question (question_key …)` in a migration) not in the registry.
   (d) an A1 validate / brand-audit / grounding code not mapped in `a1_codes` (code maps and `*_CODES` in
       services/content_generation/ and admin_pipeline.py, `{"code": ...}` literals and `X = "X"` / `*_CODE`
-      module constants in services/content_generation/, and the code constants of the A1 code-check modules
-      in services/quality/, read only — they stay exempt from (a)/(b)).
+      module constants in services/content_generation/, and the code constants and `*_CODES` of the A1
+      code-check modules in services/quality/, read only — they stay exempt from (a)/(b)).
   (e) an admin chip not mapped (defect classes — set and order frozen —, duplicate reasons, review kinds).
   (f) a paths.yaml glob that matches no tracked file.
   (g) a hard/block class without a labelled positive and negative synthetic example.
@@ -23,7 +23,8 @@ Errors
       through taxonomy.yaml aliases) or whose detector is not a registered gate, Jev key, A1 code or code check.
   plus schema errors in the three YAML files and a stale generated TS file.
 Warnings: coverage parity (§3.4 #4), hard/block classes with no enforcing detector, selector paths with no
-Q0 keep/drop set yet (§3.4 #6; becomes an error once the Q-2 corpus exists), unused Jev keys read by code.
+Q0 keep/drop set yet (§3.4 #6; becomes an error once the Q-2 corpus exists), unused Jev keys read by code,
+and (j) a gating (hard/block) Q0 case whose class id resolves only to warn classes (AA-924 input).
 
 Exempt from (a)/(b): tests, docs, migrations, services/quality/, docstrings and comments, `__all__` lists,
 the generated TS file, and a line carrying `# qlint: allow <reason>` (counted in the report).
@@ -278,9 +279,17 @@ def a1_code_sites(files: dict[str, str]) -> dict[str, str]:
 
     for path, src in files.items():
         if path in A1_CODE_MODULES:
-            for node in ast.parse(src).body:
+            tree = ast.parse(src)
+            for node in tree.body:
                 if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
                     add(node.value.value, path, node.lineno)
+            for node in ast.walk(tree):  # a code listed only in a *_CODES tuple / set
+                if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                    if any(isinstance(t, ast.Name) and t.id.endswith("_CODES") for t in targets):
+                        for c in ast.walk(node.value):
+                            if isinstance(c, ast.Constant):
+                                add(c.value, path, c.lineno)
             continue
         if not (path.startswith("services/content_generation/") or path == "api/routers/admin_pipeline.py"):
             continue
@@ -492,8 +501,11 @@ def check_paths(res: Result, tracked: list[str]) -> None:
 
 def check_q0_corpus(root: Path, res: Result) -> None:
     """Every Q0 case's class_id and detector resolve through the registry (one taxonomy). Reads the case files
-    as data (json); a case is never relabelled here."""
+    as data (json); a case is never relabelled here. A Q0 case that gates (hard/block) on a class id that
+    resolves only to warn classes is a warning, one per class id: the severity mismatch is AA-924 input."""
     refs = registry.detector_refs()
+    classes = registry.classes()
+    softened: dict[str, list[str]] = {}
     for path in sorted((root / Q0_CASES_DIR).glob("*.json")):
         if path.name.startswith("_"):
             continue
@@ -510,6 +522,14 @@ def check_q0_corpus(root: Path, res: Result) -> None:
             if c.get("detector") not in refs:
                 res.errors.append(f"{where}: (j) detector {c.get('detector')!r} is not a registered gate, Jev key, "
                                   f"A1 code or code check")
+            resolved = registry.resolve_class(c.get("class_id"))
+            if c.get("severity") in ("hard", "block") and resolved \
+                    and all(classes[r].get("severity") == "warn" for r in resolved):
+                softened.setdefault(c["class_id"], []).append(str(c.get("id")))
+    for cid, ids in sorted(softened.items()):
+        res.warnings.append(f"(j) Q0 class id {cid!r} → {registry.resolve_class(cid)} is warn, but {len(ids)} Q0 "
+                            f"case(s) gate on it ({', '.join(ids[:3])}{', …' if len(ids) > 3 else ''}); "
+                            f"AA-924 input")
 
 
 # ------------------------------------------------------------------------------------------------ run

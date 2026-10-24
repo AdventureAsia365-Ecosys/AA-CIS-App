@@ -165,6 +165,20 @@ def test_a1_code_sites_read_quality_modules_code_dicts_and_code_constants():
     assert found["DAY_NEW_CODE"] == "services/quality/day_oracle.py:1"
 
 
+def test_a1_code_sites_read_codes_tuples_in_quality_modules():
+    found = lint.a1_code_sites({
+        "services/quality/s1_checks.py": textwrap.dedent('''
+            KNOWN = "META_CUT"
+            ENFORCE_CODES = ("META_CUT", "TUPLE_ONLY_CODE")
+            _SHADOW_CODES: frozenset[str] = frozenset({"ANNOTATED_ONLY_CODE"})
+            OTHER = ("NOT_A_CODE_LIST",)
+        '''),
+    })
+    assert {"META_CUT", "TUPLE_ONLY_CODE", "ANNOTATED_ONLY_CODE"} <= set(found)
+    assert "NOT_A_CODE_LIST" not in found
+    assert found["TUPLE_ONLY_CODE"] == "services/quality/s1_checks.py:3"
+
+
 def test_q0_case_that_does_not_resolve_is_an_error(tmp_path):
     cases = tmp_path / lint.Q0_CASES_DIR
     cases.mkdir(parents=True)
@@ -178,6 +192,21 @@ def test_q0_case_that_does_not_resolve_is_an_error(tmp_path):
     assert len(res.errors) == 2, res.errors
     assert "bad-class" in res.errors[0] and "'other.nope'" in res.errors[0]
     assert "bad-det" in res.errors[1] and "'NOT_A_DETECTOR'" in res.errors[1]
+
+
+def test_q0_case_stricter_than_its_warn_class_is_a_warning(tmp_path):
+    cases = tmp_path / lint.Q0_CASES_DIR
+    cases.mkdir(parents=True)
+    (cases / "x.json").write_text(
+        '[{"id": "len-1", "class_id": "other.length", "detector": "F4_extreme_length", "severity": "block"},'
+        ' {"id": "len-2", "class_id": "other.length", "detector": "F4_extreme_length", "severity": "hard"},'
+        ' {"id": "num-1", "class_id": "source.unsupported_specific", "detector": "repair_contract",'
+        ' "severity": "hard"}]', encoding="utf-8")
+    res = lint.Result()
+    lint.check_q0_corpus(tmp_path, res)
+    assert res.errors == []
+    assert len(res.warnings) == 1, res.warnings  # fact.* classes gate, so only other.length is softened
+    assert "'other.length'" in res.warnings[0] and "2 Q0 case(s)" in res.warnings[0]
 
 
 def test_alias_shadowing_a_class_is_an_error(monkeypatch):

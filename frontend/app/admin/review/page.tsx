@@ -541,8 +541,8 @@ function ReviewQueueInner() {
             </select>
             <select value={filterScore} onChange={(e) => setScore(e.target.value)} style={selectStyle}>
               <option value="all">All scores</option>
-              <option value="critical">Critical (&lt;5.0)</option>
-              <option value="low">Low (5.0–6.9)</option>
+              <option value="critical">Critical (&lt;{SCORE_BANDS.low.toFixed(1)})</option>
+              <option value="low">Low ({SCORE_BANDS.low.toFixed(1)}–{(PASS_LINE - 0.1).toFixed(1)})</option>
               <option value="ok">{PASS_LINE.toFixed(1)}+ (held for another reason)</option>
             </select>
             <Btn variant="ghost" size="sm" onClick={() => refetch()}>

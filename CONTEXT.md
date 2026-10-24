@@ -667,7 +667,9 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   worker/, scripts/aa729/ and the frontend/portal TS; docstrings, comments, `__all__`, tests and migrations
   exempt; escape `# qlint: allow <reason>`, counted), every gate / chip / Jev key / A1 code mapped to a class
   (incl. the day-oracle, S1-first code-check and degraded codes in `services/quality/`), every Q0 corpus case's
-  `class_id` and `detector` resolving through the registry, the three YAML schemas, every `paths.yaml` glob matching a file, the generated TS fresh. The non-required job
+  `class_id` and `detector` resolving through the registry (a gating Q0 case on a `warn`-only class is a warning,
+  AA-924 input), the three YAML schemas, every `paths.yaml` glob matching a file, the generated TS fresh. The
+  non-required job
   **Quality Paths (report)** prints the quality tiers a change touches and a hash of its diff on
   `services/quality/paths.yaml` paths (AA-919 will enforce `quality/q2` with it).
 - **Frontend (Vercel)**: deploys are created by CI, not the Vercel Git integration (S241 — Hobby
