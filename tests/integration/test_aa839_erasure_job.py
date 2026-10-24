@@ -355,11 +355,16 @@ async def test_a_restore_after_the_first_checks_stops_the_apply_inside_the_trans
     await _seed(pool, tid, f"adhoc_aa839_{uuid.uuid4().hex[:8]}")
     dry_id, dry = await _run(pool, {"subject": "tenant", "tenant": tid})
     # the restore lands after apply_refusals read the (still offboarded) row and before the transaction; it writes
-    # no audit row here, so the counts (and the fingerprint) stay the same: only the locked re-check can stop it
+    # no audit row here, so the counts (and the fingerprint) stay the same: only the locked re-check can stop it.
+    # AA-978 (CIS 276): a real restore also writes a tenant.unlocked feed event, which alone changes the counts; the
+    # feed trigger is off for this one statement so the test still reaches the locked re-check.
     stale = dict(await admin.fetchrow("SELECT tenant_id, is_active, cancelled_at FROM shared.tenants "
                                       "WHERE tenant_id = $1::uuid", tid))
-    await admin.execute("UPDATE shared.tenants SET cancelled_at = NULL, is_active = true WHERE tenant_id = $1::uuid",
+    async with admin.acquire() as c, c.transaction():
+        await c.execute("ALTER TABLE shared.tenants DISABLE TRIGGER tenants_membership_feed_upd")
+        await c.execute("UPDATE shared.tenants SET cancelled_at = NULL, is_active = true WHERE tenant_id = $1::uuid",
                         tid)
+        await c.execute("ALTER TABLE shared.tenants ENABLE TRIGGER tenants_membership_feed_upd")
     real = ej.apply_refusals
     monkeypatch.setattr(ej, "apply_refusals",
                         lambda payload, dry_job, tenant_row, now, env=None: real(payload, dry_job, stale, now, env))
