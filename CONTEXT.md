@@ -390,7 +390,7 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     DRY RUN (`result.used_by_apply`, single use) and is never retried: `POST /admin/job-runner/jobs/{id}/retry`
     refuses it (409, `JobKind.retry_refusal`). A traveller job that fails or is cancelled has its hash replaced
     (`on_terminal`); `verify: true` on a traveller DRY RUN (after an apply) strips its own hash; Sentry events of
-    this kind carry no frame locals (`shared/sentry_init.py` `SCRUB_LOCALS_KINDS`). Inventory and settings:
+    this kind carry no frame locals (since AA-941 no Sentry event does, `shared/sentry_init.py`). Inventory and settings:
     `GET /admin/job-runner/erasure`.
   - **Ops metrics sampler (AA-832, AA-751)**: `api/core/ops_metrics_sampler.py`, a background task of
     the **api** (not the worker) started in `api/main.py`'s lifespan after the main pool, cancelled
