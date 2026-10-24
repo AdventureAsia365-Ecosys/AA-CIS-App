@@ -217,3 +217,20 @@ def test_code_checks_name_real_modules():
     for name, cc in registry.code_checks().items():
         assert (ROOT / cc["path"]).is_file(), name
         assert cc["path"].endswith(f"/{name}.py"), name
+
+
+def test_every_active_gate_is_a_class_detector():
+    refs = {d["ref"] for c in registry.classes().values() for d in c.get("detectors") or []}
+    active = {n for n, g in registry.gates().items() if g["kind"] == "gate" and not g.get("retired")}
+    assert active <= refs, sorted(active - refs)
+
+
+def test_redundancy_census_reads_the_registry():
+    from scripts.quality import redundancy_census as rc
+
+    rows = {r["detector"]: r for r in rc.census()["rows"]}
+    assert rows["F15_voice"]["verdict"] == "candidate" and "F2_banned_patterns" in rows["F15_voice"][
+        "covering_code_detectors"]  # the AA-924 lexicon fold
+    assert rows["T3_grounding"]["verdict"] == "sole_owner"
+    assert rows["ITINERARY_DAY_COUNT_MISMATCH"]["sole"] == [("struct.day_structure", "A1")]
+    assert "Removal candidates" in rc.render(rc.census())
