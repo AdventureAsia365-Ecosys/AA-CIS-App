@@ -50,6 +50,8 @@ SESSION_START_*.md
 !/docs/**/
 !/docs/**/*.md
 !/docs/calibration/data/*.json
+# AA-976: copies of the root HTTP contracts this repo serves (byte-identical; tests validate the routes against them).
+!/docs/contracts/*.openapi.yaml
 # K-16 / DM-6.10: security investigations kept in the private root repo (docs/archive/cis-investigations/).
 # Local copies may still exist in older checkouts; never let `git add docs/` publish them.
 /docs/claude_audit/AA-432-per-tenant-api-key-feasibility.md

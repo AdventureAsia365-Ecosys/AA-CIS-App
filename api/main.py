@@ -65,6 +65,9 @@ from api.routers.admin_tenant360 import router as admin_tenant360_router  # AA-7
 from api.routers.admin_platform_ops import router as admin_platform_ops_router  # AA-884
 from api.routers.admin_alert_recipients import router as admin_alert_recipients_router  # AA-913
 from api.routers.v1_progress import router as v1_progress_router  # AA-637
+from api.routers.catalog_http import (  # AA-976 — catalog.http.v1 for the partner CRM (M2M)
+    CatalogProblem, catalog_problem_handler, router as catalog_http_router,
+)
 from api.middleware.rate_limit import rate_limit_middleware
 from api.middleware.sentry_context import sentry_context_middleware
 from api.middleware.staff_bearer import StaffBearerMiddleware  # AA-816 C3
@@ -127,6 +130,9 @@ async def lifespan(app: FastAPI):
     # ENVIRONMENT == "test", never raises, never delays start-up.
     from api.core.identity_config import start_cis_staff_jwks_prefetch, stop_cis_staff_jwks_prefetch
     identity_prefetch_task = start_cis_staff_jwks_prefetch()
+    # AA-976 — same for the M2M pool (catalog.http.v1 callers); off under ENVIRONMENT == "test", never raises.
+    from api.core.m2m_auth import start_m2m_jwks_prefetch, stop_m2m_jwks_prefetch
+    m2m_prefetch_task = start_m2m_jwks_prefetch()
 
     # AA-544 Stage 1 — second pool, aa_app_user (non-BYPASSRLS), lazy (min_size 0, AA-817). None
     # only when the secret or the pool object cannot be made. Used only by routes that opt in via
@@ -159,6 +165,7 @@ async def lifespan(app: FastAPI):
 
     await stop_ops_metrics_sampler(ops_metrics_task)
     await stop_cis_staff_jwks_prefetch(identity_prefetch_task)
+    await stop_m2m_jwks_prefetch(m2m_prefetch_task)
     await stop_main_pool_gauge(main_pool_gauge_task)
     await pool.close()
     if app.state.tenant_pool is not None:
@@ -303,6 +310,7 @@ app.include_router(admin_content_quality_router)  # AA-769 — /admin/content-qu
 app.include_router(admin_tenant360_router)  # AA-766 — /admin/tenants/{id}/{cost,quality,markets}
 app.include_router(photos_public_router)  # AA-708 — /content/photos/{id} (public image redirect)
 app.include_router(v1_progress_router)  # AA-637 — GET /v1/progress/{kind}/{job_id}
+app.include_router(catalog_http_router)  # AA-976 — /catalog/v1 (catalog.http.v1, M2M cis.catalog/read)
 
 app.middleware("http")(rate_limit_middleware)
 # AA-816 C3 — registered after the rate limiter so it wraps it (Starlette: last registered = outermost): a
@@ -321,6 +329,7 @@ app.middleware("http")(sentry_context_middleware)
 # answered outside all user middleware, so its handler adds the header itself.
 # AA-986 L3 — new tenant work on a tour AA no longer serves: 409 tour_discontinued / tour_paused, plain sentence.
 app.add_exception_handler(TourNotServedError, tour_not_served_handler)
+app.add_exception_handler(CatalogProblem, catalog_problem_handler)  # AA-976 — contract Problem body
 app.add_exception_handler(Exception, unhandled_error_handler)
 app.add_middleware(RequestIdMiddleware)
 
