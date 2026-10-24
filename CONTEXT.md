@@ -1375,6 +1375,17 @@ Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`
   and to the `aa859_flag.py` ALLOWED set. `acquire_scoped_conn` defaults to `fail_closed=True`.
   The api's Redis client has 0.5 s socket connect / read timeouts and one retry
   (`api/core/redis_client.py`), so a hung Redis fails fast in the rate-limit middleware too.
+  **Redis connection (AA-874).** Every client (api `app.state.redis`, worker resources, SEO cache) is built
+  from `shared/cache/redis_conn.py` `redis_conn_args()`: `REDIS_HOST` (default `localhost`), `REDIS_PORT`
+  (default 6379), `REDIS_TLS=true` → `rediss://` with the certificate and host name verified, and
+  `REDIS_AUTH_TOKEN` (ECS secret from Secrets Manager) passed as `password=`, never in the URL. Without
+  `REDIS_TLS` and token it is the plain `redis://<host>:6379` of the old node, so the image works on both; a
+  token without TLS is dropped with one ERROR `aa874_redis_auth_without_tls`. The target node is an
+  ElastiCache replication group with in-transit TLS (required), AUTH and at-rest encryption (AA-CIS-Infra).
+  AA-CIS-Infra alarms (e-mail on ALARM and on OK) on any `aa817_tenant_flag_read_failed`,
+  `aa817_tenant_flag_unrecognized`, `aa817_tenant_pool_unavailable` line and on any JSON line with
+  `used_tenant_pool: false` (a route running on the admin pool, which RLS does not filter: expected only while
+  a route is rolled back on purpose).
 
   | Route(s) | Flag | Notes |
   |---|---|---|
