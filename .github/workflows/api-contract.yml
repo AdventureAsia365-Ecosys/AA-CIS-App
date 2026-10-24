@@ -1,0 +1,63 @@
+name: API contract
+# AA-899: breaking-change check of the committed OpenAPI document (docs/api/openapi.json) against the base branch.
+# The document itself is kept current by the "Unit Tests" check (tests/unit/test_aa899_openapi_export.py fails when
+# it is stale), so this job needs no Python install: it reads two committed files and runs oasdiff (pinned, checksum).
+#
+# Public paths = everything but /admin/*: the tenant API /v1/* (portal, tenant integrations), /auth/* (Booking staff
+# sign-in, the Booking bridge JWKS) and /health*. They fail the check on a breaking change. /admin/* is called only
+# by this repo's admin console through its BFF: its breaking changes are listed as warnings. Escape hatch: the PR
+# label "api-breaking" or a conventional breaking title ("feat!: ..."), see docs/api/README.md. Labelling re-runs
+# this job by itself (the event types below), no push needed.
+#
+# Free: one short job per PR event, no secrets beyond the default read-only token.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: api-contract-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  OASDIFF_VERSION: "1.33.0"
+  OASDIFF_SHA256: "43a4e328e2d13ba1552d760aa68d2485c75c5621f309f6ff64ae895188345247"
+
+jobs:
+  breaking:
+    name: OpenAPI breaking changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # The pull_request ref is the merge commit; its first parent is the base tip.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+
+      - name: Install oasdiff (pinned, checksum checked)
+        run: |
+          set -euo pipefail
+          url="https://github.com/oasdiff/oasdiff/releases/download/v${OASDIFF_VERSION}/oasdiff_${OASDIFF_VERSION}_linux_amd64.tar.gz"
+          curl -sSfL --retry 3 -o "$RUNNER_TEMP/oasdiff.tgz" "$url"
+          echo "${OASDIFF_SHA256}  $RUNNER_TEMP/oasdiff.tgz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/bin"
+          tar -xzf "$RUNNER_TEMP/oasdiff.tgz" -C "$RUNNER_TEMP/bin" oasdiff
+          "$RUNNER_TEMP/bin/oasdiff" --version
+
+      - name: Base document
+        run: git show HEAD^1:docs/api/openapi.json > "$RUNNER_TEMP/base-openapi.json" 2>/dev/null || true
+
+      - name: Breaking changes on public paths
+        env:
+          OASDIFF: ${{ runner.temp }}/bin/oasdiff
+          BASE_SPEC: ${{ runner.temp }}/base-openapi.json
+          HEAD_SPEC: docs/api/openapi.json
+          INTERNAL_PATHS: "^/admin/"
+          SEVERITY_LEVELS: .github/oasdiff/severity-levels.txt
+          ALLOW_BREAKING: >-
+            ${{ contains(github.event.pull_request.labels.*.name, 'api-breaking')
+            || contains(github.event.pull_request.title, '!:') }}
+        run: bash .github/scripts/openapi_breaking.sh

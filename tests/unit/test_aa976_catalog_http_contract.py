@@ -167,3 +167,22 @@ def test_served_tour_never_carries_a_price_or_person_field(client, issuer):
     text = str(body).lower()
     for forbidden in ("b2b_price", "supplier_net", "price", "email", "phone"):
         assert forbidden not in text
+
+
+def test_openapi_doc_models_match_the_contract_and_the_served_bodies(client, issuer):
+    """AA-899: the Catalog* models (documentation only, docs/api/openapi.json) name the contract's fields exactly and
+    accept what the router serves, so the exported document cannot drift from catalog.http.v1."""
+    from api.schemas import public_api as m
+
+    pairs = {"TourPage": m.CatalogTourPage, "TourSummary": m.CatalogTourSummary, "Tour": m.CatalogTour,
+             "TourDay": m.CatalogTourDay, "Place": m.CatalogPlace, "Exclusion": m.CatalogExclusion,
+             "Facets": m.CatalogFacets, "Photo": m.CatalogPhoto, "Destination": m.CatalogDestination}
+    for name, model in pairs.items():
+        schema = DOC["components"]["schemas"][name]
+        assert set(model.model_fields) == set(schema["properties"]), name
+        required = {f for f, info in model.model_fields.items() if info.is_required()}
+        assert required == set(schema.get("required", [])), name
+    m.CatalogTourPage.model_validate(client.get("/catalog/v1/tours", headers=_h(issuer)).json())
+    m.CatalogTour.model_validate(client.get(f"/catalog/v1/tours/cis/{SID_A}", headers=_h(issuer)).json())
+    dest = client.get(f"/catalog/v1/destinations/{DEST_BALI}", headers=_h(issuer)).json()
+    m.CatalogDestination.model_validate(dest)

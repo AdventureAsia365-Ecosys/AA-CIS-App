@@ -79,6 +79,7 @@ from api.core import staff_identity  # AA-816 C3
 from api.core import login_throttle  # AA-876
 from api.core.staff_authz import NO_BOOKING_ROLES  # AA-878
 from api.core.sentry import init_sentry
+from api.schemas.public_api import Health, Jwks, Readiness, TenantSession  # AA-899
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from shared.log_config import configure_for_process  # AA-871
 
@@ -398,7 +399,7 @@ async def _session_token_from_body(request: Request) -> str:
     return token if isinstance(token, str) else ""
 
 
-@app.post("/auth/verify-tenant", tags=["auth"])
+@app.post("/auth/verify-tenant", tags=["auth"], response_model=TenantSession)  # AA-899: model
 async def verify_tenant(request: Request):
     # verify_tenant_jwt, not verify_jwt: staff HS256 tokens share JWT_SECRET but carry no name / plan_tier, so a
     # staff token used to end in a KeyError (500); it is now refused with 403 "Tenant token required".
@@ -603,7 +604,7 @@ async def booking_token(request: Request, db: asyncpg.Pool = Depends(get_pool)):
     return BookingTokenResponse(access_token=access_token, token_type="Bearer", expires_in=expires_in)
 
 
-@app.get("/auth/.well-known/jwks.json", tags=["auth"])
+@app.get("/auth/.well-known/jwks.json", tags=["auth"], responses={200: {"model": Jwks}})  # AA-899: doc
 async def booking_jwks():
     try:
         body = booking_jwt.jwks(await booking_jwt.get_signing_keys_async())
@@ -612,7 +613,7 @@ async def booking_jwks():
     return JSONResponse(body, headers={"Cache-Control": _BOOKING_JWKS_CACHE_CONTROL})
 
 
-@app.get("/health")
+@app.get("/health", response_model=Health)  # AA-899: model
 async def health():
     # AA-884: git_sha = the commit the image was built from (deploy smoke asserts it equals the deployed SHA).
     # AA-891: version = the release version in the image (api/version.py, bumped by release-please; the deploy smoke
@@ -621,7 +622,8 @@ async def health():
     return {"status": "ok", "service": "aa-cis-api", "version": __version__, "git_sha": readiness.git_sha()}
 
 
-@app.get("/health/ready")
+@app.get("/health/ready", responses={  # AA-899: documents the JSONResponse body (200 and 503)
+    200: {"model": Readiness}, 503: {"model": Readiness, "description": "Not ready"}})
 async def health_ready():
     """AA-884 — DB answers and the newest numeric CIS migration is at least readiness.REQUIRED_CIS_SCHEMA. 200 or 503,
     cached 5 s in-process (public route)."""

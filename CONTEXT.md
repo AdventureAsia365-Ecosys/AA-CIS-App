@@ -820,6 +820,15 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   version and `/health` `version`) and tags `vX.Y.Z`. Never edit the version by hand. A release-only merge does not
   deploy (`!api/version.py` in Deploy Dev's paths); the next code merge ships it, and the smoke asserts `/health`
   `version` equals the deployed commit's manifest.
+- **API reference and breaking-change check (AA-899)**: `docs/api/openapi.json` is the OpenAPI document of `api.main`,
+  exported by `scripts/export_openapi.py` (no DB, Redis, secret or AWS call; deterministic, no `servers`,
+  `info.version` = `unreleased`). Unit Tests fails when it is stale (`tests/unit/test_aa899_openapi_export.py`, which
+  also keeps the list of public routes without a response model, `tests/unit/snapshots/aa899_untyped_public_routes.json`,
+  from growing). The "API contract" workflow (`api-contract.yml`) diffs it against the base branch with oasdiff
+  (pinned) and fails a PR that breaks a public path (everything but `/admin/*`) unless the PR carries the label
+  `api-breaking` or a `type!:` title; `/admin/*` breaks are warnings. FastAPI and Pydantic are pinned in
+  `requirements.txt` for that reason. Each release gets the document as an asset (`aa-cis-openapi-vX.Y.Z.json`).
+  How-to: `docs/api/README.md`.
 - **Logs are JSON with request / job ids (AA-871)**: `shared/log_config.py` (called once by `api.main` and
   `python -m worker`, not under unit tests) renders structlog, stdlib and uvicorn lines as one JSON object each on
   `/ecs/aa-cis-dev` (`service` = `cis-api` | `cis-worker`, `git_sha`, `environment`). The outermost API middleware
