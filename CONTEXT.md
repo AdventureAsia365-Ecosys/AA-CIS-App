@@ -135,7 +135,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
       matcher), **drafts pending legal review**: the shell `portal/app/_legal/LegalPage.tsx` always shows a
       "Draft — pending legal review" banner, and both are `noindex`. The privacy notice describes portal
       data and links `https://adventure.asia/privacy-policy` as the company-wide policy (the AA-885 redirect
-      is gone); the AI acceptable-use clause of the terms waits for AA-820. Factual sentences must match
+      is gone); `/terms` §3 carries the plain-English summary of the AI acceptable-use Schedule (AA-820, Draft v0.2;
+      the full Schedule is attached to the partner agreement). Factual sentences must match
       the code; open legal points stay `[to be confirmed]`. Links in the portal account menu (AA-759; was the
       sidebar footer) and on `/tenant-login`.
     - Staff have **no** access to the tenant portal (no staff session there; a support view is future

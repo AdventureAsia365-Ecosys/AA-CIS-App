@@ -1,8 +1,9 @@
 // portal/app/terms/page.tsx
 // AA-886 — /terms: DRAFT partner terms (was the AA-885 "being finalised" placeholder). Product facts
 // only (what the platform does, who publishes, the AI notice, suspension); commercial and legal terms are
-// left [to be confirmed] for counsel, and the AI acceptable-use clause comes from AA-820 once approved.
-// Not indexed while it is a draft.
+// left [to be confirmed] for counsel. AA-820: §3 is the plain-English summary of the AI Schedule
+// (.2–.6, root docs/legal/tenant-terms-ai-clause-draft.md v0.2); the full Schedule is attached to the
+// partner agreement. Still a draft pending legal review. Not indexed while it is a draft.
 import type { Metadata } from "next";
 import LegalPage, { A, LegalSection } from "../_legal/LegalPage";
 import { SUPPORT_EMAIL } from "../_brand/tokens";
@@ -42,7 +43,7 @@ export default function TermsPage() {
         </ul>
       </LegalSection>
 
-      <LegalSection id="ai" title="3. AI-generated content">
+      <LegalSection id="ai" title="3. AI-generated content and acceptable use">
         <ul>
           <li>
             Content is generated with AI and can contain mistakes. The portal shows this at review, publish and export:
@@ -50,9 +51,43 @@ export default function TermsPage() {
             publish.&rdquo;
           </li>
           <li>
-            You must not use the content to mislead people, for example as fake customer reviews or testimonials.
+            The content is written with models from third-party providers, including Anthropic&apos;s Claude through
+            Amazon Web Services. You must follow their usage policies, including the{" "}
+            <A href="https://www.anthropic.com/legal/aup">Anthropic Usage Policy</A> and the{" "}
+            <A href="https://aws.amazon.com/aup/">AWS Acceptable Use Policy</A>, as well as these terms.
           </li>
-          <li>The full AI acceptable-use terms are [to be confirmed].</li>
+          <li>
+            You must not use the portal or its content for:
+            <ul>
+              <li>
+                fake reviews, ratings or testimonials, or quotes and stories presented as coming from customers who
+                did not give them;
+              </li>
+              <li>invented personas, sockpuppet accounts, or content attributed to a real person who did not write or approve it;</li>
+              <li>astroturfing, or networks of websites or accounts that look independent but are not;</li>
+              <li>hiding sponsorship or a commercial relationship, or removing a disclosure the law or a channel requires;</li>
+              <li>seeding search engines or AI systems with content that misrepresents its origin, authorship or independence;</li>
+              <li>spam, or posting meant to get around the publishing limit;</li>
+              <li>
+                false or misleading information, in particular about visas and entry rules, health, safety, prices or
+                availability;
+              </li>
+              <li>
+                advice on insurance, finance, visas or other high-risk matters, unless a qualified person reviews it
+                before it is delivered and the person receiving it is told that AI was used;
+              </li>
+              <li>getting around Adventure Asia&apos;s content checks, limits or other safeguards.</li>
+            </ul>
+          </li>
+          <li>If the law or a channel&apos;s rules require content to be labelled as AI-generated, you add that label.</li>
+          <li>
+            You review each piece before it is published, and you are its publisher. Telling Adventure Asia to publish a
+            piece, in the portal or through the API, confirms that you have reviewed it.
+          </li>
+          <li>
+            Adventure Asia may hold, rewrite or decline to generate or publish content that breaks these rules.
+            Unpublishing and suspension are covered in sections 4 and 5.
+          </li>
         </ul>
       </LegalSection>
 
