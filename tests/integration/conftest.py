@@ -382,6 +382,13 @@ def _apply_schema(conn):
             part_a = sql.split("-- ── Part A")[1].split("-- ── Part B")[0]
             part_a = part_a.split("\n", 1)[1]
             sql = "BEGIN;\n" + part_a + "COMMIT;\n"
+        if mf.startswith("278_"):
+            # AA-835: 278's part B (catalog.v_supply_content) needs 245's owners and the catalog recipe. Replay only
+            # part A, the shared.supply_* tables the S6 code writes; not registered, so test_aa835_migration_278 can
+            # apply the whole file the DB Migrate way.
+            part_a = sql.split("-- ── Part A")[1].split("-- ── Part B")[0]
+            part_a = part_a.split("\n", 1)[1]
+            sql = "BEGIN;\n" + part_a + "COMMIT;\n"
         if mf.startswith("262_"):
             # AA-859 wave 3: CI's legacy app_user is a LOGIN role here (ci.yml creates it; Dev has no grant for it)
             # and holds 005's grants on tenant_brand_rules. 262's guard 1 refuses a login role with privileges on
