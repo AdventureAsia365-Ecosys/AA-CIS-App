@@ -58,11 +58,11 @@ from services.acp_content_writing.generate import (SEO_FIT_STAGE, SentenceRepair
                                                    repair_sentences, rewrite_with_feedback, write_content, write_faq)
 from services.acp_content_writing.quality_gates import (CHEAP_REPAIR_GATES, F13_REPEAT_GATE, F14_GATE, F19_GATE,
                                                           FAQ_MAX_PAIRS, FAQ_MIN_PAIRS, F9PassMemory,
-                                                          deep_strip_citation_tags, drop_restated_faq,
+                                                          deep_strip_citation_tags, drop_restated_faq, expand_ledger,
                                                           drop_subjectless_faq, drop_unanswerable_faq,
                                                           faq_answer_problem, faq_pair_count, faq_pairs,
                                                           hold_failure, merge_faq_pairs, never_holds,
-                                                          replace_faq_section, seed_place_names,
+                                                          replace_faq_section, reshape_like, seed_place_names,
                                                           run_quality_gates, strip_citation_tags,
                                                           unused_source_facts)
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
@@ -388,14 +388,19 @@ def _hold_or_ship(gate_ledger: list, flags: list) -> tuple[str, Optional[str], l
     """(status, held_reason, flags) for a piece that stops with failures: 'held' on the first
     product-truth gate (quality_gates.hold_failure); 'approved' when only a style-only gate
     (F15_voice) or an under-floor F14_social_shape (AA-780) is left — it is added to the flags so the
-    admin still sees it (quality_gates.never_holds)."""
+    admin still sees it (quality_gates.never_holds). AA-924 — reads the legacy view of the ledger and flags
+    (expand_ledger) and hands the flags back in the ledger's shape."""
     hold = hold_failure(gate_ledger)
     if hold is not None:
         return "held", _held_reason_from(hold), flags
     # Only the BLOCKING entries being waived here (mirrors _waive_style_only): a non-blocking warn —
     # e.g. a post-cut F14 under-floor warn — is already in `flags` from run_quality_gates or the cut.
-    style = [g for g in gate_ledger if not g["passed"] and g.get("blocking", True) and never_holds(g)]
-    return "approved", None, list(flags) + [{**g, "blocking": False} for g in style if g not in flags]
+    style = [g for g in expand_ledger(gate_ledger) if not g["passed"] and g.get("blocking", True) and never_holds(g)]
+    if not style:
+        return "approved", None, list(flags)
+    current = expand_ledger(flags)
+    return "approved", None, reshape_like(current + [{**g, "blocking": False} for g in style if g not in current],
+                                          gate_ledger, flags=True)
 
 
 # AA-786 (Gate-1 policy, S235) — channels where an F9 product-truth failure left after the last
@@ -532,6 +537,13 @@ def _cut_blog_truth_items(content_text: str, items: list[dict], *, ignore: froze
 def _is_floor_block(g: dict) -> bool:
     """AA-780 — a failed, blocking F14_social_shape that never holds: the attempt-1 under-floor block."""
     return g["gate"] == F14_GATE and not g["passed"] and g.get("blocking", True) and never_holds(g)
+
+
+def _blocking_failures(gate_ledger: list) -> set:
+    """AA-528 — the failed blocking gates of an attempt, for the regression guard. AA-924 — read on the legacy view
+    (expand_ledger), so each source of a merged entry counts on its own: a new banned-pattern failure inside
+    F2_lexicon is a regression even when F2_lexicon already failed on a stock phrase."""
+    return {g["gate"] for g in expand_ledger(gate_ledger) if g.get("blocking", True) and not g["passed"]}
 
 
 def _floor_only_failure(blocking_fails: list) -> bool:
@@ -727,9 +739,11 @@ def _cut_stock_lines(content_text: str, gate_ledger: list, flags: list, *, chann
         return {**g, "violations": [], "passed": True, "blocking": False}
 
     fresh = {length["gate"]: length, shape["gate"]: shape}
-    ledger = [trim_f15(fresh.get(g["gate"], g)) for g in gate_ledger]
-    new_flags = [trim_f15(f) for f in _refresh_flags(flags, fresh)]
-    new_flags = [f for f in new_flags if not (f.get("gate") == qr.F15_VOICE and f.get("passed"))]
+    # AA-924 — trimmed on the legacy view (the stock findings sit in F2_lexicon), handed back in the ledger's shape
+    ledger = reshape_like([trim_f15(fresh.get(g["gate"], g)) for g in expand_ledger(gate_ledger)], gate_ledger)
+    new_flags = [trim_f15(f) for f in expand_ledger(_refresh_flags(flags, fresh))]
+    new_flags = reshape_like([f for f in new_flags if not (f.get("gate") == qr.F15_VOICE and f.get("passed"))],
+                             gate_ledger, flags=True)
     note = [f"cut stock line '{it['phrase']}': '{it['sentence'][:200]}'" for it in gone]
     new_flags.append({"gate": F15_STOCK_CUT_FLAG, "passed": False, "blocking": False, "repairable": False,
                       "violations": note})
@@ -998,9 +1012,10 @@ def _waive_style_only(gate_ledger: list[dict], status: str) -> list[dict]:
     if status != "approved":
         return gate_ledger
     # AA-780 — an under-floor F14_social_shape kept from attempt 1 the same way (never_holds).
-    return [{**g, "blocking": False, "waived": True}
-            if not g["passed"] and g.get("blocking", True) and never_holds(g) else g
-            for g in gate_ledger]
+    # AA-924 — waived on the legacy view (only the style-only source of a merged entry), then merged back.
+    return reshape_like([{**g, "blocking": False, "waived": True}
+                         if not g["passed"] and g.get("blocking", True) and never_holds(g) else g
+                         for g in expand_ledger(gate_ledger)], gate_ledger)
 
 
 def _show_live_text(content_text: str, seo_meta: dict, channel: str) -> None:
@@ -1021,7 +1036,7 @@ def _style_only_repair(gate_ledger: list[dict]) -> bool:
     (S234 round 2: F15_voice — stock phrase, contrast frame, sibling template; round 3: F13_repeat,
     F17_trip_fact, F18_rarity — the repair keeps, softens or cuts a sentence the seed already bounds).
     F1 / F9 / leak / brand failures in the same attempt keep the t9_write stage."""
-    failed = [g for g in gate_ledger if not g["passed"] and g.get("blocking", True)
+    failed = [g for g in expand_ledger(gate_ledger) if not g["passed"] and g.get("blocking", True)
               and g["gate"] not in sentence_repair.OWNED_ELSEWHERE]
     return bool(failed) and all(g["gate"] in CHEAP_REPAIR_GATES for g in failed)
 
@@ -1271,7 +1286,7 @@ def _repair_feedback(gate_ledger: list[dict], channel: Optional[str] = None) -> 
     target = F4_OVER_MAX_TARGET if channel == "blog" else ""
     return [
         f"{g['gate']}: {v}" + (target if g["gate"] == qr.F4_EXTREME_LENGTH and _F4_OVER_RE.search(v) else "")
-        for g in gate_ledger if not g["passed"] and g.get("blocking", True)
+        for g in expand_ledger(gate_ledger) if not g["passed"] and g.get("blocking", True)  # AA-924: legacy view
         for v in g["violations"]
     ]
 
@@ -2076,8 +2091,9 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             # the two already-computed attempts.
             if prev_snapshot is not None:
                 prev_ledger = prev_snapshot["gate_ledger"]
-                prev_blocking_fail = {g["gate"] for g in prev_ledger if g.get("blocking", True) and not g["passed"]}
-                cur_blocking_fail = {g["gate"] for g in gate_ledger if g.get("blocking", True) and not g["passed"]}
+                # AA-924 — keyed by source on the legacy views (_blocking_failures)
+                prev_blocking_fail = _blocking_failures(prev_ledger)
+                cur_blocking_fail = _blocking_failures(gate_ledger)
                 new_regressions = cur_blocking_fail - prev_blocking_fail
                 # AA-780 review — an attempt 1 that blocked only on gates that never hold, one of them the
                 # under-floor F14 (a too-short post sent to a full rewrite), had no product-truth problem for
@@ -2085,7 +2101,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 # r4 false pass). When this attempt's failures are all sentence-repairable and an attempt is
                 # left, keep it and let the next attempt repair it. (An F15-only attempt 1 still reverts: its
                 # text is the full-length, truth-clean one.)
-                prev_fail = [g for g in prev_ledger if g.get("blocking", True) and not g["passed"]]
+                prev_fail = [g for g in expand_ledger(prev_ledger) if g.get("blocking", True) and not g["passed"]]
                 if (new_regressions and attempt < MAX_ATTEMPTS and _floor_only_failure(prev_fail)
                         and first_failure["repairable"]
                         and sentence_repair.plan(content_text, gate_ledger) is not None):
@@ -2128,7 +2144,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                         "repairable": False,
                     })
                     first_failure = next(
-                        (g for g in prev_ledger if not g["passed"] and g.get("blocking", True)), None
+                        (g for g in expand_ledger(prev_ledger) if not g["passed"] and g.get("blocking", True)), None
                     )
 
             # AA-770 — attempt 3 only when attempt 2's failures are all sentence-repairable.

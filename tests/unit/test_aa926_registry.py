@@ -46,7 +46,8 @@ OLD_GATE_LABELS = [
     ("FORBIDDEN_WORD", "Forbidden word"),
 ]
 OLD_RETIRED = {"promises_an_option", "F8_framework", "F3_structural_variance", "F5_atom_density", "F7_faq_dedup"}
-NEW_LABELLED = ["F2_platform_truth", "F2_superlatives", "F2_style_warn", "F19_authenticity", "F15_stock_cut"]
+NEW_LABELLED = ["F2_platform_truth", "F2_superlatives", "F2_style_warn", "F19_authenticity", "F15_stock_cut",
+                "F2_lexicon"]  # AA-924
 T10_CHANNELS = ("blog", "linkedin", "facebook", "instagram", "tiktok", "email", "landing_page", "ads")
 
 

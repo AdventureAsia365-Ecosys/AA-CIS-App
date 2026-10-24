@@ -188,12 +188,28 @@ _GENERIC_AI_WORDING_ANCHOR = (
 # adjectives now go into the same judge call (no extra call).
 
 
-class GateResultLite(TypedDict):
+class Finding(TypedDict):
+    """AA-924 — one violation of a merged ledger entry (registry.MERGED_GATES) with its own severity."""
+    text: str
+    severity: str  # BLOCK | WARN
+    source: str  # the legacy gate that found it (a retired name for F2_banned_patterns / F2_brand_forbidden)
+
+
+class _GateResultBase(TypedDict):
     gate: str
     passed: bool
     violations: list[str]
     repairable: bool
     blocking: bool
+
+
+class GateResultLite(_GateResultBase, total=False):
+    # AA-924 — only on a merged entry (`merge_ledger`): every finding with its severity, the worst severity, and
+    # one legacy-shaped record per folded source (no `violations`) so `expand_ledger` rebuilds the legacy entries.
+    # `violations` (every finding's text) and `blocking` (worst == block) stay for every older reader.
+    findings: list[Finding]
+    severity: Optional[str]
+    parts: list[dict]
 
 
 def _result(
@@ -2305,6 +2321,8 @@ def never_holds(g: dict) -> bool:
     style-only gate (STYLE_ONLY_GATES), or — AA-780 — an F14_social_shape that blocked for the
     under-floor rewrite on attempt 1 (only the far-over-the-band violation may hold). Reads the stored
     violation text, so a ledger kept by the AA-528 revert or read back from the DB answers the same."""
+    if is_merged(g):  # AA-924 — a merged entry never holds when none of its failed blocking sources may hold
+        return all(never_holds(p) for p in expand_ledger([g]) if not p["passed"] and p.get("blocking", True))
     if g.get("gate") in STYLE_ONLY_GATES:
         return True
     return g.get("gate") == F14_GATE and not any(_F14_FAR_OVER in str(v) for v in g.get("violations") or [])
@@ -2315,8 +2333,156 @@ def hold_failure(gate_ledger: list[GateResultLite]) -> Optional[GateResultLite]:
     F15_voice may block to get one sentence repair, but a stock phrase is not unresolved product
     truth, AA-613; an under-floor LinkedIn post gets one rewrite, AA-780). None → nothing holds the
     piece; it ships with the flags."""
-    return next((g for g in gate_ledger if not g["passed"] and g.get("blocking", True)
+    return next((g for g in expand_ledger(gate_ledger) if not g["passed"] and g.get("blocking", True)
                  and not never_holds(g)), None)
+
+
+# ---------------------------------------------------------------- AA-924: per-finding severity, merged entries
+
+BLOCK = "block"
+WARN = "warn"
+# F15_voice findings that belong to the lexicon entry (registry.MERGED_GATES): STOCK_PATTERNS and template lines.
+F15_STOCK_PREFIXES = ("stock phrase '", "stock line '")
+# The order gate_voice builds F15_voice findings in, by kind (the violation's prefix). The two merged entries hold
+# them apart; expand_ledger puts them back in this order, which is the legacy order.
+_F15_KIND_ORDER = ("stock phrase '", "contrast frame '", "repeats a line from an earlier piece", "stock line '",
+                   "pastes the brand brief")
+# Every source of a merged entry, in legacy ledger order.
+_SOURCE_ORDER = tuple(dict.fromkeys(s for srcs in qr.MERGED_GATES.values() for s in srcs))
+
+
+def _f15_kind(text: str) -> int:
+    t = str(text)
+    return next((i for i, p in enumerate(_F15_KIND_ORDER) if t.startswith(p)), len(_F15_KIND_ORDER))
+
+
+def _group_of(source: str, text: str) -> str:
+    """The merged entry a legacy finding goes into: F15_voice's stock findings go to the lexicon entry."""
+    if source == qr.F15_VOICE:
+        return qr.F2_LEXICON if str(text).startswith(F15_STOCK_PREFIXES) else qr.F15_VOICE
+    return qr.SOURCE_HOME[source]
+
+
+def is_merged(g) -> bool:
+    """A merged ledger entry (AA-924), as opposed to a legacy one or a merged gate's legacy namesake."""
+    return isinstance(g, dict) and g.get("gate") in qr.MERGED_GATES and isinstance(g.get("parts"), list)
+
+
+def ledger_is_merged(ledger) -> bool:
+    return any(is_merged(g) for g in ledger or [])
+
+
+def _part_severity(part: dict) -> str:
+    """A legacy source's findings are BLOCK while it fails and blocks, else WARN (a warn gate, a waived one, a
+    style gate after attempt 1)."""
+    return BLOCK if not part.get("passed") and part.get("blocking", True) else WARN
+
+
+def expand_ledger(ledger) -> list:
+    """AA-924 — the legacy view of a ledger (or a flags list): every merged entry is replaced by one legacy-shaped
+    result per source (its `parts` record plus the texts of its findings), at the merged entry the source sat at in
+    the legacy ledger (registry.SOURCE_HOME; the first merged entry holding it when that one is absent), in legacy
+    order. F15_voice's findings, split between F2_lexicon and F15_voice, come back in gate_voice's order. Every
+    other entry is kept as it is, in place; a list with no merged entry (any piece stored before AA-924) is returned
+    unchanged. Every routing decision reads this view, so a merged ledger routes exactly as the legacy one did."""
+    entries = list(ledger or [])
+    if not ledger_is_merged(entries):
+        return entries
+    meta: dict[str, dict] = {}
+    texts: dict[str, list[str]] = {}
+    slot: dict[str, int] = {}
+    for i, g in enumerate(entries):
+        if not is_merged(g):
+            continue
+        for p in g["parts"]:
+            src = p.get("gate") if isinstance(p, dict) else None
+            if not src:
+                continue
+            meta.setdefault(src, p)
+            texts.setdefault(src, [])
+            home = qr.SOURCE_HOME.get(src)
+            if src not in slot or (home == g["gate"] and entries[slot[src]].get("gate") != home):
+                slot[src] = i
+        for f in g.get("findings") or []:
+            src = f.get("source") if isinstance(f, dict) else None
+            if not src:
+                continue
+            if src not in meta:  # a finding with no part record: rebuild a minimal one
+                meta[src] = {"gate": src, "passed": False, "repairable": True, "blocking": f.get("severity") == BLOCK}
+                slot.setdefault(src, i)
+            texts.setdefault(src, []).append(str(f.get("text")))
+    out: list = []
+    for i, g in enumerate(entries):
+        if not is_merged(g):
+            out.append(g)
+            continue
+        here = sorted((s for s, k in slot.items() if k == i),
+                      key=lambda s: _SOURCE_ORDER.index(s) if s in _SOURCE_ORDER else len(_SOURCE_ORDER))
+        for src in here:
+            vs = texts.get(src, [])
+            if src == qr.F15_VOICE:
+                vs = sorted(vs, key=_f15_kind)
+            m = meta[src]
+            out.append({"gate": src, "passed": m.get("passed", not vs), "violations": vs,
+                        **{k: v for k, v in m.items() if k not in ("gate", "passed", "violations")}})
+    return out
+
+
+def merge_ledger(ledger) -> list:
+    """AA-924 — the stored shape of a ledger (or a flags list): the legacy results of each merged gate
+    (registry.MERGED_GATES) become one entry `{gate, passed, violations, repairable, blocking, severity, findings,
+    parts}` placed where its home source sat (F2_lexicon at F2_banned_patterns, F15_voice at F15_voice), or at its
+    first source when that is absent. A finding's severity is its source's (`_part_severity`); the entry's
+    `severity` is the worst one and `blocking` is worst == block (a passed entry keeps its sources' blocking).
+    Every other entry is kept as it is, in place. Expands first, so it is idempotent; `expand_ledger(merge_ledger(L))
+    == L` for a legacy list L."""
+    entries = expand_ledger(ledger)
+    members = [g for g in entries if isinstance(g, dict) and g.get("gate") in qr.SOURCE_HOME]
+    if not members:
+        return entries
+    built: dict[str, dict] = {}
+    anchor: dict[str, int] = {}
+    for m, srcs in qr.MERGED_GATES.items():
+        present = [g for g in members if g["gate"] in srcs]
+        if not present:
+            continue
+        home = [g for g in present if qr.SOURCE_HOME[g["gate"]] == m]
+        anchor[m] = id((home or present)[0])
+        ordered = sorted(present, key=lambda g: srcs.index(g["gate"]))
+        parts = [{k: v for k, v in g.items() if k != "violations"} for g in ordered]
+        findings: list[Finding] = [{"text": v, "severity": _part_severity(g), "source": g["gate"]}
+                                   for g in ordered for v in g.get("violations") or [] if _group_of(g["gate"], v) == m]
+        own = {f["source"] for f in findings}
+        contributing = [p for p in parts if p["gate"] in own]
+        worst = BLOCK if any(f["severity"] == BLOCK for f in findings) else WARN if findings else None
+        entry = {"gate": m, "passed": not findings, "violations": [f["text"] for f in findings],
+                 "repairable": any(p.get("repairable") for p in (contributing or parts)),
+                 "blocking": worst == BLOCK if findings else any(p.get("blocking", True) for p in parts),
+                 "severity": worst, "findings": findings, "parts": parts}
+        if any(p.get("waived") for p in contributing):
+            entry["waived"] = True
+        built[m] = entry
+    out: list = []
+    for g in entries:
+        if not (isinstance(g, dict) and g.get("gate") in qr.SOURCE_HOME):
+            out.append(g)
+            continue
+        out += [built[m] for m in qr.MERGED_GATES if anchor.get(m) == id(g)]
+    return out
+
+
+def merge_flags(flags) -> list:
+    """The stored shape of a flags list: `merge_ledger`, keeping only the merged entries that hold a finding (a
+    stock-only F15 flag is an F2_lexicon flag, with no empty F15_voice entry beside it)."""
+    return [g for g in merge_ledger(flags) if not (is_merged(g) and g.get("passed"))]
+
+
+def reshape_like(entries, ledger, *, flags: bool = False) -> list:
+    """`entries` (a legacy view) in the shape `ledger` has: merged when `ledger` holds a merged entry, else as is.
+    Lets a routing step that edits the legacy view hand back the ledger shape it was given."""
+    if not ledger_is_merged(ledger):
+        return list(entries)
+    return merge_flags(entries) if flags else merge_ledger(entries)
 
 
 # ---------------------------------------------------------------- orchestration
@@ -2448,8 +2614,11 @@ def run_quality_gates(
     # considers a BLOCKING gate; a failed non-blocking gate never holds/repairs a piece, but its
     # result is still in gate_ledger AND collected into `flags` below so it isn't silently
     # dropped — it ships WITH the piece as a note.
-    first_failure = next((g for g in gate_ledger if not g["passed"] and g["blocking"]), None)
-    flags = [g for g in gate_ledger if not g["passed"] and not g["blocking"]]
+    # AA-924 — routing reads the legacy view (expand_ledger); `first_failure` is a legacy result (its gate a
+    # source name), `flags` has the ledger's shape.
+    legacy = expand_ledger(gate_ledger)
+    first_failure = next((g for g in legacy if not g["passed"] and g["blocking"]), None)
+    flags = reshape_like([g for g in legacy if not g["passed"] and not g["blocking"]], gate_ledger, flags=True)
     return {
         "passed": first_failure is None,
         "gate_ledger": gate_ledger,
@@ -2478,4 +2647,6 @@ __all__ = [
     "F17_GATE", "F18_GATE", "gate_trip_facts", "CHEAP_REPAIR_GATES", "F9_NO_REASON", "F9_PROMPT_VERSION",
     "F19_GATE", "gate_authenticity",
     "F2_PLATFORM_GATE", "F2_SUPERLATIVE_GATE", "F2_STYLE_WARN_GATE", "gate_platform_truth", "gate_signature_words",
+    "Finding", "BLOCK", "WARN", "F15_STOCK_PREFIXES", "is_merged", "ledger_is_merged", "expand_ledger",
+    "merge_ledger", "merge_flags", "reshape_like",
 ]

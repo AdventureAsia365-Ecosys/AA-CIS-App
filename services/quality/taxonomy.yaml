@@ -327,7 +327,8 @@ classes:
      writers: [A1, T2, T9_blog, T9_social], definition: "A word the platform or the brand forbids (forbidden list, package words, positioning words the brand did not declare).",
      detectors: [{ref: FORBIDDEN_WORD, kind: rule, writers: [A1, T2], mode: enforce},
                  {ref: F2_brand_forbidden, kind: rule, writers: [T9_blog, T9_social], mode: enforce},
-                 {ref: F2_style_warn, kind: rule, writers: [T9_blog, T9_social], mode: warn}], synthetic_examples: []}
+                 {ref: F2_style_warn, kind: rule, writers: [T9_blog, T9_social], mode: warn},
+                 {ref: F2_lexicon, kind: rule, writers: [T9_blog, T9_social], mode: shadow}], synthetic_examples: []}
   - {id: other.length_shape, since: qtax-v1, severity: warn, checkability: oracle, artefact: output,
      writers: [A1, T2, T9_blog, T9_social], definition: "A length, count or channel-shape rule (SEO title/meta length, piece length, LinkedIn shape).",
      detectors: [{ref: SEO_META_TOO_LONG, kind: rule, writers: [A1, T2], mode: enforce},
@@ -398,6 +399,8 @@ gates:
   F19_authenticity: {kind: gate, label: "Review / testimonial / customer voice", classes: [fact.embellish], channels: all}
   # AA-926 (S250): the AA-780 stock-line cut (#916) — a fixer log like F7_faq_autofix, listed after the four above.
   F15_stock_cut: {kind: flag, label: "Stock lines cut", class: none, reason: "fixer log: stock-phrase sentences service._cut_stock_lines removed after the gates"}
+  # AA-924: the lexicon gate (F2_banned_patterns + F2_brand_forbidden + the F15 stock list, one finding per word).
+  F2_lexicon: {kind: gate, label: "Banned / forbidden / stock wording", classes: [other.lexicon, other.v1], channels: []}
   # Telemetry names (never a ledger gate).
   F9_brand_voice: {kind: telemetry, class: none, reason: "llm_call_log.quality_signal.gate of the F9 judge call (admin LLM ops reads it)"}
   F9_sticky_pass: {kind: telemetry, class: none, reason: "structlog event: sentences an earlier F9 verdict passed were dropped from the re-judge"}

@@ -28,7 +28,7 @@ from services.acp_content_writing.hygiene import (
     integrity_problems, is_sentence_end, near_duplicates, restates, sentence_spans, sentence_tail_end,
     tidy_after_cut,
 )
-from services.acp_content_writing.quality_gates import OWNED_BY_FIX_STEP
+from services.acp_content_writing.quality_gates import OWNED_BY_FIX_STEP, expand_ledger
 from services.acp_shared.citation_tags import TAG as _TAG
 from services.acp_shared.citation_tags import strip_citation_tags, trailing_tags
 from services.quality import repair_contract
@@ -315,8 +315,10 @@ def plan(content_text: str, gate_ledger: list[dict]) -> Optional[list[dict]]:
     """The sentences to repair, [] when the only failures are a title/meta scope violation the SEO
     fit owns (nothing to change in the text — the attempt re-runs the fit and the gates), or None
     when this attempt needs the full rewrite instead.
-    Each item: {"start", "end", "sentence" (tag-stripped), "problem", "gate" (the failed gate, AA-777)}."""
-    blocking = [g for g in gate_ledger if not g["passed"] and g.get("blocking", True)]
+    Each item: {"start", "end", "sentence" (tag-stripped), "problem", "gate" (the failed gate, AA-777)}.
+    AA-924 — reads the legacy view of the ledger (quality_gates.expand_ledger): an item's gate is the source that
+    found it (F2_brand_forbidden, F15_voice…), so the routing sets below keep their membership."""
+    blocking = [g for g in expand_ledger(gate_ledger) if not g["passed"] and g.get("blocking", True)]
     # F4_seo_surface is fixed by the SEO title/meta fit that runs after every attempt
     # (service._fit_seo_meta), not by the text — it never forces a full rewrite (S233). S234 review:
     # the same for an F12_scope whose violations are all in the title/meta.
