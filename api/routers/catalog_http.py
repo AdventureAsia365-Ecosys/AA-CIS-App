@@ -43,6 +43,7 @@ from fastapi.responses import JSONResponse, Response
 
 from api.core import m2m_auth
 from api.core.identity_verifier import AuthUnavailable, InvalidToken
+from api.schemas.public_api import CatalogDestination, CatalogTour, CatalogTourPage  # AA-899: doc only
 from services.catalog_http import reader
 from services.catalog_http.mapping import destination_body, tour_summary
 from services.photos.sync import public_base
@@ -198,7 +199,7 @@ def _invalid(exc: reader.InvalidRequest) -> CatalogProblem:
 
 # ── routes ────────────────────────────────────────────────────────────────────
 
-@router.get("/tours")
+@router.get("/tours", responses={200: {"model": CatalogTourPage}})
 async def list_tours(request: Request, updated_since: Optional[str] = None, country_code: Optional[str] = None,
                      cursor: Optional[str] = None, limit: Optional[str] = None,
                      caller: m2m_auth.M2MCaller = Depends(require_catalog_reader)) -> Response:
@@ -226,7 +227,7 @@ async def list_tours(request: Request, updated_since: Optional[str] = None, coun
     return _cached(request, body, _body_hash(body))
 
 
-@router.get("/tours/{source_system}/{source_id}")
+@router.get("/tours/{source_system}/{source_id}", responses={200: {"model": CatalogTour}})
 async def get_tour(source_system: str, source_id: str, request: Request,
                    caller: m2m_auth.M2MCaller = Depends(require_catalog_reader)) -> Response:
     if source_system != reader.SOURCE_SYSTEM or not source_id or len(source_id) > MAX_SOURCE_ID:
@@ -247,7 +248,7 @@ async def get_tour(source_system: str, source_id: str, request: Request,
     raise CatalogProblem(404, "not_found", "No published tour has this key.")
 
 
-@router.get("/destinations/{destination_id}")
+@router.get("/destinations/{destination_id}", responses={200: {"model": CatalogDestination}})
 async def get_destination(destination_id: str, request: Request,
                           caller: m2m_auth.M2MCaller = Depends(require_catalog_reader)) -> Response:
     try:

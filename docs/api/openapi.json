@@ -665,6 +665,426 @@
         "title": "BudgetUpdate",
         "type": "object"
       },
+      "CatalogDestination": {
+        "additionalProperties": false,
+        "description": "GET /catalog/v1/destinations/{destination_id} — one destination with its IANA time zone.",
+        "properties": {
+          "country_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country Code"
+          },
+          "destination_id": {
+            "title": "Destination Id",
+            "type": "string"
+          },
+          "lat": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lat"
+          },
+          "lng": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lng"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "time_zone": {
+            "title": "Time Zone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "destination_id",
+          "name",
+          "country_code",
+          "time_zone"
+        ],
+        "title": "CatalogDestination",
+        "type": "object"
+      },
+      "CatalogExclusion": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "suggests_collect_on_arrival": {
+            "default": false,
+            "title": "Suggests Collect On Arrival",
+            "type": "boolean"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "CatalogExclusion",
+        "type": "object"
+      },
+      "CatalogFacets": {
+        "additionalProperties": false,
+        "properties": {
+          "activities": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Activities",
+            "type": "array"
+          },
+          "intensity": {
+            "anyOf": [
+              {
+                "enum": [
+                  "easy",
+                  "moderate",
+                  "challenging",
+                  "strenuous"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intensity"
+          }
+        },
+        "title": "CatalogFacets",
+        "type": "object"
+      },
+      "CatalogPhoto": {
+        "additionalProperties": false,
+        "properties": {
+          "alt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alt"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "CatalogPhoto",
+        "type": "object"
+      },
+      "CatalogPlace": {
+        "additionalProperties": false,
+        "properties": {
+          "destination_id": {
+            "title": "Destination Id",
+            "type": "string"
+          },
+          "lat": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lat"
+          },
+          "lng": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lng"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "precision": {
+            "anyOf": [
+              {
+                "enum": [
+                  "point",
+                  "area",
+                  "line"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Precision"
+          },
+          "time_zone": {
+            "title": "Time Zone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "destination_id",
+          "name",
+          "time_zone"
+        ],
+        "title": "CatalogPlace",
+        "type": "object"
+      },
+      "CatalogTour": {
+        "additionalProperties": false,
+        "description": "GET /catalog/v1/tours/{source_system}/{source_id} — the served tour (ETag = ``content_hash``).",
+        "properties": {
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "country_code": {
+            "title": "Country Code",
+            "type": "string"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogTourDay"
+            },
+            "title": "Days",
+            "type": "array"
+          },
+          "duration_days": {
+            "title": "Duration Days",
+            "type": "integer"
+          },
+          "exclusions": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogExclusion"
+            },
+            "title": "Exclusions",
+            "type": "array"
+          },
+          "facets": {
+            "$ref": "#/components/schemas/CatalogFacets"
+          },
+          "inclusions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Inclusions",
+            "type": "array"
+          },
+          "photos": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CatalogPhoto"
+            },
+            "title": "Photos",
+            "type": "array"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_system": {
+            "const": "cis",
+            "title": "Source System",
+            "type": "string"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_system",
+          "source_id",
+          "title",
+          "country_code",
+          "duration_days",
+          "content_hash",
+          "days",
+          "inclusions",
+          "exclusions",
+          "facets"
+        ],
+        "title": "CatalogTour",
+        "type": "object"
+      },
+      "CatalogTourDay": {
+        "additionalProperties": false,
+        "properties": {
+          "day_no": {
+            "title": "Day No",
+            "type": "integer"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "places": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogPlace"
+            },
+            "title": "Places",
+            "type": "array"
+          },
+          "time_zone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Zone"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "day_no",
+          "title",
+          "places"
+        ],
+        "title": "CatalogTourDay",
+        "type": "object"
+      },
+      "CatalogTourPage": {
+        "additionalProperties": false,
+        "description": "GET /catalog/v1/tours — one page ordered by source_id; ``next_cursor`` null on the last page.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogTourSummary"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "CatalogTourPage",
+        "type": "object"
+      },
+      "CatalogTourSummary": {
+        "additionalProperties": false,
+        "description": "One tour in a ``listTours`` page.",
+        "properties": {
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "country_code": {
+            "title": "Country Code",
+            "type": "string"
+          },
+          "duration_days": {
+            "title": "Duration Days",
+            "type": "integer"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_system": {
+            "const": "cis",
+            "title": "Source System",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_system",
+          "source_id",
+          "title",
+          "country_code",
+          "duration_days",
+          "content_hash",
+          "updated_at"
+        ],
+        "title": "CatalogTourSummary",
+        "type": "object"
+      },
       "ChangeRolesBody": {
         "additionalProperties": false,
         "description": "Only the fields sent are changed; ``\"booking_role\": null`` removes the Booking grant.",
@@ -23532,6 +23952,196 @@
         "summary": "Verify Tenant",
         "tags": [
           "auth"
+        ]
+      }
+    },
+    "/catalog/v1/destinations/{destination_id}": {
+      "get": {
+        "operationId": "get_destination_catalog_v1_destinations__destination_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "destination_id",
+            "required": true,
+            "schema": {
+              "title": "Destination Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogDestination"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Destination",
+        "tags": [
+          "catalog-http"
+        ]
+      }
+    },
+    "/catalog/v1/tours": {
+      "get": {
+        "operationId": "list_tours_catalog_v1_tours_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "updated_since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Updated Since"
+            }
+          },
+          {
+            "in": "query",
+            "name": "country_code",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Country Code"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogTourPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Tours",
+        "tags": [
+          "catalog-http"
+        ]
+      }
+    },
+    "/catalog/v1/tours/{source_system}/{source_id}": {
+      "get": {
+        "operationId": "get_tour_catalog_v1_tours__source_system___source_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_system",
+            "required": true,
+            "schema": {
+              "title": "Source System",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "title": "Source Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogTour"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Tour",
+        "tags": [
+          "catalog-http"
         ]
       }
     },
