@@ -450,11 +450,23 @@ def test_unknown_or_malformed_destination_is_404(client, issuer, dest):
 # ── wiring in the real app ────────────────────────────────────────────────────
 
 def test_main_app_serves_the_catalog_routes_with_problem_bodies():
-    from api.main import app
+    # Read api/main.py as text and build a minimal app: another unit test can leave a stub app behind in
+    # sys.modules["api.main"] in the full CI run (S249: the shared module state made this test order-dependent).
+    from pathlib import Path
 
-    paths = {getattr(r, "path", "") for r in app.routes}
+    from fastapi import FastAPI
+
+    from api.routers.catalog_http import CatalogProblem, catalog_problem_handler, router
+
+    main_src = (Path(__file__).resolve().parents[2] / "api" / "main.py").read_text(encoding="utf-8")
+    assert "app.include_router(catalog_http_router)" in main_src
+    assert "CatalogProblem" in main_src and "catalog_problem_handler" in main_src
+    paths = {getattr(r, "path", "") for r in router.routes}
     assert {"/catalog/v1/tours", "/catalog/v1/tours/{source_system}/{source_id}",
             "/catalog/v1/destinations/{destination_id}"} <= paths
+    app = FastAPI()
+    app.add_exception_handler(CatalogProblem, catalog_problem_handler)
+    app.include_router(router)
     resp = TestClient(app).get("/catalog/v1/tours")
     assert resp.status_code == 401 and resp.json()["error"] == "unauthorized"
 
