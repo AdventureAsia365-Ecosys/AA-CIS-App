@@ -8,8 +8,8 @@ import { PRIVACY_PATH, TERMS_PATH } from "@/lib/hosts";
 
 /** The banner title on every legal page while the text is not approved. */
 export const LEGAL_DRAFT_LABEL = "Draft — pending legal review";
-export const LEGAL_VERSION = "Draft v0.1";
-export const LEGAL_UPDATED = "20 October 2026";
+export const LEGAL_VERSION = "Draft v0.2";
+export const LEGAL_UPDATED = "24 October 2026";
 
 // Ink + underline, not gold: BRAND.accentDeep is 4.47:1 on white and 4.05:1 on the gold tint (below WCAG AA).
 const linkStyle: CSSProperties = { color: BRAND.ink, fontWeight: 600, textDecoration: "underline", textUnderlineOffset: 2 };
@@ -76,7 +76,7 @@ export default function LegalPage({
   return (
     <div data-theme="light" style={{ minHeight: "100vh", background: "var(--bg-primary)", fontFamily: FONT_SANS, padding: "32px 16px", boxSizing: "border-box" }}>
       {/* Paragraph and list rhythm for the body text (inline styles cannot target descendants). */}
-      <style>{`.aa-legal-body p{margin:0 0 10px}.aa-legal-body ul{list-style:disc;margin:0 0 10px;padding-left:20px}.aa-legal-body li{margin:0 0 6px}`}</style>
+      <style>{`.aa-legal-body p{margin:0 0 10px}.aa-legal-body ul{list-style:disc;margin:0 0 10px;padding-left:20px}.aa-legal-body li{margin:0 0 6px}.aa-legal-body li ul{list-style:circle;margin:6px 0 0}`}</style>
       <main style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 16, padding: "28px 24px", width: "100%", maxWidth: 760, margin: "0 auto", boxSizing: "border-box" }}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={LOGO_SRC} alt="Adventure Asia" width={52} height={33} style={{ width: 52, height: "auto", display: "block", marginBottom: 16 }} />
