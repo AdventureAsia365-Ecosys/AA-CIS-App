@@ -398,6 +398,14 @@ def _apply_schema(conn):
             part_a = sql.split("-- ── Part A")[1].split("-- ── Part B")[0]
             part_a = part_a.split("\n", 1)[1]
             sql = "BEGIN;\n" + part_a + "COMMIT;\n"
+        if mf.startswith("279_"):
+            # AA-851: 279's part B (catalog.v_country, v_destination.country_iso2) needs 245's owners, 253-258 and the
+            # catalog recipe. Replay only part A (shared.countries, the resolver, raw_tours / destinations
+            # country_iso2 + trigger, the orphan report); not registered, so test_aa851_migration_279 can apply the
+            # whole file the DB Migrate way.
+            part_a = sql.split("-- ── Part A")[1].split("-- ── Part B")[0]
+            part_a = part_a.split("\n", 1)[1]
+            sql = "BEGIN;\n" + part_a + "COMMIT;\n"
         if mf.startswith("262_"):
             # AA-859 wave 3: CI's legacy app_user is a LOGIN role here (ci.yml creates it; Dev has no grant for it)
             # and holds 005's grants on tenant_brand_rules. 262's guard 1 refuses a login role with privileges on

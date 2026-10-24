@@ -108,6 +108,12 @@ def rds_like_226():
     for t in READ_TABLES:
         a.execute(f"GRANT SELECT ON {t} TO {RUNNER}")
     a.execute(f"GRANT SELECT, INSERT, UPDATE ON shared.job TO {RUNNER}")
+    # CIS 279 (AA-851, replayed part A): the country_iso2 trigger on shared.destinations resolves the country as the
+    # writer, so a writer needs what 279 gives cis_app (SELECT on shared.countries, EXECUTE on the resolver).
+    a.execute("SELECT to_regprocedure('shared.country_iso2(text)') IS NOT NULL")
+    if a.fetchone()[0]:
+        a.execute(f"GRANT SELECT ON shared.countries TO {RUNNER}")
+        a.execute(f"GRANT EXECUTE ON FUNCTION shared.country_iso2(text) TO {RUNNER}")
 
     runner = _connect(RUNNER)
     runner.autocommit = True
