@@ -83,6 +83,13 @@ async def test_crm_jobs_needs_a_cognito_session_and_never_raises():
     broken = httpx.MockTransport(lambda r: httpx.Response(502, text="bad gateway"))
     async with httpx.AsyncClient(transport=broken) as c:
         assert (await pa.crm_jobs(f"Bearer {COGNITO}", c))["status"] == "error"
+    html_200 = httpx.MockTransport(lambda r: httpx.Response(200, text="<html>proxy page</html>"))
+    async with httpx.AsyncClient(transport=html_200) as c:
+        out = await pa.crm_jobs(f"Bearer {COGNITO}", c)
+    assert out == {"status": "error", "http_status": 200, "reason": "invalid_json", "kinds": []}
+    list_200 = httpx.MockTransport(lambda r: httpx.Response(200, json=[1, 2]))
+    async with httpx.AsyncClient(transport=list_200) as c:
+        assert (await pa.crm_jobs(f"Bearer {COGNITO}", c))["reason"] == "unexpected_shape"
 
     def slow(request):
         raise httpx.ConnectTimeout("slow")
@@ -90,3 +97,74 @@ async def test_crm_jobs_needs_a_cognito_session_and_never_raises():
     async with httpx.AsyncClient(transport=httpx.MockTransport(slow)) as c:
         out = await pa.crm_jobs(f"Bearer {COGNITO}", c)
     assert out == {"status": "unavailable", "reason": "ConnectTimeout", "kinds": []}
+
+
+@pytest.mark.asyncio
+async def test_crm_llm_usage_totals_the_rollup_per_model_and_never_raises():
+    from datetime import date
+
+    seen = {}
+
+    def handler(request):
+        seen["url"] = str(request.url)
+        seen["auth"] = request.headers.get("authorization")
+        return httpx.Response(200, json={"rows": [
+            {"day": "2026-10-01", "stage": "crm_draft", "model": "m1", "calls": 3, "cost_usd": "0.010000"},
+            {"day": "2026-10-02", "stage": "crm_draft", "model": "m1", "calls": 2, "cost_usd": "0.005000"},
+            {"day": "2026-10-02", "stage": "crm_judge", "model": "m2", "calls": 1, "cost_usd": "0.020000"},
+            {"bad": "row", "calls": "x"},
+        ]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+        out = await pa.crm_llm_usage(f"Bearer {COGNITO}", date(2026, 10, 1), date(2026, 11, 1), c)
+    assert "/crm/ops/v1/llm/usage?from=2026-10-01&to=2026-10-31" in seen["url"] and seen["auth"] == f"Bearer {COGNITO}"
+    assert out["status"] == "ok" and out["calls"] == 6 and out["cost_usd"] == 0.035
+    assert [m["model"] for m in out["by_model"]] == ["m2", "m1"]  # the malformed row is skipped
+    none = await pa.crm_llm_usage(None, date(2026, 10, 1), date(2026, 11, 1))
+    assert none == {"status": "unavailable", "reason": "cognito_session_required", "calls": 0, "cost_usd": 0.0,
+                    "by_model": []}
+
+
+@pytest.mark.asyncio
+async def test_cost_page_crm_row_takes_the_crm_gateway_spend():
+    from datetime import datetime, timezone
+
+    from api.services import platform_cost as pc
+
+    class Pool:
+        async def fetch(self, sql, *args):
+            return []
+
+        async def fetchrow(self, sql, *args):
+            return None
+
+        async def fetchval(self, sql, *args):
+            return None
+
+    async def no_store(pool, start, end):
+        return None
+
+    calls = []
+
+    async def crm_llm(start, end):
+        calls.append((start, end))
+        return {"status": "ok", "calls": 4, "cost_usd": 0.5, "by_model": [{"model": "m1", "calls": 4, "cost_usd": 0.5}]}
+
+    now = datetime(2026, 10, 24, 12, tzinfo=timezone.utc)
+    orig = pc.ce.read_app_cost_range
+    pc.ce.read_app_cost_range = no_store
+    try:
+        out = await pc.cost_by_app(Pool(), None, redis=None, refresh_if_stale=False, now=now, crm_llm=crm_llm)
+
+        async def down(start, end):
+            return {"status": "unavailable", "reason": "ConnectTimeout"}
+
+        missing = await pc.cost_by_app(Pool(), None, redis=None, refresh_if_stale=False, now=now, crm_llm=down)
+    finally:
+        pc.ce.read_app_cost_range = orig
+    crm = next(r for r in out["apps"] if r["app"] == "crm")
+    assert crm["ai_usd"] == 0.5 and crm["ai_calls"] == 4 and crm["ai_outside_aws_usd"] == 0.5
+    assert crm["ai_by_source"][0]["provider"] == "crm_gateway:m1" and out["crm_llm"] == {"status": "ok"}
+    assert calls and calls[0][0].isoformat() == "2026-10-01"
+    assert missing["crm_llm"] == {"status": "unavailable", "reason": "ConnectTimeout"}
+    assert next(r for r in missing["apps"] if r["app"] == "crm")["ai_usd"] == 0.0

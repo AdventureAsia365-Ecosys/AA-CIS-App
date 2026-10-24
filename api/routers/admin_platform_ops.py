@@ -89,7 +89,13 @@ async def list_audit(
 async def get_cost(request: Request, month: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}$"),
                    refresh_if_stale: bool = Query(True)):
     try:
+        authorization = request.headers.get("authorization")
+
+        async def crm_llm(start, end_exclusive):
+            # AA-936: the CRM row's LLM spend from crm.ops.v1, with the staff member's own WORKFORCE token.
+            return await platform_apps.crm_llm_usage(authorization, start, end_exclusive)
+
         return await platform_cost.cost_by_app(request.app.state.pool, month, redis=_redis(request),
-                                               refresh_if_stale=refresh_if_stale)
+                                               refresh_if_stale=refresh_if_stale, crm_llm=crm_llm)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
