@@ -11,11 +11,16 @@ Errors
       use services/quality/thresholds.yaml (Python) or frontend/lib/quality-registry.generated.ts (TS).
   (c) a Jev question key (code constant `*_Q` / `*QUESTION*`, or a key seeded by
       `INSERT INTO shared.decision_question (question_key …)` in a migration) not in the registry.
-  (d) an A1 validate / brand-audit / grounding code not mapped in `a1_codes`.
+  (d) an A1 validate / brand-audit / grounding code not mapped in `a1_codes` (code maps and `*_CODES` in
+      services/content_generation/ and admin_pipeline.py, `{"code": ...}` literals and `X = "X"` / `*_CODE`
+      module constants in services/content_generation/, and the code constants of the A1 code-check modules
+      in services/quality/, read only — they stay exempt from (a)/(b)).
   (e) an admin chip not mapped (defect classes — set and order frozen —, duplicate reasons, review kinds).
   (f) a paths.yaml glob that matches no tracked file.
   (g) a hard/block class without a labelled positive and negative synthetic example.
   (h) a retired gate missing from the registry, or without its label.
+  (j) a Q0 corpus case (tests/unit/quality/cases/*.json) whose class_id does not resolve to a class (directly or
+      through taxonomy.yaml aliases) or whose detector is not a registered gate, Jev key, A1 code or code check.
   plus schema errors in the three YAML files and a stale generated TS file.
 Warnings: coverage parity (§3.4 #4), hard/block classes with no enforcing detector, selector paths with no
 Q0 keep/drop set yet (§3.4 #6; becomes an error once the Q-2 corpus exists), unused Jev keys read by code.
@@ -28,6 +33,7 @@ from __future__ import annotations
 import argparse
 import ast
 import fnmatch
+import json
 import os
 import re
 import subprocess
@@ -57,6 +63,9 @@ SEED_RE = re.compile(r"INSERT\s+INTO\s+shared\.decision_question\s*\(\s*question
                      re.S | re.I)
 SEED_KEY_RE = re.compile(r"^\s*\(\s*'([a-z0-9_]+)'\s*,", re.M)
 RUN_ID_RE = re.compile(r"^qcal-\d{8}-[a-z0-9-]+$")
+# A1 code-check modules under services/quality/ whose module-level code constants are mapped by (d).
+A1_CODE_MODULES = ("services/quality/day_oracle.py", "services/quality/s1_checks.py", "services/quality/degraded.py")
+Q0_CASES_DIR = "tests/unit/quality/cases"
 
 
 @dataclass
@@ -268,9 +277,20 @@ def a1_code_sites(files: dict[str, str]) -> dict[str, str]:
             out.setdefault(code, f"{path}:{line}")
 
     for path, src in files.items():
+        if path in A1_CODE_MODULES:
+            for node in ast.parse(src).body:
+                if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
+                    add(node.value.value, path, node.lineno)
+            continue
         if not (path.startswith("services/content_generation/") or path == "api/routers/admin_pipeline.py"):
             continue
         tree = ast.parse(src)
+        if path.startswith("services/content_generation/"):
+            for node in tree.body:  # NAME = "NAME" / *_CODE = "CODE" (a code constant, not an env var name)
+                if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant) \
+                        and any(isinstance(t, ast.Name) and (t.id == node.value.value or t.id.endswith("_CODE"))
+                                for t in node.targets):
+                    add(node.value.value, path, node.lineno)
         for node in ast.walk(tree):
             if isinstance(node, (ast.Assign, ast.AnnAssign)):
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
@@ -290,7 +310,7 @@ def a1_code_sites(files: dict[str, str]) -> dict[str, str]:
                 for a in node.args:
                     if isinstance(a, ast.Constant):
                         add(a.value, path, a.lineno)
-            elif isinstance(node, ast.Dict) and path == "services/content_generation/grounding.py":
+            elif isinstance(node, ast.Dict) and path.startswith("services/content_generation/"):
                 for k, v in zip(node.keys, node.values):
                     if isinstance(k, ast.Constant) and k.value == "code" and isinstance(v, ast.Constant):
                         add(v.value, path, v.lineno)
@@ -370,7 +390,7 @@ def check_schema(res: Result, tracked: set[str]) -> None:
     for dup in sorted({i for i in ids if ids.count(i) > 1}):
         res.errors.append(f"taxonomy: duplicate class id {dup!r}")
     gates, jev, a1 = registry.gates(), registry.jev_questions(), registry.a1_codes()
-    detector_refs = set(gates) | set(jev) | set(a1)
+    detector_refs = registry.detector_refs()
     for c in tax.get("classes") or []:
         cid = c.get("id")
         if not re.match(r"^[a-z]+\.[a-z0-9_]+$", cid or ""):
@@ -422,6 +442,18 @@ def check_schema(res: Result, tracked: set[str]) -> None:
         _mapped(q, f"jev {k}", class_ids, res)
     for k, a in a1.items():
         _mapped(a, f"a1 code {k}", class_ids, res)
+    for k, cc in registry.code_checks().items():
+        _mapped(cc, f"code check {k}", class_ids, res)
+        if cc.get("path") not in tracked:
+            res.errors.append(f"code check {k}: path {cc.get('path')!r} is not a tracked file")
+    for k, targets in registry.aliases().items():
+        if k in class_ids:
+            res.errors.append(f"alias {k!r} shadows a class id")
+        if not targets:
+            res.errors.append(f"alias {k!r} maps to no class")
+        for t in targets:
+            if t not in class_ids:
+                res.errors.append(f"alias {k!r}: unknown class {t!r}")
     for group, entries in registry.chips().items():
         for k, e in (entries or {}).items():
             _mapped(e, f"chip {group}.{k}", class_ids, res)
@@ -454,6 +486,30 @@ def check_paths(res: Result, tracked: list[str]) -> None:
         if entry.get("artefact") == "selector" and not entry.get("q0_set"):
             res.warnings.append(f"(i) paths.yaml selector {entry.get('globs')}: no Q0 keep/drop set yet "
                                 f"(error once the Q-2 corpus exists)")
+
+
+# --------------------------------------------------------------------------------------- (j) Q0 corpus
+
+def check_q0_corpus(root: Path, res: Result) -> None:
+    """Every Q0 case's class_id and detector resolve through the registry (one taxonomy). Reads the case files
+    as data (json); a case is never relabelled here."""
+    refs = registry.detector_refs()
+    for path in sorted((root / Q0_CASES_DIR).glob("*.json")):
+        if path.name.startswith("_"):
+            continue
+        try:
+            cases = json.loads(path.read_text(encoding="utf-8"))
+        except ValueError as e:
+            res.errors.append(f"{Q0_CASES_DIR}/{path.name}: (j) cannot parse ({e})")
+            continue
+        for c in cases if isinstance(cases, list) else []:
+            where = f"{Q0_CASES_DIR}/{path.name} {c.get('id')}"
+            if not registry.resolve_class(c.get("class_id")):
+                res.errors.append(f"{where}: (j) class_id {c.get('class_id')!r} is not a class or an alias in "
+                                  f"taxonomy.yaml")
+            if c.get("detector") not in refs:
+                res.errors.append(f"{where}: (j) detector {c.get('detector')!r} is not a registered gate, Jev key, "
+                                  f"A1 code or code check")
 
 
 # ------------------------------------------------------------------------------------------------ run
@@ -493,13 +549,16 @@ def run(root: Path = ROOT) -> Result:
             res.warnings.append(f"Jev key {k!r} is registered as used but no code constant names it")
     # (d)
     a1 = registry.a1_codes()
-    for code, where in sorted(a1_code_sites(py_files).items()):
+    a1_files = {**py_files, **{p: (root / p).read_text(encoding="utf-8") for p in A1_CODE_MODULES
+                               if p in tracked_set and (root / p).exists()}}
+    for code, where in sorted(a1_code_sites(a1_files).items()):
         if code not in a1:
             res.errors.append(f"{where}: (d) A1 code {code!r} is not mapped in taxonomy.yaml a1_codes")
     # (e)(f) + schema
     check_chips(py_files, root, res)
     check_paths(res, tracked)
     check_schema(res, tracked_set)
+    check_q0_corpus(root, res)
     # generated TS freshness
     from services.quality import gen_frontend
     gen = root / GENERATED_TS

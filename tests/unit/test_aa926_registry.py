@@ -46,7 +46,7 @@ OLD_GATE_LABELS = [
     ("FORBIDDEN_WORD", "Forbidden word"),
 ]
 OLD_RETIRED = {"promises_an_option", "F8_framework", "F3_structural_variance", "F5_atom_density", "F7_faq_dedup"}
-NEW_LABELLED = ["F2_platform_truth", "F2_superlatives", "F2_style_warn", "F19_authenticity"]
+NEW_LABELLED = ["F2_platform_truth", "F2_superlatives", "F2_style_warn", "F19_authenticity", "F15_stock_cut"]
 T10_CHANNELS = ("blog", "linkedin", "facebook", "instagram", "tiktok", "email", "landing_page", "ads")
 
 
@@ -103,7 +103,7 @@ def test_persisted_and_retired_names_stay_registered():
         assert registry.gate(n)["retired"] is True
     assert set(registry.retired_gates()) == OLD_RETIRED
     assert registry.gate("F9_brand_voice")["kind"] == "telemetry"  # llm_call_log.quality_signal.gate
-    for n in ("F7_faq_autofix", "F13_autofix", "F13_final_pass", "within_tenant_reuse"):
+    for n in ("F7_faq_autofix", "F13_autofix", "F13_final_pass", "within_tenant_reuse", "F15_stock_cut"):
         assert registry.gate(n)["kind"] == "flag"
 
 
@@ -164,3 +164,56 @@ def test_every_seeded_and_coded_jev_key_is_registered():
 def test_parity_report_flags_t2_fact_gaps():
     rows = {r["class"]: r for r in registry.parity_report()}
     assert "T2" in rows["fact.inclusion"]["missing"]  # design §3.3: T2 only has a brand-fit score
+
+
+# ------------------------------------------------------------------ S250: codes since the first base, Q0 corpus
+
+def test_f15_stock_cut_is_a_registered_labelled_flag():
+    from services.acp_content_writing import service
+
+    g = registry.gate("F15_stock_cut")
+    assert g["kind"] == "flag" and g["label"] and registry.F15_STOCK_CUT == "F15_stock_cut"
+    assert service.F15_STOCK_CUT_FLAG == registry.F15_STOCK_CUT
+    assert "F15_stock_cut:" in gen_frontend.render()
+
+
+def test_day_oracle_and_s1_check_codes_are_mapped():
+    from services.quality import day_oracle, degraded, s1_checks
+
+    a1 = registry.a1_codes()
+    assert set(day_oracle.DAY_ORACLE_MODES) <= set(a1)
+    for name in ("META_CUT", "META_LENGTH", "TEXT_TRUNCATED", "NUMBER_NOT_IN_SOURCE", "NUMBER_NOUN_MISMATCH",
+                 "NAME_NOT_IN_SOURCE", "DAY_PLACE_MISMATCH", "INCLUSION_CONTRADICTED"):
+        assert getattr(s1_checks, name) in a1, name
+    for code in (degraded.HOLD_CODE, "META_CUT_SIGNATURE", "BRAND_AUDIT_FLAGGED", "BRAND_AUDIT_UNAVAILABLE",
+                 "ITINERARY_MEAL_TIME_INVENTED"):
+        assert code in a1, code
+    assert registry.a1_codes()["SOURCE_DAY_CONTRADICTION"]["classes"] == [day_oracle.CLASS_SOURCE]
+    assert registry.a1_codes()["DAY_SUBDAY_SPLIT"]["classes"] == [day_oracle.CLASS_DAY]
+
+
+def test_every_q0_case_resolves_through_the_registry():
+    from tests.unit.quality import chain
+
+    cases = chain.load_cases()
+    assert len(cases) >= 70
+    refs = registry.detector_refs()
+    for c in cases:
+        assert registry.resolve_class(c["class_id"]), (c["id"], c["class_id"])
+        assert c["detector"] in refs, (c["id"], c["detector"])
+
+
+def test_aliases_point_at_classes_and_never_shadow_one():
+    for alias, targets in registry.aliases().items():
+        assert alias not in registry.classes(), alias
+        assert targets and all(t in registry.classes() for t in targets), alias
+    assert registry.resolve_class("other.length") == ["other.length_shape"]
+    assert registry.resolve_class("source.unsupported_specific") == ["fact.number", "fact.inclusion"]
+    assert registry.resolve_class("fact.number") == ["fact.number"]
+    assert registry.resolve_class("other.nope") == [] and registry.resolve_class(None) == []
+
+
+def test_code_checks_name_real_modules():
+    for name, cc in registry.code_checks().items():
+        assert (ROOT / cc["path"]).is_file(), name
+        assert cc["path"].endswith(f"/{name}.py"), name

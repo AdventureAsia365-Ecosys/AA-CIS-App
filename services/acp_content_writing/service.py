@@ -665,7 +665,7 @@ def _enforce_authenticity(content_text: str, gate_ledger: list, flags: list, sta
     return cut_text, ledger, flags, status, held_reason, entry
 
 
-F15_STOCK_CUT_FLAG = "F15_stock_cut"
+F15_STOCK_CUT_FLAG = qr.F15_STOCK_CUT
 
 
 def _cut_stock_lines(content_text: str, gate_ledger: list, flags: list, *, channel: str, spec=None,
@@ -717,7 +717,7 @@ def _cut_stock_lines(content_text: str, gate_ledger: list, flags: list, *, chann
         return v[len("stock phrase '"):].split("' — ", 1)[0].lower() in folded_after
 
     def trim_f15(g: dict) -> dict:
-        if g.get("gate") != "F15_voice" or g.get("passed"):
+        if g.get("gate") != qr.F15_VOICE or g.get("passed"):
             return g
         left = [v for v in g.get("violations") or [] if still_there(v)]
         if left == list(g.get("violations") or []):
@@ -729,7 +729,7 @@ def _cut_stock_lines(content_text: str, gate_ledger: list, flags: list, *, chann
     fresh = {length["gate"]: length, shape["gate"]: shape}
     ledger = [trim_f15(fresh.get(g["gate"], g)) for g in gate_ledger]
     new_flags = [trim_f15(f) for f in _refresh_flags(flags, fresh)]
-    new_flags = [f for f in new_flags if not (f.get("gate") == "F15_voice" and f.get("passed"))]
+    new_flags = [f for f in new_flags if not (f.get("gate") == qr.F15_VOICE and f.get("passed"))]
     note = [f"cut stock line '{it['phrase']}': '{it['sentence'][:200]}'" for it in gone]
     new_flags.append({"gate": F15_STOCK_CUT_FLAG, "passed": False, "blocking": False, "repairable": False,
                       "violations": note})
@@ -1137,9 +1137,9 @@ async def _apply_faq_answer_fit(content_text: str, flags: list[dict], *, context
     context["faq_answer_fit"] = record
     lines = faq_answer_fit.fit_log_lines(record)
     if lines:
-        entry = next((f for f in flags if f.get("gate") == "F7_faq_autofix"), None)
+        entry = next((f for f in flags if f.get("gate") == qr.F7_FAQ_AUTOFIX), None)
         if entry is None:
-            flags = flags + [{"gate": "F7_faq_autofix", "passed": False, "blocking": False, "repairable": False,
+            flags = flags + [{"gate": qr.F7_FAQ_AUTOFIX, "passed": False, "blocking": False, "repairable": False,
                               "violations": lines}]
         else:
             entry["violations"] = list(entry.get("violations") or []) + lines
@@ -1270,7 +1270,7 @@ def _repair_feedback(gate_ledger: list[dict], channel: Optional[str] = None) -> 
     so another channel (max 6,000) never gets it (S248 review)."""
     target = F4_OVER_MAX_TARGET if channel == "blog" else ""
     return [
-        f"{g['gate']}: {v}" + (target if g["gate"] == "F4_extreme_length" and _F4_OVER_RE.search(v) else "")
+        f"{g['gate']}: {v}" + (target if g["gate"] == qr.F4_EXTREME_LENGTH and _F4_OVER_RE.search(v) else "")
         for g in gate_ledger if not g["passed"] and g.get("blocking", True)
         for v in g["violations"]
     ]

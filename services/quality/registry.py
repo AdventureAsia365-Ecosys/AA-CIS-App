@@ -67,6 +67,7 @@ F7_FAQ_DEDUP = "F7_faq_dedup"
 F7_FAQ_AUTOFIX = "F7_faq_autofix"
 F13_AUTOFIX = "F13_autofix"
 F13_FINAL_PASS = "F13_final_pass"
+F15_STOCK_CUT = "F15_stock_cut"
 WITHIN_TENANT_REUSE = "within_tenant_reuse"
 # Telemetry (llm_call_log.quality_signal.gate, structlog events) — never a ledger gate.
 F9_BRAND_VOICE = "F9_brand_voice"
@@ -172,6 +173,34 @@ def chips() -> dict[str, dict]:
 
 def a1_codes() -> dict[str, dict]:
     return taxonomy().get("a1_codes") or {}
+
+
+def code_checks() -> dict[str, dict]:
+    """Detector modules named by their module (services/quality/*): the Q0 corpus `detector` of a contract or
+    degraded-marker case."""
+    return taxonomy().get("code_checks") or {}
+
+
+def aliases() -> dict[str, list[str]]:
+    """Q0 corpus class id → the canonical class ids it stands for (taxonomy.yaml aliases; one id or a list)."""
+    out = {}
+    for k, v in (taxonomy().get("aliases") or {}).items():
+        out[k] = [v] if isinstance(v, str) else list(v or [])
+    return out
+
+
+def resolve_class(class_id: Optional[str]) -> list[str]:
+    """The canonical class ids of a class id or a Q0 alias; [] when it resolves to nothing."""
+    if not isinstance(class_id, str):
+        return []
+    if class_id in classes():
+        return [class_id]
+    return [c for c in aliases().get(class_id, []) if c in classes()]
+
+
+def detector_refs() -> set[str]:
+    """Every name a class detector or a Q0 case `detector` may use: gates, Jev keys, A1 codes, code checks."""
+    return set(gates()) | set(jev_questions()) | set(a1_codes()) | set(code_checks())
 
 
 # --------------------------------------------------------------------------------------- thresholds

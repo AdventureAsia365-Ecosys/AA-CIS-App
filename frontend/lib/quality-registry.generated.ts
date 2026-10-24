@@ -43,6 +43,7 @@ export const GATE_LABELS: Record<string, string> = {
   F2_superlatives: "More than one stock superlative",
   F2_style_warn: "Positioning word the brand did not declare",
   F19_authenticity: "Review / testimonial / customer voice",
+  F15_stock_cut: "Stock lines cut",
 };
 
 /** AA-787 — gates the T10 stack no longer runs. Older pieces still carry them in their ledger, so the

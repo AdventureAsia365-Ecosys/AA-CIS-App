@@ -32,6 +32,7 @@ classes:
       - {ref: a1_promise_unsupported, kind: jev, writers: [A1], mode: enforce}
       - {ref: F9_cta_fact, kind: llm, writers: [T9_blog, T9_social], mode: enforce}
       - {ref: F2_platform_truth, kind: rule, writers: [T9_blog, T9_social], mode: enforce}
+      - {ref: INCLUSION_CONTRADICTED, kind: rule, writers: [A1], mode: shadow}
     synthetic_examples:
       - {truth: positive, source: "Day 2: lunch not included.", text: "Lunch is included on Day 2."}
       - {truth: negative, source: "Day 2: lunch at a village guesthouse.", text: "Day 2 includes lunch at a village guesthouse."}
@@ -47,6 +48,7 @@ classes:
       differently. Differs from fact.misbinding: there the number exists in the source but belongs to another subject.
     detectors:
       - {ref: UNSUPPORTED_NUMBER, kind: rule, writers: [A1], mode: enforce}
+      - {ref: NUMBER_NOT_IN_SOURCE, kind: rule, writers: [A1], mode: shadow}
       - {ref: T3_grounding, kind: rule, writers: [T2], mode: enforce}
       - {ref: F1_grounding, kind: rule, writers: [T9_blog, T9_social], mode: enforce}
       - {ref: F9_cta_fact, kind: llm, writers: [T9_blog, T9_social], mode: enforce}
@@ -66,6 +68,7 @@ classes:
       - {ref: a1_claim_supported, kind: jev, writers: [A1], mode: enforce}
       - {ref: F17_trip_fact, kind: rule, writers: [T9_blog, T9_social], mode: enforce}
       - {ref: F9_cta_fact, kind: llm, writers: [T9_blog, T9_social], mode: enforce}
+      - {ref: NUMBER_NOUN_MISMATCH, kind: rule, writers: [A1], mode: shadow}
     synthetic_examples:
       - {truth: positive, source: "The park shelters 30 mammal species and two lakes.", text: "The park holds 30 freshwater lakes."}
       - {truth: negative, source: "The park shelters 30 mammal species and two lakes.", text: "The park shelters 30 mammal species."}
@@ -80,6 +83,7 @@ classes:
     detectors:
       - {ref: a1_claim_supported, kind: jev, writers: [A1], mode: enforce}
       - {ref: F9_cta_fact, kind: llm, writers: [T9_blog, T9_social], mode: enforce}
+      - {ref: NAME_NOT_IN_SOURCE, kind: rule, writers: [A1], mode: shadow}
     synthetic_examples:
       - {truth: positive, source: "Lunch at the Harbour Beach Club.", text: "Lunch at the Lagoon Beach Club."}
       - {truth: negative, source: "Lunch at the Harbour Beach Club.", text: "Lunch at the Harbour Beach Club."}
@@ -142,6 +146,17 @@ classes:
       - {ref: ITINERARY_DAY_COUNT_MISMATCH, kind: oracle, writers: [A1], mode: warn}
       - {ref: ITINERARY_STILL_COMPRESSED, kind: oracle, writers: [A1], mode: warn}
       - {ref: ITINERARY_STRUCTURE_WEAK, kind: rule, writers: [A1], mode: warn}
+      # AA-925 day oracle (services/quality/day_oracle.py DAY_ORACLE_MODES: every code ships in shadow) and the
+      # S1-first step-1 code check (s1_checks, a measurement).
+      - {ref: DAY_SUBDAY_SPLIT, kind: oracle, writers: [A1], mode: shadow}
+      - {ref: DAY_OUTPUT_DUPLICATE, kind: oracle, writers: [A1], mode: shadow}
+      - {ref: DAY_OUTPUT_ORDER, kind: oracle, writers: [A1], mode: shadow}
+      - {ref: DAY_OUTPUT_GAP, kind: oracle, writers: [A1], mode: shadow}
+      - {ref: DAY_OUTPUT_EXTRA, kind: oracle, writers: [A1], mode: shadow}
+      - {ref: DAY_DEPARTURE_MIDTRIP, kind: oracle, writers: [A1], mode: shadow}
+      - {ref: DAY_COUNT_VS_DURATION, kind: oracle, writers: [A1], mode: shadow}
+      - {ref: DAY_PLACE_MISMATCH, kind: rule, writers: [A1], mode: shadow}
+      - {ref: repair_contract, kind: rule, writers: [A1], mode: shadow}
     synthetic_examples:
       - {truth: positive, source: "10 days.", text: "Day 7 — Departure. Day 8 — Arrive at the lake."}
       - {truth: negative, source: "10 days.", text: "Day 9 — Return to the capital. Day 10 — Departure."}
@@ -157,6 +172,10 @@ classes:
       - {ref: META_INCOMPLETE_SENTENCE, kind: rule, writers: [A1, T2], mode: enforce}
       - {ref: MISSING_FIELD, kind: oracle, writers: [A1, T2], mode: enforce}
       - {ref: F0_complete, kind: rule, writers: [T9_blog, T9_social], mode: enforce}
+      - {ref: META_CUT_SIGNATURE, kind: rule, writers: [A1], mode: shadow}
+      - {ref: META_CUT, kind: rule, writers: [A1], mode: shadow}
+      - {ref: TEXT_TRUNCATED, kind: rule, writers: [A1], mode: shadow}
+      - {ref: repair_contract, kind: rule, writers: [A1], mode: shadow}
     synthetic_examples:
       - {truth: positive, text: "Walk the valley trail on a single 20-kilometre."}
       - {truth: negative, text: "Walk the valley trail on a single 20-kilometre day."}
@@ -261,7 +280,8 @@ classes:
     artefact: output
     writers: [A1, T2, T9_blog, T9_social]
     definition: The source contradicts itself and the writer passes it on; labelled so the writer is not blamed (§6.4).
-    detectors: []
+    detectors:
+      - {ref: SOURCE_DAY_CONTRADICTION, kind: oracle, writers: [A1], mode: shadow}
     synthetic_examples: []
   # --------------------------------------------------------------- other.* (warn until real examples)
   - {id: other.f6, alias: F6, since: qtax-v1, severity: warn, checkability: judgement, artefact: output,
@@ -309,7 +329,14 @@ classes:
      writers: [A1, T2, T9_blog, T9_social], definition: "A length, count or channel-shape rule (SEO title/meta length, piece length, LinkedIn shape).",
      detectors: [{ref: SEO_META_TOO_LONG, kind: rule, writers: [A1, T2], mode: enforce},
                  {ref: F4_extreme_length, kind: rule, writers: [T9_blog, T9_social], mode: enforce},
-                 {ref: F14_social_shape, kind: rule, writers: [T9_social], mode: enforce}], synthetic_examples: []}
+                 {ref: F14_social_shape, kind: rule, writers: [T9_social], mode: enforce},
+                 {ref: META_LENGTH, kind: rule, writers: [A1], mode: shadow}], synthetic_examples: []}
+  # AA-926 (S250): the Q0 corpus class of a detector outage (AA-925 degraded marker). Not a writing error, so
+  # kind: meta (no parity / enforce-gap warning). The Q0 cases hold it at severity hard; see AA-924.
+  - {id: other.degraded_detector, kind: meta, since: qtax-v1, severity: warn, checkability: oracle, artefact: output,
+     writers: [A1, T2, T9_blog, T9_social], definition: "A detector failed open (judge, Jev, grounding, day oracle or brand audit down), so the output was not checked.",
+     detectors: [{ref: DEGRADED_DETECTOR, kind: rule, writers: [A1], mode: enforce},
+                 {ref: degraded, kind: rule, writers: [A1, T2, T9_blog, T9_social], mode: enforce}], synthetic_examples: []}
   # ---------------------------------------------------------------- judge classes (Q-CAL only, §3.3)
   - {id: judge.excerpt_artifact, alias: J1, kind: meta, since: qtax-v1, severity: warn, checkability: judgement,
      artefact: output, writers: [], definition: "A judge failed a claim the full source supports (it saw an excerpt).",
@@ -365,6 +392,8 @@ gates:
   F2_superlatives: {kind: gate, label: "More than one stock superlative", classes: [fact.embellish], channels: all}
   F2_style_warn: {kind: gate, label: "Positioning word the brand did not declare", classes: [other.lexicon], channels: all}
   F19_authenticity: {kind: gate, label: "Review / testimonial / customer voice", classes: [fact.embellish], channels: all}
+  # AA-926 (S250): the AA-780 stock-line cut (#916) — a fixer log like F7_faq_autofix, listed after the four above.
+  F15_stock_cut: {kind: flag, label: "Stock lines cut", class: none, reason: "fixer log: stock-phrase sentences service._cut_stock_lines removed after the gates"}
   # Telemetry names (never a ledger gate).
   F9_brand_voice: {kind: telemetry, class: none, reason: "llm_call_log.quality_signal.gate of the F9 judge call (admin LLM ops reads it)"}
   F9_sticky_pass: {kind: telemetry, class: none, reason: "structlog event: sentences an earlier F9 verdict passed were dropped from the re-judge"}
@@ -463,3 +492,50 @@ a1_codes:
   SUMMARY_SELF_REFERENTIAL: {classes: [other.v1]}
   UNSUPPORTED_CLAIM: {classes: [fact.inclusion, fact.misbinding, fact.name, fact.direction]}
   UNSUPPORTED_NUMBER: {classes: [fact.number]}
+  # AA-926 (S250): codes added since the first registry base (AA-925 day oracle and degraded marker, AA-645
+  # S1-first code checks, writer-v2 brand audit, the meta cut signature).
+  BRAND_AUDIT_FLAGGED: {classes: [other.v1], note: "writer-v2 brand audit, report-only (quality_shadow)"}
+  BRAND_AUDIT_UNAVAILABLE: {classes: [other.degraded_detector]}
+  DAY_CHECK_SKIPPED: {classes: [other.degraded_detector], note: "day oracle degraded marker, never enforced"}
+  DAY_COUNT_VS_DURATION: {classes: [struct.day_structure]}
+  DAY_DEPARTURE_MIDTRIP: {classes: [struct.day_structure]}
+  DAY_OUTPUT_DUPLICATE: {classes: [struct.day_structure]}
+  DAY_OUTPUT_EXTRA: {classes: [struct.day_structure]}
+  DAY_OUTPUT_GAP: {classes: [struct.day_structure]}
+  DAY_OUTPUT_ORDER: {classes: [struct.day_structure]}
+  DAY_PLACE_MISMATCH: {classes: [struct.day_structure]}
+  DAY_SUBDAY_SPLIT: {classes: [struct.day_structure]}
+  DEGRADED_DETECTOR: {classes: [other.degraded_detector]}
+  INCLUSION_CONTRADICTED: {classes: [fact.inclusion]}
+  META_CUT: {classes: [struct.truncated]}
+  META_CUT_SIGNATURE: {classes: [struct.truncated]}
+  META_LENGTH: {classes: [other.length_shape]}
+  NAME_NOT_IN_SOURCE: {classes: [fact.name]}
+  NUMBER_NOT_IN_SOURCE: {classes: [fact.number]}
+  NUMBER_NOUN_MISMATCH: {classes: [fact.misbinding]}
+  SOURCE_DAY_CONTRADICTION: {classes: [source.contradiction]}
+  TEXT_TRUNCATED: {classes: [struct.truncated]}
+
+# ------------------------------------------------------------------------------------- code checks
+# Detector modules named by module (a Q0 case `detector`). path must be a tracked file.
+code_checks:
+  repair_contract: {path: services/quality/repair_contract.py, classes: [fact.number, fact.inclusion, struct.truncated, struct.day_structure, scope.framing, other.s7], note: "AA-925 repair invariants: no_new_specifics, no_truncation, days_kept, scope_kept, tags_balanced"}
+  degraded: {path: services/quality/degraded.py, classes: [other.degraded_detector]}
+  day_oracle: {path: services/quality/day_oracle.py, classes: [struct.day_structure, source.contradiction]}
+
+# ------------------------------------------------------------------------------------------ aliases
+# Q0 corpus class ids (tests/unit/quality/cases/*.json, AA-925) → canonical classes. The cases are never
+# relabelled for this (a class_id change needs the q0-relabel PR label); the lint requires every Q0 class_id
+# and detector to resolve here, so there is one taxonomy. An alias never shadows a class id.
+aliases:
+  other.banned_pattern: other.v1
+  other.brand_forbidden: other.lexicon
+  other.brand_name: safety.tenant_isolation
+  other.cannibalization: safety.tenant_isolation
+  other.cta: other.c5
+  other.faq_contract: other.c5
+  other.first_line: other.length_shape
+  other.forbidden_word: other.lexicon
+  other.length: other.length_shape
+  other.missing_field: struct.truncated
+  source.unsupported_specific: [fact.number, fact.inclusion]

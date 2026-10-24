@@ -147,3 +147,44 @@ def test_a1_code_sites_are_found():
     found = lint.a1_code_sites({"services/content_generation/x.py": src})
     assert {"META_TOO_SHORT", "NEW_HARD_CODE", "ANOTHER_CODE"} <= set(found)
     assert "NEW_HARD_CODE" not in registry.a1_codes()
+
+
+def test_a1_code_sites_read_quality_modules_code_dicts_and_code_constants():
+    found = lint.a1_code_sites({
+        "services/quality/day_oracle.py": 'DAY_NEW_CODE = "DAY_NEW_CODE"\nDETECTOR = "day_oracle"\n',
+        "services/content_generation/x.py": textwrap.dedent('''
+            SOME_ENV = "S1_SOME_FLAG"
+            NEW_UNAVAILABLE = "NEW_UNAVAILABLE"
+            HOLD_CODE = "HELD_FOR_X"
+            def f(shadow):
+                shadow.append({"code": "NEW_SIGNATURE", "mode": "shadow"})
+        '''),
+    })
+    assert {"DAY_NEW_CODE", "NEW_UNAVAILABLE", "HELD_FOR_X", "NEW_SIGNATURE"} <= set(found)
+    assert "S1_SOME_FLAG" not in found  # an env var name is not a code
+    assert found["DAY_NEW_CODE"] == "services/quality/day_oracle.py:1"
+
+
+def test_q0_case_that_does_not_resolve_is_an_error(tmp_path):
+    cases = tmp_path / lint.Q0_CASES_DIR
+    cases.mkdir(parents=True)
+    (cases / "_fixtures.json").write_text("{}", encoding="utf-8")
+    (cases / "x.json").write_text(
+        '[{"id": "ok", "class_id": "other.length", "detector": "F4_extreme_length"},'
+        ' {"id": "bad-class", "class_id": "other.nope", "detector": "repair_contract"},'
+        ' {"id": "bad-det", "class_id": "fact.number", "detector": "NOT_A_DETECTOR"}]', encoding="utf-8")
+    res = lint.Result()
+    lint.check_q0_corpus(tmp_path, res)
+    assert len(res.errors) == 2, res.errors
+    assert "bad-class" in res.errors[0] and "'other.nope'" in res.errors[0]
+    assert "bad-det" in res.errors[1] and "'NOT_A_DETECTOR'" in res.errors[1]
+
+
+def test_alias_shadowing_a_class_is_an_error(monkeypatch):
+    tax = dict(registry.taxonomy())
+    tax["aliases"] = {**tax["aliases"], "fact.number": "fact.name", "other.zz": "nope.class"}
+    monkeypatch.setattr(registry, "taxonomy", lambda: tax)
+    res = lint.Result()
+    lint.check_schema(res, set(lint.tracked_files()))
+    msgs = "\n".join(res.errors)
+    assert "alias 'fact.number' shadows a class id" in msgs and "unknown class 'nope.class'" in msgs
