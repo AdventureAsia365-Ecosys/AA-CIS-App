@@ -58,6 +58,25 @@ test.describe('UI smoke — portal pages', () => {
     });
   }
 
+  // AA-935 (CRM-07, design v3 Fix C10) — the sidebar links to the Partner CRM (another app, its own sign-in until
+  // AA-979), and the CRM sidebar links back to the Content studio. Only the link is checked here: the CRM host has
+  // its own smoke in AA-Partner.
+  test('portal: sidebar links to the Partner CRM', async ({ browser }) => {
+    const context = await browser.newContext({ baseURL: baseUrl(), storageState: TENANT_STATE, viewport: { width: 1440, height: 900 } });
+    await installBypassRoute(context);
+    const page = await context.newPage();
+    try {
+      await page.goto('/portal/dashboard', { waitUntil: 'domcontentloaded' });
+      const link = page.getByTestId('portal-crm-link');
+      await expect(link).toBeVisible({ timeout: 15000 });
+      const href = await link.getAttribute('href');
+      expect(href).toMatch(/^https:\/\/[a-z0-9.-]+\/$/);
+      expect(new URL(href!).host).not.toBe(new URL(page.url()).host);
+    } finally {
+      await context.close();
+    }
+  });
+
   // AA-760 — the Browse Tours "no results" state (a search that matches no tour), captured in light
   // and dark at 1440 and 390 like the page screenshots. Every wait is bounded.
   test('portal: Browse Tours shows its empty state for a search with no match', async ({ browser }) => {

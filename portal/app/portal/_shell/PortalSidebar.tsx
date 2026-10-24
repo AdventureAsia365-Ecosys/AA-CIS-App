@@ -11,10 +11,16 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ChevronsLeft, ChevronsRight } from "lucide-react";
+import { ChevronsLeft, ChevronsRight, ExternalLink, Users } from "lucide-react";
 import { alpha, sans, serif, useHydrated, useSidebarCollapsed } from "@/app/_kit";
 import { LOGO_SRC } from "@/app/_brand/tokens";
 import { NAV_GROUPS, ROUTES, navActive, type NavEntry } from "./portalNav";
+
+// AA-935 (CRM-07, design v3 Fix C10): the cross-link to the agency CRM (AA-Partner web on its own host) until the
+// Content studio moves into the CRM shell (AA-979). Outside NAV_GROUPS on purpose: it is another app, so neither
+// the ⌘K palette nor the phone bottom bar routes to it. The CRM has its own sign-in until then (design-final §4.4).
+// NEXT_PUBLIC_CRM_URL (Vercel aa-cis-portal) overrides the Dev host.
+const CRM_URL = process.env.NEXT_PUBLIC_CRM_URL || "https://partner-dev.lumiguides.it.com";
 
 export function PortalSidebar({ drawerOpen, poolCount, catalogCount, onNavigate }: {
   drawerOpen: boolean;
@@ -98,6 +104,26 @@ export function PortalSidebar({ drawerOpen, poolCount, catalogCount, onNavigate 
             </div>
           </div>
         ))}
+        <div data-testid="portal-nav-group-crm">
+          <div data-pshell-label="true" style={groupTitleStyle}>Partner CRM</div>
+          <a
+            href={`${CRM_URL}/`}
+            data-pshell-row="true"
+            data-testid="portal-crm-link"
+            title="Open the Partner CRM"
+            style={{
+              display: "flex", alignItems: "center", gap: 10, width: "100%",
+              padding: "8px 10px", borderRadius: 7, textDecoration: "none",
+              color: "var(--aa-side-text)", fontSize: 13, fontWeight: 500, fontFamily: sans,
+            }}
+          >
+            <span aria-hidden style={{ flexShrink: 0, opacity: 0.75, display: "flex" }}><Users size={16} /></span>
+            <span data-pshell-label="true" style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              Open CRM
+            </span>
+            <span data-pshell-label="true" aria-hidden style={{ display: "flex", opacity: 0.6 }}><ExternalLink size={12} /></span>
+          </a>
+        </div>
       </nav>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
