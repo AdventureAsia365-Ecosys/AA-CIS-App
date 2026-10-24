@@ -359,6 +359,38 @@
     "capability": "spend.read",
     "module": "api.routers.admin_platform_ops"
   },
+  "GET /admin/platform/crm/agencies": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_crm_console"
+  },
+  "GET /admin/platform/crm/agencies/{tenant_id}": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_crm_console"
+  },
+  "GET /admin/platform/crm/agencies/{tenant_id}/data-requests": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_crm_console"
+  },
+  "GET /admin/platform/crm/agencies/{tenant_id}/entitlements": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_crm_console"
+  },
+  "GET /admin/platform/crm/agencies/{tenant_id}/jobs": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_crm_console"
+  },
+  "GET /admin/platform/crm/agencies/{tenant_id}/members": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_crm_console"
+  },
+  "GET /admin/platform/crm/agencies/{tenant_id}/usage": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_crm_console"
+  },
+  "GET /admin/platform/crm/console": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_crm_console"
+  },
   "GET /admin/platform/staff": {
     "capability": "staff.read",
     "module": "api.routers.admin_platform"
@@ -791,6 +823,42 @@
     "capability": "alerts.write",
     "module": "api.routers.admin_alert_recipients"
   },
+  "POST /admin/platform/crm/agencies": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_crm_console"
+  },
+  "POST /admin/platform/crm/agencies/{tenant_id}/data-requests": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_crm_console"
+  },
+  "POST /admin/platform/crm/agencies/{tenant_id}/jobs/{job_id}/retry": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_crm_console"
+  },
+  "POST /admin/platform/crm/agencies/{tenant_id}/lock": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_crm_console"
+  },
+  "POST /admin/platform/crm/agencies/{tenant_id}/members/{member_id}/deactivate": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_crm_console"
+  },
+  "POST /admin/platform/crm/agencies/{tenant_id}/owner-invite": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_crm_console"
+  },
+  "POST /admin/platform/crm/agencies/{tenant_id}/owner-recovery": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_crm_console"
+  },
+  "POST /admin/platform/crm/agencies/{tenant_id}/owner-recovery/{request_id}/complete": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_crm_console"
+  },
+  "POST /admin/platform/crm/agencies/{tenant_id}/unlock": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_crm_console"
+  },
   "POST /admin/platform/staff": {
     "capability": "staff.write",
     "module": "api.routers.admin_platform"
@@ -958,6 +1026,14 @@
   "PUT /admin/places/{destination_id}/shape": {
     "capability": "ops.write",
     "module": "api.routers.admin_places"
+  },
+  "PUT /admin/platform/crm/agencies/{tenant_id}/entitlements-allowed": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_crm_console"
+  },
+  "PUT /admin/platform/crm/agencies/{tenant_id}/insights-opt-out": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_crm_console"
   },
   "PUT /admin/tenants/{tenant_id}/brand-identity": {
     "capability": "tenant.write",

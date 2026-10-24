@@ -46,7 +46,7 @@ async def get_apps(request: Request, refresh: bool = Query(False)):
 @router.get("/apps/crm/jobs", summary="AA-936 — the partner CRM's job backlog per kind (crm.ops.v1)")
 async def get_crm_jobs(request: Request):
     # The CRM accepts only a WORKFORCE cis-admin token on /crm/ops/v1: the staff member's own Bearer is relayed.
-    return await platform_apps.crm_jobs(request.headers.get("authorization"))
+    return await platform_apps.crm_jobs(platform_apps.relay_authorization(request))
 
 
 @router.get("/apps/{app_id}", summary="AA-884 — one app's health and version card")
@@ -89,7 +89,7 @@ async def list_audit(
 async def get_cost(request: Request, month: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}$"),
                    refresh_if_stale: bool = Query(True)):
     try:
-        authorization = request.headers.get("authorization")
+        authorization = platform_apps.relay_authorization(request)
 
         async def crm_llm(start, end_exclusive):
             # AA-936: the CRM row's LLM spend from crm.ops.v1, with the staff member's own WORKFORCE token.
