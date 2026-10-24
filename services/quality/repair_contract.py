@@ -4,7 +4,7 @@ silently broke another: flag_fix re-adding "explore" to a meta (S218 Sri Lanka),
 "…a 20-kilometre walk" to "…a 20-kilometre." (S2), a sentence repair writing "the afternoon" the source never
 gave (AA-777 r6).
 
-Five invariants, checked per changed field (A1 flag_fix, A1 grounding repair, T3 sentence repair) or per
+Six invariants, checked per changed field (A1 flag_fix, A1 grounding repair, T3 sentence repair) or per
 replaced sentence (T9 sentence repair):
 
 1. ``gates_kept``       — a gate that passed before the repair does not fail after it. The gate runner is
@@ -20,6 +20,12 @@ replaced sentence (T9 sentence repair):
                           clause ("…Paro Dzong." from "…Paro Dzong and hike for 3 hours…") is not a cut.
 4. ``scope_kept``       — only the flagged fields (A1 / T3) change.
 5. ``tags_balanced``    — ``[R:…]``/``[F:…]`` tags, ``**`` and brackets stay balanced when they were.
+6. ``days_kept``        — (AA-645, S249) an itinerary keeps its day blocks: the ordered list of "Day N" headings
+                          after the repair equals the list before it — no day dropped, added, renumbered or
+                          duplicated. The S249 shadow: the generic flag_fix pass, asked to fix one meal line, sent
+                          back India "Rajasthan Adventure" with Days 1–10 of 15, ending on a full sentence, and
+                          invariants 1–5 all passed. Only the itinerary field is read (``DAY_FIELDS``); a field with
+                          no "Day N" heading before the repair has nothing to keep.
 
 The design's sixth idea, "no blanding" (a repair may not lower the source fact coverage), needs the fact
 coverage measure of Q-LEARN and is left to that issue.
@@ -37,7 +43,8 @@ from typing import Callable, Iterable, Optional
 from services.acp_shared.citation_tags import strip_citation_tags
 from services.acp_shared.grounding import find_novel_numeric_claims
 
-INVARIANTS = ("gates_kept", "no_new_specifics", "no_truncation", "scope_kept", "tags_balanced")
+INVARIANTS = ("gates_kept", "no_new_specifics", "no_truncation", "scope_kept", "tags_balanced", "days_kept")
+DAY_FIELDS = frozenset({"itineraries", "aa_itineraries"})
 
 GateRunner = Callable[[str, str], set]
 
@@ -158,6 +165,51 @@ def balanced(text: str) -> bool:
     return all(plain.count(o) == plain.count(c) for o, c in _OPEN_CLOSE)
 
 
+# A "Day N" heading at the start of a line, for an itinerary not in the canonical "Day N — Title" form
+# ("Day 3: Agra", "**Day 3** Agra", "- Day 3 - Agra").
+_LOOSE_DAY_RE = re.compile(r"^[ \t]*(?:[#>*\-•]+[ \t]*)?\**[ \t]*Day[ \t]+(\d{1,3})\b", re.IGNORECASE | re.MULTILINE)
+
+
+def day_headings(text: str) -> list[int]:
+    """The day numbers of an itinerary's "Day N" headings, in order, duplicates kept: the canonical "Day N — Title"
+    blocks (``day_parse.output_days``, what validate and the day oracle read) when there are any, else any
+    line-initial "Day N"."""
+    from services.content_generation.day_parse import output_days  # lazy: a leaf module, keeps load-time pure
+
+    t = text or ""
+    days = [d for d, _title, _first in output_days(t)]
+    return days or [int(m.group(1)) for m in _LOOSE_DAY_RE.finditer(t)]
+
+
+def _day_text(value) -> str:
+    """An itinerary value as text with its "Day N" headings: a writer-JSON list of {"day", "title", "body"} objects
+    becomes the canonical "Day N — Title" blocks (``_as_text`` would join the bare values and lose the headings)."""
+    if isinstance(value, (list, tuple)) and any(isinstance(v, dict) and "day" in v for v in value):
+        return "\n\n".join(f"Day {v.get('day')} — {v.get('title') or ''}\n{v.get('body') or ''}"
+                           for v in value if isinstance(v, dict))
+    return _as_text(value)
+
+
+def days_problem(before: str, after: str) -> Optional[str]:
+    """Why ``after`` does not keep ``before``'s day blocks (invariant 6), or None."""
+    b = day_headings(before)
+    if not b:
+        return None
+    a = day_headings(after)
+    if a == b:
+        return None
+    dropped = [d for d in dict.fromkeys(b) if d not in a]
+    added = [d for d in dict.fromkeys(a) if d not in b]
+    detail = f"{len(b)} day blocks before, {len(a)} after"
+    if dropped:
+        detail += "; dropped Day " + ", ".join(str(d) for d in dropped)
+    if added:
+        detail += "; added Day " + ", ".join(str(d) for d in added)
+    if not dropped and not added:
+        detail += "; days reordered or duplicated"
+    return detail
+
+
 def _sentence_initial(text: str, idx: int) -> bool:
     return bool(_SENT_START_RE.search(text[:idx]))
 
@@ -236,6 +288,10 @@ def check(before: dict, after: dict, *, allowed: Optional[Iterable[str]] = None,
         if balanced(b) and not balanced(a):
             res.violations.append({"invariant": "tags_balanced", "field": key,
                                    "detail": "unbalanced tag, bold or bracket"})
+        if key in DAY_FIELDS:
+            lost = days_problem(_day_text(b_raw), _day_text(a_raw))
+            if lost:
+                res.violations.append({"invariant": "days_kept", "field": key, "detail": lost})
     return res
 
 

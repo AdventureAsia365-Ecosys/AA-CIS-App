@@ -2093,12 +2093,19 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     add a figure (or, for the grounding / T3 fact editors, a name) the text and source lack, cut a sentence
     short (incl. the cut signature "…a 20-kilometre." that `meta_complete_sentence` accepts — a modifier left
     without its noun; dropping a whole trailing clause before "and / with / to …" is the fact editor's job and
-    is kept), touch an unflagged field, or break a tag / bold / bracket pair. The fit's fact tail may state the
+    is kept), touch an unflagged field, break a tag / bold / bracket pair, or (AA-645 `days_kept`) change the
+    itinerary's ordered "Day N" headings — drop, add, renumber or duplicate a day (the S249 shadow: flag_fix's
+    whole-itinerary rewrite returned Rajasthan with 10 of 15 days). The fit's fact tail may state the
     day count `tour_days()` derives ("8 nights" → 9 days). A violating field or sentence keeps its pre-repair
     text (soft `degraded: repair_contract`). Spliced at flag_fix (replaces the AA-641 per-field revert, same
     behaviour), the A1 grounding repair, revalidate's strip + fit, the T3 sentence repair + meta regenerate and
     T9 `splice_checked`. The T9 AA-528/AA-780 regression guard of full rewrites stays in
     `run_write_background` and already covers invariant 1 there.
+  - **Writer-v2 hard code** (AA-645, S249): on an A1 writer-v2 draft `ITINERARY_DAY_COUNT_MISMATCH` (a source day
+    missing from the output) blocks Master — `graph.V2_HARD_BLOCK_CODES`, read through `graph.hard_block_codes(state)`
+    by `_is_publishable` and the human-edit gate; v1 drafts and tenant rewrites keep the soft structure deduction. A
+    meal fact line that copies the same source day's meal list ("Meals: dinner." from "(D)" / "Meals included:
+    Dinner") is source-backed in the A1 brand pre-audit and is not sent to Jev.
   - **AA-740 fitter**: `fit_seo_meta_final` no longer cuts a too-long meta mid-clause; it salvages at a
     sentence boundary, appends a facts-only clause to a short one, closes an uncut in-band clause, and
     otherwise leaves the length code to the LLM (A1 flag_fix seo_meta repair + `_rerepair_meta`; T3 a
