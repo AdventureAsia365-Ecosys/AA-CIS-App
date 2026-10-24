@@ -5,8 +5,12 @@ Scores every piece with ``services.acp_content_writing.voice_rubric`` (profile c
 pack, ``custom_validators.voice_rubric`` override when the row has one) and reports against the labels:
 
 * a confusion table per tenant × channel: would_block vs the label (light-or-better = as_is / light);
-* the Trail Pulse voice-miss set: the S234 label-pack Trail Pulse pieces (all approved by the gates; the panel's
-  deciding defects name a voice miss on each) — how many the rubric would block (bar: ≥ 4 of 6);
+* the Trail Pulse false passes: Trail Pulse pieces the gates approved that the panel labelled heavy or reject,
+  plus the plan's named ones (``NAMED_FALSE_PASSES``, panel round / number) when the corpus has them — how many
+  the rubric would block. AA-790 review: an approved Trail Pulse piece the panel labelled LIGHT is not a false
+  pass; it counts in the light fires below, never as a catch. The plan's bar is ≥ 4 of 6; only the false passes
+  present in the corpus can be scored, so the bar is scaled to them (``ceil(4/6 × present)``) and the missing
+  named ids are listed;
 * fires on pieces labelled light: Trail Pulse (bar: ≤ 1) and the other tenants (bar: 0).
 
 One label per piece: the 4-lens panel majority of the label pack when the piece is in it, else the AA-729 fixture
@@ -23,6 +27,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import os
 import sys
 from collections import defaultdict
@@ -33,7 +38,19 @@ from scripts.aa790 import corpus  # noqa: E402
 from services.acp_content_writing import voice_rubric as vr  # noqa: E402
 
 TRAIL = "Trail Pulse"
-BARS = {"trail_caught_min": 4, "trail_light_fires_max": 1, "other_light_fires_max": 0}
+BARS = {"trail_caught_of_6": 4, "trail_light_fires_max": 1, "other_light_fires_max": 0}
+# The plan's named Trail Pulse false passes (S234 panel round files 02/04/07): r1 #7, r3 #9, r4 #6, r4 #11. The
+# plan's "r4 #7 / #12" are the test names R4_7 / R4_12 of r4 #6 / #11 (test_aa780_linkedin_floor_voice), so the
+# named set is 4 unique pieces; the plan's "6" counted them twice.
+NAMED_FALSE_PASSES = frozenset({"r1#7", "r3#9", "r4#6", "r4#11"})
+HEAVY = frozenset({"heavy", "reject"})
+
+
+def _false_pass(p: dict) -> bool:
+    """A Trail Pulse piece the gates approved that a human label calls heavy / reject, or a named one."""
+    if p["tenant"] != TRAIL or p["status"] != "approved":
+        return False
+    return p["label"] in HEAVY or (p["id"] in NAMED_FALSE_PASSES and p["label"] not in corpus.LIGHT)
 
 
 def _dedupe(rows: list[dict]) -> list[dict]:
@@ -69,13 +86,17 @@ def replay(rows: list[dict]) -> dict:
                        "source": r["source"], "profile": rubric.profile, "would_block": res["would_block"],
                        "violations": res["violations"],
                        "features": {k: (len(v) if isinstance(v, list) else v) for k, v in res["features"].items()}})
-    trail_set = [p for p in pieces if p["tenant"] == TRAIL and p["source"] == "pack" and p["status"] == "approved"]
+    trail_set = [p for p in pieces if _false_pass(p)]
     trail_light = [p for p in pieces if p["tenant"] == TRAIL and p["label"] in corpus.LIGHT]
     other_light = [p for p in pieces if p["tenant"] != TRAIL and p["label"] in corpus.LIGHT]
+    ids = {p["id"] for p in pieces if p["tenant"] == TRAIL}
     summary = {
         "pieces": len(pieces),
-        "trail_voice_miss_set": len(trail_set),
+        "trail_false_passes": len(trail_set),
+        "trail_false_pass_ids": sorted(p["id"] for p in trail_set),
+        "named_missing": sorted(NAMED_FALSE_PASSES - ids),
         "trail_caught": sum(p["would_block"] for p in trail_set),
+        "trail_caught_min": math.ceil(BARS["trail_caught_of_6"] / 6 * len(trail_set)),
         "trail_light": len(trail_light),
         "trail_light_fires": sum(p["would_block"] for p in trail_light),
         "other_light": len(other_light),
@@ -83,7 +104,7 @@ def replay(rows: list[dict]) -> dict:
         "any_miss_other_light": sum(bool(p["violations"]) for p in other_light),
     }
     summary["bars"] = {
-        "trail_caught": summary["trail_caught"] >= BARS["trail_caught_min"],
+        "trail_caught": bool(trail_set) and summary["trail_caught"] >= summary["trail_caught_min"],
         "trail_light_fires": summary["trail_light_fires"] <= BARS["trail_light_fires_max"],
         "other_light_fires": summary["other_light_fires"] <= BARS["other_light_fires_max"],
     }
@@ -104,8 +125,10 @@ def main() -> int:
             json.dump(res, fh, indent=1, ensure_ascii=False)
     s = res["summary"]
     print(f"{res['rubric']}: {s['pieces']} pieces")
-    print(f"Trail Pulse voice-miss set: {s['trail_caught']}/{s['trail_voice_miss_set']} would block "
-          f"(bar ≥ {BARS['trail_caught_min']}: {'met' if s['bars']['trail_caught'] else 'NOT met'})")
+    print(f"Trail Pulse false passes (approved, labelled heavy / reject): {s['trail_caught']}/"
+          f"{s['trail_false_passes']} would block {s['trail_false_pass_ids']} (bar ≥ 4 of 6 scaled to "
+          f"≥ {s['trail_caught_min']}: {'met' if s['bars']['trail_caught'] else 'NOT met'}); named, not in the "
+          f"corpus: {', '.join(s['named_missing']) or 'none'}")
     print(f"Trail Pulse labelled light: {s['trail_light_fires']}/{s['trail_light']} would block "
           f"(bar ≤ {BARS['trail_light_fires_max']}: {'met' if s['bars']['trail_light_fires'] else 'NOT met'})")
     print(f"Other tenants labelled light: {s['other_light_fires']}/{s['other_light']} would block "

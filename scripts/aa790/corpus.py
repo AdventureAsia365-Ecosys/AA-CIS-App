@@ -13,6 +13,17 @@ Sources (all read-only, $0):
 * ``db``      — every stored ``acp_shared.content_piece`` row (latest attempt per request), with the tenant's
   active ``shared.tenant_brand_rules`` row and the latest ``acp_shared.content_piece_label`` label. Read with
   the container's ``DATABASE_URL`` (role cis_app), ssl=require. SELECT only.
+* ``rows``    — a JSON file of rows this module exported (``--rows``), so the census and the replay run locally
+  with the branch's detectors on DB rows read by the deployed image.
+
+The image has no ``scripts/`` folder and the deployed ``services/`` predate AA-790, so the DB census runs in two
+steps (S3-mediated ECS exec, root runbook ``docs/ops/runbooks/ecs-exec-s3-mediated.md``): upload THIS file alone
+and run it in the api container as an exporter (it imports only ``services.acp_shared.brand_pack``)::
+
+  python3 /tmp/s.py --db --export /tmp/rows.json --s3 s3://<scripts bucket>/scripts/aa790-rows.json
+
+then fetch the object into the private root ``.tmp-session/`` and run ``integrity_census --rows <file>`` (and
+``voice_rubric_replay --rows <file>``) locally. The rows quote tenant piece text: never commit them to this repo.
 """
 from __future__ import annotations
 
@@ -29,7 +40,7 @@ PIECES_SQL = """
     ORDER BY cp.angle_gate_request_id, cp.attempt_number DESC
 """
 BRAND_SQL = """
-    SELECT DISTINCT ON (tenant_id) tenant_id::text AS tenant_id, *
+    SELECT DISTINCT ON (tenant_id) tenant_id::text AS tenant_key, *
     FROM shared.tenant_brand_rules
     WHERE is_active = true
     ORDER BY tenant_id, (brand_name = 'default') DESC, version DESC
@@ -106,13 +117,15 @@ async def load_db(dsn: Optional[str] = None) -> list[dict]:
     conn = await asyncpg.connect(dsn or os.environ["DATABASE_URL"], ssl="require")
     try:
         pieces = await conn.fetch(PIECES_SQL)
-        brands = {r["tenant_id"]: r for r in await conn.fetch(BRAND_SQL)}
+        # AA-790 review — keyed by the unique text alias: `*` brings its own uuid tenant_id, and asyncpg's
+        # record maps a repeated column name to the LAST one, so r["tenant_id"] would be the uuid, not the text
+        brands = {r["tenant_key"]: r for r in await conn.fetch(BRAND_SQL)}
         labels = {r["piece_id"]: r["label"] for r in await conn.fetch(LABEL_SQL)}
     finally:
         await conn.close()
     rows = []
     for p in pieces:
-        b = brands.get(p["tenant_id"])
+        b = brands.get(str(p["tenant_id"]))
         pack = pack_from_row(dict(b)) if b else {}
         rows.append({
             "id": p["piece_id"][:8], "piece_id": p["piece_id"], "tenant": p["tenant"], "channel": p["channel"],
@@ -123,11 +136,29 @@ async def load_db(dsn: Optional[str] = None) -> list[dict]:
     return rows
 
 
+def load_rows(path: str) -> list[dict]:
+    with open(path, encoding="utf-8") as fh:
+        rows = json.load(fh)
+    return [r for r in rows if isinstance(r, dict) and r.get("text") is not None]
+
+
+def export(rows: list[dict], path: str, s3_uri: Optional[str] = None) -> None:
+    """Write rows as JSON (and, with ``s3_uri``, upload it with boto3 — the container has no aws CLI)."""
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(rows, fh, ensure_ascii=False, default=str)
+    if s3_uri:
+        import boto3
+
+        bucket, _, key = s3_uri.removeprefix("s3://").partition("/")
+        boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-west-1")).upload_file(path, bucket, key)
+
+
 def add_args(ap) -> None:
     ap.add_argument("--golden", help="AA-729 fixture JSON (root docs/eval/aa729/fixture-*.json)")
     ap.add_argument("--pack", help="S234 label pack xlsx (needs --panel-key)")
     ap.add_argument("--panel-key", help="agreement/panel_key.json next to the label pack")
     ap.add_argument("--db", action="store_true", help="read acp_shared.content_piece with DATABASE_URL (read-only)")
+    ap.add_argument("--rows", help="rows JSON written by `corpus.py --db --export` in the api container")
 
 
 async def load(args) -> list[dict]:
@@ -138,7 +169,31 @@ async def load(args) -> list[dict]:
         rows += load_pack(args.pack, args.panel_key, golden)
     if args.db:
         rows += await load_db()
+    if getattr(args, "rows", None):
+        rows += load_rows(args.rows)
     return rows
 
 
 LIGHT = frozenset({"as_is", "light"})
+
+
+def main() -> int:
+    """The container exporter: ``--db --export <path> [--s3 s3://bucket/key]`` (see the module docstring)."""
+    import argparse
+    import asyncio
+    import sys
+
+    sys.path.insert(0, os.getcwd())  # run as /tmp/s.py from the image's work dir: `services` must import
+    ap = argparse.ArgumentParser(description="AA-790 corpus exporter (read-only)")
+    add_args(ap)
+    ap.add_argument("--export", required=True, help="write the loaded rows here as JSON")
+    ap.add_argument("--s3", help="also upload the JSON to this s3://bucket/key")
+    args = ap.parse_args()
+    rows = asyncio.run(load(args))
+    export(rows, args.export, args.s3)
+    print(f"exported {len(rows)} rows to {args.export}" + (f" and {args.s3}" if args.s3 else ""))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

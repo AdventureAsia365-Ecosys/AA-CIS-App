@@ -996,15 +996,24 @@ class _StepGuard:
     """AA-790 — repair-contract invariant 7 (``repair_contract.enforce_step``) on the deterministic edits of one T9
     job's attempt loop. Each call takes the step's own output and log and returns ``(text, log, reverted)``: a
     clean edit with its log unchanged, or ``before`` with the ``reverted <step>: …`` lines in place of the step's
-    own log (the step's edits are gone, so its log would no longer be true). ``reverts`` collects every reverted
-    step of the job for ``_degraded_final`` (``degraded: repair_contract``, soft). Steps before the final pass are
-    compared as ``text_integrity.settle`` leaves them (``settle=True``); one memo per job keeps that to one
-    settle per distinct text."""
+    own log (the step's edits are gone, so its log would no longer be true). ``reverts`` holds the reverted steps
+    of the CURRENT attempt for ``_degraded_final`` (``degraded: repair_contract``, soft): every attempt runs every
+    step on its own text, so only the kept attempt's reverts describe the stored piece. ``begin_attempt`` starts
+    a new list; ``keep_previous`` puts the previous attempt's list back when the AA-528 regression guard keeps
+    that attempt's text (AA-790 review). Steps before the final pass are compared as ``text_integrity.settle``
+    leaves them (``settle=True``); one memo per job keeps that to one settle per distinct text."""
 
     def __init__(self, hyg: hygiene.HygieneContext, *, ignore: frozenset, cta: Optional[str]):
         self.hyg, self.ignore, self.cta = hyg, ignore, cta
         self.reverts: list[str] = []
+        self._previous: list[str] = []
         self._memo: dict[str, str] = {}
+
+    def begin_attempt(self) -> None:
+        self._previous, self.reverts = self.reverts, []
+
+    def keep_previous(self) -> None:
+        self.reverts = list(self._previous)
 
     def _settle(self, text: str) -> str:
         if text not in self._memo:
@@ -1828,6 +1837,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
         step_guard = _StepGuard(hyg, ignore=brand_ignore, cta=cta)
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
+            step_guard.begin_attempt()
             if attempt == 1:
                 content_text, cost, seo_meta, summary = await asyncio.to_thread(
                     write_content, content_seed=atom_text, goal=goal, channel_style=channel_style,
@@ -1951,6 +1961,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     content_text, gate_ledger = prev_snapshot["content_text"], prev_snapshot["gate_ledger"]
                     seo_meta, summary = prev_snapshot["seo_meta"], prev_snapshot["summary"]
                     embedding = prev_snapshot["embedding"]
+                    step_guard.keep_previous()  # AA-790 review — attempt 2's text, attempt 2's step reverts
                     # AA-786 — the last attempt: LinkedIn cuts the flagged F9 sentences (review P2).
                     content_text, gate_ledger, flags, cut_entry = _cut_truth_items(
                         content_text, gate_ledger, flags, channel=channel, ignore=brand_ignore, cta=cta,
@@ -2205,6 +2216,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                         "gate_ledger": gate_ledger,
                     }
                     content_text = prev_snapshot["content_text"]
+                    step_guard.keep_previous()  # AA-790 review — the kept text's own step reverts
                     # AA-780 review — attempt 1's under-floor F14 block asked for the rewrite just discarded;
                     # it never holds, so it is waived now (and shown as a flag) instead of blocking the next
                     # step: a remaining F1/F9 still gets its attempt-3 sentence repair (sentence_repair.plan

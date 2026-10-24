@@ -287,6 +287,18 @@ _TERMINAL_TAIL_RE = re.compile(r"[.!?…:;][\"'”’)*\]]*$")
 _LAST_WORD_RE = re.compile(r"([A-Za-zÀ-ÖØ-öø-ÿ']+)\W*$")
 _FIRST_WORD_RE = re.compile(r"^[\W_]*([A-Za-zÀ-ÖØ-öø-ÿ']+)")
 _SMALL_WORDS = frozenset({"a", "an", "the", "and", "or", "of", "in", "on", "at", "to", "for", "with", "by", "from"})
+# A last token that is a link or an address: 'https://trailpulse.travel/laos', 'www.x.com', 'hello@wild.travel'.
+_LINK_TAIL_RE = re.compile(r"(?:\S*://\S+|www\.\S+|\S+@\S+\.\w+|\S+\.(?:com|travel|net|org|io|co|asia)\S*)$", re.I)
+
+
+def _ends_open(clean: str) -> bool:
+    """AA-790 review — a paragraph is unfinished only when it stops on a letter or a digit ('…where the water',
+    '…on Day 2'). A line that ends in an emoji, an arrow, a symbol, a closing quote or bracket, or a link is a
+    social-post or quote style, not a cut (S250 review: 'That's a pilgrimage, and you feel it in your legs 🌄')."""
+    clean = clean.rstrip()
+    if not clean or _TERMINAL_TAIL_RE.search(clean) or not clean[-1].isalnum():
+        return False
+    return _LINK_TAIL_RE.search(clean.split()[-1]) is None
 
 
 def _prose_paragraph(para: str, cta: Optional[str]) -> Optional[str]:
@@ -313,13 +325,14 @@ def _prose_paragraph(para: str, cta: Optional[str]) -> Optional[str]:
 def split_paragraphs(text: Optional[str], cta: Optional[str] = None) -> list[dict]:
     """S234 r4 #18 — a sentence broken across a blank line: a prose paragraph that ends with no end mark,
     followed by a prose paragraph that continues it (opens lower-case, or on 'And' / 'But' / 'Which' /
-    'Because' …). [{"text", "why", "span": None}] — the two halves, joined. Paragraph-level, like an unbalanced
-    bracket: never a sentence a repair can locate or `fix_fragments` can cut."""
+    'Because' …); the first one must stop on a letter or a digit (`_ends_open`). [{"text", "why", "kind",
+    "span": None}] — the two halves, joined. Paragraph-level, like an unbalanced bracket: never a sentence a
+    repair can locate or `fix_fragments` can cut."""
     paras = [p for p in re.split(r"\n\s*\n", text or "") if p.strip()]
     out: list[dict] = []
     for prev, nxt in zip(paras, paras[1:]):
         a = _prose_paragraph(prev, cta)
-        if a is None or _TERMINAL_TAIL_RE.search(a):
+        if a is None or not _ends_open(a):
             continue
         b_lines = [ln.strip() for ln in nxt.strip().splitlines() if ln.strip()]
         if not b_lines or _HEADING_RE.match(b_lines[0]) or _LIST_LINE_RE.match(b_lines[0] + " ") \
@@ -333,30 +346,39 @@ def split_paragraphs(text: Optional[str], cta: Optional[str] = None) -> list[dic
         if not (word[0].islower() or word.lower() in _CONTINUATION_OPENERS):
             continue
         out.append({"text": f"{a[-150:]} ¶ {b[:150]}", "why": "splits one sentence across two paragraphs",
-                    "span": None})
+                    "kind": "split_paragraph", "span": None})
     return out
 
 
 def open_paragraphs(text: Optional[str], cta: Optional[str] = None) -> list[dict]:
-    """A prose paragraph that stops with no end mark and is not continued by the next one (that is
-    `split_paragraphs`): what is left when the final pass cuts the lower-case half of a split, or a trim drops
-    the paragraph that finished the sentence. 0 of the 70 local stored pieces (AA-729 fixture + S234 label
-    pack) have one. [{"text", "why", "span": None}]."""
+    """A prose paragraph that stops on a letter or a digit with no end mark (`_ends_open`) and is not continued
+    by the next one (that is `split_paragraphs`): what is left when the final pass cuts the lower-case half of a
+    split, or a trim drops the paragraph that finished the sentence. Left out (AA-790 review): the piece's
+    first paragraph when it is one line (a hook or title line, 'Bhutan's quietest valley, and why we keep going
+    back') and a lead-in followed by a list ('Here's what to pack' + '- a swimsuit'). 0 of the 70 local stored
+    pieces (AA-729 fixture + S234 label pack) have one. [{"text", "why", "kind", "span": None}]."""
     paras = [p for p in re.split(r"\n\s*\n", text or "") if p.strip()]
     split = {f["text"].split(" ¶ ")[0] for f in split_paragraphs(text, cta)}
     out: list[dict] = []
-    for para in paras:
+    for k, para in enumerate(paras):
         a = _prose_paragraph(para, cta)
-        if a is None or _TERMINAL_TAIL_RE.search(a) or a[-150:] in split:
+        if a is None or not _ends_open(a) or a[-150:] in split:
             continue
-        out.append({"text": a[-300:], "why": "stops with no end mark (an unfinished paragraph)", "span": None})
+        if k == 0 and len([ln for ln in para.splitlines() if ln.strip()]) == 1:
+            continue
+        nxt = paras[k + 1].strip() if k + 1 < len(paras) else ""
+        if nxt and _LIST_LINE_RE.match(nxt.splitlines()[0].strip() + " "):
+            continue
+        out.append({"text": a[-300:], "why": "stops with no end mark (an unfinished paragraph)",
+                    "kind": "open_paragraph", "span": None})
     return out
 
 
 def dangling_tails(text: Optional[str]) -> list[dict]:
     """S234 r4 #4 / #12 — a prose, bullet or FAQ-answer sentence cut mid-clause: it ends on an article, a
     conjunction or a possessive ('…before lunch at the.', '…time to swim and'), with or without its end
-    mark. [{"text", "why", "span": None}] — reported, never cut in code (the sentence still carries content)."""
+    mark. [{"text", "why", "kind", "span": None}] — reported, never cut in code (the sentence still carries
+    content)."""
     out: list[dict] = []
     for s in sentence_spans(text or ""):
         if s["kind"] not in ("prose", "bullet", "faq_a"):
@@ -366,7 +388,8 @@ def dangling_tails(text: Optional[str]) -> list[dict]:
             continue
         word = m.group(1)
         if word.islower() and word in _TAIL_WORDS:
-            out.append({"text": s["clean"], "why": f"ends mid-clause on '{word}'", "span": None})
+            out.append({"text": s["clean"], "why": f"ends mid-clause on '{word}'", "kind": "dangling_tail",
+                        "span": None})
     return out
 
 
@@ -377,6 +400,28 @@ def structure_findings(text: Optional[str], cta: Optional[str] = None) -> list[d
     one function). Not read by a gate: under the S247 gate freeze a finding the writer itself made stays a
     census number."""
     return split_paragraphs(text, cta) + open_paragraphs(text, cta) + dangling_tails(text)
+
+
+_PARAGRAPH_KINDS = ("split_paragraph", "open_paragraph")
+
+
+def new_structure_findings(before: Optional[str], after: Optional[str], cta: Optional[str] = None) -> list[dict]:
+    """The `structure_findings` of ``after`` an edit added to ``before`` (read by `hygiene.integrity_problems`).
+
+    A dangling tail is a sentence: new when its text is new, like `fragments`. A split or open paragraph is a
+    paragraph: new only when ``after`` has MORE of that kind than ``before`` (AA-790 review). Matched by text, an
+    edit anywhere inside a paragraph that was already open (a sentence repair, a rewritten hook) would read as a
+    new problem and be reverted for a defect it did not make. When the count grows, the findings whose text
+    ``before`` lacks are reported, as many as the count grew by."""
+    old, new = structure_findings(before, cta), structure_findings(after, cta)
+    old_texts = {f["text"] for f in old}
+    out = [f for f in new if f["kind"] not in _PARAGRAPH_KINDS and f["text"] not in old_texts]
+    for kind in _PARAGRAPH_KINDS:
+        grew = sum(f["kind"] == kind for f in new) - sum(f["kind"] == kind for f in old)
+        if grew > 0:
+            cand = [f for f in new if f["kind"] == kind]
+            out += ([f for f in cand if f["text"] not in old_texts] or cand)[:grew]
+    return out
 
 
 # ---------------------------------------------------------------- the pass
@@ -442,5 +487,6 @@ def _fix_all(text: str, cta: Optional[str], ignore: frozenset) -> tuple[str, lis
 
 
 __all__ = ["cta_findings", "cta_occurrences", "dangling_tails", "edit_findings", "final_pass", "fix_cta",
-           "fix_fragments", "fragments", "integrity_findings", "normalise", "open_paragraphs", "settle",
+           "fix_fragments", "fragments", "integrity_findings", "new_structure_findings", "normalise", "open_paragraphs",
+           "settle",
            "split_paragraphs", "structure_findings", "unbalanced_findings"]

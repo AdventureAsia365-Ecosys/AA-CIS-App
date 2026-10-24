@@ -171,3 +171,91 @@ class TestStepGuard:
 
     def test_no_step_revert_adds_nothing(self):
         assert service._degraded_final([], [], [], "approved", None, step_reverts=[]) == ("approved", None, [], [])
+
+
+# ---------------------------------------------------------------- review round (S250): no false positives
+
+
+EMOJI = "That's not a hike. That's a pilgrimage, and you feel it in your legs 🌄"
+LINK = "Lunch is at the café above the cascade. The full plan is at trailpulse.travel/laos"
+HOOK = "Bhutan's quietest valley, and why we keep going back"
+
+
+class TestReviewFalsePositives:
+    @pytest.mark.parametrize("para", [
+        EMOJI,
+        "Swim first, lunch after, and the trail home is downhill 👇",
+        "The plan for Day 2 is simple ➡",
+        "Every guide says the same thing: “go early and stay late”",
+        "The day ends at the café (lunch is included)",
+        LINK,
+        "Write to hello@wild.travel",
+        "Book through https://trailpulse.travel/laos/day-2",
+    ])
+    def test_a_paragraph_that_ends_in_a_symbol_or_a_link_is_not_open(self, para):
+        text = f"## Day Two\n\nThe trek ends at the pools.\n\n{para}\n\nThe pools are cold."
+        assert ti.structure_findings(text, CTA) == []
+
+    def test_a_list_lead_in_and_a_one_line_hook_are_not_open(self):
+        text = (f"{HOOK}\n\nThe trek ends at the pools.\n\nHere is what to pack for the swim\n\n"
+                "- a swimsuit\n- a dry shirt")
+        assert ti.open_paragraphs(text, CTA) == []
+
+    def test_a_letter_ended_paragraph_mid_piece_is_still_open(self):
+        text = "## Day Two\n\nThe trek ends at the pools.\n\nThe water turns a vivid turquoise where the\n\n## Lunch"
+        found = ti.open_paragraphs(text, CTA)
+        assert len(found) == 1 and found[0]["kind"] == "open_paragraph"
+
+    @pytest.mark.parametrize("before_para,old,new", [
+        # the review's cases: a repair of the emoji line itself, and a repair next to a link-ended line
+        (EMOJI, "That's not a hike.", "The trail is a real climb."),
+        (LINK, "Lunch is at the café above the cascade.", "Lunch is at the café by the falls."),
+        # an edit inside a paragraph that was ALREADY open: same count of open paragraphs → not new
+        ("The pools sit below the falls. The water turns a vivid turquoise near the",
+         "The pools sit below the falls.", "The pools are below the falls."),
+    ])
+    def test_splice_checked_keeps_a_repair_beside_an_ended_or_already_open_paragraph(self, before_para, old, new):
+        from services.acp_content_writing import sentence_repair as sr
+        text = f"{HOOK}\n\nThe trek ends at the pools on Day 2.\n\n{before_para}\n\n## Lunch\n\nThe café opens at noon."
+        item = {"start": text.index(old), "end": text.index(old) + len(old), "sentence": old, "problem": "x"}
+        out = sr.splice_checked(text, [item], [new], cta=CTA)
+        assert new in out and "guard" not in item
+
+    def test_a_hook_rewrite_without_an_end_mark_is_not_a_problem(self):
+        body = "\n\nThe trek ends at the pools on Day 2. The café opens at noon."
+        assert h.integrity_problems("Bhutan's quietest valley is worth the trip." + body,
+                                    "Bhutan's quietest valley, and why we keep going back 👀" + body) == []
+        assert h.integrity_problems("Bhutan's quietest valley is worth the trip." + body, HOOK + body) == []
+
+    def test_paragraph_kinds_are_new_by_count_sentence_kinds_by_text(self):
+        open_a = "The water turns a vivid turquoise near the lower pools"
+        open_b = "The water turns a bright turquoise near the lower pools"
+        base = "## Day Two\n\nThe trek ends at the pools.\n\n{}\n\n## Lunch\n\nThe café opens at noon."
+        assert ti.new_structure_findings(base.format(open_a), base.format(open_b)) == []
+        grew = ti.new_structure_findings(base.format("The pools are cold."), base.format(open_b))
+        assert [f["kind"] for f in grew] == ["open_paragraph"]
+        tail_a = base.format("Lunch is served at the café overlooking the.")
+        tail_b = base.format("Lunch is served at the café beside the.")
+        assert [f["kind"] for f in ti.new_structure_findings(tail_a, tail_b)] == ["dangling_tail"]
+
+
+class TestStepGuardPerAttempt:
+    def _guard(self):
+        return service._StepGuard(h.HygieneContext(seed="", cta=CTA, brand_name="Trail Pulse"),
+                                  ignore=h.brand_words("Trail Pulse"), cta=CTA)
+
+    def test_only_the_kept_attempts_reverts_are_reported(self):
+        g = self._guard()
+        g.begin_attempt()
+        g("length_trim", CLEAN, SPLIT, [], settle=False)  # attempt 1 reverted a trim
+        g.begin_attempt()
+        assert g.reverts == []  # attempt 2 starts clean
+        g("fix_trip_facts", CLEAN, TAIL, [], settle=False)
+        assert g.reverts == ["fix_trip_facts"]
+        g.keep_previous()  # the AA-528 guard keeps attempt 1's text
+        assert g.reverts == ["length_trim"]
+
+    def test_the_attempt_loop_resets_and_restores_the_guard(self):
+        import inspect
+        src = inspect.getsource(service.run_write_background)
+        assert "step_guard.begin_attempt()" in src and src.count("step_guard.keep_previous()") == 2

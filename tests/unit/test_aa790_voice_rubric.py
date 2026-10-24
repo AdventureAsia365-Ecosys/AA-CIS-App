@@ -142,3 +142,77 @@ def test_no_pipeline_module_reads_the_rubric():
                for p in (root / d).rglob("*.py")
                if "voice_rubric" in p.read_text(encoding="utf-8") and p.name != "voice_rubric.py"]
     assert readers == []
+
+
+# ---------------------------------------------------------------- the replay and the corpus (S250 review round)
+
+
+def _row(rid, tenant, status, label, text=R4_7, source="pack"):
+    return {"id": rid, "piece_id": rid, "tenant": tenant, "channel": "linkedin", "status": status, "text": text,
+            "cta": TRAIL_CTA if tenant == "Trail Pulse" else None,
+            "brand_pack": TRAIL if tenant == "Trail Pulse" else WILD, "custom_validators": {}, "label": label,
+            "source": source}
+
+
+class TestReplay:
+    def test_a_light_trail_pulse_piece_is_not_a_false_pass(self):
+        from scripts.aa790 import voice_rubric_replay as rp
+        rows = [_row("r4#6", "Trail Pulse", "approved", "heavy"), _row("r1#3", "Trail Pulse", "approved", "light"),
+                _row("r2#9", "Trail Pulse", "held", "heavy")]
+        s = rp.replay(rows)["summary"]
+        assert s["trail_false_pass_ids"] == ["r4#6"] and s["trail_caught"] == 1
+        assert s["trail_light"] == 1 and s["trail_light_fires"] == 1
+        assert s["named_missing"] == ["r1#7", "r3#9", "r4#11"]
+
+    def test_the_bar_scales_to_the_false_passes_present(self):
+        from scripts.aa790 import voice_rubric_replay as rp
+        rows = [_row(f"r{i}#1", "Trail Pulse", "approved", "heavy", text=t)
+                for i, t in enumerate([R4_7, R4_12, TRAIL_ON_VOICE], 1)]
+        s = rp.replay(rows)["summary"]
+        assert (s["trail_false_passes"], s["trail_caught_min"], s["trail_caught"]) == (3, 2, 2)
+        assert s["bars"]["trail_caught"]
+        assert not rp.replay([_row("x", "WildKind Travel", "approved", "light")])["summary"]["bars"]["trail_caught"]
+
+
+class TestCorpusDb:
+    def test_brand_rows_are_keyed_by_the_text_alias(self, monkeypatch):
+        """asyncpg maps a repeated column name to the LAST column: `tenant_id::text AS tenant_id, *` gives the uuid
+        back, so brands keyed by r["tenant_id"] never matched the text tenant id of a piece (S250 review)."""
+        import asyncio
+        import sys
+        import types
+        import uuid
+
+        from scripts.aa790 import corpus
+
+        tid = uuid.uuid4()
+
+        class Conn:
+            async def fetch(self, sql):
+                if "content_piece_label" in sql:
+                    return []
+                if "tenant_brand_rules" in sql:
+                    row = {"tenant_id": tid, "brand_name": "Trail Pulse", "default_cta": TRAIL_CTA,
+                           "custom_validators": '{"voice_rubric": {"profile": "energetic"}}'}
+                    if "AS tenant_key" in sql:
+                        row["tenant_key"] = str(tid)
+                    return [row]
+                return [{"piece_id": "p1", "tenant_id": str(tid), "channel": "linkedin", "status": "approved",
+                         "content_text": R4_7, "tenant": "Trail Pulse"}]
+
+            async def close(self):
+                return None
+
+        async def connect(*_a, **_k):
+            return Conn()
+
+        monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=connect))
+        rows = asyncio.run(corpus.load_db("postgres://x"))
+        assert rows[0]["cta"] == TRAIL_CTA and rows[0]["brand_pack"]["brand_name"] == "Trail Pulse"
+        assert rows[0]["custom_validators"] == {"voice_rubric": {"profile": "energetic"}}
+
+    def test_exported_rows_load_back(self, tmp_path):
+        from scripts.aa790 import corpus
+        rows = [_row("p1", "Trail Pulse", "approved", None, source="db")]
+        corpus.export(rows, str(tmp_path / "rows.json"))
+        assert corpus.load_rows(str(tmp_path / "rows.json")) == rows

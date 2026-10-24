@@ -2215,9 +2215,11 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     `enforce_step`): every deterministic edit of the T9 attempt loop (`hygiene.autofix`, the family caveat, the
     FAQ droppers, `real_first_faq`, `fix_trip_facts`, `trim_to_band`; `ensure_cta` is must-keep) is reverted when
     it leaves a new repeat, orphan, dangling opener, fragment, split or unfinished paragraph, or a sentence cut
-    on 'the' / 'and' (`hygiene.integrity_problems` + `text_integrity.structure_findings`; steps before the final
-    pass are compared as `text_integrity.settle` leaves them). The revert lines go to F13_autofix and count as
-    soft `degraded: repair_contract` (detector `t9_step`); no gate or registry entry is added (gate freeze).
+    on 'the' / 'and' (`hygiene.integrity_problems` + `text_integrity.new_structure_findings`: a paragraph is
+    unfinished only when it stops on a letter or digit, and paragraph kinds are new by count; steps before the
+    final pass are compared as `text_integrity.settle` leaves them). The revert lines go to F13_autofix and the
+    kept attempt's reverts count as soft `degraded: repair_contract` (detector `t9_step`); no gate or registry
+    entry is added (gate freeze).
     The tenant-voice rubric (`acp_content_writing/voice_rubric.py`) is an offline scorer only
     (`scripts/aa790/voice_rubric_replay.py`): no pipeline reads it until the freeze ends and κ ≥ 0.6.
   - **Writer-v2 hard code** (AA-645, S249): on an A1 writer-v2 draft `ITINERARY_DAY_COUNT_MISMATCH` (a source day
