@@ -7,8 +7,10 @@ error mapping (422 field rule incl. visa_needs_official_link, 409 stale, 404), p
 """
 from __future__ import annotations
 
+import unicodedata
 import uuid
 
+import asyncpg
 import pytest
 from fastapi.testclient import TestClient
 
@@ -173,6 +175,20 @@ def test_bad_ids_and_stamps(client, calls):
     assert calls == []
 
 
+@pytest.mark.parametrize("missing", ["body_markdown", "applies_to", "title"])
+def test_draft_put_is_a_full_replace(client, calls, missing):
+    """A PUT without one of the draft's fields is 422, never a silent wipe of that field."""
+    body = {k: v for k, v in DRAFT.items() if k != missing}
+    r = client.put(f"{BASE}/{CID}/draft", json=body, headers=_h())
+    assert r.status_code == 422 and calls == []
+
+
+def test_draft_put_accepts_an_empty_body_and_scope(client, calls):
+    r = client.put(f"{BASE}/{CID}/draft", json={**DRAFT, "body_markdown": "", "applies_to": {}}, headers=_h())
+    assert r.status_code == 200
+    assert calls[0][2]["body_markdown"] == "" and calls[0][2]["applies_to"] == {}
+
+
 def test_expected_stamp_reaches_the_store_as_utc(client, calls):
     client.post(f"{BASE}/{CID}/publish", json={"expected_updated_at": "2026-10-24T15:00:00.123456+07:00"},
                 headers=_h())
@@ -198,6 +214,30 @@ def test_store_refusals_are_mapped(client, monkeypatch, exc, status, code):
         assert r.json()["field"] == "body_markdown"
 
 
+def test_only_version_refusal_is_409(client, monkeypatch):
+    async def refuse(conn, *args, **kwargs):
+        raise ContentConflict("only_version", "This draft is the item's only version")
+
+    monkeypatch.setattr(store, "discard_draft", refuse)
+    r = client.delete(f"{BASE}/{CID}/draft?expected_updated_at={STAMP}", headers=_h())
+    assert r.status_code == 409 and r.json()["code"] == "only_version"
+
+
+@pytest.mark.parametrize("method, path, body, op", [
+    ("get", BASE, None, "list_items"),
+    ("get", f"{BASE}/groups/prep-vietnam", None, "get_group"),
+    ("get", f"{BASE}/{CID}", None, "get_item"),
+    *WRITES,
+])
+def test_code_deployed_before_the_migration_is_503_not_500(client, monkeypatch, method, path, body, op):
+    async def missing(conn, *args, **kwargs):
+        raise asyncpg.UndefinedTableError('relation "gold_aa_internal.aa_content_item" does not exist')
+
+    monkeypatch.setattr(store, op, missing)
+    r = _call(client, method, path, body, _h())
+    assert r.status_code == 503 and r.json()["code"] == "unavailable" and r.headers["retry-after"] == "5"
+
+
 # ── validate.py ───────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("body", [
@@ -205,6 +245,9 @@ def test_store_refusals_are_mapped(client, monkeypatch, exc, status, code):
     "Visa: [official site](https://www.mofa.go.jp/j_info/visit/visa/index.html).",
     "Thị thực: nộp tại https://evisa.gov.vn",
     "No entry rules in this pack.\n\nMoney: cash is king.",
+    "Money: pay by Visa card or cash.",
+    "Cards: Visa/Mastercard are taken in most hotels.",
+    "Apply for an eVisa at https://evisa.gov.vn before you fly.",
 ])
 def test_visa_rule_accepts(body):
     validate.publishable("prep_pack", "Before you go", body)
@@ -215,6 +258,11 @@ def test_visa_rule_accepts(body):
     "Money: cash.\n\nVISA requirements differ by passport, ask your agent.",
     "Thị thực: hỏi đại lý của bạn.",
     "Visa: see http://not-https.example.com",
+    "Apply for an eVisa before you fly.",
+    "apply for an evisa before you fly.",
+    "E-Visas take three days.",
+    unicodedata.normalize("NFD", "Xin thị thực trước khi đi."),
+    "Pay by Visa card.\n\nYou also need a visa to enter.",
 ])
 def test_visa_rule_refuses_a_visa_section_without_an_https_link(body):
     with pytest.raises(ContentInvalid) as exc:

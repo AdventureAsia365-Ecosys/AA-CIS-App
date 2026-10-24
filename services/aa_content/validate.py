@@ -7,12 +7,14 @@ this module adds what SQL cannot see, with an error the editor can show next to 
   AA_ISO2), no duplicates;
 - ``applies_to.tours``: ``{source_system: "cis", source_id}`` with a source_id of 1-128 characters (the catalog key);
 - at publish: a title and a body, and for a prep pack the visa rule of the contract (AaContent.body_markdown: "Visa
-  items are an official link only", Q1 2.3): every section that mentions a visa (visa / e-visa / thị thực) carries an
-  https link, so the CRM never shows visa advice without the official source.
+  items are an official link only", Q1 2.3): every section that mentions a visa (visa / e-visa / eVisa / thị thực,
+  matched on NFC text; "Visa card" is a payment card, not a visa) carries an https link, so the CRM never shows visa
+  advice without the official source.
 """
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any, Optional
 
 from services.places.guards import AA_ISO2
@@ -25,7 +27,10 @@ BODY_MAX = 20000
 SOURCE_ID_MAX = 128
 AA_COUNTRY_CODES = frozenset(code.upper() for code in AA_ISO2)
 
-_VISA_RE = re.compile(r"\bvisas?\b|thị\s+thực", re.IGNORECASE)
+# visa / visas / e-visa / evisa / eVisa / thị thực (matched on NFC text); "visa card" / "Visa debit" is a payment card.
+_VISA_RE = re.compile(r"\be-?visas?\b|\bvisas?\b|thị\s+thực", re.IGNORECASE)
+_VISA_CARD_RE = re.compile(r"\bvisa\s+(?:card|cards|debit|credit|or\s+mastercard)\b|\bvisa\s*/\s*mastercard\b",
+                           re.IGNORECASE)
 _HTTPS_LINK_RE = re.compile(r"https://[^\s)\]>]+", re.IGNORECASE)
 _BLOCK_SPLIT_RE = re.compile(r"\n\s*\n")
 
@@ -140,9 +145,15 @@ def _sections(text: str) -> list[str]:
     return sections
 
 
+def _mentions_visa(section: str) -> bool:
+    return _VISA_RE.search(_VISA_CARD_RE.sub(" ", section)) is not None
+
+
 def visa_sections_without_link(text: str) -> list[str]:
-    """The sections that mention a visa without an https link (the first 80 characters of each)."""
-    return [s.strip()[:80] for s in _sections(text) if _VISA_RE.search(s) and not _HTTPS_LINK_RE.search(s)]
+    """The sections that mention a visa without an https link (the first 80 characters of each). The text is NFC
+    normalized first: some input methods type Vietnamese decomposed (NFD), which the pattern would not see."""
+    text = unicodedata.normalize("NFC", text)
+    return [s.strip()[:80] for s in _sections(text) if _mentions_visa(s) and not _HTTPS_LINK_RE.search(s)]
 
 
 def publishable(kind_value: str, title_value: Any, body_value: Any) -> None:

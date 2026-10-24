@@ -56,7 +56,8 @@ _POOL_ERRORS = (asyncpg.PostgresConnectionError, asyncpg.TooManyConnectionsError
 
 
 class ContentUnavailable(Exception):  # noqa: N818 - reads as an outcome
-    """No database connection right now (pool missing, at its limit, or the database unreachable): 503."""
+    """No database connection right now (pool missing, at its limit, the database unreachable, or the CIS 275
+    objects missing): 503."""
 
 
 class InvalidRequest(ValueError):
@@ -76,7 +77,9 @@ async def content_connection(pool: Any) -> AsyncIterator[Any]:
     try:
         async with conn.transaction(readonly=True):
             yield conn
-    except (*_POOL_ERRORS, asyncpg.QueryCanceledError) as exc:
+    except (*_POOL_ERRORS, asyncpg.QueryCanceledError, asyncpg.UndefinedTableError) as exc:
+        # UndefinedTableError: CIS 275 is not applied on this database yet (code deployed before the migration);
+        # answer 503 like any other storage outage instead of a bare 500.
         raise ContentUnavailable(type(exc).__name__) from exc
     finally:
         await pool.release(conn)

@@ -195,3 +195,21 @@ async def test_publish_stores_microsecond_published_at(conn):
                               now=at)
     served = await reader.get_published_version(conn, uuid.UUID(item["content_id"]), 1)
     assert served["published_at"] == "2026-10-24T08:00:00.654321Z" == out["published"]["published_at"]
+
+
+@pytest.mark.asyncio
+async def test_the_only_draft_of_a_never_published_item_cannot_be_discarded(conn):
+    item = await _create(conn, _group())
+    cid = uuid.UUID(item["content_id"])
+    with pytest.raises(ContentConflict) as only:
+        await store.discard_draft(conn, cid, expected_updated_at=_stamp(item))
+    assert only.value.code == "only_version"
+    assert [v["version"] for v in (await store.get_item(conn, cid))["versions"]] == [1]
+
+
+@pytest.mark.asyncio
+async def test_visa_rule_catches_evisa_at_publish(conn):
+    item = await _create(conn, _group(), body="Apply for an eVisa before you fly.")
+    with pytest.raises(ContentInvalid) as visa:
+        await store.publish(conn, uuid.UUID(item["content_id"]), expected_updated_at=_stamp(item), actor=ACTOR)
+    assert visa.value.code == "visa_needs_official_link"

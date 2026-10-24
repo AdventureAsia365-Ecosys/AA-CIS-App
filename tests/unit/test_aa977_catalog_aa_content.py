@@ -7,6 +7,7 @@ retired item leaves the list but its versions still answer 200.
 """
 import asyncio
 
+import asyncpg
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -159,7 +160,7 @@ def test_retired_item_versions_still_answer(client, issuer):
 
 
 @pytest.mark.parametrize("content_id, version", [("not-a-uuid", 1), (VN_EN, 0), (VN_EN, "abc"), (VN_EN, "-1"),
-                                                 (VN_EN, "99999999999")])
+                                                 (VN_EN, "99999999999"), (VN_EN, "01"), (VN_EN, "0001")])
 def test_bad_path_values_are_400(client, issuer, content_id, version):
     r = _check("getAaContentVersion", client.get(_version_path(content_id, version), headers=_h(issuer)))
     assert r.status_code == 400 and r.json()["error"] == "invalid"
@@ -171,6 +172,27 @@ def test_database_unavailable_is_503(issuer):
         for op, path in (("listAaContent", LIST), ("getAaContentVersion", _version_path(VN_EN, 1))):
             r = _check(op, c.get(path, headers=_h(issuer)))
             assert r.status_code == 503 and r.headers["retry-after"] == "5"
+
+
+class _MissingView:
+    """A connection on a database where CIS 275 is not applied yet: every read fails like Postgres would."""
+
+    def transaction(self, isolation=None, readonly=False):
+        return seeded().transaction(readonly=readonly)
+
+    async def fetch(self, sql, *args):
+        raise asyncpg.UndefinedTableError('relation "gold_aa_internal.v_aa_content_published" does not exist')
+
+    fetchrow = fetch
+
+
+def test_code_deployed_before_the_migration_is_503_not_500(issuer):
+    pool = FakeMainPool(_MissingView())
+    c = TestClient(_app(pool), raise_server_exceptions=False)
+    for op, path in (("listAaContent", LIST), ("getAaContentVersion", _version_path(VN_EN, 1))):
+        r = _check(op, c.get(path, headers=_h(issuer)))
+        assert r.status_code == 503 and r.json()["error"] == "unavailable" and r.headers["retry-after"] == "5"
+    assert pool.acquired == pool.released == 2
 
 
 def test_reads_are_read_only_on_the_main_pool(client, issuer, view, pool):

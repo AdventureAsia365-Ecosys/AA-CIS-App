@@ -8,7 +8,8 @@ campaign blocks) that the partner CRM reads over catalog.http.v1 ``/catalog/v1/a
   GET    /admin/aa-content/{content_id}                     item + every version (newest first)
   GET    /admin/aa-content/{content_id}/versions/{version}  one version (draft or published), for the preview
   PUT    /admin/aa-content/{content_id}/draft               save the draft {title, body_markdown, applies_to,
-                                                            expected_updated_at}; starts draft n+1 after a publish
+                                                            expected_updated_at}, all required (full replace);
+                                                            starts draft n+1 after a publish
   DELETE /admin/aa-content/{content_id}/draft?expected_updated_at=   discard the draft
   POST   /admin/aa-content/{content_id}/publish             {expected_updated_at}: draft -> published
   POST   /admin/aa-content/{content_id}/retire              {expected_updated_at}: hidden from the served list
@@ -22,7 +23,9 @@ The viewer is refused on every write (READ_ONLY_ROLES). The staff-audit middlewa
 ``expected_updated_at`` is the item's ``updated_at`` as the editor last read it: a write on an item someone else
 changed since answers 409 ``stale``. Errors: ``{detail, code[, field]}`` — 422 a field rule
 (``visa_needs_official_link`` at publish for a prep pack whose visa section has no https link), 409 ``stale`` /
-``retired`` / ``no_draft`` / ``duplicate`` / ``already_retired`` / ``not_retired``, 404 unknown item, version or draft.
+``retired`` / ``no_draft`` / ``duplicate`` / ``already_retired`` / ``not_retired`` / ``only_version`` (discard of
+a never-published item's only draft), 404 unknown item, version or draft, 503 ``unavailable`` when the CIS 275 tables
+are missing (code deployed before the migration).
 
 The router is included without an include prefix (staff_policy reads the route template from scope["route"].path).
 """
@@ -32,6 +35,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+import asyncpg
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -41,6 +46,8 @@ from api.routers.admin import verify_admin_secret
 from services.aa_content import store, validate
 from services.aa_content.store import ContentConflict, ContentNotFound
 from services.aa_content.validate import ContentInvalid
+
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/admin/aa-content", tags=["admin-aa-content"],
                    dependencies=[Depends(verify_admin_secret), Depends(staff_policy)])
@@ -56,11 +63,14 @@ class CreateBody(BaseModel):
     applies_to: Optional[dict[str, Any]] = None
 
 
+# PUT is a full replace of the draft: every field is sent ("" / {} for an empty body / no scope), so a client that
+# forgets a field gets 422 instead of silently wiping it. Starting draft n+1 after a publish likewise takes exactly
+# what is sent (the editor pre-fills it from the published version).
 class DraftBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str = Field(..., max_length=1000)
-    body_markdown: Optional[str] = Field(None, max_length=40000)
-    applies_to: Optional[dict[str, Any]] = None
+    body_markdown: str = Field(..., max_length=40000)
+    applies_to: dict[str, Any]
     expected_updated_at: str = Field(..., max_length=64)
 
 
@@ -99,6 +109,11 @@ def _expected(value: str) -> datetime:
 
 
 def _refused(exc: Exception) -> JSONResponse:
+    if isinstance(exc, asyncpg.UndefinedTableError):
+        # CIS 275 not applied on this database yet (code deployed before the migration): 503, not a bare 500.
+        logger.error("admin_aa_content_storage_missing", reason=str(exc))
+        return JSONResponse({"detail": "AA content storage is not available yet; retry later.",
+                             "code": "unavailable"}, status_code=503, headers={"Retry-After": "5"})
     if isinstance(exc, ContentInvalid):
         return JSONResponse({"detail": exc.detail, "code": exc.code, "field": exc.field}, status_code=422)
     if isinstance(exc, ContentConflict):
@@ -106,7 +121,7 @@ def _refused(exc: Exception) -> JSONResponse:
     return JSONResponse({"detail": str(exc), "code": "not_found"}, status_code=404)
 
 
-_REFUSALS = (ContentInvalid, ContentConflict, ContentNotFound)
+_REFUSALS = (ContentInvalid, ContentConflict, ContentNotFound, asyncpg.UndefinedTableError)
 
 
 # Literal paths (groups/…) before the /{content_id} routes of the same method.
@@ -125,9 +140,12 @@ async def list_aa_content(request: Request, kind: Optional[str] = None, locale: 
         return _refused(exc)
     if not 1 <= limit <= store.ADMIN_PAGE_MAX or offset < 0:
         raise HTTPException(status_code=422, detail=f"limit must be 1-{store.ADMIN_PAGE_MAX}, offset >= 0")
-    async with request.app.state.pool.acquire() as conn:
-        return await store.list_items(conn, kind=kind, locale=locale, status=status, country=country,
-                                      limit=limit, offset=offset)
+    try:
+        async with request.app.state.pool.acquire() as conn:
+            return await store.list_items(conn, kind=kind, locale=locale, status=status, country=country,
+                                          limit=limit, offset=offset)
+    except asyncpg.UndefinedTableError as exc:
+        return _refused(exc)
 
 
 @router.post("", status_code=201, summary="AA-977 — create an item (draft v1)")
@@ -147,8 +165,11 @@ async def get_aa_content_group(group_key: str, request: Request):
         validate.group_key(group_key)
     except ContentInvalid as exc:
         return _refused(exc)
-    async with request.app.state.pool.acquire() as conn:
-        items = await store.get_group(conn, group_key)
+    try:
+        async with request.app.state.pool.acquire() as conn:
+            items = await store.get_group(conn, group_key)
+    except asyncpg.UndefinedTableError as exc:
+        return _refused(exc)
     if not items:
         raise HTTPException(status_code=404, detail="No AA content group has this key")
     return {"group_key": group_key, "items": items}

@@ -6,7 +6,7 @@ are never deleted (the CIS 275 trigger enforces it; this module never tries). Li
 
   create_item     item + draft v1
   save_draft      edits the draft, or starts draft n+1 (with the fields sent) after version n was published
-  discard_draft   deletes the draft (a published version stays)
+  discard_draft   deletes the draft (a published version stays); refused when the draft is the only version
   publish         draft -> published: content_hash over the served AaContent body (reader.served_body), published_at
                   / published_by, in one transaction; the prep-pack visa rule (validate.publishable) runs first
   retire/restore  hides / shows the item in the served list; its published versions stay fetchable by version
@@ -42,10 +42,14 @@ _VERSION_COLS = ("content_id, version, status, title, body_markdown, applies_to,
 ITEM_SQL = f"SELECT {_ITEM_COLS} FROM {ITEM} WHERE content_id = $1::uuid"
 LOCK_ITEM_SQL = ITEM_SQL + " FOR UPDATE"
 GROUP_SQL = f"SELECT {_ITEM_COLS} FROM {ITEM} WHERE group_key = $1 ORDER BY locale"
+# Serializes creates in one group, so two concurrent creates of the EN and VI copies cannot pass the kind check with
+# different kinds (SQL does not hold that rule; the lock is released at COMMIT).
+GROUP_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtext('aa_content_group:' || $1::text))"
 VERSIONS_SQL = f"SELECT {_VERSION_COLS} FROM {VERSION} WHERE content_id = $1::uuid ORDER BY version DESC"
 ONE_VERSION_SQL = f"SELECT {_VERSION_COLS} FROM {VERSION} WHERE content_id = $1::uuid AND version = $2::int"
 DRAFT_SQL = f"SELECT {_VERSION_COLS} FROM {VERSION} WHERE content_id = $1::uuid AND status = 'draft'"
 NEWEST_SQL = f"SELECT COALESCE(max(version), 0) FROM {VERSION} WHERE content_id = $1::uuid"
+PUBLISHED_COUNT_SQL = f"SELECT count(*) FROM {VERSION} WHERE content_id = $1::uuid AND status = 'published'"
 TOUCH_SQL = f"UPDATE {ITEM} SET updated_at = clock_timestamp() WHERE content_id = $1::uuid"
 INSERT_ITEM_SQL = (f"INSERT INTO {ITEM} (kind, locale, group_key, created_by) VALUES ($1, $2, $3, $4) "
                    "RETURNING content_id")
@@ -96,7 +100,8 @@ class ContentNotFound(LookupError):
 
 
 class ContentConflict(Exception):  # noqa: N818 - reads as an outcome
-    """The item is not in a state that allows the write (stale, retired, no draft, duplicate): 409 ``{code}``."""
+    """The item is not in a state that allows the write (stale, retired, no draft, duplicate, only version): 409
+    ``{code}``."""
 
     def __init__(self, code: str, detail: str) -> None:
         super().__init__(code, detail)
@@ -215,6 +220,7 @@ async def create_item(conn: Any, *, kind: str, locale: str, group_key: str, titl
     body = validate.body(body_markdown)
     applies = validate.applies_to(applies_to)
     async with conn.transaction():
+        await conn.execute(GROUP_LOCK_SQL, group_key)
         for other in await conn.fetch(GROUP_SQL, group_key):
             if other["locale"] == locale:
                 raise ContentConflict("duplicate", f"The group {group_key} already has a {locale} item")
@@ -247,8 +253,16 @@ async def save_draft(conn: Any, content_id: uuid.UUID, *, title: str, body_markd
 
 
 async def discard_draft(conn: Any, content_id: uuid.UUID, *, expected_updated_at: datetime) -> dict:
+    """Delete the draft. 409 ``only_version`` when nothing was ever published: the draft is the item's only version,
+    and an item cannot be deleted (cis_app has no DELETE on it), so discarding would leave an empty item holding its
+    (group_key, locale) slot; the editor saves over the draft or retires the item instead."""
     async with conn.transaction():
         await _locked(conn, content_id, expected_updated_at)
+        if await conn.fetchrow(DRAFT_SQL, content_id) is None:
+            raise ContentNotFound("This item has no draft")
+        if not await conn.fetchval(PUBLISHED_COUNT_SQL, content_id):
+            raise ContentConflict("only_version",
+                                  "This draft is the item's only version; edit it, or retire the item instead")
         if await conn.execute(DISCARD_SQL, content_id) == "DELETE 0":
             raise ContentNotFound("This item has no draft")
         await conn.execute(TOUCH_SQL, content_id)

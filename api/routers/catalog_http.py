@@ -328,7 +328,9 @@ async def get_aa_content_version(content_id: str, version: str, request: Request
         key = uuid.UUID(content_id)
     except ValueError as exc:
         raise CatalogProblem(400, "invalid", "content_id must be a UUID") from exc
-    if len(version) > 10 or not version.isascii() or not version.isdigit() or not 1 <= int(version) <= 2_147_483_647:
+    # One spelling per version (no leading zero: '0001' would be a second cache key for version 1).
+    if (len(version) > 10 or not version.isascii() or not version.isdigit() or version.startswith("0")
+            or not 1 <= int(version) <= 2_147_483_647):
         raise CatalogProblem(400, "invalid", "version must be a positive integer")
     try:
         async with aa_reader.content_connection(getattr(request.app.state, "pool", None)) as conn:

@@ -1660,28 +1660,14 @@
         "additionalProperties": false,
         "properties": {
           "applies_to": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Applies To"
+            "additionalProperties": true,
+            "title": "Applies To",
+            "type": "object"
           },
           "body_markdown": {
-            "anyOf": [
-              {
-                "maxLength": 40000,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Body Markdown"
+            "maxLength": 40000,
+            "title": "Body Markdown",
+            "type": "string"
           },
           "expected_updated_at": {
             "maxLength": 64,
@@ -1696,6 +1682,8 @@
         },
         "required": [
           "title",
+          "body_markdown",
+          "applies_to",
           "expected_updated_at"
         ],
         "title": "DraftBody",
