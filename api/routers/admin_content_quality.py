@@ -215,32 +215,56 @@ async def list_pieces(
 _F9_PHRASE_RE = re.compile(r'exact flagged phrase\(s\): (.+)$')
 _QUOTED_RE = re.compile(r'"([^"]{3,})"')
 _BRAND_RE = re.compile(r"^(.+?): '(.+)'\s*$", re.DOTALL)
+_BANNED_PHRASE_RE = re.compile(r"^banned pattern /.*/ -> '(.+)'$", re.DOTALL)
+
+
+def _findings(g: dict) -> list[tuple[str, str, bool, str]]:
+    """(parse shape, violation, blocking, severity) per violation of a ledger / flag entry. AA-924 — a merged entry
+    (F2_lexicon, F15_voice) gives each finding with its own severity, parsed in the shape of the source gate that
+    found it; an older entry gives every violation with the gate's own `blocking`."""
+    if isinstance(g.get("findings"), list):
+        return [(f.get("source"), f.get("text"), f.get("severity") == "block", f.get("severity") or "warn")
+                for f in g["findings"] if isinstance(f, dict) and isinstance(f.get("text"), str)]
+    blocking = g.get("blocking", True)
+    return [(g.get("gate"), v, blocking, "block" if blocking else "warn")
+            for v in g.get("violations") or [] if isinstance(v, str)]
 
 
 def highlights(content_text: str, gate_ledger: list, flags: list) -> list[dict]:
-    """[{start, end, gate, blocking, problem}] for every flagged sentence or phrase found in the
+    """[{start, end, gate, blocking, severity, problem}] for every flagged sentence or phrase found in the
     final text. Parses the same violation shapes sentence_repair.py reads; a quote that cannot
-    be found (rewritten later, or too short) is left out."""
+    be found (rewritten later, or too short) is left out. AA-924 — `blocking` / `severity` are the finding's own
+    (a warn stock phrase inside a blocking F2_lexicon entry reads warn); `gate` is the stored entry, `source` the
+    gate that found it when they differ."""
     out: list[dict] = []
     text = content_text or ""
     for g in list(gate_ledger or []) + list(flags or []):
         if not isinstance(g, dict) or g.get("passed", False):
             continue
-        gate, blocking = g.get("gate"), g.get("blocking", True)
-        for v in g.get("violations") or []:
-            if not isinstance(v, str):
-                continue
+        gate = g.get("gate")
+        for shape, v, blocking, severity in _findings(g):
+            mark = {"gate": gate, "blocking": blocking, "severity": severity,
+                    **({"source": shape} if shape != gate else {})}
             spans: list[tuple[str, str]] = []
-            if gate == qr.F1_GROUNDING:
+            if shape == qr.F1_GROUNDING:
                 m = sentence_repair._F1_QUOTE_RE.search(v)
                 if m:
                     spans.append((m.group(1), v.split(" not present", 1)[0]))
-            elif gate in (qr.F2_BRAND_FORBIDDEN, qr.F11_BRAND_NAME):
+            elif shape == qr.F2_BANNED_PATTERNS:
+                # AA-924 — "banned pattern /…/ -> '<phrase>'" is highlighted as a phrase; the em-dash one quotes
+                # its sentence
+                m = _BANNED_PHRASE_RE.search(v)
+                i = text.lower().find(m.group(1).lower()) if m else -1
+                if i >= 0:
+                    out.append({"start": i, "end": i + len(m.group(1)), **mark, "problem": "banned phrase"})
+                elif not m and (m := _BRAND_RE.search(v)):
+                    spans.append((m.group(2), m.group(1)))
+            elif shape in (qr.F2_BRAND_FORBIDDEN, qr.F11_BRAND_NAME):
                 m = _BRAND_RE.search(v)
                 if m:
                     spans.append((m.group(2), m.group(1)))
-            elif gate in (qr.F12_SCOPE, qr.F13_HYGIENE, qr.F13_LEAK, qr.F13_REPEAT, qr.F14_SOCIAL_SHAPE,
-                          qr.F14_FIRST_LINE, qr.F15_VOICE, qr.F15_VOICE_WARN, qr.F17_TRIP_FACT, qr.F18_RARITY):
+            elif shape in (qr.F12_SCOPE, qr.F13_HYGIENE, qr.F13_LEAK, qr.F13_REPEAT, qr.F14_SOCIAL_SHAPE,
+                           qr.F14_FIRST_LINE, qr.F15_VOICE, qr.F15_VOICE_WARN, qr.F17_TRIP_FACT, qr.F18_RARITY):
                 # S234 — "<problem>: '<sentence>'"; a title/meta scope hit is not in the text. F14's
                 # word-count line quotes nothing and is left out; its first line / hashtags are quoted.
                 # F15_voice quotes its sentence the same way (plan C4).
@@ -249,25 +273,23 @@ def highlights(content_text: str, gate_ledger: list, flags: list) -> list[dict]:
                     quote = m.group(2)
                     if sentence_repair.locate_sentence(text, quote) is None and quote in text:
                         i = text.find(quote)  # a short quote (a hashtag) is highlighted as a phrase
-                        out.append({"start": i, "end": i + len(quote), "gate": gate, "blocking": blocking,
-                                    "problem": m.group(1)[:300]})
+                        out.append({"start": i, "end": i + len(quote), **mark, "problem": m.group(1)[:300]})
                     else:
                         spans.append((quote, m.group(1)))
-            elif gate == qr.F9_CTA_FACT and "unsupported claim(s):" in v:
+            elif shape == qr.F9_CTA_FACT and "unsupported claim(s):" in v:
                 for sent, claim, why in sentence_repair._F9_CLAIM_RE.findall(v.split("unsupported claim(s):", 1)[1]):
                     spans.append((sent, f"{claim.strip()} — {why.strip()}"))
-            elif gate == qr.F9_BRAND_STYLE:
+            elif shape == qr.F9_BRAND_STYLE:
                 m = _F9_PHRASE_RE.search(v)
                 for phrase in _QUOTED_RE.findall(m.group(1)) if m else []:
                     i = text.find(phrase)
                     if i >= 0:
-                        out.append({"start": i, "end": i + len(phrase), "gate": gate, "blocking": blocking,
+                        out.append({"start": i, "end": i + len(phrase), **mark,
                                     "problem": v.split(" — ", 1)[0][:200]})
             for quote, problem in spans:
                 span = sentence_repair.locate_sentence(text, quote)
                 if span:
-                    out.append({"start": span[0], "end": span[1], "gate": gate, "blocking": blocking,
-                                "problem": problem[:300]})
+                    out.append({"start": span[0], "end": span[1], **mark, "problem": problem[:300]})
     # A non-blocking gate sits in both gate_ledger and flags: keep one highlight per span + gate.
     seen, unique = set(), []
     for h in sorted(out, key=lambda h: (h["start"], h["end"])):
@@ -306,7 +328,8 @@ def flagged_sentences(content_text: str, hls: list[dict]) -> list[dict]:
                                 "gates": [], "problems": [], "blocking": False}
         if h["gate"] not in it["gates"]:
             it["gates"].append(h["gate"])
-        it["problems"].append({"gate": h["gate"], "problem": h["problem"], "blocking": h["blocking"]})
+        it["problems"].append({"gate": h["gate"], "problem": h["problem"], "blocking": h["blocking"],
+                               "severity": h.get("severity"), **({"source": h["source"]} if h.get("source") else {})})
         it["blocking"] = it["blocking"] or bool(h["blocking"])
     return [items[k] for k in sorted(items)]
 

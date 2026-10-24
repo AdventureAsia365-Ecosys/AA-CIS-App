@@ -270,8 +270,14 @@ def gate_grounding(content_text: str, atom_text: str) -> GateResultLite:
 def gate_banned_patterns(content_text: str, atom_text: str) -> GateResultLite:
     """AA-450-02 gate map, F2 row — deterministic, cheap. A match is exempt only when it's
     genuinely present (case-insensitive) in the atom's own source text — same B12 carve-out N7's
-    own gate_banned_patterns() applies, adapted to T9's single-atom shape."""
-    violations: list[str] = []
+    own gate_banned_patterns() applies, adapted to T9's single-atom shape.
+    AA-924 — a source check of the lexicon gate: the ledger holds it inside F2_lexicon (gate_lexicon)."""
+    return _result(qr.F2_BANNED_PATTERNS, [v for _, _, v in _banned_hits(content_text, atom_text)])
+
+
+def _banned_hits(content_text: str, atom_text: str) -> list[tuple[str, str, str]]:
+    """(phrase, its sentence, violation text) for each banned-pattern match, in gate_banned_patterns' order."""
+    hits: list[tuple[str, str, str]] = []
     atom_lower = (atom_text or "").lower()
     # AA-778 — the dash of a testimonial attribution ('"…" <em-dash> Sarah, UK') is kept by fix_dashes on
     # purpose so F19 can flag and cut the invented review; F2 must not also hold it, or the piece loses
@@ -285,12 +291,13 @@ def gate_banned_patterns(content_text: str, atom_text: str) -> GateResultLite:
             if pattern.pattern == EM_DASH_PATTERN and any(s <= m.start() < e or s < m.end() <= e
                                                           for s, e in f19_spans):
                 continue
+            sentence = _sentence_with(content_text, m.group(0))
             if pattern.pattern == EM_DASH_PATTERN:  # AA-778 — readable, with its sentence, not the regex
-                violations.append(f"uses an em-dash ('{m.group(0)}'); use a comma, a colon or a full stop: "
-                                  f"'{_sentence_with(content_text, m.group(0))}'")
+                hits.append((m.group(0), sentence, f"uses an em-dash ('{m.group(0)}'); use a comma, a colon or a "
+                                                   f"full stop: '{sentence}'"))
                 continue
-            violations.append(f"banned pattern /{pattern.pattern}/ -> '{m.group(0)}'")
-    return _result(qr.F2_BANNED_PATTERNS, violations)
+            hits.append((m.group(0), sentence, f"banned pattern /{pattern.pattern}/ -> '{m.group(0)}'"))
+    return hits
 
 
 # ---------------------------------------------------------------- F2b / F11: tenant brand (AA-771, S233)
@@ -306,8 +313,15 @@ def gate_brand_forbidden_words(content_text: str, atom_text: str,
                                forbidden_words: Optional[list[str]]) -> GateResultLite:
     """F2_brand_forbidden — blocking, repairable: a word or phrase the tenant's own T0 brand pack
     forbids (before S233 these reached only the F9 judge as text, a warn-only signal). Exempt
-    when the phrase is in the source itself, same carve-out as F2."""
-    violations: list[str] = []
+    when the phrase is in the source itself, same carve-out as F2.
+    AA-924 — a source check of the lexicon gate: the ledger holds it inside F2_lexicon (gate_lexicon)."""
+    return _result(qr.F2_BRAND_FORBIDDEN, [v for _, _, v in _forbidden_hits(content_text, atom_text, forbidden_words)])
+
+
+def _forbidden_hits(content_text: str, atom_text: str,
+                    forbidden_words: Optional[list[str]]) -> list[tuple[str, str, str]]:
+    """(phrase, its sentence, violation text) for each tenant-forbidden word found, in the brand's list order."""
+    hits: list[tuple[str, str, str]] = []
     atom_lower = (atom_text or "").lower()
     for phrase in forbidden_words or []:
         phrase = phrase.strip()
@@ -316,9 +330,9 @@ def gate_brand_forbidden_words(content_text: str, atom_text: str,
         pattern = re.compile(rf"(?<!\w){re.escape(phrase)}(?!\w)", re.IGNORECASE)
         m = pattern.search(content_text or "")
         if m:
-            violations.append(f"uses '{m.group(0)}', which the brand forbids: "
-                              f"'{_sentence_with(content_text, m.group(0))}'")
-    return _result(qr.F2_BRAND_FORBIDDEN, violations)
+            sentence = _sentence_with(content_text, m.group(0))
+            hits.append((m.group(0), sentence, f"uses '{m.group(0)}', which the brand forbids: '{sentence}'"))
+    return hits
 
 
 # ---------------------------------------------------------------- F2 word layers (AA-800)
@@ -341,13 +355,17 @@ def _word_hits(text: str, words, exempt_text: str) -> list[tuple[str, str]]:
     return out
 
 
-def gate_platform_truth(content_text: str, atom_text: str) -> GateResultLite:
+def gate_platform_truth(content_text: str, atom_text: str,
+                        own_forbidden: Optional[list[str]] = None) -> GateResultLite:
     """F2_platform_truth — blocking, sentence-repairable: a price or booking promise (cheap, deal,
     discount, book now, instant booking) the platform cannot back, for every tenant (AA-800 layer 1).
-    T9 never checked these before. A word in the source (seed, CTA, trip name) is exempt, as for F2."""
+    T9 never checked these before. A word in the source (seed, CTA, trip name) is exempt, as for F2.
+    AA-924 — a word on the tenant's own forbidden list (`own_forbidden`) is the lexicon gate's, never judged twice
+    (gate_signature_words already skipped it)."""
     from services.acp_shared.signature_vocabulary import PLATFORM_TRUTH
+    own = {str(w).lower().strip() for w in own_forbidden or []}
     violations = [f"uses '{w}', a price or booking promise the platform cannot back: '{sent}'"
-                  for w, sent in _word_hits(content_text, PLATFORM_TRUTH, atom_text)]
+                  for w, sent in _word_hits(content_text, [w for w in PLATFORM_TRUTH if w not in own], atom_text)]
     return _result(F2_PLATFORM_GATE, list(dict.fromkeys(violations)), repairable=True)
 
 
@@ -2049,7 +2067,9 @@ def gate_trip_facts(content_text: str, trip_ctx: Optional[TripFactContext], seo_
 # F15_voice (stock-phrase hard list only) blocks — and goes to sentence repair, never a full
 # rewrite — on the FIRST attempt only, and never holds a piece (S234 plan PR3 + review): a style
 # phrase is not product truth (AA-613 'held'). Trade register, audience leak and opener checks are a
-# separate warn-only result, F15_voice_warn, so sentence_repair.plan never rewrites them.
+# separate warn-only result, F15_voice_warn, so sentence_repair.plan never rewrites them. AA-924 — both stay
+# source checks for routing; the stored ledger keeps the stock findings in F2_lexicon and the rest (with
+# F15_voice_warn's as warn findings) in one F15_voice entry.
 F15_STOCK_BLOCKING = True
 # AA-780 (S234 r4 plan #7) — a LinkedIn post under the band's floor (120 words) blocks on attempt 1 only
 # (the same `stock_blocking` flag): one full rewrite to the target, never a rewrite loop, never a hold
@@ -2212,7 +2232,10 @@ def gate_voice(content_text: str, *, spec: Optional[ChannelSpec], stock_blocking
     F15_STOCK_BLOCKING and `stock_blocking` (the caller passes it for attempt 1 only), so it is
     repaired sentence by sentence (sentence_repair._ELIGIBLE_GATES) at most once, never by a full
     rewrite; `hold_failure` never holds a piece on it. Every violation reads
-    "<problem>: '<sentence>'" (the shape sentence_repair.plan parses)."""
+    "<problem>: '<sentence>'" (the shape sentence_repair.plan parses).
+    AA-924 — the F15_voice source check. The ledger splits it: the stock findings ('stock phrase', 'stock line')
+    sit in F2_lexicon, the contrast frames, sibling templates and brief phrases in F15_voice beside
+    gate_voice_warn's findings (registry.MERGED_GATES, merge_ledger)."""
     text = content_text or ""
     spans = [sp for sp in sentence_spans(text) if sp["kind"] in ("prose", "bullet")]
     stock: list[str] = []
@@ -2233,10 +2256,13 @@ def gate_voice(content_text: str, *, spec: Optional[ChannelSpec], stock_blocking
         if sentence in quoted and len(sentence.split()) >= _MIN_QUOTE_WORDS and not any(sentence in v for v in stock):
             stock.append(f"stock line '{line}' — say it plainly or cut it: '{sentence}'")
     stock += _brief_violations(text, brief_texts, exclude_texts, brand_name, spans, keyword)
-    if not stock:
+    return _voice_result(list(dict.fromkeys(stock)), spec, stock_blocking)
+
+
+def _voice_result(violations: list[str], spec: Optional[ChannelSpec], stock_blocking: bool) -> GateResultLite:
+    if not violations:
         return _result(F15_GATE, [], repairable=spec is not None, blocking=False)
-    blocking = F15_STOCK_BLOCKING and stock_blocking and bool(stock)
-    return _result(F15_GATE, list(dict.fromkeys(stock)), repairable=True, blocking=blocking)
+    return _result(F15_GATE, violations, repairable=True, blocking=F15_STOCK_BLOCKING and stock_blocking)
 
 
 def gate_voice_warn(content_text: str, *, spec: Optional[ChannelSpec], brand_pack: Optional[dict] = None,
@@ -2253,7 +2279,8 @@ def gate_voice_warn(content_text: str, *, spec: Optional[ChannelSpec], brand_pac
     - AA-780 — broetry: ≥ BROETRY_RUN consecutive sentences of ≤ BROETRY_MAX_WORDS words (S234 Trail
       Pulse "That's not filler. That's structure.", "Not squeezed in. Planned in."), one warning per run;
       a sentence of the configured `cta` (ensure_cta puts it in word for word) never counts.
-    Same "<problem>: '<sentence>'" shape, for the admin highlights."""
+    Same "<problem>: '<sentence>'" shape, for the admin highlights.
+    AA-924 — the F15_voice_warn source check: the ledger holds its findings as warn findings of F15_voice."""
     if spec is None:
         return _result(F15_WARN_GATE, [], repairable=False, blocking=False)
     text = content_text or ""
@@ -2485,6 +2512,87 @@ def reshape_like(entries, ledger, *, flags: bool = False) -> list:
     return merge_flags(entries) if flags else merge_ledger(entries)
 
 
+def ledger_gate(g: dict) -> str:
+    """The stored ledger entry a legacy result's findings sit in: F2_banned_patterns / F2_brand_forbidden →
+    F2_lexicon, F15_voice_warn → F15_voice, an F15_voice whose findings are all stock → F2_lexicon; any other gate
+    is its own. Used for the names a merged piece stores outside the ledger (held_reason, gate_targeted)."""
+    gate = g.get("gate")
+    if gate == qr.F15_VOICE:
+        vs = g.get("violations") or []
+        return qr.F2_LEXICON if vs and all(_group_of(gate, v) == qr.F2_LEXICON for v in vs) else qr.F15_VOICE
+    return qr.SOURCE_HOME.get(gate, gate)
+
+
+# ---------------------------------------------------------------- F2_lexicon (AA-924)
+
+_STOCK_FINDING_RE = re.compile(r"^stock (?:phrase|line) '(.+?)' — .*: '(.+)'\s*$", re.DOTALL)
+_SAME_SENTENCE_CHARS = 120
+
+
+def _hit_key(text: str) -> str:
+    return " ".join(re.findall(r"\w+", fold(strip_citation_tags(text or ""))))
+
+
+def _same_hit(a: tuple[str, str], b: tuple[str, str]) -> bool:
+    """Two (phrase, sentence) hits are one word judged twice: one phrase holds the other and the two sentences
+    are the same (their first 120 folded characters; a quote may run on into the next sentence)."""
+    pa, pb = _hit_key(a[0]), _hit_key(b[0])
+    if not pa or not pb or not (f" {pa} " in f" {pb} " or f" {pb} " in f" {pa} "):
+        return False
+    sa, sb = _hit_key(a[1]), _hit_key(b[1])
+    n = min(len(sa), len(sb), _SAME_SENTENCE_CHARS)
+    return n > 0 and sa[:n] == sb[:n]
+
+
+def lexicon_sources(content_text: str, f2_source: str, brand_pack: Optional[dict] = None, *,
+                    atom_text: Optional[str] = None, voice: Optional[GateResultLite] = None,
+                    spec: Optional[ChannelSpec] = None) -> list[GateResultLite]:
+    """AA-924 — the legacy source results the lexicon gate folds, each word judged once: [F2_banned_patterns,
+    F2_brand_forbidden] plus, with `voice` (gate_voice's result), F15_voice. A tenant-forbidden word already found
+    as a banned pattern in the same sentence is dropped, and so is a stock finding a banned or forbidden hit already
+    covers (the highest severity is kept: both of those block). `f2_source` exempts banned patterns (seed + CTA +
+    trip name), `atom_text` the tenant's words (as before: the seed only; `f2_source` when None)."""
+    banned = _banned_hits(content_text, f2_source)
+    kept = [(p, sent) for p, sent, _ in banned]
+    forbidden: list[str] = []
+    for p, sent, v in _forbidden_hits(content_text, f2_source if atom_text is None else atom_text,
+                                      (brand_pack or {}).get("forbidden_words")):
+        if any(_same_hit((p, sent), k) for k in kept):
+            continue
+        kept.append((p, sent))
+        forbidden.append(v)
+    out = [_result(qr.F2_BANNED_PATTERNS, [v for _, _, v in banned]), _result(qr.F2_BRAND_FORBIDDEN, forbidden)]
+    if voice is not None:
+        vs = []
+        for v in voice.get("violations") or []:
+            m = _STOCK_FINDING_RE.match(v) if v.startswith(F15_STOCK_PREFIXES) else None
+            if m and any(_same_hit((m.group(1), m.group(2)), k) for k in kept):
+                continue
+            vs.append(v)
+        out.append(voice if len(vs) == len(voice.get("violations") or []) else
+                   {**voice, **_voice_result(vs, spec, bool(voice.get("blocking")))})
+    return out
+
+
+def gate_lexicon(content_text: str, f2_source: str, brand_pack: Optional[dict] = None,
+                 spec: Optional[ChannelSpec] = None, stock_blocking: bool = True, include_stock: bool = True, *,
+                 atom_text: Optional[str] = None, voice: Optional[GateResultLite] = None) -> GateResultLite:
+    """F2_lexicon (AA-924; S234 Report 12 §1.2) — one result for every word list a T9 piece is checked against:
+    banned patterns (block, source F2_banned_patterns; the em-dash and F19 attribution carve-outs kept), the
+    tenant's forbidden words (block, source F2_brand_forbidden) and the F15 stock list — STOCK_PATTERNS on a channel
+    with a spec and hygiene.template_lines everywhere — (block while `stock_blocking`, i.e. attempt 1, then warn;
+    source F15_voice). One finding per word and sentence (`lexicon_sources`). The AA-800 layers (F2_platform_truth,
+    F2_superlatives, F2_style_warn) stay their own gates and skip the tenant's own words.
+    `include_stock=False` (the admin sentence Apply, sentence_repair.check_replacement) checks only the banned and
+    forbidden words. `voice` is gate_voice's result when the caller has it (run_quality_gates: one F15 check feeds
+    both F2_lexicon and F15_voice)."""
+    if include_stock and voice is None:
+        voice = gate_voice(content_text, spec=spec, stock_blocking=stock_blocking)
+    parts = lexicon_sources(content_text, f2_source, brand_pack, atom_text=atom_text,
+                            voice=voice if include_stock else None, spec=spec)
+    return next(g for g in merge_ledger(parts) if g["gate"] == qr.F2_LEXICON)
+
+
 # ---------------------------------------------------------------- orchestration
 
 class QualityCheckOutcome(TypedDict):
@@ -2536,7 +2644,13 @@ def run_quality_gates(
     blog base rate) and F5_atom_density (too rare to mean anything). F7_faq_dedup is folded into
     F16_faq: service.py's `drop_restated_faq` fixer cuts every FAQ answer sentence that copies the
     body before these gates read the text (logged in the `F7_faq_autofix` flag), and F16 counts the
-    pairs that are left."""
+    pairs that are left.
+
+    AA-924 (Report 12 §1.2) — the gates still run as their legacy source checks, and the stored ledger folds them:
+    F2_banned_patterns + F2_brand_forbidden + F15_voice's stock findings → one F2_lexicon entry (at F2_banned_patterns'
+    place), F15_voice + F15_voice_warn → one F15_voice entry, each finding with its own block / warn severity
+    (merge_ledger). That is 26 → 24 distinct results: 23 on a blog, 22 on LinkedIn, 21 on the other channels.
+    `first_failure` and `flags` are read on the legacy view (expand_ledger), so routing is unchanged."""
     cta_result = gate_cta_present(cta)
     ledger = [cta_result]
     if not cta_result["passed"]:
@@ -2547,17 +2661,27 @@ def run_quality_gates(
     # AA-778 — the configured CTA (ensure_cta puts it in word for word, after autofix) and the full trip
     # name (fix_dashes keeps it verbatim) are source text for F2 too (AA-800: and for the word layers)
     f2_source = "\n".join(t for t in (atom_text, cta, hygiene_ctx.trip_name if hygiene_ctx else None) if t)
-    gate_ledger = [
+    # S234 review — F15_voice blocks (stock phrases) only while `stock_blocking` (attempt 1).
+    # S234 round 2 — plus contrast density and sibling templates, every channel. AA-924 — one check feeds both
+    # F2_lexicon (its stock findings) and F15_voice (the rest), see below.
+    voice = gate_voice(content_text, spec=spec, stock_blocking=stock_blocking, sibling_texts=sibling_texts,
+                       exclude_texts=[t for t in (hygiene_ctx.lexicon.own_text if hygiene_ctx else atom_text, cta,
+                                                  hygiene_ctx.facts if hygiene_ctx else None) if t],
+                       brand_name=(brand_pack or {}).get("brand_name"), keyword=keyword, brief_texts=brief_texts)
+    # AA-924 — the lexicon sources, each word judged once: banned patterns (AA-778 — the configured CTA and the full
+    # trip name are source text for them too), the tenant's own forbidden words (AA-771, S233) and the F15 stock list.
+    banned, forbidden, voice = lexicon_sources(content_text, f2_source, brand_pack, atom_text=atom_text, voice=voice,
+                                               spec=spec)
+    # The legacy (source) results in legacy order; merge_ledger below folds them into the stored entries.
+    sources = [
         cta_result,
         gate_grounding(content_text, atom_text),
-        # AA-778 — the configured CTA (ensure_cta puts it in word for word, after autofix) and the full
-        # trip name (fix_dashes keeps it verbatim) are source text for F2 too
-        gate_banned_patterns(content_text, f2_source),
-        # AA-771 (S233) — the tenant's own forbidden words and brand name, deterministic.
-        gate_brand_forbidden_words(content_text, atom_text, (brand_pack or {}).get("forbidden_words")),
+        banned,
+        forbidden,
         # AA-800 — the word layers: platform truth blocks; stock superlatives capped at one; positioning
-        # words the brand did not declare are a warning. Same source exemption as F2.
-        gate_platform_truth(content_text, f2_source),
+        # words the brand did not declare are a warning. Same source exemption as F2. AA-924 — a word on the
+        # tenant's own forbidden list is the lexicon's only.
+        gate_platform_truth(content_text, f2_source, (brand_pack or {}).get("forbidden_words")),
         *gate_signature_words(content_text, f2_source, brand_pack),
         gate_brand_name(content_text, atom_text, (brand_pack or {}).get("brand_name")),
         # AA-819 (AUP 2026-11) — no reviews / testimonials / customer first person / independence claim.
@@ -2581,35 +2705,34 @@ def run_quality_gates(
         # channel without a spec (every channel but LinkedIn).
         # AA-780 — under the floor blocks on attempt 1 only (`stock_blocking`), for one full rewrite.
         gate_social_shape(content_text, spec, floor_blocking=F14_FLOOR_BLOCKING and stock_blocking),
-        # S234 review — F15_voice blocks (stock phrases) only while `stock_blocking` (attempt 1);
-        # the warn-only checks are their own result so a stock repair never rewrites them.
-        # S234 round 2 — plus contrast density and sibling templates, every channel.
-        gate_voice(content_text, spec=spec, stock_blocking=stock_blocking, sibling_texts=sibling_texts,
-                   exclude_texts=[t for t in (hygiene_ctx.lexicon.own_text if hygiene_ctx else atom_text, cta,
-                                              hygiene_ctx.facts if hygiene_ctx else None) if t],
-                   brand_name=(brand_pack or {}).get("brand_name"), keyword=keyword, brief_texts=brief_texts),
+        # F15_voice (the source check, deduplicated above) and the warn-only checks (F15_voice_warn), kept apart
+        # so a stock repair never rewrites them; AA-924 stores both in one F15_voice entry.
+        voice,
         gate_voice_warn(content_text, spec=spec, brand_pack=brand_pack, atom_text=atom_text,
                         sibling_openers=sibling_openers, cta=cta),
     ]
     if channel == "blog":
-        gate_ledger.append(gate_seo_surface(seo_title, meta_description, slug, keyword, seed=atom_text,
-                                            body=content_text, taken_titles=taken_titles))
+        sources.append(gate_seo_surface(seo_title, meta_description, slug, keyword, seed=atom_text,
+                                        body=content_text, taken_titles=taken_titles))
     # AA-786 — F9 judges what the tenant reads: no citation tags (S234: "visible citation markers"
     # notes on r1#9 / r3#4), plus the blog's search title and meta. F9 returns TWO results (blocking
     # F9_cta_fact + non-blocking F9_brand_style), spread in here.
     seo_kw = {"seo_title": seo_title, "meta_description": meta_description} if channel == "blog" else {}
     # AA-777 — the job's sticky-pass set (sentences an earlier F9 verdict passed); None = no memory.
-    gate_ledger += gate_brand_voice(length_check_text, cta or "", brand_rubric_text, source_text=atom_text,
-                                    voice=(brand_pack or {}).get("voice"), passed_sentences=f9_passed_sentences,
-                                    **seo_kw)
+    sources += gate_brand_voice(length_check_text, cta or "", brand_rubric_text, source_text=atom_text,
+                                voice=(brand_pack or {}).get("voice"), passed_sentences=f9_passed_sentences,
+                                **seo_kw)
     # S234 round 2 — contract gates owned by a dedicated fix step in service.py (FAQ regeneration,
     # first-line rewrite). Last in the ledger and not repairable: when one is the only blocking
     # failure left the piece is held at once; when another gate fails first, that gate's repair
     # runs (sentence_repair.plan skips these two).
     if channel == "blog":
-        gate_ledger.append(gate_faq_contract(content_text))
+        sources.append(gate_faq_contract(content_text))
     if spec is not None:
-        gate_ledger.append(gate_first_line(content_text, spec))
+        sources.append(gate_first_line(content_text, spec))
+    # AA-924 — the stored ledger: F2_banned_patterns + F2_brand_forbidden + the F15 stock findings → F2_lexicon,
+    # F15_voice + F15_voice_warn → F15_voice, each finding with its own severity (26 → 24 distinct results).
+    gate_ledger = merge_ledger(sources)
     # AA-519 Việc 5 — first_failure (drives service.py's hold/repair decision) only ever
     # considers a BLOCKING gate; a failed non-blocking gate never holds/repairs a piece, but its
     # result is still in gate_ledger AND collected into `flags` below so it isn't silently
@@ -2648,5 +2771,5 @@ __all__ = [
     "F19_GATE", "gate_authenticity",
     "F2_PLATFORM_GATE", "F2_SUPERLATIVE_GATE", "F2_STYLE_WARN_GATE", "gate_platform_truth", "gate_signature_words",
     "Finding", "BLOCK", "WARN", "F15_STOCK_PREFIXES", "is_merged", "ledger_is_merged", "expand_ledger",
-    "merge_ledger", "merge_flags", "reshape_like",
+    "merge_ledger", "merge_flags", "reshape_like", "ledger_gate", "gate_lexicon", "lexicon_sources",
 ]

@@ -39,13 +39,15 @@ OLD_GATE_LABELS = [
     ("F14_social_shape", "LinkedIn length / hashtags"),
     ("F14_first_line", "LinkedIn first line too long"),
     ("F16_faq", "Blog FAQ under 3 pairs"),
-    ("F15_voice", "Stock phrase"),
+    ("F15_voice", "Voice: stock frames, templates, register"),  # AA-924: it also holds F15_voice_warn's findings
     ("F15_voice_warn", "Trade register / audience leak / opener"),
     ("within_tenant_reuse", "Repeats this tenant"),
     ("T3_grounding", "Number not in the source tour"),
     ("FORBIDDEN_WORD", "Forbidden word"),
 ]
-OLD_RETIRED = {"promises_an_option", "F8_framework", "F3_structural_variance", "F5_atom_density", "F7_faq_dedup"}
+OLD_RETIRED = {"promises_an_option", "F8_framework", "F3_structural_variance", "F5_atom_density", "F7_faq_dedup",
+               # AA-924: folded into F2_lexicon / F15_voice
+               "F2_banned_patterns", "F2_brand_forbidden", "F15_voice_warn"}
 NEW_LABELLED = ["F2_platform_truth", "F2_superlatives", "F2_style_warn", "F19_authenticity", "F15_stock_cut",
                 "F2_lexicon"]  # AA-924
 T10_CHANNELS = ("blog", "linkedin", "facebook", "instagram", "tiktok", "email", "landing_page", "ads")
@@ -88,8 +90,8 @@ def test_registry_channels_match_the_real_ledger_per_channel():
                     and (g.get("channels") == "all" or ch in (g.get("channels") or []))}
         assert expected == set(snap["t10"]["channel_gate_order"][ch]), ch
     counts = {ch: len(snap["t10"]["channel_gate_order"][ch]) for ch in T10_CHANNELS}
-    assert counts["blog"] == 25 and counts["linkedin"] == 24  # CONTEXT.md "Gate" (AA-787)
-    assert all(counts[c] == 23 for c in T10_CHANNELS if c not in ("blog", "linkedin"))
+    assert counts["blog"] == 23 and counts["linkedin"] == 22  # CONTEXT.md "Gate" (AA-787, AA-924)
+    assert all(counts[c] == 21 for c in T10_CHANNELS if c not in ("blog", "linkedin"))
 
 
 def test_every_gate_kind_has_a_label_and_a_class():
@@ -230,8 +232,11 @@ def test_redundancy_census_reads_the_registry():
     from scripts.quality import redundancy_census as rc
 
     rows = {r["detector"]: r for r in rc.census()["rows"]}
-    assert rows["F15_voice"]["verdict"] == "candidate" and "F2_banned_patterns" in rows["F15_voice"][
-        "covering_code_detectors"]  # the AA-924 lexicon fold
+    # AA-924 folded F2_banned_patterns into F2_lexicon; the census is per class (an upper bound), so F15_voice's
+    # frames still share other.v1 with the lexicon gate
+    assert rows["F15_voice"]["verdict"] == "candidate" and "F2_lexicon" in rows["F15_voice"][
+        "covering_code_detectors"]
+    assert "F2_banned_patterns" not in rows and "F2_brand_forbidden" not in rows
     assert rows["T3_grounding"]["verdict"] == "sole_owner"
     assert rows["ITINERARY_DAY_COUNT_MISMATCH"]["sole"] == [("struct.day_structure", "A1")]
     assert "Removal candidates" in rc.render(rc.census())

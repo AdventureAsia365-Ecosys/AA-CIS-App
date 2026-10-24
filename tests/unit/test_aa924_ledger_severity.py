@@ -86,7 +86,9 @@ def test_routing_identical_on_merged_ledger(case_id, ledger, text):
     flags = [g for g in ledger if not g["passed"] and not g["blocking"]]
     st, reason, out_flags = service._hold_or_ship(merged, qg.merge_flags(flags))
     st0, reason0, out_flags0 = service._hold_or_ship(ledger, flags)
-    assert (st, reason) == (st0, reason0)
+    hold = qg.hold_failure(ledger)
+    # the held reason names the stored entry (F2_lexicon), not the retired source name
+    assert (st, reason) == (st0, reason0 if hold is None else reason0.replace(hold["gate"], qg.ledger_gate(hold), 1))
     assert qg.expand_ledger(out_flags) == out_flags0
     assert qg.expand_ledger(service._waive_style_only(merged, "approved")) == service._waive_style_only(
         ledger, "approved")

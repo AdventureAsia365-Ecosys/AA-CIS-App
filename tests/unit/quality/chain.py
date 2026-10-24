@@ -325,7 +325,9 @@ def run_t9(case: dict, fixtures: Optional[dict] = None) -> dict:
         asyncio.run(service.run_write_background(T9_REQUEST_ID, T9_PIECE_ID, t9_context(inp), pool=MagicMock()))
     ledger = captured.get("gate_ledger") or []
     flags = captured.get("flags") or []
-    observed = ({g["gate"] for g in ledger if isinstance(g, dict) and not g.get("passed", True)}
+    # AA-924 — a stored merged entry (F2_lexicon) and the legacy sources inside it (F2_banned_patterns…) both count
+    seen = ledger + qg.expand_ledger(ledger)
+    observed = ({g["gate"] for g in seen if isinstance(g, dict) and not g.get("passed", True)}
                 | signal_names(f for f in flags if isinstance(f, dict))
                 | signal_names(captured.get("degraded"))
                 | {f.get("degraded") for f in flags if isinstance(f, dict) and f.get("degraded")})

@@ -59,6 +59,7 @@ from services.acp_content_writing.generate import (SEO_FIT_STAGE, SentenceRepair
 from services.acp_content_writing.quality_gates import (CHEAP_REPAIR_GATES, F13_REPEAT_GATE, F14_GATE, F19_GATE,
                                                           FAQ_MAX_PAIRS, FAQ_MIN_PAIRS, F9PassMemory,
                                                           deep_strip_citation_tags, drop_restated_faq, expand_ledger,
+                                                          ledger_gate, ledger_is_merged,
                                                           drop_subjectless_faq, drop_unanswerable_faq,
                                                           faq_answer_problem, faq_pair_count, faq_pairs,
                                                           hold_failure, merge_faq_pairs, never_holds,
@@ -380,8 +381,11 @@ def choose_keyword(related_keywords: list, seed_text: str, out_of_scope=()) -> O
     return fallback  # None: no keyword about this moment — the writer titles it naturally
 
 
-def _held_reason_from(first_failure: dict) -> str:
-    return f"{first_failure['gate']}: {'; '.join(first_failure['violations'][:3])}"
+def _held_reason_from(first_failure: dict, ledger: Optional[list] = None) -> str:
+    """'<gate>: <first 3 violations>'. AA-924 — for a merged `ledger` the gate is the stored entry the failure sits
+    in (quality_gates.ledger_gate: 'F2_lexicon: …', never a retired source name)."""
+    gate = ledger_gate(first_failure) if ledger_is_merged(ledger) else first_failure["gate"]
+    return f"{gate}: {'; '.join(first_failure['violations'][:3])}"
 
 
 def _hold_or_ship(gate_ledger: list, flags: list) -> tuple[str, Optional[str], list]:
@@ -392,7 +396,7 @@ def _hold_or_ship(gate_ledger: list, flags: list) -> tuple[str, Optional[str], l
     (expand_ledger) and hands the flags back in the ledger's shape."""
     hold = hold_failure(gate_ledger)
     if hold is not None:
-        return "held", _held_reason_from(hold), flags
+        return "held", _held_reason_from(hold, gate_ledger), flags
     # Only the BLOCKING entries being waived here (mirrors _waive_style_only): a non-blocking warn —
     # e.g. a post-cut F14 under-floor warn — is already in `flags` from run_quality_gates or the cut.
     style = [g for g in expand_ledger(gate_ledger) if not g["passed"] and g.get("blocking", True) and never_holds(g)]
@@ -696,6 +700,7 @@ def _cut_stock_lines(content_text: str, gate_ledger: list, flags: list, *, chann
     - The re-run F4 / F14 results replace their ledger entries and warn flags (`_refresh_flags`); the
       F15_voice entry keeps only the violations whose phrase is still in the text (passed when none is),
       and the cut sentences are shown as a non-blocking `F15_stock_cut` flag. Status is never changed.
+      AA-924 — trimmed on the legacy view: in a merged ledger these stock findings sit in F2_lexicon.
     Returns (content_text, gate_ledger, flags, repair_log entry or None)."""
     if spec is None:
         return content_text, gate_ledger, flags, None
@@ -2065,7 +2070,9 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
 
             first_failure = outcome["first_failure"]
             repair_log.append({
-                "attempt": attempt, "gate_targeted": first_failure["gate"],
+                # AA-924 — the stored entry's name (F2_lexicon), not the retired source name
+                "attempt": attempt, "gate_targeted": ledger_gate(first_failure) if ledger_is_merged(gate_ledger)
+                else first_failure["gate"],
                 "violations": first_failure["violations"], "repairable": first_failure["repairable"],
                 # AA-768 — what the rewrite is actually told: every blocking failure, not one gate.
                 "feedback": _repair_feedback(gate_ledger, channel),

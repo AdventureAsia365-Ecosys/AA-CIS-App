@@ -34,7 +34,7 @@ export const GATE_LABELS: Record<string, string> = {
   F14_social_shape: "LinkedIn length / hashtags",
   F14_first_line: "LinkedIn first line too long",
   F16_faq: "Blog FAQ under 3 pairs",
-  F15_voice: "Stock phrase",
+  F15_voice: "Voice: stock frames, templates, register",
   F15_voice_warn: "Trade register / audience leak / opener",
   within_tenant_reuse: "Repeats this tenant",
   T3_grounding: "Number not in the source tour",
@@ -50,7 +50,7 @@ export const GATE_LABELS: Record<string, string> = {
 /** AA-787 — gates the T10 stack no longer runs. Older pieces still carry them in their ledger, so the
  *  labels stay; the UI marks them retired and keeps them out of the main gate filter. */
 export const RETIRED_GATES: ReadonlySet<string> = new Set([
-  "promises_an_option", "F5_atom_density", "F3_structural_variance", "F7_faq_dedup", "F8_framework",
+  "F2_banned_patterns", "F2_brand_forbidden", "promises_an_option", "F5_atom_density", "F3_structural_variance", "F7_faq_dedup", "F8_framework", "F15_voice_warn",
 ]);
 
 /** The quality pass line (thresholds.yaml review.approve_floor → pass_line). */

@@ -1,0 +1,7178 @@
+{
+ "cases": {
+  "f0-1": {
+   "first_failure": "F0_complete",
+   "flags": [],
+   "hold_failure": "F0_complete",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "the text stops mid-sentence: '...From the ridge the view is unobstructed t'"
+     ]
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    }
+   ],
+   "passed": false,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F0_complete"
+  },
+  "f0-2": {
+   "first_failure": "F0_complete",
+   "flags": [],
+   "hold_failure": "F0_complete",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "the text stops mid-sentence: '...After dinner the guides light the stove,'"
+     ]
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    }
+   ],
+   "passed": false,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F0_complete"
+  },
+  "f0-3": {
+   "first_failure": "F0_complete",
+   "flags": [],
+   "hold_failure": "F0_complete",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "the text ends with a stray backslash — it was cut off"
+     ]
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    }
+   ],
+   "passed": false,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F0_complete"
+  },
+  "f0-ok": {
+   "first_failure": null,
+   "flags": [],
+   "hold_failure": null,
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    }
+   ],
+   "passed": true,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F0_complete"
+  },
+  "f10-1": {
+   "first_failure": "F10_cannibalization_cross_tenant",
+   "flags": [],
+   "hold_failure": "F10_cannibalization_cross_tenant",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "content is 0.93 cosine-similar to a piece already published by a different tenant (piece_id=00000000-0000-0000-0000-000000000791) — above the confirmed 0.92 cannibalization threshold. Two tenants publishing near-identical copy risks readers noticing duplicate marketing content. This tenant has no active brand rules configured — generic, unbranded copy is more likely to converge with other tenants' content; setting up brand rules may reduce this going forward."
+     ]
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    }
+   ],
+   "passed": false,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F10_cannibalization_cross_tenant"
+  },
+  "f10-2": {
+   "first_failure": "F10_cannibalization_cross_tenant",
+   "flags": [],
+   "hold_failure": "F10_cannibalization_cross_tenant",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "content is 0.97 cosine-similar to a piece already published by a different tenant (piece_id=00000000-0000-0000-0000-000000000792) — above the confirmed 0.92 cannibalization threshold. Two tenants publishing near-identical copy risks readers noticing duplicate marketing content."
+     ]
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    }
+   ],
+   "passed": false,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F10_cannibalization_cross_tenant"
+  },
+  "f10-3": {
+   "first_failure": "F10_cannibalization_cross_tenant",
+   "flags": [],
+   "hold_failure": "F10_cannibalization_cross_tenant",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "content is 0.99 cosine-similar to a piece already published by a different tenant (piece_id=00000000-0000-0000-0000-000000000793) — above the confirmed 0.92 cannibalization threshold. Two tenants publishing near-identical copy risks readers noticing duplicate marketing content."
+     ]
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    }
+   ],
+   "passed": false,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F10_cannibalization_cross_tenant"
+  },
+  "f10-ok": {
+   "first_failure": null,
+   "flags": [],
+   "hold_failure": null,
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    }
+   ],
+   "passed": true,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F10_cannibalization_cross_tenant"
+  },
+  "f11-1": {
+   "first_failure": "F11_brand_name",
+   "flags": [],
+   "hold_failure": "F11_brand_name",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "names a brand that is not Terra Family Expeditions ('Arcadia Adventures'): 'At Arcadia Adventures, we plan every day around the lake.'"
+     ]
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    }
+   ],
+   "passed": false,
+   "repair_plan": [
+    {
+     "end": 57,
+     "gate": "F11_brand_name",
+     "gates": [
+      "F11_brand_name"
+     ],
+     "problem": "names a brand that is not Terra Family Expeditions ('Arcadia Adventures')",
+     "sentence": "At Arcadia Adventures, we plan every day around the lake.",
+     "start": 0
+    }
+   ],
+   "style_only_repair": false,
+   "target_gate": "F11_brand_name"
+  },
+  "f11-2": {
+   "first_failure": "F11_brand_name",
+   "flags": [],
+   "hold_failure": "F11_brand_name",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "names a brand that is not Terra Family Expeditions ('Wild Atlas'): 'Here at Wild Atlas, our guides know the camp.'"
+     ]
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    }
+   ],
+   "passed": false,
+   "repair_plan": [
+    {
+     "end": 45,
+     "gate": "F11_brand_name",
+     "gates": [
+      "F11_brand_name"
+     ],
+     "problem": "names a brand that is not Terra Family Expeditions ('Wild Atlas')",
+     "sentence": "Here at Wild Atlas, our guides know the camp.",
+     "start": 0
+    }
+   ],
+   "style_only_repair": false,
+   "target_gate": "F11_brand_name"
+  },
+  "f11-3": {
+   "first_failure": "F11_brand_name",
+   "flags": [],
+   "hold_failure": "F11_brand_name",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "names a brand that is not Terra Family Expeditions ('Adventure Asia'): 'Adventure Asia plans this trip around the lake.'"
+     ]
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    }
+   ],
+   "passed": false,
+   "repair_plan": [
+    {
+     "end": 47,
+     "gate": "F11_brand_name",
+     "gates": [
+      "F11_brand_name"
+     ],
+     "problem": "names a brand that is not Terra Family Expeditions ('Adventure Asia')",
+     "sentence": "Adventure Asia plans this trip around the lake.",
+     "start": 0
+    }
+   ],
+   "style_only_repair": false,
+   "target_gate": "F11_brand_name"
+  },
+  "f11-ok": {
+   "first_failure": null,
+   "flags": [],
+   "hold_failure": null,
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    }
+   ],
+   "passed": true,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F11_brand_name"
+  },
+  "f13l-1": {
+   "first_failure": "F13_leak",
+   "flags": [],
+   "hold_failure": "F13_leak",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "leaks the writer's instructions ('This guide covers'): 'This guide covers the Khövsgöl region in depth, from the caldera to the camp.'"
+     ]
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    }
+   ],
+   "passed": false,
+   "repair_plan": [
+    {
+     "end": 111,
+     "gate": "F13_leak",
+     "gates": [
+      "F13_leak"
+     ],
+     "problem": "leaks the writer's instructions ('This guide covers')",
+     "sentence": "This guide covers the Khövsgöl region in depth, from the caldera to the camp.",
+     "start": 34
+    }
+   ],
+   "style_only_repair": false,
+   "target_gate": "F13_leak"
+  },
+  "f13l-2": {
+   "first_failure": "F13_leak",
+   "flags": [],
+   "hold_failure": "F13_leak",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "leaks the source-notes wording ('content seed'): 'The content seed describes many things in great detail here.'"
+     ]
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    }
+   ],
+   "passed": false,
+   "repair_plan": [
+    {
+     "end": 60,
+     "gate": "F13_leak",
+     "gates": [
+      "F13_leak"
+     ],
+     "problem": "leaks the source-notes wording ('content seed')",
+     "sentence": "The content seed describes many things in great detail here.",
+     "start": 0
+    }
+   ],
+   "style_only_repair": false,
+   "target_gate": "F13_leak"
+  },
+  "f13l-3": {
+   "first_failure": "F13_leak",
+   "flags": [],
+   "hold_failure": "F13_leak",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "leaks the writer's instructions ('days three to fourteen'): 'The pacing across days three to fourteen is designed well.'"
+     ]
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    }
+   ],
+   "passed": false,
+   "repair_plan": [
+    {
+     "end": 91,
+     "gate": "F13_leak",
+     "gates": [
+      "F13_leak"
+     ],
+     "problem": "leaks the writer's instructions ('days three to fourteen')",
+     "sentence": "The pacing across days three to fourteen is designed well.",
+     "start": 33
+    }
+   ],
+   "style_only_repair": false,
+   "target_gate": "F13_leak"
+  },
+  "f13l-ok": {
+   "first_failure": null,
+   "flags": [],
+   "hold_failure": null,
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    }
+   ],
+   "passed": true,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F13_leak"
+  },
+  "f14-1": {
+   "first_failure": "F14_social_shape",
+   "flags": [],
+   "hold_failure": "F14_first_line",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F14_social_shape",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "post is 70 words, under the 120–250-word band for this brand on LinkedIn — rewrite it to 150–220 words with more of the source's own detail, keeping the same angle and adding nothing the source does not state"
+     ]
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F14_first_line",
+     "passed": false,
+     "repairable": false,
+     "violations": [
+      "first line is 151 characters, over 140: 'Sod Camp sits opposite a mountain range and the first night in a ger near Lake Khövsgöl is quieter than most families expect from a camp this far north'"
+     ]
+    }
+   ],
+   "passed": false,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F14_first_line"
+  },
+  "f14-2": {
+   "first_failure": "F14_social_shape",
+   "flags": [],
+   "hold_failure": "F14_first_line",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F14_social_shape",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "post is 76 words, under the 120–250-word band for this brand on LinkedIn — rewrite it to 150–220 words with more of the source's own detail, keeping the same angle and adding nothing the source does not state"
+     ]
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F14_first_line",
+     "passed": false,
+     "repairable": false,
+     "violations": [
+      "first line is 199 characters, over 140: 'The afternoon arrival at Sod Camp leaves time to settle into the ger, walk to the shore, and watch the light change on the mountain range opposite the camp while the guides start the stove for dinner'"
+     ]
+    }
+   ],
+   "passed": false,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F14_first_line"
+  },
+  "f14-3": {
+   "first_failure": "F14_social_shape",
+   "flags": [],
+   "hold_failure": "F14_first_line",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F14_social_shape",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "post is 74 words, under the 120–250-word band for this brand on LinkedIn — rewrite it to 150–220 words with more of the source's own detail, keeping the same angle and adding nothing the source does not state"
+     ]
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F14_first_line",
+     "passed": false,
+     "repairable": false,
+     "violations": [
+      "first line is 204 characters, over 140: 'Sod Camp sits opposite a mountain range, Sod Camp sits opposite a mountain range, Sod Camp sits opposite a mountain range, Sod Camp sits opposite a mountain range, Sod Camp sits opposite a mountain range,'"
+     ]
+    }
+   ],
+   "passed": false,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F14_first_line"
+  },
+  "f14-ok": {
+   "first_failure": "F14_social_shape",
+   "flags": [],
+   "hold_failure": null,
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F14_social_shape",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "post is 47 words, under the 120–250-word band for this brand on LinkedIn — rewrite it to 150–220 words with more of the source's own detail, keeping the same angle and adding nothing the source does not state"
+     ]
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F14_first_line",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    }
+   ],
+   "passed": false,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F14_first_line"
+  },
+  "f16-1": {
+   "first_failure": "F4_extreme_length",
+   "flags": [],
+   "hold_failure": "F4_extreme_length",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "content is only 441 chars — effectively empty"
+     ]
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_seo_surface",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "no SEO title — the search headline is not optional",
+      "no meta description — the search snippet is not optional",
+      "no slug"
+     ]
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F16_faq",
+     "passed": false,
+     "repairable": false,
+     "violations": [
+      "the blog ends with 0 FAQ pair(s) after unanswerable and restated ones were dropped; it needs at least 3"
+     ]
+    }
+   ],
+   "passed": false,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F16_faq"
+  },
+  "f16-2": {
+   "first_failure": "F4_extreme_length",
+   "flags": [],
+   "hold_failure": "F4_extreme_length",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "content is only 525 chars — effectively empty"
+     ]
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_seo_surface",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "no SEO title — the search headline is not optional",
+      "no meta description — the search snippet is not optional",
+      "no slug"
+     ]
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F16_faq",
+     "passed": false,
+     "repairable": false,
+     "violations": [
+      "the blog ends with 1 FAQ pair(s) after unanswerable and restated ones were dropped; it needs at least 3"
+     ]
+    }
+   ],
+   "passed": false,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F16_faq"
+  },
+  "f16-3": {
+   "first_failure": "F4_extreme_length",
+   "flags": [],
+   "hold_failure": "F4_extreme_length",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "content is only 600 chars — effectively empty"
+     ]
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_seo_surface",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "no SEO title — the search headline is not optional",
+      "no meta description — the search snippet is not optional",
+      "no slug"
+     ]
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F16_faq",
+     "passed": false,
+     "repairable": false,
+     "violations": [
+      "the blog ends with 2 FAQ pair(s) after unanswerable and restated ones were dropped; it needs at least 3"
+     ]
+    }
+   ],
+   "passed": false,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F16_faq"
+  },
+  "f16-ok": {
+   "first_failure": "F4_extreme_length",
+   "flags": [],
+   "hold_failure": "F4_extreme_length",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "content is only 680 chars — effectively empty"
+     ]
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_seo_surface",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "no SEO title — the search headline is not optional",
+      "no meta description — the search snippet is not optional",
+      "no slug"
+     ]
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F16_faq",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    }
+   ],
+   "passed": false,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F16_faq"
+  },
+  "f2-1": {
+   "first_failure": "F2_banned_patterns",
+   "flags": [],
+   "hold_failure": "F2_banned_patterns",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "banned pattern /\\bunforgettable\\b/ -> 'unforgettable'"
+     ]
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    }
+   ],
+   "passed": false,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F2_banned_patterns"
+  },
+  "f2-2": {
+   "first_failure": "F2_banned_patterns",
+   "flags": [],
+   "hold_failure": "F2_banned_patterns",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "banned pattern /\\bhidden gem(s)?\\b/ -> 'hidden gem'"
+     ]
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    }
+   ],
+   "passed": false,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F2_banned_patterns"
+  },
+  "f2-3": {
+   "first_failure": "F2_banned_patterns",
+   "flags": [],
+   "hold_failure": "F2_banned_patterns",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "banned pattern /\\bembark on\\b/ -> 'Embark on'"
+     ]
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    }
+   ],
+   "passed": false,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F2_banned_patterns"
+  },
+  "f2-ok": {
+   "first_failure": null,
+   "flags": [],
+   "hold_failure": null,
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    }
+   ],
+   "passed": true,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F2_banned_patterns"
+  },
+  "f2b-1": {
+   "first_failure": "F2_brand_forbidden",
+   "flags": [],
+   "hold_failure": "F2_brand_forbidden",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "uses 'luxury', which the brand forbids: 'A luxury night at Sod Camp.'"
+     ]
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    }
+   ],
+   "passed": false,
+   "repair_plan": [
+    {
+     "end": 27,
+     "gate": "F2_brand_forbidden",
+     "gates": [
+      "F2_brand_forbidden"
+     ],
+     "problem": "uses 'luxury', which the brand forbids",
+     "sentence": "A luxury night at Sod Camp.",
+     "start": 0
+    }
+   ],
+   "style_only_repair": false,
+   "target_gate": "F2_brand_forbidden"
+  },
+  "f2b-2": {
+   "first_failure": "F2_brand_forbidden",
+   "flags": [],
+   "hold_failure": "F2_brand_forbidden",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "uses 'Cheap', which the brand forbids: 'Cheap flights are not part of this.'"
+     ]
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "uses 'cheap', a price or booking promise the platform cannot back: 'Cheap flights are not part of this.'"
+     ]
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    }
+   ],
+   "passed": false,
+   "repair_plan": [
+    {
+     "end": 35,
+     "gate": "F2_brand_forbidden",
+     "gates": [
+      "F2_brand_forbidden",
+      "F2_platform_truth"
+     ],
+     "problem": "uses 'Cheap', which the brand forbids; ALSO: uses 'cheap', a price or booking promise the platform cannot back",
+     "sentence": "Cheap flights are not part of this.",
+     "start": 0
+    }
+   ],
+   "style_only_repair": false,
+   "target_gate": "F2_brand_forbidden"
+  },
+  "f2b-3": {
+   "first_failure": "F2_brand_forbidden",
+   "flags": [],
+   "hold_failure": "F2_brand_forbidden",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "uses 'once in a lifetime', which the brand forbids: 'A once in a lifetime night at Sod Camp.'"
+     ]
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    }
+   ],
+   "passed": false,
+   "repair_plan": [
+    {
+     "end": 39,
+     "gate": "F2_brand_forbidden",
+     "gates": [
+      "F2_brand_forbidden"
+     ],
+     "problem": "uses 'once in a lifetime', which the brand forbids",
+     "sentence": "A once in a lifetime night at Sod Camp.",
+     "start": 0
+    }
+   ],
+   "style_only_repair": false,
+   "target_gate": "F2_brand_forbidden"
+  },
+  "f2b-ok": {
+   "first_failure": null,
+   "flags": [],
+   "hold_failure": null,
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    }
+   ],
+   "passed": true,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F2_brand_forbidden"
+  },
+  "f4-1": {
+   "first_failure": "F4_extreme_length",
+   "flags": [],
+   "hold_failure": "F4_extreme_length",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "content is only 9 chars — effectively empty"
+     ]
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    }
+   ],
+   "passed": false,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F4_extreme_length"
+  },
+  "f4-2": {
+   "first_failure": "F4_extreme_length",
+   "flags": [],
+   "hold_failure": "F4_extreme_length",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "content is 6720 chars — far beyond any real channel example"
+     ]
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    }
+   ],
+   "passed": false,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F4_extreme_length"
+  },
+  "f4-3": {
+   "first_failure": "F4_extreme_length",
+   "flags": [],
+   "hold_failure": "F4_extreme_length",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "content is only 680 chars — effectively empty"
+     ]
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_seo_surface",
+     "passed": false,
+     "repairable": true,
+     "violations": [
+      "no SEO title — the search headline is not optional",
+      "no meta description — the search snippet is not optional",
+      "no slug"
+     ]
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F16_faq",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    }
+   ],
+   "passed": false,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F4_extreme_length"
+  },
+  "f4-ok": {
+   "first_failure": null,
+   "flags": [],
+   "hold_failure": null,
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    }
+   ],
+   "passed": true,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F4_extreme_length"
+  },
+  "f6-1": {
+   "first_failure": "F6_cta_present",
+   "flags": [],
+   "hold_failure": "F6_cta_present",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": false,
+     "repairable": false,
+     "violations": [
+      "no CTA available for this request"
+     ]
+    }
+   ],
+   "passed": false,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F6_cta_present"
+  },
+  "f6-2": {
+   "first_failure": "F6_cta_present",
+   "flags": [],
+   "hold_failure": "F6_cta_present",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": false,
+     "repairable": false,
+     "violations": [
+      "no CTA available for this request"
+     ]
+    }
+   ],
+   "passed": false,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F6_cta_present"
+  },
+  "f6-3": {
+   "first_failure": "F6_cta_present",
+   "flags": [],
+   "hold_failure": "F6_cta_present",
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": false,
+     "repairable": false,
+     "violations": [
+      "no CTA available for this request"
+     ]
+    }
+   ],
+   "passed": false,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F6_cta_present"
+  },
+  "f6-ok": {
+   "first_failure": null,
+   "flags": [],
+   "hold_failure": null,
+   "ledger": [
+    {
+     "blocking": true,
+     "gate": "F6_cta_present",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F1_grounding",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_banned_patterns",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_brand_forbidden",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F2_platform_truth",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_superlatives",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F2_style_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F11_brand_name",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F19_authenticity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F10_cannibalization_cross_tenant",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F4_extreme_length",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F0_complete",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F12_scope",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F13_hygiene",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_leak",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F13_repeat",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F17_trip_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F18_rarity",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F14_social_shape",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F15_voice_warn",
+     "passed": true,
+     "repairable": false,
+     "violations": []
+    },
+    {
+     "blocking": true,
+     "gate": "F9_cta_fact",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    },
+    {
+     "blocking": false,
+     "gate": "F9_brand_style",
+     "passed": true,
+     "repairable": true,
+     "violations": []
+    }
+   ],
+   "passed": true,
+   "repair_plan": null,
+   "style_only_repair": false,
+   "target_gate": "F6_cta_present"
+  }
+ },
+ "channel_gate_order": {
+  "ads": [
+   "F6_cta_present",
+   "F1_grounding",
+   "F2_banned_patterns",
+   "F2_brand_forbidden",
+   "F2_platform_truth",
+   "F2_superlatives",
+   "F2_style_warn",
+   "F11_brand_name",
+   "F19_authenticity",
+   "F10_cannibalization_cross_tenant",
+   "F4_extreme_length",
+   "F0_complete",
+   "F12_scope",
+   "F13_hygiene",
+   "F13_leak",
+   "F13_repeat",
+   "F17_trip_fact",
+   "F18_rarity",
+   "F14_social_shape",
+   "F15_voice",
+   "F15_voice_warn",
+   "F9_cta_fact",
+   "F9_brand_style"
+  ],
+  "blog": [
+   "F6_cta_present",
+   "F1_grounding",
+   "F2_banned_patterns",
+   "F2_brand_forbidden",
+   "F2_platform_truth",
+   "F2_superlatives",
+   "F2_style_warn",
+   "F11_brand_name",
+   "F19_authenticity",
+   "F10_cannibalization_cross_tenant",
+   "F4_extreme_length",
+   "F0_complete",
+   "F12_scope",
+   "F13_hygiene",
+   "F13_leak",
+   "F13_repeat",
+   "F17_trip_fact",
+   "F18_rarity",
+   "F14_social_shape",
+   "F15_voice",
+   "F15_voice_warn",
+   "F4_seo_surface",
+   "F9_cta_fact",
+   "F9_brand_style",
+   "F16_faq"
+  ],
+  "email": [
+   "F6_cta_present",
+   "F1_grounding",
+   "F2_banned_patterns",
+   "F2_brand_forbidden",
+   "F2_platform_truth",
+   "F2_superlatives",
+   "F2_style_warn",
+   "F11_brand_name",
+   "F19_authenticity",
+   "F10_cannibalization_cross_tenant",
+   "F4_extreme_length",
+   "F0_complete",
+   "F12_scope",
+   "F13_hygiene",
+   "F13_leak",
+   "F13_repeat",
+   "F17_trip_fact",
+   "F18_rarity",
+   "F14_social_shape",
+   "F15_voice",
+   "F15_voice_warn",
+   "F9_cta_fact",
+   "F9_brand_style"
+  ],
+  "facebook": [
+   "F6_cta_present",
+   "F1_grounding",
+   "F2_banned_patterns",
+   "F2_brand_forbidden",
+   "F2_platform_truth",
+   "F2_superlatives",
+   "F2_style_warn",
+   "F11_brand_name",
+   "F19_authenticity",
+   "F10_cannibalization_cross_tenant",
+   "F4_extreme_length",
+   "F0_complete",
+   "F12_scope",
+   "F13_hygiene",
+   "F13_leak",
+   "F13_repeat",
+   "F17_trip_fact",
+   "F18_rarity",
+   "F14_social_shape",
+   "F15_voice",
+   "F15_voice_warn",
+   "F9_cta_fact",
+   "F9_brand_style"
+  ],
+  "instagram": [
+   "F6_cta_present",
+   "F1_grounding",
+   "F2_banned_patterns",
+   "F2_brand_forbidden",
+   "F2_platform_truth",
+   "F2_superlatives",
+   "F2_style_warn",
+   "F11_brand_name",
+   "F19_authenticity",
+   "F10_cannibalization_cross_tenant",
+   "F4_extreme_length",
+   "F0_complete",
+   "F12_scope",
+   "F13_hygiene",
+   "F13_leak",
+   "F13_repeat",
+   "F17_trip_fact",
+   "F18_rarity",
+   "F14_social_shape",
+   "F15_voice",
+   "F15_voice_warn",
+   "F9_cta_fact",
+   "F9_brand_style"
+  ],
+  "landing_page": [
+   "F6_cta_present",
+   "F1_grounding",
+   "F2_banned_patterns",
+   "F2_brand_forbidden",
+   "F2_platform_truth",
+   "F2_superlatives",
+   "F2_style_warn",
+   "F11_brand_name",
+   "F19_authenticity",
+   "F10_cannibalization_cross_tenant",
+   "F4_extreme_length",
+   "F0_complete",
+   "F12_scope",
+   "F13_hygiene",
+   "F13_leak",
+   "F13_repeat",
+   "F17_trip_fact",
+   "F18_rarity",
+   "F14_social_shape",
+   "F15_voice",
+   "F15_voice_warn",
+   "F9_cta_fact",
+   "F9_brand_style"
+  ],
+  "linkedin": [
+   "F6_cta_present",
+   "F1_grounding",
+   "F2_banned_patterns",
+   "F2_brand_forbidden",
+   "F2_platform_truth",
+   "F2_superlatives",
+   "F2_style_warn",
+   "F11_brand_name",
+   "F19_authenticity",
+   "F10_cannibalization_cross_tenant",
+   "F4_extreme_length",
+   "F0_complete",
+   "F12_scope",
+   "F13_hygiene",
+   "F13_leak",
+   "F13_repeat",
+   "F17_trip_fact",
+   "F18_rarity",
+   "F14_social_shape",
+   "F15_voice",
+   "F15_voice_warn",
+   "F9_cta_fact",
+   "F9_brand_style",
+   "F14_first_line"
+  ],
+  "tiktok": [
+   "F6_cta_present",
+   "F1_grounding",
+   "F2_banned_patterns",
+   "F2_brand_forbidden",
+   "F2_platform_truth",
+   "F2_superlatives",
+   "F2_style_warn",
+   "F11_brand_name",
+   "F19_authenticity",
+   "F10_cannibalization_cross_tenant",
+   "F4_extreme_length",
+   "F0_complete",
+   "F12_scope",
+   "F13_hygiene",
+   "F13_leak",
+   "F13_repeat",
+   "F17_trip_fact",
+   "F18_rarity",
+   "F14_social_shape",
+   "F15_voice",
+   "F15_voice_warn",
+   "F9_cta_fact",
+   "F9_brand_style"
+  ]
+ },
+ "note": "AA-926-era T10 outcomes of the AA-791 fault set (frozen from tests/unit/fixtures/aa926_gate_snapshot.json at the AA-924 PR1a commit): the legacy ledgers test_aa924_equivalence compares the merged ledgers against.",
+ "repair_feedback": {
+  "f0-1|blog": [
+   "F0_complete: the text stops mid-sentence: '...From the ridge the view is unobstructed t'"
+  ],
+  "f0-1|facebook": [
+   "F0_complete: the text stops mid-sentence: '...From the ridge the view is unobstructed t'"
+  ],
+  "f0-2|blog": [
+   "F0_complete: the text stops mid-sentence: '...After dinner the guides light the stove,'"
+  ],
+  "f0-2|facebook": [
+   "F0_complete: the text stops mid-sentence: '...After dinner the guides light the stove,'"
+  ],
+  "f0-3|blog": [
+   "F0_complete: the text ends with a stray backslash — it was cut off"
+  ],
+  "f0-3|facebook": [
+   "F0_complete: the text ends with a stray backslash — it was cut off"
+  ],
+  "f0-ok|blog": [],
+  "f0-ok|facebook": [],
+  "f10-1|blog": [
+   "F10_cannibalization_cross_tenant: content is 0.93 cosine-similar to a piece already published by a different tenant (piece_id=00000000-0000-0000-0000-000000000791) — above the confirmed 0.92 cannibalization threshold. Two tenants publishing near-identical copy risks readers noticing duplicate marketing content. This tenant has no active brand rules configured — generic, unbranded copy is more likely to converge with other tenants' content; setting up brand rules may reduce this going forward."
+  ],
+  "f10-1|facebook": [
+   "F10_cannibalization_cross_tenant: content is 0.93 cosine-similar to a piece already published by a different tenant (piece_id=00000000-0000-0000-0000-000000000791) — above the confirmed 0.92 cannibalization threshold. Two tenants publishing near-identical copy risks readers noticing duplicate marketing content. This tenant has no active brand rules configured — generic, unbranded copy is more likely to converge with other tenants' content; setting up brand rules may reduce this going forward."
+  ],
+  "f10-2|blog": [
+   "F10_cannibalization_cross_tenant: content is 0.97 cosine-similar to a piece already published by a different tenant (piece_id=00000000-0000-0000-0000-000000000792) — above the confirmed 0.92 cannibalization threshold. Two tenants publishing near-identical copy risks readers noticing duplicate marketing content."
+  ],
+  "f10-2|facebook": [
+   "F10_cannibalization_cross_tenant: content is 0.97 cosine-similar to a piece already published by a different tenant (piece_id=00000000-0000-0000-0000-000000000792) — above the confirmed 0.92 cannibalization threshold. Two tenants publishing near-identical copy risks readers noticing duplicate marketing content."
+  ],
+  "f10-3|blog": [
+   "F10_cannibalization_cross_tenant: content is 0.99 cosine-similar to a piece already published by a different tenant (piece_id=00000000-0000-0000-0000-000000000793) — above the confirmed 0.92 cannibalization threshold. Two tenants publishing near-identical copy risks readers noticing duplicate marketing content."
+  ],
+  "f10-3|facebook": [
+   "F10_cannibalization_cross_tenant: content is 0.99 cosine-similar to a piece already published by a different tenant (piece_id=00000000-0000-0000-0000-000000000793) — above the confirmed 0.92 cannibalization threshold. Two tenants publishing near-identical copy risks readers noticing duplicate marketing content."
+  ],
+  "f10-ok|blog": [],
+  "f10-ok|facebook": [],
+  "f11-1|blog": [
+   "F11_brand_name: names a brand that is not Terra Family Expeditions ('Arcadia Adventures'): 'At Arcadia Adventures, we plan every day around the lake.'"
+  ],
+  "f11-1|facebook": [
+   "F11_brand_name: names a brand that is not Terra Family Expeditions ('Arcadia Adventures'): 'At Arcadia Adventures, we plan every day around the lake.'"
+  ],
+  "f11-2|blog": [
+   "F11_brand_name: names a brand that is not Terra Family Expeditions ('Wild Atlas'): 'Here at Wild Atlas, our guides know the camp.'"
+  ],
+  "f11-2|facebook": [
+   "F11_brand_name: names a brand that is not Terra Family Expeditions ('Wild Atlas'): 'Here at Wild Atlas, our guides know the camp.'"
+  ],
+  "f11-3|blog": [
+   "F11_brand_name: names a brand that is not Terra Family Expeditions ('Adventure Asia'): 'Adventure Asia plans this trip around the lake.'"
+  ],
+  "f11-3|facebook": [
+   "F11_brand_name: names a brand that is not Terra Family Expeditions ('Adventure Asia'): 'Adventure Asia plans this trip around the lake.'"
+  ],
+  "f11-ok|blog": [],
+  "f11-ok|facebook": [],
+  "f13l-1|blog": [
+   "F13_leak: leaks the writer's instructions ('This guide covers'): 'This guide covers the Khövsgöl region in depth, from the caldera to the camp.'"
+  ],
+  "f13l-1|facebook": [
+   "F13_leak: leaks the writer's instructions ('This guide covers'): 'This guide covers the Khövsgöl region in depth, from the caldera to the camp.'"
+  ],
+  "f13l-2|blog": [
+   "F13_leak: leaks the source-notes wording ('content seed'): 'The content seed describes many things in great detail here.'"
+  ],
+  "f13l-2|facebook": [
+   "F13_leak: leaks the source-notes wording ('content seed'): 'The content seed describes many things in great detail here.'"
+  ],
+  "f13l-3|blog": [
+   "F13_leak: leaks the writer's instructions ('days three to fourteen'): 'The pacing across days three to fourteen is designed well.'"
+  ],
+  "f13l-3|facebook": [
+   "F13_leak: leaks the writer's instructions ('days three to fourteen'): 'The pacing across days three to fourteen is designed well.'"
+  ],
+  "f13l-ok|blog": [],
+  "f13l-ok|facebook": [],
+  "f14-1|blog": [
+   "F14_social_shape: post is 70 words, under the 120–250-word band for this brand on LinkedIn — rewrite it to 150–220 words with more of the source's own detail, keeping the same angle and adding nothing the source does not state",
+   "F14_first_line: first line is 151 characters, over 140: 'Sod Camp sits opposite a mountain range and the first night in a ger near Lake Khövsgöl is quieter than most families expect from a camp this far north'"
+  ],
+  "f14-1|facebook": [
+   "F14_social_shape: post is 70 words, under the 120–250-word band for this brand on LinkedIn — rewrite it to 150–220 words with more of the source's own detail, keeping the same angle and adding nothing the source does not state",
+   "F14_first_line: first line is 151 characters, over 140: 'Sod Camp sits opposite a mountain range and the first night in a ger near Lake Khövsgöl is quieter than most families expect from a camp this far north'"
+  ],
+  "f14-2|blog": [
+   "F14_social_shape: post is 76 words, under the 120–250-word band for this brand on LinkedIn — rewrite it to 150–220 words with more of the source's own detail, keeping the same angle and adding nothing the source does not state",
+   "F14_first_line: first line is 199 characters, over 140: 'The afternoon arrival at Sod Camp leaves time to settle into the ger, walk to the shore, and watch the light change on the mountain range opposite the camp while the guides start the stove for dinner'"
+  ],
+  "f14-2|facebook": [
+   "F14_social_shape: post is 76 words, under the 120–250-word band for this brand on LinkedIn — rewrite it to 150–220 words with more of the source's own detail, keeping the same angle and adding nothing the source does not state",
+   "F14_first_line: first line is 199 characters, over 140: 'The afternoon arrival at Sod Camp leaves time to settle into the ger, walk to the shore, and watch the light change on the mountain range opposite the camp while the guides start the stove for dinner'"
+  ],
+  "f14-3|blog": [
+   "F14_social_shape: post is 74 words, under the 120–250-word band for this brand on LinkedIn — rewrite it to 150–220 words with more of the source's own detail, keeping the same angle and adding nothing the source does not state",
+   "F14_first_line: first line is 204 characters, over 140: 'Sod Camp sits opposite a mountain range, Sod Camp sits opposite a mountain range, Sod Camp sits opposite a mountain range, Sod Camp sits opposite a mountain range, Sod Camp sits opposite a mountain range,'"
+  ],
+  "f14-3|facebook": [
+   "F14_social_shape: post is 74 words, under the 120–250-word band for this brand on LinkedIn — rewrite it to 150–220 words with more of the source's own detail, keeping the same angle and adding nothing the source does not state",
+   "F14_first_line: first line is 204 characters, over 140: 'Sod Camp sits opposite a mountain range, Sod Camp sits opposite a mountain range, Sod Camp sits opposite a mountain range, Sod Camp sits opposite a mountain range, Sod Camp sits opposite a mountain range,'"
+  ],
+  "f14-ok|blog": [
+   "F14_social_shape: post is 47 words, under the 120–250-word band for this brand on LinkedIn — rewrite it to 150–220 words with more of the source's own detail, keeping the same angle and adding nothing the source does not state"
+  ],
+  "f14-ok|facebook": [
+   "F14_social_shape: post is 47 words, under the 120–250-word band for this brand on LinkedIn — rewrite it to 150–220 words with more of the source's own detail, keeping the same angle and adding nothing the source does not state"
+  ],
+  "f16-1|blog": [
+   "F4_extreme_length: content is only 441 chars — effectively empty",
+   "F4_seo_surface: no SEO title — the search headline is not optional",
+   "F4_seo_surface: no meta description — the search snippet is not optional",
+   "F4_seo_surface: no slug",
+   "F16_faq: the blog ends with 0 FAQ pair(s) after unanswerable and restated ones were dropped; it needs at least 3"
+  ],
+  "f16-1|facebook": [
+   "F4_extreme_length: content is only 441 chars — effectively empty",
+   "F4_seo_surface: no SEO title — the search headline is not optional",
+   "F4_seo_surface: no meta description — the search snippet is not optional",
+   "F4_seo_surface: no slug",
+   "F16_faq: the blog ends with 0 FAQ pair(s) after unanswerable and restated ones were dropped; it needs at least 3"
+  ],
+  "f16-2|blog": [
+   "F4_extreme_length: content is only 525 chars — effectively empty",
+   "F4_seo_surface: no SEO title — the search headline is not optional",
+   "F4_seo_surface: no meta description — the search snippet is not optional",
+   "F4_seo_surface: no slug",
+   "F16_faq: the blog ends with 1 FAQ pair(s) after unanswerable and restated ones were dropped; it needs at least 3"
+  ],
+  "f16-2|facebook": [
+   "F4_extreme_length: content is only 525 chars — effectively empty",
+   "F4_seo_surface: no SEO title — the search headline is not optional",
+   "F4_seo_surface: no meta description — the search snippet is not optional",
+   "F4_seo_surface: no slug",
+   "F16_faq: the blog ends with 1 FAQ pair(s) after unanswerable and restated ones were dropped; it needs at least 3"
+  ],
+  "f16-3|blog": [
+   "F4_extreme_length: content is only 600 chars — effectively empty",
+   "F4_seo_surface: no SEO title — the search headline is not optional",
+   "F4_seo_surface: no meta description — the search snippet is not optional",
+   "F4_seo_surface: no slug",
+   "F16_faq: the blog ends with 2 FAQ pair(s) after unanswerable and restated ones were dropped; it needs at least 3"
+  ],
+  "f16-3|facebook": [
+   "F4_extreme_length: content is only 600 chars — effectively empty",
+   "F4_seo_surface: no SEO title — the search headline is not optional",
+   "F4_seo_surface: no meta description — the search snippet is not optional",
+   "F4_seo_surface: no slug",
+   "F16_faq: the blog ends with 2 FAQ pair(s) after unanswerable and restated ones were dropped; it needs at least 3"
+  ],
+  "f16-ok|blog": [
+   "F4_extreme_length: content is only 680 chars — effectively empty",
+   "F4_seo_surface: no SEO title — the search headline is not optional",
+   "F4_seo_surface: no meta description — the search snippet is not optional",
+   "F4_seo_surface: no slug"
+  ],
+  "f16-ok|facebook": [
+   "F4_extreme_length: content is only 680 chars — effectively empty",
+   "F4_seo_surface: no SEO title — the search headline is not optional",
+   "F4_seo_surface: no meta description — the search snippet is not optional",
+   "F4_seo_surface: no slug"
+  ],
+  "f2-1|blog": [
+   "F2_banned_patterns: banned pattern /\\bunforgettable\\b/ -> 'unforgettable'"
+  ],
+  "f2-1|facebook": [
+   "F2_banned_patterns: banned pattern /\\bunforgettable\\b/ -> 'unforgettable'"
+  ],
+  "f2-2|blog": [
+   "F2_banned_patterns: banned pattern /\\bhidden gem(s)?\\b/ -> 'hidden gem'"
+  ],
+  "f2-2|facebook": [
+   "F2_banned_patterns: banned pattern /\\bhidden gem(s)?\\b/ -> 'hidden gem'"
+  ],
+  "f2-3|blog": [
+   "F2_banned_patterns: banned pattern /\\bembark on\\b/ -> 'Embark on'"
+  ],
+  "f2-3|facebook": [
+   "F2_banned_patterns: banned pattern /\\bembark on\\b/ -> 'Embark on'"
+  ],
+  "f2-ok|blog": [],
+  "f2-ok|facebook": [],
+  "f2b-1|blog": [
+   "F2_brand_forbidden: uses 'luxury', which the brand forbids: 'A luxury night at Sod Camp.'"
+  ],
+  "f2b-1|facebook": [
+   "F2_brand_forbidden: uses 'luxury', which the brand forbids: 'A luxury night at Sod Camp.'"
+  ],
+  "f2b-2|blog": [
+   "F2_brand_forbidden: uses 'Cheap', which the brand forbids: 'Cheap flights are not part of this.'",
+   "F2_platform_truth: uses 'cheap', a price or booking promise the platform cannot back: 'Cheap flights are not part of this.'"
+  ],
+  "f2b-2|facebook": [
+   "F2_brand_forbidden: uses 'Cheap', which the brand forbids: 'Cheap flights are not part of this.'",
+   "F2_platform_truth: uses 'cheap', a price or booking promise the platform cannot back: 'Cheap flights are not part of this.'"
+  ],
+  "f2b-3|blog": [
+   "F2_brand_forbidden: uses 'once in a lifetime', which the brand forbids: 'A once in a lifetime night at Sod Camp.'"
+  ],
+  "f2b-3|facebook": [
+   "F2_brand_forbidden: uses 'once in a lifetime', which the brand forbids: 'A once in a lifetime night at Sod Camp.'"
+  ],
+  "f2b-ok|blog": [],
+  "f2b-ok|facebook": [],
+  "f4-1|blog": [
+   "F4_extreme_length: content is only 9 chars — effectively empty"
+  ],
+  "f4-1|facebook": [
+   "F4_extreme_length: content is only 9 chars — effectively empty"
+  ],
+  "f4-2|blog": [
+   "F4_extreme_length: content is 6720 chars — far beyond any real channel example — cut the piece to under 12,000 characters: shorten the longest sections; keep every heading, the CTA and the FAQ"
+  ],
+  "f4-2|facebook": [
+   "F4_extreme_length: content is 6720 chars — far beyond any real channel example"
+  ],
+  "f4-3|blog": [
+   "F4_extreme_length: content is only 680 chars — effectively empty",
+   "F4_seo_surface: no SEO title — the search headline is not optional",
+   "F4_seo_surface: no meta description — the search snippet is not optional",
+   "F4_seo_surface: no slug"
+  ],
+  "f4-3|facebook": [
+   "F4_extreme_length: content is only 680 chars — effectively empty",
+   "F4_seo_surface: no SEO title — the search headline is not optional",
+   "F4_seo_surface: no meta description — the search snippet is not optional",
+   "F4_seo_surface: no slug"
+  ],
+  "f4-ok|blog": [],
+  "f4-ok|facebook": [],
+  "f6-1|blog": [
+   "F6_cta_present: no CTA available for this request"
+  ],
+  "f6-1|facebook": [
+   "F6_cta_present: no CTA available for this request"
+  ],
+  "f6-2|blog": [
+   "F6_cta_present: no CTA available for this request"
+  ],
+  "f6-2|facebook": [
+   "F6_cta_present: no CTA available for this request"
+  ],
+  "f6-3|blog": [
+   "F6_cta_present: no CTA available for this request"
+  ],
+  "f6-3|facebook": [
+   "F6_cta_present: no CTA available for this request"
+  ],
+  "f6-ok|blog": [],
+  "f6-ok|facebook": []
+ }
+}

@@ -842,8 +842,8 @@ def check_replacement(replacement: str, grounding: str, brand_pack: Optional[dic
     """The deterministic checks on a replacement sentence before it is saved (lesson AA-641: a
     repair needs a guard after it). Returns [{gate, violations, blocking}] — empty means clean.
 
-    Blocking (plan section 4, PR4 — the admin cannot save it): F1 (no number the source lacks), F2
-    banned patterns, the brand's forbidden words, F11 (no foreign brand / platform name), F19 (no
+    Blocking (plan section 4, PR4 — the admin cannot save it): F1 (no number the source lacks), F2_lexicon (F2
+    banned patterns and the brand's forbidden words, AA-924), F11 (no foreign brand / platform name), F19 (no
     review, testimonial, customer first person or independence claim — AA-819), and a
     near-verbatim copy of one of its ±4 neighbours (hygiene.near_verbatim — the rule the pipeline
     auto-deletes on; `splice` would otherwise have turned it into a silent cut).
@@ -861,9 +861,10 @@ def check_replacement(replacement: str, grounding: str, brand_pack: Optional[dic
     pack = brand_pack or {}
     results = [
         qg.gate_grounding(sentence, grounding),
-        qg.gate_banned_patterns(sentence, grounding),
-        qg.gate_brand_forbidden_words(sentence, grounding, pack.get("forbidden_words")),
-        qg.gate_platform_truth(sentence, grounding),  # AA-800
+        # AA-924 — banned patterns + the brand's forbidden words, one F2_lexicon result (no stock list: a
+        # sentence the admin wrote is not held to the writer's style list)
+        qg.gate_lexicon(sentence, grounding, pack, include_stock=False),
+        qg.gate_platform_truth(sentence, grounding, pack.get("forbidden_words")),  # AA-800
         qg.gate_brand_name(sentence, grounding, pack.get("brand_name")),
         # AA-819 — an admin suggestion (t9_repair) or edit never puts a review / customer voice in
         qg.gate_authenticity(sentence, (writer_input or {}).get("cta")),

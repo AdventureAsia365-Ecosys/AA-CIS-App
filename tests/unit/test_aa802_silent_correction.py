@@ -237,7 +237,7 @@ async def test_apply_refuses_a_version_the_tenant_owns_or_superseded(row):
 @pytest.mark.parametrize("replacement,gate", [
     ("The trek climbs 900 steps to the monastery.", "F1_grounding"),
     ("The trek climbs to a stunning monastery.", "FORBIDDEN_WORD"),
-    ("The trek climbs to a cosy monastery.", "F2_brand_forbidden"),
+    ("The trek climbs to a cosy monastery.", "F2_lexicon"),  # AA-924 (the brand's forbidden word)
     ("Adventure Asia leads the trek to the monastery.", "F11_brand_name"),
 ])
 async def test_apply_rewrite_blocked_by_checks(replacement, gate):

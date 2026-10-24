@@ -106,8 +106,9 @@ def test_check_replacement_runs_the_deterministic_gates():
     assert sr.check_replacement("Groups of 7-16 walk up.", grounding, pack) == []  # source number
     gates = lambda s: [f["gate"] for f in sr.check_replacement(s, grounding, pack)]  # noqa: E731
     assert gates("The monastery has 900 steps.") == ["F1_grounding"]
-    assert gates("The rooms are cosy at dawn.") == ["F2_brand_forbidden"]
-    assert "F2_banned_patterns" in gates("The view is unforgettable at dawn.")
+    # AA-924 — banned patterns and the brand's forbidden words are one F2_lexicon result
+    assert gates("The rooms are cosy at dawn.") == ["F2_lexicon"]
+    assert "F2_lexicon" in gates("The view is unforgettable at dawn.")
     # AA-800: a price / booking promise is refused on an admin sentence too
     assert "F2_platform_truth" in gates("The rooms are cheap at dawn.")
     assert gates("Adventure Asia runs it every week.") == ["F11_brand_name"]
@@ -249,7 +250,7 @@ async def test_apply_rejects_status_processing_or_failed(status):
 @pytest.mark.parametrize("replacement,gate", [
     ("We build it with 900 guides.", "F1_grounding"),
     ("Adventure Asia builds it.", "F11_brand_name"),
-    ("We build it, and it is cosy.", "F2_brand_forbidden"),
+    ("We build it, and it is cosy.", "F2_lexicon"),  # AA-924 (the brand's forbidden word)
 ])
 async def test_apply_rewrite_blocked_by_deterministic_guard(replacement, gate):
     conn = _conn(_piece_row())
