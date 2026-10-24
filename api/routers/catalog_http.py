@@ -50,7 +50,6 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
 
 from api.core import m2m_auth
-from api.core.identity_verifier import AuthUnavailable, InvalidToken
 from api.schemas.public_api import (  # AA-899: doc only
     CatalogAaContent, CatalogAaContentPage, CatalogDestination, CatalogTour, CatalogTourPage,
 )
@@ -67,67 +66,18 @@ CACHE_CONTROL = "private, max-age=60"
 MAX_SOURCE_ID = 128
 
 
-class CatalogProblem(Exception):
-    """An error answered with the contract Problem body (registered in api/main.py)."""
-
-    def __init__(self, status: int, error: str, message: str, reason: Optional[str] = None,
-                 headers: Optional[dict[str, str]] = None) -> None:
-        super().__init__(status, error, message, reason, headers)
-        self.status, self.error, self.message, self.reason = status, error, message, reason
-        self.headers = headers or {}
-
-
-def problem_response(exc: CatalogProblem) -> JSONResponse:
-    body: dict[str, Any] = {"error": exc.error, "message": exc.message[:500]}
-    if exc.reason is not None:
-        body["reason"] = exc.reason
-    return JSONResponse(status_code=exc.status, content=body, headers=exc.headers)
-
-
-async def catalog_problem_handler(_request: Request, exc: CatalogProblem) -> JSONResponse:
-    return problem_response(exc)
-
+# AA-978: the Problem exception, its handler and the M2M dependency live in api/core/m2m_auth.py, shared with
+# tenant.membership.v1. The names below stay for the existing imports (api/main.py, tests).
+CatalogProblem = m2m_auth.M2MProblem
+problem_response = m2m_auth.problem_response
+catalog_problem_handler = m2m_auth.m2m_problem_handler
 
 # ── auth ──────────────────────────────────────────────────────────────────────
 
-_UNAUTHORIZED_HEADERS = {"WWW-Authenticate": 'Bearer realm="catalog.http.v1"'}
-
-
-def _bearer(request: Request) -> Optional[str]:
-    value = (request.headers.get("authorization") or "").strip()
-    if value[:7].lower() != "bearer ":
-        return None
-    token = value[7:].strip()
-    return token or None
-
-
-async def require_catalog_reader(request: Request) -> m2m_auth.M2MCaller:
-    """The verified CRM caller with scope cis.catalog/read, or a Problem (401 / 403 / 503)."""
-    token = _bearer(request)
-    if token is None:
-        raise CatalogProblem(401, "unauthorized", "An M2M bearer token is required.", headers=_UNAUTHORIZED_HEADERS)
-    try:
-        verifier = m2m_auth.get_m2m_verifier()
-    except ValueError as exc:
-        logger.error("catalog_http_m2m_config_invalid", error=str(exc))
-        raise CatalogProblem(503, "unavailable", "Token verification is not configured.") from exc
-    try:
-        caller = await m2m_auth.verify_caller(verifier, token)
-    except m2m_auth.CallerRefused as exc:
-        logger.info("catalog_http_refused", reason=str(exc))
-        raise CatalogProblem(403, "forbidden", "This client may not read the catalog.") from exc
-    except InvalidToken as exc:
-        logger.info("catalog_http_unauthorized", reason=str(exc))
-        raise CatalogProblem(401, "unauthorized", "The bearer token is not valid.",
-                             headers=_UNAUTHORIZED_HEADERS) from exc
-    except AuthUnavailable as exc:
-        logger.error("catalog_http_jwks_unavailable")
-        raise CatalogProblem(503, "unavailable", "Token verification is unavailable; retry later.",
-                             headers={"Retry-After": "5"}) from exc
-    if not caller.has(m2m_auth.SCOPE_CATALOG_READ):
-        logger.info("catalog_http_refused", reason="missing scope", client_id=caller.client_id)
-        raise CatalogProblem(403, "forbidden", f"The token lacks the scope {m2m_auth.SCOPE_CATALOG_READ}.")
-    return caller
+require_catalog_reader = m2m_auth.require_m2m(
+    m2m_auth.SCOPE_CATALOG_READ, realm="catalog.http.v1", refused="This client may not read the catalog.",
+    log_prefix="catalog_http")
+"""The verified CRM caller with scope cis.catalog/read, or a Problem (401 / 403 / 503)."""
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

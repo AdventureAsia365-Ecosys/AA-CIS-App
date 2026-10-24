@@ -200,6 +200,10 @@ POLICY: dict[tuple[str, str], str] = {
     ("GET", "/admin/tenants/{tenant_id}/cost"): TENANT_READ,
     ("GET", "/admin/tenants/{tenant_id}/quality"): TENANT_READ,
     ("GET", "/admin/tenants/{tenant_id}/markets"): TENANT_READ,
+    # AA-978 — Tenant 360 Members (CIS memberships; a removal also signs the person out of the partner CRM)
+    ("GET", "/admin/tenants/{tenant_id}/members"): TENANT_READ,
+    ("PATCH", "/admin/tenants/{tenant_id}/members/{membership_id}"): TENANT_WRITE,
+    ("POST", "/admin/tenants/{tenant_id}/members/{membership_id}/remove"): TENANT_WRITE,
 
     # ── admin_pipeline — Upload (S0), every staff role
     ("POST", "/admin/upload-url"): CONTENT_WRITE,

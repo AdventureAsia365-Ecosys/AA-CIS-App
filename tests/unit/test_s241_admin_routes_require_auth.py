@@ -41,7 +41,9 @@ from starlette.routing import Mount
 from api import main
 from api.core import staff_authz, staff_secret
 from api.main import app
-from api.routers import admin, admin_atoms, admin_pipeline, admin_settings, catalog_http, v1_pipeline, v1_tours
+from api.routers import (
+    admin, admin_atoms, admin_pipeline, admin_settings, catalog_http, tenant_membership, v1_pipeline, v1_tours,
+)
 
 # Dependencies that admit staff only (the X-Admin-Secret held by the staff BFF).
 STAFF_DEPENDENCIES = {
@@ -60,9 +62,10 @@ TENANT_OR_STAFF_DEPENDENCIES = {
     v1_tours.get_tenant,                       # tenant portal routes
 }
 # Dependencies that admit a service caller only: an M2M client-credentials token of the aa-m2m pool, one pinned
-# client and scope (AA-976, root ADR 0006b decision 7). Never accepted on a staff-only path.
+# client and scope (AA-976 / AA-978, root ADR 0006b decision 7). Never accepted on a staff-only path.
 M2M_DEPENDENCIES = {
     catalog_http.require_catalog_reader,       # /catalog/v1: CRM client + cis.catalog/read
+    tenant_membership.require_tenant_reader,   # /tenant/membership/v1: CRM client + cis.tenant/read (AA-978)
 }
 # Functions accepted as an inline staff check at the top of an endpoint body (identity, not name).
 STAFF_INLINE_CHECKS = {admin.verify_admin_secret, admin_settings.verify_admin}

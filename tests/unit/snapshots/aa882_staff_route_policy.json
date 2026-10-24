@@ -483,6 +483,10 @@
     "capability": "tenant.read",
     "module": "api.routers.admin_tenant360"
   },
+  "GET /admin/tenants/{tenant_id}/members": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_tenant360"
+  },
   "GET /admin/tenants/{tenant_id}/quality": {
     "capability": "tenant.read",
     "module": "api.routers.admin_tenant360"
@@ -650,6 +654,10 @@
   "PATCH /admin/tenants/{tenant_id}": {
     "capability": "tenant.write",
     "module": "api.routers.admin"
+  },
+  "PATCH /admin/tenants/{tenant_id}/members/{membership_id}": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_tenant360"
   },
   "PATCH /admin/tours/{tour_id}/country": {
     "capability": "content.write",
@@ -978,6 +986,10 @@
   "POST /admin/tenants/{tenant_id}/generate-key": {
     "capability": "tenant.write",
     "module": "api.routers.admin"
+  },
+  "POST /admin/tenants/{tenant_id}/members/{membership_id}/remove": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_tenant360"
   },
   "POST /admin/tenants/{tenant_id}/offboard": {
     "capability": "tenant.write",

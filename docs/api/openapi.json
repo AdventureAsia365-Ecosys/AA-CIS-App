@@ -2266,6 +2266,248 @@
         "title": "ManualShapeRequest",
         "type": "object"
       },
+      "MemberRoleChange": {
+        "additionalProperties": false,
+        "description": "PATCH body: the Content studio role only. A CRM role has no field here (CIS can never grant one).",
+        "properties": {
+          "content_studio_role": {
+            "enum": [
+              "owner",
+              "editor",
+              "viewer"
+            ],
+            "title": "Content Studio Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "content_studio_role"
+        ],
+        "title": "MemberRoleChange",
+        "type": "object"
+      },
+      "MembershipEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "title": "Cursor",
+            "type": "string"
+          },
+          "event_id": {
+            "title": "Event Id",
+            "type": "string"
+          },
+          "membership": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MembershipItem"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "occurred_at": {
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "tenant.created",
+              "tenant.locked",
+              "tenant.unlocked",
+              "tenant.deleted",
+              "membership.invited",
+              "membership.activated",
+              "membership.role_changed",
+              "membership.removed"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_id",
+          "cursor",
+          "type",
+          "occurred_at",
+          "tenant_id"
+        ],
+        "title": "MembershipEvent",
+        "type": "object"
+      },
+      "MembershipEventPage": {
+        "additionalProperties": false,
+        "description": "GET /tenant/membership/v1/events — oldest first; ``next_cursor`` is always set (store it and send it back).",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MembershipEvent"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "title": "Next Cursor",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "MembershipEventPage",
+        "type": "object"
+      },
+      "MembershipIdentity": {
+        "additionalProperties": false,
+        "properties": {
+          "iss": {
+            "title": "Iss",
+            "type": "string"
+          },
+          "sub": {
+            "title": "Sub",
+            "type": "string"
+          }
+        },
+        "required": [
+          "iss",
+          "sub"
+        ],
+        "title": "MembershipIdentity",
+        "type": "object"
+      },
+      "MembershipIdentityMemberships": {
+        "additionalProperties": false,
+        "description": "GET /tenant/membership/v1/memberships?iss=&sub= — the identity's memberships that are not removed.",
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/MembershipIdentity"
+          },
+          "memberships": {
+            "items": {
+              "$ref": "#/components/schemas/MembershipItem"
+            },
+            "title": "Memberships",
+            "type": "array"
+          }
+        },
+        "required": [
+          "identity",
+          "memberships"
+        ],
+        "title": "MembershipIdentityMemberships",
+        "type": "object"
+      },
+      "MembershipItem": {
+        "additionalProperties": false,
+        "description": "One CIS membership: the Content studio role, never a CRM role; no e-mail or name.",
+        "properties": {
+          "content_studio_role": {
+            "enum": [
+              "owner",
+              "editor",
+              "viewer"
+            ],
+            "title": "Content Studio Role",
+            "type": "string"
+          },
+          "identity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MembershipIdentity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "invitation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invitation Id"
+          },
+          "membership_id": {
+            "title": "Membership Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "invited",
+              "active",
+              "removed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "membership_id",
+          "tenant_id",
+          "content_studio_role",
+          "status",
+          "updated_at"
+        ],
+        "title": "MembershipItem",
+        "type": "object"
+      },
+      "MembershipTenantMembers": {
+        "additionalProperties": false,
+        "description": "GET /tenant/membership/v1/tenants/{tenant_id}/members — invited and active members (ETag, 304).",
+        "properties": {
+          "as_of": {
+            "title": "As Of",
+            "type": "string"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/MembershipItem"
+            },
+            "title": "Members",
+            "type": "array"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "tenant_state": {
+            "enum": [
+              "active",
+              "locked",
+              "deleted"
+            ],
+            "title": "Tenant State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant_id",
+          "tenant_state",
+          "members",
+          "as_of"
+        ],
+        "title": "MembershipTenantMembers",
+        "type": "object"
+      },
       "OffboardRequest": {
         "properties": {
           "reason": {
@@ -23694,6 +23936,273 @@
         ]
       }
     },
+    "/admin/tenants/{tenant_id}/members": {
+      "get": {
+        "operationId": "get_tenant_members_admin_tenants__tenant_id__members_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "AA-978 — the tenant's CIS memberships (Content studio roles)",
+        "tags": [
+          "admin-tenant360"
+        ]
+      }
+    },
+    "/admin/tenants/{tenant_id}/members/{membership_id}": {
+      "patch": {
+        "operationId": "patch_tenant_member_admin_tenants__tenant_id__members__membership_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "membership_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Membership Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "title": "X-Admin-User-Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemberRoleChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "AA-978 — change a member's Content studio role (owner / editor / viewer)",
+        "tags": [
+          "admin-tenant360"
+        ]
+      }
+    },
+    "/admin/tenants/{tenant_id}/members/{membership_id}/remove": {
+      "post": {
+        "operationId": "remove_tenant_member_admin_tenants__tenant_id__members__membership_id__remove_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "membership_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Membership Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "title": "X-Admin-User-Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "AA-978 — remove a member (final; the partner CRM signs them out within a minute)",
+        "tags": [
+          "admin-tenant360"
+        ]
+      }
+    },
     "/admin/tenants/{tenant_id}/offboard": {
       "post": {
         "description": "Tenant offboarding: cancel tenant, revoke API key, write the audit row. PRD v1.0 §3.2.\nSoft state only (AA-797, Nghiệp 14/10/2026): no tenant data or setting is deleted or\noverwritten (brand rules, planning config, T2 versions, content, markets, plan_id, users), so\nPOST /tenants/{id}/restore brings the tenant back whole. PATCH / generate-key on an\noffboarded tenant return 409. The tenant's QUEUED jobs are cancelled (running ones finish).\nThe Jev allow-list row is removed (AA-741) but snapshotted into the audit row so restore can\nput it back. Tenant data erasure is a separate step (AA-839: after offboarding plus a retention\nwindow, with explicit approval, per the data-erasure runbook), not automated here.",
@@ -27123,6 +27632,181 @@
           }
         },
         "summary": "Health Ready"
+      }
+    },
+    "/tenant/membership/v1/events": {
+      "get": {
+        "operationId": "list_membership_events_tenant_membership_v1_events_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembershipEventPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Membership Events",
+        "tags": [
+          "tenant-membership"
+        ]
+      }
+    },
+    "/tenant/membership/v1/memberships": {
+      "get": {
+        "operationId": "find_memberships_tenant_membership_v1_memberships_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "iss",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Iss"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sub",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sub"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembershipIdentityMemberships"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Find Memberships",
+        "tags": [
+          "tenant-membership"
+        ]
+      }
+    },
+    "/tenant/membership/v1/tenants/{tenant_id}/members": {
+      "get": {
+        "operationId": "get_tenant_members_tenant_membership_v1_tenants__tenant_id__members_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembershipTenantMembers"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "304": {
+            "description": "Not Modified"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Tenant Members",
+        "tags": [
+          "tenant-membership"
+        ]
       }
     },
     "/v1/angle-gate/goals": {

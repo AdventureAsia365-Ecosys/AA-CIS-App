@@ -70,6 +70,7 @@ from api.routers.v1_progress import router as v1_progress_router  # AA-637
 from api.routers.catalog_http import (  # AA-976 — catalog.http.v1 for the partner CRM (M2M)
     CatalogProblem, catalog_problem_handler, router as catalog_http_router,
 )
+from api.routers.tenant_membership import router as tenant_membership_router  # AA-978 — tenant.membership.v1
 from api.middleware.rate_limit import rate_limit_middleware
 from api.middleware.sentry_context import sentry_context_middleware
 from api.middleware.staff_bearer import StaffBearerMiddleware  # AA-816 C3
@@ -316,6 +317,7 @@ app.include_router(admin_tenant360_router)  # AA-766 — /admin/tenants/{id}/{co
 app.include_router(photos_public_router)  # AA-708 — /content/photos/{id} (public image redirect)
 app.include_router(v1_progress_router)  # AA-637 — GET /v1/progress/{kind}/{job_id}
 app.include_router(catalog_http_router)  # AA-976 — /catalog/v1 (catalog.http.v1, M2M cis.catalog/read)
+app.include_router(tenant_membership_router)  # AA-978 — /tenant/membership/v1 (M2M cis.tenant/read)
 
 app.middleware("http")(rate_limit_middleware)
 # AA-816 C3 — registered after the rate limiter so it wraps it (Starlette: last registered = outermost): a
@@ -334,7 +336,9 @@ app.middleware("http")(sentry_context_middleware)
 # answered outside all user middleware, so its handler adds the header itself.
 # AA-986 L3 — new tenant work on a tour AA no longer serves: 409 tour_discontinued / tour_paused, plain sentence.
 app.add_exception_handler(TourNotServedError, tour_not_served_handler)
-app.add_exception_handler(CatalogProblem, catalog_problem_handler)  # AA-976 — contract Problem body
+# AA-976 / AA-978 — contract Problem body; CatalogProblem is api.core.m2m_auth.M2MProblem, also raised by
+# /tenant/membership/v1.
+app.add_exception_handler(CatalogProblem, catalog_problem_handler)
 app.add_exception_handler(Exception, unhandled_error_handler)
 app.add_middleware(RequestIdMiddleware)
 
