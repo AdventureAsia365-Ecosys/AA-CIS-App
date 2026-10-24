@@ -1,7 +1,6 @@
 import asyncio
 import asyncpg
 import json
-import os
 import redis.asyncio as _aioredis
 import structlog
 from datetime import datetime, timedelta
@@ -15,6 +14,7 @@ from shared.dfs_client.call_log import record_dfs_call
 from shared.services.tenant_config_service import TenantConfigService
 from shared.repository.seo_context_repository import SeoContextRepository
 from shared.cache.redis_cache import RedisCache
+from shared.cache.redis_conn import redis_conn_args
 
 logger = structlog.get_logger()
 
@@ -26,8 +26,9 @@ logger = structlog.get_logger()
 # command and are managed/reconnected by the library for the life of the worker
 # process. No explicit shutdown hook: the socket closes with the process, and a
 # single long-lived client isn't a meaningful leak to guard against.
-_REDIS_HOST = os.environ.get("REDIS_HOST", "aa-cis-dev-redis.wvp8vb.0001.usw1.cache.amazonaws.com")
-_seo_redis_client = _aioredis.from_url(f"redis://{_REDIS_HOST}:6379", encoding="utf-8", decode_responses=True)
+# AA-874: URL + TLS / AUTH kwargs from env (shared/cache/redis_conn.py); localhost when REDIS_HOST is unset.
+_redis_url, _redis_kwargs = redis_conn_args()
+_seo_redis_client = _aioredis.from_url(_redis_url, encoding="utf-8", decode_responses=True, **_redis_kwargs)
 
 # AA-625: SEO cache TTL raised 24h -> 7 days. Search volume / SERP for travel keywords change on a
 # weekly/monthly cadence, not daily, so a 24h TTL forced a fresh (billable) DataForSEO fetch for the

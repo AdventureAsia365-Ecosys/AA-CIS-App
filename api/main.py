@@ -98,10 +98,11 @@ async def lifespan(app: FastAPI):
     global pool
     # S241: socket timeouts + one retry (api/core/redis_client.py), so a hung Redis fails fast and every
     # fail-open Redis caller (rate limit, tenant-pool flags) answers instead of waiting for the 30 s API GW.
+    # AA-874: URL + TLS / AUTH kwargs from REDIS_HOST / REDIS_TLS / REDIS_AUTH_TOKEN (shared/cache/redis_conn.py).
     from api.core.redis_client import build_api_redis
-    redis = build_api_redis(
-        f"redis://{os.environ.get('REDIS_HOST', 'aa-cis-dev-redis.wvp8vb.0001.usw1.cache.amazonaws.com')}:6379",
-    )
+    from shared.cache.redis_conn import redis_conn_args
+    redis_url, redis_kwargs = redis_conn_args()
+    redis = build_api_redis(redis_url, **redis_kwargs)
     app.state.redis = redis
     pool = await asyncpg.create_pool(
         os.environ["DATABASE_URL"], min_size=2, max_size=10,
