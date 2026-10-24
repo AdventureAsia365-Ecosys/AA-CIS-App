@@ -13,11 +13,8 @@ import { defineConfig, devices } from '@playwright/test';
 //   • "smoke-public" (AA-816 S2 path) — every smoke spec WITHOUT the @staff tag: no session, no setup. This is
 //     what a per-PR *.vercel.app preview runs (Cognito has no wildcard callbacks, and the legacy password login
 //     is going away). The staff job runs it too.
-// AA-885: two more, for the tenant portal app (portal/, its own host):
-//   • "smoke-portal-setup" — tests/e2e/smoke-portal/*.setup.ts: the tenant login (API key from
-//     E2E_TENANT_API_KEY) once, writing tests/e2e/.auth/tenant-state.json; skips without the key.
-//   • "smoke-portal" — tests/e2e/smoke-portal/*.spec.ts against a PORTAL BASE_URL
-//     (ui-smoke-portal.yml runs `--project=smoke-portal`).
+// AA-979: the tenant portal smoke (projects "smoke-portal-setup" / "smoke-portal", AA-885) moved to AA-Partner
+// (e2e/smoke-portal/, e2e/playwright.portal.config.ts) with the portal itself.
 // AA-816 (E1): one more, for the real Cognito email-code sign-in:
 //   • "cognito" — tests/e2e/cognito/*.spec.ts, always against the production admin host (the only
 //     registered callback). Out of every other project; the sign-in test itself skips unless E2ECOGNITO=1
@@ -40,7 +37,7 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      testIgnore: /(smoke(-portal)?|cognito)\//,
+      testIgnore: /(smoke|cognito)\//,
       use: { ...devices['Desktop Chrome'] },
     },
     {
@@ -61,17 +58,6 @@ export default defineConfig({
       name: 'smoke-public',
       testMatch: /smoke\/.*\.spec\.ts$/,
       grepInvert: /@staff/,
-      use: { ...devices['Desktop Chrome'] },
-    },
-    {
-      name: 'smoke-portal-setup',
-      testMatch: /smoke-portal\/.*\.setup\.ts$/,
-      use: { ...devices['Desktop Chrome'] },
-    },
-    {
-      name: 'smoke-portal',
-      testMatch: /smoke-portal\/.*\.spec\.ts$/,
-      dependencies: ['smoke-portal-setup'],
       use: { ...devices['Desktop Chrome'] },
     },
     {
