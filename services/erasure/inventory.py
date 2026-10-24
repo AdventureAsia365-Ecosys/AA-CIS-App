@@ -95,6 +95,9 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     _d("shared.jev_tenant_allowlist", "Jev allow-list (offboard already removed it)"),
     _d("shared.unmapped_market_requests", "market requests"),
     _d("shared.notifications", "tenant notifications (bell)"),
+    # AA-978 (276): the guards allow these deletes only for an offboarded tenant (or after the 90-day retention).
+    _d("shared.tenant_members", "the agency's memberships (identities, Content studio roles)"),
+    _d("shared.tenant_membership_event", "the agency's tenant.membership.v1 feed events"),
     _d("shared.pipeline_runs", "tenant pipeline batches (acp_runs and raw rows follow through FKs)"),
     _d("shared.acp_runs", "ACP run rows"),
     _d("shared.tenant_api_usage", "per-request API usage; a CHECK forbids a tenant-actor row without a tenant"),
