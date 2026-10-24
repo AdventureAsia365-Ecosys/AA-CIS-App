@@ -50,7 +50,7 @@ async def test_one_insert_with_hashes_and_the_returned_id():
     assert ref == wm.SignalRef(str(SID), sha("Old text."), sha("New text."))
     assert args[:4] == ["t9_blog", None, "tenant", TENANT] and json.loads(args[5]) == {"start": 1, "end": 4}
     assert args[6:10] == ["Old text.", "New text.", sha("Old text."), sha("New text.")]
-    assert args[15] == "pending" and args[17:] == ["content_piece", "p1"]
+    assert args[15] == "pending" and args[17:] == ["content_piece", "p1", None]
 
 
 def test_sha256_is_lower_hex_of_utf8():
@@ -114,18 +114,42 @@ def test_scope_and_writer_helpers():
 # ── the edit-history reader ──────────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
+async def test_problem_is_stored_on_the_signal_and_the_caps_refuse_in_code():
+    conn = _conn()
+    await wm.record_writer_feedback(conn, writer="t2", scope="tenant", tenant_id=TENANT, action="sentence_cut",
+                                    actor_type="admin", source_table="tenant_tour_version", source_id="v",
+                                    problem="number(s) ['4,200'] not in the source tour")
+    assert conn.fetchval.await_args.args[-1] == "number(s) ['4,200'] not in the source tour"
+    assert "problem)" in conn.fetchval.await_args.args[0] and "$20" in conn.fetchval.await_args.args[0]
+    for kw in ({"problem": "p" * (wm.MAX_PROBLEM + 1)}, {"actor_id": "a" * 129}):
+        with pytest.raises(ValueError, match="longer than"):
+            await wm.record_writer_feedback(conn, writer="a1", scope="platform", tenant_id=None, action="reject",
+                                            actor_type="admin", source_table="review_queue", source_id="r", **kw)
+
+
+@pytest.mark.parametrize("raw,expected", [
+    (None, "unknown"), ("", "unknown"), ("u1", "unknown"), ("x" * 300, "unknown"), ("ops@example.com", "unknown"),
+    (str(uuid.UUID(int=3)).upper(), str(uuid.UUID(int=3))),
+])
+def test_admin_actor_id_keeps_only_a_canonical_uuid(raw, expected):
+    assert wm.admin_actor_id(raw) == expected
+
+
+@pytest.mark.asyncio
 async def test_history_reads_new_rows_from_the_signal_and_keeps_legacy_rows():
     sid = str(uuid.uuid4())
     conn = _conn()
     conn.fetch = AsyncMock(return_value=[{"signal_id": sid, "before_text": "Old.", "after_text": None,
+                                          "problem": "'Wat Xieng Thong 1560' not present",
                                           "reason_code": "ai_phrasing", "exemplar_pref": None,
                                           "fact_status": "pending"}])
-    edits = [{"action": "x", "details": {"signal_id": sid, "mode": "cut"}},
-             {"action": "y", "details": {"before": "legacy", "after": "row"}}]               # D16
+    edits = [{"action": "x", "details": {"signal_id": sid, "mode": "cut", "problem_sha256": "h"}},
+             {"action": "y", "details": {"before": "legacy", "after": "row", "problem": "old"}}]   # D16
     out = await wm.with_signal_texts(conn, edits, TENANT)
-    assert out[0]["details"] == {"signal_id": sid, "mode": "cut", "before": "Old.", "after": "",
+    assert out[0]["details"] == {"signal_id": sid, "mode": "cut", "problem_sha256": "h", "before": "Old.",
+                                 "after": "", "problem": "'Wat Xieng Thong 1560' not present",
                                  "reason_code": "ai_phrasing", "exemplar_pref": None}
-    assert out[1]["details"] == {"before": "legacy", "after": "row"}
+    assert out[1]["details"] == {"before": "legacy", "after": "row", "problem": "old"}
     sql, ids, owner = conn.fetch.await_args.args
     assert "tenant_id IS NOT DISTINCT FROM $2::uuid" in sql and ids == [sid] and owner == TENANT  # explicit filter
 

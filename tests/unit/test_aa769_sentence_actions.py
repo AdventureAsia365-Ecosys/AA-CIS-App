@@ -205,7 +205,7 @@ def _audits(conn):
 
 _SIGNAL_COLS = ("writer", "channel", "scope", "tenant_id", "field", "locator", "before_text", "after_text",
                 "before_sha256", "after_sha256", "gate", "reason_code", "action", "actor_type", "actor_id",
-                "fact_status", "audit_log_id", "source_table", "source_id")
+                "fact_status", "audit_log_id", "source_table", "source_id", "problem")
 
 
 def _signals(conn):
@@ -237,6 +237,9 @@ async def test_apply_cut_updates_text_and_writes_audit():
     assert "before" not in d and "after" not in d and "suggestion" not in d
     assert d["signal_id"] == str(conn.fetchval.return_value)
     assert d["before_sha256"] == hashlib.sha256(SENT.encode()).hexdigest() == sig["before_sha256"]
+    # review round 1: the gate's problem (it quotes the flagged text) is on the signal; the audit keeps its hash
+    assert "problem" not in d and sig["problem"] == "foreign brand"
+    assert d["problem_sha256"] == hashlib.sha256(b"foreign brand").hexdigest()
 
 
 @pytest.mark.asyncio

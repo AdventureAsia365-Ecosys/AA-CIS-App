@@ -535,10 +535,12 @@ _SIGNAL_ACTION_BY_MODE = {"cut": "sentence_cut", "rewrite": "sentence_rewrite", 
 
 
 def _sentence_audit(body: "SentenceApplyBody", ref: "wm.SignalRef", warnings: list[dict]) -> dict:
-    """AA-916 (ADR 0010 decision 11) — the audit details both sentence applies share: the action, the chip, the
-    signal id and the hashes. The sentence text, the suggestion text and the warning texts live in the writing
-    signal / the response only; `problem` (the gate's own diagnostic) stays."""
-    return {"mode": body.mode, "gate": body.gate, "problem": body.problem,
+    """AA-916 (ADR 0010 decision 11) — the audit details both sentence applies share: the action, the gate, the
+    chip, the signal id and the hashes. No tenant text: the sentence, the suggestion, the warning texts and the
+    `problem` (the gate's diagnostic quotes the flagged fact / number / claim, and the admin may type up to 1000
+    characters there) live in the writing signal / the response only; the drawer reads `problem` back from the
+    signal (`wm.with_signal_texts`)."""
+    return {"mode": body.mode, "gate": body.gate, "problem_sha256": wm.text_sha256(body.problem),
             "suggestion_model": body.suggestion_model, "suggestion_cost_usd": body.suggestion_cost_usd,
             "suggestion_sha256": wm.text_sha256(body.suggestion),
             "warning_gates": [w.get("gate") for w in warnings],
@@ -641,9 +643,9 @@ async def apply_sentence(piece_id: str, body: SentenceApplyBody, request: Reques
             ref = await wm.record_writer_feedback(
                 conn, writer=wm.writer_for_channel(row["channel"]), scope=scope, tenant_id=owner,
                 channel=row["channel"], field="content_text", locator={"start": start, "end": end},
-                before_text=old_text[start:end], after_text=replacement, gate=body.gate, reason_code=body.reason_code,
-                action=_SIGNAL_ACTION_BY_MODE[body.mode], actor_type="admin", actor_id=x_admin_user_id or "unknown",
-                source_table="content_piece", source_id=piece_id)
+                before_text=old_text[start:end], after_text=replacement, gate=body.gate, problem=body.problem,
+                reason_code=body.reason_code, action=_SIGNAL_ACTION_BY_MODE[body.mode], actor_type="admin",
+                actor_id=wm.admin_actor_id(x_admin_user_id), source_table="content_piece", source_id=piece_id)
             await write_audit_log(
                 conn, tenant_id=str(row["tenant_id"]), actor=f"admin:{x_admin_user_id or 'unknown'}",
                 action=_ACTION_BY_MODE[body.mode], resource_type="content_piece", resource_id=piece_id,
@@ -1326,9 +1328,10 @@ async def apply_tour_sentence(version_id: str, body: TourSentenceApplyBody, requ
             ref = await wm.record_writer_feedback(
                 conn, writer="t2", scope=scope, tenant_id=owner, channel="tour", field=body.field,
                 locator={"field": body.field, "index": body.index, "start": start, "end": end},
-                before_text=sentence, after_text=replacement, gate=body.gate, reason_code=body.reason_code,
-                action=_SIGNAL_ACTION_BY_MODE[body.mode], actor_type="admin", actor_id=x_admin_user_id or "unknown",
-                source_table="tenant_tour_version", source_id=str(row["id"]))
+                before_text=sentence, after_text=replacement, gate=body.gate, problem=body.problem,
+                reason_code=body.reason_code, action=_SIGNAL_ACTION_BY_MODE[body.mode], actor_type="admin",
+                actor_id=wm.admin_actor_id(x_admin_user_id), source_table="tenant_tour_version",
+                source_id=str(row["id"]))
             # ADR 0010 decision 11: the version history keeps hashes of the section and of the whole version
             # before / after (AA-802 kept their text; that is tenant text, which only deletable tables hold).
             await write_audit_log(
@@ -1366,9 +1369,15 @@ async def _record_fact_not_in_source(pool, tour: dict, sentence: str, ref: "wm.S
         by = str(UUID(admin_id)) if admin_id else None
     except ValueError:
         by = None
-    rows = await record_outcome(pool, T3_JEV_Q, subject_key(source, sentence.strip()), truth=False,
+    key = subject_key(source, sentence.strip())
+    rows = await record_outcome(pool, T3_JEV_Q, key, truth=False,
                                 source="admin_reason_fact_not_in_source", ref=ref.signal_id, by=by)
-    logger.info("aa916_fact_not_in_source_outcome", signal_id=ref.signal_id, rows=rows)
+    if rows:
+        logger.info("aa916_fact_not_in_source_outcome", signal_id=ref.signal_id, rows=rows)
+    else:
+        # T3 never asked Jev about this sentence (Jev off for the tenant, or a hit T3 never had), or the key drifted
+        # from T3's (segmentation / source dict): the admin's truth=false labelled nothing. Visible, not silent.
+        logger.warning("aa916_fact_not_in_source_unlabelled", signal_id=ref.signal_id, subject_key=key)
     return rows
 
 

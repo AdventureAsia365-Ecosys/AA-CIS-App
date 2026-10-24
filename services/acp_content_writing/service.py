@@ -2777,18 +2777,30 @@ async def _write_piece_edit_audit(conn_or_pool, tenant_id: UUID, piece_id: UUID,
     )
 
 
-async def _record_piece_edit_signal(conn, tenant_id: UUID, piece_id: UUID, row,
-                                    content_text: str) -> Optional[wm_signals.SignalRef]:
+def _piece_edit_scope(tenant_id: UUID, row) -> tuple[str, Optional[str]]:
+    """AA-916 — (scope, tenant_id) of a tenant edit's signal: the row's owner (= the caller, by the WHERE and RLS),
+    with the AA master tenant mapped to platform like every other capture path (`scope_for_tenant`)."""
+    return wm_signals.scope_for_tenant(row.get("tenant_id") or tenant_id)
+
+
+async def _record_piece_edit_signal(conn, tenant_id: UUID, piece_id: UUID, row, content_text: str, *,
+                                    tenant_pool: bool = False) -> Optional[wm_signals.SignalRef]:
     """AA-916 WM-04 — the tenant's hand edit as a writing signal (before / after of the whole piece), on the
     edit's own connection: on the tenant pool inside its transaction (aa_app_user may insert its own tenant
     rows only, RLS). Best-effort: a SAVEPOINT, and a failure is logged (`aa916_signal_failed`), never a 500 on
-    the edit. Nothing is written when the text did not change."""
+    the edit. Nothing is written when the text did not change.
+
+    The AA master tenant's edit is a platform signal (tenant_id NULL), which RLS never lets aa_app_user insert:
+    on the tenant pool (`tenant_pool`) it is skipped here and the caller writes it on the main pool after the
+    tenant transaction committed (`update_piece_content_text`)."""
     before = row.get("before_text") if hasattr(row, "get") else None
     if before == content_text:
         return None
+    scope, owner = _piece_edit_scope(tenant_id, row)
+    if scope == "platform" and tenant_pool:
+        return None
     return await wm_signals.record_writer_feedback_safe(
-        conn, writer=wm_signals.writer_for_channel(row.get("channel")), scope="tenant",
-        tenant_id=str(row.get("tenant_id") or tenant_id),  # the row's owner (= the caller, by the WHERE and RLS)
+        conn, writer=wm_signals.writer_for_channel(row.get("channel")), scope=scope, tenant_id=owner,
         channel=row.get("channel") or "blog", field="content_text", before_text=before, after_text=content_text,
         action="tenant_edit", actor_type="tenant", actor_id=f"tenant:{tenant_id}", source_table="content_piece",
         source_id=str(piece_id))
@@ -2831,10 +2843,20 @@ async def update_piece_content_text(
         if row is None:
             raise _piece_edit_not_found(piece_id)
         # AA-916 WM-04 — inside the tenant transaction (a SAVEPOINT: the GUC set before it stays).
-        signal = await _record_piece_edit_signal(conn, tenant_id, piece_id, row, content_text)
+        signal = await _record_piece_edit_signal(conn, tenant_id, piece_id, row, content_text,
+                                                 tenant_pool=used_tenant_pool)
         if not used_tenant_pool:  # flag off: the old shape, audit next to the UPDATE on the admin conn
             await _write_piece_edit_audit(conn, tenant_id, piece_id, content_text, signal)
     if used_tenant_pool:
+        if _piece_edit_scope(tenant_id, row)[0] == "platform":
+            # AA-916 — the AA master tenant's edit: a platform signal, which only the main pool may write (after
+            # the tenant transaction committed; best-effort like the audit row below).
+            try:
+                async with pool.acquire() as main:
+                    signal = await _record_piece_edit_signal(main, tenant_id, piece_id, row, content_text)
+            except Exception as exc:  # noqa: BLE001 — best-effort, as on the tenant pool
+                logger.warning("aa916_signal_failed", writer="t9", action="tenant_edit", source_id=str(piece_id),
+                               error_type=type(exc).__name__, error=str(exc)[:200])
         # AA-859 MAIN exception: audit_log has no RLS and no aa_app_user grant; written after the tenant
         # transaction committed. Best-effort: the edit is saved, a lost audit row must not turn it into a 500.
         try:

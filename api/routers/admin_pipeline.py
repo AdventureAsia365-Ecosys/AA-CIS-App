@@ -2903,7 +2903,7 @@ async def _record_review_reason(pool, review_id: str, action: str, reason_code: 
             scope, tenant = wm.scope_for_tenant(row["tenant_id"])
             await wm.record_writer_feedback_safe(
                 conn, writer="t2" if row["tenant_tour_version_id"] else "a1", scope=scope, tenant_id=tenant,
-                reason_code=reason_code, action=action, actor_type="admin", actor_id=actor_id or "unknown",
+                reason_code=reason_code, action=action, actor_type="admin", actor_id=wm.admin_actor_id(actor_id),
                 source_table="review_queue", source_id=review_id)
     except Exception as exc:  # noqa: BLE001 — best-effort by contract
         logger.warning("aa916_signal_failed", action=action, review_id=review_id, error=str(exc)[:200])

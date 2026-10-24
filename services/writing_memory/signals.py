@@ -33,6 +33,8 @@ ACTIONS = ("field_edit", "sentence_cut", "sentence_rewrite", "sentence_manual", 
 ACTOR_TYPES = ("admin", "tenant", "system")
 FACT_STATUSES = ("pending", "grey", "pass", "fail")
 MAX_TEXT = 200_000                       # writing_signal_size_check
+MAX_PROBLEM = 2_000                      # writing_signal_size_check (the apply bodies cap it at 1000)
+MAX_ACTOR_ID = 128
 
 # The AA master tenant: its rows (A1 Master content) are platform scope; any other tenant's text is tenant scope.
 PLATFORM_TENANT_ID = "00000000-0000-0000-0000-000000000001"
@@ -40,8 +42,9 @@ PLATFORM_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 _INSERT_SQL = """
     INSERT INTO shared.writing_signal
         (writer, channel, scope, tenant_id, field, locator, before_text, after_text, before_sha256, after_sha256,
-         gate, reason_code, action, actor_type, actor_id, fact_status, audit_log_id, source_table, source_id)
-    VALUES ($1, $2, $3, $4::uuid, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::uuid, $18, $19)
+         gate, reason_code, action, actor_type, actor_id, fact_status, audit_log_id, source_table, source_id, problem)
+    VALUES ($1, $2, $3, $4::uuid, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::uuid, $18, $19,
+            $20)
     RETURNING signal_id
 """
 
@@ -65,6 +68,17 @@ def scope_for_tenant(tenant_id) -> tuple[str, Optional[str]]:
     return "tenant", str(tenant_id)
 
 
+def admin_actor_id(raw: Optional[str]) -> str:
+    """The signal's actor_id for an admin action: the x-admin-user-id header as a canonical UUID (the shared.admin_users
+    id the BFF forwards from the verified JWT), otherwise 'unknown'. The header is never stored as given: a long value
+    would break writing_signal_size_check (and the admin's edit with it), and the column holds an id, never a name or
+    an e-mail address."""
+    try:
+        return str(UUID(str(raw))) if raw else "unknown"
+    except (ValueError, TypeError):
+        return "unknown"
+
+
 def writer_for_channel(channel: Optional[str]) -> str:
     """The T9 writer of a content piece channel: blog -> t9_blog, every social channel -> t9_social."""
     return "t9_blog" if (channel or "blog") == "blog" else "t9_social"
@@ -80,13 +94,14 @@ async def record_writer_feedback(
     channel: Optional[str] = None, field: Optional[str] = None, locator: Optional[dict[str, Any]] = None,
     before_text: Optional[str] = None, after_text: Optional[str] = None, gate: Optional[str] = None,
     reason_code: Optional[str] = None, actor_id: Optional[str] = None, fact_status: Optional[str] = None,
-    audit_log_id=None,
+    audit_log_id=None, problem: Optional[str] = None,
 ) -> SignalRef:
     """INSERT one signal on `conn` and return its id and the text hashes. Raises ValueError on an argument the
     table would refuse (a platform row naming a tenant, a tenant row without one, an unknown code …).
 
     `fact_status` defaults to 'fail' for reason `fact_not_in_source` (the admin says the fact is not in the source)
-    and to 'pending' otherwise."""
+    and to 'pending' otherwise. `problem` is the gate's diagnostic of the edited sentence (it quotes the flagged
+    text, so it is kept here and the audit row keeps only its sha256)."""
     _check("writer", writer, WRITERS)
     _check("scope", scope, SCOPES)
     _check("action", action, ACTIONS)
@@ -101,15 +116,16 @@ async def record_writer_feedback(
                          "tenant, tenant rows always do)")
     if locator is not None and not isinstance(locator, dict):
         raise ValueError("writing signal: locator must be an object")
-    for name, text in (("before_text", before_text), ("after_text", after_text)):
-        if text is not None and len(text) > MAX_TEXT:
-            raise ValueError(f"writing signal: {name} is longer than {MAX_TEXT} characters")
+    for name, text, cap in (("before_text", before_text, MAX_TEXT), ("after_text", after_text, MAX_TEXT),
+                            ("problem", problem, MAX_PROBLEM), ("actor_id", actor_id, MAX_ACTOR_ID)):
+        if text is not None and len(text) > cap:
+            raise ValueError(f"writing signal: {name} is longer than {cap} characters")
     before_h, after_h = text_sha256(before_text), text_sha256(after_text)
     signal_id = await conn.fetchval(
         _INSERT_SQL, writer, channel, scope, str(tenant_id) if tenant_id is not None else None, field,
         json.dumps(locator) if locator is not None else None, before_text, after_text, before_h, after_h, gate,
         reason_code, action, actor_type, actor_id, fact_status, str(audit_log_id) if audit_log_id else None,
-        source_table, str(source_id))
+        source_table, str(source_id), problem)
     return SignalRef(str(signal_id), before_h, after_h)
 
 
@@ -140,14 +156,14 @@ def audit_details(ref: Optional[SignalRef], reason_code: Optional[str] = None) -
 
 
 _TEXTS_SQL = """
-    SELECT signal_id::text AS signal_id, before_text, after_text, reason_code, exemplar_pref, fact_status
+    SELECT signal_id::text AS signal_id, before_text, after_text, problem, reason_code, exemplar_pref, fact_status
       FROM shared.writing_signal
      WHERE signal_id = ANY($1::uuid[]) AND tenant_id IS NOT DISTINCT FROM $2::uuid
 """
 
 
 async def load_texts(conn, signal_ids: Iterable[str], tenant_id) -> dict[str, dict]:
-    """signal_id -> {before_text, after_text, reason_code, exemplar_pref, fact_status} for the given ids of ONE
+    """signal_id -> {before_text, after_text, problem, reason_code, exemplar_pref, fact_status} for the ids of ONE
     owner (`tenant_id`; None = platform rows). cis_app sees every row, so the tenant filter is explicit here (ADR 0010
     decision 10): an id of another tenant never resolves."""
     ids = []
@@ -165,8 +181,8 @@ async def load_texts(conn, signal_ids: Iterable[str], tenant_id) -> dict[str, di
 
 async def with_signal_texts(conn, edits: list[dict], tenant_id) -> list[dict]:
     """Admin edit history rows (audit_log, details parsed): a row written since AA-916 names its signal
-    (details.signal_id) and holds no text; fill details.before / details.after (and reason_code) from the signal so
-    the drawer reads every row the same way. A legacy row keeps its own details.before / after (D16)."""
+    (details.signal_id) and holds no text; fill details.before / details.after / details.problem (and reason_code)
+    from the signal so the drawer reads every row the same way. A legacy row keeps its own text (D16)."""
     ids = [e["details"].get("signal_id") for e in edits if isinstance(e.get("details"), dict)]
     texts = await load_texts(conn, [i for i in ids if i], tenant_id)
     out = []
@@ -175,12 +191,13 @@ async def with_signal_texts(conn, edits: list[dict], tenant_id) -> list[dict]:
         sig = texts.get(str(d.get("signal_id"))) if d.get("signal_id") else None
         if sig is not None:
             d = {**d, "before": sig["before_text"], "after": sig["after_text"] or "",
+                 **({"problem": sig["problem"]} if sig["problem"] is not None else {}),
                  **({"reason_code": sig["reason_code"]} if sig["reason_code"] else {}),
                  "exemplar_pref": sig["exemplar_pref"]}
         out.append({**e, "details": d})
     return out
 
 
-__all__ = ["ACTIONS", "PLATFORM_TENANT_ID", "SignalRef", "WRITERS", "audit_details", "load_texts",
+__all__ = ["ACTIONS", "PLATFORM_TENANT_ID", "SignalRef", "WRITERS", "admin_actor_id", "audit_details", "load_texts",
            "record_writer_feedback", "record_writer_feedback_safe", "scope_for_tenant", "text_sha256",
            "with_signal_texts", "writer_for_channel"]

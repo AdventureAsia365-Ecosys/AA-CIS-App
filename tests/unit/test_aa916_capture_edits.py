@@ -84,7 +84,7 @@ async def test_tenant_edit_writes_one_signal_inside_the_tenant_transaction():
     args = call.args[1:]
     assert args[:5] == ("t9_blog", "blog", "tenant", str(TENANT_ID), "content_text")
     assert args[6:8] == ("Old body", TEXT) and args[12:15] == ("tenant_edit", "tenant", f"tenant:{TENANT_ID}")
-    assert args[17:] == ("content_piece", str(PIECE_ID))
+    assert args[17:] == ("content_piece", str(PIECE_ID), None)
     audit_sql, *params = request.app.state.pool.execute.await_args.args
     assert "INSERT INTO acp_shared.audit_log" in audit_sql
     details = json.loads(params[5])
@@ -118,6 +118,43 @@ async def test_unchanged_text_writes_no_signal_and_flag_off_writes_on_the_admin_
     assert len(_signal_calls(main)) == 1
     [audit] = [c for c in main.execute.await_args_list if "acp_shared.audit_log" in c.args[0]]
     assert json.loads(audit.args[6])["signal_id"] == str(SID)
+
+
+@pytest.mark.asyncio
+async def test_master_tenant_edit_is_a_platform_signal_written_on_main_after_the_tenant_transaction():
+    # review round 1: the AA master tenant's text is platform scope everywhere (scope_for_tenant); aa_app_user may
+    # never insert a platform row, so the tenant pool skips it and the main pool writes it after the commit.
+    master = uuid.UUID(wm.PLATFORM_TENANT_ID)
+    tenant = _with_signal_insert(_conn(fetchrow={**_piece_row(), "tenant_id": master, "before_text": "Old body"}))
+    main = _with_signal_insert(_conn())
+    request = _request(flag=True, tenant_conn=tenant, main_conn=main)
+    request.app.state.redis.get = _flag_only(PIECE_EDIT_FLAG)
+    await service.update_piece_content_text(master, PIECE_ID, TEXT, request.app.state.pool, request=request)
+    assert _signal_calls(tenant) == []
+    [call] = _signal_calls(main)
+    args = call.args[1:]
+    assert args[:4] == ("t9_blog", "blog", "platform", None) and args[6:8] == ("Old body", TEXT)
+    audit = request.app.state.pool.execute.await_args.args
+    assert json.loads(audit[6])["signal_id"] == str(SID)
+    # flag off (admin conn): written in place, platform scope as well
+    off = _with_signal_insert(_conn(fetchrow={**_piece_row(), "tenant_id": master, "before_text": "Old body"}))
+    req_off = _request(flag=False, main_conn=off)
+    await service.update_piece_content_text(master, PIECE_ID, TEXT, req_off.app.state.pool, request=req_off)
+    [call] = _signal_calls(off)
+    assert call.args[3:5] == ("platform", None)
+
+
+@pytest.mark.asyncio
+async def test_master_tenant_main_pool_failure_never_fails_the_edit():
+    master = uuid.UUID(wm.PLATFORM_TENANT_ID)
+    tenant = _conn(fetchrow={**_piece_row(), "tenant_id": master, "before_text": "Old body"})
+    request = _request(flag=True, tenant_conn=tenant)
+    request.app.state.redis.get = _flag_only(PIECE_EDIT_FLAG)
+    request.app.state.pool.acquire = MagicMock(side_effect=RuntimeError("pool closed"))
+    with capture_logs() as logs:
+        out = await service.update_piece_content_text(master, PIECE_ID, TEXT, request.app.state.pool,
+                                                      request=request)
+    assert out["content_text"] == "Body" and [e for e in logs if e["event"] == "aa916_signal_failed"]
 
 
 def test_piece_edit_sql_reads_the_text_before_the_edit():
@@ -264,7 +301,7 @@ async def test_a1_field_edit_writes_one_platform_signal_per_changed_field():
     assert got == {("aa_summary", "Old summary.", "New summary."), ("aa_highlights", '["b", "a"]', '["c"]')}
     for a in conn.signals:
         assert a[:4] == ("a1", "master", "platform", None) and a[12:14] == ("field_edit", "admin")
-        assert a[14] == str(uuid.UUID(int=7)) and a[17:] == ("generated_content", content_id)
+        assert a[14] == str(uuid.UUID(int=7)) and a[17:] == ("generated_content", content_id, None)
     [(sql, args)] = conn.updates
     assert "human_edited = true" in sql and "revalidate_passed = NULL" in sql
     edit_diff = json.loads(args[-3])
@@ -317,20 +354,27 @@ def _review_pool(row):
     return pool, conn
 
 
+ADMIN_ID = uuid.UUID(int=9)
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("ttv,writer", [(None, "a1"), (uuid.uuid4(), "t2")])
-async def test_dismiss_with_a_code_writes_a_reason_only_signal(ttv, writer):
+@pytest.mark.parametrize("ttv,writer,header,actor", [
+    (None, "a1", str(ADMIN_ID).upper(), str(ADMIN_ID)),       # the BFF's JWT sub, stored canonical
+    (uuid.uuid4(), "t2", "x" * 300, "unknown"),                # not an id: never stored as given (size CHECK, no names)
+])
+async def test_dismiss_with_a_code_writes_a_reason_only_signal(ttv, writer, header, actor):
     review = str(uuid.uuid4())
     pool, conn = _review_pool({"tenant_id": uuid.UUID(wm.PLATFORM_TENANT_ID), "tenant_tour_version_id": ttv})
     req = MagicMock()
     req.app.state.pool = pool
     out = await ap.admin_dismiss_review(review, req, ap.ReviewReasonBody(reason_code="voice_off_brand"),
-                                        x_admin_secret=SECRET, x_admin_user_id="u9")
+                                        x_admin_secret=SECRET, x_admin_user_id=header)
     assert out == {"status": "dismissed", "review_id": review}
     [call] = _signal_calls(conn)
     a = call.args[1:]
     assert a[0] == writer and a[2:4] == ("platform", None) and a[6:8] == (None, None)    # no text
-    assert a[11:15] == ("voice_off_brand", "dismiss", "admin", "u9") and a[17:] == ("review_queue", review)
+    assert a[11:15] == ("voice_off_brand", "dismiss", "admin", actor)
+    assert a[17:] == ("review_queue", review, None)
 
 
 @pytest.mark.asyncio
@@ -383,6 +427,53 @@ async def test_t2_fact_not_in_source_labels_the_t3_jev_question_false():
     with patch("shared.llm_client.decide.record_outcome", new=AsyncMock()) as ro2:
         assert await cq._record_fact_not_in_source("POOL", {}, "x", ref, "not-a-uuid") == 0
     ro2.assert_not_awaited()                                             # no source text: nothing to label
+
+
+# review round 1: the key the admin's fact_not_in_source labels must be the key T3 asked Jev with. T3 splits with
+# tenant_pipeline._SENT_SPLIT_RE on the T2 output; the drawer flags spans from hygiene.sentence_spans on the stored
+# version. Both read the same source dict (t2_rewrite_job.source_tour_dict).
+_T3_TOUR = {"name": "Luang Prabang Loop", "subtitle": "", "summary": "Walk the old town with a local guide.",
+            "description": "A gentle walk through temples and markets.", "highlights": "Temples; markets",
+            "itineraries": "Day 1: old town walk.", "seo_title": "", "seo_meta": "", "country": "Laos",
+            "duration": "3 days"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rc", [
+    {"summary": "Walk the old town with a local guide. The trek climbs 4,200 metres to the pass. Evenings are free."},
+    {"subtitle": "Temples and markets. A 1,200-step stairway leads to the summit!"},
+    {"highlights": ["Temples at dawn.", "Markets by night.", "A 15 km bike ride? Yes, along the Mekong."]},
+    {"itineraries": "Day 1: walk the old town. Day 2: the trek climbs 4,200 metres. \"It rains in May.\""},
+    {"summary": "Walk the old town.\n\nThe trek climbs 4,200 metres to the pass.\nEvenings are free."},
+])
+async def test_fact_not_in_source_key_matches_the_key_t3_asked_jev(rc):
+    from services.acp_produce.tenant_pipeline import _t3_grounding_check
+    from services.content_generation.grounding import source_text, subject_key
+    source_texts = [str(v) for v in _T3_TOUR.values() if v]
+    violations = _t3_grounding_check(rc, source_texts, background=False)
+    assert violations, "the fixture must give T3 a hit"
+    t3_keys = {subject_key(source_text(_T3_TOUR), v["sentence"]) for v in violations}
+    flagged = cq.t2_flag(cq.t2_sections(rc), _T3_TOUR, [])
+    numeric = [f for f in flagged if any("number(s)" in p["problem"] for p in f["problems"])]
+    assert numeric, "the drawer must flag the same sentence"
+    keys = set()
+    for f in numeric:
+        text = cq._t2_field_text(rc, f["field"], f["index"])
+        with patch("shared.llm_client.decide.record_outcome", new=AsyncMock(return_value=1)) as ro:
+            await cq._record_fact_not_in_source("POOL", _T3_TOUR, text[f["start"]:f["end"]],
+                                                wm.SignalRef(str(SID), None, None), None)
+        keys.add(ro.await_args.args[2])
+    assert keys <= t3_keys, (keys, t3_keys)                              # every flagged span labels a T3 question
+
+
+@pytest.mark.asyncio
+async def test_fact_not_in_source_that_labels_nothing_logs_a_warning():
+    with patch("shared.llm_client.decide.record_outcome", new=AsyncMock(return_value=0)), capture_logs() as logs:
+        rows = await cq._record_fact_not_in_source("POOL", _T3_TOUR, "The trek climbs 4,200 metres.",
+                                                   wm.SignalRef(str(SID), None, None), None)
+    assert rows == 0
+    [warn] = [e for e in logs if e["event"] == "aa916_fact_not_in_source_unlabelled"]
+    assert warn["log_level"] == "warning" and warn["signal_id"] == str(SID) and warn["subject_key"].startswith("claim:")
 
 
 def test_flagged_sentences_carry_the_suggested_reason():

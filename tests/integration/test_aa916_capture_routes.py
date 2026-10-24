@@ -119,9 +119,11 @@ async def test_history_reader_never_resolves_another_tenants_signal(conn):
     a, b = await _tenant(conn), await _tenant(conn)
     ref = await wm.record_writer_feedback(conn, writer="t9_blog", scope="tenant", tenant_id=a, action="sentence_cut",
                                           actor_type="admin", source_table="content_piece", source_id="p",
-                                          before_text="A's sentence.", after_text="")
+                                          before_text="A's sentence.", after_text="",
+                                          problem="'A's fact' not present")
     edits = [{"details": {"signal_id": ref.signal_id, "mode": "cut"}}]
-    assert (await wm.with_signal_texts(conn, edits, a))[0]["details"]["before"] == "A's sentence."
+    own = (await wm.with_signal_texts(conn, edits, a))[0]["details"]
+    assert own["before"] == "A's sentence." and own["problem"] == "'A's fact' not present"   # problem: signal only
     assert (await wm.with_signal_texts(conn, edits, b))[0]["details"] == {"signal_id": ref.signal_id, "mode": "cut"}
     assert (await wm.with_signal_texts(conn, edits, MASTER))[0]["details"].get("before") is None
 

@@ -192,12 +192,16 @@ async def test_apply_cut_updates_the_tenants_row_in_place_and_audits():
     [(sig_sql, sig)] = conn.signals
     assert "INSERT INTO shared.writing_signal" in sig_sql
     assert sig[:5] == ("t2", "tour", "tenant", str(TENANT_ID), "summary")
-    assert sig[6:8] == (BAD, "") and sig[12] == "sentence_cut" and sig[17:] == ("tenant_tour_version", VERSION_ID)
+    assert sig[6:8] == (BAD, "") and sig[12] == "sentence_cut" and sig[17:19] == ("tenant_tour_version", VERSION_ID)
     sha = lambda t: hashlib.sha256(t.encode()).hexdigest()  # noqa: E731
     assert d["signal_id"] == str(uuid.UUID(int=1)) and d["before_sha256"] == sha(BAD)
     assert d["section_before_sha256"] == sha(SUMMARY) and d["section_after_sha256"] == sha(new_rc["summary"])
     assert d["content_before_sha256"] == sha(json.dumps(RC, sort_keys=True))
     assert d["content_after_sha256"] == sha(json.dumps(new_rc, sort_keys=True))
+    # review round 1: the problem text is on the signal only, the audit row keeps its sha256
+    assert sig[19] == "number not in source" and "problem" not in d
+    assert sig[14] == "unknown"                         # x-admin-user-id "u1" is not an id: never stored as given
+    assert d["problem_sha256"] == sha("number not in source")
     assert not {"before", "after", "section_before", "section_after", "content_before", "content_after"} & set(d)
     assert out["warnings"] == [] and out["editable"] is True
 
