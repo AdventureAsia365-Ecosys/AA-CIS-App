@@ -152,7 +152,8 @@ async def recompute_segment_score_route(tour_id: str, pool, *, log_tour_id: str 
 
 
 async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str, version_id: str,
-                                      reraise: bool = False, progress=None, force: bool = False) -> dict:
+                                      reraise: bool = False, progress=None, force: bool = False,
+                                      retry_failed_days: bool = False) -> dict:
     """AA-526 — the actual A3 atomize call, launched fire-and-forget from process_export() so a
     slow multi-day LLM atomize run (services.acp_contract.a3_atomize.run_a3_atomize(), up to
     one LLM call per itinerary day) never adds latency to — or risks an API Gateway
@@ -171,6 +172,11 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
     `reraise=True`, so an atomize failure is retried and shows on the Jobs page instead of only
     being logged. The default (False) keeps the old best-effort behaviour for any direct caller.
 
+    AA-645 (S250) — `retry_failed_days=True` (the job on a non-final attempt) raises AtomizeIncomplete right after
+    an atomize that still has failed day(s), before the Segment/Score/Route and place steps, so the job's next
+    attempt re-reads only those days and runs the later steps once on the whole tour. On the final attempt the job
+    passes False: the later steps run on the days that did succeed, and the job then fails itself.
+
     Returns {"segment_score_route": "ok" | "failed: <error>"} so the job result shows a failed
     Segment/Score/Route step (S218: it failed silently for every tour from 05/10)."""
     outcome = {"segment_score_route": "not_run"}
@@ -183,8 +189,12 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
         )
         logger.info("a3_atomize_done", tour_id=tour_id, result=result)
         outcome["atomize"] = {k: result.get(k) for k in ("status", "atom_count", "days_total", "days_read",
-                                                          "orphan_atoms_deleted", "replaced_atoms_deleted")
+                                                          "orphan_atoms_deleted", "replaced_atoms_deleted",
+                                                          "days_failed", "day_errors", "error")
                               if k in result}
+        if retry_failed_days and result.get("status") == "failed":
+            from services.acp_contract.a3_atomize import AtomizeIncomplete
+            raise AtomizeIncomplete(result)
 
         # AA-545 — Segment/Score/Route now DO run here, platform-wide, right after atomize.
         # AA-526's own note (kept below, historical) explains why this was blocked at the time:

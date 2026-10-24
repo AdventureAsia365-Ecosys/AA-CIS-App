@@ -29,10 +29,13 @@ REDIS_RETRIES = 1
 
 
 def build_api_redis(url: str, *, socket_connect_timeout: float = REDIS_SOCKET_CONNECT_TIMEOUT_S,
-                    socket_timeout: float = REDIS_SOCKET_TIMEOUT_S) -> aioredis.Redis:
-    """Lazy: no I/O here. The keyword overrides exist for tests."""
+                    socket_timeout: float = REDIS_SOCKET_TIMEOUT_S, **conn_kwargs) -> aioredis.Redis:
+    """Lazy: no I/O here. The timeout overrides exist for tests. `conn_kwargs` carries the TLS / AUTH
+    settings from shared.cache.redis_conn.redis_conn_args() (AA-874: password, ssl_cert_reqs,
+    ssl_check_hostname); the connect timeout also bounds the TLS handshake."""
     return aioredis.from_url(
         url, encoding="utf-8", decode_responses=True,
         socket_connect_timeout=socket_connect_timeout, socket_timeout=socket_timeout,
         retry=Retry(NoBackoff(), REDIS_RETRIES), retry_on_timeout=True,
+        **conn_kwargs,
     )
