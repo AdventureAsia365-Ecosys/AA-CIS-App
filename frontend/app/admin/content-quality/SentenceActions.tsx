@@ -17,6 +17,8 @@ import {
   type AdminEdit, type ApplyBody, type CheckFailure, type FlaggedSentence, type PieceDetail, type SuggestResponse,
   type TenantCopy,
 } from "./shared";
+import { SeverityBadge, SourceNote } from "./Severity";
+import { SEVERITY_TONE, markSeverity, worstOf } from "@/lib/gateSeverity";
 
 const EDITABLE = ["approved", "held"];
 
@@ -108,13 +110,12 @@ export function FlaggedSentences({ piece }: { piece: PieceDetail }) {
           <div key={s.key} id={`hl-${s.key}`} data-testid="cq-flag-row"
                style={{ border: `1px solid ${s.blocking ? A.redBorder : A.line}`, borderRadius: 8, padding: "8px 10px", background: A.card }}>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 6 }}>
+              {/* AA-924 — a gate's chip is red only when one of ITS findings on this sentence blocks */}
               {s.gates.map((g) => (
-                <Badge key={g} tone={s.problems.some((p) => p.gate === g && p.blocking) ? "danger" : "warning"} dot={false}>{gateLabel(g)}</Badge>
+                <Badge key={g} tone={SEVERITY_TONE[worstOf(s.problems.filter((p) => p.gate === g)) ?? "warn"]} dot={false}>{gateLabel(g)}</Badge>
               ))}
             </div>
-            <div style={{ fontSize: 12, color: A.body, marginBottom: 6 }}>
-              {s.problems.map((p, i) => <div key={i}><span style={{ fontFamily: mono, fontSize: 10.5, color: A.muted }}>{p.gate}</span> {p.problem}</div>)}
-            </div>
+            <ProblemList problems={s.problems} />
             <div style={{ fontSize: 12.5, lineHeight: 1.55, color: A.ink, background: A.bg, borderRadius: 6, padding: "6px 8px", wordBreak: "break-word" }}>{s.sentence}</div>
             {canEdit && !open && (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8, alignItems: "center" }}>
@@ -159,6 +160,23 @@ export function FlaggedSentences({ piece }: { piece: PieceDetail }) {
           </div>
         }
       />
+    </div>
+  );
+}
+
+/** AA-924 — one line per problem of a flagged sentence: its own severity badge, the stored gate, the problem, and
+ *  the legacy gate that found it inside a merged entry. Shared with the T2 drawer. */
+export function ProblemList({ problems }: { problems: FlaggedSentence["problems"] }) {
+  return (
+    <div style={{ fontSize: 12, color: A.body, marginBottom: 6, display: "flex", flexDirection: "column", gap: 3 }}>
+      {problems.map((p, i) => (
+        <div key={i} data-testid="cq-problem" style={{ display: "flex", gap: 6, alignItems: "baseline", flexWrap: "wrap", minWidth: 0 }}>
+          <SeverityBadge severity={markSeverity(p)} />
+          <span style={{ fontFamily: mono, fontSize: 10.5, color: A.muted }}>{p.gate}</span>
+          <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{p.problem}</span>
+          <SourceNote source={p.source && p.source !== p.gate ? p.source : null} />
+        </div>
+      ))}
     </div>
   );
 }
