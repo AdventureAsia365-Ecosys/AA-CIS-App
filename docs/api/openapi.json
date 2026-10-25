@@ -1,6 +1,295 @@
 {
   "components": {
     "schemas": {
+      "AccountActivityAction": {
+        "properties": {
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "category"
+        ],
+        "title": "AccountActivityAction",
+        "type": "object"
+      },
+      "AccountActivityCategory": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label"
+        ],
+        "title": "AccountActivityCategory",
+        "type": "object"
+      },
+      "AccountActivityItem": {
+        "description": "One row of the calling tenant's activity trail (an allowlisted ``acp_shared.audit_log`` action).",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "actor": {
+            "enum": [
+              "you",
+              "adventure_asia",
+              "system"
+            ],
+            "title": "Actor",
+            "type": "string"
+          },
+          "at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          },
+          "category": {
+            "enum": [
+              "content",
+              "tours",
+              "account"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "resource_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Id"
+          },
+          "resource_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Type"
+          }
+        },
+        "required": [
+          "id",
+          "at",
+          "action",
+          "category",
+          "label",
+          "actor",
+          "resource_type",
+          "resource_id",
+          "detail"
+        ],
+        "title": "AccountActivityItem",
+        "type": "object"
+      },
+      "AccountActivityPage": {
+        "description": "GET /v1/account/activity — one page, newest first, plus the filter options.",
+        "properties": {
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/AccountActivityAction"
+            },
+            "title": "Actions",
+            "type": "array"
+          },
+          "categories": {
+            "items": {
+              "$ref": "#/components/schemas/AccountActivityCategory"
+            },
+            "title": "Categories",
+            "type": "array"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/AccountActivityItem"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/AccountPagination"
+          }
+        },
+        "required": [
+          "data",
+          "pagination",
+          "categories",
+          "actions"
+        ],
+        "title": "AccountActivityPage",
+        "type": "object"
+      },
+      "AccountApiKey": {
+        "description": "GET /v1/account/api-key — the key is never readable (only its sha256 is stored): a mask and its dates.",
+        "properties": {
+          "has_key": {
+            "title": "Has Key",
+            "type": "boolean"
+          },
+          "issued_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issued At"
+          },
+          "last_api_call_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Api Call At"
+          },
+          "last_api_call_month": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Api Call Month"
+          },
+          "last_sign_in_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Sign In At"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "last_used_month": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used Month"
+          },
+          "masked": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Masked"
+          }
+        },
+        "required": [
+          "has_key",
+          "masked",
+          "issued_at",
+          "last_sign_in_at",
+          "last_api_call_at",
+          "last_api_call_month",
+          "last_used_at",
+          "last_used_month"
+        ],
+        "title": "AccountApiKey",
+        "type": "object"
+      },
+      "AccountPagination": {
+        "properties": {
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "page",
+          "page_size",
+          "total",
+          "pages"
+        ],
+        "title": "AccountPagination",
+        "type": "object"
+      },
       "AddRecipientBody": {
         "additionalProperties": false,
         "properties": {
@@ -1874,6 +2163,29 @@
           "status"
         ],
         "title": "ExecutionStatus",
+        "type": "object"
+      },
+      "ExemplarBody": {
+        "additionalProperties": false,
+        "description": "The admin's example preference on one writing signal (consumed by WM-27); null clears it.",
+        "properties": {
+          "exemplar_pref": {
+            "anyOf": [
+              {
+                "enum": [
+                  "use",
+                  "never"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exemplar Pref"
+          }
+        },
+        "title": "ExemplarBody",
         "type": "object"
       },
       "ExpectedBody": {
@@ -8641,6 +8953,114 @@
         ]
       }
     },
+    "/admin/content-quality/pieces/{piece_id}/signals/{signal_id}": {
+      "patch": {
+        "description": "AA-916 WM-07 — \"Use as example\" / \"Never use as example\" on an admin sentence edit of this T9 piece.",
+        "operationId": "set_piece_signal_exemplar_admin_content_quality_pieces__piece_id__signals__signal_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "piece_id",
+            "required": true,
+            "schema": {
+              "title": "Piece Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "signal_id",
+            "required": true,
+            "schema": {
+              "title": "Signal Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExemplarBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Piece Signal Exemplar",
+        "tags": [
+          "admin-content-quality"
+        ]
+      }
+    },
     "/admin/content-quality/place-cards": {
       "get": {
         "operationId": "list_place_cards_admin_content_quality_place_cards_get",
@@ -9865,6 +10285,114 @@
           }
         },
         "summary": "Suggest Tour Sentence",
+        "tags": [
+          "admin-content-quality"
+        ]
+      }
+    },
+    "/admin/content-quality/tour-versions/{version_id}/signals/{signal_id}": {
+      "patch": {
+        "description": "AA-916 WM-07 — the same on an admin sentence edit of this T2 tour version.",
+        "operationId": "set_version_signal_exemplar_admin_content_quality_tour_versions__version_id__signals__signal_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "title": "Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "signal_id",
+            "required": true,
+            "schema": {
+              "title": "Signal Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExemplarBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Version Signal Exemplar",
         "tags": [
           "admin-content-quality"
         ]
@@ -30223,6 +30751,276 @@
         "summary": "Get Tenant Members",
         "tags": [
           "tenant-membership"
+        ]
+      }
+    },
+    "/v1/account/activity": {
+      "get": {
+        "operationId": "list_activity_v1_account_activity_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "category",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 32,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Category"
+            }
+          },
+          {
+            "in": "query",
+            "name": "action",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Action"
+            }
+          },
+          {
+            "description": "first UTC day, inclusive (YYYY-MM-DD)",
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "first UTC day, inclusive (YYYY-MM-DD)",
+              "title": "Since"
+            }
+          },
+          {
+            "description": "last UTC day, inclusive (YYYY-MM-DD)",
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "last UTC day, inclusive (YYYY-MM-DD)",
+              "title": "Until"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "maximum": 100000,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountActivityPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "AA-761 — the tenant's activity trail, newest first, server paging",
+        "tags": [
+          "tenant-account"
+        ]
+      }
+    },
+    "/v1/account/activity/export": {
+      "get": {
+        "operationId": "export_activity_v1_account_activity_export_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "category",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 32,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Category"
+            }
+          },
+          {
+            "in": "query",
+            "name": "action",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Action"
+            }
+          },
+          {
+            "description": "first UTC day, inclusive (YYYY-MM-DD)",
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "first UTC day, inclusive (YYYY-MM-DD)",
+              "title": "Since"
+            }
+          },
+          {
+            "description": "last UTC day, inclusive (YYYY-MM-DD)",
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "last UTC day, inclusive (YYYY-MM-DD)",
+              "title": "Until"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "AA-761 — the tenant's activity trail as CSV (current filters)",
+        "tags": [
+          "tenant-account"
+        ]
+      }
+    },
+    "/v1/account/api-key": {
+      "get": {
+        "operationId": "get_api_key_v1_account_api_key_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountApiKey"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "AA-761 — masked API key, issue date and last use",
+        "tags": [
+          "tenant-account"
         ]
       }
     },

@@ -3,6 +3,7 @@
 
 import type { SeedInfo } from "../_components/SeedLine";
 import { GATE_LABELS, RETIRED_GATES } from "@/lib/quality-registry.generated";
+import type { ExemplarPref, ReasonCode } from "@/lib/writingReasons";
 
 export interface PieceRow {
   piece_id: string;
@@ -36,18 +37,30 @@ export interface Gate {
   blocking?: boolean;
   repairable?: boolean;
   violations: string[];
+  // AA-924 — per-violation severity (pieces written since PR1). `severity` = the worst finding; a merged entry
+  // (F2_lexicon, F15_voice) names the legacy gate of each finding in `source`. Absent on older ledgers: every
+  // violation then reads the entry's `blocking` (lib/gateSeverity.ts).
+  severity?: "block" | "warn";
+  findings?: { text: string; severity: "block" | "warn"; source?: string }[];
 }
 
 /** One flagged span (display). Offsets are Python code points — see toUtf16 in PieceDrawer. */
 export interface Highlight {
   start: number; end: number; gate: string; blocking: boolean; problem: string;
+  severity?: "block" | "warn" | null; source?: string; // AA-924 — the finding's own severity and source gate
   text: string; sentence_start: number; sentence_end: number; sentence: string; key: string;
 }
 
 /** One actionable sentence (S234): every gate that flagged it, and the span Cut / Rewrite send back. */
 export interface FlaggedSentence {
   key: string; start: number; end: number; text: string; sentence: string;
-  gates: string[]; problems: { gate: string; problem: string; blocking: boolean }[]; blocking: boolean;
+  gates: string[]; problems: SentenceProblem[]; blocking: boolean;
+  suggested_reason?: string; // AA-916 WM-06 — the chip the drawer preselects (from the first gate)
+}
+
+/** AA-924 — one problem of a flagged sentence: its finding's severity, and the source gate inside a merged entry. */
+export interface SentenceProblem {
+  gate: string; problem: string; blocking: boolean; severity?: "block" | "warn" | null; source?: string;
 }
 
 export interface AdminEdit {
@@ -55,6 +68,9 @@ export interface AdminEdit {
   details: {
     before?: string; after?: string; mode?: string; gate?: string | null; published?: boolean; exported?: boolean;
     field?: string; index?: number | null; // AA-802 — T2 version edits name the section
+    // AA-916 — a row written since WM-06 names its writing signal; the reason chip and the example preference
+    // come back from the signal (wm.with_signal_texts)
+    signal_id?: string; reason_code?: string | null; exemplar_pref?: ExemplarPref; problem?: string;
   };
 }
 
@@ -79,6 +95,7 @@ export interface SuggestResponse {
 export interface ApplyBody {
   start: number; end: number; text: string; replacement: string; mode: "cut" | "rewrite" | "manual";
   gate?: string; problem?: string; suggestion?: string; suggestion_model?: string | null; suggestion_cost_usd?: number;
+  reason_code?: ReasonCode; // AA-916 WM-07 — the chip the admin confirmed
 }
 
 export interface CostRow { stage: string; role: string; calls: number; cost_usd: number }
@@ -140,13 +157,14 @@ export interface VersionRow {
 }
 
 // AA-802 — T2 silent correction (GET /tour-versions/{id}, POST …/sentences/suggest|apply).
-export interface TourProblem { gate: string; problem: string; blocking: boolean }
+export type TourProblem = SentenceProblem;
 export interface TourSentence {
   key: string; start: number; end: number; text: string; sentence: string; problems: TourProblem[];
 }
 export interface TourSection { field: string; index: number | null; text: string; sentences: TourSentence[] }
 export interface TourFlaggedSentence extends TourSentence {
   field: string; index: number | null; gates: string[]; blocking: boolean;
+  suggested_reason?: string; // AA-916 WM-06
 }
 export interface TourVersionDetail extends Omit<VersionRow, "cost_usd" | "escalations"> {
   tenant_id: string;

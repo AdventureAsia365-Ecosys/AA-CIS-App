@@ -639,11 +639,19 @@
     "capability": "atoms.write",
     "module": "api.routers.admin_atoms"
   },
+  "PATCH /admin/content-quality/pieces/{piece_id}/signals/{signal_id}": {
+    "capability": "quality.write",
+    "module": "api.routers.admin_content_quality"
+  },
   "PATCH /admin/content-quality/place-cards/{card_id}": {
     "capability": "quality.write",
     "module": "api.routers.admin_content_quality"
   },
   "PATCH /admin/content-quality/place-cards/{card_id}/facts": {
+    "capability": "quality.write",
+    "module": "api.routers.admin_content_quality"
+  },
+  "PATCH /admin/content-quality/tour-versions/{version_id}/signals/{signal_id}": {
     "capability": "quality.write",
     "module": "api.routers.admin_content_quality"
   },

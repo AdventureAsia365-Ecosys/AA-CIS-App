@@ -497,6 +497,16 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   months and raw rows for the rest.
   No plan attached → plan fields are null (no invented Starter defaults). Tenants never see cost
   (`/v1/billing` has no `llm_cost_usd`, AA-796).
+- **Tenant Account pages (AA-761)**: `GET /v1/account/activity` (the tenant's own `acp_shared.audit_log` rows,
+  newest first, `category` / `action` / `since` / `until` filters, offset paging with a total, `page_size` ≤ 100),
+  `GET /v1/account/activity/export` (the same filtered set as CSV, at most 50 000 rows, a cut file says so) and
+  `GET /v1/account/api-key` (masked `cis_…` key, issue date from the onboard / rotate / restore audit rows, last
+  sign-in with it and last metered API call). Tenant JWT only; the id comes from the token. `audit_log` has no RLS
+  and no tenant-role grant, so these read on the main pool with the id bound (the `/v1/billing` pattern), and only
+  an **allowlist of actions** is visible (`api/services/tenant_account.py` `TENANT_VISIBLE_ACTIONS`): admin silent
+  corrections, the staff request trail, brand / config / membership edits and the erasure record never are. A new
+  audit action is invisible to tenants until it is added there. `details` never leaves raw (a per-action whitelist
+  builds `detail`). Billing still reads `/v1/billing` + `/v1/quota`; CIS stores no invoices yet.
 - **Pipeline routes are admin-only (AA-799)**: every `/v1/pipeline/*` route requires the admin secret or (AA-816
   C9) a verified staff principal (`_require_admin`, a router-wide dependency in `api/routers/v1_pipeline.py`); a
   tenant JWT gets 403,
@@ -907,8 +917,10 @@ Booking bk-023 grants the four `booking.v_supply_*` views to `cis_app`). `servic
 - Review (`review.py`, `/admin/supply-content`): an edit is a new `human` version; publish (review.act) refuses an
   inactive entity, a version written against older facts (409 `outdated`) and a photo without usage rights or copy
   (409 `photo_rights`); reject, unpublish, regenerate (content.write). Version content is immutable in the DB (CIS
-  278 guard trigger). The admin page itself is a follow-up (AA-835 S6 UI) and must ship before Booking's "Edit in
-  CIS" link (`edit_url`) is shown: until then that link opens a 404.
+  278 guard trigger). Admin UI (CIS Content › Assets › Supply content): `/admin/supply-content` (list with the
+  feed board, server-side filters and paging) and `/admin/supply-content/<id>` (the page `edit_url` names: status,
+  open draft with its diff and publish blockers, published version, photo rights state, Booking facts, version
+  history; Publish / Reject / Unpublish for review.act, Edit / Regenerate for content.write). Every staff role reads.
 
 Platform services other apps may reuse (already used by TripPlanner where noted): the Model Gateway
 and `llm_call_log` (TripPlanner), the durable job runner `shared.job` (CIS only for now — a second

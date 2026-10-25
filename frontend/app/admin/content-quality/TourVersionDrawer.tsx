@@ -8,12 +8,17 @@
 //                       forbidden word); the same Cut / Rewrite / Edit actions as the T9 drawer.
 //   Text              — every editable section; click any sentence to edit it.
 // Admin role only; the backend re-checks the role, the version status and the span.
+// AA-916 WM-07: every sentence action carries a reason chip row (a flagged sentence preselects the API's
+// `suggested_reason`, a sentence picked in the text `style_only`); Cut / Apply send it as `reason_code`.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
 import { A, mono } from "../_components/adminUi";
 import { ApiError, Badge, Button, ConfirmModal, Drawer, Spinner, apiGet, apiSend, useAdminIdentity, useToast } from "../../_kit";
-import { AdminEdits, RewritePanel, TenantCopyNotice, type Editor } from "./SentenceActions";
+import { AdminEdits, ProblemList, RewritePanel, TenantCopyNotice, type Editor } from "./SentenceActions";
+import { SEVERITY_TONE, worstOf } from "@/lib/gateSeverity";
+import { ReasonTag, WritingReasonChips } from "../_components/WritingReasonChips";
+import { preselect, type ReasonCode } from "@/lib/writingReasons";
 import {
   codePointIndex, gateLabel, tourSectionLabel, usd,
   type CheckFailure, type TourApplyBody, type TourProblem, type TourSection, type TourSentence,
@@ -21,7 +26,7 @@ import {
 } from "./shared";
 
 /** A sentence the admin acts on, with the section it sits in. */
-interface Target { field: string; index: number | null; s: TourSentence; problems: TourProblem[] }
+interface Target { field: string; index: number | null; s: TourSentence; problems: TourProblem[]; suggested?: string }
 
 const targetKey = (t: { field: string; index: number | null; s: TourSentence }) => `${t.field}:${t.index ?? "-"}:${t.s.start}`;
 const problemText = (t: Target) => t.problems.map((p) => `${p.gate}: ${p.problem}`).join(" | ");
@@ -96,6 +101,9 @@ export default function TourVersionDrawer({ id, onClose }: { id: string; onClose
   const [target, setTarget] = useState<Target | null>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
   const [cutting, setCutting] = useState<Target | null>(null);
+  // AA-916 — the chip per sentence the admin changed; untouched ones read the API's suggestion
+  const [reasons, setReasons] = useState<Record<string, ReasonCode>>({});
+  const reasonOf = (t: Target) => reasons[targetKey(t)] ?? preselect(t.suggested);
   const base = `/api/admin/content-quality/tour-versions/${id}/sentences`;
   const canEdit = isAdmin && !!v?.editable;
 
@@ -138,6 +146,7 @@ export default function TourVersionDrawer({ id, onClose }: { id: string; onClose
     field: t.field, index: t.index, start: t.s.start, end: t.s.end, text: t.s.text, replacement, mode,
     gate: t.problems[0]?.gate, problem: problemText(t).slice(0, 1000) || undefined,
     suggestion: ed?.suggestion?.replacement, suggestion_model: ed?.suggestion?.model, suggestion_cost_usd: ed?.suggestion?.cost_usd,
+    reason_code: reasonOf(t),
   });
 
   const applyEditor = (t: Target, ed: Editor) => {
@@ -148,6 +157,17 @@ export default function TourVersionDrawer({ id, onClose }: { id: string; onClose
 
   /** The actions + editor for one sentence (a flagged row, or a sentence picked in the text). */
   const actions = (t: Target) => {
+    const key = targetKey(t);
+    const chips = (
+      <div style={{ marginTop: 8 }}>
+        <WritingReasonChips value={reasonOf(t)} suggested={preselect(t.suggested)} disabled={busy}
+                            onChange={(code) => setReasons((r) => ({ ...r, [key]: code }))} />
+      </div>
+    );
+    return <>{chips}{sentenceButtons(t)}</>;
+  };
+
+  const sentenceButtons = (t: Target) => {
     const key = targetKey(t);
     const open = editor?.key === key ? editor : null;
     const loadingThis = suggest.isPending && suggest.variables && targetKey(suggest.variables.t) === key;
@@ -201,16 +221,16 @@ export default function TourVersionDrawer({ id, onClose }: { id: string; onClose
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {v.flagged_sentences.map((f) => {
-                  const t: Target = { field: f.field, index: f.index, s: f, problems: f.problems };
+                  const t: Target = { field: f.field, index: f.index, s: f, problems: f.problems, suggested: f.suggested_reason };
                   return (
                     <div key={targetKey(t)} data-testid="cq-tv-flag-row" style={{ border: `1px solid ${A.redBorder}`, borderRadius: 8, padding: "8px 10px", background: A.card }}>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 6, alignItems: "center" }}>
                         <span style={{ fontSize: 11, color: A.muted }}>{tourSectionLabel(f.field, f.index)}</span>
-                        {f.gates.map((g) => <Badge key={g} tone="danger" dot={false}>{gateLabel(g)}</Badge>)}
+                        {f.gates.map((g) => (
+                          <Badge key={g} tone={SEVERITY_TONE[worstOf(f.problems.filter((p) => p.gate === g)) ?? "block"]} dot={false}>{gateLabel(g)}</Badge>
+                        ))}
                       </div>
-                      <div style={{ fontSize: 12, color: A.body, marginBottom: 6 }}>
-                        {f.problems.map((p, i) => <div key={i}><span style={{ fontFamily: mono, fontSize: 10.5, color: A.muted }}>{p.gate}</span> {p.problem}</div>)}
-                      </div>
+                      <ProblemList problems={f.problems} />
                       <div style={{ fontSize: 12.5, lineHeight: 1.55, color: A.ink, background: A.bg, borderRadius: 6, padding: "6px 8px", wordBreak: "break-word" }}>{f.sentence}</div>
                       {canEdit && actions(t)}
                     </div>
@@ -241,7 +261,9 @@ export default function TourVersionDrawer({ id, onClose }: { id: string; onClose
           </Section>
 
           {v.admin_edits.length > 0 && (
-            <Section title={`Admin edits · ${v.admin_edits.length}`}><AdminEdits edits={v.admin_edits} /></Section>
+            <Section title={`Admin edits · ${v.admin_edits.length}`}>
+              <AdminEdits edits={v.admin_edits} owner={{ kind: "tour-versions", id: String(v.id), queryKey: ["cq-version", id] }} />
+            </Section>
           )}
 
           <Section title={`Escalations · ${v.reviews.length}`}>
@@ -273,6 +295,7 @@ export default function TourVersionDrawer({ id, onClose }: { id: string; onClose
             body={
               <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 13 }}>
                 <div style={{ background: A.redSoft, borderRadius: 6, padding: "6px 8px", color: A.ink }}>{cutting?.s.sentence}</div>
+                {cutting && <div style={{ display: "flex", gap: 6, alignItems: "center", color: A.body }}>Reason <ReasonTag code={reasonOf(cutting)} /></div>}
                 <div style={{ color: A.body }}>
                   The tenant&rsquo;s copy of this version changes in place (a cut highlight is removed from the list).
                   The edit is audit-logged with the removed text.

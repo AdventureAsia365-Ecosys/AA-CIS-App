@@ -78,6 +78,11 @@ class AdminAuditAction:
     TOUR_SENTENCE_EDITED = "tenant_tour_version.admin_sentence_edited"
     # S234 — an admin re-ran T8 for a request (new 3 angles, choice reset); details keep the old ones.
     ANGLES_REGENERATED = "angle_gate_request.admin_angles_regenerated"
+    # AA-916 WM-07 — an admin set / cleared "use as example" on a sentence-edit signal of this piece / version
+    # (details: signal_id, exemplar_pref). Kept out of the ADMIN_SENTENCE_PREFIX / TOUR_SENTENCE_PREFIX families on
+    # purpose: those prefixes feed the drawers' "Admin edits" list, and a toggle is not an edit of the text.
+    EXEMPLAR_PREF_SET = "content_piece.admin_exemplar_pref"
+    TOUR_EXEMPLAR_PREF_SET = "tenant_tour_version.admin_exemplar_pref"
 
 
 class AdminTenantAuditAction:

@@ -24,7 +24,7 @@ import difflib
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Iterator, Optional
 
 from services.acp_shared.citation_tags import TAG as _TAG
 from services.acp_shared.citation_tags import strip_citation_tags
@@ -366,7 +366,8 @@ def find_scope_violations(lex: ScopeLexicon, *, title: Optional[str] = None, met
 _HASHTAG_RE = re.compile(r"(?<![\w&#])#([A-Za-z][A-Za-z0-9]+)")
 _HASHTAG_LINE_RE = re.compile(r"(?:#[A-Za-z][A-Za-z0-9]+[\s,]*)+")
 _HEADING_RE = re.compile(r"#{1,6}\s")
-_SENT_END_RE = re.compile(rf"[.!?…]+[\"'”’)*]*(?:\s?{_TAG})*(?=\s+\S|\s*$)")
+# A sentence end inside a line: _sentence_end_matches below (a linear scan; it replaced the regex
+# [.!?…]+["'”’)*]*(?:\s?TAG)*(?=\s+\S|\s*$), O(n^2) on '!' * n + 'x' — AA-790 follow-up).
 
 # Sentence boundaries (AA-769 review, S234) — the ONE rule sentence_spans, expand_to_sentence and
 # sentence_repair.locate_sentence share: a mark ('.', '!', '?', '…') is an end only when whitespace,
@@ -436,6 +437,40 @@ def is_sentence_end(text: str, i: int) -> bool:
     return True
 
 
+def _sentence_end_matches(line: str, pos: int = 0) -> Iterator[tuple[int, int]]:
+    """(start, end) of every match of the old sentence-end regex (comment above) in line[pos:] (no
+    newline inside `line`), in one left-to-right pass: a mark run, its closers, the citation tags
+    after it (each with at most one whitespace char before it), ending where whitespace or the end
+    of the line follows — the longest such end, as the regex's backtracking picks. A run that cannot
+    end there is skipped whole (every start inside it has the same tail), so the scan is linear,
+    where finditer was O(n^2) on '!' * n + 'x' (AA-790 follow-up)."""
+    n = len(line)
+    i = pos
+    while i < n:
+        if line[i] not in _SENTENCE_END_CHARS:
+            i += 1
+            continue
+        start, j = i, i + 1
+        while j < n and line[j] in _SENTENCE_END_CHARS:
+            j += 1
+        k = j
+        while k < n and line[k] in _CLOSERS:
+            k += 1
+        ends = [k]
+        while True:  # (?:\s?TAG)*: a tag body holds no bracket, so each tag has one match
+            m = _TAG_AT_RE.match(line, ends[-1] + 1 if ends[-1] < n and line[ends[-1]].isspace() else ends[-1])
+            if not m:
+                break
+            ends.append(m.end())
+        for e in reversed(ends):  # (?=\s+\S|\s*$): whitespace or the end of the line follows
+            if e == n or line[e].isspace():
+                yield start, e
+                i = e
+                break
+        else:
+            i = j
+
+
 def sentence_tail_end(text: str, pos: int) -> Optional[int]:
     """End of the sentence running through `pos`: just after the first real sentence end
     (is_sentence_end) at or after `pos`, plus its closing quotes and trailing citation tags. None
@@ -485,10 +520,10 @@ def sentence_spans(text: str) -> list[dict]:
             lead += 1
         cur = line_start + lead
         line_end = line_start + len(line.rstrip())
-        for m in _SENT_END_RE.finditer(line, lead):
-            if not is_sentence_end(line, m.start()):
+        for m_start, m_end in _sentence_end_matches(line, lead):
+            if not is_sentence_end(line, m_start):
                 continue  # "Mt. Fuji", "No. 5": not a sentence end
-            end = line_start + m.end()
+            end = line_start + m_end
             if end > cur:
                 spans.append(_span(text, cur, end, kind, in_faq))
             cur = end
@@ -1863,10 +1898,10 @@ def _split_first_line(text: str, first_line_max: Optional[int]) -> tuple[str, li
     head, sep, rest = text.partition("\n")
     if len(head) <= first_line_max:
         return text, []
-    m = _SENT_END_RE.search(head)
-    if not m or m.end() > first_line_max or m.end() >= len(head.rstrip()):
+    m_end = next((e for _, e in _sentence_end_matches(head)), None)
+    if m_end is None or m_end > first_line_max or m_end >= len(head.rstrip()):
         return text, []
-    first, remainder = head[:m.end()].rstrip(), head[m.end():].strip()
+    first, remainder = head[:m_end].rstrip(), head[m_end:].strip()
     return f"{first}\n\n{remainder}{sep}{rest}", ["split the first line after its first sentence"]
 
 

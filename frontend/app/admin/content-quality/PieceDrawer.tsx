@@ -9,6 +9,9 @@
 // AA-863: a "Slate seed" line — the frozen seed atom's place · country and a mismatch badge.
 // AA-779 (S245): "Search questions" — the real questions the blog writer got and where each final FAQ
 // question came from (Segment match / place PAA / tour PAA, or `writer` = made up). Admin only.
+// AA-924 PR2: per-violation severity. Each failed gate lists its findings with their own blocking / warning badge
+// (a merged F2_lexicon / F15_voice entry also names the legacy gate that found each one); highlights and the
+// attempt history read the finding's severity, not the entry's.
 
 import { useQuery } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
@@ -18,6 +21,8 @@ import { SeedLine, seedSkipText } from "../_components/SeedLine";
 import { PieceLabelSection } from "./PieceLabel";
 import { AdminEdits, FlaggedSentences, TenantCopyNotice } from "./SentenceActions";
 import { codePointIndex, fmtTime, gateLabel, usd, type Gate, type Highlight, type PieceDetail, type QuestionWithSource, type WriterInput } from "./shared";
+import { FindingList } from "./Severity";
+import { SEVERITY_LABEL, SEVERITY_TONE, countsLabel, entrySeverity, findingsOf, markSeverity, severityCounts } from "@/lib/gateSeverity";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -90,10 +95,13 @@ function HighlightedText({ text, highlights }: { text: string; highlights: Highl
     const start = at(h.start), end = at(h.end);
     if (start < pos) return;
     if (start > pos) runs.push(<span key={`t${i}`}>{text.slice(pos, start)}</span>);
+    // AA-924 — the finding's own severity: a warn stock phrase inside a blocking F2_lexicon entry is amber
+    const block = markSeverity(h) === "block";
     runs.push(
-      <mark key={`h${i}`} title={`${gateLabel(h.gate)} (${h.gate}): ${h.problem}`}
+      <mark key={`h${i}`} data-severity={block ? "block" : "warn"}
+            title={`${SEVERITY_LABEL[block ? "block" : "warn"]} · ${gateLabel(h.gate)} (${h.source ?? h.gate}): ${h.problem}`}
             onClick={() => document.getElementById(`hl-${h.key}`)?.scrollIntoView({ behavior: "smooth", block: "center" })}
-            style={{ background: h.blocking ? A.redSoft : A.amberSoft, color: A.ink, borderBottom: `2px solid ${h.blocking ? A.red : A.amber}`, padding: "0 1px", cursor: "pointer" }}>
+            style={{ background: block ? A.redSoft : A.amberSoft, color: A.ink, borderBottom: `2px solid ${block ? A.red : A.amber}`, padding: "0 1px", cursor: "pointer" }}>
         {text.slice(start, end)}
       </mark>,
     );
@@ -120,8 +128,11 @@ function AttemptLedgers({ log }: { log: Record<string, unknown>[] }) {
           <div key={i} style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", fontSize: 12 }}>
             <span style={{ fontWeight: 600, color: A.ink, minWidth: 74 }}>Attempt {String(e.attempt ?? i + 1)}</span>
             {failed.length === 0 ? <span style={{ color: A.muted }}>no gate failed</span> : failed.map((g) => (
-              <span key={g.gate} title={(g.violations || []).join(" | ")}>
-                <Badge tone={g.blocking === false ? "warning" : "danger"} dot={false}>{gateLabel(g.gate)}</Badge>
+              <span key={g.gate} data-testid="cq-attempt-gate"
+                    title={findingsOf(g).map((f) => `[${SEVERITY_LABEL[f.severity]}] ${f.text}`).join(" | ")}>
+                <Badge tone={SEVERITY_TONE[entrySeverity(g) ?? "block"]} dot={false}>
+                  {gateLabel(g.gate)}{g.findings ? ` · ${countsLabel(severityCounts(g))}` : ""}
+                </Badge>
               </span>
             ))}
             <span style={{ color: A.muted }}>· {(e.gate_ledger as Gate[]).length} gates ran</span>
@@ -132,20 +143,28 @@ function AttemptLedgers({ log }: { log: Record<string, unknown>[] }) {
   );
 }
 
+/** AA-924 — one row per gate; a failed gate lists every finding with its own severity badge. The row tint follows
+ *  the entry's worst severity. */
 function GateTable({ gates }: { gates: Gate[] }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      {gates.map((g, i) => (
-        <div key={`${g.gate}-${i}`} style={{ display: "grid", gridTemplateColumns: "190px 1fr", gap: 10, fontSize: 12, padding: "6px 8px", borderRadius: 6, background: g.passed ? "transparent" : (g.blocking === false ? A.amberSoft : A.redSoft) }}>
-          <div>
-            <div style={{ fontWeight: 600, color: A.ink }}>{gateLabel(g.gate)}</div>
-            <div style={{ fontFamily: mono, fontSize: 10.5, color: A.muted }}>{g.gate}{g.blocking === false ? " · warn" : ""}</div>
+      {gates.map((g, i) => {
+        const sev = entrySeverity(g);
+        const counts = countsLabel(severityCounts(g));
+        return (
+          <div key={`${g.gate}-${i}`} data-testid="cq-gate-row" data-severity={sev ?? "passed"}
+               style={{ display: "grid", gridTemplateColumns: "minmax(0, 190px) minmax(0, 1fr)", gap: 10, fontSize: 12, padding: "6px 8px", borderRadius: 6, background: sev === null ? "transparent" : (sev === "warn" ? A.amberSoft : A.redSoft) }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontWeight: 600, color: A.ink }}>{gateLabel(g.gate)}</div>
+              <div style={{ fontFamily: mono, fontSize: 10.5, color: A.muted, overflowWrap: "anywhere" }}>{g.gate}{sev === "warn" ? " · warn" : ""}</div>
+              {sev !== null && counts && <div style={{ fontSize: 10.5, color: A.muted }}>{counts}</div>}
+            </div>
+            <div style={{ color: sev === null ? A.muted : A.body, minWidth: 0 }}>
+              {sev === null ? "passed" : <FindingList entry={g} />}
+            </div>
           </div>
-          <div style={{ color: g.passed ? A.muted : A.body }}>
-            {g.passed ? "passed" : (g.violations || []).map((v, j) => <div key={j} style={{ marginBottom: 3 }}>{v}</div>)}
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -196,7 +215,7 @@ export default function PieceDrawer({ pieceId, onClose }: { pieceId: string; onC
             <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 6, fontSize: 11.5, color: A.muted }}>
               <span style={{ flexShrink: 0, display: "inline-flex" }}><Badge tone="danger" dot={false}>blocking</Badge></span>
               <span style={{ flexShrink: 0, display: "inline-flex" }}><Badge tone="warning" dot={false}>warning</Badge></span>
-              <span style={{ minWidth: 0 }}>hover a highlight for the gate and reason, click it to jump to its actions</span>
+              <span style={{ minWidth: 0 }}>each finding has its own severity; hover a highlight for the gate and reason, click it to jump to its actions</span>
             </div>
             <HighlightedText text={p.content_text || ""} highlights={p.highlights} />
             {p.channel === "blog" && (
@@ -212,7 +231,9 @@ export default function PieceDrawer({ pieceId, onClose }: { pieceId: string; onC
           </Section>
 
           {p.admin_edits.length > 0 && (
-            <Section title={`Admin edits · ${p.admin_edits.length}`}><AdminEdits edits={p.admin_edits} /></Section>
+            <Section title={`Admin edits · ${p.admin_edits.length}`}>
+              <AdminEdits edits={p.admin_edits} owner={{ kind: "pieces", id: p.piece_id, queryKey: ["cq-piece", pieceId] }} />
+            </Section>
           )}
 
           <Section title="Label"><PieceLabelSection piece={p} /></Section>

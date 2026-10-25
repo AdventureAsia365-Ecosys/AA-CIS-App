@@ -13,6 +13,8 @@ actions on one piece:
   POST /requests/{id}/regenerate-angles — clone the request (same goal, atom, subject, route) and
                                          enqueue t8_angles for the clone; the old request and its
                                          pieces' angles stay as they were. Audit-logged.
+  PATCH /pieces/{id}/signals/{sid}    — AA-916 WM-07: "use as example" / "never" (exemplar_pref) on an admin
+  PATCH /tour-versions/{id}/signals/{sid}   sentence edit's writing signal; the signal must belong to that object.
   GET/POST /pieces/{id}/label         — AA-791: a human label per piece and labeller
                                          (acp_shared.content_piece_label, migration 231; 503 until
                                          it is applied). Admin data only, never shown to a tenant.
@@ -30,13 +32,14 @@ import hashlib
 import json
 import re
 from decimal import Decimal
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID
 
+import asyncpg
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from api.core.staff_authz import staff_policy
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from api.routers.admin import verify_admin_secret
 from services.acp_content_writing import hygiene, sentence_repair, text_integrity
@@ -659,6 +662,95 @@ async def apply_sentence(piece_id: str, body: SentenceApplyBody, request: Reques
         piece = await _load_piece_detail(conn, piece_id)
     # S234 review: F12_scope / F13 hygiene hits on the admin's text are warnings, not refusals.
     return {**piece, "warnings": warnings}
+
+
+# ── AA-916 WM-07: "use as example" / "never use as example" on an admin sentence edit ─────────────────────────
+
+class ExemplarBody(BaseModel):
+    """The admin's example preference on one writing signal (consumed by WM-27); null clears it."""
+    model_config = ConfigDict(extra="forbid")
+    exemplar_pref: Optional[Literal["use", "never"]] = None
+
+
+# Only the sentence edits an admin made on this object carry a before / after worth keeping as an example.
+_EXEMPLAR_ACTIONS = ["sentence_cut", "sentence_rewrite", "sentence_manual"]
+_EXEMPLAR_OWNERS = {
+    "content_piece": "SELECT tenant_id FROM acp_shared.content_piece WHERE piece_id = $1::uuid",
+    "tenant_tour_version": "SELECT tenant_id FROM gold_aa_internal.tenant_tour_versions WHERE id = $1::uuid",
+}
+_EXEMPLAR_AUDIT_ACTIONS = {"content_piece": AdminAuditAction.EXEMPLAR_PREF_SET,
+                           "tenant_tour_version": AdminAuditAction.TOUR_EXEMPLAR_PREF_SET}
+_EXEMPLAR_UPDATE_SQL = """
+    UPDATE shared.writing_signal SET exemplar_pref = $5
+     WHERE signal_id = $1::uuid AND source_table = $2 AND source_id = $3
+       AND tenant_id IS NOT DISTINCT FROM $4::uuid AND actor_type = 'admin' AND action = ANY($6::text[])
+    RETURNING signal_id::text AS signal_id, exemplar_pref
+"""
+
+
+def _canonical_uuid(value: str, what: str) -> str:
+    try:
+        return str(UUID(str(value)))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=404, detail=f"{what} not found")
+
+
+async def _set_exemplar_pref(pool, source_table: str, object_id: str, signal_id: str,
+                             body: ExemplarBody, actor: Optional[str]) -> dict:
+    """AA-916 WM-07 — set `exemplar_pref` on one admin sentence-edit signal OF THIS OBJECT. cis_app sees every
+    signal, so the owner filter is explicit (ADR 0010 decision 10): the signal must name this piece / version as its
+    source and belong to the object's tenant (platform rows: tenant NULL). Anything else is a 404, never a write to
+    another tenant's row. 503 while CIS 277 is not applied.
+
+    The change is audit-logged in the same transaction (review fix): the signal's own actor_id is the admin who made
+    the edit, not whoever toggles the preference later, and WM-27 picks its examples from this value."""
+    oid = _canonical_uuid(object_id, "Piece" if source_table == "content_piece" else "Version")
+    sid = _canonical_uuid(signal_id, "Signal")
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                owner = await conn.fetchrow(_EXEMPLAR_OWNERS[source_table], oid)
+                if owner is None:
+                    raise HTTPException(status_code=404, detail="Piece not found" if source_table == "content_piece"
+                                        else "Version not found")
+                _, tenant = wm.scope_for_tenant(owner["tenant_id"])
+                row = await conn.fetchrow(_EXEMPLAR_UPDATE_SQL, sid, source_table, oid, tenant, body.exemplar_pref,
+                                          _EXEMPLAR_ACTIONS)
+                if row is not None:
+                    await write_audit_log(
+                        conn, tenant_id=owner["tenant_id"], actor=f"admin:{wm.admin_actor_id(actor)}",
+                        action=_EXEMPLAR_AUDIT_ACTIONS[source_table], resource_type=source_table, resource_id=oid,
+                        details={"signal_id": sid, "exemplar_pref": body.exemplar_pref})
+    except asyncpg.UndefinedTableError:
+        raise HTTPException(status_code=503, detail="Writing signals are not available yet (CIS 277)")
+    if row is None:
+        raise HTTPException(status_code=404, detail="Signal not found for this edit")
+    logger.info("aa916_exemplar_pref_set", signal_id=sid, source_table=source_table, exemplar_pref=body.exemplar_pref,
+                actor=wm.admin_actor_id(actor))
+    return dict(row)
+
+
+@router.patch("/pieces/{piece_id}/signals/{signal_id}")
+async def set_piece_signal_exemplar(piece_id: str, signal_id: str, body: ExemplarBody, request: Request,
+                                    x_admin_secret: str = Header(None), x_admin_user_id: Optional[str] = Header(None),
+                                    x_admin_role: Optional[str] = Header(None)):
+    """AA-916 WM-07 — "Use as example" / "Never use as example" on an admin sentence edit of this T9 piece."""
+    verify_admin_secret(x_admin_secret)
+    _require_admin_role(x_admin_role)
+    return await _set_exemplar_pref(request.app.state.pool, "content_piece", piece_id, signal_id, body,
+                                    x_admin_user_id)
+
+
+@router.patch("/tour-versions/{version_id}/signals/{signal_id}")
+async def set_version_signal_exemplar(version_id: str, signal_id: str, body: ExemplarBody, request: Request,
+                                      x_admin_secret: str = Header(None),
+                                      x_admin_user_id: Optional[str] = Header(None),
+                                      x_admin_role: Optional[str] = Header(None)):
+    """AA-916 WM-07 — the same on an admin sentence edit of this T2 tour version."""
+    verify_admin_secret(x_admin_secret)
+    _require_admin_role(x_admin_role)
+    return await _set_exemplar_pref(request.app.state.pool, "tenant_tour_version", version_id, signal_id, body,
+                                    x_admin_user_id)
 
 
 # ── S234: regenerate the 3 T8 angles of one request (admin only) ─────────────────────────────
