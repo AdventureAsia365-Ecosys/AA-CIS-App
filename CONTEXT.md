@@ -1,12 +1,12 @@
 ---
 id: ARCH-06-cis
 title: "AA-CIS-App — Repo Context"
-description: Stack, boundaries, ownership, domain terms and working rules of AA-CIS-App (API, job worker, admin app and tenant portal); read it before designing or changing code in this repo.
+description: Stack, boundaries, ownership, domain terms and working rules of AA-CIS-App (API incl. the Content studio API, job worker, admin app; the frozen tenant portal copy); read it before designing or changing code in this repo.
 type: explanation
 status: active
 owner: nghiep
 audience: [engineer, agent]
-applies_to: [aa-cis-api, aa-cis-worker, aa-cis-frontend, aa-cis-portal]
+applies_to: [aa-cis-api, aa-cis-worker, aa-cis-frontend]
 last_reviewed: 2026-10-25
 review_every_days: 90
 related: [ARCH-01, ARCH-05, ARCH-08, docs/adr/README.md]
@@ -47,8 +47,9 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
 - **Backend**: Python (FastAPI-style routers under `api/routers/`, services under `services/`),
   running on **ECS** (cluster `aa-cis-dev-cluster`, service `aa-cis-dev-api`) fronted by ALB +
   API Gateway. Postgres (RDS) holds the schemas; some steps use Bedrock for LLM work.
-- **Frontend**: two Next.js apps (AA-885, S243), each its own Vercel project, both deployed by CI
-  (not one of the 5 required checks — see Deploy & CI):
+- **Frontend**: two Next.js apps (AA-885, S243), each its own Vercel project. Only the admin is deployed from
+  this repo (CI, not one of the 5 required checks — see Deploy & CI); the portal is deployed from AA-Partner
+  since AA-979:
   - `frontend/` = the **Admin** console (`app/admin/*`), Vercel `aa-cis-frontend`,
     `https://aa-cis.lumiguides.it.com`, workflow `Vercel Deploy` (job "Vercel deploy").
   - `portal/` = the **Tenant portal** (`portal/app/portal/*`), Vercel `aa-cis-portal` (Root Directory
@@ -916,8 +917,10 @@ Booking bk-023 grants the four `booking.v_supply_*` views to `cis_app`). `servic
 - Review (`review.py`, `/admin/supply-content`): an edit is a new `human` version; publish (review.act) refuses an
   inactive entity, a version written against older facts (409 `outdated`) and a photo without usage rights or copy
   (409 `photo_rights`); reject, unpublish, regenerate (content.write). Version content is immutable in the DB (CIS
-  278 guard trigger). The admin page itself is a follow-up (AA-835 S6 UI) and must ship before Booking's "Edit in
-  CIS" link (`edit_url`) is shown: until then that link opens a 404.
+  278 guard trigger). Admin UI (CIS Content › Assets › Supply content): `/admin/supply-content` (list with the
+  feed board, server-side filters and paging) and `/admin/supply-content/<id>` (the page `edit_url` names: status,
+  open draft with its diff and publish blockers, published version, photo rights state, Booking facts, version
+  history; Publish / Reject / Unpublish for review.act, Edit / Regenerate for content.write). Every staff role reads.
 
 Platform services other apps may reuse (already used by TripPlanner where noted): the Model Gateway
 and `llm_call_log` (TripPlanner), the durable job runner `shared.job` (CIS only for now — a second

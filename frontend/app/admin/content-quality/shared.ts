@@ -36,18 +36,29 @@ export interface Gate {
   blocking?: boolean;
   repairable?: boolean;
   violations: string[];
+  // AA-924 — per-violation severity (pieces written since PR1). `severity` = the worst finding; a merged entry
+  // (F2_lexicon, F15_voice) names the legacy gate of each finding in `source`. Absent on older ledgers: every
+  // violation then reads the entry's `blocking` (lib/gateSeverity.ts).
+  severity?: "block" | "warn";
+  findings?: { text: string; severity: "block" | "warn"; source?: string }[];
 }
 
 /** One flagged span (display). Offsets are Python code points — see toUtf16 in PieceDrawer. */
 export interface Highlight {
   start: number; end: number; gate: string; blocking: boolean; problem: string;
+  severity?: "block" | "warn" | null; source?: string; // AA-924 — the finding's own severity and source gate
   text: string; sentence_start: number; sentence_end: number; sentence: string; key: string;
 }
 
 /** One actionable sentence (S234): every gate that flagged it, and the span Cut / Rewrite send back. */
 export interface FlaggedSentence {
   key: string; start: number; end: number; text: string; sentence: string;
-  gates: string[]; problems: { gate: string; problem: string; blocking: boolean }[]; blocking: boolean;
+  gates: string[]; problems: SentenceProblem[]; blocking: boolean;
+}
+
+/** AA-924 — one problem of a flagged sentence: its finding's severity, and the source gate inside a merged entry. */
+export interface SentenceProblem {
+  gate: string; problem: string; blocking: boolean; severity?: "block" | "warn" | null; source?: string;
 }
 
 export interface AdminEdit {
@@ -140,7 +151,7 @@ export interface VersionRow {
 }
 
 // AA-802 — T2 silent correction (GET /tour-versions/{id}, POST …/sentences/suggest|apply).
-export interface TourProblem { gate: string; problem: string; blocking: boolean }
+export type TourProblem = SentenceProblem;
 export interface TourSentence {
   key: string; start: number; end: number; text: string; sentence: string; problems: TourProblem[];
 }
