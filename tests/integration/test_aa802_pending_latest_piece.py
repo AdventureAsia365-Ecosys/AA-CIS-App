@@ -188,9 +188,9 @@ async def test_publish_refuses_a_superseded_piece(ctx):
     assert await p.fetchval("SELECT count(*) FROM acp_shared.publish_log WHERE tenant_id = $1", tid) == 0
 
 
-# ── AA-669: My Content's published status comes from the piece's live publish_log row ─────────────
+# ── AA-669: My Content's published status comes from the request's live publish_log row ───────────
 @pytest.mark.asyncio
-async def test_my_content_shows_the_live_post_of_the_latest_piece_only(ctx):
+async def test_my_content_shows_the_live_post_of_the_request(ctx):
     p, tid = ctx
     req, opt = await _request_row(p, tid)
     latest = await _piece(p, tid, req, opt, status="approved", minutes=0)
@@ -202,6 +202,7 @@ async def test_my_content_shows_the_live_post_of_the_latest_piece_only(ctx):
         "VALUES ($1, $2, 'blog', 'published', $3, 'https://blog.example.com/two-worlds')", latest, tid, T0)
     [item] = await cw_service.fetch_review_list(tid, p)
     assert item["published_at"] == T0.isoformat() and item["published_url"] == "https://blog.example.com/two-worlds"
+    assert item["published_piece_id"] == str(latest)
     await p.execute("UPDATE acp_shared.publish_log SET status = 'unpublished', unpublished_at = now() "
                     "WHERE piece_id = $1 AND status = 'published'", latest)
     [item] = await cw_service.fetch_review_list(tid, p)
@@ -224,7 +225,44 @@ async def test_my_content_never_reads_another_tenants_publish_row(ctx):
             "VALUES ($1, $2, 'blog', 'published', now(), 'https://other.example.com/x')", piece, other)
         [item] = await cw_service.fetch_review_list(tid, p)
         assert item["published_at"] is None and item["published_url"] is None
-        assert await cw_service.fetch_review_list(other, p) == []
+        # A piece filed under the other tenant but pointing at this tenant's request, live under either tenant id,
+        # is not this request's post either (the request-wide join binds the piece's tenant too).
+        forged = await p.fetchval(
+            "INSERT INTO acp_shared.content_piece (tenant_id, angle_gate_request_id, angle_gate_option_id, "
+            "attempt_number, content_text, status, gate_ledger, repair_log, channel, created_at) "
+            "VALUES ($1, $2, $3, 9, 'x', 'approved', '{}'::jsonb, '[]'::jsonb, 'blog', $4) RETURNING piece_id",
+            other, req, opt, T0 - timedelta(days=1))
+        for owner in (other, tid):
+            await p.execute(
+                "INSERT INTO acp_shared.publish_log (piece_id, tenant_id, channel, status, published_at, external_url) "
+                "VALUES ($1, $2, 'blog', 'published', now(), 'https://other.example.com/y')", forged, owner)
+        [item] = await cw_service.fetch_review_list(tid, p)
+        assert item["published_at"] is None and item["published_piece_id"] is None
     finally:
+        await p.execute("DELETE FROM acp_shared.publish_log WHERE piece_id IN "
+                        "(SELECT piece_id FROM acp_shared.content_piece WHERE tenant_id = $1)", other)
+        await p.execute("DELETE FROM acp_shared.content_piece WHERE tenant_id = $1", other)
         await p.execute("DELETE FROM acp_shared.publish_log WHERE tenant_id = $1", other)
         await p.execute("DELETE FROM shared.tenants WHERE tenant_id = $1", other)
+
+
+@pytest.mark.asyncio
+async def test_a_rewrite_keeps_the_row_published_while_the_older_post_is_live(ctx):
+    """AA-669 review (S251): after "Write again" on a published piece, the request's latest piece is the new
+    text but the earlier piece's post is still live. The row must keep reading published (with that post's link
+    and the live piece id), so the portal does not offer Publish again and put a second post up."""
+    p, tid = ctx
+    req, opt = await _request_row(p, tid)
+    old = await _piece(p, tid, req, opt, status="approved", minutes=0)
+    await p.execute(
+        "INSERT INTO acp_shared.publish_log (piece_id, tenant_id, channel, status, published_at, external_url) "
+        "VALUES ($1, $2, 'blog', 'published', $3, 'https://blog.example.com/v1')", old, tid, T0)
+    new = await _piece(p, tid, req, opt, status="approved", minutes=30, attempt=2)
+    [item] = await cw_service.fetch_review_list(tid, p)
+    assert item["piece_id"] == str(new)
+    assert item["published_at"] == T0.isoformat() and item["published_url"] == "https://blog.example.com/v1"
+    assert item["published_piece_id"] == str(old)
+    await p.execute("UPDATE acp_shared.publish_log SET status = 'unpublished', unpublished_at = now() "
+                    "WHERE piece_id = $1 AND status = 'published'", old)
+    [item] = await cw_service.fetch_review_list(tid, p)
+    assert item["published_at"] is None and item["published_piece_id"] is None  # the new version is publishable
