@@ -273,6 +273,9 @@ POLICY: dict[tuple[str, str], str] = {
     ("POST", "/admin/content-quality/pieces/{piece_id}/sentences/apply"): QUALITY_WRITE,
     ("POST", "/admin/content-quality/tour-versions/{version_id}/sentences/suggest"): QUALITY_WRITE,
     ("POST", "/admin/content-quality/tour-versions/{version_id}/sentences/apply"): QUALITY_WRITE,
+    # AA-916 WM-07 — the example preference on an admin sentence edit (writing signal) of this piece / version
+    ("PATCH", "/admin/content-quality/pieces/{piece_id}/signals/{signal_id}"): QUALITY_WRITE,
+    ("PATCH", "/admin/content-quality/tour-versions/{version_id}/signals/{signal_id}"): QUALITY_WRITE,
     ("POST", "/admin/content-quality/requests/{request_id}/regenerate-angles"): QUALITY_WRITE,
     ("POST", "/admin/content-quality/place-cards/build"): QUALITY_WRITE,
     ("PATCH", "/admin/content-quality/place-cards/{card_id}"): QUALITY_WRITE,
