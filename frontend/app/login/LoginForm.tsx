@@ -4,7 +4,12 @@
 // username/password form only while the server flag LEGACY_ADMIN_LOGIN_ENABLED is on.
 // S242: a one-line note under the button says the code arrives by email and names the sign-in host
 // (our custom domain staff-auth.lumiguides.it.com, branded like this page).
+// S251 (AA-835 smoke): the page follows the theme like the admin (the stored choice, else prefers-color-scheme, set on
+// <html data-theme> by the restore script in app/layout.tsx); it no longer pins data-theme="light". useThemeChoice()
+// subscribes the theme store (app/_kit/theme.ts), so an OS switch while the page is open applies too. Nothing renders
+// from its value (the server snapshot differs from the client's, so an attribute would not hydrate cleanly).
 import { useState } from "react";
+import { useThemeChoice } from "../_kit/useTheme";
 import { BRAND, BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_SANS, LOGO_SRC } from "../_brand/tokens";
 import { User, Lock, Mail } from "lucide-react";
 
@@ -21,6 +26,7 @@ export default function LoginForm({ legacyEnabled, cognitoAvailable, signInHost,
   const [password, setPassword] = useState("");
   const [error, setError]       = useState("");
   const [loading, setLoading]   = useState(false);
+  useThemeChoice();
 
   const login = async () => {
     // AA-573: guard against a second concurrent submit (rapid double-Enter,
@@ -80,7 +86,7 @@ export default function LoginForm({ legacyEnabled, cognitoAvailable, signInHost,
   };
 
   return (
-    <div data-theme="light" style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"var(--bg-primary)", fontFamily: FONT_SANS }}>
+    <div data-testid="login-page" style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"var(--bg-primary)", fontFamily: FONT_SANS }}>
       <div style={{ background:"var(--bg-card)", border:"1px solid var(--border)", borderRadius:16, padding:40, width:380 }}>
         <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:32 }}>
           {/* AA-605 — real Adventure Asia logo (was a gold "AA" tile). */}
