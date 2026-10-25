@@ -418,6 +418,12 @@ _ADVERSARIAL = {
     "years-old": "children must be " * (_N // 17) + "7 years old",
     "per": "7 per " * (_N // 6),
     "of-link": "families of " * (_N // 12) + "4 x",
+    # round-3 fourth review: time tails, look-backs and era words
+    "from-to": "visitors from 10 to 12 " * (_N // 23),
+    "aged-years": "malt aged 12 years " * (_N // 19),
+    "eras": "Middle Ages " * (_N // 12) + "12",
+    "every": "every " * (_N // 6) + "day",
+    "group-of": "groups of " * (_N // 10),
 }
 
 
@@ -435,7 +441,10 @@ def _round3_patterns():
                                                 "_SRC_HYPHEN_AGE_RE", "_SRC_YEARS_AND_OVER_RE", "_SRC_YEARS_OLD_RE",
                                                 "_DURATION_TAIL_RE", "_UNIT_AFTER_RE",
                                                 # the fact-preservation invariant's tokeniser and particle look
-                                                "_FACT_TOKEN_RE", "_PARTICLE_AFTER_RE", "_SEED_LABEL_RE")]
+                                                "_FACT_TOKEN_RE", "_PARTICLE_AFTER_RE", "_SEED_LABEL_RE",
+                                                # round-3 fourth review: range tails, thing ages and eras
+                                                "_AGE_TAIL_RE", "_TIME_TAIL_RE", "_GROUP_BEFORE_RE",
+                                                "_AGE_LOOKBACK_CUE_RE", "_ERA_BEFORE_RE", "_AGED_BEFORE_RE")]
     start = next(i for i, r in enumerate(hygiene.AI_TELL_LINE_RES)
                  if r.pattern.startswith(r"\b(?:that|this|it)(?:['’]s|\s+is)\s+(?:a|the|one)\s+(?:detail"))
     out += [(f"AI_TELL_LINE_RES[{i}]", r) for i, r in enumerate(hygiene.AI_TELL_LINE_RES) if i >= start]

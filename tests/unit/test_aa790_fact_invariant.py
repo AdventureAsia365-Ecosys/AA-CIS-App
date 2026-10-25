@@ -524,6 +524,50 @@ def test_an_explicit_age_cue_in_the_seed_keeps_the_age_known(source, claim):
     assert hygiene.unsupported_ages(claim, source) == []
 
 
+@pytest.mark.parametrize("source, claim, found", [
+    # fourth review (1): clock-time and visiting-rule ranges after a person noun
+    ("Day 3. Visitors from 10 to 12 can enter the assembly hall.", "Kids aged 10 and over will love it.",
+     "aged 10 and over"),
+    ("Students from 7 to 9 in the morning practise in the courtyard.", "Ideal for children aged 7 and up.",
+     "aged 7 and up"),
+    ("Kids from 9 to 5 daily.", "Kids aged 5 and up can join.", "aged 5 and up"),
+    ("Pilgrims from 6 to 8 every evening circle the chorten.", "Kids aged 6 and up can join.", "aged 6 and up"),
+    # fourth review (2): a thing's age written 'aged N (years)', and eras
+    ("Day 5: Taste a single malt aged 12 years at the distillery.", "A 12-year-old can manage the walk.",
+     "12-year-old"),
+    ("Sample Pu'er tea aged 15 years in the cellar.", "Great for 15-year-olds.", "15-year-olds"),
+    ("Rice wine aged 3 years.", "Great for 3-year-olds.", "3-year-olds"),
+    ("Kimchi aged 2 years.", "Great for 2-year-olds.", "2-year-olds"),
+    ("Sake aged 10 years and over.", "Kids aged 10 and over will love it.", "aged 10 and over"),
+    ("Visit a temple aged 12 years.", "A 12-year-old can manage the walk.", "12-year-old"),
+    ("Whisky aged 12.", "A 12-year-old can manage the walk.", "12-year-old"),
+    ("The Middle Ages 12 monks lived here.", "A 12-year-old can manage the walk.", "12-year-old"),
+    ("The Stone Age 8 caves.", "Great for 8-year-olds.", "8-year-olds"),
+    ("Group of travellers 2–12.", "Kids aged 12 and up will love the rafting.", "aged 12 and up"),
+])
+def test_fourth_review_non_age_numbers_are_not_known_ages(source, claim, found):
+    assert not hygiene._source_ages(source)
+    assert hygiene.unsupported_ages(claim, source) == [found]
+    assert hygiene.unsupported_ages(claim, "") == [found]
+
+
+@pytest.mark.parametrize("source, claim", [
+    ("Children from 6 to 12 years join the class.", "Kids aged 6 to 12 join the class."),
+    ("Children from 6 to 12.", "Kids aged 6 to 12 join the class."),
+    ("Ages 6–12.", "Kids aged 6 to 12 join the class."),
+    ("Kids aged 7 and up are welcome.", "Kids aged 7 and up are welcome."),
+    ("Children aged 8 years and over.", "Kids aged 8 and up join in."),
+    ("Minimum age: travellers must be aged 10 years or over.", "Kids aged 10 and over are welcome."),
+])
+def test_fourth_review_explicit_age_cues_still_count(source, claim):
+    assert hygiene.unsupported_ages(claim, source) == []
+
+
+def test_a_things_age_in_the_output_is_not_an_age_claim():
+    assert hygiene.unsupported_ages("Taste a single malt aged 12 years at the distillery.", "") == []
+    assert hygiene.unsupported_ages("For families with children aged 12 and up.", "") == ["aged 12 and up"]
+
+
 def test_a_measurement_in_the_output_is_not_an_age_claim():
     assert hygiene.unsupported_ages("Hikers over 30 km a day need a rest.", "") == []
     assert hygiene.unsupported_ages("Travellers above 4,000 m feel the altitude.", "") == []

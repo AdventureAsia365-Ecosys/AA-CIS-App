@@ -1249,7 +1249,8 @@ _SRC_AGE_WORD_RE = re.compile(
     r"\b(?:aged|ages?)(?:\s*[:(]\s*|\s+)(?:(?:of|from|between|is|are|limit|minimum|requirement|must|be|at|least"
     rf"|under|over|above)\s+){{0,3}}{_AGE_RANGE}", re.I)
 _SRC_PERSON_RANGE_RE = re.compile(
-    rf"\b{_AGE_PERSON}\s+(?:(?:aged|from|of|between)\s+)?(?P<a>{_AGE_NUM})\s*(?:–|-|to)\s*(?P<b>{_AGE_NUM})", re.I)
+    rf"\b{_AGE_PERSON}\s+(?:(?P<link>aged|from|of|between)\s+)?(?P<a>{_AGE_NUM})\s*(?:–|-|to)\s*(?P<b>{_AGE_NUM})",
+    re.I)
 _SRC_PERSON_TAIL_RE = re.compile(
     rf"\b{_AGE_PERSON}\s+(?:(?P<be>(?:must|should|need[ \t]+to|have[ \t]+to)[ \t]+be)\s+)?"
     r"(?:(?P<link>aged|from|of)\s+)?"
@@ -1265,6 +1266,52 @@ _YEARS_OLD_CUE_RE = re.compile(
     rf"\b(?:{_AGE_PERSON}|aged?|ages|must|minimum|min\.?|least|under|over|above)(?:\s*[:(]\s*|[\s-]+)"
     r"(?:(?:is|are|must|be|of|from|between|aged|age|the|at|least|over|under|above|older|younger|than)\s+){0,4}$",
     re.I)
+# Round-3 fourth review (S252). A range after 'from' is an age only with an age tail ('Children from 6 to 12 years')
+# or at the clause end; never before a time of day or a visiting rule ('Visitors from 10 to 12 can enter the hall',
+# 'Students from 7 to 9 in the morning', 'Kids from 9 to 5 daily'), and never a descending range.
+_AGE_TAIL_RE = re.compile(r"^(?:[\s-]*(?:years?|yrs?)\b|\s*(?:[.,;:!?)]|$))", re.I)
+_TIME_TAIL_RE = re.compile(
+    r"^\s*(?:am\b|pm\b|a\.m|p\.m|o['’]clock|h\b|hrs\b|daily\b|nightly\b|each\s+(?:day|morning|evening)\b"
+    r"|every\s+(?:day|morning|afternoon|evening|night|week)\b|in\s+the\s+(?:morning|afternoon|evening)\b|at\s+night\b"
+    r"|on\s+(?:weekdays|weekends|[a-z]+days)\b|until\b|till\b|(?:can|may|could)\s+(?:enter|visit|open|come)\b)", re.I)
+# 'Group of travellers 2–12', 'a party of guests 4-8': a head count, never an age band
+_GROUP_BEFORE_RE = re.compile(r"\b(?:groups?|part(?:y|ies)|teams?|size|max(?:imum)?)\s+(?:of\s+)?$", re.I)
+# A thing's age is never a person's: 'a single malt aged 12 years', "Pu'er tea aged 15 years", 'a temple aged 12
+# years', 'Whisky aged 12.' An 'aged N' counts only after a person noun or an age-limit word in the same clause (the
+# look-back reads at most 80 characters, cut at the last sentence or clause break). 'The Middle Ages 12 …', 'the
+# Stone Age 8 …' are eras.
+_AGE_LOOKBACK_CUE_RE = re.compile(
+    rf"\b(?:{_AGE_PERSON}|people|persons?|anyone|everyone|those|ones|learners|climbers|walkers|paddlers|divers"
+    r"|campers|minimum|min\.?|least|must|limits?|restrictions?|requirements?)\b", re.I)
+_ERA_BEFORE_RE = re.compile(r"\b(?:middle|stone|bronze|iron|dark|ice|golden|gilded|space|information|modern)[ \t]*$",
+                            re.I)
+_AGED_BEFORE_RE = re.compile(r"\baged\s*$", re.I)
+_CLAUSE_BREAKS = ".!?;\n"
+
+
+def _age_cue_before(text: str, start: int) -> bool:
+    """A person noun or an age-limit word in the same clause before ``start`` (≤ 80 characters back)."""
+    look = text[max(0, start - 80):start]
+    cut = max(look.rfind(c) for c in _CLAUSE_BREAKS)
+    return bool(_AGE_LOOKBACK_CUE_RE.search(look[cut + 1:]))
+
+
+def _thing_aged(text: str, m: re.Match) -> bool:
+    """'aged N' with no person or age-limit cue before it (a thing's age), or 'Age(s) N' after an era word."""
+    head = text[m.start():m.start() + 4].lower()
+    if head == "aged":
+        return not _age_cue_before(text, m.start())
+    if head.startswith("age"):
+        return bool(_ERA_BEFORE_RE.search(text[max(0, m.start() - 14):m.start()]))
+    return False
+
+
+def _thing_aged_before(text: str, start: int) -> bool:
+    """'… aged' right before the number ('Sake aged 10 years and over') with no person or age-limit cue."""
+    look = text[max(0, start - 8):start]
+    return bool(_AGED_BEFORE_RE.search(look)) and not _age_cue_before(text, start)
+
+
 _COUNT_AFTER_RE = re.compile(
     rf"^(?:\s+(?:{_PERSON_NOUNS}|people|persons?|pax|seats?|rooms?|beds?)\b|\s*(?:am|pm|a\.m|p\.m|o['’]clock|h)\b)",
     re.I)
@@ -1307,13 +1354,26 @@ def _source_ages(text: str) -> set[int]:
         after = rest(m)
         if m.group("c") and (_count_after(after) or _YEARS_AFTER_RE.match(after) or _PLURAL_AFTER_RE.match(after)):
             continue
-        if m.group("a") and _count_after(rest(m)):
+        if m.group("a") and (_count_after(rest(m)) or _thing_aged(text, m) or _PLURAL_AFTER_RE.match(after)):
+            continue
+        if m.group("d") and _thing_aged_before(text, m.start()):
             continue
         out |= _ages_of(m)
     for rx in (_SRC_AGE_WORD_RE, _SRC_PERSON_RANGE_RE, _SRC_HYPHEN_AGE_RE, _SRC_YEARS_AND_OVER_RE):
         for m in rx.finditer(text):
-            if not _count_after(rest(m)) and not (rx is _SRC_PERSON_RANGE_RE and _PLURAL_AFTER_RE.match(rest(m))):
-                out |= _ages_of(m)
+            after = rest(m)
+            if _count_after(after) or (rx is not _SRC_HYPHEN_AGE_RE and _PLURAL_AFTER_RE.match(after)):
+                continue
+            if rx is _SRC_AGE_WORD_RE and _thing_aged(text, m):
+                continue
+            if rx is _SRC_YEARS_AND_OVER_RE and _thing_aged_before(text, m.start()):
+                continue
+            if rx is _SRC_PERSON_RANGE_RE and (
+                    _TIME_TAIL_RE.match(after) or _GROUP_BEFORE_RE.search(text[max(0, m.start() - 30):m.start()])
+                    or (m.group("link") or "").lower() == "from" and not _AGE_TAIL_RE.match(after)
+                    or (small_number(m.group("b")) or 0) < (small_number(m.group("a")) or 0)):
+                continue
+            out |= _ages_of(m)
     for m in _SRC_PERSON_TAIL_RE.finditer(text):
         tail = (m.group("tail") or "").strip(" \t-").lower()
         if not (m.group("be") or tail) or _count_after(rest(m)) or (not tail and _PLURAL_AFTER_RE.match(rest(m))):
@@ -1324,7 +1384,7 @@ def _source_ages(text: str) -> set[int]:
             continue
         out |= _ages_of(m)
     for m in _SRC_YEARS_OLD_RE.finditer(text):
-        if _YEARS_OLD_CUE_RE.search(text[max(0, m.start() - 80):m.start()]):
+        if _YEARS_OLD_CUE_RE.search(text[max(0, m.start() - 80):m.start()]) and not _thing_aged_before(text, m.start()):
             out |= _ages_of(m)
     return out - {None}
 
@@ -1340,6 +1400,9 @@ def unsupported_ages(sentence: str, source: Optional[str]) -> list[str]:
     text = sentence or ""
     for m in _AGE_CLAIM_RE.finditer(text):
         if (m.group("a") or m.group("c")) and _count_after(text[m.end():m.end() + 60]):
+            continue
+        # fourth review: 'a single malt aged 12 years' is a thing's age on the output side too
+        if m.group("a") and _thing_aged(text, m):
             continue
         values = {small_number(v) for v in m.groups() if v} - {None}
         if values and max(values) <= 120 and not values <= known:  # 'the 300-year-old' is never a person
