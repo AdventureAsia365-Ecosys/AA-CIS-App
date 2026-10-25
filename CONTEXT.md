@@ -907,8 +907,10 @@ Booking bk-023 grants the four `booking.v_supply_*` views to `cis_app`). `servic
 - Review (`review.py`, `/admin/supply-content`): an edit is a new `human` version; publish (review.act) refuses an
   inactive entity, a version written against older facts (409 `outdated`) and a photo without usage rights or copy
   (409 `photo_rights`); reject, unpublish, regenerate (content.write). Version content is immutable in the DB (CIS
-  278 guard trigger). The admin page itself is a follow-up (AA-835 S6 UI) and must ship before Booking's "Edit in
-  CIS" link (`edit_url`) is shown: until then that link opens a 404.
+  278 guard trigger). Admin UI (CIS Content › Assets › Supply content): `/admin/supply-content` (list with the
+  feed board, server-side filters and paging) and `/admin/supply-content/<id>` (the page `edit_url` names: status,
+  open draft with its diff and publish blockers, published version, photo rights state, Booking facts, version
+  history; Publish / Reject / Unpublish for review.act, Edit / Regenerate for content.write). Every staff role reads.
 
 Platform services other apps may reuse (already used by TripPlanner where noted): the Model Gateway
 and `llm_call_log` (TripPlanner), the durable job runner `shared.job` (CIS only for now — a second
