@@ -159,30 +159,39 @@ def finish(text: str, row: dict, args: dict) -> tuple[str, list[str], dict]:
 
 
 def call_writer(row: dict, args: dict, model_tier: Optional[str], run_id: str) -> dict:
+    """One writer call through the gateway (AA-927 canonical pattern): the row is written once the reply is parsed;
+    a reply that came back (billed) but cannot be parsed writes a billed_unusable row in the except branch and
+    re-raises. A call that raises inside ``generate()`` is logged by the gateway itself."""
     from services.acp_content_writing import generate
     from services.acp_content_writing.prompts import SYSTEM_PROMPT, build_user_prompt
-    from shared.llm_client.call_log import record_call_sync
+    from shared.llm_client.call_log import record_call_sync, record_unusable_sync
     from shared.llm_client.client import LLMClient
     from shared.llm_client.models import LLMRequest
 
     channel = args["channel_style"]["channel"]
     user = build_user_prompt(**args)
+    signal = {"aa790_run": run_id, "piece": row["piece_id"], "channel": channel, "mode": "repanel_write",
+              "lead_focus": bool(args.get("lead_focus"))}
     resp = LLMClient().generate(LLMRequest(system_prompt=SYSTEM_PROMPT, user_prompt=user, stage=STAGE,
                                            model_tier=model_tier, max_tokens=generate.max_tokens_for(channel)))
+    try:
+        if channel == "blog":
+            body, _seo, _summary = generate._parse_blog_envelope(resp.content)
+        else:
+            body, _summary = generate._extract_summary(generate._strip_fences(resp.content))
+            if channel in generate.PLAIN_TEXT_CHANNELS:
+                body = generate.strip_markdown(body)
+        if not (body or "").strip():
+            raise ValueError("empty writer reply")
+    except Exception as exc:
+        record_unusable_sync(resp, stage=STAGE, role="writer", error=exc, quality_signal_extra=signal)
+        raise
     record_call_sync(
         stage=STAGE, role="writer", model=resp.model_used, tokens_in=getattr(resp, "input_tokens", None),
-        tokens_out=getattr(resp, "output_tokens", None), cost_usd=resp.cost_usd,
-        quality_signal={"aa790_run": run_id, "piece": row["piece_id"], "channel": channel, "mode": "repanel_write",
-                        "lead_focus": bool(args.get("lead_focus"))},
+        tokens_out=getattr(resp, "output_tokens", None), cost_usd=resp.cost_usd, quality_signal=signal,
         stop_reason=getattr(resp, "stop_reason", None), account=getattr(resp, "satellite_account", None),
         fallback_used=getattr(resp, "fallback_used", None),
         provider=resp.provider if isinstance(getattr(resp, "provider", None), str) else None)
-    if channel == "blog":
-        body, _seo, _summary = generate._parse_blog_envelope(resp.content)
-    else:
-        body, _summary = generate._extract_summary(generate._strip_fences(resp.content))
-        if channel in generate.PLAIN_TEXT_CHANNELS:
-            body = generate.strip_markdown(body)
     return {"text": body, "cost_usd": float(resp.cost_usd or 0.0), "model": resp.model_used,
             "stop_reason": getattr(resp, "stop_reason", None)}
 

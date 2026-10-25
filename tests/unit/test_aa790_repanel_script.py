@@ -59,3 +59,27 @@ def test_call_is_logged_as_adhoc_and_the_pass_runs(monkeypatch):
     assert "That's the opening." not in text and any("verdict line" in ln for ln in log)
     assert writer_census["fixable_total"] == 1
     json.dumps({"text": text, "log": log})  # the result row is plain JSON
+
+
+def test_billed_but_unusable_reply_writes_one_billed_unusable_row(monkeypatch):
+    """AA-927 canonical pattern: a reply that came back (billed) but is empty writes a billed_unusable row, no
+    ordinary row, and the error reaches the per-piece handler."""
+    import pytest
+
+    logged, unusable = [], []
+
+    class _Client:
+        def generate(self, req):
+            return SimpleNamespace(content="   \n\n===SUMMARY===\ns", cost_usd=0.02, model_used="sonnet-4-6",
+                                   input_tokens=10, output_tokens=0, stop_reason="end_turn",
+                                   satellite_account="acc3", fallback_used=False, provider="bedrock-satellite")
+    monkeypatch.setattr("shared.llm_client.client.LLMClient", _Client)
+    monkeypatch.setattr("shared.llm_client.call_log.record_call_sync", lambda **kw: logged.append(kw))
+    monkeypatch.setattr("shared.llm_client.call_log.record_unusable_sync",
+                        lambda resp, **kw: unusable.append((resp, kw)))
+    row = _row("p1", "r1")
+    with pytest.raises(ValueError):
+        rp.call_writer(row, rp.writer_args(row, 0), "sonnet-4-6", "run1")
+    assert not logged
+    assert len(unusable) == 1 and unusable[0][1]["stage"] == "adhoc_aa790" and unusable[0][1]["role"] == "writer"
+    assert unusable[0][0].cost_usd == 0.02

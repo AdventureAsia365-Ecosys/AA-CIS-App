@@ -72,6 +72,15 @@ _PROTECTED_RE = re.compile(
     r"\b(?:allow(?:ed|s)?|permit(?:ted|s)?|possible|suitable|safe|unsafe|included|includ(?:es|ing)|available|"
     r"required|requires?|recommended|open|closed|optional|guaranteed|offered|accessible|necessary|must|"
     r"forbidden|prohibited|banned|restricted|dangerous|risk)\b", re.I)
+# AA-790 review: what a family needs to know about effort, cost, payment or access. A denial, verdict or contrast
+# whose own (denied / judged) part names one of these is a fact, not a set-up, and is never cut or folded
+# ("It is not difficult.", "This is free.", "not reachable by car", "Bring cash for the market, not cards.").
+# Checked on that part only, so a tell elsewhere in a sentence that mentions 'free time' is still fixed.
+_PRACTICAL_RE = re.compile(
+    r"\b(?:compulsory|mandatory|essential|obligatory|free|extra|charged?|charges|costs?|costly|fees?|paid|payable|"
+    r"prices?|priced|refundable|bookable|booked|reservations?|reachable|cash|cards?|easy|easier|difficult|hard|"
+    r"strenuous|steep|tiring|demanding|physical|far|long|short|deep|shallow|cold|hot|crowded|busy|quiet|noisy|"
+    r"cheap|cheaper|expensive|affordable|wheelchair|strollers?|prams?|toilets?|tipping)\b", re.I)
 _DIGIT_RE = re.compile(r"\d")
 _TAG_RE = re.compile(TAG)  # the shared citation-tag definition (AA-912)
 _WORD_RE = re.compile(r"[A-Za-zÀ-ÖØ-öø-ÿ][\w'’-]*")
@@ -127,6 +136,10 @@ def _cap(s: str) -> str:
 
 def _protected(s: str) -> bool:
     return bool(_PROTECTED_RE.search(s))
+
+
+def _practical(part: str) -> bool:
+    return bool(_PRACTICAL_RE.search(part))
 
 
 def _seed_fact(denied: str, src: frozenset) -> bool:
@@ -218,7 +231,8 @@ _NOT_BECAUSE_RE = re.compile(r",?[ \t]+not[ \t]+because[ \t]+[^.;!?\n]{1,140}?,?
 
 def _not_because(s: str, src: frozenset) -> tuple[str, list[str]]:
     m = _NOT_BECAUSE_RE.search(s)
-    if not m or not s[:m.start()].strip() or _protected(s) or _seed_fact(m.group(0), src):
+    if (not m or not s[:m.start()].strip() or _protected(s) or _practical(m.group(0))
+            or _seed_fact(m.group(0), src)):
         return s, []
     return s[:m.start()] + " because" + s[m.end():], ["not because … but because"]
 
@@ -232,8 +246,48 @@ _NOT_BUT_RE = re.compile(
     r"|nothing\b|everything\b|all\b|to\b)"
     r"(?P<x>[^.,;:!?()\"“”\n]{1,70}?)[ \t]+but[ \t]+(?:rather[ \t]+)?(?!also\b|not\b|only\b)(?P<y>\w+)", re.I)
 _PREPOSITIONS = frozenset("by for with in on at from through to into as about".split())
+# AA-790 review: "is not difficult but it is long" / "is not paved but the jeeps manage it fine": after "but" a new
+# clause starts, so cutting "not X but" leaves "is it is long". A subject pronoun, a finite verb or an object
+# pronoun in Y's phrase (before any relative word) marks that clause; the copula path then never fires.
+_SUBJECT_PRONOUNS = frozenset("i it they we you he she there".split())
+_CLAUSE_MARKERS = frozenset("""i it they we you he she them us him her there here is are was were be has have had do
+does did can could will would may might must should shall cannot can't won't don't doesn't didn't isn't aren't
+wasn't weren't""".split())
+_RELATIVE_WORDS = frozenset("that which who whom whose where when while".split())
+_WH_WORDS = frozenset("what how why whether".split())
+_DEGREE_WORDS = frozenset("very quite rather more far much too so fairly surprisingly".split())
+_Y_PHRASE_RE = re.compile(r"[^.,;:!?()\n]*")
 _DETERMINERS = frozenset("a an the this that these those its their his her our your one two three some each every "
                          "something someone".split())
+
+
+def _y_phrase(s: str, start: int) -> list[str]:
+    """Y's words from ``start`` to the next punctuation, cut at the first relative word ('a monastery where monks
+    still live' → ['a', 'monastery']) or at a wh-clause a preposition opens ('an argument about what this corner
+    is' → ['an', 'argument', 'about']; 'the monks know what it is' is not cut)."""
+    out: list[str] = []
+    for w in _Y_PHRASE_RE.match(s, start).group(0).split():
+        w = w.lower().strip("\"'“”‘’")
+        if w in _RELATIVE_WORDS or (w in _WH_WORDS and out and out[-1] in _PREPOSITIONS):
+            break
+        out.append(w)
+    return out
+
+
+def _parallel_copula(x_words: list[str], y_words: list[str]) -> bool:
+    """'is not A but B' is folded to 'is B' only when B is the same kind of phrase as A and no clause starts after
+    'but': two noun phrases ('not a museum but a working monastery'), or a one-word complement and a short one
+    ('not difficult but long', 'not grey but very green')."""
+    if not y_words or y_words[0] in _SUBJECT_PRONOUNS or _CLAUSE_MARKERS & set(y_words):
+        return False
+    x0, y0 = x_words[0].lower(), y_words[0]
+    if y0 in _DETERMINERS:
+        return x0 in _DETERMINERS
+    if len(x_words) != 1 or x0 in _DETERMINERS:
+        return False
+    if len(y_words) == 1:
+        return True
+    return len(y_words) == 2 and (y0 in _DEGREE_WORDS or y0.endswith("ly"))
 
 
 def _not_but(s: str, src: frozenset) -> tuple[str, list[str]]:
@@ -246,9 +300,11 @@ def _not_but(s: str, src: frozenset) -> tuple[str, list[str]]:
             x_words = m.group("x").split()
             if not x_words or len(x_words) > 9 or _seed_fact(m.group("x"), src):
                 continue
+            if _practical(m.group("x")):
+                continue
             y = m.group("y").lower()
             same_prep = x_words[0].lower() in _PREPOSITIONS and x_words[0].lower() == y
-            copula = bool(m.group("lead")) and (y in _DETERMINERS or len(x_words) == 1)
+            copula = bool(m.group("lead")) and _parallel_copula(x_words, _y_phrase(s, m.start("y")))
             if same_prep or copula:
                 hit = m
                 break
@@ -270,7 +326,7 @@ _NOT_TAIL_RE = re.compile(
 def _not_tail(s: str, src: frozenset) -> tuple[str, list[str]]:
     m = _NOT_TAIL_RE.search(s)
     if (not m or len(m.group("x").split()) > 12 or _protected(s) or _DIGIT_RE.search(m.group("x"))
-            or _seed_fact(m.group("x"), src)):
+            or _practical(s) or _seed_fact(m.group("x"), src)):
         return s, []
     return s[:m.start()] + m.group("end").strip(), [", not X"]
 
@@ -285,7 +341,7 @@ _INLINE_PAIR_RE = re.compile(
 def _inline_pair(s: str, src: frozenset) -> tuple[str, list[str]]:
     m = _INLINE_PAIR_RE.match(s)
     if (not m or _protected(m.group("subj") + " " + m.group("x")) or _DIGIT_RE.search(m.group("x"))
-            or _seed_fact(m.group("x"), src)):
+            or _practical(m.group("x")) or _seed_fact(m.group("x"), src)):
         return s, []
     cop = m.group("cop2") or {"s": "is", "re": "are"}[m.group("c2").lower()]
     if m.group("cop").lower() in ("are", "were") and cop.lower() in ("is", "was"):
@@ -371,7 +427,7 @@ def _pair(s1: str, s2: str, src: frozenset) -> Optional[str]:
     d, a = _DENIAL_RE.match(_expand(s1)), _AFFIRM_RE.match(_expand(s2))
     if not d or not a or len(_words(s1)) > 22:
         return None
-    if _protected(s1) or _DIGIT_RE.search(d.group("x")) or _seed_fact(d.group("x"), src):
+    if _protected(s1) or _practical(d.group("x")) or _DIGIT_RE.search(d.group("x")) or _seed_fact(d.group("x"), src):
         return None
     subj = d.group("subj").strip()
     if _subject_is_pronoun(subj):
@@ -389,7 +445,8 @@ def _lone_denial(s: str, src: frozenset) -> bool:
     d = _DENIAL_RE.match(_expand(s))
     if not d or "more than" in d.group(0).lower() or len(_words(s)) > 9:
         return False
-    if _protected(s) or _DIGIT_RE.search(s) or _NAME_AFTER_FIRST_RE.search(s) or _seed_fact(d.group("x"), src):
+    if (_protected(s) or _practical(d.group("x")) or _DIGIT_RE.search(s) or _NAME_AFTER_FIRST_RE.search(s)
+            or _seed_fact(d.group("x"), src)):
         return False
     return bool(_LONE_SUBJ_RE.match(d.group("subj").strip()))
 
@@ -401,7 +458,8 @@ def _verdict(s: str, source_words: frozenset) -> bool:
     rest = m.group("rest")
     if not _VERDICT_REST_RE.match(rest.strip()):
         return False
-    if _DIGIT_RE.search(rest) or _NAME_AFTER_FIRST_RE.search(" " + rest) or _PERSON_RE.search(rest) or _protected(s):
+    if (_DIGIT_RE.search(rest) or _NAME_AFTER_FIRST_RE.search(" " + rest) or _PERSON_RE.search(rest) or _protected(s)
+            or _practical(rest)):
         return False
     concrete = [w for w in content_words(rest) if w not in _META_NOUNS]
     return not any(w in source_words for w in concrete)

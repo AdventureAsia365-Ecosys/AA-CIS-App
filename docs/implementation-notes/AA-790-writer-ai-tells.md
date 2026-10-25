@@ -119,3 +119,26 @@ gate, registry gate count unchanged. So the fix is on the writer side.
   request shows `writer_input.lead_focus`. The re-panel numbers come from the script + the orchestrator's 4-lens panel.
 - No migration, no Terraform, no new gate / registry / taxonomy entry, no frontend change. `quality/paths.yaml`
   lists `ai_tells.py` with the hygiene group (Q0 + R0). Needs a CIS api + worker deploy in a wave gap.
+
+## Review fixes (S251, independent review of af816642)
+
+- **Re-panel script call site registered (AA-927).** `scripts/aa790/t9_writer_repanel.py::call_writer` is in
+  `LOGGED_CALL_SITES` and now follows the canonical pattern: `generate()`, then parse; a parse failure or an empty
+  reply writes a `billed_unusable` row through `record_unusable_sync` in the `except` and re-raises; the ordinary row is
+  written only after the reply parses. A raise inside `generate()` is still logged by the gateway itself.
+- **`_not_but` copula fold needs a parallel complement.** "The walk is not difficult but it is long." was folded to
+  "The walk is it is long." and neither `integrity_problems` nor `repair_contract.enforce_step` caught it. The copula
+  path now fires only when Y is the same kind of phrase as X: two noun phrases (both open on a determiner), or a
+  one-word X and a one-word Y (or degree word / -ly adverb + word). It never fires when Y opens on a subject pronoun or
+  Y's phrase (up to a relative word, or a wh-clause a preposition opens) holds a clause marker (pronoun, auxiliary,
+  modal, copula). The same-preposition path is unchanged. On the golden fixture + S234 label pack the edit log is
+  byte-identical before and after; on the 20 pilot pieces the edit count is unchanged (58 applied edits).
+- **Practical facts are never cut or folded.** New `_PRACTICAL_RE` (effort, cost, payment, access, crowding:
+  compulsory, free, extra, fee, reachable, cash, card, easy, difficult, steep, cheap, expensive, crowded, …). It is
+  checked on the denied / judged part only (verdict complement, lone-denial X, pair X, inline-pair X, not-but X,
+  not-because clause) so a sentence that mentions "free time" elsewhere is still fixed; `, not X.` checks the whole
+  sentence, because its tail contrasts with the main clause ("Bring cash for the market, not cards.").
+  Tradeoff: some real tells around these words stay; the brief still tells the writer not to write them.
+- **Residue list narrowed.** `has a way of` skips "way of life / living"; the `earn` pattern drops name / title /
+  status and never matches before from / of / as / for ("earned its name from the legend", "earned its reputation
+  for weaving"). This list widens the existing F15 stock-line detection during the gate freeze, so it errs narrow.

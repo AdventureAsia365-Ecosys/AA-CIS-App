@@ -1635,14 +1635,17 @@ TEMPLATE_LINE_RES = tuple(re.compile(p, re.I) for p in (
 # one sentence repair on attempt 1, never a hold). Whole-sentence shapes, never a bare word: 'earns income' and
 # 'rewards points' are facts. The writer is told the same list (ai_tells.PROMPT_RULES).
 AI_TELL_LINE_RES = tuple(re.compile(p, re.I) for p in (
-    # 'This is the day the route earns its reputation.', 'the water earns every second you spend in it'
+    # 'This is the day the route earns its reputation.', 'the water earns every second you spend in it'.
+    # Not a history fact: 'earned its name from the legend', 'earned the title of', 'earned its reputation for
+    # weaving' (no name/title/status; never before from/of/as/for — AA-790 review).
     r"\bearn(?:s|ed)\s+(?:its|that|this|every|the|it)\s+(?:\w+\s+)?(?:reputation|place|distinction|description|"
-    r"name|title|status|keep|second|minute|hour|attention|time)\b",
+    r"keep|second|minute|hour|attention|time)\b(?!\s+(?:from|of|as|for)\b)",
     # 'Northern Mongolia rewards those who arrive with patience', 'it rewards more than a brief visit'
     r"\brewards?\s+(?:those|the\s+traveller|the\s+traveler|travell?ers|visitors|families|anyone|patience|"
     r"more\s+than|a\s+slow|slow)\b",
     r"^there\s+is\s+a\s+(?:particular|certain|special|specific|distinct)\s+(?:quality|kind|sort|feeling)\b",
-    r"\bhas\s+a\s+way\s+of\b",
+    # not 'has a way of life built around the reindeer' (a fact)
+    r"\bhas\s+a\s+way\s+of\b(?!\s+(?:life|living)\b)",
     r"^if\s+there\s+is\s+one\s+(?:place|stop|moment|day|thing|site)\b",
     r"\bis\s+the\s+thing\s+itself\b",
     # 'a piece of cloth is rarely just cloth'

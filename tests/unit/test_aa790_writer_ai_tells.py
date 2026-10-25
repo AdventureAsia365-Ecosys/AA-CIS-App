@@ -181,10 +181,53 @@ def test_the_first_sentence_is_never_cut():
     "Visitors are not allowed inside the inner shrine, but the courtyard is open.",
     "This is an offer that depends on the elder and the evening.",
     "That is where the trek begins on Day 2 with the Paro guide.",
+    # AA-790 review: a new clause after "but" is never folded ("The walk is it is long.")
+    "The walk is not difficult but it is long.",
+    "The water is not deep but it is very cold in June.",
+    "The road is not paved but the jeeps manage it fine.",
+    "The hall is not grand but families gather there every evening.",
+    "The dzong is not a museum but the monks live there.",
+    "The trail is not marked but we walk it with a local guide.",
+    "The dzong is not a museum but the monks know what it is.",
 ])
 def test_clean_sentence_unchanged(clean):
     text = _blog(f"The falls drop into turquoise pools. {clean}")
     assert _run(text) == (text, [])
+
+
+@pytest.mark.parametrize("para", [
+    # AA-790 review: effort, cost, payment and access facts a family needs are never cut or folded
+    "The falls drop into turquoise pools. This is compulsory.",
+    "The falls drop into turquoise pools. This is free.",
+    "The falls drop into turquoise pools. That is extra.",
+    "The falls drop into turquoise pools. It is not difficult.",
+    "The falls drop into turquoise pools. It is not cheap.",
+    "The falls drop into turquoise pools. The pass is not reachable by car, it is a two-hour walk.",
+    "The falls drop into turquoise pools. The pass is not reachable by car; it is a two-hour walk.",
+    "The falls drop into turquoise pools. The pass is not reachable by car. It is a two-hour walk.",
+    "The falls drop into turquoise pools. Bring cash for the market, not cards.",
+    "The falls drop into turquoise pools. The walk is not difficult but long.",
+    "The falls drop into turquoise pools. We start early, not because the walk is difficult, but because the light "
+    "is best at dawn.",
+])
+def test_practical_facts_are_kept(para):
+    text = _blog(para)
+    assert _run(text) == (text, [])
+
+
+@pytest.mark.parametrize("before, after", [
+    # the copula fold still fires on a parallel complement
+    ("The hall is not grey but very green.", "The hall is very green."),
+    ("The dzong is not a museum but a working monastery where monks still live.",
+     "The dzong is a working monastery where monks still live."),
+    # 631f8533: a wh-clause inside Y's noun phrase is not a new clause
+    ("The convergence of landscapes here is not a sequence of separate attractions but a coherent argument about "
+     "what this corner of the world is.", "The convergence of landscapes here is a coherent argument about what this "
+     "corner of the world is."),
+])
+def test_parallel_copula_contrast_is_still_folded(before, after):
+    text, log = _run(_blog(before))
+    assert text == _blog(after) and log
 
 
 def test_a_denial_the_seed_states_is_kept():
@@ -267,6 +310,11 @@ def test_residue_goes_to_the_f15_stock_line_repair(sentence, phrase):
     "The loyalty programme rewards points on every booking.",
     "There is a lake beside the camp.",
     "The cloth is woven on backstrap looms.",
+    # AA-790 review: history and way-of-life facts are not stock lines
+    "The Tsaatan has a way of life built around the reindeer.",
+    "Taktsang earned its name from the legend of the flying tigress.",
+    "The dzong earned the title of the most beautiful in Bhutan.",
+    "The valley earned its reputation for weaving centuries ago.",
 ])
 def test_residue_patterns_leave_facts_alone(sentence):
     assert residue(_blog(sentence)) == []
