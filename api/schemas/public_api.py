@@ -118,7 +118,11 @@ class AccountApiKey(BaseModel):
     issued_at: Optional[str]
     last_sign_in_at: Optional[str]
     last_api_call_at: Optional[str]
+    # AA-825 rollup fallback: newest month (YYYY-MM) with calls when the 90-day raw window holds none
+    last_api_call_month: Optional[str]
     last_used_at: Optional[str]
+    # set (and last_used_at null) when that month is newer than every exact use
+    last_used_month: Optional[str]
 
 
 # ── catalog.http.v1 (AA-976) — documentation only ──────────────────────────────

@@ -300,7 +300,9 @@ API_KEY_FACTS_SQL = """
         (SELECT max(a.created_at) FROM acp_shared.audit_log a
           WHERE a.tenant_id = $2 AND a.action = 'tenant.login') AS last_sign_in_at,
         (SELECT max(u.called_at) FROM shared.tenant_api_usage u
-          WHERE u.tenant_id = $1 AND u.actor_type = 'tenant') AS last_api_call_at
+          WHERE u.tenant_id = $1 AND u.actor_type = 'tenant') AS last_api_call_at,
+        (SELECT max(m.month) FROM shared.tenant_api_usage_monthly m
+          WHERE m.tenant_id = $1 AND m.actor_type = 'tenant' AND m.calls > 0) AS last_api_call_month
     FROM shared.tenants t
     WHERE t.tenant_id = $1
 """
@@ -310,16 +312,34 @@ def _iso(v: Optional[datetime]) -> Optional[str]:
     return v.astimezone(timezone.utc).isoformat() if v else None
 
 
+def _month_start(m: date) -> datetime:
+    return datetime(m.year, m.month, 1, tzinfo=timezone.utc)
+
+
 async def api_key_facts(pool, tenant_id: str) -> dict:
     """The key itself is never readable (only its sha256 is stored, ``shared.tenants.api_key_hash``), so the
     masked view is the fixed prefix and a mask. ``last_used_at`` = the newer of a sign-in with the key (portal or
-    ``/auth/tenant-login``) and a metered API call made with a token from it."""
+    ``/auth/tenant-login``) and a metered API call made with a token from it.
+
+    Raw ``shared.tenant_api_usage`` is kept 90 days, then rolled up per month into
+    ``shared.tenant_api_usage_monthly`` (AA-825). When no raw call is left, the newest rolled-up month with calls
+    is returned at month precision (``last_api_call_month``, ``YYYY-MM``) instead of claiming no call was ever made.
+    ``last_used_month`` carries that month when it is newer than every exact use; then ``last_used_at`` is null, so
+    at most one of the two is set and neither states an older use as the latest."""
     async with pool.acquire() as conn:
         row = await conn.fetchrow(API_KEY_FACTS_SQL, uuid.UUID(tenant_id), tenant_id, list(KEY_ISSUE_ACTIONS))
     if row is None:
         return {"has_key": False, "masked": None, "issued_at": None, "last_sign_in_at": None,
-                "last_api_call_at": None, "last_used_at": None}
+                "last_api_call_at": None, "last_api_call_month": None, "last_used_at": None,
+                "last_used_month": None}
     used = [v for v in (row["last_sign_in_at"], row["last_api_call_at"]) if v]
+    last_used = max(used) if used else None
+    # the rollup only matters when the raw window holds no call (fallback, not a merge of the two sources)
+    month = row.get("last_api_call_month") if row["last_api_call_at"] is None else None
+    month_text = month.strftime("%Y-%m") if month else None
+    used_month = None
+    if month and (last_used is None or last_used < _month_start(month)):
+        used_month, last_used = month_text, None
     has_key = bool(row["has_key"])
     return {
         "has_key": has_key,
@@ -327,5 +347,7 @@ async def api_key_facts(pool, tenant_id: str) -> dict:
         "issued_at": _iso(row["issued_at"]),
         "last_sign_in_at": _iso(row["last_sign_in_at"]),
         "last_api_call_at": _iso(row["last_api_call_at"]),
-        "last_used_at": _iso(max(used)) if used else None,
+        "last_api_call_month": month_text,
+        "last_used_at": _iso(last_used),
+        "last_used_month": used_month,
     }

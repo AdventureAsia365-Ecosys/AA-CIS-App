@@ -193,6 +193,17 @@
             ],
             "title": "Last Api Call At"
           },
+          "last_api_call_month": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Api Call Month"
+          },
           "last_sign_in_at": {
             "anyOf": [
               {
@@ -215,6 +226,17 @@
             ],
             "title": "Last Used At"
           },
+          "last_used_month": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used Month"
+          },
           "masked": {
             "anyOf": [
               {
@@ -233,7 +255,9 @@
           "issued_at",
           "last_sign_in_at",
           "last_api_call_at",
-          "last_used_at"
+          "last_api_call_month",
+          "last_used_at",
+          "last_used_month"
         ],
         "title": "AccountApiKey",
         "type": "object"

@@ -200,7 +200,52 @@ async def test_api_key_facts_revoked_or_unknown():
     out = await ta.api_key_facts(pool, TENANT_A)
     assert out["has_key"] is False and out["masked"] is None and out["last_used_at"] is None
     pool, _ = _pool(fetchrow=None)
-    assert (await ta.api_key_facts(pool, TENANT_A))["has_key"] is False
+    out = await ta.api_key_facts(pool, TENANT_A)
+    assert out["has_key"] is False and out["last_api_call_month"] is None and out["last_used_month"] is None
+
+
+def _facts(**kw):
+    row = {"has_key": True, "issued_at": None, "last_sign_in_at": None, "last_api_call_at": None,
+           "last_api_call_month": None}
+    row.update(kw)
+    return row
+
+
+@pytest.mark.asyncio
+async def test_api_key_facts_falls_back_to_the_rolled_up_month_when_raw_is_empty():
+    # raw usage aged out (90 days, AA-825): the newest rolled-up month is shown, never "no call yet"
+    pool, conn = _pool(fetchrow=_facts(last_api_call_month=date(2026, 6, 1)))
+    out = await ta.api_key_facts(pool, TENANT_A)
+    assert out["last_api_call_at"] is None and out["last_api_call_month"] == "2026-06"
+    assert out["last_used_at"] is None and out["last_used_month"] == "2026-06"
+    assert "tenant_api_usage_monthly" in conn.fetchrow.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_api_key_facts_rolled_up_month_newer_than_an_old_sign_in():
+    pool, _ = _pool(fetchrow=_facts(last_sign_in_at=datetime(2026, 3, 2, tzinfo=timezone.utc),
+                                    last_api_call_month=date(2026, 6, 1)))
+    out = await ta.api_key_facts(pool, TENANT_A)
+    assert out["last_used_at"] is None and out["last_used_month"] == "2026-06"
+    assert out["last_sign_in_at"] == "2026-03-02T00:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_api_key_facts_a_newer_exact_use_wins_over_the_month():
+    signed = datetime(2026, 6, 20, tzinfo=timezone.utc)  # inside the month: the exact time is the better fact
+    pool, _ = _pool(fetchrow=_facts(last_sign_in_at=signed, last_api_call_month=date(2026, 6, 1)))
+    out = await ta.api_key_facts(pool, TENANT_A)
+    assert out["last_used_at"] == signed.isoformat() and out["last_used_month"] is None
+    assert out["last_api_call_month"] == "2026-06"
+
+
+@pytest.mark.asyncio
+async def test_api_key_facts_raw_call_present_ignores_the_rollup():
+    called = datetime(2026, 10, 5, tzinfo=timezone.utc)
+    pool, _ = _pool(fetchrow=_facts(last_api_call_at=called, last_api_call_month=date(2026, 6, 1)))
+    out = await ta.api_key_facts(pool, TENANT_A)
+    assert out["last_api_call_at"] == called.isoformat() and out["last_api_call_month"] is None
+    assert out["last_used_at"] == called.isoformat() and out["last_used_month"] is None
 
 
 # ── routes ──────────────────────────────────────────────────────────────────────────────────────
