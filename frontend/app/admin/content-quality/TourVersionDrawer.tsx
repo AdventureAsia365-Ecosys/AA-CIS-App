@@ -13,7 +13,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
 import { A, mono } from "../_components/adminUi";
 import { ApiError, Badge, Button, ConfirmModal, Drawer, Spinner, apiGet, apiSend, useAdminIdentity, useToast } from "../../_kit";
-import { AdminEdits, RewritePanel, TenantCopyNotice, type Editor } from "./SentenceActions";
+import { AdminEdits, ProblemList, RewritePanel, TenantCopyNotice, type Editor } from "./SentenceActions";
+import { SEVERITY_TONE, worstOf } from "@/lib/gateSeverity";
 import {
   codePointIndex, gateLabel, tourSectionLabel, usd,
   type CheckFailure, type TourApplyBody, type TourProblem, type TourSection, type TourSentence,
@@ -206,11 +207,11 @@ export default function TourVersionDrawer({ id, onClose }: { id: string; onClose
                     <div key={targetKey(t)} data-testid="cq-tv-flag-row" style={{ border: `1px solid ${A.redBorder}`, borderRadius: 8, padding: "8px 10px", background: A.card }}>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 6, alignItems: "center" }}>
                         <span style={{ fontSize: 11, color: A.muted }}>{tourSectionLabel(f.field, f.index)}</span>
-                        {f.gates.map((g) => <Badge key={g} tone="danger" dot={false}>{gateLabel(g)}</Badge>)}
+                        {f.gates.map((g) => (
+                          <Badge key={g} tone={SEVERITY_TONE[worstOf(f.problems.filter((p) => p.gate === g)) ?? "block"]} dot={false}>{gateLabel(g)}</Badge>
+                        ))}
                       </div>
-                      <div style={{ fontSize: 12, color: A.body, marginBottom: 6 }}>
-                        {f.problems.map((p, i) => <div key={i}><span style={{ fontFamily: mono, fontSize: 10.5, color: A.muted }}>{p.gate}</span> {p.problem}</div>)}
-                      </div>
+                      <ProblemList problems={f.problems} />
                       <div style={{ fontSize: 12.5, lineHeight: 1.55, color: A.ink, background: A.bg, borderRadius: 6, padding: "6px 8px", wordBreak: "break-word" }}>{f.sentence}</div>
                       {canEdit && actions(t)}
                     </div>
