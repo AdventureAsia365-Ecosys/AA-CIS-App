@@ -4,6 +4,7 @@
 // functions; the page wires them into useQuery/useMutation.
 
 import { adminHeaders, apiGet, apiSend } from "../../_kit";
+import type { ReasonCode } from "@/lib/writingReasons";
 
 export type ReviewRaw = Record<string, unknown> & {
   id: string | number;
@@ -44,12 +45,18 @@ export function approveReview(id: string): Promise<unknown> {
   return apiSend(`/api/admin/review-queue/${id}/approve`, { method: "POST", admin: true });
 }
 
-export function rejectReview(id: string): Promise<unknown> {
-  return apiSend(`/api/admin/review-queue/${id}/reject`, { method: "POST", admin: true });
+// AA-916 WM-07 — Reject / Dismiss carry the reason chip (`reason_code`, a reason-only writing signal). The body is
+// optional on the API, so a call without a code keeps the old behaviour.
+export function rejectReview(id: string, reasonCode?: ReasonCode): Promise<unknown> {
+  return apiSend(`/api/admin/review-queue/${id}/reject`, {
+    method: "POST", admin: true, body: reasonCode ? { reason_code: reasonCode } : undefined,
+  });
 }
 
-export function dismissReview(id: string): Promise<unknown> {
-  return apiSend(`/api/admin/review-queue/${id}/dismiss`, { method: "POST", admin: true });
+export function dismissReview(id: string, reasonCode?: ReasonCode): Promise<unknown> {
+  return apiSend(`/api/admin/review-queue/${id}/dismiss`, {
+    method: "POST", admin: true, body: reasonCode ? { reason_code: reasonCode } : undefined,
+  });
 }
 
 /** PATCH edited fields on a generated_content version. */
@@ -90,6 +97,10 @@ export async function startRevalidate(
 export async function startRegenerate(args: {
   tourId: string;
   modelTier: string;
+  // AA-916 WM-07 — the review row and the chip: the API writes one reason-only signal per job it creates
+  // (a dedup double click writes none); neither goes into the job payload.
+  reviewId?: string;
+  reasonCode?: ReasonCode;
 }): Promise<{ job_id: string }> {
   const res = await fetch(`/api/admin/run-tour-async`, {
     method: "POST",
@@ -100,6 +111,7 @@ export async function startRegenerate(args: {
       tenant_id: "00000000-0000-0000-0000-000000000001",
       model_tier: args.modelTier,
       allow_auto_upgrade: false,
+      ...(args.reviewId && args.reasonCode ? { review_id: args.reviewId, reason_code: args.reasonCode } : {}),
     }),
   });
   if (res.status !== 202) {
