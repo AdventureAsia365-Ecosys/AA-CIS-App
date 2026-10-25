@@ -22,9 +22,10 @@ from shared.sentry_init import release
 
 logger = structlog.get_logger()
 
-# The newest CIS migration this code needs: 277 (AA-916 — the admin A1 field edit and both sentence applies write
-# shared.writing_signal inside their own transaction; without the table they fail).
-REQUIRED_CIS_SCHEMA = 277
+# The newest CIS migration this code needs: 280 (AA-917 — the writing-memory jobs and /admin/writing-memory read and
+# write shared.writing_rule; 277, AA-916: the admin A1 field edit and both sentence applies write shared.writing_signal
+# inside their own transaction; without the table they fail).
+REQUIRED_CIS_SCHEMA = 280
 READY_CACHE_SECONDS = 5.0
 
 SCHEMA_VERSION_SQL = """

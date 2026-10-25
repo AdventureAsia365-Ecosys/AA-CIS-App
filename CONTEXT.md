@@ -332,7 +332,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     `s1_seo_prefetch`, `photo_sync`, `s1_rewrite`, `s1_batch_ingest`, `revalidate`, `recompute`,
     `place_cards_build`, `t7_slate`, `t8_angles`, and the place pipeline `place_extract`,
     `place_geocode`, `tour_graph_build` — AA-712, `place_shape`, `place_dedupe` — AA-847, the five `retention_*` kinds — AA-825,
-    `ops_alert_email` — AA-828, `data_erasure` — AA-839). Every claim merges `progress.attempt_started_at` (AA-751, F18):
+    `ops_alert_email` — AA-828, `data_erasure` — AA-839, the writing-memory kinds `writing_signal_backfill`,
+    `writing_signal_fact_filter`, `writing_memory_mine` — AA-917). Every claim merges `progress.attempt_started_at` (AA-751, F18):
     `started_at` keeps the first attempt's start, so per-attempt age reads the progress key.
   - **Background kinds (AA-712)**: `@job_kind(..., background=True)` kinds never take the worker's
     last `BACKGROUND_RESERVE` (2) free slots (`Worker.claim_caps`), so a place-pipeline backlog cannot
@@ -2100,6 +2101,39 @@ rules of a writer hold ≤ 400 tokens (platform) or ≤ 250 tokens per tenant (t
 platform rule drawn from tenant evidence needs ≥ 3 tenants (`support_tenants`, D9). Provenance: `signal_ids`, support
 counts, `lint`; the key that survives a gate rename is `reason_code` + `gate_class` (the qtax-v1 class). Tenant rules
 go with the tenant (AA-839 erasure inventory).
+Mined by the `writing_memory_mine` job (AA-917, `services/writing_memory/mining.py`): pass signals are clustered in
+code ($0) by label — the reason code, else the gate's qtax class, plus every phrase a human edit removed — and a
+cluster over threshold (tenant: ≥ 2 edits on ≥ 2 pieces; platform from tenant edits: ≥ 3 tenants; A1: ≥ 2
+reviewers, or a gate failing on ≥ 5% of the last 30 days' A1 pieces; `services/writing_memory/config.py`) gets one
+drafter call on stage `writing_memory_mine` (judge route, masked text only, ≤ 50 calls / ≤ $1 a run, ≤ $25 a
+calendar month over every writing-memory stage). The draft is linted (`lint.py`: only constrains, a lexicon
+replacement adds no specific, no 5-gram of tenant text or tenant brand in a platform rule, PREDICT: explains ≥ 2
+held-out edits) and stored `candidate` (or `rejected` by the lint) with its provenance; a rejected draft is clamped
+to the 280 limits, stored redacted when it held tenant text, and not redrafted until new signals join its cluster.
+Automatic runs are off unless the worker sets `WRITING_MEMORY_AUTO_MINE`; when on: ≥ 10 new pass signals since the
+last run, ≤ 2 a month, never during an open rerun wave. A manual run (admin, after a confirm step) is the 3rd. A
+failed run that spent money counts as a run.
+Signals reach `pass` through the fact filter (`writing_signal_fact_filter`, `fact_filter.py`, $0, daily from the
+api ops sampler while signals are pending): an edit that adds a number, time, price or promise word the text and
+the source lack fails (quarantined), an added name is grey (admin confirms), a style edit passes. The backfill
+(`writing_signal_backfill`, `backfill.py`) copies the pre-AA-916 admin sentence audit rows, T2 tenant-edit versions,
+T9 failed attempts (system signals, evidence for R0) and A1 brand-audit lessons, idempotently. Admin page
+`/admin/writing-memory` (Signals and Candidates tabs; `api/routers/admin_writing_memory.py`, admin only). A rule
+reaches a writer through a release (AA-919), except an L0 lexicon rule (below).
+**R0** (AA-918, `services/writing_memory/replay.py`, job `writing_memory_r0`, $0, no model call): the replay of one
+rule over stored T9 texts (final text, discarded attempts, the writer's text before a human edit), gate ledgers,
+repair logs and signals — how often it would fire, which stored failures quote its phrase (prevented), the signals it
+matches, and whether its cluster recurred ≥ k in 30 days, k being the mining threshold of its basis
+(`mining.cluster_threshold`, one function for both). The baseline sanity check re-runs the deterministic T10 gates on
+stored texts against their stored ledgers (F9 verdicts passed through: `run_quality_gates(f9_results=…)`). The
+result (counts and ids only) is kept in `lint.r0`, tied to the rule's text by `rule_sha`.
+**L0 lexicon fast path** (AA-918, `services/writing_memory/l0.py`, ADR 0010 decision 6, D11): an `active` `lexicon`
+rule of `t9_blog` / `t9_social` joins the brand pack's forbidden words at T9 `start_write` (prompt "Never use" line +
+the F2_lexicon gate, source F2_brand_forbidden; a replacement also gets "Write X instead of Y" on the WORDS line), never
+a post-gate substitution; skipped when it is a declared signature word, or in the CTA / brand name / trip name; the
+piece's `writer_input.writing_rules` lists what it got. Activation = an R0 on the current text with `l0_ok` (phrase
+drops to 0, no new hard stop, a replacement adds no number / place / time / price / service) + one admin click;
+rollback = one click (`active` → `rejected`, `rollback: …`). No active rule: the pack and prompt are unchanged.
 _Avoid_: lesson (the frozen AA-132 rows), output rule (the retired N8 table), guideline.
 
 **Pinned Exemplar**:

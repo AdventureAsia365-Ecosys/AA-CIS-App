@@ -31,6 +31,7 @@ const NAV: { label: string; path: string }[] = [
   { label: 'Content Trace', path: '/admin/tenant-activity' },
   { label: 'A4 Quality', path: '/admin/platform-stats' },
   { label: 'Content Quality', path: '/admin/content-quality' },
+  { label: 'Writing memory', path: '/admin/writing-memory' },   // AA-917
   { label: 'Settings', path: '/admin/settings' },
 ];
 

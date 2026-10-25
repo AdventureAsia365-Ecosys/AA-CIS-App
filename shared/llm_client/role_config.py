@@ -161,6 +161,10 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
     # AA-835 (migration 278): the customer description / highlights of a Booking hotel or service, reviewed by a
     # human before Booking shows it. Customer-facing text → `writer`, Sonnet; no fallback, no shadow.
     "supply_content_writer": StageConfig("supply_content_writer", "writer", "claude", "sonnet", "acc3"),
+    # AA-917 (migration 280, app ADR 0010 decision 5): the writing-memory rule drafter, a judge stage on the judge
+    # route (writers stay Anthropic, rules are drafted by another vendor); WM-13 may reorder it after its check.
+    "writing_memory_mine": StageConfig("writing_memory_mine", "judge", "openai", "gpt-5.6-luna", "acc3",
+                                       fallback_model_ids=_JUDGE_ROUTE_DEFAULT),
 }
 
 _GENERIC_FALLBACK = StageConfig("unknown", "writer", "claude", "haiku", "acc3")
