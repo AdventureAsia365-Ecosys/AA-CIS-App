@@ -1650,16 +1650,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -1771,16 +1786,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -1813,14 +1837,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -1917,14 +1937,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -1969,16 +1985,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -2090,16 +2121,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -2132,14 +2172,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -2236,14 +2272,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -2288,16 +2320,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -2409,16 +2456,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -2451,14 +2507,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -2555,14 +2607,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -2607,16 +2655,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -2726,16 +2789,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -2768,14 +2840,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -2870,14 +2938,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -2920,16 +2984,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -3041,16 +3120,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -3083,14 +3171,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -3187,14 +3271,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -3239,16 +3319,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -3360,16 +3455,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -3402,14 +3506,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -3506,14 +3606,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -3558,16 +3654,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -3679,16 +3790,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -3721,14 +3841,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -3825,14 +3941,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -3877,16 +3989,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -3996,16 +4123,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -4038,14 +4174,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -4140,14 +4272,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -4190,16 +4318,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -4311,16 +4454,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -4353,14 +4505,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -4457,14 +4605,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -4520,16 +4664,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -4641,16 +4800,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -4683,14 +4851,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -4787,14 +4951,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -4850,16 +5010,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -4971,16 +5146,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -5013,14 +5197,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -5117,14 +5297,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -5180,16 +5356,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -5299,16 +5490,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -5341,14 +5541,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -5443,14 +5639,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -5493,16 +5685,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -5614,16 +5821,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -5656,14 +5872,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -5760,14 +5972,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -5823,16 +6031,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -5944,16 +6167,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -5986,14 +6218,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -6090,14 +6318,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -6153,16 +6377,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -6274,16 +6513,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -6316,14 +6564,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -6420,14 +6664,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -6483,16 +6723,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -6602,16 +6857,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -6644,14 +6908,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -6746,14 +7006,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -6796,16 +7052,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": true
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -6917,16 +7188,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -6968,14 +7248,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -7072,14 +7348,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -7133,16 +7405,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": true
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -7254,16 +7541,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -7305,14 +7601,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -7409,14 +7701,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -7470,16 +7758,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": true
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -7591,16 +7894,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -7642,14 +7954,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -7746,14 +8054,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -7807,16 +8111,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": true
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -7928,16 +8247,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -7977,14 +8305,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -8081,14 +8405,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -8139,16 +8459,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -8260,16 +8595,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -8322,14 +8666,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -8426,14 +8766,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -8498,16 +8834,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -8619,16 +8970,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -8681,14 +9041,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -8785,14 +9141,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -8857,16 +9209,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -8978,16 +9345,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -9040,14 +9416,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -9144,14 +9516,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -9216,16 +9584,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -9337,16 +9720,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -9397,14 +9789,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -9501,14 +9889,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -9570,19 +9954,40 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [
+       {
+        "severity": "block",
+        "source": "F2_banned_patterns",
+        "text": "banned pattern /\\bunforgettable\\b/ -> 'unforgettable'"
+       }
+      ],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": false,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": false,
       "repairable": true,
+      "severity": "block",
       "violations": [
        "banned pattern /\\bunforgettable\\b/ -> 'unforgettable'"
       ]
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
-      "violations": []
      },
      {
       "blocking": true,
@@ -9691,16 +10096,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -9733,17 +10147,19 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [
+       {
+        "severity": "block",
+        "source": "F2_banned_patterns",
+        "text": "banned pattern /\\bunforgettable\\b/ -> 'unforgettable'"
+       }
+      ],
+      "gate": "F2_lexicon",
       "passed": false,
+      "severity": "block",
       "violations": [
        "banned pattern /\\bunforgettable\\b/ -> 'unforgettable'"
       ]
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "violations": []
      },
      {
       "blocking": true,
@@ -9837,14 +10253,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -9861,7 +10273,7 @@
      }
     ],
     "never_holds": {
-     "F2_banned_patterns": false
+     "F2_lexicon": false
     },
     "passed": false,
     "repair_plan": null,
@@ -9889,19 +10301,40 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [
+       {
+        "severity": "block",
+        "source": "F2_banned_patterns",
+        "text": "banned pattern /\\bhidden gem(s)?\\b/ -> 'hidden gem'"
+       }
+      ],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": false,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": false,
       "repairable": true,
+      "severity": "block",
       "violations": [
        "banned pattern /\\bhidden gem(s)?\\b/ -> 'hidden gem'"
       ]
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
-      "violations": []
      },
      {
       "blocking": true,
@@ -10010,16 +10443,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -10052,17 +10494,19 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [
+       {
+        "severity": "block",
+        "source": "F2_banned_patterns",
+        "text": "banned pattern /\\bhidden gem(s)?\\b/ -> 'hidden gem'"
+       }
+      ],
+      "gate": "F2_lexicon",
       "passed": false,
+      "severity": "block",
       "violations": [
        "banned pattern /\\bhidden gem(s)?\\b/ -> 'hidden gem'"
       ]
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "violations": []
      },
      {
       "blocking": true,
@@ -10156,14 +10600,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -10180,7 +10620,7 @@
      }
     ],
     "never_holds": {
-     "F2_banned_patterns": false
+     "F2_lexicon": false
     },
     "passed": false,
     "repair_plan": null,
@@ -10208,19 +10648,40 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [
+       {
+        "severity": "block",
+        "source": "F2_banned_patterns",
+        "text": "banned pattern /\\bembark on\\b/ -> 'Embark on'"
+       }
+      ],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": false,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": false,
       "repairable": true,
+      "severity": "block",
       "violations": [
        "banned pattern /\\bembark on\\b/ -> 'Embark on'"
       ]
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
-      "violations": []
      },
      {
       "blocking": true,
@@ -10329,16 +10790,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -10371,17 +10841,19 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [
+       {
+        "severity": "block",
+        "source": "F2_banned_patterns",
+        "text": "banned pattern /\\bembark on\\b/ -> 'Embark on'"
+       }
+      ],
+      "gate": "F2_lexicon",
       "passed": false,
+      "severity": "block",
       "violations": [
        "banned pattern /\\bembark on\\b/ -> 'Embark on'"
       ]
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "violations": []
      },
      {
       "blocking": true,
@@ -10475,14 +10947,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -10499,7 +10967,7 @@
      }
     ],
     "never_holds": {
-     "F2_banned_patterns": false
+     "F2_lexicon": false
     },
     "passed": false,
     "repair_plan": null,
@@ -10527,16 +10995,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -10646,16 +11129,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -10688,14 +11180,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -10790,14 +11278,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -10840,16 +11324,37 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
-      "passed": true,
-      "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
+      "findings": [
+       {
+        "severity": "block",
+        "source": "F2_brand_forbidden",
+        "text": "uses 'luxury', which the brand forbids: 'A luxury night at Sod Camp.'"
+       }
+      ],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": false,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": false,
       "repairable": true,
+      "severity": "block",
       "violations": [
        "uses 'luxury', which the brand forbids: 'A luxury night at Sod Camp.'"
       ]
@@ -10961,16 +11466,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -11003,14 +11517,16 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
-      "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
+      "findings": [
+       {
+        "severity": "block",
+        "source": "F2_brand_forbidden",
+        "text": "uses 'luxury', which the brand forbids: 'A luxury night at Sod Camp.'"
+       }
+      ],
+      "gate": "F2_lexicon",
       "passed": false,
+      "severity": "block",
       "violations": [
        "uses 'luxury', which the brand forbids: 'A luxury night at Sod Camp.'"
       ]
@@ -11107,14 +11623,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -11131,7 +11643,7 @@
      }
     ],
     "never_holds": {
-     "F2_brand_forbidden": false
+     "F2_lexicon": false
     },
     "passed": false,
     "repair_plan": [
@@ -11170,16 +11682,37 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
-      "passed": true,
-      "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
+      "findings": [
+       {
+        "severity": "block",
+        "source": "F2_brand_forbidden",
+        "text": "uses 'Cheap', which the brand forbids: 'Cheap flights are not part of this.'"
+       }
+      ],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": false,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": false,
       "repairable": true,
+      "severity": "block",
       "violations": [
        "uses 'Cheap', which the brand forbids: 'Cheap flights are not part of this.'"
       ]
@@ -11187,11 +11720,9 @@
      {
       "blocking": true,
       "gate": "F2_platform_truth",
-      "passed": false,
+      "passed": true,
       "repairable": true,
-      "violations": [
-       "uses 'cheap', a price or booking promise the platform cannot back: 'Cheap flights are not part of this.'"
-      ]
+      "violations": []
      },
      {
       "blocking": false,
@@ -11293,16 +11824,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -11335,14 +11875,16 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
-      "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
+      "findings": [
+       {
+        "severity": "block",
+        "source": "F2_brand_forbidden",
+        "text": "uses 'Cheap', which the brand forbids: 'Cheap flights are not part of this.'"
+       }
+      ],
+      "gate": "F2_lexicon",
       "passed": false,
+      "severity": "block",
       "violations": [
        "uses 'Cheap', which the brand forbids: 'Cheap flights are not part of this.'"
       ]
@@ -11350,10 +11892,8 @@
      {
       "blocking": true,
       "gate": "F2_platform_truth",
-      "passed": false,
-      "violations": [
-       "uses 'cheap', a price or booking promise the platform cannot back: 'Cheap flights are not part of this.'"
-      ]
+      "passed": true,
+      "violations": []
      },
      {
       "blocking": false,
@@ -11441,14 +11981,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -11465,8 +12001,7 @@
      }
     ],
     "never_holds": {
-     "F2_brand_forbidden": false,
-     "F2_platform_truth": false
+     "F2_lexicon": false
     },
     "passed": false,
     "repair_plan": [
@@ -11474,10 +12009,9 @@
       "end": 35,
       "gate": "F2_brand_forbidden",
       "gates": [
-       "F2_brand_forbidden",
-       "F2_platform_truth"
+       "F2_brand_forbidden"
       ],
-      "problem": "uses 'Cheap', which the brand forbids; ALSO: uses 'cheap', a price or booking promise the platform cannot back",
+      "problem": "uses 'Cheap', which the brand forbids",
       "sentence": "Cheap flights are not part of this.",
       "start": 0
      }
@@ -11506,16 +12040,37 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
-      "passed": true,
-      "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
+      "findings": [
+       {
+        "severity": "block",
+        "source": "F2_brand_forbidden",
+        "text": "uses 'once in a lifetime', which the brand forbids: 'A once in a lifetime night at Sod Camp.'"
+       }
+      ],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": false,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": false,
       "repairable": true,
+      "severity": "block",
       "violations": [
        "uses 'once in a lifetime', which the brand forbids: 'A once in a lifetime night at Sod Camp.'"
       ]
@@ -11627,16 +12182,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -11669,14 +12233,16 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
-      "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
+      "findings": [
+       {
+        "severity": "block",
+        "source": "F2_brand_forbidden",
+        "text": "uses 'once in a lifetime', which the brand forbids: 'A once in a lifetime night at Sod Camp.'"
+       }
+      ],
+      "gate": "F2_lexicon",
       "passed": false,
+      "severity": "block",
       "violations": [
        "uses 'once in a lifetime', which the brand forbids: 'A once in a lifetime night at Sod Camp.'"
       ]
@@ -11773,14 +12339,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -11797,7 +12359,7 @@
      }
     ],
     "never_holds": {
-     "F2_brand_forbidden": false
+     "F2_lexicon": false
     },
     "passed": false,
     "repair_plan": [
@@ -11836,16 +12398,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -11955,16 +12532,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -11997,14 +12583,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -12099,14 +12681,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -12149,16 +12727,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -12270,16 +12863,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -12312,14 +12914,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -12416,14 +13014,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -12468,16 +13062,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -12589,16 +13198,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -12631,14 +13249,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -12735,14 +13349,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -12787,16 +13397,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -12908,16 +13533,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -12968,14 +13602,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -13072,14 +13702,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -13141,16 +13767,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -13260,16 +13901,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -13302,14 +13952,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -13404,14 +14050,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -13553,16 +14195,31 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
+      "parts": [
+       {
+        "blocking": true,
+        "gate": "F2_banned_patterns",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": true,
+        "gate": "F2_brand_forbidden",
+        "passed": true,
+        "repairable": true
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
-      "repairable": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -13672,16 +14329,25 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
+      "parts": [
+       {
+        "blocking": false,
+        "gate": "F15_voice",
+        "passed": true,
+        "repairable": false
+       },
+       {
+        "blocking": false,
+        "gate": "F15_voice_warn",
+        "passed": true,
+        "repairable": false
+       }
+      ],
       "passed": true,
       "repairable": false,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
-      "repairable": false,
+      "severity": null,
       "violations": []
      },
      {
@@ -13714,14 +14380,10 @@
      },
      {
       "blocking": true,
-      "gate": "F2_banned_patterns",
+      "findings": [],
+      "gate": "F2_lexicon",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": true,
-      "gate": "F2_brand_forbidden",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -13816,14 +14478,10 @@
      },
      {
       "blocking": false,
+      "findings": [],
       "gate": "F15_voice",
       "passed": true,
-      "violations": []
-     },
-     {
-      "blocking": false,
-      "gate": "F15_voice_warn",
-      "passed": true,
+      "severity": null,
       "violations": []
      },
      {
@@ -13850,8 +14508,7 @@
    "ads": [
     "F6_cta_present",
     "F1_grounding",
-    "F2_banned_patterns",
-    "F2_brand_forbidden",
+    "F2_lexicon",
     "F2_platform_truth",
     "F2_superlatives",
     "F2_style_warn",
@@ -13868,15 +14525,13 @@
     "F18_rarity",
     "F14_social_shape",
     "F15_voice",
-    "F15_voice_warn",
     "F9_cta_fact",
     "F9_brand_style"
    ],
    "blog": [
     "F6_cta_present",
     "F1_grounding",
-    "F2_banned_patterns",
-    "F2_brand_forbidden",
+    "F2_lexicon",
     "F2_platform_truth",
     "F2_superlatives",
     "F2_style_warn",
@@ -13893,7 +14548,6 @@
     "F18_rarity",
     "F14_social_shape",
     "F15_voice",
-    "F15_voice_warn",
     "F4_seo_surface",
     "F9_cta_fact",
     "F9_brand_style",
@@ -13902,8 +14556,7 @@
    "email": [
     "F6_cta_present",
     "F1_grounding",
-    "F2_banned_patterns",
-    "F2_brand_forbidden",
+    "F2_lexicon",
     "F2_platform_truth",
     "F2_superlatives",
     "F2_style_warn",
@@ -13920,15 +14573,13 @@
     "F18_rarity",
     "F14_social_shape",
     "F15_voice",
-    "F15_voice_warn",
     "F9_cta_fact",
     "F9_brand_style"
    ],
    "facebook": [
     "F6_cta_present",
     "F1_grounding",
-    "F2_banned_patterns",
-    "F2_brand_forbidden",
+    "F2_lexicon",
     "F2_platform_truth",
     "F2_superlatives",
     "F2_style_warn",
@@ -13945,15 +14596,13 @@
     "F18_rarity",
     "F14_social_shape",
     "F15_voice",
-    "F15_voice_warn",
     "F9_cta_fact",
     "F9_brand_style"
    ],
    "instagram": [
     "F6_cta_present",
     "F1_grounding",
-    "F2_banned_patterns",
-    "F2_brand_forbidden",
+    "F2_lexicon",
     "F2_platform_truth",
     "F2_superlatives",
     "F2_style_warn",
@@ -13970,15 +14619,13 @@
     "F18_rarity",
     "F14_social_shape",
     "F15_voice",
-    "F15_voice_warn",
     "F9_cta_fact",
     "F9_brand_style"
    ],
    "landing_page": [
     "F6_cta_present",
     "F1_grounding",
-    "F2_banned_patterns",
-    "F2_brand_forbidden",
+    "F2_lexicon",
     "F2_platform_truth",
     "F2_superlatives",
     "F2_style_warn",
@@ -13995,15 +14642,13 @@
     "F18_rarity",
     "F14_social_shape",
     "F15_voice",
-    "F15_voice_warn",
     "F9_cta_fact",
     "F9_brand_style"
    ],
    "linkedin": [
     "F6_cta_present",
     "F1_grounding",
-    "F2_banned_patterns",
-    "F2_brand_forbidden",
+    "F2_lexicon",
     "F2_platform_truth",
     "F2_superlatives",
     "F2_style_warn",
@@ -14020,7 +14665,6 @@
     "F18_rarity",
     "F14_social_shape",
     "F15_voice",
-    "F15_voice_warn",
     "F9_cta_fact",
     "F9_brand_style",
     "F14_first_line"
@@ -14028,8 +14672,7 @@
    "tiktok": [
     "F6_cta_present",
     "F1_grounding",
-    "F2_banned_patterns",
-    "F2_brand_forbidden",
+    "F2_lexicon",
     "F2_platform_truth",
     "F2_superlatives",
     "F2_style_warn",
@@ -14046,7 +14689,6 @@
     "F18_rarity",
     "F14_social_shape",
     "F15_voice",
-    "F15_voice_warn",
     "F9_cta_fact",
     "F9_brand_style"
    ]
@@ -14243,12 +14885,10 @@
     "F2_brand_forbidden: uses 'luxury', which the brand forbids: 'A luxury night at Sod Camp.'"
    ],
    "f2b-2|blog": [
-    "F2_brand_forbidden: uses 'Cheap', which the brand forbids: 'Cheap flights are not part of this.'",
-    "F2_platform_truth: uses 'cheap', a price or booking promise the platform cannot back: 'Cheap flights are not part of this.'"
+    "F2_brand_forbidden: uses 'Cheap', which the brand forbids: 'Cheap flights are not part of this.'"
    ],
    "f2b-2|facebook": [
-    "F2_brand_forbidden: uses 'Cheap', which the brand forbids: 'Cheap flights are not part of this.'",
-    "F2_platform_truth: uses 'cheap', a price or booking promise the platform cannot back: 'Cheap flights are not part of this.'"
+    "F2_brand_forbidden: uses 'Cheap', which the brand forbids: 'Cheap flights are not part of this.'"
    ],
    "f2b-3|blog": [
     "F2_brand_forbidden: uses 'once in a lifetime', which the brand forbids: 'A once in a lifetime night at Sod Camp.'"

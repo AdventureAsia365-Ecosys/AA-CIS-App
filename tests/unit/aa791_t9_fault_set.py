@@ -182,14 +182,15 @@ def judges_pass():
 
 def run_case(case: FaultCase) -> dict:
     """run_quality_gates() on one case (call inside judges_pass()). Returns the outcome plus the
-    target gate's ledger entry (None when the gate did not run)."""
+    target gate's ledger entry (None when the gate did not run). AA-924 — the target is read on the legacy view
+    (expand_ledger): F2_banned_patterns / F2_brand_forbidden are sources inside the stored F2_lexicon entry."""
     outcome = qg.run_quality_gates(
         content_text=case.content_text, atom_text=case.atom_text, cta=case.cta,
         brand_rubric_text="rubric", channel=case.channel, brand_pack=case.brand_pack,
         hygiene_ctx=_hygiene_ctx() if case.with_hygiene else None,
         cannibalization_match=case.cannibalization_match,
     )
-    entry = next((g for g in outcome["gate_ledger"] if g["gate"] == case.gate), None)
+    entry = next((g for g in qg.expand_ledger(outcome["gate_ledger"]) if g["gate"] == case.gate), None)
     return {**outcome, "target": entry}
 
 

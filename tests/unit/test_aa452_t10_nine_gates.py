@@ -106,15 +106,16 @@ class TestRunQualityGatesChannelDispatch:
         # a `None` cannibalization_match (this test's default) always passes with 0 violations.
         # AA-613: F9 split into F9_cta_fact (block) + F9_brand_style (warn).
         # AA-787: promises_an_option and F8_framework dropped (23 results for a non-blog channel).
+        # AA-924: F2_banned_patterns + F2_brand_forbidden → F2_lexicon, F15_voice_warn → F15_voice (21 results).
         assert gates == [
-            "F6_cta_present", "F1_grounding", "F2_banned_patterns", "F2_brand_forbidden",
+            "F6_cta_present", "F1_grounding", "F2_lexicon",
             "F2_platform_truth", "F2_superlatives", "F2_style_warn",  # AA-800 word layers, every channel
             "F11_brand_name",
             "F19_authenticity",  # AA-819 (AUP 2026-11) — every channel, right after F11
             "F10_cannibalization_cross_tenant",
             "F4_extreme_length", "F0_complete", "F12_scope", "F13_hygiene", "F13_leak",
             "F13_repeat", "F17_trip_fact", "F18_rarity",  # S234 round 3 — pass without contexts
-            "F14_social_shape", "F15_voice", "F15_voice_warn",  # AA-771 (S234) — pass without a channel spec
+            "F14_social_shape", "F15_voice",  # AA-771 (S234) — pass without a channel spec
             "F9_cta_fact", "F9_brand_style",
         ]
 
@@ -133,15 +134,16 @@ class TestRunQualityGatesChannelDispatch:
         # AA-484: + F10_cannibalization_cross_tenant, right after F2 (before promises_an_option).
         # AA-613: F9 split into F9_cta_fact (block) + F9_brand_style (warn).
         # AA-787: promises_an_option, F5, F3, F8 dropped; F7 folded into F16 (25 results for a blog).
+        # AA-924: F2_lexicon and one F15_voice (23 results for a blog).
         assert gates == [
-            "F6_cta_present", "F1_grounding", "F2_banned_patterns", "F2_brand_forbidden",
+            "F6_cta_present", "F1_grounding", "F2_lexicon",
             "F2_platform_truth", "F2_superlatives", "F2_style_warn",  # AA-800 word layers, every channel
             "F11_brand_name",
             "F19_authenticity",  # AA-819 (AUP 2026-11) — every channel, right after F11
             "F10_cannibalization_cross_tenant",
             "F4_extreme_length", "F0_complete", "F12_scope", "F13_hygiene", "F13_leak",
             "F13_repeat", "F17_trip_fact", "F18_rarity",  # S234 round 3 — pass without contexts
-            "F14_social_shape", "F15_voice", "F15_voice_warn", "F4_seo_surface",
+            "F14_social_shape", "F15_voice", "F4_seo_surface",
             "F9_cta_fact", "F9_brand_style",
             "F16_faq",  # S234 round 2 — the blog FAQ contract, last (owned by the FAQ step)
         ]

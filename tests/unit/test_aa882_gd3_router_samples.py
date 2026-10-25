@@ -37,6 +37,7 @@ SAMPLES = [
     ("admin_content_quality", "PATCH", "/admin/content-quality/place-cards/{card_id}", {}),
     ("admin_photos", "POST", "/admin/photos/{photo_id}/assign", {}),
     ("admin_places", "POST", "/admin/places/backfill", {"limit": 999}),
+    ("admin_supply_content", "POST", "/admin/supply-content/{entity_id}/versions/{version_id}/publish", None),
     ("admin_segment_research", "POST", "/admin/segment-research/run", {}),
     ("admin_waves", "POST", "/admin/waves/{wave_id}/close", None),
     ("admin_waves", "POST", "/admin/waves/check", None),

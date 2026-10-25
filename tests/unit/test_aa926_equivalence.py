@@ -32,5 +32,6 @@ def test_snapshot_covers_all_40_fault_set_cases_and_8_channels():
     data = json.loads(snap.FIXTURE.read_text(encoding="utf-8"))
     assert len(data["t10"]["cases"]) == 40
     order = data["t10"]["channel_gate_order"]
-    assert len(order["blog"]) == 25 and len(order["linkedin"]) == 24
-    assert all(len(order[c]) == 23 for c in order if c not in ("blog", "linkedin"))
+    # AA-924 folded F2_banned_patterns + F2_brand_forbidden into F2_lexicon and F15_voice_warn into F15_voice
+    assert len(order["blog"]) == 23 and len(order["linkedin"]) == 22
+    assert all(len(order[c]) == 21 for c in order if c not in ("blog", "linkedin"))

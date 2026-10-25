@@ -1,6 +1,7 @@
 """AA-769 (S234) — cut / rewrite one flagged sentence from the Content Quality drawer: edit-ready
 highlights, the deterministic apply (lock, span match, checks, splice, audit) and the one cheap
 suggest call (stage t9_repair, logged with the piece id)."""
+import hashlib
 import json
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -106,8 +107,9 @@ def test_check_replacement_runs_the_deterministic_gates():
     assert sr.check_replacement("Groups of 7-16 walk up.", grounding, pack) == []  # source number
     gates = lambda s: [f["gate"] for f in sr.check_replacement(s, grounding, pack)]  # noqa: E731
     assert gates("The monastery has 900 steps.") == ["F1_grounding"]
-    assert gates("The rooms are cosy at dawn.") == ["F2_brand_forbidden"]
-    assert "F2_banned_patterns" in gates("The view is unforgettable at dawn.")
+    # AA-924 — banned patterns and the brand's forbidden words are one F2_lexicon result
+    assert gates("The rooms are cosy at dawn.") == ["F2_lexicon"]
+    assert "F2_lexicon" in gates("The view is unforgettable at dawn.")
     # AA-800: a price / booking promise is refused on an admin sentence too
     assert "F2_platform_truth" in gates("The rooms are cheap at dawn.")
     assert gates("Adventure Asia runs it every week.") == ["F11_brand_name"]
@@ -201,6 +203,17 @@ def _audits(conn):
     return [c for c in conn.execute.await_args_list if "INSERT INTO acp_shared.audit_log" in c.args[0]]
 
 
+_SIGNAL_COLS = ("writer", "channel", "scope", "tenant_id", "field", "locator", "before_text", "after_text",
+                "before_sha256", "after_sha256", "gate", "reason_code", "action", "actor_type", "actor_id",
+                "fact_status", "audit_log_id", "source_table", "source_id", "problem")
+
+
+def _signals(conn):
+    """AA-916: the writing signals the apply inserted (record_writer_feedback's INSERT … RETURNING)."""
+    return [dict(zip(_SIGNAL_COLS, c.args[1:])) for c in conn.fetchval.await_args_list
+            if "INSERT INTO shared.writing_signal" in c.args[0]]
+
+
 @pytest.mark.asyncio
 async def test_apply_cut_updates_text_and_writes_audit():
     conn = _conn(_piece_row())
@@ -214,8 +227,19 @@ async def test_apply_cut_updates_text_and_writes_audit():
     assert (tenant, actor, action, rtype, rid) == (str(TENANT_ID), "admin:u1", AdminAuditAction.SENTENCE_CUT,
                                                    "content_piece", PIECE_ID)
     d = json.loads(details)
-    assert d["before"] == SENT and d["after"] == "" and d["mode"] == "cut" and d["gate"] == "F11_brand_name"
+    assert d["mode"] == "cut" and d["gate"] == "F11_brand_name"
     assert d["length_before"] == len(TEXT) and d["published"] is False
+    # AA-916 (ADR 0010 decision 11): the text is in the writing signal; the audit row has its id and hashes
+    [sig] = _signals(conn)
+    assert sig["before_text"] == SENT and sig["after_text"] == "" and sig["action"] == "sentence_cut"
+    assert (sig["writer"], sig["scope"], sig["tenant_id"]) == ("t9_social", "tenant", str(TENANT_ID))
+    assert json.loads(sig["locator"]) == {"start": START, "end": START + len(SENT)}
+    assert "before" not in d and "after" not in d and "suggestion" not in d
+    assert d["signal_id"] == str(conn.fetchval.return_value)
+    assert d["before_sha256"] == hashlib.sha256(SENT.encode()).hexdigest() == sig["before_sha256"]
+    # review round 1: the gate's problem (it quotes the flagged text) is on the signal; the audit keeps its hash
+    assert "problem" not in d and sig["problem"] == "foreign brand"
+    assert d["problem_sha256"] == hashlib.sha256(b"foreign brand").hexdigest()
 
 
 @pytest.mark.asyncio
@@ -249,7 +273,7 @@ async def test_apply_rejects_status_processing_or_failed(status):
 @pytest.mark.parametrize("replacement,gate", [
     ("We build it with 900 guides.", "F1_grounding"),
     ("Adventure Asia builds it.", "F11_brand_name"),
-    ("We build it, and it is cosy.", "F2_brand_forbidden"),
+    ("We build it, and it is cosy.", "F2_lexicon"),  # AA-924 (the brand's forbidden word)
 ])
 async def test_apply_rewrite_blocked_by_deterministic_guard(replacement, gate):
     conn = _conn(_piece_row())
@@ -269,7 +293,8 @@ async def test_apply_rewrite_saves_and_audits_the_suggestion():
     [audit] = _audits(conn)
     d = json.loads(audit.args[6])
     assert audit.args[3] == AdminAuditAction.SENTENCE_REWRITTEN
-    assert d["after"] == "Trail Pulse builds it." and d["suggestion_model"] == "haiku-4-5"
+    assert _signals(conn)[0]["after_text"] == "Trail Pulse builds it." and d["suggestion_model"] == "haiku-4-5"
+    assert d["suggestion_sha256"] == hashlib.sha256(b"Trail Pulse builds it.").hexdigest()
 
 
 @pytest.mark.asyncio
@@ -452,7 +477,7 @@ async def test_apply_saves_the_replacement_without_citation_tag_or_markdown():
     [upd] = _updates(conn)
     assert "Trail Pulse builds it. It is a hidden gem." in upd.args[2]
     assert "[R:" not in upd.args[2] and "**" not in upd.args[2]
-    assert json.loads(_audits(conn)[0].args[6])["after"] == "Trail Pulse builds it."
+    assert _signals(conn)[0]["after_text"] == "Trail Pulse builds it."
 
 
 @pytest.mark.asyncio
@@ -465,7 +490,7 @@ async def test_apply_saves_with_warnings_and_refuses_only_blocking_checks():
     with patch.object(sr, "check_replacement", return_value=warn):
         out = await _apply(conn, mode="manual", replacement="Trail Pulse builds it.")
     assert out["warnings"] == warn and len(_updates(conn)) == 1
-    assert json.loads(_audits(conn)[0].args[6])["warnings"] == warn
+    assert json.loads(_audits(conn)[0].args[6])["warning_gates"] == ["F12_scope"]   # AA-916: no warning text
     conn = _conn(_piece_row())
     with patch.object(sr, "check_replacement", return_value=warn + [
             {"gate": "F11_brand_name", "violations": ["foreign brand"], "blocking": True}]):

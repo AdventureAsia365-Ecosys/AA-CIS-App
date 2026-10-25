@@ -877,6 +877,7 @@ write CIS schemas. Owners per schema: `AA-Ecosys/docs/database/schema-ownership.
 | AA-Booking, AA-TripPlanner-Web | **Catalog read model**, schema `catalog` (AA-679): `v_tour` (live AA tours, key `(source_system, source_id)` = `('cis', raw_tours.source_group_id)`, `content_hash`), `v_tour_day` (parsed canonical itinerary), `v_tour_place` (active-atom places + place card + destination lat/lng), `v_tour_photo`, `v_destination`, `v_destination_photo`. **Coordinates carry an attribution duty**: wherever a consumer shows `lat`/`lng` from these views (map pins, area circles), it must show "Powered by Geoapify" (link) + "© OpenStreetMap contributors" (AA-712, Geoapify Free-plan + ODbL terms); the place views of migration 228 expose `located_by` / `geo_precision` so a consumer draws `area` points as areas, not pins. Contract `AA-Ecosys/docs/contracts/catalog.tour.v1.json`; `catalog.tour.v1.3` (CIS 274, AA-986 L4) adds `v_tour_retired` (tombstone: retired / paused / restored per key, derived from the served state) and `v_tour_lifecycle_outbox` (served-state events, cursor `event_id`). New consumers read only `catalog.*`; since CIS 270 TripPlanner does too (plus the Model Gateway). Events `catalog.tour.published/updated/trashed` (outbox) are the next AA-679 slice | its own `booking.*` | CIS 225 to roles `aa_app_user`, `tripplanner`, `booking` (unguarded). Views owned by NOLOGIN role `catalog_owner` (no BYPASSRLS, no members), which reads `published_tours` / `raw_tours` through RLS policy `catalog_owner_aa_master_read` (AA master tenant only); consumers need not set `app.tenant_id`. 225 also makes `tenant_isolation` on those two tables treat `app.tenant_id = ''` as no tenant (NULLIF) instead of raising |
 | AA-Partner (partner CRM) | **`catalog.http.v1` over HTTP** (AA-976, CRM-B4; root ADR 0010 decision 4: the CRM holds no grant on any CIS schema): `GET /catalog/v1/tours` (keyset cursor by `source_id`, `updated_since`, `country_code`, `limit` ≤ 50), `GET /catalog/v1/tours/cis/{source_id}` (days with per-day and per-place IANA `time_zone`, inclusions, exclusions classified for pay-on-arrival R25, facets for system tags R29, photos), `GET /catalog/v1/destinations/{id}`. Served from the `catalog` views read as `aa_app_user` on the tenant pool (one connection per api task at most, READ ONLY, `app.tenant_id` = ''), so it shows exactly what Booking / TripPlanner see. Liveness per root ADR 0015 decision 5: `retired` → 410 `gone` + `reason` (the CRM marks lines "no longer offered"), `paused` → 404 + `reason`, never served → 404. Strong `ETag` (a tour's `content_hash` = sha256 over the served body), `Cache-Control: private, max-age=60`, 304 on `If-None-Match`. Code: `api/routers/catalog_http.py`, `services/catalog_http/`; contract copy `docs/contracts/catalog.http.v1.openapi.yaml` (byte-identical to the root file, conformance test `tests/unit/test_aa976_catalog_http_contract.py`). **AA-authored content** (AA-977, contract 1.2): `GET /catalog/v1/aa-content` (latest published version of each item that is not retired; `kind`, `locale`, keyset cursor by `content_id`, `limit` ≤ 50; ETag / 304) and `GET /catalog/v1/aa-content/{content_id}/versions/{version}` (any published version, also after a newer publish or retire; a draft / unknown version → 404), read from `gold_aa_internal.v_aa_content_published` on the main pool (cis_app); see "AA-authored content" below | — | M2M client-credentials token of the `aa-m2m-<env>` pool, CRM client + scope `cis.catalog/read` (root ADR 0006b decision 7, `api/core/m2m_auth.py`, same shared verifier as staff tokens); API Gateway route `/catalog/{proxy+}` (AA-CIS-Infra) |
 | AA-Partner (partner CRM) | **`tenant.membership.v1` over HTTP** (AA-978, CRM-P1; root ADR 0006b decision 4, ADR 0010 decision 5): `GET /tenant/membership/v1/tenants/{id}/members` (invited + active members and `tenant_state` active / locked / deleted; ETag over the body without `as_of`, 304), `GET /tenant/membership/v1/memberships?iss=&sub=` (keyed by iss AND sub), `GET /tenant/membership/v1/events?after=&limit=` (cursor feed, `limit` ≤ 500, ordered by `(txid, seq)` below the snapshot horizon so a late commit is never skipped). Ids, identity and the Content studio role only: no e-mail, name or CRM role. Read from `shared.tenant_members` / `shared.tenant_membership_event` (CIS 276) on the main pool (cis_app); see "Tenant membership directory" below. Code: `api/routers/tenant_membership.py`, `services/tenant_membership/`; contract copy `docs/contracts/tenant.membership.v1.openapi.yaml` (test `tests/unit/test_aa978_tenant_membership_contract.py`) | — | M2M token of the `aa-m2m-<env>` pool, CRM client + scope `cis.tenant/read` (`api/core/m2m_auth.require_m2m`, the same dependency factory as `/catalog/v1`); API Gateway route `/tenant/membership/{membership_proxy+}` (AA-CIS-Infra, AA-978 S1) |
+| AA-Booking | **Supply content read-back** (AA-835, root ADR 0004a): `catalog.v_supply_content` (CIS 278), one row per Booking hotel / service CIS knows, key `(source_system 'booking', source_id = the Booking id)`: `content_status`, `content_version`, and `description`, `highlights`, `good_to_know`, `photo_urls` **only while published** (an approved version of an active entity; draft, in_review, stale and unpublished rows carry NULL text), `edit_url` = `/admin/supply-content/<id>` (Booking prefixes the CIS admin origin). Booking's hotel / service pages show it read-only and proposals carry only published text (AA-Booking `app/supply/content.py`, feature-detected) | — | CIS 278 to role `booking` only, under the `catalog.*:booking` contract grant (catalog_owner view, security_barrier) |
 | Ops-probe Lambda (AA-CIS-Infra) | `POST /admin/dfs-balance/check`, `/admin/jev-canary/check`, `/admin/jev/402-sweep`, `/admin/waves/check` daily | — | admin secret |
 
 CIS as a consumer (AA-858): the `/admin/overview` business view reads `booking.v_ops_funnel_daily`,
@@ -884,6 +885,33 @@ CIS as a consumer (AA-858): the `/admin/overview` business view reads `booking.v
 views the producers own and grant to `cis_app` in their own migrations (contract `ops.overview.v1`, AA-Ecosys
 `docs/contracts/ops.overview.v1.md`; AA-CIS-Infra `db/owners.yaml` consumer_grants). CIS never reads `booking.*` /
 `tripplanner.*` tables.
+
+CIS as a consumer of Booking supply facts (AA-835, root ADR 0004a; contracts `supply.hotel.v1` / `supply.service.v1`,
+Booking bk-023 grants the four `booking.v_supply_*` views to `cis_app`). `services/supply_content/`:
+- `pull.py`, one batch per api ops-sampler tick (`api/core/ops_metrics_sampler.py`, off with `SUPPLY_FEED_PULL=off`):
+  `booking.v_supply_outbox` after the cursor in `shared.supply_feed_cursor` (row locked, SKIP LOCKED), the current
+  facts from `v_supply_hotels` / `v_supply_services`, the inbox `shared.supply_event_inbox` (key = Booking
+  `event_id`: a duplicate changes nothing; `applied` only when the facts' `supply_version` is newer, else
+  `skipped_older`; `missing` when the entity left the view). An applied version stores the facts in
+  `shared.supply_entity`, syncs `shared.supply_media` and queues one `supply_content_draft` job
+  (`supply_content_draft:<source_id>:<supply_version>`); published content turns `stale` (no text served); a
+  deactivated or missing entity turns `unpublished` (rows kept). A CIS photo copy whose media lost its usage rights
+  or left Booking gets one `supply_media_purge` job (`services/jobs/supply_media_purge_job.py`: deletes both WebP
+  objects, clears the copy columns, invalidates `/supply/<type>/<media_id>-*` on the photos CDN when
+  `PHOTO_CDN_DISTRIBUTION_ID` is set; needs the task role's `s3:DeleteObject` on `photos/supply/*`). Lag, the last
+  error and the purge jobs: `GET /admin/supply-content/status`.
+- `supply_content_draft` job (`services/jobs/supply_content_draft_job.py`, background, concurrency 1, 2 attempts):
+  kill switch `SUPPLY_CONTENT_LLM=off`, at most `SUPPLY_CONTENT_MAX_DRAFTS_PER_DAY` (20) paid writer calls a UTC day plus
+  the cost guard row `bedrock / job:supply_content_draft`; copies rights-cleared photos (`photos.py`: source bucket /
+  key from `booking.v_supply_media`, checked against the bk-023 naming rule and the sha256; WebP 1600 / 600 under
+  `photos/supply/` + the img. CDN); one call on stage `supply_content_writer` (`writer.py`: facts quoted as untrusted
+  data, source fidelity, logged to `shared.llm_call_log` with the job id); writes a new `llm` draft version. Never
+  publishes.
+- Review (`review.py`, `/admin/supply-content`): an edit is a new `human` version; publish (review.act) refuses an
+  inactive entity, a version written against older facts (409 `outdated`) and a photo without usage rights or copy
+  (409 `photo_rights`); reject, unpublish, regenerate (content.write). Version content is immutable in the DB (CIS
+  278 guard trigger). The admin page itself is a follow-up (AA-835 S6 UI) and must ship before Booking's "Edit in
+  CIS" link (`edit_url`) is shown: until then that link opens a 404.
 
 Platform services other apps may reuse (already used by TripPlanner where noted): the Model Gateway
 and `llm_call_log` (TripPlanner), the durable job runner `shared.job` (CIS only for now — a second
@@ -1717,15 +1745,26 @@ per (Subject, Channel, Goal) — the tenant picks one before Write runs.
 _Avoid_: approach, take, framing (used loosely elsewhere; Angle is the specific picked object).
 
 **Gate**:
-An automated check run inline right after Write (T9/T10). Since AA-787 (S245) a blog gets 25 gate
-results, LinkedIn 24 and the other channels 23 (count them in `run_quality_gates`). Since AA-613 each failure has a **severity**: `block` (product truth —
+An automated check run inline right after Write (T9/T10). Since AA-924 (S250) a blog gets 23 gate
+results, LinkedIn 22 and the other channels 21 (AA-787 had 25 / 24 / 23; count them in `run_quality_gates`).
+AA-924 — **per-finding severity and two merged entries.** The gates still run as their legacy source checks;
+the stored ledger folds F2_banned_patterns + F2_brand_forbidden + F15_voice's stock findings (STOCK_PATTERNS,
+template lines) into one **F2_lexicon** entry (at F2_banned_patterns' place; one finding per word and sentence,
+so a word on two lists is judged once; a longer phrase around a shorter word is a second finding), and F15_voice +
+F15_voice_warn into one **F15_voice** entry. A merged entry carries `findings: [{text, severity: block|warn, source}]` (source = the legacy gate, a retired name),
+`severity` (the worst), and `parts` (one legacy record per source); `violations` and `blocking` (worst is block)
+stay for older readers. `quality_gates.expand_ledger` rebuilds the legacy entries and every routing step reads
+that view (first failure, hold, sentence-repair plan, waive, regression guard keyed by source), so routing is
+the legacy one; `held_reason` and `repair_log[].gate_targeted` name the stored entry (`F2_lexicon: …`). The
+AA-800 layers stay their own gates and skip the tenant's own forbidden words. Ledgers stored before AA-924 keep
+the old names and read as before. Since AA-613 each failure has a **severity**: `block` (product truth —
 facts, grounding, CTA), `warn` (brand/style, e.g. generic AI wording, brand-fit) or `note`. Only
 `block` triggers a rewrite (max 2 retries). Never assume "failed a gate" means "held" — check
 the severity first. S233: blog shape gates F3/F5/F7 are `warn` (F7 auto-drops FAQ pairs that
 restate the body). AA-787 (S245) removed `promises_an_option` (F17_trip_fact owns offered moments, ADR
 0009), F8_framework (its LLM call), F3 and F5; F7 folded into F16_faq (the restate fixer runs before
 the gates, logged as `F7_faq_autofix`). Old ledgers keep those names. S233 also added the blocking
-gates F0_complete (cut-off text), F2_brand_forbidden (the tenant's own forbidden words) and F11_brand_name (another brand / the platform speaking). An F9
+gates F0_complete (cut-off text), F2_brand_forbidden (the tenant's own forbidden words; inside F2_lexicon since AA-924) and F11_brand_name (another brand / the platform speaking). An F9
 judge outage is never a blocking gate (no rewrite on it), but since AA-925 (Q-2, reversing S233's "warn, not a
 hold") it **holds** the piece: the F9 result carries a `degraded` marker and, when the FINAL attempt has it,
 the last step after `_final_integrity` labels an approved piece `held` (`held_reason` "degraded:
@@ -1754,7 +1793,7 @@ word band 120–250 (editorial 300), ≤3 hashtags, first line ≤140 chars; hyg
 rewrite; AA-780: under the band's floor blocks on attempt 1 only → one full rewrite to the target, and never
 holds a piece — `quality_gates.never_holds`; the AA-528 regression guard keeps a repairable rewrite of a floor-only attempt 1 for the attempt-3 repair, and on a revert waives the floor block), **F15_voice** (stock-phrase hard list; blocks on attempt 1 only, for one sentence repair, and
 never holds a piece — `hold_failure` skips it; AA-780 S246: a STOCK_PATTERNS sentence still in the final attempt's text is cut in code after the loop, `service._cut_stock_lines` — never the hook or the CTA, never below the word band; shown as the non-blocking `F15_stock_cut` flag) and **F15_voice_warn** (trade register, audience-number leak,
-generic or repeated opener, AA-780 broetry — ≥2 consecutive prose sentences of ≤5 words, bullets and emoji-only lines excluded; warn only, never repaired). All pass for every other channel. The F9 judge
+generic or repeated opener, AA-780 broetry — ≥2 consecutive prose sentences of ≤5 words, bullets and emoji-only lines excluded; warn only, never repaired; stored as warn findings of F15_voice since AA-924, whose stock-list findings sit in F2_lexicon). All pass for every other channel. The F9 judge
 gets the brand's voice adjectives and no longer favours a calm house voice.
 S234 round 2 (AA-768): **F13_leak** (blocking, sentence-repairable) — writer-instruction wording ("A Sentence
 on…", "This guide covers…", the SCOPE's day span), the brand pack's audience ranges ("25–40", "seven-to-sixteen")
@@ -1891,7 +1930,8 @@ attempt 3 is a sentence-level repair only, on the same row — the AA-485 buffer
 (`approved`/`held`/`failed`), and (blog only) a `publish_log` row once T11 ships it.
 Each failed attempt's `repair_log` entry also keeps that attempt's own trimmed ledger
 (`repair_log[].gate_ledger`: gate, passed, blocking, at most 5 violations; AA-791,
-`gate_eval.ledger_snapshot`), so gate precision and recall can be measured across attempts; pieces
+`gate_eval.ledger_snapshot`; AA-924: a merged entry also keeps `severity` and at most 5 `findings`
+{text, severity, source}), so gate precision and recall can be measured across attempts; pieces
 written before AA-791 have only the persisted attempt's ledger. A **Label** is an admin's human
 verdict on one Piece (`acp_shared.content_piece_label`, migration 231, one row per Piece and
 labeller: `as_is`/`light`/`heavy`/`reject`, per-class defects, minutes to fix, reason, and the
@@ -2038,6 +2078,14 @@ tenant (T2 / T9, `tenant_id` set); RLS ENABLE + FORCE with `tenant_isolation` fo
 SELECT + INSERT only) and the X1 parity policies for `cis_app` / `cis_owner`, so every `cis_app` read filters
 `tenant_id` explicitly. Tenant rows are deleted by the AA-839 tenant erasure (`services/erasure/inventory.py`);
 `acp_shared.audit_log` keeps only the signal id and the sha256 hashes.
+Captured by `services/writing_memory/signals.py` `record_writer_feedback` (AA-916) on: the tenant's T9 hand edit
+(PATCH /v1/content-writing/pieces/{id}, best-effort, on the tenant pool), the admin A1 field edit (PATCH
+/admin/tours/{tour_id}/generated/{content_id}, one signal per changed field), the admin sentence cut / rewrite / edit
+of a T9 piece or a T2 version (with an optional reason code; `fact_not_in_source` on a T2 sentence also labels Jev
+`a1_claim_supported` truth=false), and reject / dismiss / regenerate of a review row (reason-only, no text). The admin
+history reads the text back from the signal (legacy audit rows keep their own text, D16). Reason codes and the chip
+preselected for a gate: `services/writing_memory/reason_codes.py`. Every discarded T9 attempt is kept in
+`content_piece.discarded_attempts`, and `writer_input.writer_prompt_version` stamps the T9 system prompt.
 _Avoid_: lesson, feedback (alone), training data.
 
 **Writing Rule**:
@@ -2209,7 +2257,17 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     text (soft `degraded: repair_contract`). Spliced at flag_fix (replaces the AA-641 per-field revert, same
     behaviour), the A1 grounding repair, revalidate's strip + fit, the T3 sentence repair + meta regenerate and
     T9 `splice_checked`. The T9 AA-528/AA-780 regression guard of full rewrites stays in
-    `run_write_background` and already covers invariant 1 there.
+    `run_write_background` and already covers invariant 1 there. Invariant 7 (AA-790 `integrity_kept`,
+    `enforce_step`): every deterministic edit of the T9 attempt loop (`hygiene.autofix`, the family caveat, the
+    FAQ droppers, `real_first_faq`, `fix_trip_facts`, `trim_to_band`; `ensure_cta` is must-keep) is reverted when
+    it leaves a new repeat, orphan, dangling opener, fragment, split or unfinished paragraph, or a sentence cut
+    on 'the' / 'and' (`hygiene.integrity_problems` + `text_integrity.new_structure_findings`: a paragraph is
+    unfinished only when it stops on a letter or digit, and paragraph kinds are new by count; steps before the
+    final pass are compared as `text_integrity.settle` leaves them). The revert lines go to F13_autofix and the
+    kept attempt's reverts count as soft `degraded: repair_contract` (detector `t9_step`); no gate or registry
+    entry is added (gate freeze).
+    The tenant-voice rubric (`acp_content_writing/voice_rubric.py`) is an offline scorer only
+    (`scripts/aa790/voice_rubric_replay.py`): no pipeline reads it until the freeze ends and κ ≥ 0.6.
   - **Writer-v2 hard code** (AA-645, S249): on an A1 writer-v2 draft `ITINERARY_DAY_COUNT_MISMATCH` (a source day
     missing from the output) blocks Master — `graph.V2_HARD_BLOCK_CODES`, read through `graph.hard_block_codes(state)`
     by `_is_publishable` and the human-edit gate; v1 drafts and tenant rewrites keep the soft structure deduction. A
