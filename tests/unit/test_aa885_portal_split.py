@@ -1,12 +1,13 @@
-"""AA-885 — guards for the tenant portal split (portal/ = its own Next.js app and Vercel project).
+"""AA-885 — guards for the tenant portal split (portal/ = its own Next.js app and Vercel project), and AA-979 —
+the portal source moved to AdventureAsia365-Ecosys/AA-Partner (portal/, CRM-P2a, root ADR 0010 §6).
 
-- The UI-kit files the portal vendors stay byte-identical to their admin source (edit
-  frontend/app/_kit, copy into portal/ in the same PR — the list is in CONTEXT.md).
-- The portal app holds no admin secret and no staff session code.
-- The admin app no longer serves the portal: the moved routes are gone, /portal and /tenant-login
-  answer 308 to the portal host, the admin gate and rbac no longer mention the portal.
-- The portal sends the security headers, its lockfile is tracked, and its Vercel workflow deploys
-  another project on disjoint paths (and never redeploys ECS).
+- The copy of portal/ left in this repo is FROZEN: it is not deployed from here any more and stays only until it is
+  deleted (P2b + 7 days). Any change under portal/ fails `test_portal_copy_is_frozen`: make portal changes in
+  AA-Partner. The vendored UI-kit byte checks moved there too ("Vendored CIS copies", PORTAL_COPIES).
+- No workflow of this repo deploys the portal or runs its smoke.
+- The frozen portal app holds no admin secret and no staff session code.
+- The admin app does not serve the portal: the moved routes are gone, /portal and /tenant-login answer 308 to the
+  portal host, the admin gate and rbac no longer mention the portal.
 """
 from __future__ import annotations
 
@@ -14,41 +15,15 @@ import re
 import subprocess
 from pathlib import Path
 
-import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 FRONTEND = REPO / "frontend"
 PORTAL = REPO / "portal"
 PORTAL_HOST = "https://portal.lumiguides.it.com"
 
-# portal path → admin source path (both relative to the repo root). Keep in sync with CONTEXT.md.
-VENDORED = {
-    "portal/app/_kit/tokens.ts": "frontend/app/_kit/tokens.ts",
-    "portal/app/_kit/primitives.tsx": "frontend/app/_kit/primitives.tsx",
-    "portal/app/_kit/Modal.tsx": "frontend/app/_kit/Modal.tsx",
-    "portal/app/_kit/Drawer.tsx": "frontend/app/_kit/Drawer.tsx",
-    "portal/app/_kit/Toast.tsx": "frontend/app/_kit/Toast.tsx",
-    "portal/app/_kit/api.ts": "frontend/app/_kit/api.ts",
-    "portal/app/_kit/useMediaQuery.ts": "frontend/app/_kit/useMediaQuery.ts",
-    "portal/app/_kit/Providers.tsx": "frontend/app/_kit/Providers.tsx",
-    "portal/app/_kit/DataTable.tsx": "frontend/app/_kit/DataTable.tsx",
-    "portal/app/_kit/csv.ts": "frontend/app/_kit/csv.ts",
-    "portal/app/_kit/savedViews.ts": "frontend/app/_kit/savedViews.ts",
-    # AA-759 — theme + sidebar-collapse stores for the PortalShell.
-    "portal/app/_kit/theme.ts": "frontend/app/_kit/theme.ts",
-    "portal/app/_kit/useTheme.ts": "frontend/app/_kit/useTheme.ts",
-    "portal/app/_kit/sidebarStore.ts": "frontend/app/_kit/sidebarStore.ts",
-    "portal/app/_kit/useSidebar.ts": "frontend/app/_kit/useSidebar.ts",
-    "portal/app/_kit/useHydrated.ts": "frontend/app/_kit/useHydrated.ts",
-    "portal/app/_brand/tokens.ts": "frontend/app/_brand/tokens.ts",
-    "portal/lib/bffPath.ts": "frontend/lib/bffPath.ts",
-    "portal/lib/proxyResponse.ts": "frontend/lib/proxyResponse.ts",
-    "portal/lib/sameOrigin.ts": "frontend/lib/sameOrigin.ts",  # AA-911
-    "portal/lib/crossSiteGuard.ts": "frontend/lib/crossSiteGuard.ts",  # AA-911
-}
-
-# Portal-owned files in the vendored folders (not copies).
-PORTAL_OWNED_IN_KIT = {"index.ts"}
+# AA-979 — tree id of portal/ at the cut (AA-CIS-App d1e0eb43, 118 files); AA-Partner's portal/ started from the
+# identical tree. Do not re-pin it to make a portal change pass: make the change in AA-Partner portal/.
+FROZEN_PORTAL_TREE = "ba736844f356f5d13aa40e4fc378c460e5efbfb7"
 
 FORBIDDEN_IN_PORTAL = ["ADMIN_SECRET", "INTERNAL_API_KEY", "x-admin-secret", "COGNITO_", "cis_admin_token"]
 
@@ -69,24 +44,6 @@ def _portal_source_files():
             continue
         if p.suffix in {".ts", ".tsx", ".mjs", ".js", ".json", ".css"} and p.name != "package-lock.json":
             yield p
-
-
-@pytest.mark.parametrize("portal_path,source_path", sorted(VENDORED.items()))
-def test_vendored_file_is_byte_identical(portal_path, source_path):
-    copy, source = REPO / portal_path, REPO / source_path
-    assert source.is_file(), f"admin source {source_path} is gone — update VENDORED and CONTEXT.md"
-    assert copy.is_file(), f"{portal_path} missing — copy it from {source_path}"
-    assert copy.read_bytes() == source.read_bytes(), (
-        f"{portal_path} drifted from {source_path}. The portal vendors the admin UI kit byte for byte "
-        f"(AA-885): copy the admin file over the portal one in the same PR (cp {source_path} {portal_path})."
-    )
-
-
-def test_every_portal_kit_file_is_vendored_or_portal_owned():
-    """A new file in portal/app/_kit must be either a guarded copy or explicitly portal-owned."""
-    for p in (PORTAL / "app" / "_kit").iterdir():
-        rel = str(p.relative_to(REPO))
-        assert rel in VENDORED or p.name in PORTAL_OWNED_IN_KIT, f"{rel} is neither vendored nor portal-owned"
 
 
 def test_portal_holds_no_admin_secret_or_staff_session():
@@ -204,21 +161,28 @@ def test_portal_lockfile_is_tracked():
     assert out.returncode == 0, "portal/package-lock.json must be tracked (Vercel + CI run npm ci in portal/)"
 
 
-def test_portal_workflow_deploys_its_own_project_on_disjoint_paths():
-    admin = (REPO / ".github" / "workflows" / "vercel-deploy.yml").read_text()
-    portal = (REPO / ".github" / "workflows" / "vercel-deploy-portal.yml").read_text()
-    admin_id = re.search(r"VERCEL_PROJECT_ID:\s*(\S+)", admin).group(1)
-    portal_id = re.search(r"VERCEL_PROJECT_ID:\s*(.+?)\s*(#|$)", portal, re.M).group(1)
-    assert portal_id != admin_id
-    assert "vars.VERCEL_PORTAL_PROJECT_ID" in portal_id
-    assert '"portal/**"' in portal and '"frontend/**"' not in portal
+def test_portal_copy_is_frozen():
+    """AA-979 — the portal moved to AA-Partner; this copy is frozen until it is deleted (P2b + 7 days)."""
+    out = subprocess.run(
+        ["git", "rev-parse", "HEAD:portal"], cwd=REPO, capture_output=True, text=True,
+    )
+    assert out.returncode == 0, f"git rev-parse HEAD:portal failed: {out.stderr.strip()}"
+    assert out.stdout.strip() == FROZEN_PORTAL_TREE, (
+        "portal/ changed. The tenant portal lives in AdventureAsia365-Ecosys/AA-Partner/portal since AA-979 "
+        "(CRM-P2a); this copy is frozen and no longer deployed. Make the change there instead."
+    )
+
+
+def test_no_workflow_deploys_the_portal():
+    """AA-979 — the portal deploys from AA-Partner only (one deployer for the Vercel project aa-cis-portal)."""
+    workflows = REPO / ".github" / "workflows"
+    assert not (workflows / "vercel-deploy-portal.yml").exists()
+    assert not (workflows / "ui-smoke-portal.yml").exists()
+    for wf in workflows.glob("*.y*ml"):
+        text = wf.read_text()
+        assert "VERCEL_PORTAL_PROJECT_ID" not in text, f"{wf.name} still deploys the portal project"
+        assert "smoke-portal" not in text, f"{wf.name} still runs the portal smoke"
+    admin = (workflows / "vercel-deploy.yml").read_text()
     assert '"portal/**"' not in admin
-    assert "./.github/workflows/ui-smoke-portal.yml" in portal
-    deploy_dev = (REPO / ".github" / "workflows" / "deploy-dev.yml").read_text()
+    deploy_dev = (workflows / "deploy-dev.yml").read_text()
     assert "portal/" not in deploy_dev, "a portal change must never redeploy ECS"
-
-
-def test_context_lists_the_vendored_files():
-    ctx = (REPO / "CONTEXT.md").read_text()
-    for portal_path in VENDORED:
-        assert portal_path in ctx, f"CONTEXT.md must list the vendored file {portal_path}"
