@@ -16,13 +16,17 @@ from __future__ import annotations
 
 ATOM_REPLACED = "atom_replaced"
 
+# Re-picking the angle on the same request (``/reopen`` then ``/choose``) keeps the same atom_id and would hit this
+# 409 again, so both sentences send the tenant to Social Content (the Slate) to start a new post from that part of
+# the tour, which makes a new request on the current atom.
 TENANT_SENTENCE = (
-    "Adventure Asia has updated the part of the tour this post was planned from, so it can't be written from "
-    "the angle you picked. Pick the angle again to write this post."
+    "Adventure Asia has updated the part of the tour this post was planned from, so this post can't be written "
+    "from it any more. Pick this part of the tour again in Social Content to start a new post."
 )
 ADMIN_SENTENCE = (
     "This request's atom is no longer live (the tour was atomized again since it was made), so new angles "
-    "can't be generated for it. The tenant has to pick the angle again."
+    "can't be generated for it. The tenant has to start a new post by picking this part of the tour again in "
+    "Social Content."
 )
 
 # Same filter as services/acp_angle_gate/service.py::_ATOM_QUERY and services/acp_content_writing/service.py::
@@ -40,10 +44,20 @@ class AtomReplaced(Exception):
     code = ATOM_REPLACED
     sentence = TENANT_SENTENCE
 
+    # The ids are for logs (the caller logs them); the tenant gets ``detail``. Set through ``about()`` so the
+    # constructor keeps the plain Exception signature (pickle / copy safe).
+    atom_id: str | None = None
+    segment_ids: list | None = None
+
     def __init__(self, internal: str = ""):
         super().__init__(internal)
-        # The internal message (ids) is for logs; the tenant gets ``detail``.
         self.internal = internal
+
+    def about(self, *, atom_id: str | None = None, segment_ids: list | None = None):
+        """Attach the replaced atom id / Route Segment ids for the log line; returns ``self`` for ``raise``."""
+        self.atom_id = atom_id
+        self.segment_ids = list(segment_ids) if segment_ids else None
+        return self
 
     @property
     def detail(self) -> str:

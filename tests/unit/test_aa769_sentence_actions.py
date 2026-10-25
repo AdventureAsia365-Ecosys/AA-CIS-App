@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+from structlog.testing import capture_logs
 
 from api.routers import admin_content_quality as cq
 from services.acp_content_writing import generate, service
@@ -602,10 +603,12 @@ async def test_regenerate_angles_409_atom_replaced_when_the_atom_is_no_longer_li
     """AA-990 — a Segment request whose atom a later atomize run replaced: the clone's t8_angles job could only fail
     ("atom not found"), so regenerate answers a typed 409 atom_replaced and enqueues nothing."""
     conn = _angle_request_conn(atom_live=False)
-    with pytest.raises(HTTPException) as e:
+    with pytest.raises(HTTPException) as e, capture_logs() as logs:
         await _regenerate(conn)
     assert e.value.status_code == 409
-    assert e.value.detail.startswith("atom_replaced: ")
+    assert e.value.detail.startswith("atom_replaced: ") and "Social Content" in e.value.detail
+    line = [entry for entry in logs if entry["event"] == "aa990_atom_replaced"]
+    assert len(line) == 1 and line[0]["path"] == "admin_regenerate_angles" and line[0]["atom_id"] == "atom_old"
     assert e.value.headers == {"X-Error-Code": "atom_replaced"}
     conn.execute.assert_not_awaited()
     live = [c for c in conn.fetchval.await_args_list if "v_active_tour_atoms" in c.args[0]]

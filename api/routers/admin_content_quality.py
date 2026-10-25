@@ -837,6 +837,8 @@ async def regenerate_angles(request_id: str, request: Request, x_admin_secret: s
                                                                                 req["tenant_id"]):
                 # AA-990 — a single-atom request whose atom a later atomize run replaced: the clone's t8_angles job
                 # could only fail ("atom not found"); answer 409 atom_replaced instead of enqueueing it.
+                logger.warning("aa990_atom_replaced", path="admin_regenerate_angles", tenant_id=str(req["tenant_id"]),
+                               request_id=str(request_id), atom_id=req["atom_id"])
                 raise HTTPException(status_code=409, detail=atom_replaced.admin_detail(),
                                     headers={"X-Error-Code": atom_replaced.ATOM_REPLACED})
             new_id = str(uuid4())

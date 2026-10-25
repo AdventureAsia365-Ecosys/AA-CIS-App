@@ -121,7 +121,7 @@ class MissingCTAError(ContentWritingError):
 
 class AtomReplacedError(ContentWritingError, AtomReplaced):
     """AA-990 — the request's atom (or every Segment of its Route) is no longer live: a later atomize run replaced
-    it. The router answers 409 `atom_replaced` ("pick the angle again"), not the generic 500 of
+    it. The router answers 409 `atom_replaced` ("start a new post in Social Content"), not the generic 500 of
     ContentWritingError. Still a ContentWritingError, so every other caller keeps catching it."""
 
 
@@ -143,7 +143,8 @@ async def _fetch_atom_text(tenant_id: UUID, atom_id: str, pool) -> str:
         # AA-768 — the atom's evidence/hook + Segment siblings' evidence, not just its short label.
         seed = await atom_seed_text(conn, atom_id, str(tenant_id)) if row is not None else None
     if row is None:
-        raise AtomReplacedError(f"atom_id={atom_id!r} not found (deleted, or not a live platform/tenant atom)")
+        raise AtomReplacedError(
+            f"atom_id={atom_id!r} not found (deleted, or not a live platform/tenant atom)").about(atom_id=atom_id)
     return seed or row["text"]
 
 
@@ -251,7 +252,7 @@ async def _fetch_route_segments(
         raise AtomReplacedError(
             f"None of route_segment_ids={segment_ids!r} resolved to a live atom for trip_id="
             f"{trip_id!r} — the Route was rebuilt away. Refresh the Slate and pick again."
-        )
+        ).about(segment_ids=segment_ids)
     if atoms_out is not None:
         atoms_out.extend(atoms)
     return segments

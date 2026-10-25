@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
@@ -40,6 +41,7 @@ from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from services.acp_shared.cta_review_notice import WHERE_WRITE_OVERRIDE, check_saved_cta, cta_warning
 
 router = APIRouter(prefix="/v1/content-writing", tags=["tenant-content-writing"])
+logger = structlog.get_logger()
 
 # AA-652 — T9_STEPS and the progress wrapper moved to services/jobs/t9_write_job.py; the
 # write runs as a durable `t9_write` job. Re-exported for existing imports.
@@ -69,7 +71,10 @@ async def write(request_id: UUID, body: WriteBody, request: Request, tenant=Depe
         raise HTTPException(status_code=409, detail=str(exc))
     except service.MissingCTAError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
-    except service.AtomReplacedError as exc:   # AA-990: 409 atom_replaced ("pick the angle again"), was a 500
+    except service.AtomReplacedError as exc:   # AA-990: 409 atom_replaced (start a new post), was a 500
+        # The ids never reach the tenant; this line is the list of affected requests for AA-990 proper.
+        logger.warning("aa990_atom_replaced", path="t9_write", tenant_id=str(tenant_id), request_id=str(request_id),
+                       atom_id=exc.atom_id, segment_ids=exc.segment_ids, internal=exc.internal)
         raise HTTPException(status_code=exc.status_code, detail=exc.detail, headers=exc.headers) from exc
     except service.ContentWritingError as exc:
         raise HTTPException(status_code=500, detail=str(exc))

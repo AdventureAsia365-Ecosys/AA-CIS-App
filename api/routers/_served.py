@@ -29,6 +29,8 @@ def refuse_http(exc: TourNotServedError) -> HTTPException:
 
 
 async def tour_not_served_handler(_request, exc: TourNotServedError) -> JSONResponse:
+    """App handler for a typed 409 refusal. Also registered for ``services.acp_shared.atom_replaced.AtomReplaced``
+    (AA-990): it only reads ``status_code`` / ``detail`` / ``headers``, which both classes carry."""
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers=exc.headers)
 
 
