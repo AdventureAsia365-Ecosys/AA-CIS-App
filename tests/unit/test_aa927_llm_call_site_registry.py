@@ -114,6 +114,8 @@ LOGGED_CALL_SITES: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
     ("scripts/aa645/brandfit_measure.py", "score_page"): (
         ("services/content_generation/judge_node.py", "_write_judge_rows"),
         ("scripts/aa645/brandfit_measure.py", "score_page")),
+    # AA-790 (S251) T9 writer re-panel: the row right after the reply parses, the billed unusable row in the except.
+    ("scripts/aa790/t9_writer_repanel.py", "call_writer"): _self("scripts/aa790/t9_writer_repanel.py", "call_writer"),
 }
 
 # (path, enclosing function) -> why no llm_call_log row is written there.

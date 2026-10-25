@@ -26,7 +26,7 @@ paths:
     tiers: {Q0: true, Q3: "T9 channels affected"}
   - globs: [services/acp_content_writing/quality_gates.py, services/acp_content_writing/hygiene.py,
             services/acp_content_writing/trip_facts.py, services/acp_content_writing/text_integrity.py,
-            services/acp_content_writing/authenticity.py]
+            services/acp_content_writing/authenticity.py, services/acp_content_writing/ai_tells.py]
     tiers: {Q0: true, Q2: "when F9 changes", R0: true}
   - globs: [services/acp_content_writing/service.py]
     note: "design names run_write_background (the T9 write + repair loop) in this file"
