@@ -7,9 +7,14 @@
 //   Edit    — the same preview, empty, no LLM call.
 // Apply returns the refreshed piece, which replaces the drawer's cached copy. Admin role only, and
 // only on approved / held pieces (the backend and the BFF enforce both again).
+// AA-916 WM-07: each row carries a reason chip row (preselected from the API's `suggested_reason`); Cut and Apply
+// send the chosen chip as `reason_code`, so the action stays one click. "Admin edits" shows each edit's stored
+// reason and the "Use as example" / "Never use as example" toggles (PATCH …/signals/{signal_id}, WM-27 reads them).
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { ReasonTag, WritingReasonChips } from "../_components/WritingReasonChips";
+import { exemplarPath, preselect, toggledPref, type ExemplarPref, type ReasonCode } from "@/lib/writingReasons";
 import { A, mono } from "../_components/adminUi";
 import { ApiError, Badge, Button, ConfirmModal, Spinner, apiSend, useAdminIdentity, useToast } from "../../_kit";
 import {
@@ -37,6 +42,9 @@ export function FlaggedSentences({ piece }: { piece: PieceDetail }) {
   const { isAdmin } = useAdminIdentity();
   const [cutting, setCutting] = useState<FlaggedSentence | null>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
+  // AA-916 — the chip per sentence the admin changed; untouched rows read the API's suggestion
+  const [reasons, setReasons] = useState<Record<string, ReasonCode>>({});
+  const reasonOf = (s: FlaggedSentence) => reasons[s.key] ?? preselect(s.suggested_reason);
   const base = `/api/admin/content-quality/pieces/${piece.piece_id}/sentences`;
   const canEdit = isAdmin && EDITABLE.includes(piece.status);
   const hasSource = !!piece.writer_input;
@@ -83,6 +91,7 @@ export function FlaggedSentences({ piece }: { piece: PieceDetail }) {
       mode: sug && text === sug.replacement.trim() ? "rewrite" : "manual",
       gate: s.gates[0], problem: problemText(s).slice(0, 1000),
       suggestion: sug?.replacement, suggestion_model: sug?.model, suggestion_cost_usd: sug?.cost_usd,
+      reason_code: reasonOf(s),
     });
   };
 
@@ -117,6 +126,12 @@ export function FlaggedSentences({ piece }: { piece: PieceDetail }) {
             </div>
             <ProblemList problems={s.problems} />
             <div style={{ fontSize: 12.5, lineHeight: 1.55, color: A.ink, background: A.bg, borderRadius: 6, padding: "6px 8px", wordBreak: "break-word" }}>{s.sentence}</div>
+            {canEdit && (
+              <div style={{ marginTop: 8 }}>
+                <WritingReasonChips value={reasonOf(s)} suggested={preselect(s.suggested_reason)} disabled={busy}
+                                    onChange={(code) => setReasons((r) => ({ ...r, [s.key]: code }))} />
+              </div>
+            )}
             {canEdit && !open && (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8, alignItems: "center" }}>
                 <span data-testid="cq-cut"><Button size="sm" variant="danger" disabled={busy} onClick={() => setCutting(s)}>Cut</Button></span>
@@ -146,7 +161,7 @@ export function FlaggedSentences({ piece }: { piece: PieceDetail }) {
         onClose={() => !apply.isPending && setCutting(null)}
         onConfirm={() => cutting && apply.mutate({
           start: cutting.start, end: cutting.end, text: cutting.text, replacement: "", mode: "cut",
-          gate: cutting.gates[0], problem: problemText(cutting).slice(0, 1000),
+          gate: cutting.gates[0], problem: problemText(cutting).slice(0, 1000), reason_code: reasonOf(cutting),
         })}
         title="Cut this sentence?"
         destructive
@@ -155,6 +170,7 @@ export function FlaggedSentences({ piece }: { piece: PieceDetail }) {
         body={
           <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 13 }}>
             <div style={{ background: A.redSoft, borderRadius: 6, padding: "6px 8px", color: A.ink }}>{cutting?.sentence}</div>
+            {cutting && <div style={{ display: "flex", gap: 6, alignItems: "center", color: A.body }}>Reason <ReasonTag code={reasonOf(cutting)} /></div>}
             <div style={{ color: A.body }}>The tenant&rsquo;s copy of this piece changes. The edit is audit-logged with the removed text.</div>
             {delivered && <div style={{ color: A.amber }}>The tenant already {piece.published ? "published" : "exported"} this piece; their copy is not updated.</div>}
           </div>
@@ -235,20 +251,67 @@ export function RewritePanel({ s, ed, busy, regenerating, onChange, onApply, onR
 
 const MODE_LABEL: Record<string, string> = { cut: "cut", rewrite: "rewrite (suggestion)", manual: "edit" };
 
-export function AdminEdits({ edits }: { edits: AdminEdit[] }) {
+/** Which object the edits belong to: the exemplar PATCH goes through it (the backend checks the signal is its). */
+export interface EditOwner { kind: "pieces" | "tour-versions"; id: string; queryKey: readonly unknown[] }
+
+export function AdminEdits({ edits, owner }: { edits: AdminEdit[]; owner?: EditOwner }) {
+  const { isAdmin } = useAdminIdentity();
   if (edits.length === 0) return <div style={{ fontSize: 12, color: A.muted }}>No admin edits.</div>;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       {edits.map((e, i) => (
-        <div key={`${e.created_at}-${i}`} style={{ fontSize: 12, borderBottom: `1px solid ${A.line}`, paddingBottom: 6 }}>
-          <div style={{ color: A.muted }}>
-            {fmtTime(e.created_at)} · {e.actor} · {MODE_LABEL[e.details.mode ?? ""] ?? e.action}{e.details.gate ? ` · ${e.details.gate}` : ""}
-            {e.details.field ? ` · ${tourSectionLabel(e.details.field, e.details.index ?? null)}` : ""}
+        <div key={`${e.created_at}-${i}`} data-testid="cq-admin-edit" style={{ fontSize: 12, borderBottom: `1px solid ${A.line}`, paddingBottom: 6 }}>
+          <div style={{ color: A.muted, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+            <span>
+              {fmtTime(e.created_at)} · {e.actor} · {MODE_LABEL[e.details.mode ?? ""] ?? e.action}{e.details.gate ? ` · ${e.details.gate}` : ""}
+              {e.details.field ? ` · ${tourSectionLabel(e.details.field, e.details.index ?? null)}` : ""}
+            </span>
+            <ReasonTag code={e.details.reason_code} />
           </div>
           <div style={{ textDecoration: "line-through", color: A.body, wordBreak: "break-word" }}>{e.details.before}</div>
           {e.details.after ? <div style={{ color: A.ink, wordBreak: "break-word" }}>{e.details.after}</div> : <div style={{ color: A.muted }}>(removed)</div>}
+          {owner && e.details.signal_id && (
+            <ExemplarToggles owner={owner} signalId={e.details.signal_id} value={e.details.exemplar_pref ?? null} canEdit={isAdmin} />
+          )}
         </div>
       ))}
+    </div>
+  );
+}
+
+const EXEMPLAR_LABEL = { use: "Use as example", never: "Never use as example" } as const;
+
+/** AA-916 WM-07 — the example preference of one admin edit (its writing signal). A click on the active toggle
+ *  clears it. The drawer query is refetched after the save, so the value shown is the stored one. */
+function ExemplarToggles({ owner, signalId, value, canEdit }: {
+  owner: EditOwner; signalId: string; value: ExemplarPref; canEdit: boolean;
+}) {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const save = useMutation({
+    mutationFn: (pref: ExemplarPref) =>
+      apiSend<{ signal_id: string; exemplar_pref: ExemplarPref }>(exemplarPath(owner.kind, owner.id, signalId), {
+        method: "PATCH", body: { exemplar_pref: pref }, admin: true,
+      }),
+    onSuccess: (r) => {
+      toast.success(r.exemplar_pref ? `Saved: ${EXEMPLAR_LABEL[r.exemplar_pref].toLowerCase()}` : "Example preference cleared");
+      qc.invalidateQueries({ queryKey: owner.queryKey });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : String(e), 8000),
+  });
+  if (!canEdit) {
+    return value ? <div style={{ marginTop: 4, fontSize: 11.5, color: A.muted }}>{EXEMPLAR_LABEL[value]}</div> : null;
+  }
+  return (
+    <div data-testid="cq-exemplar" data-value={value ?? ""} style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6, alignItems: "center" }}>
+      {(["use", "never"] as const).map((pref) => (
+        <Button key={pref} size="sm" variant={value === pref ? "primary" : "ghost"} disabled={save.isPending}
+                title={value === pref ? "Click again to clear" : pref === "use" ? "Writing memory may show this edit as a good example" : "Writing memory never shows this edit as an example"}
+                onClick={() => save.mutate(toggledPref(value, pref))}>
+          {EXEMPLAR_LABEL[pref]}
+        </Button>
+      ))}
+      {save.isPending && <Spinner size={14} />}
     </div>
   );
 }

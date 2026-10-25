@@ -8,6 +8,8 @@
 // revalidate (202 + job) → poll → Approve gated on revalidate_passed===true. The editor and its
 // re-validate flow live in ReviewEditor.tsx; the data layer in reviewApi.ts; the field/severity
 // model in reviewModel.ts.
+// AA-916 WM-07: Reject and Dismiss open a small confirm (ReasonActionModal.tsx) with the reason chip preselected
+// from the row's failure codes; Regenerate carries the chip too (RegenerateModal.tsx).
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Ban, CheckCircle, Filter, RotateCcw, X } from "lucide-react";
@@ -27,6 +29,8 @@ import {
 import { can } from "@/lib/rbac";
 import { ReviewEditor } from "./ReviewEditor";
 import { RegenerateModal } from "./RegenerateModal";
+import { ReasonActionModal, type ReasonAction } from "./ReasonActionModal";
+import type { ReasonCode } from "@/lib/writingReasons";
 import {
   approveReview,
   dismissReview,
@@ -129,6 +133,8 @@ function ReviewQueueInner() {
   });
   const [editorItem, setEditorItem] = useState<ReviewItem | null>(null);
   const [regenItems, setRegenItems] = useState<ReviewItem[]>([]);
+  // AA-916 — the Reject / Dismiss waiting for its reason chip
+  const [reasonAction, setReasonAction] = useState<{ action: ReasonAction; item: ReviewItem } | null>(null);
   // review ids whose regenerate job is in flight (client-only flag → poll + spinner)
   const [regenerating, setRegenerating] = useState<Set<string>>(new Set());
   const initRef = useRef(false);
@@ -202,17 +208,19 @@ function ReviewQueueInner() {
     onError: (e) => toast.error(e instanceof Error ? e.message : "Approve failed"),
   });
   const rejectM = useMutation({
-    mutationFn: rejectReview,
+    mutationFn: ({ id, reason }: { id: string; reason: ReasonCode }) => rejectReview(id, reason),
     onSuccess: () => {
       toast.success("Rejected");
+      setReasonAction(null);
       invalidate();
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Reject failed"),
   });
   const dismissM = useMutation({
-    mutationFn: dismissReview,
+    mutationFn: ({ id, reason }: { id: string; reason: ReasonCode }) => dismissReview(id, reason),
     onSuccess: () => {
       toast.success("Dismissed");
+      setReasonAction(null);
       invalidate();
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Dismiss failed"),
@@ -353,7 +361,7 @@ function ReviewQueueInner() {
               )}
               <div style={{ display: "flex", gap: 6, alignItems: "center", whiteSpace: "nowrap", flexWrap: "nowrap" }}>
                 <button
-                  onClick={() => dismissM.mutate(item.id)}
+                  onClick={() => setReasonAction({ action: "dismiss", item })}
                   disabled={busy}
                   title="Dismiss — drop this stale failed version from the queue (no edit, no publish)"
                   style={{
@@ -369,7 +377,7 @@ function ReviewQueueInner() {
                 >
                   <Ban size={13} />
                 </button>
-                <Btn variant="danger" size="sm" disabled={busy} onClick={() => rejectM.mutate(item.id)}>
+                <Btn variant="danger" size="sm" disabled={busy} onClick={() => setReasonAction({ action: "reject", item })}>
                   Reject
                 </Btn>
                 <Btn variant={ok ? "primary" : "ghost"} size="sm" disabled={!ok || busy} onClick={() => approveM.mutate(item.id)}>
@@ -381,7 +389,7 @@ function ReviewQueueInner() {
         },
       },
     ],
-    [approveM, rejectM, dismissM, canAct],
+    [approveM, canAct],
   );
 
   // ── Non-blocking regenerate: mark rows regenerating, close modal, let the poll refresh ──
@@ -603,6 +611,17 @@ function ReviewQueueInner() {
           />
         )}
       </Drawer>
+
+      {reasonAction && (
+        <ReasonActionModal
+          key={`${reasonAction.action}-${reasonAction.item.id}`}
+          action={reasonAction.action}
+          item={reasonAction.item}
+          busy={rejectM.isPending || dismissM.isPending}
+          onClose={() => setReasonAction(null)}
+          onConfirm={(reason) => (reasonAction.action === "reject" ? rejectM : dismissM).mutate({ id: reasonAction.item.id, reason })}
+        />
+      )}
 
       {regenItems.length > 0 && (
         <RegenerateModal items={regenItems} onClose={() => setRegenItems([])} onEnqueued={onEnqueued} />

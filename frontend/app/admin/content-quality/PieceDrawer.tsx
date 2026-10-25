@@ -231,7 +231,9 @@ export default function PieceDrawer({ pieceId, onClose }: { pieceId: string; onC
           </Section>
 
           {p.admin_edits.length > 0 && (
-            <Section title={`Admin edits · ${p.admin_edits.length}`}><AdminEdits edits={p.admin_edits} /></Section>
+            <Section title={`Admin edits · ${p.admin_edits.length}`}>
+              <AdminEdits edits={p.admin_edits} owner={{ kind: "pieces", id: p.piece_id, queryKey: ["cq-piece", pieceId] }} />
+            </Section>
           )}
 
           <Section title="Label"><PieceLabelSection piece={p} /></Section>

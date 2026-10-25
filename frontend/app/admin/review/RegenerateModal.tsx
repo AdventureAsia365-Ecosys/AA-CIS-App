@@ -9,12 +9,16 @@
 //
 // Supports a single tour (the row's Regenerate button) or a bulk set (DataTable "Regenerate
 // selected"). For bulk, one tier choice applies to every selected tour that has no recorded tier.
+// AA-916 WM-07: a reason chip row (preselected from the rows' failure codes) — every started job sends its review id
+// and the chip, so the regenerate is a writing signal too.
 
 import { Loader2, RotateCcw } from "lucide-react";
 import { useState } from "react";
 import { A, mono, sans, Btn } from "../_components/adminUi";
 import { Modal } from "../../_kit";
 import { startRegenerate } from "./reviewApi";
+import { WritingReasonChips } from "../_components/WritingReasonChips";
+import { commonReason, type ReasonCode } from "@/lib/writingReasons";
 import type { ReviewItem } from "./reviewModel";
 
 export function RegenerateModal({
@@ -35,6 +39,10 @@ export function RegenerateModal({
   const [tier, setTier] = useState<string>("");
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // AA-916 — null = the preselection from the rows' codes (derived, so a new set of rows gets its own)
+  const [reasonPick, setReasonPick] = useState<ReasonCode | null>(null);
+  const suggested = commonReason(items.map((it) => it.codes));
+  const reason = reasonPick ?? suggested;
 
   // Each tour uses its own recorded tier if present, else the chosen fallback tier.
   const canRun = !running && items.length > 0 && (!anyMissingTier || !!tier);
@@ -52,7 +60,7 @@ export function RegenerateModal({
         continue;
       }
       try {
-        await startRegenerate({ tourId: it.raw.tour_id, modelTier: effectiveTier });
+        await startRegenerate({ tourId: it.raw.tour_id, modelTier: effectiveTier, reviewId: it.id, reasonCode: reason });
         startedTours.push(String(it.raw.tour_id));
         startedReviews.push(it.id);
       } catch (err) {
@@ -113,6 +121,11 @@ export function RegenerateModal({
           ))}
         </ul>
       ) : null}
+
+      <div style={{ marginBottom: 14 }}>
+        <WritingReasonChips value={reason} suggested={suggested} disabled={running} onChange={setReasonPick}
+                            label={bulk ? "Why (all rows)" : "Why"} />
+      </div>
 
       {anyMissingTier ? (
         <div style={{ marginBottom: 6 }}>
