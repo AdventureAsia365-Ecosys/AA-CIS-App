@@ -41,7 +41,26 @@ _ADD_VERBS = (r"add|adds|adding|include|includes|including|mention|mentions|ment
 _ADD_RE = re.compile(rf"(?<![a-z])({_ADD_VERBS})(?![a-z])", re.I)
 _NEGATION_RE = re.compile(r"(?<![a-z])(?:do\s+not|don['’]t|never|no|not|avoid|without|stop|refrain\s+from|instead\s+of|"
                           r"rather\s+than|unless|only\s+if|cut|remove|drop|delete)(?![a-z])", re.I)
-_CLAUSE_SPLIT_RE = re.compile(r"[.;:!?]|,\s*(?:and|but|or)\s+|\s+(?:and\s+then|then)\s+", re.I)
+# The clause separators of re.split(r"[.;:!?]|,\s*(?:and|but|or)\s+|\s+(?:and\s+then|then)\s+", re.I). The last
+# branch here starts at ONE whitespace char and `_clauses` widens it back over the rest of the run: the leading \s+
+# was retried from every offset of a long whitespace run (O(n^2), CodeQL py/polynomial-redos, S251).
+_CLAUSE_SEP_RE = re.compile(r"[.;:!?]|,\s*(?:and|but|or)\s+|\s(?:and\s+then|then)\s+", re.I)
+
+
+def _clauses(text: str) -> list[str]:
+    """The pieces of the old re.split above, in linear time. A separator never ends inside a whitespace run (each
+    branch ends at a mark or a greedy \\s+), so the 'then' branch the old regex matched from the run's first char is
+    found at the run's last char and widened back to the run's start (not past the previous separator)."""
+    out, last = [], 0
+    for m in _CLAUSE_SEP_RE.finditer(text):
+        start = m.start()
+        if text[start].isspace():
+            while start > last and text[start - 1].isspace():
+                start -= 1
+        out.append(text[last:start])
+        last = m.end()
+    out.append(text[last:])
+    return out
 
 
 def _check(ok: bool, detail: str = "") -> dict:
@@ -50,7 +69,7 @@ def _check(ok: bool, detail: str = "") -> dict:
 
 def constraint_only(rule_text: str) -> dict:
     """Refuse a rule whose clause tells the writer to add something; negated verbs ("do not mention") pass."""
-    for clause in _CLAUSE_SPLIT_RE.split(rule_text or ""):
+    for clause in _clauses(rule_text or ""):
         for m in _ADD_RE.finditer(clause):
             if not _NEGATION_RE.search(clause[:m.start()]):
                 return _check(False, f"tells the writer to {m.group(1).lower()} something ('{clause.strip()[:80]}')")

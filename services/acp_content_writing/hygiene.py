@@ -393,9 +393,20 @@ _UNIT_ABBREVIATIONS = frozenset({"ft", "km", "mi", "hr", "hrs", "min", "mins"})
 # AA-912: a backward scan, not search(r"(?<![A-Za-z0-9])[A-Za-z.]+$", text, 0, i), which restarted at
 # offset 0 for every period (O(i) per period on plain prose, O(n^2) on a run of dots).
 _WORD_DOT_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.")
-_NEXT_RUNS_ON_RE = re.compile(r"\s*[a-z0-9]")
 _DOTTED_ACRONYM_RE = re.compile(r"(?:[A-Za-z]\.)+[A-Za-z]")
-_NEXT_IS_NUMBER_RE = re.compile(r"\s*\d")
+_RUNS_ON_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789")
+
+
+def _next_non_space(text: str, j: int) -> str:
+    """The first non-whitespace char at or after text[j] ('' when none). Replaces re.match(r"\\s*[a-z0-9]") and
+    re.match(r"\\s*\\d") at j (CodeQL py/polynomial-redos, S251): str.isspace / str.isdecimal are exactly the
+    regex classes \\s / \\d on str, so the result is the same."""
+    n = len(text)
+    while j < n and text[j].isspace():
+        j += 1
+    return text[j] if j < n else ""
+
+
 
 
 def _word_before_dot(text: str, i: int) -> str:
@@ -430,9 +441,9 @@ def is_sentence_end(text: str, i: int) -> bool:
         w = word.lower()
         if w in _ABBREVIATIONS or (word and _DOTTED_ACRONYM_RE.fullmatch(word)):
             return False
-        if w in _NUMBER_ABBREVIATIONS and _NEXT_IS_NUMBER_RE.match(text, i + 1):
+        if w in _NUMBER_ABBREVIATIONS and _next_non_space(text, i + 1).isdecimal():
             return False
-        if w in _UNIT_ABBREVIATIONS and _NEXT_RUNS_ON_RE.match(text, i + 1):
+        if w in _UNIT_ABBREVIATIONS and _next_non_space(text, i + 1) in _RUNS_ON_CHARS:
             return False
     return True
 
