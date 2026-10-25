@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 from _audit_cleanup import delete_audit_rows  # noqa: E402
-from services.tenant_membership import feed, reader, writer  # noqa: E402
+from services.tenant_membership import feed, portal, reader, writer  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 ISS = "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_zz978svc"
@@ -141,3 +141,20 @@ async def test_an_open_transaction_hides_its_event_until_commit(world):
         assert [e["type"] for e in page["items"] if e["tenant_id"] == tid] == ["tenant.locked"]
     finally:
         await other.close()
+
+
+@pytest.mark.asyncio
+async def test_portal_members_list_is_the_tenants_own_current_members(world):
+    """AA-978 follow-up (GET /v1/account/members): invited + active rows of this tenant only, active first, the
+    fingerprint instead of the identity; a removal leaves the list; another tenant id reads nothing."""
+    conn, tid, owner, invited = world
+    body = await portal.list_for_tenant(conn, tid)
+    assert [(m["membership_id"], m["status"], m["role"]) for m in body["data"]] == [
+        (owner, "active", "owner"), (invited, "invited", "viewer")]
+    assert body["data"][0]["member_ref"] == writer.fingerprint(ISS, "sub-owner")
+    assert body["data"][1]["member_ref"] is None
+    assert "sub-owner" not in str(body) and ISS not in str(body)
+    assert (await portal.list_for_tenant(conn, str(uuid.uuid4())))["data"] == []
+    await writer.remove(conn, tid, invited, "admin:test")
+    after = await portal.list_for_tenant(conn, tid)
+    assert [m["membership_id"] for m in after["data"]] == [owner] and after["invited"] == 0
