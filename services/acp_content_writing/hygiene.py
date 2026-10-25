@@ -1630,13 +1630,42 @@ TEMPLATE_LINE_RES = tuple(re.compile(p, re.I) for p in (
 ))
 
 
+# AA-790 (S251 T9 pilot, AI-tells 4.08) — the AI tells the writer-side pass (ai_tells.rewrite) cannot fix in code:
+# they need a rewrite of the sentence, so they ride the stock-line routing above (F15_voice, stored in F2_lexicon:
+# one sentence repair on attempt 1, never a hold). Whole-sentence shapes, never a bare word: 'earns income' and
+# 'rewards points' are facts. The writer is told the same list (ai_tells.PROMPT_RULES).
+AI_TELL_LINE_RES = tuple(re.compile(p, re.I) for p in (
+    # 'This is the day the route earns its reputation.', 'the water earns every second you spend in it'.
+    # Not a history fact: 'earned its name from the legend', 'earned the title of', 'earned its reputation for
+    # weaving' (no name/title/status; never before from/of/as/for — AA-790 review).
+    r"\bearn(?:s|ed)\s+(?:its|that|this|every|the|it)\s+(?:\w+\s+)?(?:reputation|place|distinction|description|"
+    r"keep|second|minute|hour|attention|time)\b(?!\s+(?:from|of|as|for)\b)",
+    # 'Northern Mongolia rewards those who arrive with patience', 'it rewards more than a brief visit'
+    r"\brewards?\s+(?:those|the\s+traveller|the\s+traveler|travell?ers|visitors|families|anyone|patience|"
+    r"more\s+than|a\s+slow|slow)\b",
+    r"^there\s+is\s+a\s+(?:particular|certain|special|specific|distinct)\s+(?:quality|kind|sort|feeling)\b",
+    # not 'has a way of life built around the reindeer' (a fact)
+    r"\bhas\s+a\s+way\s+of\b(?!\s+(?:life|living)\b)",
+    r"^if\s+there\s+is\s+one\s+(?:place|stop|moment|day|thing|site)\b",
+    r"\bis\s+the\s+thing\s+itself\b",
+    # 'a piece of cloth is rarely just cloth'
+    r"\b(\w{3,})\s+(?:is|are)\s+(?:rarely|never|seldom)\s+(?:just|only|simply|merely)\s+\1\b",
+    r"\bworth\s+(?:slowing\s+down|taking\s+time|lingering)\s+(?:for|over|with|on)\b",
+    # 'Kuang Si Falls is not simply a destination in itself.'
+    r"\bnot\s+(?:simply|merely)\s+(?:a|an|the)\s+\w+(?:\s+\w+)?\s+in\s+itself\b",
+    # 'The caldera floor asks nothing of a child except …', 'a forest that asks a great deal of everyone'
+    r"\basks\s+(?:nothing|little|much|more|a\s+great\s+deal|a\s+lot)\s+of\s+(?:a|an|the|every|each|its|you|"
+    r"everyone|visitors?|travell?ers?|families|children|guests?)\b",
+))
+
+
 def template_lines(text: str) -> list[tuple[str, str]]:
-    """[(stock line, its sentence)] for TEMPLATE_LINE_RES, prose / bullets / FAQ answers."""
+    """[(stock line, its sentence)] for TEMPLATE_LINE_RES and AI_TELL_LINE_RES, prose / bullets / FAQ answers."""
     out = []
     for sp in sentence_spans(text or ""):
         if sp["kind"] not in ("prose", "bullet", "faq_a"):
             continue
-        for rx in TEMPLATE_LINE_RES:
+        for rx in TEMPLATE_LINE_RES + AI_TELL_LINE_RES:
             m = rx.search(sp["clean"])
             if m:
                 out.append((" ".join(m.group(0).split()), sp["clean"]))
