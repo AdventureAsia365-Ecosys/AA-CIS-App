@@ -3054,7 +3054,7 @@ def _review_dict(req: dict, piece_row, atom_context: Optional[dict], trips: list
 # expand-fetch. Deliberately does NOT select gate_ledger/repair_log/held_reason, same as
 # fetch_review().
 _TENANT_REVIEWS_QUERY = """
-    SELECT * FROM (
+    SELECT latest.*, pub.published_at, pub.external_url AS published_url, pub.piece_id AS published_piece_id FROM (
         SELECT DISTINCT ON (cp.angle_gate_request_id)
             cp.piece_id, cp.angle_gate_request_id, cp.status, cp.content_text,
             cp.created_at, cp.route_hub_name, cp.route_segment_count, cp.flags,
@@ -3077,6 +3077,21 @@ _TENANT_REVIEWS_QUERY = """
         WHERE cp.tenant_id = $1
         ORDER BY cp.angle_gate_request_id, cp.created_at DESC
     ) latest
+    -- AA-669: the REQUEST's live post (status 'published'), for My Content's "Published" status / published-at
+    -- column and its link. Read over every piece of the request, not only the latest: after a rewrite the latest
+    -- piece is the new text while the post of an earlier piece is still live, and the row must keep reading
+    -- "Published" (the portal then refuses Publish / Write again until that post is unpublished; review S251).
+    -- Same tenant bound again on both tables (defence in depth next to the RLS of the tenant pool); a since-
+    -- unpublished or failed attempt is not "published". LIMIT 1 (newest live post) keeps one row per request.
+    LEFT JOIN LATERAL (
+        SELECT pl.published_at, pl.external_url, pl.piece_id
+        FROM acp_shared.publish_log pl
+        JOIN acp_shared.content_piece pp ON pp.piece_id = pl.piece_id AND pp.tenant_id = $1
+        WHERE pp.angle_gate_request_id = latest.angle_gate_request_id
+          AND pl.tenant_id = $1 AND pl.status = 'published'
+        ORDER BY pl.published_at DESC NULLS LAST
+        LIMIT 1
+    ) pub ON true
     ORDER BY latest.created_at DESC
 """
 # Live-verify (30/08/2026) caught a real bug here: using the SAME placeholder ($1) both bare
@@ -3167,6 +3182,12 @@ async def fetch_review_list(tenant_id: UUID, pool, request: Optional[Request] = 
             "dfs_paa_snapshot": snapshot,
             "cta": r["cta"],
             "created_at": r["created_at"].isoformat(),
+            # AA-669 — the request's live post (None when none of its pieces is live: never published, or
+            # unpublished since). published_piece_id names the live piece: it differs from piece_id when the post
+            # shows an earlier version than the text in the list.
+            "published_at": r["published_at"].isoformat() if r["published_at"] else None,
+            "published_url": r["published_url"],
+            "published_piece_id": str(r["published_piece_id"]) if r["published_piece_id"] else None,
         })
         _tl.with_served(items[-1], served.get(str(r["angle_gate_request_id"])))   # AA-986 L3
     return items
