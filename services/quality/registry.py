@@ -54,6 +54,8 @@ F9_CTA_FACT = "F9_cta_fact"
 F9_BRAND_STYLE = "F9_brand_style"
 F16_FAQ = "F16_faq"
 F14_FIRST_LINE = "F14_first_line"
+# AA-924 — one ledger entry for F2_banned_patterns + F2_brand_forbidden + the F15 stock list (MERGED_GATES).
+F2_LEXICON = "F2_lexicon"
 # T2 tenant-version sentence checks (admin Content Quality, AA-802).
 T3_GROUNDING = "T3_grounding"
 T2_FORBIDDEN_WORD = "FORBIDDEN_WORD"
@@ -78,6 +80,17 @@ F9_STICKY_PASS_SKIPPED = "F9_sticky_pass_skipped"
 GATE_CONSTANTS: dict[str, str] = {k: v for k, v in dict(globals()).items()
                                   if k.isupper() and isinstance(v, str) and k not in
                                   ("TAXONOMY_VERSION",)}
+
+# AA-924 — merged T10 ledger entries: each one folds these legacy gates ("sources"), in legacy ledger order. A
+# finding of a merged entry names its source; quality_gates.expand_ledger rebuilds one legacy entry per source.
+# F15_voice is in both: its stock findings (STOCK_PATTERNS, template lines) sit in F2_lexicon, the rest in F15_voice.
+MERGED_GATES: dict[str, tuple[str, ...]] = {
+    F2_LEXICON: (F2_BANNED_PATTERNS, F2_BRAND_FORBIDDEN, F15_VOICE),
+    F15_VOICE: (F15_VOICE, F15_VOICE_WARN),
+}
+# The merged entry a source is put back at when a ledger is expanded (where the source sat in the legacy ledger).
+SOURCE_HOME: dict[str, str] = {F2_BANNED_PATTERNS: F2_LEXICON, F2_BRAND_FORBIDDEN: F2_LEXICON,
+                               F15_VOICE: F15_VOICE, F15_VOICE_WARN: F15_VOICE}
 
 SEVERITY_DEFAULTS = {
     # design §4.2 — the pass criterion per severity (metric, tolerance), used when a class stores none.

@@ -22,7 +22,9 @@ This module owns:
   the travel trade. Used before an angle is saved (T8) and on
   stored angles when a non-blog prompt is built (T9), so old requests get it at $0;
 - the stock-phrase hard list, the trade-register pattern (TRADE_PATTERN / B2B_RE) and the
-  generic-opener pattern read by the T9 prompt and the F15_voice / F15_voice_warn gates.
+  generic-opener pattern read by the T9 prompt and the F15_voice / F15_voice_warn checks (AA-924: the stock-phrase
+  findings are stored in the F2_lexicon ledger entry, the trade-register and opener ones as warn findings of
+  F15_voice).
 
 Pure: no DB, no LLM.
 """
@@ -133,7 +135,8 @@ class ChannelSpec:
         return int(self.words[1] * 1.3)
 
 
-# Shown to the writer as things to avoid; F15_voice checks the same list (STOCK_PATTERNS). No commas
+# Shown to the writer as things to avoid; F15_voice checks the same list (STOCK_PATTERNS; AA-924: its findings are
+# stored in the F2_lexicon ledger entry). No commas
 # inside an item: ranking.split_avoid_phrases splits the avoid list on commas.
 STOCK_PHRASES = (
     "worth sitting with", "worth paying attention to", "difficult to overstate", "not incidental",

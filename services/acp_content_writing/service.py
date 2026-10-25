@@ -58,11 +58,12 @@ from services.acp_content_writing.generate import (SEO_FIT_STAGE, SentenceRepair
                                                    repair_sentences, rewrite_with_feedback, write_content, write_faq)
 from services.acp_content_writing.quality_gates import (CHEAP_REPAIR_GATES, F13_REPEAT_GATE, F14_GATE, F19_GATE,
                                                           FAQ_MAX_PAIRS, FAQ_MIN_PAIRS, F9PassMemory,
-                                                          deep_strip_citation_tags, drop_restated_faq,
+                                                          deep_strip_citation_tags, drop_restated_faq, expand_ledger,
+                                                          ledger_gate, ledger_is_merged,
                                                           drop_subjectless_faq, drop_unanswerable_faq,
                                                           faq_answer_problem, faq_pair_count, faq_pairs,
                                                           hold_failure, merge_faq_pairs, never_holds,
-                                                          replace_faq_section, seed_place_names,
+                                                          replace_faq_section, reshape_like, seed_place_names,
                                                           run_quality_gates, strip_citation_tags,
                                                           unused_source_facts)
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
@@ -77,7 +78,11 @@ from services.acp_planning.tenant_pool import fetch_tenant_trips, fetch_tenant_t
 from services.acp_produce.brand import fetch_brand_rubric_text
 from services.acp_content_writing.gate_eval import ledger_snapshot  # AA-791
 from services.quality import degraded  # AA-925
+from services.quality import repair_contract  # AA-790
 from services.quality import registry as qr
+from services.writing_memory import signals as wm_signals  # AA-916
+from services.acp_content_writing.prompts import SYSTEM_PROMPT  # AA-916 WM-08 (writer_prompt_version)
+from services.content_generation.batch_prompt import prompt_version_of
 from services.quality.registry import threshold
 
 logger = structlog.get_logger()
@@ -380,22 +385,30 @@ def choose_keyword(related_keywords: list, seed_text: str, out_of_scope=()) -> O
     return fallback  # None: no keyword about this moment — the writer titles it naturally
 
 
-def _held_reason_from(first_failure: dict) -> str:
-    return f"{first_failure['gate']}: {'; '.join(first_failure['violations'][:3])}"
+def _held_reason_from(first_failure: dict, ledger: Optional[list] = None) -> str:
+    """'<gate>: <first 3 violations>'. AA-924 — for a merged `ledger` the gate is the stored entry the failure sits
+    in (quality_gates.ledger_gate: 'F2_lexicon: …', never a retired source name)."""
+    gate = ledger_gate(first_failure) if ledger_is_merged(ledger) else first_failure["gate"]
+    return f"{gate}: {'; '.join(first_failure['violations'][:3])}"
 
 
 def _hold_or_ship(gate_ledger: list, flags: list) -> tuple[str, Optional[str], list]:
     """(status, held_reason, flags) for a piece that stops with failures: 'held' on the first
     product-truth gate (quality_gates.hold_failure); 'approved' when only a style-only gate
     (F15_voice) or an under-floor F14_social_shape (AA-780) is left — it is added to the flags so the
-    admin still sees it (quality_gates.never_holds)."""
+    admin still sees it (quality_gates.never_holds). AA-924 — reads the legacy view of the ledger and flags
+    (expand_ledger) and hands the flags back in the ledger's shape."""
     hold = hold_failure(gate_ledger)
     if hold is not None:
-        return "held", _held_reason_from(hold), flags
+        return "held", _held_reason_from(hold, gate_ledger), flags
     # Only the BLOCKING entries being waived here (mirrors _waive_style_only): a non-blocking warn —
     # e.g. a post-cut F14 under-floor warn — is already in `flags` from run_quality_gates or the cut.
-    style = [g for g in gate_ledger if not g["passed"] and g.get("blocking", True) and never_holds(g)]
-    return "approved", None, list(flags) + [{**g, "blocking": False} for g in style if g not in flags]
+    style = [g for g in expand_ledger(gate_ledger) if not g["passed"] and g.get("blocking", True) and never_holds(g)]
+    if not style:
+        return "approved", None, list(flags)
+    current = expand_ledger(flags)
+    return "approved", None, reshape_like(current + [{**g, "blocking": False} for g in style if g not in current],
+                                          gate_ledger, flags=True)
 
 
 # AA-786 (Gate-1 policy, S235) — channels where an F9 product-truth failure left after the last
@@ -532,6 +545,13 @@ def _cut_blog_truth_items(content_text: str, items: list[dict], *, ignore: froze
 def _is_floor_block(g: dict) -> bool:
     """AA-780 — a failed, blocking F14_social_shape that never holds: the attempt-1 under-floor block."""
     return g["gate"] == F14_GATE and not g["passed"] and g.get("blocking", True) and never_holds(g)
+
+
+def _blocking_failures(gate_ledger: list) -> set:
+    """AA-528 — the failed blocking gates of an attempt, for the regression guard. AA-924 — read on the legacy view
+    (expand_ledger), so each source of a merged entry counts on its own: a new banned-pattern failure inside
+    F2_lexicon is a regression even when F2_lexicon already failed on a stock phrase."""
+    return {g["gate"] for g in expand_ledger(gate_ledger) if g.get("blocking", True) and not g["passed"]}
 
 
 def _floor_only_failure(blocking_fails: list) -> bool:
@@ -684,6 +704,7 @@ def _cut_stock_lines(content_text: str, gate_ledger: list, flags: list, *, chann
     - The re-run F4 / F14 results replace their ledger entries and warn flags (`_refresh_flags`); the
       F15_voice entry keeps only the violations whose phrase is still in the text (passed when none is),
       and the cut sentences are shown as a non-blocking `F15_stock_cut` flag. Status is never changed.
+      AA-924 — trimmed on the legacy view: in a merged ledger these stock findings sit in F2_lexicon.
     Returns (content_text, gate_ledger, flags, repair_log entry or None)."""
     if spec is None:
         return content_text, gate_ledger, flags, None
@@ -727,9 +748,11 @@ def _cut_stock_lines(content_text: str, gate_ledger: list, flags: list, *, chann
         return {**g, "violations": [], "passed": True, "blocking": False}
 
     fresh = {length["gate"]: length, shape["gate"]: shape}
-    ledger = [trim_f15(fresh.get(g["gate"], g)) for g in gate_ledger]
-    new_flags = [trim_f15(f) for f in _refresh_flags(flags, fresh)]
-    new_flags = [f for f in new_flags if not (f.get("gate") == qr.F15_VOICE and f.get("passed"))]
+    # AA-924 — trimmed on the legacy view (the stock findings sit in F2_lexicon), handed back in the ledger's shape
+    ledger = reshape_like([trim_f15(fresh.get(g["gate"], g)) for g in expand_ledger(gate_ledger)], gate_ledger)
+    new_flags = [trim_f15(f) for f in expand_ledger(_refresh_flags(flags, fresh))]
+    new_flags = reshape_like([f for f in new_flags if not (f.get("gate") == qr.F15_VOICE and f.get("passed"))],
+                             gate_ledger, flags=True)
     note = [f"cut stock line '{it['phrase']}': '{it['sentence'][:200]}'" for it in gone]
     new_flags.append({"gate": F15_STOCK_CUT_FLAG, "passed": False, "blocking": False, "repairable": False,
                       "violations": note})
@@ -972,14 +995,64 @@ def _final_integrity(content_text: str, hyg: hygiene.HygieneContext, gate_ledger
     return content_text, ledger, flags, status, held_reason
 
 
+class _StepGuard:
+    """AA-790 — repair-contract invariant 7 (``repair_contract.enforce_step``) on the deterministic edits of one T9
+    job's attempt loop. Each call takes the step's own output and log and returns ``(text, log, reverted)``: a
+    clean edit with its log unchanged, or ``before`` with the ``reverted <step>: …`` lines in place of the step's
+    own log (the step's edits are gone, so its log would no longer be true). ``reverts`` holds the reverted steps
+    of the CURRENT attempt for ``_degraded_final`` (``degraded: repair_contract``, soft): every attempt runs every
+    step on its own text, so only the kept attempt's reverts describe the stored piece. ``begin_attempt`` starts
+    a new list; ``keep_previous`` puts the previous attempt's list back when the AA-528 regression guard keeps
+    that attempt's text (AA-790 review). Steps before the final pass are compared as ``text_integrity.settle``
+    leaves them (``settle=True``); one memo per job keeps that to one settle per distinct text."""
+
+    def __init__(self, hyg: hygiene.HygieneContext, *, ignore: frozenset, cta: Optional[str]):
+        self.hyg, self.ignore, self.cta = hyg, ignore, cta
+        self.reverts: list[str] = []
+        self._previous: list[str] = []
+        self._memo: dict[str, str] = {}
+
+    def begin_attempt(self) -> None:
+        self._previous, self.reverts = self.reverts, []
+
+    def keep_previous(self) -> None:
+        self.reverts = list(self._previous)
+
+    def _settle(self, text: str) -> str:
+        if text not in self._memo:
+            if len(self._memo) >= 16:
+                self._memo.clear()
+            self._memo[text] = text_integrity.settle(text, self.hyg, cta=self.cta)
+        return self._memo[text]
+
+    def __call__(self, step: str, before: str, after: str, step_log: list, *, must_keep: bool = False,
+                 settle: bool = True) -> tuple[str, list, bool]:
+        if after == before:
+            return after, list(step_log), False
+        text, lines, problems = repair_contract.enforce_step(
+            step, before, after, ignore=self.ignore, cta=self.cta, must_keep=must_keep,
+            settle=self._settle if settle else None)
+        if not problems:
+            return text, list(step_log), False
+        if must_keep:
+            return text, list(step_log) + lines, False
+        self.reverts.append(step)
+        logger.warning("t9_step_contract_revert", step=step, problems=problems[:3])
+        return text, lines, True
+
+
 def _degraded_final(gate_ledger: list[dict], flags: list[dict], repair_log: list[dict], status: str,
-                    held_reason: Optional[str], *, piece_id=None) -> tuple:
+                    held_reason: Optional[str], *, piece_id=None, step_reverts: Optional[list[str]] = None) -> tuple:
     """AA-925 — the final attempt's `degraded[]` (services/quality/degraded.py): the F9 outage marker on its
-    ledger result and the job's repair-contract reverts. Adds the admin flag + a repair_log entry, logs one
+    ledger result and the job's repair-contract reverts (sentence repairs, and with ``step_reverts`` the AA-790
+    deterministic-step reverts). Adds the admin flag + a repair_log entry, logs one
     `quality_degraded` event and holds an approved piece on a hard entry. Returns
     (status, held_reason, flags, repair_log)."""
     contract = sum(int(e.get("contract_reverts") or 0) for e in repair_log if isinstance(e, dict))
     lst = degraded.t9_entries(gate_ledger, contract)
+    if step_reverts:  # AA-790 — deterministic edits reverted by repair-contract invariant 7
+        lst = degraded.add(lst, degraded.REPAIR_CONTRACT, detector="t9_step", count=len(step_reverts),
+                           detail=", ".join(dict.fromkeys(step_reverts)))
     if not lst:
         return status, held_reason, flags, repair_log
     degraded.emit(lst, stage="t9", piece_id=str(piece_id) if piece_id else None)
@@ -998,9 +1071,10 @@ def _waive_style_only(gate_ledger: list[dict], status: str) -> list[dict]:
     if status != "approved":
         return gate_ledger
     # AA-780 — an under-floor F14_social_shape kept from attempt 1 the same way (never_holds).
-    return [{**g, "blocking": False, "waived": True}
-            if not g["passed"] and g.get("blocking", True) and never_holds(g) else g
-            for g in gate_ledger]
+    # AA-924 — waived on the legacy view (only the style-only source of a merged entry), then merged back.
+    return reshape_like([{**g, "blocking": False, "waived": True}
+                         if not g["passed"] and g.get("blocking", True) and never_holds(g) else g
+                         for g in expand_ledger(gate_ledger)], gate_ledger)
 
 
 def _show_live_text(content_text: str, seo_meta: dict, channel: str) -> None:
@@ -1021,7 +1095,7 @@ def _style_only_repair(gate_ledger: list[dict]) -> bool:
     (S234 round 2: F15_voice — stock phrase, contrast frame, sibling template; round 3: F13_repeat,
     F17_trip_fact, F18_rarity — the repair keeps, softens or cuts a sentence the seed already bounds).
     F1 / F9 / leak / brand failures in the same attempt keep the t9_write stage."""
-    failed = [g for g in gate_ledger if not g["passed"] and g.get("blocking", True)
+    failed = [g for g in expand_ledger(gate_ledger) if not g["passed"] and g.get("blocking", True)
               and g["gate"] not in sentence_repair.OWNED_ELSEWHERE]
     return bool(failed) and all(g["gate"] in CHEAP_REPAIR_GATES for g in failed)
 
@@ -1271,7 +1345,7 @@ def _repair_feedback(gate_ledger: list[dict], channel: Optional[str] = None) -> 
     target = F4_OVER_MAX_TARGET if channel == "blog" else ""
     return [
         f"{g['gate']}: {v}" + (target if g["gate"] == qr.F4_EXTREME_LENGTH and _F4_OVER_RE.search(v) else "")
-        for g in gate_ledger if not g["passed"] and g.get("blocking", True)
+        for g in expand_ledger(gate_ledger) if not g["passed"] and g.get("blocking", True)  # AA-924: legacy view
         for v in g["violations"]
     ]
 
@@ -1750,20 +1824,23 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
         # right before that attempt gets overwritten by a rewrite. Only used by the gate-
         # regression-guard below; stays None on attempt 1 (nothing to compare against yet).
         prev_snapshot: dict | None = None
-        # AA-570 — whichever attempt did NOT become the final content_text (at most one, since
-        # MAX_ATTEMPTS=2), captured for the Data Flywheel/lesson-log use case. Set either inside
-        # the gate-regression-guard block below (the just-generated attempt 2 that got reverted
-        # AWAY from) or, in the post-loop fallback, from `prev_snapshot` (attempt 1, discarded in
-        # favor of whatever attempt 2 produced) — see that fallback's own comment for why both
-        # paths are needed. Stays None whenever only 1 attempt ever ran.
-        discarded_attempt: dict | None = None
+        # AA-570 / AA-916 WM-08 — EVERY attempt whose text did not become the final content_text (at most
+        # MAX_ATTEMPTS - 1), for the writing memory: an attempt replaced by the next one (kept when its
+        # `prev_snapshot` is overwritten, and after the loop for the last one) and the regressed rewrite the
+        # AA-528 guard reverted away from. `content_from` is the attempt the current text came from (a revert
+        # puts the previous attempt's number back), so an entry is never mislabelled.
+        discarded: list[dict] = []
+        content_from = 1
         faq_repair_regen = False  # S234 r2 review — the one FAQ regeneration after a sentence repair
         # AA-777 — the job's F9 sticky-pass memory: the body sentences (folded) an earlier F9 verdict of
         # this piece passed; run_quality_gates drops a later re-flag of one of them while it is unchanged.
         # AA-865 — an F9PassMemory also keeps the last judged text, so a pass survives a deletion-only repair.
         f9_passed: set[str] = F9PassMemory()
+        # AA-790 — repair-contract invariant 7 on the deterministic edits below (reverts → degraded: repair_contract)
+        step_guard = _StepGuard(hyg, ignore=brand_ignore, cta=cta)
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
+            step_guard.begin_attempt()
             if attempt == 1:
                 content_text, cost, seo_meta, summary = await asyncio.to_thread(
                     write_content, content_seed=atom_text, goal=goal, channel_style=channel_style,
@@ -1776,12 +1853,16 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 fresh_text = True
             else:
                 fresh_text = False
+                # AA-916 WM-08 — the snapshot taken one attempt ago is overwritten now: if the current text
+                # replaced it (no revert), it was discarded.
+                _keep_discarded(discarded, prev_snapshot, content_text, len(repair_log))
                 # AA-528 — capture attempt (attempt-1)'s outcome before rewrite_with_feedback()
                 # overwrites content_text/gate_ledger/etc. below. This is what a detected
                 # regression gets reverted to.
                 prev_snapshot = {
                     "content_text": content_text, "gate_ledger": gate_ledger, "seo_meta": seo_meta,
-                    "summary": summary, "embedding": embedding,
+                    "summary": summary, "embedding": embedding, "attempt_number": content_from,
+                    "ledger_index": len(repair_log),
                 }
                 # AA-768 — when attempt 1 failed only on quoted invented facts, fix just those
                 # sentences (sentence_repair.py) so the rewrite cannot invent new ones; anything
@@ -1887,6 +1968,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     content_text, gate_ledger = prev_snapshot["content_text"], prev_snapshot["gate_ledger"]
                     seo_meta, summary = prev_snapshot["seo_meta"], prev_snapshot["summary"]
                     embedding = prev_snapshot["embedding"]
+                    step_guard.keep_previous()  # AA-790 review — attempt 2's text, attempt 2's step reverts
                     # AA-786 — the last attempt: LinkedIn cuts the flagged F9 sentences (review P2).
                     content_text, gate_ledger, flags, cut_entry = _cut_truth_items(
                         content_text, gate_ledger, flags, channel=channel, ignore=brand_ignore, cta=cta,
@@ -1910,6 +1992,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                         facts_text=facts_text, **openers_kw, **search_kw,
                     )
                     fresh_text = True
+            content_from = attempt  # AA-916 WM-08 — this attempt wrote (or repaired) the current text
             total_cost += cost
             if channel == "blog":
                 # S234 round 4 — the search title/meta exist for the blog only: no publish path, gate or
@@ -1952,25 +2035,43 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             faq_dropped, faq_unanswerable = 0, []
             # S234 — deterministic fixes after the last LLM step of this attempt (write/rewrite,
             # sentence splice and SEO fit all ran above), before the gates read the text.
+            # AA-790 — each one under repair-contract invariant 7 (`step_guard`): an edit that leaves a new
+            # repeat, orphan, dangling opener, fragment, split paragraph or cut sentence is reverted and logged.
+            before = content_text
             content_text, hygiene_log = hygiene.autofix(content_text, hyg)
+            content_text, hygiene_log, _ = step_guard("hygiene.autofix", before, content_text, hygiene_log)
             # S234 round 3 (r2 §4 fix 9) — the configured CTA line, word for word, after the last edit
+            # (must keep: never reverted, what it leaves is reported)
+            before = content_text
             content_text, cta_log = hygiene.ensure_cta(content_text, cta)
+            content_text, cta_log, _ = step_guard("hygiene.ensure_cta", before, content_text, cta_log, must_keep=True)
             hygiene_log += cta_log
             # S234 round 3 review — a family brand's missing access caveat goes in from the seed, in
             # code (no repair call that the repeat guard could turn into a cut of the anchor sentence)
+            before = content_text
             content_text, caveat_log = trip_facts.add_family_caveats(content_text, trip_ctx, brand_ignore)
+            content_text, caveat_log, _ = step_guard("add_family_caveats", before, content_text, caveat_log)
             hygiene_log += caveat_log
             if channel == "blog":  # AA-770 — F7 auto-fix instead of a hold/rewrite
                 if fresh_text:  # S245 r7 review — the writer's own FAQ, before any FAQ step
                     context["faq_pairs_before"] = faq_pair_stats(content_text, context)
+                before = content_text
                 content_text, faq_dropped = drop_restated_faq(content_text)
+                content_text, revert_log, undone = step_guard("drop_restated_faq", before, content_text, [])
+                hygiene_log += revert_log
+                faq_dropped = 0 if undone else faq_dropped
                 own_seed = hygiene.split_seed(atom_text)[0]
+                before = content_text
                 content_text, faq_unanswerable = drop_unanswerable_faq(content_text, own_seed, facts_text)
+                content_text, faq_unanswerable, _ = step_guard("drop_unanswerable_faq", before, content_text,
+                                                               faq_unanswerable)
                 # AA-779 — an answer that does not name its question's subject (or only says what is not
                 # the case) goes while more than FAQ_MIN_PAIRS remain; the ones kept at the minimum make
                 # this writer text's one FAQ regeneration rewrite them (never a hold of its own).
+                before = content_text
                 content_text, subject_log, subject_short = drop_subjectless_faq(
                     content_text, f"{own_seed}\n{facts_text}")
+                content_text, subject_log, _ = step_guard("drop_subjectless_faq", before, content_text, subject_log)
                 faq_unanswerable = list(faq_unanswerable) + subject_log
                 # S234 round 2 — FAQ contract: one regeneration per writer text. S234 r2 review: a
                 # sentence repair can cut a FAQ pair (a repeat-guard delete, an emptied answer, an
@@ -1994,11 +2095,16 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     total_cost += faq_cost
                     if content_text != before_regen:
                         # the new FAQ replaced the kept non-answers: report what the new one still has
+                        before = content_text
                         content_text, again_log, _ = drop_subjectless_faq(content_text, f"{own_seed}\n{facts_text}")
+                        content_text, again_log, _ = step_guard("drop_subjectless_faq", before, content_text,
+                                                                again_log)
                         faq_unanswerable = [x for x in faq_unanswerable if not x.startswith("kept FAQ pair")] \
                             + again_log
                     faq_unanswerable = list(faq_unanswerable) + faq_regen
+                before = content_text
                 content_text, real_first_log = real_first_faq(content_text, context)
+                content_text, real_first_log, _ = step_guard("real_first_faq", before, content_text, real_first_log)
                 faq_unanswerable = list(faq_unanswerable) + real_first_log
             first_line_log: list[str] = []
             if spec is not None:  # S234 round 2 — hook line still too long after the deterministic split
@@ -2011,13 +2117,18 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             # (thin-moment heading / coda, a hazard played down, a background place made the base),
             # then the final text-integrity pass (one CTA, no duplicate, no fragment, normalised
             # whitespace). What it cannot fix is F13_repeat in the gates below.
+            before = content_text
             content_text, tf_log = trip_facts.fix_trip_facts(content_text, trip_ctx)
+            content_text, tf_log, _ = step_guard("fix_trip_facts", before, content_text, tf_log)
             content_text, final_log, _ = text_integrity.final_pass(content_text, hyg)
             # AA-984 — an over-long blog is trimmed into its band here (whole low-value paragraphs, never a
             # heading, the FAQ or the CTA), so it is never rewritten or held for length alone (S247 r9 32789658).
+            # AA-790 — after the final pass: compared as the gates read it (no settle).
+            before = content_text
             content_text, trim_log = length_trim.trim_to_band(content_text, channel=channel, cta=cta,
                                                               ignore=brand_ignore, moments=hyg.moments,
                                                               trip_ctx=trip_ctx)
+            content_text, trim_log, _ = step_guard("length_trim", before, content_text, trim_log, settle=False)
             first_line_log = first_line_log + tf_log + final_log + trim_log
             progress_step("check")  # AA-637 live view (no-op without a bound tracker)
             outcome = await asyncio.to_thread(
@@ -2049,8 +2160,10 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 break
 
             first_failure = outcome["first_failure"]
+            # AA-924 — the stored entry's name (F2_lexicon), not the retired source name
+            targeted = ledger_gate(first_failure) if ledger_is_merged(gate_ledger) else first_failure["gate"]
             repair_log.append({
-                "attempt": attempt, "gate_targeted": first_failure["gate"],
+                "attempt": attempt, "gate_targeted": targeted,
                 "violations": first_failure["violations"], "repairable": first_failure["repairable"],
                 # AA-768 — what the rewrite is actually told: every blocking failure, not one gate.
                 "feedback": _repair_feedback(gate_ledger, channel),
@@ -2059,7 +2172,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             })
             logger.info(
                 "t9_attempt_failed_quality_check", request_id=str(request_id), attempt=attempt,
-                gate=first_failure["gate"], repairable=first_failure["repairable"],
+                gate=targeted, repairable=first_failure["repairable"],
+                **({"source": first_failure["gate"]} if targeted != first_failure["gate"] else {}),
             )
 
             # AA-528 gate-regression-guard — a full rewrite (not a targeted field fix) can break a
@@ -2076,8 +2190,9 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             # the two already-computed attempts.
             if prev_snapshot is not None:
                 prev_ledger = prev_snapshot["gate_ledger"]
-                prev_blocking_fail = {g["gate"] for g in prev_ledger if g.get("blocking", True) and not g["passed"]}
-                cur_blocking_fail = {g["gate"] for g in gate_ledger if g.get("blocking", True) and not g["passed"]}
+                # AA-924 — keyed by source on the legacy views (_blocking_failures)
+                prev_blocking_fail = _blocking_failures(prev_ledger)
+                cur_blocking_fail = _blocking_failures(gate_ledger)
                 new_regressions = cur_blocking_fail - prev_blocking_fail
                 # AA-780 review — an attempt 1 that blocked only on gates that never hold, one of them the
                 # under-floor F14 (a too-short post sent to a full rewrite), had no product-truth problem for
@@ -2085,7 +2200,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 # r4 false pass). When this attempt's failures are all sentence-repairable and an attempt is
                 # left, keep it and let the next attempt repair it. (An F15-only attempt 1 still reverts: its
                 # text is the full-length, truth-clean one.)
-                prev_fail = [g for g in prev_ledger if g.get("blocking", True) and not g["passed"]]
+                prev_fail = [g for g in expand_ledger(prev_ledger) if g.get("blocking", True) and not g["passed"]]
                 if (new_regressions and attempt < MAX_ATTEMPTS and _floor_only_failure(prev_fail)
                         and first_failure["repairable"]
                         and sentence_repair.plan(content_text, gate_ledger) is not None):
@@ -2104,11 +2219,11 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     # this attempt) is the one that ends up as the final content_text, so it must
                     # NOT be reported as discarded — this attempt's own regressed content is the
                     # real discard.
-                    discarded_attempt = {
-                        "attempt_number": attempt, "content_text": content_text,
-                        "gate_ledger": gate_ledger,
-                    }
+                    _keep_discarded(discarded, {"attempt_number": attempt, "content_text": content_text,
+                                                "gate_ledger": gate_ledger}, None, len(repair_log))
+                    content_from = prev_snapshot["attempt_number"]
                     content_text = prev_snapshot["content_text"]
+                    step_guard.keep_previous()  # AA-790 review — the kept text's own step reverts
                     # AA-780 review — attempt 1's under-floor F14 block asked for the rewrite just discarded;
                     # it never holds, so it is waived now (and shown as a flag) instead of blocking the next
                     # step: a remaining F1/F9 still gets its attempt-3 sentence repair (sentence_repair.plan
@@ -2128,7 +2243,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                         "repairable": False,
                     })
                     first_failure = next(
-                        (g for g in prev_ledger if not g["passed"] and g.get("blocking", True)), None
+                        (g for g in expand_ledger(prev_ledger) if not g["passed"] and g.get("blocking", True)), None
                     )
 
             # AA-770 — attempt 3 only when attempt 2's failures are all sentence-repairable.
@@ -2210,23 +2325,13 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
         # The marker is a non-blocking flag + a repair_log entry, never a blocking ledger gate (that would
         # trigger a rewrite and confuse the AA-528 guard).
         status, held_reason, flags, repair_log = _degraded_final(gate_ledger, flags, repair_log, status,
-                                                                 held_reason, piece_id=piece_id)
+                                                                 held_reason, piece_id=piece_id,
+                                                                 step_reverts=step_guard.reverts)
 
-        # AA-570 — the common case: attempt 2 ran and its own gate-regression-guard branch above
-        # never fired, so `discarded_attempt` is still None even though a real attempt WAS
-        # thrown away (attempt 1, overwritten by attempt 2's rewrite). `prev_snapshot` is exactly
-        # that attempt's own outcome, captured right before the rewrite ran.
-        if discarded_attempt is None and attempt > 1 and prev_snapshot is not None:
-            discarded_attempt = {
-                "attempt_number": attempt - 1, "content_text": prev_snapshot["content_text"],
-                "gate_ledger": prev_snapshot["gate_ledger"],
-            }
-        if discarded_attempt is not None:
-            discarded_attempt = {
-                **discarded_attempt,
-                "content_text": strip_citation_tags(discarded_attempt["content_text"]),
-                "gate_ledger": deep_strip_citation_tags(discarded_attempt["gate_ledger"]),
-            }
+        # AA-570 — the common case: the last attempt replaced the one before it (no revert), so the
+        # last `prev_snapshot` was discarded. AA-916 WM-08 — the final text's own attempt is never listed.
+        _keep_discarded(discarded, prev_snapshot, content_text, len(repair_log))
+        discarded_attempts = _final_discarded(discarded, content_from)
 
         # AA-499 (Decision 5) — within-tenant reuse flag, 'approved' only (a held piece never
         # ships, nothing useful to compare it against or index it for). Reuses the LAST attempt's
@@ -2267,7 +2372,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             pool, piece_id=piece_id, attempt_number=attempt,
             content_text=content_text, status=status, held_reason=held_reason,
             gate_ledger=gate_ledger, repair_log=repair_log, flags=flags,
-            discarded_attempts=[discarded_attempt] if discarded_attempt else [],
+            discarded_attempts=discarded_attempts,
             seo_title=seo_meta.get("seo_title"), meta_description=seo_meta.get("meta_description"),
             slug=seo_meta.get("slug"), content_summary=summary,
             # AA-770 (S233) — a held piece now reaches the tenant too, so it is indexed like an
@@ -2300,12 +2405,41 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             )
 
 
+def _keep_discarded(discarded: list[dict], snap: dict | None, current_text: str | None,
+                    ledger_index: int) -> None:
+    """AA-916 WM-08 — add one attempt that did not become the current text: `snap` (an attempt's text and
+    ledger with its attempt_number), unless it is the current text (`current_text`: a revert kept it, or the
+    attempt changed nothing) or that attempt is already listed. `ledger_index` = len(repair_log) when the
+    attempt's outcome was captured (the snapshot's own value when it has one): repair_log[:ledger_index] are
+    the entries written up to and including that attempt's own failure."""
+    if snap is None or (current_text is not None and snap["content_text"] == current_text):
+        return
+    if any(d["attempt_number"] == snap["attempt_number"] for d in discarded):
+        return
+    discarded.append({"attempt_number": snap["attempt_number"], "ledger_index": snap.get("ledger_index", ledger_index),
+                      "content_text": snap["content_text"], "gate_ledger": snap["gate_ledger"]})
+
+
+def _final_discarded(discarded: list[dict], final_attempt: int) -> list[dict]:
+    """The stored `discarded_attempts`: oldest first, never the final text's own attempt, at most
+    MAX_ATTEMPTS - 1, citation tags stripped (AA-452, same as the final text)."""
+    out = sorted((d for d in discarded if d["attempt_number"] != final_attempt), key=lambda d: d["attempt_number"])
+    return [{**d, "content_text": strip_citation_tags(d["content_text"]),
+             "gate_ledger": deep_strip_citation_tags(d["gate_ledger"])} for d in out[:MAX_ATTEMPTS - 1]]
+
+
+# AA-916 WM-08 — the T9 writer's system prompt version, the formula A1 records (batch_prompt.prompt_version_of):
+# a piece can be traced to the exact prompt text it was written with.
+WRITER_PROMPT_VERSION = prompt_version_of(SYSTEM_PROMPT)
+
+
 def writer_input_snapshot(context: dict) -> dict:
     """AA-769 — what the T9 writer was given, stored on the piece for the admin Content Quality
     page (never in a tenant projection). Admin-facing, so the brand pack is stored whole."""
     chosen = context.get("chosen") or {}
     goal = context.get("goal") or {}
     return {
+        "writer_prompt_version": WRITER_PROMPT_VERSION,  # AA-916 WM-08
         "seed": context.get("atom_text"),
         "route_moments": [{"atom_id": a, "seed": t} for a, t in (context.get("route_segments") or [])],
         "facts": context.get("facts_text") or "",
@@ -2608,14 +2742,23 @@ async def _piece_served(conn, tenant_id, row):
 # AA-859 W2 — module level so the tests can mutate it (forgotten-WHERE check). Ownership + status in the
 # WHERE, as before; on the tenant pool RLS (content_piece tenant_isolation, USING + WITH CHECK) also holds
 # the tenant boundary.
+# AA-916 WM-04 — the CTE locks the row and reads the text before the edit (`before_text`, for the writing
+# signal) in the same statement; both WHEREs carry the same owner + status literal, so the forgotten-WHERE
+# test still drops the tenant filter everywhere. `before_text` never reaches the tenant (_tenant_safe_piece).
 _PIECE_EDIT_SQL = """
+    WITH prev AS (
+        SELECT content_text AS before_text FROM acp_shared.content_piece
+        WHERE piece_id = $1 AND tenant_id = $2 AND status IN ('approved', 'held')
+        FOR UPDATE
+    )
     UPDATE acp_shared.content_piece
     SET content_text = $3
+    FROM prev
     WHERE piece_id = $1 AND tenant_id = $2 AND status IN ('approved', 'held')
     RETURNING piece_id, tenant_id, angle_gate_request_id, attempt_number, content_text,
               status, held_reason, gate_ledger, repair_log, created_at,
               seo_title, meta_description, slug, channel,
-              route_hub_name, route_segment_count, flags
+              route_hub_name, route_segment_count, flags, prev.before_text
 """
 
 
@@ -2623,12 +2766,44 @@ def _piece_edit_not_found(piece_id: UUID) -> ContentWritingError:
     return ContentWritingError(f"piece_id={piece_id} not found for this tenant, or not in an editable state")
 
 
-async def _write_piece_edit_audit(conn_or_pool, tenant_id: UUID, piece_id: UUID, content_text: str) -> None:
+async def _write_piece_edit_audit(conn_or_pool, tenant_id: UUID, piece_id: UUID, content_text: str,
+                                  signal: Optional[wm_signals.SignalRef] = None) -> None:
+    # AA-916 (ADR 0010 decision 11): the audit row keeps the length, the signal id and the hashes; the text
+    # itself is in the (deletable) writing signal only.
     await write_audit_log(
         conn_or_pool, tenant_id=str(tenant_id), actor=f"tenant:{tenant_id}",
         action=TenantAuditAction.CONTENT_PIECE_EDITED, resource_type="content_piece",
-        resource_id=str(piece_id), details={"content_length": len(content_text)},
+        resource_id=str(piece_id), details={"content_length": len(content_text), **wm_signals.audit_details(signal)},
     )
+
+
+def _piece_edit_scope(tenant_id: UUID, row) -> tuple[str, Optional[str]]:
+    """AA-916 — (scope, tenant_id) of a tenant edit's signal: the row's owner (= the caller, by the WHERE and RLS),
+    with the AA master tenant mapped to platform like every other capture path (`scope_for_tenant`)."""
+    return wm_signals.scope_for_tenant(row.get("tenant_id") or tenant_id)
+
+
+async def _record_piece_edit_signal(conn, tenant_id: UUID, piece_id: UUID, row, content_text: str, *,
+                                    tenant_pool: bool = False) -> Optional[wm_signals.SignalRef]:
+    """AA-916 WM-04 — the tenant's hand edit as a writing signal (before / after of the whole piece), on the
+    edit's own connection: on the tenant pool inside its transaction (aa_app_user may insert its own tenant
+    rows only, RLS). Best-effort: a SAVEPOINT, and a failure is logged (`aa916_signal_failed`), never a 500 on
+    the edit. Nothing is written when the text did not change.
+
+    The AA master tenant's edit is a platform signal (tenant_id NULL), which RLS never lets aa_app_user insert:
+    on the tenant pool (`tenant_pool`) it is skipped here and the caller writes it on the main pool after the
+    tenant transaction committed (`update_piece_content_text`)."""
+    before = row.get("before_text") if hasattr(row, "get") else None
+    if before == content_text:
+        return None
+    scope, owner = _piece_edit_scope(tenant_id, row)
+    if scope == "platform" and tenant_pool:
+        return None
+    return await wm_signals.record_writer_feedback_safe(
+        conn, writer=wm_signals.writer_for_channel(row.get("channel")), scope=scope, tenant_id=owner,
+        channel=row.get("channel") or "blog", field="content_text", before_text=before, after_text=content_text,
+        action="tenant_edit", actor_type="tenant", actor_id=f"tenant:{tenant_id}", source_table="content_piece",
+        source_id=str(piece_id))
 
 
 async def update_piece_content_text(
@@ -2653,7 +2828,8 @@ async def update_piece_content_text(
             row = await conn.fetchrow(_PIECE_EDIT_SQL, piece_id, tenant_id, content_text)
             if row is None:
                 raise _piece_edit_not_found(piece_id)
-            await _write_piece_edit_audit(conn, tenant_id, piece_id, content_text)
+            signal = await _record_piece_edit_signal(conn, tenant_id, piece_id, row, content_text)
+            await _write_piece_edit_audit(conn, tenant_id, piece_id, content_text, signal)
         # AA-613 — tenant-safe projection (this is a tenant edit endpoint, PATCH /v1/.../pieces/{id}).
         return _tenant_safe_piece(row)
 
@@ -2666,13 +2842,25 @@ async def update_piece_content_text(
                     updated=row is not None, used_tenant_pool=used_tenant_pool)
         if row is None:
             raise _piece_edit_not_found(piece_id)
+        # AA-916 WM-04 — inside the tenant transaction (a SAVEPOINT: the GUC set before it stays).
+        signal = await _record_piece_edit_signal(conn, tenant_id, piece_id, row, content_text,
+                                                 tenant_pool=used_tenant_pool)
         if not used_tenant_pool:  # flag off: the old shape, audit next to the UPDATE on the admin conn
-            await _write_piece_edit_audit(conn, tenant_id, piece_id, content_text)
+            await _write_piece_edit_audit(conn, tenant_id, piece_id, content_text, signal)
     if used_tenant_pool:
+        if _piece_edit_scope(tenant_id, row)[0] == "platform":
+            # AA-916 — the AA master tenant's edit: a platform signal, which only the main pool may write (after
+            # the tenant transaction committed; best-effort like the audit row below).
+            try:
+                async with pool.acquire() as main:
+                    signal = await _record_piece_edit_signal(main, tenant_id, piece_id, row, content_text)
+            except Exception as exc:  # noqa: BLE001 — best-effort, as on the tenant pool
+                logger.warning("aa916_signal_failed", writer="t9", action="tenant_edit", source_id=str(piece_id),
+                               error_type=type(exc).__name__, error=str(exc)[:200])
         # AA-859 MAIN exception: audit_log has no RLS and no aa_app_user grant; written after the tenant
         # transaction committed. Best-effort: the edit is saved, a lost audit row must not turn it into a 500.
         try:
-            await _write_piece_edit_audit(pool, tenant_id, piece_id, content_text)
+            await _write_piece_edit_audit(pool, tenant_id, piece_id, content_text, signal)
         except Exception as exc:
             logger.warning("aa859_piece_edit_audit_failed", tenant_id=str(tenant_id), piece_id=str(piece_id),
                            error=repr(exc))
