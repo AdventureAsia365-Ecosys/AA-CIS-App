@@ -9,6 +9,7 @@ fact, an audience limit). The rules stay as proposers; ``ai_tells._accept`` (and
 * exact-output tests for every sentence quoted in the second and third reviews of round 3;
 * a generated property test: ≥ 300 sentences from denial / contrast / verdict frames × fact tokens of every class,
   with and without a seed, at a paragraph start and mid-paragraph, plus chained pairs; every fact token survives;
+* the explicit-cue age reading (fourth review findings 5 and 7);
 * linear-time checks for the invariant itself.
 
 Every sentence is synthetic or the reviewer's own probe sentence, never a tenant's text.
@@ -312,6 +313,62 @@ def test_missing_facts_counts_closed_words_and_finds_names_anywhere():
     assert hygiene.missing_facts(["It does not begin in Paro."], "", after) == []
 
 
+# ---------------------------------------------------------------- ages: explicit cue only (findings 5 and 7)
+
+@pytest.mark.parametrize("source, claim, found", [
+    # finding 5 — group sizes, discounts and counts
+    ("Groups of 10 and over get 5% off the entry fee.", "Children aged 10 and up can join.", "aged 10 and up"),
+    ("Parties of 12 or over must book ahead.", "Kids aged 12 and over will love it.", "aged 12 and over"),
+    ("Tables for 8 and over need a reservation.", "Ideal for children aged 8 and up.", "aged 8 and up"),
+    ("Orders of 5 and up ship free.", "Great for 5-year-olds.", "5-year-olds"),
+    ("Groups of over 6 need a second guide.", "The visit suits children over 6.", "children over 6"),
+    ("At least 8 of the dancers are novices.", "Kids aged 8 and up join the class.", "aged 8 and up"),
+    # finding 7 — altitude, durations, head counts, ratings, prices
+    ("Day 4 of the trip. Travellers above 4,000 m often feel the altitude on the pass.",
+     "Great for 4-year-olds and up.", "4-year-olds"),
+    ("Hikers over 3,500 m need a rest day.", "Children over 3 can ride the ponies.", "Children over 3"),
+    ("Our guides have 15+ years of experience.", "Teens aged 15 and up can join.", "aged 15 and up"),
+    ("The homestay family has hosted travellers for 10+ years.", "Kids aged 10 and over enjoy it.",
+     "aged 10 and over"),
+    ("The terraces were built by local families over 12 years.", "A 12-year-old can manage the walk.",
+     "12-year-old"),
+    ("Run by the same family for 12 years and over three generations.", "A 12-year-old can manage the walk.",
+     "12-year-old"),
+    ("Group discounts for groups of 6 and above.", "Suitable for children aged 6 and up.", "aged 6 and up"),
+    ("Max participants: 12.", "Kids aged 12 and up will love the rafting.", "aged 12 and up"),
+    ("Participants: 2-12", "Kids aged 12 and up will love the rafting.", "aged 12 and up"),
+    ("Travellers: 2 to 14", "Teens aged 14 and over can kayak.", "aged 14 and over"),
+    ("Riders 6 max per horse trek.", "Children aged 6 and up can ride.", "aged 6 and up"),
+    ("Rated 4 and above by guests.", "Great for 4-year-olds.", "4-year-olds"),
+    ("Trek grade 3 and above.", "Children over 3 can ride.", "Children over 3"),
+    ("Price per person: adults USD 45, children 8", "Ideal for children aged 8 and up.", "aged 8 and up"),
+])
+def test_a_number_without_an_age_cue_is_not_a_known_age(source, claim, found):
+    assert hygiene.unsupported_ages(claim, source) == [found]
+
+
+@pytest.mark.parametrize("source, claim", [
+    ("Minimum age is 12.", "Kids aged 12 and up will love the rafting."),
+    ("Minimum age: 7.", "Kids aged 7 and up are welcome."),
+    ("Not suitable for under-5s.", "Children under 5 stay at the camp."),
+    ("Riders must be at least 14.", "Riders aged 14 and over may take the long loop."),
+    ("Children 6–12 join the class.", "Kids aged 6 to 12 join the class."),
+    ("Suitable for children from 8 years.", "Kids aged 8 and up join the class."),
+    ("Open to children 7 and older.", "Kids aged 7 and up are welcome."),
+    ("Suitable for 10 years and over.", "Kids aged 10 and over are welcome."),
+    ("Recommended for travellers aged 10+.", "Kids aged 10 and over are welcome."),
+    ("Riders must be 12 years old.", "A 12-year-old can ride."),
+    ("Families with children of 8 years and over.", "Kids aged 8 and up join in."),
+])
+def test_an_explicit_age_cue_in_the_seed_keeps_the_age_known(source, claim):
+    assert hygiene.unsupported_ages(claim, source) == []
+
+
+def test_a_measurement_in_the_output_is_not_an_age_claim():
+    assert hygiene.unsupported_ages("Hikers over 30 km a day need a rest.", "") == []
+    assert hygiene.unsupported_ages("Travellers above 4,000 m feel the altitude.", "") == []
+
+
 # ---------------------------------------------------------------- linear time
 
 _N = 8000
@@ -347,6 +404,12 @@ def test_the_invariant_check_scales_linearly():
     t_small = min(_timed(lambda: hygiene.missing_facts([small], "", hygiene.word_forms(small))) for _ in range(3))
     t_big = min(_timed(lambda: hygiene.missing_facts([big], "", hygiene.word_forms(big))) for _ in range(3))
     assert t_big < 16 * t_small + 0.01  # 8× the text: linear (≈8×), never quadratic (64×)
+
+
+@pytest.mark.parametrize("label", list(_INPUTS))
+def test_the_age_readers_are_linear(label):
+    s = _INPUTS[label]
+    assert min(_timed(lambda: (hygiene._source_ages(s), hygiene.unsupported_ages(s, s))) for _ in range(2)) < 0.1
 
 
 def test_the_pass_with_many_refused_edits_stays_fast():

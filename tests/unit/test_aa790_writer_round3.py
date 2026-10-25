@@ -426,10 +426,12 @@ def _round3_patterns():
              "_RELOCATE_X_RE", "_AND_THE_RE", "_Y_PHRASE_RE", "_STAGED_NOUN_X_RE", "_AUDIENCE_RE", "_SUPERLATIVE_RE")
     out = [(n, getattr(ai_tells, n)) for n in names]
     out += [(n, getattr(hygiene, n)) for n in ("_AGE_CLAIM_RE", "_FOUNDING_REASON_RE", "_PURPOSE_RE",
-                                                "_SOURCE_SENTENCE_RE", "_SOURCE_AGE_RE", "_COUNT_AFTER_RE",
-                                                "_PLURAL_AFTER_RE", "_PER_AFTER_RE", "_EXPLICIT_AGE_CUE_RE",
-                                                "_YEARS_AFTER_RE", "_YEARS_OLD_TAIL_RE", "_YEARS_OLD_CUE_RE",
-                                                "_OF_LINK_RE", "_AGE_WORD_RE",
+                                                "_SOURCE_SENTENCE_RE", "_COUNT_AFTER_RE", "_PLURAL_AFTER_RE",
+                                                "_PER_AFTER_RE", "_YEARS_AFTER_RE", "_YEARS_OLD_CUE_RE",
+                                                # fourth review: the explicit-cue source-age readers
+                                                "_SRC_AGE_WORD_RE", "_SRC_PERSON_RANGE_RE", "_SRC_PERSON_TAIL_RE",
+                                                "_SRC_HYPHEN_AGE_RE", "_SRC_YEARS_AND_OVER_RE", "_SRC_YEARS_OLD_RE",
+                                                "_DURATION_TAIL_RE", "_UNIT_AFTER_RE",
                                                 # the fact-preservation invariant's tokeniser and particle look
                                                 "_FACT_TOKEN_RE", "_PARTICLE_AFTER_RE", "_SEED_LABEL_RE")]
     start = next(i for i, r in enumerate(hygiene.AI_TELL_LINE_RES)
