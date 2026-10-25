@@ -35,6 +35,36 @@ def auto_enabled() -> bool:
     return os.environ.get(AUTO_ENV, "").strip().lower() in _ON_VALUES
 
 
+# AA-989 (S252 decision 1, "maintain what exists"): with PLACE_PIPELINE_AUTO off, an automatic trigger still queues
+# place_extract for a tour whose source ALREADY has a place build — keeping the built layer in step with its atoms
+# (re-sync is small and budget-guarded: days call only when the text changed and the rules miss an overnight, embeds
+# only for new texts, debounced geocode under its own budget). Coverage expansion (a source never built) stays gated.
+_BUILT_SQL = """
+    SELECT EXISTS (
+        SELECT 1 FROM silver_aa_internal.raw_tours rt
+          JOIN geo.tour_build b ON b.source_id = COALESCE(rt.source_group_id, rt.tour_id)::text
+         WHERE rt.tour_id = $1::uuid AND b.status <> 'retired') AS built
+"""
+
+
+async def source_is_built(db, tour_id: str) -> bool:
+    """Whether the tour's source has a place build (not retired). raw_tours is FORCE-RLS: read with app.tenant_id
+    pinned to the AA master tenant for this transaction (store._catalog_fetch)."""
+    from services.places import store
+    async with db.acquire() as conn:
+        rows = await store._catalog_fetch(conn, _BUILT_SQL, str(tour_id))
+    return bool(rows and rows[0]["built"])
+
+
+async def auto_allowed(db, tour_id: str) -> tuple[bool, str]:
+    """(allowed, why) for an automatic place_extract of this tour."""
+    if auto_enabled():
+        return True, "auto"
+    if await source_is_built(db, tour_id):
+        return True, "maintain_built"
+    return False, f"{AUTO_ENV} off and the source has no place build"
+
+
 EXTRACT_KIND = "place_extract"
 GEOCODE_KIND = "place_geocode"
 GRAPH_KIND = "tour_graph_build"
@@ -86,14 +116,15 @@ async def after_atomize(db, *, tour_id: str, version_id: str, atomize_job_id: Op
     """End of A3 atomize (publish, re-upload, admin re-atomize). Keyed on the content version and
     the atomize job, so a retried atomize job does not queue twice, while an admin re-atomize of
     the same version (new atomize job) does rebuild — its atoms may have changed."""
-    if not auto_enabled():
+    allowed, why = await auto_allowed(db, tour_id)
+    if not allowed:
         logger.info("place_extract_auto_off", tour_id=str(tour_id), version_id=str(version_id))
-        return {"place_extract_job": None, "place_extract_skipped": f"{AUTO_ENV} off"}
+        return {"place_extract_job": None, "place_extract_skipped": why}
     key = f"{EXTRACT_KIND}:{version_id}" + (f":{atomize_job_id}" if atomize_job_id else "")
     job_id, created = await enqueue_place_extract(
         db, tour_id=tour_id, version_id=version_id, reason="a3_atomize", created_by="a3_atomize",
         idempotency_key=key)
-    return {"place_extract_job": job_id, "place_extract_job_reused": not created}
+    return {"place_extract_job": job_id, "place_extract_job_reused": not created, "place_extract_trigger": why}
 
 
 async def after_liveness_change(db, *, tour_id: str, new_status: str, created_by: str) -> dict:

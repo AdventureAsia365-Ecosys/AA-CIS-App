@@ -305,8 +305,35 @@ def test_background_kinds_are_dropped_from_caps_when_only_reserved_slots_are_fre
 # ── enqueue (fake db) ──────────────────────────────────────────────────────────────────────────
 
 class _Db:
-    def __init__(self, reuse=None, queued_extract=None):
+    def __init__(self, reuse=None, queued_extract=None, built=False):
         self.reuse, self.queued_extract, self.inserted = reuse, queued_extract, []
+        self.built, self.built_reads = built, []
+
+    # AA-989: enqueue.source_is_built reads geo.tour_build through store._catalog_fetch (acquire → transaction)
+    def acquire(self):
+        db = self
+
+        class _Ctx:
+            async def __aenter__(self):
+                return db
+
+            async def __aexit__(self, *a):
+                return False
+        return _Ctx()
+
+    def transaction(self):
+        t = MagicMock()
+        t.__aenter__ = AsyncMock(return_value=None)
+        t.__aexit__ = AsyncMock(return_value=False)
+        return t
+
+    async def execute(self, sql, *args):
+        return None
+
+    async def fetch(self, sql, *args):
+        assert "geo.tour_build" in sql and "source_group_id" in sql
+        self.built_reads.append(args)
+        return [{"built": self.built}]
 
     async def fetchval(self, sql, *args):
         if "UPDATE shared.job" in sql:
@@ -353,7 +380,38 @@ async def test_after_atomize_enqueues_nothing_while_auto_is_off(monkeypatch):
     db = _Db()
     out = await eq.after_atomize(db, tour_id="t", version_id="v", atomize_job_id="a1")
     assert out["place_extract_job"] is None and "off" in out["place_extract_skipped"]
-    assert db.inserted == []
+    assert db.inserted == [] and db.built_reads == [("t",)]
+
+
+@pytest.mark.asyncio
+async def test_after_atomize_maintains_an_already_built_source_while_auto_is_off(monkeypatch):
+    # AA-989 (S252 decision 1): a source that already has a place build follows its atoms even with auto off;
+    # a source never built stays gated (coverage expansion, S236)
+    from services.places import enqueue as eq
+    import services.jobs  # noqa: F401
+    monkeypatch.delenv(eq.AUTO_ENV, raising=False)
+    db = _Db(built=True)
+    out = await eq.after_atomize(db, tour_id="t", version_id="v", atomize_job_id="a1")
+    assert out["place_extract_job"] == "job-1" and out["place_extract_trigger"] == "maintain_built"
+    assert db.inserted[0][2] == "place_extract:v:a1"          # the same idempotency key as the auto path
+    # auto on: no build read needed
+    monkeypatch.setenv(eq.AUTO_ENV, "on")
+    db2 = _Db()
+    assert (await eq.after_atomize(db2, tour_id="t", version_id="v", atomize_job_id="a2"))["place_extract_trigger"] \
+        == "auto"
+    assert db2.built_reads == []
+
+
+@pytest.mark.asyncio
+async def test_place_cards_relink_enqueues_for_a_built_source_while_auto_is_off(monkeypatch):
+    from services.jobs import place_cards_job as job
+    from services.places import enqueue as eq
+    monkeypatch.delenv(eq.AUTO_ENV, raising=False)
+    called = AsyncMock(return_value=("pe9", True))
+    monkeypatch.setattr(eq, "enqueue_place_extract", called)
+    assert await job._relink_places(_Db(built=True), "t1") == "pe9"
+    assert await job._relink_places(_Db(built=False), "t1") is None
+    assert called.await_count == 1
 
 
 @pytest.mark.asyncio
@@ -363,7 +421,7 @@ async def test_place_cards_relink_skipped_while_auto_is_off(monkeypatch):
     monkeypatch.delenv(eq.AUTO_ENV, raising=False)
     called = AsyncMock()
     monkeypatch.setattr(eq, "enqueue_place_extract", called)
-    assert await job._relink_places(object(), "t1") is None
+    assert await job._relink_places(_Db(built=False), "t1") is None
     called.assert_not_called()
 
 # ── cost guard: kind-scoped day spend ──────────────────────────────────────────────────────────

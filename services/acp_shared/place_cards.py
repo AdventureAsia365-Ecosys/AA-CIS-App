@@ -788,7 +788,7 @@ async def build_card_for_atom(atom: dict, pool) -> Optional[str]:
 def _empty_counters(atoms: int) -> dict:
     return {"atoms": atoms, "already_linked": 0, "skipped_by_rule": 0, "places": 0, "linked_existing": 0,
             "skipped_cached": 0, "over_cap": 0, "drafted": 0, "linked_new": 0, "missed": 0, "errors": 0,
-            "built": 0, "linked_after_draft": 0}
+            "built": 0, "linked_after_draft": 0, "miss_recorded": 0}
 
 
 async def ensure_place_cards(atom_ids: list[str], pool, *, force: bool = False,
@@ -852,6 +852,13 @@ async def ensure_place_cards(atom_ids: list[str], pool, *, force: bool = False,
     now = datetime.now(timezone.utc)
     to_draft = [k for k in todo if not miss_is_active(misses.get(k), now)]
     counters["skipped_cached"] = len(todo) - len(to_draft)
+    # AA-989 — a group skipped on its stored miss: its atoms get the atom-level miss row (no call), so an atom that a
+    # re-atomize re-created is not counted as "never tried" (AA-991 probe place_card_links_missing).
+    cached_rows = [(a["atom_id"], misses[k]["reason"]) for k in todo if k not in to_draft for a in groups[k]]
+    if cached_rows:
+        async with pool.acquire() as conn:
+            await conn.executemany(_ATOM_MISS_SQL, cached_rows)
+        counters["miss_recorded"] = len(cached_rows)
     if max_places is not None and len(to_draft) > max_places:
         counters["over_cap"] = len(to_draft) - max_places
         to_draft = to_draft[:max_places]
@@ -881,6 +888,26 @@ async def ensure_place_cards(atom_ids: list[str], pool, *, force: bool = False,
 
     await asyncio.gather(*(one(k) for k in to_draft))
     return counters
+
+
+# AA-989 — the tour's active place atoms (the place_cards_build job's read, without its paid cap).
+_TOUR_PLACE_ATOMS_SQL = """
+    SELECT atom_id FROM acp_contract.v_active_tour_atoms
+    WHERE tour_id = $1::uuid AND NOT deleted AND NOT is_empty_marker AND place IS NOT NULL AND btrim(place) <> ''
+    ORDER BY itinerary_day NULLS LAST, atom_id
+    LIMIT $2
+"""
+RELINK_MAX_ATOMS = 400   # = place_cards_build MAX_ATOMS (the largest tours have ~100 atoms)
+
+
+async def relink_tour_place_cards(pool, tour_id: str) -> dict:
+    """AA-989 — the $0 relink of one tour's place atoms after atomize: card links are keyed on atom_id, and a
+    re-atomize gives replaced atoms new ids. Free work only (`max_places=0`): rule-skip miss rows, existing cards by
+    alias / core name / locality, stored-miss rows. Groups that would need a draft are left (`over_cap`) for the
+    admin build or T8 on demand. Never calls a model."""
+    async with pool.acquire() as conn:
+        ids = [r["atom_id"] for r in await conn.fetch(_TOUR_PLACE_ATOMS_SQL, tour_id, RELINK_MAX_ATOMS)]
+    return await ensure_place_cards(ids, pool, max_places=0)
 
 
 # ── Duplicates + merge (admin) ─────────────────────────────────────────────────────────────────

@@ -164,7 +164,9 @@ class TestSegmentMatchingReadsByTourIdPlatformWide:
         assert "owner_scope" not in atom_query
         assert "tenant_tour_versions" not in atom_query
         assert params == [TOUR_ID]
-        assert result == {"segments_written": 0, "atoms": 0, "aliases": 0, "existing_segments": 0}
+        # AA-988: the early return still drops this tour's dead atoms' memberships (0 here)
+        assert result == {"segments_written": 0, "atoms": 0, "aliases": 0, "existing_segments": 0,
+                          "dead_members_removed": 0}
 
 
 @pytest.mark.asyncio
@@ -270,12 +272,17 @@ class TestA3RunsSegmentScoreRouteAfterAtomize:
                    AsyncMock(return_value=("job-9", False))) as enq, \
              patch("services.acp_contract.atom_ranking.run_atom_ranking", ranking), \
              patch("services.acp_contract.route_detection.run_route_detection", routes), \
+             patch("services.acp_shared.place_cards.relink_tour_place_cards",
+                   AsyncMock(return_value={"linked_existing": 2, "drafted": 0})) as relink, \
              patch("services.places.enqueue.after_atomize",
                    AsyncMock(return_value={"place_extract_job": "job-p", "place_extract_job_reused": False})) as pl:
             out = await export_handler._run_a3_atomize_background(
                 tour_id=TOUR_ID, rewritten=rewritten, country="Vietnam", version_id=GC_ID,
             )
 
+        # AA-989: the $0 card relink of this tour ran once (before place_extract, see test_aa988_989_follow)
+        relink.assert_awaited_once()
+        assert relink.await_args.args[1] == str(TOUR_ID)
         seg.assert_awaited_once()
         assert seg.await_args.args[0] == TOUR_ID
         ranking.assert_not_awaited()
@@ -290,7 +297,8 @@ class TestA3RunsSegmentScoreRouteAfterAtomize:
                        "brand_fit_cache_cleared": 0,
                        "segment_score_route": "ok", "segments": 2, "score_route_job": "job-9",
                        "score_route_job_reused": True, "place_extract_job": "job-p",
-                       "place_extract_job_reused": False}
+                       "place_extract_job_reused": False,
+                       "place_cards_relink": {"linked_existing": 2, "drafted": 0}}
         cleared = [c for c in conn.execute.await_args_list if "debate_brand_fit_cache" in c.args[0]]
         assert len(cleared) == 1 and cleared[0].args[1] == ["seg_a", "seg_b"]
 

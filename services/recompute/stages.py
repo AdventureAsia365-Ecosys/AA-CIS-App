@@ -41,9 +41,14 @@ actually depend on:
       * `hub` — UPSERT (an UPDATE of `updated_at` on reuse, an INSERT on a new family; never
         superseded or rebuilt — implementation notes Decision 10).
 
-The two named lists mirror the two old chains exactly:
+  - `segment_gc` (AA-988) — DELETE of zero-reference orphan Segments and of their member rows on dead atoms
+    (`services/acp_contract/segment_gc.py`), in `report` mode by default (env SEGMENT_GC_MODE), under the
+    segment-write lock the `segment` stage holds shared.
+
+The two named lists mirror the two old chains, plus the AA-988 clean-up at the end of the platform pass:
   - `TOUR_STAGES`     = segment -> landing -> score -> route (one tour's publish / atom edit).
-  - `PLATFORM_STAGES` =            landing -> score -> route (platform score+route only).
+  - `PLATFORM_STAGES` =            landing -> score -> route -> segment_gc (platform score+route, then GC once
+    ranking and routes are current).
 """
 from __future__ import annotations
 
@@ -187,6 +192,16 @@ async def _run_route(ctx: RecomputeContext, scope: RecomputeScope) -> dict:
     return route_result
 
 
+async def _run_segment_gc(ctx: RecomputeContext, scope: RecomputeScope) -> dict:
+    from services.acp_contract.segment_gc import run_segment_gc
+    if ctx.progress:
+        ctx.progress({"step": "segment_gc", "done": 0, "total": 1})
+    result = await run_segment_gc(ctx.pool)
+    if ctx.progress:
+        ctx.progress({"step": "segment_gc", "done": 1, "total": 1})
+    return result
+
+
 # ── registry ────────────────────────────────────────────────────────────────────────────────
 
 _STAGES: dict[str, Stage] = {
@@ -249,6 +264,21 @@ _STAGES: dict[str, Stage] = {
         write_strategy="versioned_swap",  # route — AA-532; the strategy readers depend on
         run=_run_route,
     ),
+    "segment_gc": Stage(
+        name="segment_gc",
+        reads=("acp_contract.atom_segment", "acp_contract.atom_segment_member", "acp_contract.tour_atoms",
+               "acp_contract.v_active_tour_atoms", "acp_contract.atom_ranking", "acp_contract.atom_segment_alias",
+               "acp_contract.route", "acp_shared.subject", "acp_shared.debate_brand_fit_cache",
+               "acp_shared.angle_gate_request"),
+        writes=("acp_contract.atom_segment", "acp_contract.atom_segment_member"),
+        # AA-988 — deletes only (report mode: none): orphan Segments and their member rows on dead atoms.
+        table_strategies={
+            "acp_contract.atom_segment": "delete_insert",
+            "acp_contract.atom_segment_member": "delete_insert",
+        },
+        write_strategy="delete_insert",
+        run=_run_segment_gc,
+    ),
 }
 
 
@@ -266,7 +296,7 @@ def all_stages() -> dict[str, Stage]:
 
 # Named stage lists — these mirror the two hand-written chains they replace, exactly.
 TOUR_STAGES = ["segment", "landing", "score", "route"]
-PLATFORM_STAGES = ["landing", "score", "route"]
+PLATFORM_STAGES = ["landing", "score", "route", "segment_gc"]
 
 
 async def run_stages(names: list[str], scope: RecomputeScope, *, pool,

@@ -115,16 +115,20 @@ def text_hash(text: str) -> str:
 
 
 def components_hash(atoms: list[dict]) -> str:
-    """sha256(RULE_VERSION ‖ sorted (day, place, activity_type, text[:280], place-card link fields)
+    """sha256(RULE_VERSION ‖ sorted (day, place, activity_type, text[:280], place-card link fields, atom_id)
     of the active atoms). The card fields (card id, display name, country, locality, destination)
     are in the hash because a card usually arrives AFTER atomize (place_cards_build, T8 on demand)
-    and changes the link key / locality of a component (design §3 "card identity preferred")."""
+    and changes the link key / locality of a component (design §3 "card identity preferred").
+    AA-989: the atom id too — a re-upload (new tour_id → new atom ids, same text) or an action-only re-atomize
+    left `geo.tour_place.atom_ids` on replaced atoms (rebase / skipped_unchanged). A changed id set now rebuilds
+    the components; days and vectors are reused (days_hash / text_hash), so the rebuild is free unless names are
+    new. One-time effect of this change: the next place_extract of every built tour rebuilds once."""
     rows = sorted(
         (int(a["itinerary_day"]) if a.get("itinerary_day") is not None else -1, (a.get("place") or "").strip(),
          (a.get("activity_type") or "").strip().lower(), (a.get("text") or "").strip()[:TEXT_MAX],
          str(a.get("card_id") or ""), (a.get("card_display_name") or "").strip(),
          (a.get("card_country") or "").strip(), (a.get("card_locality") or "").strip(),
-         str(a.get("card_destination_id") or ""))
+         str(a.get("card_destination_id") or ""), str(a.get("atom_id") or ""))
         for a in atoms)
     blob = "\n".join("\t".join(str(x) for x in r) for r in rows)
     return hashlib.sha256(f"{days_mod.RULE_VERSION}\n{blob}".encode("utf-8")).hexdigest()
@@ -179,3 +183,70 @@ def build_components(source_id: str, tour_country: str, atoms: list[dict],
     out = sorted(merged.values(), key=lambda c: (c.day_index, c.name_norm, c.activity))
     counters["components"] = len(out)
     return out, counters
+
+
+# ── AA-989: component ids survive a rebuild ─────────────────────────────────────────────────────
+# TripPlanner pins a component by its id (trip_events add_component / remove_component / reorder, read back through
+# catalog.v_tour_component). The id is uuid5(source, day, itinerary spelling, country, activity), so a rewrite that
+# respells a place, retypes its activity or moves it a day would mint a new id and silently drop every saved pin.
+# A rebuild therefore keeps the id of the PREVIOUS row of the same source for the same place: the uuid5 is only the
+# id of a place's first build. Passes, in order, each one-to-one and only on an unambiguous pair (exactly one free
+# old row and exactly one unmatched new component share the key); an ambiguous key falls to the next pass:
+#   same day + itinerary spelling (activity retyped) → same day + destination → same day + place card →
+#   same day + link name → any day + destination → any day + place card → any day + link name.
+CARRY_PASSES = (
+    ("spelling", True), ("destination", True), ("card", True), ("link_name", True),
+    ("destination", False), ("card", False), ("link_name", False),
+)
+
+
+def _carry_key(kind: str, *, spelling: str, link_name: str, destination, card) -> Optional[str]:
+    v = {"spelling": spelling, "link_name": link_name, "destination": destination, "card": card}[kind]
+    return str(v) if v else None
+
+
+def carry_over_ids(comps: list[Component], comp_dest: dict, old_rows: list[dict]) -> tuple[dict[str, str], dict]:
+    """({new component id: previous id to keep}, counters). `old_rows`: the source's current geo.tour_place rows
+    (component_id, day_index, name, name_norm, destination_id, place_card_id). Pure; the caller renames."""
+    old = {str(o["component_id"]): o for o in old_rows}
+    new_ids = {c.component_id for c in comps}
+    free_old = {i for i in old if i not in new_ids}
+    todo = [c for c in comps if c.component_id not in old]
+    mapping: dict[str, str] = {}
+    by_pass: dict[str, int] = {}
+    for kind, same_day in CARRY_PASSES:
+        if not free_old or not todo:
+            break
+        olds: dict[tuple, list[str]] = {}
+        for i in sorted(free_old):
+            o = old[i]
+            k = _carry_key(kind, spelling=name_norm(o.get("name")), link_name=o.get("name_norm") or "",
+                           destination=o.get("destination_id"), card=o.get("place_card_id"))
+            if k:
+                olds.setdefault((int(o["day_index"]) if same_day else None, k), []).append(i)
+        news: dict[tuple, list[Component]] = {}
+        for c in todo:
+            k = _carry_key(kind, spelling=name_norm(c.name), link_name=c.name_norm,
+                           destination=comp_dest.get(c.component_id), card=c.place_card_id)
+            if k:
+                news.setdefault((c.day_index if same_day else None, k), []).append(c)
+        for key, cs in news.items():
+            os_ = olds.get(key) or []
+            if len(cs) == 1 and len(os_) == 1:
+                mapping[cs[0].component_id] = os_[0]
+                free_old.discard(os_[0])
+                label = f"{kind}{'' if same_day else '_any_day'}"
+                by_pass[label] = by_pass.get(label, 0) + 1
+        todo = [c for c in todo if c.component_id not in mapping]
+    counters = {"ids_kept": sum(1 for c in comps if c.component_id in old), "ids_carried": len(mapping),
+                "ids_carried_by": by_pass, "ids_new": len(todo), "ids_dropped": len(free_old)}
+    return mapping, counters
+
+
+def apply_carry_over(comps: list[Component], comp_dest: dict, mapping: dict[str, str]) -> dict:
+    """Renames the components in place; returns comp_dest re-keyed on the kept ids."""
+    if not mapping:
+        return comp_dest
+    for c in comps:
+        c.component_id = mapping.get(c.component_id, c.component_id)
+    return {mapping.get(k, k): v for k, v in comp_dest.items()}
