@@ -69,7 +69,6 @@ _CONNECTORS = frozenset({
 })
 _WORD_RE = re.compile(r"[A-Za-zÀ-ÖØ-öø-ÿ][\w'’-]*")
 _CAP_RE = re.compile(r"(?<![\w'’-])([A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ][\w'’-]*)")
-_SENT_START_RE = re.compile(r"(?:^|[.!?:;]\s+|\n\s*(?:[-*•]\s*)?|\*\*\s*|#+\s*|\"\s*|“\s*)$")
 _OPEN_CLOSE = (("(", ")"), ("[", "]"), ("{", "}"))
 _TAG_OPEN_RE = re.compile(r"\[(?:R|F):")
 # Capitalised words that are not names: sentence words a repair may legitimately start a clause with.
@@ -231,7 +230,31 @@ def days_problem(before: str, after: str) -> Optional[str]:
 
 
 def _sentence_initial(text: str, idx: int) -> bool:
-    return bool(_SENT_START_RE.search(text[:idx]))
+    """True when ``text[:idx]`` ends a sentence opener: nothing, an end mark or colon/semicolon + whitespace, a newline
+    (optionally + a list bullet), ``**``, ``#``, or a straight / curly opening quote, each + optional whitespace.
+
+    Same result as re.search(r"(?:^|[.!?:;]\\s+|\\n\\s*(?:[-*•]\\s*)?|\\*\\*\\s*|#+\\s*|\\"\\s*|“\\s*)$", text[:idx]),
+    as a backward scan over the trailing whitespace only: the regex search restarted at every offset and ran
+    O(n^2) on a run of newlines or '#' (CodeQL py/polynomial-redos, S251). str.isspace is exactly the regex \\s."""
+    idx = min(idx, len(text)) if idx >= 0 else max(0, len(text) + idx)   # text[:idx] slice semantics
+    if idx == 0:
+        return True
+    w = idx
+    while w > 0 and text[w - 1].isspace():
+        w -= 1
+    if "\n" in text[w:idx]:
+        return True
+    if w == 0:
+        return False
+    prev = text[w - 1]
+    if (prev in ".!?:;" and w < idx) or prev in "#\"“" or text[w - 2:w] == "**":
+        return True
+    if prev in "-*•":                     # a list bullet right after a newline (whitespace between allowed)
+        k = w - 1
+        while k > 0 and text[k - 1].isspace():
+            k -= 1
+        return "\n" in text[k:w - 1]
+    return False
 
 
 def new_names(before: str, after: str, source: str = "") -> list[str]:

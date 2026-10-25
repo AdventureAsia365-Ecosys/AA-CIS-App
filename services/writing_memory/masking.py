@@ -15,13 +15,11 @@ from typing import Optional
 
 from services.writing_memory.config import EXCERPT_CHARS
 
-_URL_RE = re.compile(r"https?://\S+|www\.\S+|\S+@\S+\.\w+")
 _PRICE_RE = re.compile(r"(?:[$€£¥₫]|\b(?:USD|EUR|VND|THB|US\$)\s?)\s?\d[\d,.]*(?:\s?(?:k|K|m|M))?|\b\d[\d,.]*\s?"
                        r"(?:USD|EUR|VND|THB|dollars?|euros?)\b", re.I)
 _TIME_RE = re.compile(r"\b\d{1,2}(?::\d{2})?\s?(?:am|pm|a\.m\.|p\.m\.)|\b\d{1,2}:\d{2}\b|\b\d{1,2}h\d{2}\b", re.I)
 _NUM_RE = re.compile(r"\b\d[\d,.]*(?:st|nd|rd|th)?\b")
 _WORD_RE = re.compile(r"[A-Za-z][\w'’-]*")
-_SENT_END_RE = re.compile(r"(?:^|[.!?:;]\s+|\n\s*|[\"“(]\s*)$")
 _TOKEN_RE = re.compile(r"\[(?:N|PRICE|TIME|URL|NAME)\]")
 _RUNS_RE = re.compile(r"\[NAME\](?:[\s-]+(?:of\s+|the\s+|de\s+)?\[NAME\])+")
 # Capitalised words that are ordinary English, not names, when they appear mid-sentence.
@@ -29,7 +27,78 @@ _COMMON = frozenset("""I I'm I've I'll I'd Day Days Mr Mrs Ms Dr AM PM OK TV""".
 
 
 def _is_sentence_start(text: str, idx: int) -> bool:
-    return bool(_SENT_END_RE.search(text[:idx]))
+    """True when ``text[:idx]`` is empty or ends with an end mark / colon / semicolon + whitespace, a newline +
+    optional whitespace, or an opening quote / parenthesis + optional whitespace.
+
+    Same result as re.search(r'(?:^|[.!?:;]\\s+|\\n\\s*|["“(]\\s*)$', text[:idx]), as a backward scan over the
+    trailing whitespace only: the regex search restarted at every offset and ran O(n^2) on a run of newlines
+    (CodeQL py/polynomial-redos, S251). str.isspace is exactly the regex \\s."""
+    idx = min(idx, len(text)) if idx >= 0 else max(0, len(text) + idx)   # text[:idx] slice semantics
+    if idx == 0:
+        return True
+    w = idx
+    while w > 0 and text[w - 1].isspace():
+        w -= 1
+    if "\n" in text[w:idx]:
+        return True
+    if w == 0:
+        return False
+    return (text[w - 1] in ".!?:;" and w < idx) or text[w - 1] in "\"“("
+
+
+def _is_word_char(ch: str) -> bool:
+    return ch.isalnum() or ch == "_"          # exactly the regex \w on str
+
+
+def _url_spans(text: str) -> list[tuple[int, int]]:
+    """(start, end) of every match of re.finditer(r"https?://\\S+|www\\.\\S+|\\S+@\\S+\\.\\w+", text), in one
+    linear pass per whitespace-free run (CodeQL py/polynomial-redos, S251: the e-mail branch backtracked O(n^2)
+    on '!' * n and worse on '!@' * n).
+
+    Every match lies inside one run. At a position p of a run [p0, r): a 'http://' / 'https://' / 'www.' prefix
+    with at least one char after it in the run matches to the run's end (the first two branches). Else the e-mail
+    branch matches iff an '@' sits in [p + 1, D - 2], where D is the run's rightmost '.' followed by a word char
+    (greedy backtracking picks that D and the rightmost such '@'), and ends after the word chars that follow D.
+    After an e-mail match the scan goes on at its end, past D, where only a prefix can match again."""
+    spans: list[tuple[int, int]] = []
+    n, i = len(text), 0
+    while i < n:
+        if text[i].isspace():
+            i += 1
+            continue
+        r = i
+        while r < n and not text[r].isspace():
+            r += 1
+        dot = r - 2
+        while dot >= i and not (text[dot] == "." and _is_word_char(text[dot + 1])):
+            dot -= 1
+        at = text.rfind("@", i, dot - 1) if dot - 1 > i else -1   # an '@' in [i, dot - 2]
+        p = i
+        while p < r:
+            if text[p] in "hw" and any(text.startswith(pre, p) and p + len(pre) < r
+                                       for pre in ("https://", "http://", "www.")):
+                spans.append((p, r))
+                break
+            if at > p:
+                e = dot + 1
+                while e < r and _is_word_char(text[e]):
+                    e += 1
+                spans.append((p, e))
+                p = e
+                continue
+            p += 1
+        i = r
+    return spans
+
+
+def _mask_urls(text: str) -> str:
+    out, last = [], 0
+    for start, end in _url_spans(text):
+        out.append(text[last:start])
+        out.append("[URL]")
+        last = end
+    out.append(text[last:])
+    return "".join(out)
 
 
 def mask(text: Optional[str]) -> str:
@@ -37,7 +106,7 @@ def mask(text: Optional[str]) -> str:
     output."""
     if not text:
         return ""
-    t = _URL_RE.sub("[URL]", text)
+    t = _mask_urls(text)
     t = _PRICE_RE.sub("[PRICE]", t)
     t = _TIME_RE.sub("[TIME]", t)
     t = _NUM_RE.sub("[N]", t)

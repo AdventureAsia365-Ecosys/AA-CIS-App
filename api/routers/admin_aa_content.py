@@ -118,7 +118,18 @@ def _refused(exc: Exception) -> JSONResponse:
         return JSONResponse({"detail": exc.detail, "code": exc.code, "field": exc.field}, status_code=422)
     if isinstance(exc, ContentConflict):
         return JSONResponse({"detail": exc.detail, "code": exc.code}, status_code=409)
-    return JSONResponse({"detail": str(exc), "code": "not_found"}, status_code=404)
+    if isinstance(exc, ContentNotFound):
+        # A fixed message per kind, never the exception text (CodeQL py/stack-trace-exposure, S251).
+        what = getattr(exc, "what", "")
+        logger.info("admin_aa_content_not_found", what=what)
+        return JSONResponse({"detail": _NOT_FOUND_DETAIL.get(what, "Not found"), "code": "not_found"},
+                            status_code=404)
+    logger.error("admin_aa_content_refusal_unmapped", error_type=type(exc).__name__, reason=str(exc))
+    return JSONResponse({"detail": "Internal error", "code": "internal"}, status_code=500)
+
+
+_NOT_FOUND_DETAIL = {"item": "No AA content item has this id", "version": "No such version",
+                     "draft": "This item has no draft"}
 
 
 _REFUSALS = (ContentInvalid, ContentConflict, ContentNotFound, asyncpg.UndefinedTableError)

@@ -201,7 +201,7 @@ def test_expected_stamp_reaches_the_store_as_utc(client, calls):
     (ContentInvalid("visa_needs_official_link", "body_markdown", "add the link"), 422, "visa_needs_official_link"),
     (ContentConflict("stale", "Someone else saved this item"), 409, "stale"),
     (ContentConflict("no_draft", "Nothing to publish"), 409, "no_draft"),
-    (ContentNotFound("No AA content item has this id"), 404, "not_found"),
+    (ContentNotFound("item"), 404, "not_found"),
 ])
 def test_store_refusals_are_mapped(client, monkeypatch, exc, status, code):
     async def refuse(conn, *args, **kwargs):
@@ -212,6 +212,23 @@ def test_store_refusals_are_mapped(client, monkeypatch, exc, status, code):
     assert r.status_code == status and r.json()["code"] == code
     if status == 422:
         assert r.json()["field"] == "body_markdown"
+
+
+@pytest.mark.parametrize("what, detail", [
+    ("item", "No AA content item has this id"),
+    ("version", "No such version"),
+    ("draft", "This item has no draft"),
+    ("SELECT secret FROM x -- arn:aws:iam::<account>:role/Fake", "Not found"),
+])
+def test_not_found_sends_a_fixed_message_never_the_exception_text(client, monkeypatch, what, detail):
+    """AA-981 (CodeQL py/stack-trace-exposure): the 404 body is a fixed message per kind, not str(exc)."""
+    async def refuse(conn, *args, **kwargs):
+        raise ContentNotFound(what)
+
+    monkeypatch.setattr(store, "publish", refuse)
+    r = client.post(f"{BASE}/{CID}/publish", json=EXPECTED, headers=_h())
+    assert r.status_code == 404 and r.json() == {"detail": detail, "code": "not_found"}
+    assert "arn:" not in r.text and "SELECT" not in r.text
 
 
 def test_only_version_refusal_is_409(client, monkeypatch):

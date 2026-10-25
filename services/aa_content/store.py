@@ -96,7 +96,12 @@ COUNT_SQL = f"SELECT count(*) {_LIST_FROM}"
 
 
 class ContentNotFound(LookupError):
-    """No item / version / draft with this id: 404."""
+    """No item / version / draft with this id: 404. ``what`` names which ("item", "version" or "draft"); the API maps
+    it to a fixed message and never sends the exception text."""
+
+    def __init__(self, what: str) -> None:
+        super().__init__(what)
+        self.what = what
 
 
 class ContentConflict(Exception):  # noqa: N818 - reads as an outcome
@@ -168,7 +173,7 @@ def _list_row(row: Any) -> dict:
 async def get_item(conn: Any, content_id: uuid.UUID) -> dict:
     row = await conn.fetchrow(ITEM_SQL, content_id)
     if row is None:
-        raise ContentNotFound("No AA content item has this id")
+        raise ContentNotFound("item")
     return _item(row, [_version(v) for v in await conn.fetch(VERSIONS_SQL, content_id)])
 
 
@@ -182,7 +187,7 @@ async def get_version(conn: Any, content_id: uuid.UUID, version: int) -> dict:
     """Any version (draft or published), for the editor's preview."""
     row = await conn.fetchrow(ONE_VERSION_SQL, content_id, version)
     if row is None:
-        raise ContentNotFound("No such version")
+        raise ContentNotFound("version")
     return {"content_id": str(content_id), **_version(row)}
 
 
@@ -200,7 +205,7 @@ async def list_items(conn: Any, *, kind: Optional[str], locale: Optional[str], s
 async def _locked(conn: Any, content_id: uuid.UUID, expected_updated_at: datetime) -> Any:
     row = await conn.fetchrow(LOCK_ITEM_SQL, content_id)
     if row is None:
-        raise ContentNotFound("No AA content item has this id")
+        raise ContentNotFound("item")
     if row["updated_at"] != expected_updated_at:
         raise ContentConflict("stale", "Someone else saved this item since you opened it; reload and try again")
     return row
@@ -259,12 +264,12 @@ async def discard_draft(conn: Any, content_id: uuid.UUID, *, expected_updated_at
     async with conn.transaction():
         await _locked(conn, content_id, expected_updated_at)
         if await conn.fetchrow(DRAFT_SQL, content_id) is None:
-            raise ContentNotFound("This item has no draft")
+            raise ContentNotFound("draft")
         if not await conn.fetchval(PUBLISHED_COUNT_SQL, content_id):
             raise ContentConflict("only_version",
                                   "This draft is the item's only version; edit it, or retire the item instead")
         if await conn.execute(DISCARD_SQL, content_id) == "DELETE 0":
-            raise ContentNotFound("This item has no draft")
+            raise ContentNotFound("draft")
         await conn.execute(TOUCH_SQL, content_id)
     return await get_item(conn, content_id)
 
