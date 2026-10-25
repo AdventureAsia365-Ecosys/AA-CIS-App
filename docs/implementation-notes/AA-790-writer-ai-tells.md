@@ -513,9 +513,10 @@ must still go) in `tests/unit/test_aa790_writer_round3.py` (section "round-3 rev
 ### Tradeoffs
 
 - **Recall given back for precision.** On the AA-729 golden fixture + S234 pack (70 texts) the fixed code makes the
-  same 170 edits minus one staging tail ("… rather than performance"); on the pilot texts two edits go ("geology
-  rather than spectacle", and "These are not details to hide from children. They are …", an audience word). The
-  panel's quoted forms are unaffected (below).
+  same 170 edits minus one staging tail ("… rather than performance"); on the 20 round-2 texts one staging tail goes
+  ("… commitment rather than a demonstration", not a judge's quote); on the pilot texts two edits go ("geology rather
+  than spectacle", and "These are not details to hide from children. They are …", an audience word). The panel's
+  quoted forms are unaffected (below).
 - `_SCHEDULE_NEG` is broad (any day / month / season / 'during' / 'when' / digit): some real "There is no
   performance …" aphorisms that mention a time stay. They go to the prompt, not the residue.
 
