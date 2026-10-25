@@ -17,6 +17,7 @@ import structlog
 from api.routers.v1_notifications import router as v1_notifications_router
 from api.routers._served import tour_not_served_handler
 from shared.tour_liveness import TourNotServedError
+from services.acp_shared.atom_replaced import AtomReplaced
 from api.routers.auth import (
     _hash_api_key, _create_jwt, verify_jwt, verify_tenant_jwt,
     TenantLoginRequest, TenantLoginResponse,
@@ -345,6 +346,9 @@ app.middleware("http")(sentry_context_middleware)
 # answered outside all user middleware, so its handler adds the header itself.
 # AA-986 L3 — new tenant work on a tour AA no longer serves: 409 tour_discontinued / tour_paused, plain sentence.
 app.add_exception_handler(TourNotServedError, tour_not_served_handler)
+# AA-990 — T9 / T8 work on a request whose atom a later atomize run replaced: 409 atom_replaced, plain sentence
+# (same status_code / detail / headers shape as TourNotServedError, so the same handler answers it).
+app.add_exception_handler(AtomReplaced, tour_not_served_handler)
 # AA-976 / AA-978 — contract Problem body; CatalogProblem is api.core.m2m_auth.M2MProblem, also raised by
 # /tenant/membership/v1.
 app.add_exception_handler(CatalogProblem, catalog_problem_handler)
