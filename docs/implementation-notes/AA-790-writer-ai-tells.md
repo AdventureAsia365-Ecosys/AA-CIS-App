@@ -685,3 +685,146 @@ mid-paragraph, with no source and with the Taktsang seed, in the "third review o
 - The unit files that import ai_tells / hygiene / prompts / quality_gates / service (97 files) give 3916 passed and
   1 skipped. On 67bb5550 the same files give 3787 passed and 1 skipped.
 - No prompt change: `writer_prompt_version` stays `24363541` and `AI_TELLS_VERSION` stays `ai_tells.v3`.
+
+## Round 3: fact-preservation invariant (S252)
+
+Input: the second and third reviews of round 3 (8 open blocking findings on 7b998197; several also on origin/main,
+i.e. live round 2). Three review rounds each found a new chain of rules that deleted a fact, so this round stops
+patching rule by rule. The rules stay as proposers. One invariant decides: an edit that removes a sentence or a
+clause is refused unless every fact token of the removed words is still there after it.
+
+### Decisions
+
+- **FI-D1 — the invariant is the arbiter in `ai_tells._accept`.** Every proposed edit (word rules, pairs, cuts,
+  anaphora joins, heading and CTA-clause edits) carries what it removed (`Edit.olds`, now set on cuts too). An edit is
+  kept only when `hygiene.missing_facts(olds, new, …)` is empty. A refused edit is logged as
+  `ai_tells: skipped <kind> (drops a fact: <tokens>): '<sentence>'`. The all-at-once path checks every edit against one
+  `word_forms` of the result. The one-at-a-time path keeps running word-form counts and checks each edit in O(its own
+  words). The check is linear in the text.
+- **FI-D2 — fact tokens** (`hygiene.fact_tokens`, one pass, closed lists): numbers and number words (ordinals
+  included), a unit right after a number ('900 m', 'two-hour'), time / day / month / season / weather words, limit and
+  rule words (only, except, until, after, before, closed, open, passable, free …), person and audience nouns (gender,
+  religious role, visitor type, group, solo, pregnant …), place / amenity / access / vehicle / use / position nouns
+  (road, bridge, gate, entrance, ferry, pier, trail, footpath, toilet, water, drinking, swimming, alcohol, shop, food,
+  online, room, heated, signal, halfway, end, top …), superlatives and the word after most / least, the practical
+  words of `_PRACTICAL_RE` / `_PROTECTED_RE`, proper names (a capitalised word that does not open its sentence or
+  line), settlement nouns (village, town, city) and any other content word of the seed + Facts. Evaluative words are
+  never facts. Words are matched through their plural forms ('Leeches' = 'leech', 'ferries' = 'ferry').
+- **FI-D3 — two kinds of "still there".** A closed-class token must survive in the edit's own new text, as often as
+  in what it replaced (count). A name, a settlement or a seed word must still be somewhere in the text after the edit
+  (presence). The count rule is stricter than "still appears in the output". The reason: with presence, "This is not
+  the end of the climb. This is the halfway point." lost the denial because the test piece ends on "The day ends at
+  the riverside camp." The same closed word elsewhere is usually another claim. Names and seed words are the topic,
+  so a mention elsewhere keeps them. With this split, the panel's relocation tell ("does not begin in Thimphu. It
+  begins in the east") is still joined.
+- **FI-D4 — headings and the seed template.** A heading edit (angle label, brief words, CTA heading) is checked on
+  seed and settlement words only. Title case is not a name, and the angle's "Two Worlds", "Family Anchor" are brief
+  words. The seed's line labels and boilerplate ("Source itinerary:", "Why it matters:", "(do not place it in any
+  other town, region or country)", the Place background header, "[Fact id=…]", "of the trip") and naming verbs
+  (referred, called, known …) never make seed words. A word right before a particle is not a fact: 'warm-up',
+  'check-in', 'opens up' ('up to 12' stays a limit).
+- **FI-D5 — the same invariant on the hygiene repeat deletes** (`hygiene.dedupe`: copy / contained / restate /
+  phrase deletes, orphan lines, closing recaps, echoed openings; `autofix`'s nearby repeat). A repeat's facts are by
+  design in the sentence it repeats, so the check is presence for every class (`closed_by_count=False`). A repeat
+  that adds a fact word the piece has nowhere else stays, and F13_repeat sees it. `dedupe` takes an optional
+  `source` (autofix passes the seed + Facts). The other autofix deletes (borrowed-trip sentences, prompt leaks,
+  social proof) remove unsupported claims on purpose and are not arbitrated.
+- **FI-D6 — ages: a seed number is a known age only after an explicit age cue** (findings 5 and 7). `_source_ages`
+  reads small regexes, each bounded: 'aged / age(s)' + at most three linking words + N ('Minimum age is 12', 'Minimum
+  age: 7', 'under the age of 7', 'aged 10+'); a person noun + N–M ('Children 6–12'); a person noun + must be / aged /
+  from / of / at least / over / under + N with an age tail ('+', 'and over / older / up', 'N years' after aged / from /
+  of) or bare after 'must be' ('Riders must be at least 14'); a person noun + under / over / above N, never before
+  'N years' without 'old'; 'under-5s'; 'N years and over' that closes its clause; 'N years old / of age' after a
+  person / age / must / minimum / at least / under / over cue; 'N-year-old(s)' in a person use. Never a number next to
+  ':' / '.' / ',' digits, or before a unit, a head count, 'per' or a plural noun. Group sizes and discounts ('Groups
+  of 10 and over', 'Parties of 12 or over', 'Max participants: 12', 'Participants: 2-12'), altitudes ('above 4,000
+  m'), durations ('15+ years of experience', 'over 12 years', 'for 12 years and over three generations'), ratings,
+  grades and prices ('adults USD 45, children 8') no longer make an age known. On the output side the 'c' group
+  ('children over N') skips a grouped number and a measurement ('Hikers over 30 km a day').
+
+### How each open finding is handled
+
+| Finding (third review) | Handled by | The fact token that blocks the deleting edit |
+|---|---|---|
+| 1 same-pronoun correction pairs ('This is not the dry season. This is the tail of the monsoon.') | invariant | dry, season (the denial cut), tail, monsoon, halfway, gate, heat (the verdict cut) |
+| 2 lone denials with a safety / access / use fact | invariant | water, drinking, swimming, beach, road, campsite, public, footpath, guided |
+| 3 `_inline_pair` access / location / amenity | invariant | road, village (no other mention), heated |
+| 4 place / time / channel / goods / vehicle choices, no comma; ', not X' tails | invariant | lodge, Sundays, pier, April, English, dining, room, noon, online, food, cars |
+| 5 group-size numbers as known ages | explicit-cue age reading | — |
+| 6 verdict lines that restate a seed fact in another inflection | invariant | leech (seed 'Leeches'), mobile, signal |
+| 7 altitudes, durations, head counts, ratings, prices as known ages | explicit-cue age reading + 'c'-group digit guard | — |
+| 8 gender, religious-role and visitor-type access limits | invariant | women, men, monks, pilgrims, tourists, groups, solo, pregnant |
+
+Every quoted sentence of both review files has an exact-output test (paragraph start and mid-paragraph, with and
+without the review's seed) in `tests/unit/test_aa790_fact_invariant.py`. On 7b998197, 83 of the 92 placements of the
+third review's pass sentences lose a fact; after this round none do. The second review's sentences were already
+pinned in `test_aa790_writer_round3.py` and still pass.
+
+### Changed (vs the brief)
+
+- "Still appears in the output" is count-based for the closed classes (FI-D3), presence for names and seed words.
+- Headings are checked on seed and settlement words only. A unit counts only after a number. Phrasal particles and
+  the seed template are excluded (FI-D4). Without these, every angle-label heading edit on the pilot texts ("Where
+  Two Worlds Meet …") and "That's not a warm-up." were refused, and 'itinerary', 'region', 'country' became seed
+  words of every piece.
+- The rule guards added in the earlier review fixes stay. They are now redundant with the invariant, but they keep
+  a refused edit from being proposed at all, so the log stays quiet.
+- The age reading is not "the same number anywhere in the seed". It needs the cue shapes above, which still cover
+  every wording the earlier reviews needed ("Minimum age is 12", "under-5s", "at least 14", "Children 6–12", "from 8
+  years", "children 7 and older", "10 years and over").
+
+### Tradeoffs
+
+- **Proposals the invariant now refuses on the stored corpora (all read by hand):**
+  - "In Bhutan, heritage is not only preserved. It remains in active use." 'not only X' asserts X, so the join lost
+    "heritage is preserved".
+  - "Kuang Si Falls is more than a famous landmark. It is a threshold." 'more than' asserts the landmark, which is a
+    seed word.
+  - "To visit their settlements is not to encounter a preserved exhibit. It is …" ('encounter' is a seed word: noise
+    from the seed-word class on verbs).
+  - "… offers something that no guided commentary can substitute: …" ('guided'). The residue entry still flags it,
+    so the census still counts it.
+  - Round-1 text: "This kind of stay does not position the village as a backdrop." ('stay' is a seed word).
+  - Edit counts: r2 texts 18 → 17, r2 `before_text` / pilot texts 59 → 56 (pilot set alone 53 → 50), round-1 texts
+    10 → 9.
+- **Existing test expectations that changed, each with a refused-case test that names the fact:**
+  - round 1: "not only preserved" (only); "That is a good second day." (second); a Khaling internal label named once
+    (national). The label test now names the centre again later, and then the label still goes.
+  - round 2: "from the road" (road; the fixture now says 'ridge'); "present / position the village as a stage /
+    backdrop" as the only mention (village; with a second mention the cut still goes); "the two cultures … not
+    accidental" (two).
+  - round 3: the staged-noun colon fold needs the piece to name the relic again, as the panel's text does.
+  - S234 dedupe: the Sod Camp and caldera repeats add 'optional' and 'travellers', so they now stay for F13_repeat
+    unless the piece has those words elsewhere. A closing recap that is the only mention of Uran Togoo / the Tsaatan
+    stays. The near-verbatim autofix repeat that adds "visits to local nomadic families are available" stays.
+- **Hold risk.** A repeat that `final_pass` no longer deletes is final-pass residue (F13_repeat), which holds an
+  approved piece. On the 60 stored texts (r2, r2 `before_text`, round 1) autofix + final_pass make 0 repeat deletes
+  before and after, so no change was measured. Watch `F13_repeat` holds in the next re-panel.
+- **The seed-word class reads verbs too** ('encounter', 'stay'). It errs toward keeping. A residue false positive
+  costs one repair call; a false negative is a fidelity defect.
+
+### Should know
+
+- **$0 census (local scratch scripts, not committed; before = 7b998197, after = 8ecdd3b2):**
+  - AI-tells quotes on the 20 r2 texts: 64 matchable, 38 caught (11 pass, 27 residue) before and after, with the
+    same quote-by-quote result. (This script splits quotes a little differently from the earlier note's 63 / 37.)
+  - Source-fidelity quotes: 54 matchable, 10 caught (2 pass, 6 residue, 2 seed-aware) before and after.
+  - Seed-aware findings: 4 on the r2 texts (2 ages, 2 founding reasons), 0 on `before_text`, 1 on round 1: unchanged.
+  - Known ages over the 60 judge-view sources (`panel-batch-*.json`): none before or after.
+- **Generated property test:** 1,580 sentences: 10 frames × 41 fact phrases in 9 classes × paragraph start / mid ×
+  seed / no seed, plus chained correction pairs. On 7b998197, 508 of them lose the planted fact word. Now 0 do, and
+  every fact token of the input is still in the output.
+- New `hygiene` API: `fact_tokens`, `word_forms`, `source_forms`, `missing_facts`, `SUPERLATIVE_WORDS`,
+  `EVALUATIVE_WORDS`, `dedupe(…, source=None)`. Removed age helpers: `_SOURCE_AGE_RE`, `_cue_is_count`,
+  `_PREPOSITION_CUE_RE`, `_EXPLICIT_AGE_CUE_RE`, `_YEARS_OLD_TAIL_RE`, `_OF_LINK_RE`, `_AGE_WORD_RE`.
+  `_UNIT_AFTER_RE` gains cm, inches and pounds.
+- Linear time: the round-3 regex list gains the six source-age readers, `_DURATION_TAIL_RE`, `_UNIT_AFTER_RE`,
+  `_FACT_TOKEN_RE`, `_PARTICLE_AFTER_RE` and `_SEED_LABEL_RE`. `test_aa790_fact_invariant.py` times the invariant
+  check on 8000-character adversarial inputs and checks that 8× the text costs < 16× the time. A pass with 140
+  refused edits on 8000 characters takes about 50 ms; 7b998197 took about 500 ms on the same text, because a refused
+  edit now skips the integrity trial. The pre-existing integrity fallback is still slow on texts that repeat one
+  sentence many times: "The dzong is not a relic, but a working institution." × 150 takes about 27 s on both
+  commits. This change did not cause it.
+- Tests: `test_aa790_fact_invariant.py` 192 (new), `test_aa790_writer_round3.py` 414, `test_aa790_writer_round2.py`
+  201, `test_aa790_writer_ai_tells.py` 100. The 98 unit files that import `acp_content_writing` give 4015 passed.
+- No prompt change: `writer_prompt_version` stays `24363541` and `AI_TELLS_VERSION` stays `ai_tells.v3`.
