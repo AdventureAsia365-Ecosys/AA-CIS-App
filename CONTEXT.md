@@ -1,12 +1,12 @@
 ---
 id: ARCH-06-cis
 title: "AA-CIS-App — Repo Context"
-description: Stack, boundaries, ownership, domain terms and working rules of AA-CIS-App (API, job worker, admin app and tenant portal); read it before designing or changing code in this repo.
+description: Stack, boundaries, ownership, domain terms and working rules of AA-CIS-App (API incl. the Content studio API, job worker, admin app; the frozen tenant portal copy); read it before designing or changing code in this repo.
 type: explanation
 status: active
 owner: nghiep
 audience: [engineer, agent]
-applies_to: [aa-cis-api, aa-cis-worker, aa-cis-frontend, aa-cis-portal]
+applies_to: [aa-cis-api, aa-cis-worker, aa-cis-frontend]
 last_reviewed: 2026-10-25
 review_every_days: 90
 related: [ARCH-01, ARCH-05, ARCH-08, docs/adr/README.md]
@@ -47,8 +47,9 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
 - **Backend**: Python (FastAPI-style routers under `api/routers/`, services under `services/`),
   running on **ECS** (cluster `aa-cis-dev-cluster`, service `aa-cis-dev-api`) fronted by ALB +
   API Gateway. Postgres (RDS) holds the schemas; some steps use Bedrock for LLM work.
-- **Frontend**: two Next.js apps (AA-885, S243), each its own Vercel project, both deployed by CI
-  (not one of the 5 required checks — see Deploy & CI):
+- **Frontend**: two Next.js apps (AA-885, S243), each its own Vercel project. Only the admin is deployed from
+  this repo (CI, not one of the 5 required checks — see Deploy & CI); the portal is deployed from AA-Partner
+  since AA-979:
   - `frontend/` = the **Admin** console (`app/admin/*`), Vercel `aa-cis-frontend`,
     `https://aa-cis.lumiguides.it.com`, workflow `Vercel Deploy` (job "Vercel deploy").
   - `portal/` = the **Tenant portal** (`portal/app/portal/*`), Vercel `aa-cis-portal` (Root Directory
