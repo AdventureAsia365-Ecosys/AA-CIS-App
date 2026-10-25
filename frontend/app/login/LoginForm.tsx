@@ -10,7 +10,7 @@
 // from its value (the server snapshot differs from the client's, so an attribute would not hydrate cleanly).
 import { useState } from "react";
 import { useThemeChoice } from "../_kit/useTheme";
-import { BRAND, BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_SANS, LOGO_SRC } from "../_brand/tokens";
+import { BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_SANS, LOGO_SRC } from "../_brand/tokens";
 import { User, Lock, Mail } from "lucide-react";
 
 interface LoginFormProps {
@@ -121,7 +121,7 @@ export default function LoginForm({ legacyEnabled, cognitoAvailable, signInHost,
             No password needed: a one-time sign-in code arrives by email. Sign-in opens on {signInHost}.
           </div>
         )}
-        {initialError && !error && <div role="alert" style={{ fontSize:12, color:BRAND.danger, marginTop:10 }}>{initialError}</div>}
+        {initialError && !error && <div role="alert" style={{ fontSize:12, color:"var(--aa-red)", marginTop:10 }}>{initialError}</div>}
 
         {legacyEnabled && (
           <>
@@ -137,7 +137,7 @@ export default function LoginForm({ legacyEnabled, cognitoAvailable, signInHost,
                 <input type="text" value={username} onChange={e => { setUsername(e.target.value); setError(""); }}
                   placeholder="Username"
                   onKeyDown={e => e.key === "Enter" && !loading && login()}
-                  style={{ width:"100%", padding:"10px 12px 10px 34px", background:"var(--bg-primary)", border:`1px solid ${error ? BRAND.danger : "var(--border)"}`, borderRadius:8, color:"var(--text-primary)", fontSize:13, outline:"none" }} />
+                  style={{ width:"100%", padding:"10px 12px 10px 34px", background:"var(--bg-primary)", border:`1px solid ${error ? "var(--aa-red)" : "var(--border)"}`, borderRadius:8, color:"var(--text-primary)", fontSize:13, outline:"none" }} />
               </div>
             </div>
 
@@ -148,9 +148,9 @@ export default function LoginForm({ legacyEnabled, cognitoAvailable, signInHost,
                 <input type="password" value={password} onChange={e => { setPassword(e.target.value); setError(""); }}
                   placeholder="••••••••"
                   onKeyDown={e => e.key === "Enter" && !loading && login()}
-                  style={{ width:"100%", padding:"10px 12px 10px 34px", background:"var(--bg-primary)", border:`1px solid ${error ? BRAND.danger : "var(--border)"}`, borderRadius:8, color:"var(--text-primary)", fontSize:13, outline:"none" }} />
+                  style={{ width:"100%", padding:"10px 12px 10px 34px", background:"var(--bg-primary)", border:`1px solid ${error ? "var(--aa-red)" : "var(--border)"}`, borderRadius:8, color:"var(--text-primary)", fontSize:13, outline:"none" }} />
               </div>
-              {error && <div style={{ fontSize:12, color:BRAND.danger, marginTop:6 }}>{error}</div>}
+              {error && <div style={{ fontSize:12, color:"var(--aa-red)", marginTop:6 }}>{error}</div>}
             </div>
 
             <button onClick={login} disabled={loading}

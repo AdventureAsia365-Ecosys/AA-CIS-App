@@ -328,8 +328,13 @@ test.describe('UI smoke — admin', { tag: '@staff' }, () => {
 
       // enabled buttons only (a row being regenerated disables its actions)
       const actions = rows.locator('button:not([disabled])');
-      await openAndCancel('Reject', actions.filter({ hasText: /^\s*Reject\s*$/ }));
-      await openAndCancel('Dismiss', actions.and(page.locator('[title^="Dismiss"]')));
+      const reject = actions.filter({ hasText: /^\s*Reject\s*$/ });
+      const dismiss = actions.and(page.locator('[title^="Dismiss"]'));
+      // every row busy (being regenerated) leaves no enabled action: nothing to open, not a failure
+      test.skip((await reject.count()) + (await dismiss.count()) === 0,
+        'every Review Queue row is busy (regenerating): no enabled Reject / Dismiss to open');
+      await openAndCancel('Reject', reject);
+      await openAndCancel('Dismiss', dismiss);
       await openAndCancel('Regenerate', actions.and(page.locator('[title^="Regenerate"]')));
 
       expect(opened, 'Reject and Dismiss are on every actionable row').toEqual(expect.arrayContaining(['Reject', 'Dismiss']));

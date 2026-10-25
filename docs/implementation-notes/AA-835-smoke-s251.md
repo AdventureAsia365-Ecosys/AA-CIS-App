@@ -28,6 +28,11 @@ S251 screenshot review also found three UI defects.
   `useThemeChoice()` so the theme store's matchMedia listener follows an OS switch while the page is open. Nothing is
   rendered from the hook's value (the server snapshot differs, an attribute would not hydrate cleanly). A public smoke
   test (no session, runs on every per-PR preview) checks the background luminance under light and dark.
+- **/login error red (S251 review)**: the error texts and the input error border used the fixed `BRAND.danger`
+  `#C20101`, which on the dark card `#19212C` is about 2.55:1 (fails WCAG AA for 12 px text) once the light pin is gone.
+  They now use the theme token `var(--aa-red)` (light `#C20101`, dark `#F2746F`), the same token as the kit's `K.danger`.
+- **Review modal test, every row busy (S251 review)**: a row being regenerated disables its actions. If no row has an
+  enabled Reject or Dismiss, the test now skips with a reason instead of failing the `arrayContaining` check.
 
 ## Changed
 
