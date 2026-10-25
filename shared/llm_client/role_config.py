@@ -159,8 +159,11 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
                                       fallback_model_ids=("gpt-6-luna-openai",)),
     "a3_place_dedupe_check": StageConfig("a3_place_dedupe_check", "validate", "claude", "haiku", "acc3"),
     # AA-835 (migration 278): the customer description / highlights of a Booking hotel or service, reviewed by a
-    # human before Booking shows it. Customer-facing text → `writer`, Sonnet; no fallback, no shadow.
-    "supply_content_writer": StageConfig("supply_content_writer", "writer", "claude", "sonnet", "acc3"),
+    # human before Booking shows it. Customer-facing text → `writer`, Sonnet; no shadow. S251 (migration 282): the
+    # structured-output call moves to the catalog key sonnet-5-5 (Converse: the schema is enforced) — the legacy
+    # 'sonnet' (Messages API) stays last so the stage still drafts with the catalog unreadable (lesson S222 #617).
+    "supply_content_writer": StageConfig("supply_content_writer", "writer", "claude", "sonnet-5-5", "acc3",
+                                         fallback_model_ids=("sonnet",)),
     # AA-917 (migration 280, app ADR 0010 decision 5): the writing-memory rule drafter, a judge stage on the judge
     # route (writers stay Anthropic, rules are drafted by another vendor); WM-13 may reorder it after its check.
     "writing_memory_mine": StageConfig("writing_memory_mine", "judge", "openai", "gpt-5.6-luna", "acc3",

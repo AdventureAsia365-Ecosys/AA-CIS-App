@@ -109,3 +109,34 @@ def test_draft_content_unusable_reply_logs_billed_row_and_raises(logged):
         writer.draft_content("hotel", HOTEL, client=_Client("garbage"))
     assert len(logged["unusable"]) == 1 and not logged["ok"]
     assert logged["unusable"][0]["stage"] == "supply_content_writer"
+
+
+# ── S251 live run: a fenced reply (defence in depth behind the gateway's schema check) ──────────────────────────────
+
+FENCED = "```json\n" + json.dumps({"description": "A boutique hotel by the river.", "highlights": ["Pool"],
+                                   "good_to_know": ["Check-in from 14:00"]}) + "\n```"
+
+
+@pytest.mark.parametrize("content", [FENCED, "  " + FENCED.replace("```json", "```") + "\n", FENCED + "\n"])
+def test_parse_output_accepts_a_fenced_reply(content):
+    out = writer.parse_output(content)
+    assert out == {"description": "A boutique hotel by the river.", "highlights": ["Pool"],
+                   "good_to_know": ["Check-in from 14:00"]}
+
+
+@pytest.mark.parametrize("content", ["Here is the content:\n" + FENCED, "Sure! " + FENCED, "```json\n```", "```"])
+def test_parse_output_still_refuses_prose_around_the_json(content):
+    with pytest.raises(writer.DraftUnusable):
+        writer.parse_output(content)
+
+
+def test_draft_content_fenced_reply_logs_one_ok_row(logged):
+    draft, _usage = writer.draft_content("hotel", HOTEL, client=_Client(FENCED))
+    assert draft["description"] == "A boutique hotel by the river."
+    assert len(logged["ok"]) == 1 and not logged["unusable"]
+
+
+def test_draft_content_leaves_room_for_adaptive_thinking(logged):
+    client = _Client(FENCED)
+    writer.draft_content("hotel", HOTEL, client=client)
+    assert client.requests[0].max_tokens == 2048

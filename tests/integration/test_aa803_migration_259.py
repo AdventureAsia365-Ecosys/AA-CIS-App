@@ -88,7 +88,8 @@ def test_new_rows_are_on_no_route(cur):
     cur.execute("SELECT stage FROM shared.llm_role_config WHERE model_id = ANY (%s) "
                 "OR shadow_model_id = ANY (%s) OR fallback_model_ids && %s::text[]",
                 (list(NEW), list(NEW), list(NEW)))
-    assert cur.fetchall() == []
+    # 259 routes no stage; a later migration that routes one is listed here (282, S251: supply_content_writer).
+    assert sorted(r[0] for r in cur.fetchall()) == ["supply_content_writer"]
 
 
 def test_sonnet_drops_the_legacy_acc2_profile_only(cur):

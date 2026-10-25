@@ -129,10 +129,23 @@ def _description(text: Any) -> str:
     return " ".join(kept)
 
 
+def _unfenced(content: Any) -> Any:
+    """The text inside a ``` / ```json fence around the whole reply (S251 live run: defence in depth for a reply
+    that did not come through the gateway's schema check); anything else unchanged."""
+    if not isinstance(content, str):
+        return content
+    text = content.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else ""
+        text = text.rsplit("```", 1)[0]
+    return text.strip()
+
+
 def parse_output(content: str) -> dict:
-    """The checked draft {description, highlights, good_to_know}; raises DraftUnusable."""
+    """The checked draft {description, highlights, good_to_know}; raises DraftUnusable. A reply wrapped in one
+    ``` fence is accepted; prose around the JSON is not."""
     try:
-        data = json.loads(content)
+        data = json.loads(_unfenced(content))
     except (TypeError, ValueError) as exc:
         raise DraftUnusable(f"reply is not JSON: {exc}") from exc
     if not isinstance(data, dict):
@@ -158,7 +171,9 @@ def draft_content(entity_type: str, facts: dict, *, client: Optional[Any] = None
         user_prompt=user_prompt(entity_type, facts),
         stage=STAGE,
         temperature=0.4,
-        max_tokens=1200,
+        # S251: 2048, not 1200 — the route is Claude Sonnet 5.5 (CIS 282), whose adaptive thinking counts against
+        # this cap; the reply itself is < 400 tokens. Worst case 2048 out ≈ $0.02, under CALL_ESTIMATE_USD.
+        max_tokens=2048,
         json_schema=SCHEMA,
     ))
     try:

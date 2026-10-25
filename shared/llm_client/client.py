@@ -133,6 +133,21 @@ def _json_object_in_text(text: str) -> Optional[dict]:
     return value if isinstance(value, dict) else None
 
 
+# S251 (AA-835 live run): the legacy haiku/sonnet chain calls the Anthropic Messages API (invoke_claude /
+# _call_bedrock), which has no tool or response_format here, so a request's json_schema used to be dropped without a
+# word and the caller got free text ("reply is not JSON"). The schema is now asked for in the system prompt and the
+# reply is checked like a Converse reply. Stages that warned once per process are kept here.
+_LEGACY_SCHEMA_WARNED: set[str] = set()
+
+
+def _legacy_schema_instruction(schema: dict) -> str:
+    """The system-prompt instruction a legacy key gets for a structured request (appended after the caller's own
+    system prompt, so the caller's text stays first)."""
+    return (f"Answer with exactly one JSON object that matches the JSON schema {schema['name']!r} below, and nothing "
+            "else: no prose before or after it, no markdown, no code fence.\n"
+            f"JSON schema:\n{json.dumps(schema['schema'], ensure_ascii=False, sort_keys=True)}")
+
+
 # AA-803 (S246): Claude models whose Messages API answers a forced tool choice (`any` / `tool`) with a
 # 400 — Opus 5.5, Sonnet 5.5, Fable 5.1 / Mythos 5.1. Haiku 5.5 is NOT one of them: it accepts a forced
 # tool (with thinking on, the response then starts with the tool call and carries no thinking block), so
@@ -330,7 +345,37 @@ class LLMClient:
         # fallback; a stage that wants one lists it in its route (AA-659).
         if key not in LEGACY_KEYS:
             return self._call_catalog_model(request, key, primary_acct)
+        if request.json_schema and key != "gpt-4.1":
+            # S251: never lose the schema on a legacy Claude key (gpt-4.1 enforces it through response_format).
+            return self._legacy_structured(request, key, primary_acct, fallback_acct)
         return self._legacy_chain(request, key, primary_acct, fallback_acct)
+
+    def _legacy_structured(self, request: LLMRequest, key: str, primary_acct: str, fallback_acct: str) -> LLMResponse:
+        """S251 (AA-835): a json_schema request on a legacy haiku/sonnet key. The Messages API path has no structured
+        output, so (a) the system prompt gets an explicit "one JSON object matching this schema" instruction with the
+        schema, and (b) the reply's JSON object is taken (a ``` fence is tolerated, prose is not) and conformed with
+        `_checked_json`. An unusable reply raises BilledUnusableReply carrying the billed usage, so
+        `_call_key_logged` writes its billed_unusable llm_call_log row and a route moves to its next model, exactly as
+        on the Converse path. A request without json_schema never comes here (byte-identical to before)."""
+        schema = request.json_schema
+        stage = request.stage or "unstaged"
+        if stage not in _LEGACY_SCHEMA_WARNED:
+            _LEGACY_SCHEMA_WARNED.add(stage)
+            logger.warning("llm_legacy_key_structured_output", stage=stage, model=key, schema=schema["name"],
+                           action="schema asked by prompt only; route this stage to a catalog (Converse) key")
+        asked = request.model_copy(
+            update={"system_prompt": f"{request.system_prompt}\n\n{_legacy_schema_instruction(schema)}"})
+        resp = self._legacy_chain(asked, key, primary_acct, fallback_acct)
+        try:
+            parsed = _json_object_in_text(resp.content)
+            if parsed is None:
+                raise RuntimeError(f"{resp.model_used} returned no JSON object for schema {schema['name']!r}")
+            resp.content = _checked_json(resp.model_used, parsed, schema)
+        except RuntimeError as e:
+            # The same billing fields a caller's record_unusable_sync(resp) would write for this reply.
+            from .call_log import billed_record
+            raise _billed_unusable(str(e), [billed_record(resp)]) from e
+        return resp
 
     def _call_key_logged(self, request: LLMRequest, key: str, primary_acct: str, fallback_acct: str, *,
                          role: str, position: int, extra: Optional[dict] = None) -> LLMResponse:
