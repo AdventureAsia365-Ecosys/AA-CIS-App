@@ -143,9 +143,12 @@ def test_registered_rerunnable_owned_and_granted(cur):
     for role, allowed in (("booking", True), ("tripplanner", False), ("aa_app_user", False), ("cis_app", False)):
         cur.execute("SELECT has_table_privilege(%s, 'catalog.v_supply_content', 'SELECT')", (role,))
         assert cur.fetchone()[0] is allowed, role
-    cur.execute("SELECT stage, role, provider, model_id, account_route, is_active, shadow_model_id "
+    # 278 seeds the stage ('sonnet', ON CONFLICT DO NOTHING); the replay already ran 282 (S251), which moved it to the
+    # catalog key sonnet-5-5 with the legacy 'sonnet' last, and a re-run of 278 leaves that row alone.
+    cur.execute("SELECT stage, role, provider, model_id, account_route, is_active, shadow_model_id, fallback_model_ids "
                 "FROM shared.llm_role_config WHERE stage = 'supply_content_writer'")
-    assert cur.fetchone() == ("supply_content_writer", "writer", "claude", "sonnet", "acc3", True, None)
+    assert cur.fetchone() == ("supply_content_writer", "writer", "claude", "sonnet-5-5", "acc3", True, None,
+                              ["sonnet"])
     cur.execute("SELECT per_run_usd, per_day_usd, hard_stop FROM shared.spend_budget "
                 "WHERE provider = 'bedrock' AND scope = 'job:supply_content_draft'")
     assert [float(x) if not isinstance(x, bool) else x for x in cur.fetchone()] == [0.10, 1.00, True]

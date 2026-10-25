@@ -72,7 +72,13 @@ def _checked_json(model_label: str, value, schema: dict) -> str:
         raise RuntimeError(f"{model_label} output does not match schema {schema['name']!r}: {e}") from e
 
 
-class BilledUnusableReply(RuntimeError):
+class UnusableReply(RuntimeError):
+    """S251 (AA-835): the model answered and was billed, but the reply cannot be used. A caller that treats a bad
+    reply differently from an outage (no retry, an `unsure` verdict) catches this; its gateway rows are already
+    written, so the caller must not log the attempt again. Cost of the attempt(s): `unusable_reply_cost()`."""
+
+
+class BilledUnusableReply(UnusableReply):
     """AA-927: the provider billed the request(s) but the reply is unusable (schema mismatch after the
     Converse retry, empty content, invalid JSON). `billed_usage` = one dict per billed model attempt
     (model, account, tokens, cost — internal retries folded, `provider_requests` > 1), so the gateway can
@@ -86,6 +92,22 @@ def _billed_unusable(message: str, billed_usage: list[dict]) -> BilledUnusableRe
     exc = BilledUnusableReply(message)
     exc.billed_usage = billed_usage
     return exc
+
+
+class RouteUnusableReply(UnusableReply):
+    """S251 (AA-835): every model a stage route tried answered with an unusable (billed) reply; nothing was down.
+    Same message as the route's plain RuntimeError. `logged_usage` holds the attempts' billing dicts, which
+    `_call_key_logged` has already written. It is deliberately NOT named `billed_usage`, so `_billed_usage_of()` never
+    logs them a second time."""
+
+    logged_usage: tuple = ()
+
+
+def unusable_reply_cost(exc: BaseException) -> float:
+    """The billed USD of an UnusableReply's attempt(s) (0.0 for any other exception), for a caller's own run budget.
+    The gateway rows already count it in llm_call_log."""
+    usage = getattr(exc, "billed_usage", None) or getattr(exc, "logged_usage", None) or ()
+    return float(sum(float((u or {}).get("cost_usd") or 0.0) for u in usage))
 
 
 def _billed_usage(model_used: str, account: Optional[str], usage_totals: dict, cost: float,
@@ -131,6 +153,21 @@ def _json_object_in_text(text: str) -> Optional[dict]:
     except ValueError:
         return None
     return value if isinstance(value, dict) else None
+
+
+# S251 (AA-835 live run): the legacy haiku/sonnet chain calls the Anthropic Messages API (invoke_claude /
+# _call_bedrock), which has no tool or response_format here, so a request's json_schema used to be dropped without a
+# word and the caller got free text ("reply is not JSON"). The schema is now asked for in the system prompt and the
+# reply is checked like a Converse reply. Stages that warned once per process are kept here.
+_LEGACY_SCHEMA_WARNED: set[str] = set()
+
+
+def _legacy_schema_instruction(schema: dict) -> str:
+    """The system-prompt instruction a legacy key gets for a structured request (appended after the caller's own
+    system prompt, so the caller's text stays first)."""
+    return (f"Answer with exactly one JSON object that matches the JSON schema {schema['name']!r} below, and nothing "
+            "else: no prose before or after it, no markdown, no code fence.\n"
+            f"JSON schema:\n{json.dumps(schema['schema'], ensure_ascii=False, sort_keys=True)}")
 
 
 # AA-803 (S246): Claude models whose Messages API answers a forced tool choice (`any` / `tool`) with a
@@ -330,7 +367,40 @@ class LLMClient:
         # fallback; a stage that wants one lists it in its route (AA-659).
         if key not in LEGACY_KEYS:
             return self._call_catalog_model(request, key, primary_acct)
+        if request.json_schema and key != "gpt-4.1":
+            # S251: never lose the schema on a legacy Claude key (gpt-4.1 enforces it through response_format).
+            return self._legacy_structured(request, key, primary_acct, fallback_acct)
         return self._legacy_chain(request, key, primary_acct, fallback_acct)
+
+    def _legacy_structured(self, request: LLMRequest, key: str, primary_acct: str, fallback_acct: str) -> LLMResponse:
+        """S251 (AA-835): a json_schema request on a legacy haiku/sonnet key. The Messages API path has no structured
+        output, so (a) the system prompt gets an explicit "one JSON object matching this schema" instruction with the
+        schema, and (b) the reply's JSON object is taken (a ``` fence is tolerated, prose is not) and conformed with
+        `_checked_json`. An unusable reply raises BilledUnusableReply carrying the billed usage, so
+        `_call_key_logged` writes its billed_unusable llm_call_log row and a route moves to its next model, exactly as
+        on the Converse path. A request without json_schema never comes here (byte-identical to before)."""
+        schema = request.json_schema
+        stage = request.stage or "unstaged"
+        if stage not in _LEGACY_SCHEMA_WARNED:
+            _LEGACY_SCHEMA_WARNED.add(stage)
+            logger.warning("llm_legacy_key_structured_output", stage=stage, model=key, schema=schema["name"],
+                           action="schema asked by prompt only; route this stage to a catalog (Converse) key")
+        asked = request.model_copy(
+            update={"system_prompt": f"{request.system_prompt}\n\n{_legacy_schema_instruction(schema)}"})
+        resp = self._legacy_chain(asked, key, primary_acct, fallback_acct)
+        if not resp.content and not (resp.input_tokens or resp.output_tokens):
+            # Nothing billed (same rule as the Converse path): a plain failure, no billed_unusable row.
+            raise RuntimeError(f"{resp.model_used} returned empty content for schema {schema['name']!r}")
+        try:
+            parsed = _json_object_in_text(resp.content)
+            if parsed is None:
+                raise RuntimeError(f"{resp.model_used} returned no JSON object for schema {schema['name']!r}")
+            resp.content = _checked_json(resp.model_used, parsed, schema)
+        except RuntimeError as e:
+            # The same billing fields a caller's record_unusable_sync(resp) would write for this reply.
+            from .call_log import billed_record
+            raise _billed_unusable(str(e), [billed_record(resp)]) from e
+        return resp
 
     def _call_key_logged(self, request: LLMRequest, key: str, primary_acct: str, fallback_acct: str, *,
                          role: str, position: int, extra: Optional[dict] = None) -> LLMResponse:
@@ -350,6 +420,10 @@ class LLMClient:
     def _call_route(self, request: LLMRequest, chain: list, primary_acct: str, fallback_acct: str,
                     role: str = "writer") -> LLMResponse:
         errors = []
+        # S251: the billed usage of attempts whose reply was unusable; an attempt that failed any other way (outage,
+        # throttle, blocked) clears `all_unusable`: the final error is RouteUnusableReply only when no model was down.
+        unusable_usage: list = []
+        all_unusable = True
         for position, key in enumerate(chain):
             if key not in LEGACY_KEYS:
                 m = get_model_sync(key)
@@ -365,6 +439,11 @@ class LLMClient:
                 logger.warning("llm_route_attempt_failed", stage=request.stage, model=key,
                                position=position, error=str(e)[:300])
                 errors.append(f"{key}: {str(e)[:200]}")
+                billed = _billed_usage_of(e) if isinstance(e, UnusableReply) else []
+                if billed:
+                    unusable_usage.extend(billed)
+                else:
+                    all_unusable = False
                 continue
             if position > 0:
                 resp.fallback_used = True
@@ -377,8 +456,12 @@ class LLMClient:
                                position=position, errors=errors)
             logger.info("llm_route_used", stage=request.stage, model=key, position=position)
             return resp
-        raise RuntimeError(f"All models in the route failed for stage {request.stage!r}: "
-                           + "; ".join(errors))
+        message = f"All models in the route failed for stage {request.stage!r}: " + "; ".join(errors)
+        if all_unusable and unusable_usage:
+            exc = RouteUnusableReply(message)
+            exc.logged_usage = tuple(unusable_usage)
+            raise exc
+        raise RuntimeError(message)
 
     def _start_shadow(self, request: LLMRequest, cfg, primary: LLMResponse,
                       primary_acct: str, fallback_acct: str) -> None:
@@ -547,7 +630,8 @@ class LLMClient:
 
         # AA-637 — a new provider attempt: drop any partial text a failed attempt already showed.
         stream_sink.emit_restart(request.stage)
-        on_delta = stream_sink.delta_callback(request.stage)
+        # S251: no live text for a structured request (the caller gets the conformed JSON), as on Converse.
+        on_delta = None if request.json_schema else stream_sink.delta_callback(request.stage)
         response = self._bedrock.invoke_model_with_response_stream(
             modelId=model,
             contentType="application/json",
@@ -622,7 +706,8 @@ class LLMClient:
                 account=account,
                 # AA-637 — only set when a live-progress sink streams this stage; None keeps the
                 # exact pre-AA-637 non-streaming invoke_model request.
-                on_delta=stream_sink.delta_callback(request.stage),
+                # S251: never for a structured request (the caller gets the conformed JSON), as on Converse.
+                on_delta=None if request.json_schema else stream_sink.delta_callback(request.stage),
                 # S224: forward an explicitly requested temperature (was silently dropped).
                 temperature=(request.temperature if "temperature" in request.model_fields_set else None),
             )
@@ -864,7 +949,7 @@ class LLMClient:
         resp = self._openai.chat.completions.create(**kwargs)
         content = resp.choices[0].message.content or ""
         # AA-637 — no token streaming on this last-resort path; a live view gets the whole text.
-        _cb = stream_sink.delta_callback(request.stage)
+        _cb = None if request.json_schema else stream_sink.delta_callback(request.stage)   # S251: as on Converse
         if _cb is not None and content:
             _cb(content)
         in_tok  = resp.usage.prompt_tokens

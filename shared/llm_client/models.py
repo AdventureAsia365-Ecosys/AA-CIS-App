@@ -26,8 +26,9 @@ class LLMRequest(BaseModel):
     # can run reproducibly while content calls that omit it keep provider-default behavior.
     seed:          Optional[int] = None
     # AA-659 — structured output: {"name": str, "schema": dict}. OpenAI -> strict json_schema
-    # response_format; Bedrock Converse -> one forced tool whose input is the schema. The
-    # response content is then the JSON text of that object.
+    # response_format; Bedrock Converse -> one forced tool whose input is the schema; S251: a
+    # legacy haiku/sonnet key -> an instruction with the schema in the system prompt, the reply
+    # checked the same way. The response content is then the JSON text of that object.
     json_schema:   Optional[dict] = None
 
 class LLMResponse(BaseModel):
