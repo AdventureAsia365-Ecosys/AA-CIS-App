@@ -459,6 +459,18 @@
     "capability": "spend.read",
     "module": "api.routers.admin_llm_ops"
   },
+  "GET /admin/supply-content": {
+    "capability": null,
+    "module": "api.routers.admin_supply_content"
+  },
+  "GET /admin/supply-content/status": {
+    "capability": null,
+    "module": "api.routers.admin_supply_content"
+  },
+  "GET /admin/supply-content/{entity_id}": {
+    "capability": null,
+    "module": "api.routers.admin_supply_content"
+  },
   "GET /admin/tenants": {
     "capability": "tenant.read",
     "module": "api.routers.admin"
@@ -978,6 +990,26 @@
   "POST /admin/segment-research/run": {
     "capability": "ops.write",
     "module": "api.routers.admin_segment_research"
+  },
+  "POST /admin/supply-content/{entity_id}/draft": {
+    "capability": "content.write",
+    "module": "api.routers.admin_supply_content"
+  },
+  "POST /admin/supply-content/{entity_id}/unpublish": {
+    "capability": "review.act",
+    "module": "api.routers.admin_supply_content"
+  },
+  "POST /admin/supply-content/{entity_id}/versions": {
+    "capability": "content.write",
+    "module": "api.routers.admin_supply_content"
+  },
+  "POST /admin/supply-content/{entity_id}/versions/{version_id}/publish": {
+    "capability": "review.act",
+    "module": "api.routers.admin_supply_content"
+  },
+  "POST /admin/supply-content/{entity_id}/versions/{version_id}/reject": {
+    "capability": "review.act",
+    "module": "api.routers.admin_supply_content"
   },
   "POST /admin/tenants": {
     "capability": "tenant.write",

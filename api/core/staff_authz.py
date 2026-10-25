@@ -386,6 +386,14 @@ POLICY: dict[tuple[str, str], str] = {
     # ── admin_data_model (AA-894 scope 2) — Developer › Data model: the live ERD from the nightly schema dump
     # (every schema of the shared RDS, PII tags included), admin only.
     ("GET", "/admin/data-model"): OPS_READ,
+
+    # ── admin_supply_content (AA-835) — the review of the customer content of Booking hotels / services. An edit or
+    # a (paid) regenerate is content work; publish, reject and unpublish are review actions. Reads: every staff role.
+    ("POST", "/admin/supply-content/{entity_id}/versions"): CONTENT_WRITE,
+    ("POST", "/admin/supply-content/{entity_id}/draft"): CONTENT_WRITE,
+    ("POST", "/admin/supply-content/{entity_id}/versions/{version_id}/publish"): REVIEW_ACT,
+    ("POST", "/admin/supply-content/{entity_id}/versions/{version_id}/reject"): REVIEW_ACT,
+    ("POST", "/admin/supply-content/{entity_id}/unpublish"): REVIEW_ACT,
 }
 
 # POLICY entries whose route is not on main yet. (method, route) -> the change that adds it. The

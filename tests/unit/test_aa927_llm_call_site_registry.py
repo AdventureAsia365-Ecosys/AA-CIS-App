@@ -100,6 +100,9 @@ LOGGED_CALL_SITES: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
     ("services/places/llm.py", "embed_texts"): _self("services/places/llm.py", "embed_texts"),
     ("services/jobs/place_dedupe_job.py", "_generate_sync"): (
         ("services/jobs/place_dedupe_job.py", "make_models.call"),),
+    # AA-835: the supply content draft (job supply_content_draft); its row right after generate(), the billed
+    # unusable row in the except branch.
+    ("services/supply_content/writer.py", "draft_content"): _self("services/supply_content/writer.py", "draft_content"),
     ("shared/llm_client/column_mapper.py", "detect_column_mapping"): (
         ("shared/llm_client/column_mapper.py", "_log_call"),),
     ("scripts/aa856_global_profile_probe.py", "_invoke_global"): (
