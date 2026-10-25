@@ -295,6 +295,8 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
         await asyncio.wait_for(_supply_pull_part(pool, kinds, out), timeout=part_timeout_s)
     except Exception as e:
         out["supply_pull_error"] = _err(e)
+
+    try:
         await asyncio.wait_for(_writing_memory_part(pool, kinds, ts, out), timeout=part_timeout_s)
     except Exception as e:
         out["writing_memory_error"] = _err(e)
