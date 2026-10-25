@@ -828,3 +828,102 @@ pinned in `test_aa790_writer_round3.py` and still pass.
 - Tests: `test_aa790_fact_invariant.py` 192 (new), `test_aa790_writer_round3.py` 414, `test_aa790_writer_round2.py`
   201, `test_aa790_writer_ai_tells.py` 100. The 98 unit files that import `acp_content_writing` give 4015 passed.
 - No prompt change: `writer_prompt_version` stays `24363541` and `AI_TELLS_VERSION` stays `ai_tells.v3`.
+
+### Round 3: fact-preservation invariant (S252) — fourth review fixes
+
+Input: three blocking findings on acf6b85b. (1) The invariant only knew closed-list words, names and seed words, so
+`_lone_denial`, `_inline_pair` and the pair joins still deleted ordinary practical words ('The spring water is not
+potable; it is glacier melt.' → 'The spring water is glacier melt.'). The property test drew its facts from the same
+lists, so it could not find this. (2) `final_pass` / `settle` called `dedupe` without the seed, and a repeat that adds a
+non-fact word ('…, unroped and unmarked') was still deleted. (3) Clock-time ranges, a thing's age and eras still made
+a seed number a known age.
+
+#### Decisions
+
+- **FI-D7 — a denied word is a fact by default** (`hygiene.fact_tokens`, kind `DENIED`). Every content word in the
+  scope of not / no / never / nor / cannot / n't counts, up to the end of its clause (, ; : . ! ? ( ) — or 'but') and
+  at most 8 words. The edit keeps it only when its own new text still has the word. So 'not a performance of
+  tradition. It is tradition' still joins, because the new sentence keeps 'tradition'. 'not because …' and 'not just /
+  merely / simply …' deny nothing. A name, a settlement or a seed word keeps its own reading (presence anywhere), as
+  before. The one-pass tokeniser stays linear.
+- **FI-D8 — the allowlist of words a denial may cut** (`_DENIABLE_WORDS`). It covers staged, dead or packaged things
+  (museum, performance, relic, backdrop, replica, landscaped, memorial, monument …), the tourist gaze (postcard, photo,
+  view, attraction, glimpse …), things that sell or announce themselves (itself, announce, advertise, sell, charm,
+  age …) and the abstract frame of a reframe (incidental, accidental, gradual, fade, calendar, guidebook, substitute,
+  version, dramatic …). This matches `_STAGED_NOUN_X_RE` in spirit. A word not on the list is kept.
+- **FI-D9 — a repeat delete takes no word out of the piece** (`hygiene.added_words`). Every number and content word of
+  the deleted sentence must still be in the text after the delete. Stop words, evaluative and generic frame words, and
+  a short `_REPEAT_FREE_WORDS` list are left out: the experience words a recap or paraphrase adds ('rewards those who
+  travel with patience', 'offers a quieter rhythm'). The comparison matches plural forms and a rough stem ('holding' =
+  'holds'). This is applied to the near-duplicate deletes, the far / closing repeats and autofix's nearby repeat. Orphan
+  lines and echoed openings keep the fact-token check only.
+- **FI-D10 — `final_pass` and `settle` take `source`.** The default is `hyg.source_text` (seed + Facts), and
+  `_fix_all` forwards it to `dedupe`. The service callers pass `hyg`, so they read the seed with no call-site change.
+- **FI-D11 — the repeat checks are O(the removed words) per candidate.** `dedupe` and `autofix` build one form and stem
+  count of the text per pass. Each candidate is checked against the counts minus its own span (`_TextWithout`).
+  `tidy_after_cut` now runs only on an accepted delete. Before this, each candidate cost O(text). With the stricter
+  rule, most candidates are refused, and an intermediate version took 1 h 42 m on the unit suite. Now the suite runs in
+  46 s.
+- **FI-D12 — ages.** (a) A person range after 'from' needs an age tail ('years') or a clause end. No range counts
+  before a time or visiting tail (am / pm / daily / every day / in the morning / until / can enter …), after
+  'group(s) / party / team / size / max (of)', or when it descends ('9 to 5'). (b) 'aged N', 'aged N years (and
+  over / old)' count only after a person noun or an age-limit word in the same clause, read at most 80 characters back
+  (`_AGE_LOOKBACK_CUE_RE`). 'Middle / Stone / Bronze / Iron … Age(s) N' is an era. A plural noun after 'Age(s) N' is a
+  count. The output side skips a thing's 'aged N' too, so a seed's 'single malt aged 12 years' copied into the text is
+  not flagged now that the seed no longer makes 12 known.
+
+#### How each finding is handled
+
+| Finding | Handled by | Result |
+|---|---|---|
+| 1 open-class practical words cut by lone denial / inline pair / joins | FI-D7, FI-D8 | The 12 quoted sentences are unchanged with no seed and with the unrelated seed, at paragraph start and mid-paragraph (48 placements: 48 changed on acf6b85b, 0 now). Each refusal logs `drops a fact: potable` etc. |
+| 1 property test drawn from the closed lists | 12 open-class phrases added (potable, paved, waymarked, insured, lit, air-conditioned, smoking, plowed, covered, insulated, unmarked, unroped) | On acf6b85b, 9 of the 10 frames lose a planted word. Now none do. |
+| 2 `final_pass` / `settle` without the seed | FI-D10 | A spy test checks that the seed reaches `dedupe`. |
+| 2 leech / lifejackets / unroped-unmarked repeats deleted | FI-D9 (+ FI-D7 for 'no lifejackets') | autofix → final_pass → settle leave all four unchanged, with and without the seed. F13_repeat still reports them, so the repair rewrites them. |
+| 3 clock-time person ranges | FI-D12 (a) | 'Visitors from 10 to 12 can enter', 'Students from 7 to 9 in the morning', 'Kids from 9 to 5 daily' → no known age |
+| 3 thing ages, eras, 'Group of travellers 2–12' | FI-D12 (b), `_GROUP_BEFORE_RE` | Every repro → no known age. The positive cues ('Minimum age is 12', 'Children 6–12', 'under-5s', 'Riders must be at least 14', 'children from 8 years', 'Ages 6–12') still count. |
+
+#### Changed (vs the brief)
+
+- The repeat rule is "every content word stays in the piece", not "adds no word missing from the sentence it repeats".
+  A word the piece tells elsewhere is not lost. The strict form also refused the panel's r3 #12 / #17 / #19 recap and
+  paraphrase deletes, which FI-D5 kept deliberately.
+- The denied-word check compares against the edit's own new text (presence), not by count. The joined affirmation
+  often repeats the denied noun ('It is tradition').
+
+#### Tradeoffs
+
+- **Proposals now refused (each has a refusal test):** 'The hall is not grey but very green.' (grey), 'The bridge is
+  not the original. It was rebuilt.' (original), 'Tsaatan settlements are not permanent villages. They are seasonal
+  camps …' (permanent; a real fact), 'The reindeer are not raised primarily for meat; …' without the seed (meat; the
+  semicolon split goes with the refused edit), 'The valley's story does not begin in the capital. It begins …'
+  (capital; a named place still joins when the piece names it again), 'The crater does not announce itself from the
+  ridge …' (ridge), '… not from any trick of the light.' (light).
+- **Test fixtures that changed:** the round-2 crater / bridge / grey fixtures now use a staged noun or no place phrase.
+  The relocation hook names Thimphu. `missing_facts(['This is not the end of the climb.'])` now also reports 'climb'.
+  In the S234 round-4 fixtures, the caldera repeat needs the piece to name the cone, the green steppe and the patches
+  of forest, and the r3 #12 recap needs the piece to name the caldera, before they are deleted.
+- **Hold risk.** More repeats stay for F13_repeat. On the 60 judge-view texts, autofix makes 2 repeat deletes and
+  final_pass makes 0, before and after. 8 texts have final-pass residue, before and after.
+
+#### Should know
+
+- **$0 census (local scratch scripts, not committed; before = acf6b85b, after = dd5b649c), 60 judge-view texts
+  (`panel-batch-*.json`, seed from `source_facts`):**
+  - `ai_tells.rewrite` edits 78 → 77, refusals 6 → 7, texts changed 33 → 33. One output differs: ', not X' 6 → 5, the
+    "trick of the light" tail. The 'permanent villages' join was already refused.
+  - `final_pass` (seed passed) deletes 0 → 0. autofix repeat deletes 2 → 2. Known ages over the 60 sources: 0 → 0.
+  - Panel ai_tells quotes (this script's split: 152 matchable): 34 by the pass, 39 by residue, 79 missed. Same before
+    and after.
+- Linear time: `_AGE_TAIL_RE`, `_TIME_TAIL_RE`, `_GROUP_BEFORE_RE`, `_AGE_LOOKBACK_CUE_RE`, `_ERA_BEFORE_RE`,
+  `_AGED_BEFORE_RE` and the changed `_SRC_PERSON_RANGE_RE` are in the round-3 regex list. It gains adversarial inputs
+  for range tails, 'aged N years' runs, era runs, 'every' and 'groups of', and each input stays under 50 ms on 8000
+  characters. The invariant check also covers inputs for the denial scope ('not' runs, 'no X,' runs). `added_words` and
+  `_repeat_delete_ok` each run under 50 ms on 8000 characters. dedupe with 100 refused near-duplicates (~8000
+  characters) takes about 0.3 s.
+- New `hygiene` API: `DENIED`, `added_words`; `text_integrity.final_pass(…, source=None)`,
+  `settle(…, source=None)`.
+- Tests: `test_aa790_fact_invariant.py` 308, `test_aa790_writer_round3.py` 420, `test_aa790_writer_round2.py` 203,
+  `test_aa790_writer_ai_tells.py` 100, `test_aa768_s234_round4.py` 70. The 101 unit files that import
+  `acp_content_writing` give 4170 passed.
+- No prompt change: `writer_prompt_version` and `AI_TELLS_VERSION` stay the same.
