@@ -103,17 +103,26 @@ def _tour(tid, sid, text="d"):
 
 @pytest.mark.asyncio
 async def test_plan_ids_keeps_request_order_one_per_source_and_reports_skips(monkeypatch):
+    from services.places import components as comp_mod
     from services.places import days as days_mod
     from services.places import store
     live = [_tour(T1, S1), _tour(T2, T2)]
     monkeypatch.setattr(store, "live_tours_by_ids", AsyncMock(return_value=live))
+    atoms = [{"atom_id": "a1", "itinerary_day": 1, "place": "Erdene Zuu", "activity_type": "culture", "text": "x"}]
+    tour_atoms = AsyncMock(return_value=atoms)
+    monkeypatch.setattr(store, "tour_atoms", tour_atoms)
     fresh = {"source_id": T2, "tour_id": T2, "status": "ok", "rule_version": days_mod.RULE_VERSION,
-             "days_hash": days_mod.days_hash("d")}
+             "days_hash": days_mod.days_hash("d"), "components_hash": comp_mod.components_hash(atoms)}
     conn = MagicMock()
     conn.fetch = AsyncMock(return_value=[fresh])
     picked, skipped = await bf.plan_ids(conn, [T3, S1, T1, T2], only_stale=True)
     assert [t["tour_id"] for t in picked] == [T1]            # S1 (source id) and T1 are the same source: once
     assert skipped == {"not_live": [T3], "fresh": [T2]}
+    assert [c.args[1] for c in tour_atoms.await_args_list] == [T2]     # atoms read only for the fresh-looking tour
+    # AA-989: same text, other atoms (a re-upload / action-only re-atomize) → stale
+    tour_atoms.return_value = [dict(atoms[0], atom_id="a1_new")]
+    picked, skipped = await bf.plan_ids(conn, [T2], only_stale=True)
+    assert [t["tour_id"] for t in picked] == [T2] and skipped["fresh"] == []
     picked, skipped = await bf.plan_ids(conn, [T2, T1], only_stale=False)
     assert [t["tour_id"] for t in picked] == [T2, T1] and skipped == {"not_live": [], "fresh": []}
     assert picked[0]["build"] == fresh and picked[1]["build"] is None

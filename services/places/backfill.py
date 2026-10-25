@@ -113,12 +113,23 @@ async def wave_busy(conn) -> dict:
     return out
 
 
-def is_stale(tour: dict, build: Optional[dict]) -> bool:
+def is_stale(tour: dict, build: Optional[dict], components_hash: Optional[str] = None) -> bool:
+    """Stale = no ok build of this version, another rule version, other day text or (AA-989, when the caller read
+    the atoms) other components: an atom-only change (re-upload, action-only re-atomize) is stale too."""
     if build is None or build.get("status") != "ok" or str(build.get("tour_id")) != tour["tour_id"]:
         return True
     if build.get("rule_version") != days_mod.RULE_VERSION:
         return True
-    return build.get("days_hash") != days_mod.days_hash(tour.get("aa_itineraries") or "")
+    if build.get("days_hash") != days_mod.days_hash(tour.get("aa_itineraries") or ""):
+        return True
+    return components_hash is not None and build.get("components_hash") != components_hash
+
+
+async def _is_stale_read(conn, tour: dict, build: Optional[dict]) -> bool:
+    """is_stale(), reading the tour's atoms only when the cheap checks say fresh."""
+    if is_stale(tour, build):
+        return True
+    return is_stale(tour, build, comp_mod.components_hash(await store.tour_atoms(conn, tour["tour_id"])))
 
 
 def normalize_tour_ids(ids: list[str]) -> list[str]:
@@ -142,7 +153,8 @@ async def plan_ids(conn, tour_ids: list[str], *, only_stale: bool) -> tuple[list
     for t in sorted(tours, key=lambda x: x["tour_id"]):
         by_source.setdefault(t["source_id"], t)
     builds = {r["source_id"]: dict(r) for r in await conn.fetch(
-        "SELECT source_id, tour_id::text AS tour_id, status, rule_version, days_hash FROM geo.tour_build "
+        "SELECT source_id, tour_id::text AS tour_id, status, rule_version, days_hash, components_hash "
+        "FROM geo.tour_build "
         "WHERE source_id = ANY($1::text[])", [t["source_id"] for t in tours])} if tours else {}
     picked, seen, not_live, fresh = [], set(), [], []
     for i in ids:
@@ -154,7 +166,7 @@ async def plan_ids(conn, tour_ids: list[str], *, only_stale: bool) -> tuple[list
             continue
         seen.add(t["source_id"])
         b = builds.get(t["source_id"])
-        if only_stale and not is_stale(t, b):
+        if only_stale and not await _is_stale_read(conn, t, b):
             fresh.append(i)
             continue
         picked.append({**t, "build": b})
@@ -165,12 +177,13 @@ async def plan(conn, *, country: Optional[str], limit: int, only_stale: bool) ->
     limit = max(1, min(int(limit), MAX_TOURS))
     tours = sorted(await store.live_tours(conn, country), key=lambda t: t["source_id"])
     builds = {r["source_id"]: dict(r) for r in await conn.fetch(
-        "SELECT source_id, tour_id::text AS tour_id, status, rule_version, days_hash FROM geo.tour_build "
+        "SELECT source_id, tour_id::text AS tour_id, status, rule_version, days_hash, components_hash "
+        "FROM geo.tour_build "
         "WHERE source_id = ANY($1::text[])", [t["source_id"] for t in tours])}
     picked = []
     for t in tours:
         b = builds.get(t["source_id"])
-        if only_stale and not is_stale(t, b):
+        if only_stale and not await _is_stale_read(conn, t, b):
             continue
         picked.append({**t, "build": b})
         if len(picked) >= limit:

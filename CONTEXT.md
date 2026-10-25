@@ -485,11 +485,23 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     `write_strategy` (`segment`/`landing` upsert; `score`/`route` versioned-swap — the SQL itself
     is unchanged, only declared). The orchestrator `run_stages(names, scope, pool=, progress=)`
     runs a named list in order. Two lists: `TOUR_STAGES` (segment→landing→score→route, a tour's
-    publish / atom edit) and `PLATFORM_STAGES` (landing→score→route, platform score+route only).
+    publish / atom edit) and `PLATFORM_STAGES` (landing→score→route→segment_gc, platform score+route, then the
+    AA-988 orphan-Segment clean-up).
     The `recompute` job and the `a3_atomize` path (its inline segment matching) run their work
     only through `run_stages`; the thin wrappers `recompute_segment_score_route` /
     `recompute_rankings_and_routes` in `services/export/handler.py` map the stage results back to
-    the Jobs-page result keys (`{segment, ranking, route}` / `{ranking, route}`).
+    the Jobs-page result keys (`{segment, ranking, route}` / `{ranking, route, segment_gc}`).
+  - **Segments follow a re-atomize (AA-988)**: the `segment` stage drops the member rows of its tour's dead atoms
+    (soft-deleted by the re-atomize, or empty-day markers) in its write transaction; the `segment_gc` stage
+    (`services/acp_contract/segment_gc.py`) deletes Segments nothing refers to any more (no member on a live atom, no
+    ranking row, no alias row either side, no Subject, brand-fit cache row, current / Subject-named route or
+    angle-request route list) and their dead member rows. Mode env `SEGMENT_GC_MODE` = `report` (default, counts and
+    samples in the `recompute` result) | `apply` | `off`; `apply` holds (`held_volume`) above `SEGMENT_GC_MAX`
+    (10,000). Lock `acp:segment_write`: every segment run holds it shared from its candidate read to its write; the
+    GC takes it exclusive (30 s lock timeout → `skipped`). The `a3_atomize` path re-lands the Segments the tour had
+    BEFORE its segment stage too (cache clear + recompute scope), and then runs the $0 place-card relink
+    (`place_cards.relink_tour_place_cards`, `max_places=0`, result key `place_cards_relink`) before `place_extract`
+    (AA-989).
 - **Bedrock Batch for S1 (AA-606)**: `shared/llm_client/bedrock_batch.py` +
   `services/content_generation/s1_batch.py`, endpoints `POST /admin/s1-batch/submit` and
   `GET /admin/s1-batch/{job_id}`. Built and merged, but **never run for real**: AWS has not yet
@@ -573,11 +585,12 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   `match_destinations` it fills empty `shared.destinations.cover_image_url` (read by the TripPlanner)
   — off until the destinations are re-extracted from the rerun tours (the schedule never sets it).
 - **Place pipeline (AA-712, ADR 0007, migration 226)**: CIS — not TripPlanner — computes each live
-  tour's day skeleton (start / end / overnight), places (= itinerary components, stable uuid5 ids),
+  tour's day skeleton (start / end / overnight), places (= itinerary components; id = uuid5(source, day, itinerary spelling, country, activity) at a place's first build, and AA-989: a rebuild keeps the previous row's id for the same place respelt, retyped or moved a day — `components.carry_over_ids`, unambiguous one-to-one pairs only — because TripPlanner trips pin components by id; `components_hash` includes the atom ids),
   geocoded destinations and the tour graph (stops, nodes, edges, legs, junctions) into the CIS-internal
   schema `geo`, keyed by `source_id` (catalog identity). Jobs (`services/jobs/place_*`,
-  `tour_graph_job.py`; logic in `services/places/`): `place_extract` per tour (after A3 atomize,
-  set-active / restore, admin backfill `POST /admin/places/backfill`, ≤ 50 tours of a country or an explicit
+  `tour_graph_job.py`; logic in `services/places/`): `place_extract` per tour (after A3 atomize — automatic only
+  with `PLACE_PIPELINE_AUTO` on or, AA-989, when the tour's source already has a `geo.tour_build` row ("maintain
+  what exists"; coverage expansion stays gated, S236) — set-active / restore, admin backfill `POST /admin/places/backfill`, ≤ 50 tours of a country or an explicit
   `tour_ids` list ≤ 100 (AA-847), dry-run cost estimate priced at each stage's live route and catalog price,
   refused during a wave); `place_geocode` (debounced, the ONLY writer of
   `shared.destinations` coordinates) — the model proposes a point (`a3_place_locate`), **Geoapify**
@@ -1693,7 +1706,9 @@ label: an A3 run relabels only ids it claimed (its atoms' prior Segments + its p
 member left, re-mints a fresh id that collides with another country's Segment or an alias old id
 (`sha256(id|country|aa857|n)`), and rolls back if a written id would gain a second country among
 its live atoms (AA-857). Subjects stored on an id that later merged resolve through
-`atom_segment_alias` to the live id (an id that still has members is live, never followed).
+`atom_segment_alias` to the live id (an id that still has members is live, never followed). A Segment with no
+reference left (AA-988: no live member, ranking, alias, Subject, brand-fit or route reference) is deleted by the
+`segment_gc` recompute stage; it is re-minted with the same id if its place / verb comes back.
 _Avoid_: cluster, group, topic.
 
 **Search Demand**:
