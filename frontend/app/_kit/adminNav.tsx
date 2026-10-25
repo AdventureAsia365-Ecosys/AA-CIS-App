@@ -16,7 +16,7 @@
 import {
   Gauge, Users, Upload, Wand2, ClipboardList, Library, Settings, Wallet, UserCog, Radio,
   Puzzle, ListChecks, Scale, Search, Image as ImageIcon, BookOpen, BarChart3, ShieldCheck,
-  Boxes, ScrollText, ChartPie, BellRing, MapPin, Network, Eraser, Building2, FileText,
+  Boxes, ScrollText, ChartPie, BellRing, MapPin, Network, Eraser, Building2, FileText, Hotel,
 } from "lucide-react";
 import { canSeePage } from "@/lib/rbac";
 
@@ -88,6 +88,7 @@ export const NAV_GROUPS: NavGroup[] = [
     { href: "/admin/photos", icon: <ImageIcon size={16} />, label: "Photos" },
     { href: "/admin/places", icon: <MapPin size={16} />, label: "Places" },  // AA-847
     { href: "/admin/aa-content", icon: <FileText size={16} />, label: "AA content (CRM)" },  // AA-977
+    { href: "/admin/supply-content", icon: <Hotel size={16} />, label: "Supply content (Booking)" },  // AA-835
   ] },
   { label: "Intelligence", section: "cis", items: [
     { href: "/admin/atom-curation",    icon: <Puzzle size={16} />, label: "Social Content" },

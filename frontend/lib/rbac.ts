@@ -80,6 +80,10 @@ export const PAGE_RULES: PageRule[] = [
   // AA-977 — AA content for the partner CRM: every staff role reads; drafts need content.write, publish / retire /
   // restore need master.admin (backend staff_authz POLICY; the page hides the controls with can()).
   { prefix: "/admin/aa-content", roles: ALL_STAFF },
+  // AA-835 — supply content of AA-Booking hotels / services (Booking's "Edit in CIS" link opens /admin/supply-content/<id>):
+  // every staff role reads; edits / regenerate need content.write, publish / reject / unpublish review.act (backend
+  // staff_authz POLICY; the page hides the controls with can(), the BFF refuses every write of the viewer).
+  { prefix: "/admin/supply-content", roles: ALL_STAFF },
 ];
 
 export function pageRule(pathname: string): PageRule | undefined {
