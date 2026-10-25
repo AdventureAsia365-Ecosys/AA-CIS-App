@@ -656,6 +656,181 @@ def content_words(sentence: str, ignore: frozenset = frozenset()) -> list[str]:
     return [w[:-1] if w.endswith("s") and len(w) > 4 else w for w in words]
 
 
+# ---------------------------------------------------------------- fact tokens (AA-790 round 3, S252)
+
+# The fact-preservation invariant: code that deletes words for style (ai_tells.rewrite, the repeat deletes of
+# dedupe / autofix) may remove a sentence or a clause only when every FACT TOKEN of what it removed still appears in
+# the text after the edit. Three review rounds kept finding a new rule chain that deleted a fact (a join the verdict
+# rule then cut, a denial that was itself the access rule, a place choice folded away …); the rules stay as
+# proposers and this check is the arbiter, so a chain cannot lose a fact whatever its rules. A token is a fact when
+# it is a number, a unit, a time / day / month / season / weather word, a limit or rule word, a person / audience
+# noun, a place / amenity / access / vehicle noun, a position word, a superlative (or the word after most / least),
+# a practical word, a proper name (a capitalised word that does not open its sentence or line), or any other
+# content word the seed + Facts use. Purely evaluative words are never facts. Closed lists, singular forms (the
+# plural forms are matched through _forms).
+_FACT_NUMBER_WORDS = frozenset("""zero one two three four five six seven eight nine ten eleven twelve thirteen
+fourteen fifteen sixteen seventeen eighteen nineteen twenty thirty forty fifty sixty seventy eighty ninety
+hundred thousand million dozen half first second third fourth fifth sixth seventh eighth ninth tenth last
+final""".split())
+_FACT_UNITS = frozenset("""km kilometre kilometer metre meter mile ft feet foot cm mm kg kilo gram litre liter hour hr
+minute min day night week month year decade century centurie percent degree celsius fahrenheit usd dollar euro
+nu ngultrum baht dong kip tugrik""".split())
+_FACT_TIME_WORDS = frozenset("""monday tuesday wednesday thursday friday saturday sunday weekend weekday january
+february march april june july august september october november december spring summer autumn winter monsoon
+season seasonal dry wet rainy rain snow snowfall ice icy fog foggy mist misty heat humid humidity cold hot
+warm cool chilly freezing wind windy storm weather temperature dawn dusk sunrise sunset morning afternoon
+evening noon midday midnight today tonight tomorrow daily weekly monthly annual annually yearly early late
+overnight daytime festival holiday""".split())
+_FACT_LIMIT_WORDS = frozenset("""only except until till unless after before without beyond within closed shut open
+passable impassable accessible inaccessible allowed permitted forbidden prohibited banned restricted required
+mandatory compulsory included excluded extra free maximum minimum max limit limited""".split())
+_FACT_PERSON_WORDS = frozenset("""traveller traveler family families kid child children adult teen teenager youngster
+explorer adventurer couple parent guest hiker trekker walker climber rider swimmer nonswimmer passenger
+pedestrian cyclist motorist driver beginner novice infant toddler baby babie senior elderly visitor tourist
+foreigner local pilgrim devotee worshipper monk nun lama priest novice women woman men man girl boy lady ladie
+gentleman gentlemen group solo pregnant member student pupil vegetarian vegan wheelchair user people person
+anyone buddhist hindu muslim christian layman laypeople""".split())
+_FACT_PLACE_WORDS = frozenset("""road track path trail footpath bridge gate entrance exit door ferry ferrie boat pier
+jetty dock harbour harbor port station bus buse train car jeep vehicle taxi bike bicycle horse pony ponie
+cable lift stair step ladder ramp toilet restroom bathroom shower water drinking tap electricity power wifi
+signal phone mobile coverage internet heating heated heater alcohol beer wine food shop market cafe restaurant
+kitchen room dining terrace courtyard chapel shrine hall lodge hotel homestay guesthouse camp campsite camping
+tent parking beach pool river lake sea current swimming swim bathing fishing diving guided guide public
+private licensed staffed ticket permit cash card atm online booking reservation altitude elevation halfway
+middle end start top summit bottom base edge side inner outer upper lower north south east west northern
+southern eastern western above below inside outside upstream downstream uphill downhill""".split())
+SUPERLATIVE_WORDS = frozenset("""best worst highest lowest longest shortest hardest easiest coldest hottest warmest
+coolest wettest driest busiest quietest calmest oldest newest youngest biggest largest smallest steepest
+deepest shallowest fastest quickest slowest nearest closest furthest farthest safest cheapest latest earliest
+toughest windiest sunniest rainiest muddiest narrowest widest emptiest fullest""".split())
+EVALUATIVE_WORDS = frozenset("""important striking telling memorable rewarding interesting remarkable significant
+meaningful beautiful moving powerful revealing compelling evocative satisfying special impressive affecting
+atmospheric extraordinary fascinating intriguing genuine genuinely truly real really rare unique deep deeper
+richer quiet subtle honest simple single whole particular specific concrete different living""".split())
+# What a practical, rule or access sentence turns on (ai_tells _PROTECTED_RE / _PRACTICAL_RE, as words).
+_FACT_PRACTICAL_WORDS = frozenset("""allow allowed permit permitted possible suitable safe unsafe include included
+includes including available require required requires recommended optional guaranteed offered necessary must
+dangerous risk compulsory essential obligatory charge charged charges cost costs costly fee paid payable price
+priced refundable bookable booked reachable easy easier difficult difficulty hard strenuous steep tiring
+demanding physical far long short deep shallow crowded busy noisy cheap cheaper expensive affordable stroller
+pram tipping""".split())
+# Content words that never make a seed fact on their own: the piece talking about itself and generic frame words.
+_FACT_GENERIC = frozenset("""trip journey route section stop moment part opening point kind sort type thing place
+story experience way day referred called known named spelled rendered""".split()) | EVALUATIVE_WORDS
+# The seed's own line labels and boilerplate (atom_seed.compose_seed): never seed words of a piece.
+_SEED_BOILERPLATE = ("(do not place it in any other town, region or country)",
+                     "(do not name any other country or region for it)", "(the itinerary calls it",
+                     "Place background (checked facts about the place itself — you may use these; "
+                     "they say nothing about what this trip does):")
+_SEED_LABEL_RE = re.compile(r"^(?:Source itinerary|Why it matters|Location|Naming|Season|Status):|\[Fact id=[^\]\n]*\]"
+                            r"|\bof the trip\b", re.M)
+# A settlement noun is a topic, like a name: kept when the text still names it ('present the village as a stage').
+_FACT_TOPIC_WORDS = frozenset("village town city hamlet settlement".split())
+_FACT_CLASSES = (_FACT_NUMBER_WORDS | _FACT_TIME_WORDS | _FACT_LIMIT_WORDS | _FACT_PERSON_WORDS | _FACT_PLACE_WORDS
+                 | SUPERLATIVE_WORDS | _FACT_PRACTICAL_WORDS)
+_FACT_TOKEN_RE = re.compile(r"[^\W\d_]+|\d+|[%°]")
+# A word right before a particle is a phrasal verb or noun, not its fact sense: 'warm-up', 'check-in', 'opens up'
+# ('up to 12' is a limit and stays).
+_PARTICLE_AFTER_RE = re.compile(r"-(?:up|in|off|out|over|down)\b|[ \t]up\b(?![ \t]+to\b)")
+_SENTENCE_BREAK_CHARS = frozenset(".!?\n")
+
+
+def _forms(token: str) -> tuple:
+    """The forms one lower-case token is matched by: itself and its singular candidates ('leeches' → leeches,
+    leeche, leech; 'ferries' → …, ferry). Two tokens match when their forms meet."""
+    t = token
+    out = [t]
+    if len(t) > 3 and t.endswith("s") and not t.endswith("ss"):
+        out.append(t[:-1])
+        if len(t) > 4 and t.endswith("es"):
+            out.append(t[:-2])
+        if len(t) > 4 and t.endswith("ies"):
+            out.append(t[:-3] + "y")
+    return tuple(out)
+
+
+def word_forms(text: Optional[str]) -> frozenset:
+    """Every form of every word of ``text`` (citation tags out): the set a fact token is looked up in. Linear."""
+    return frozenset(f for m in _FACT_TOKEN_RE.finditer(fold(strip_tags(text or ""))) for f in _forms(m.group(0)))
+
+
+def source_forms(source: Optional[str]) -> frozenset:
+    """``word_forms`` of the seed + Facts without its line labels and boilerplate, stop words and generic frame
+    words: the seed-word fact class."""
+    text = source or ""
+    for b in _SEED_BOILERPLATE:
+        text = text.replace(b, " ")
+    text = _SEED_LABEL_RE.sub(" ", text)
+    return frozenset(f for f in word_forms(text) if f not in _STOP and f not in _FACT_GENERIC and len(f) > 2)
+
+
+def fact_tokens(text: Optional[str], seed_forms: frozenset = frozenset(), *,
+                heading: bool = False) -> list[tuple[str, bool]]:
+    """The fact tokens of ``text`` in order: (lower-case token, closed) where ``closed`` marks the closed classes
+    (number, unit, time, limit, person, place / amenity, position, superlative, practical word) and False a name or
+    a seed word. One pass, linear in the text. A ``heading`` is a title-case label over its section: only its seed
+    and settlement words count (an angle label's 'Two Worlds', 'Family Anchor' are brief words, not facts)."""
+    raw = strip_tags(text or "")
+    out: list[tuple[str, bool]] = []
+    prev_end, prev = -1, ""
+    for m in _FACT_TOKEN_RE.finditer(raw):
+        word = m.group(0)
+        t = fold(word)
+        forms = _forms(t)
+        number_before = prev.isdigit() or prev in _FACT_NUMBER_WORDS
+        if heading or _PARTICLE_AFTER_RE.match(raw, m.end()):  # 'warm-up', 'opens up', 'check-in': phrasal
+            pass
+        elif (word.isdigit() or word in "%°" or any(f in _FACT_CLASSES for f in forms)
+                or (number_before and (t == "m" or any(f in _FACT_UNITS for f in forms)))  # '900 m', 'two hours'
+                or (prev in ("most", "least") and t not in EVALUATIVE_WORDS and t not in _STOP)):
+            out.append((t, True))
+        else:
+            gap = raw[prev_end:m.start()] if prev_end >= 0 else "."
+            initial = prev_end < 0 or any(c in _SENTENCE_BREAK_CHARS for c in gap)
+            if ((not heading and not initial and word[:1].isupper() and word != "I") or t in _FACT_TOPIC_WORDS
+                    or (len(t) > 2 and t not in _STOP and t not in _FACT_GENERIC
+                        and any(f in seed_forms for f in forms))):
+                out.append((t, False))
+        prev_end, prev = m.end(), t
+    return out
+
+
+def _form_counts(texts: list[str]) -> dict[str, int]:
+    """How many words of ``texts`` each form stands for (each word counts once per form)."""
+    counts: dict[str, int] = {}
+    for text in texts:
+        for m in _FACT_TOKEN_RE.finditer(fold(strip_tags(text or ""))):
+            for f in _forms(m.group(0)):
+                counts[f] = counts.get(f, 0) + 1
+    return counts
+
+
+def missing_facts(olds: list[str], new: str, after_forms: frozenset, seed_forms: frozenset = frozenset(), *,
+                  heading: bool = False, closed_by_count: bool = True) -> list[str]:
+    """The facts an edit that replaced the ``olds`` texts with ``new`` loses, each once, in order; empty = the edit
+    keeps every fact. A name or a seed word is kept when the text after the edit still has it (``after_forms`` =
+    its ``word_forms``). A closed-class token (a number, a limit, a time, an audience, a place, a superlative …) is
+    kept only when ``new`` carries it as often as the ``olds`` did (``closed_by_count``): the same word elsewhere
+    in the piece is another claim ('The day ends at the camp.' does not keep 'This is not the end of the climb.').
+    A delete of a repeat (hygiene.dedupe) passes ``closed_by_count=False``: its facts are, by design, elsewhere.
+    Linear in the texts."""
+    old_counts = new_counts = None
+    out: dict[str, None] = {}
+    for r in olds:
+        for t, closed in fact_tokens(r, seed_forms, heading=heading):
+            if t in out:
+                continue
+            forms = _forms(t)
+            if closed and closed_by_count:
+                if old_counts is None:
+                    old_counts, new_counts = _form_counts(olds), _form_counts([new])
+                if max(new_counts.get(f, 0) for f in forms) < max(old_counts.get(f, 0) for f in forms):
+                    out[t] = None
+            elif not any(f in after_forms for f in forms):
+                out[t] = None
+    return list(out)
+
+
 def _grams(words: list[str], n: int) -> set:
     return {tuple(words[i:i + n]) for i in range(len(words) - n + 1)}
 
@@ -1430,12 +1605,22 @@ def _closing_zone(text: str, cta: Optional[str]) -> Optional[tuple[int, int]]:
     return start, spans[k]["end"]
 
 
-def dedupe(text: str, ignore: frozenset = frozenset(), cta: Optional[str] = None) -> tuple[str, list[str]]:
+def _keeps_facts(after: str, removed: str, seed: frozenset) -> bool:
+    """AA-790 round 3 (S252) — the fact-preservation invariant for a repeat delete: every fact token of the removed
+    words is still in the text after the delete (a repeat's facts are, by design, in the sentence it repeats; when
+    one is not, the delete would lose it). Linear in the text."""
+    return not missing_facts([removed], "", word_forms(after), seed, closed_by_count=False)
+
+
+def dedupe(text: str, ignore: frozenset = frozenset(), cta: Optional[str] = None,
+           source: Optional[str] = None) -> tuple[str, list[str]]:
     """Fix the near-duplicates that are safe to fix in place: delete a later sentence that copies an
     earlier one, or a short one (≤ 12 copy words) that repeats a figure with ≥ 60% of its words
     already in the earlier sentence; trim an echoed opening phrase ('On day three, the route…' →
-    'The route…'); delete an orphan line. A delete happens only when no pronoun is orphaned. The rest
-    is left for F13_repeat. Returns (text, log)."""
+    'The route…'); delete an orphan line. A delete happens only when no pronoun is orphaned and every fact
+    token of what it removes is still in the text (``_keeps_facts``; ``source`` = seed + Facts, for the
+    seed-word class). The rest is left for F13_repeat. Returns (text, log)."""
+    seed = source_forms(source) if source else frozenset()
     log: list[str] = []
     for _ in range(10):  # one edit per pass: offsets move after each
         changed = False
@@ -1447,24 +1632,29 @@ def dedupe(text: str, ignore: frozenset = frozenset(), cta: Optional[str] = None
                 m = _LEAD_PHRASE_RE.match(later["text"])
                 if m and all(w in copy_words(m.group(0), ignore) for w in d["shared"].split()):
                     rest = later["text"][m.end():]
-                    text = text[:later["start"]] + rest[:1].upper() + rest[1:] + text[later["end"]:]
+                    trial = text[:later["start"]] + rest[:1].upper() + rest[1:] + text[later["end"]:]
+                    if not _keeps_facts(trial, m.group(0), seed):
+                        continue
+                    text = trial
                     log.append(f"trimmed an echoed opening ('{m.group(0).strip(', ')}'): '{later['clean'][:160]}'")
                     changed = True
                     break
                 continue
             contained = sum(w in ew for w in lw) / len(lw) if lw else 0.0
             if d["kind"] in _DELETE_KINDS or (len(lw) <= _DUP_SHORT_WORDS and contained >= _DUP_CONTAINED):
-                if _dup_safe_delete(text, later):
-                    after = later["end"] + 1 if text[later["end"]:later["end"] + 1] == " " else later["end"]
-                    text = tidy_after_cut(text[:later["start"]] + text[after:])
+                after = later["end"] + 1 if text[later["end"]:later["end"] + 1] == " " else later["end"]
+                trial = tidy_after_cut(text[:later["start"]] + text[after:])
+                if _dup_safe_delete(text, later) and _keeps_facts(trial, later["clean"], seed):
+                    text = trial
                     log.append(f"deleted a sentence that {d['why']}: '{later['clean'][:160]}'")
                     changed = True
                     break
         if not changed:
             for o in orphan_lines(text, ignore, cta):
                 span = next(s for s in _dup_spans(text, cta) if s["clean"] == o)
-                if _dup_safe_delete(text, span):
-                    text = tidy_after_cut(text[:span["start"]] + text[span["end"]:])
+                trial = tidy_after_cut(text[:span["start"]] + text[span["end"]:])
+                if _dup_safe_delete(text, span) and _keeps_facts(trial, o, seed):
+                    text = trial
                     log.append(f"deleted a line that adds nothing to the sentences around it: '{o[:160]}'")
                     changed = True
                     break
@@ -1493,9 +1683,10 @@ def dedupe(text: str, ignore: frozenset = frozenset(), cta: Optional[str] = None
                                for e in prior)
                 else:
                     real = any(adds_nothing(r, e, ignore) for e in prior)
-                if real and _dup_safe_delete(text, span):
-                    after = span["end"] + 1 if text[span["end"]:span["end"] + 1] == " " else span["end"]
-                    text = tidy_after_cut(text[:span["start"]] + text[after:])
+                after = span["end"] + 1 if text[span["end"]:span["end"] + 1] == " " else span["end"]
+                trial = tidy_after_cut(text[:span["start"]] + text[after:])
+                if real and _dup_safe_delete(text, span) and _keeps_facts(trial, r, seed):
+                    text = trial
                     log.append(f"deleted a sentence that repeats an earlier one: '{r[:160]}'")
                     changed = True
                     break
@@ -2686,12 +2877,15 @@ def autofix(content_text: str, ctx: HygieneContext) -> tuple[str, list[str]]:
     def deleted(k: int) -> bool:  # a trimmed sentence is still there and can still repeat
         return k in edits and not edits[k][0]
 
+    seed = source_forms(ctx.source_text)
     for a, i in enumerate(prose):
         if deleted(i) or _is_cta(spans[i]["clean"], ctx.cta):
             continue
         for j in prose[max(0, a - _DUP_WINDOW):a]:
             if not deleted(j) and near_verbatim(spans[i]["clean"], spans[j]["clean"], ignore):
-                edits[i] = ("", f"deleted a repeat of a nearby sentence: '{spans[i]['clean'][:160]}'")
+                # AA-790 round 3: every fact of the repeat is still in the text without it (the fact invariant)
+                if _keeps_facts(text[:spans[i]["start"]] + text[spans[i]["end"]:], spans[i]["clean"], seed):
+                    edits[i] = ("", f"deleted a repeat of a nearby sentence: '{spans[i]['clean'][:160]}'")
                 break
     if edits:
         for i in sorted(edits, reverse=True):
@@ -2707,7 +2901,7 @@ def autofix(content_text: str, ctx: HygieneContext) -> tuple[str, list[str]]:
 
     # S234 round 3 — near-duplicates the window rule above does not see (a figure told twice, an echoed
     # opening, an orphan line) and a moment repeated under another moment's heading
-    text, more = dedupe(text, ignore, ctx.cta)
+    text, more = dedupe(text, ignore, ctx.cta, ctx.source_text)
     log += more
     from services.acp_content_writing.trip_facts import fix_misplaced
     text, more = fix_misplaced(text, ctx.moments, ctx.cta)

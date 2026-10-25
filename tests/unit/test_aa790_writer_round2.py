@@ -32,7 +32,8 @@ def _run(text: str, ctx: TellContext = CTX) -> tuple[str, list[str]]:
 
 @pytest.mark.parametrize("before, after", [
     # a 'do' denial with a personifying verb + its affirmation (the volcano / Mongolia shapes)
-    ("The crater does not announce itself from the road. It is simply there, tucked into the grass.",
+    # (round 3, S252: 'from the road' would be an access fact the fact-preservation invariant keeps; a ridge is not)
+    ("The crater does not announce itself from the ridge. It is simply there, tucked into the grass.",
      "The crater is simply there, tucked into the grass."),
     ("The shrines do not advertise their age. They are still repainted every spring.",
      "The shrines are still repainted every spring."),
@@ -57,23 +58,27 @@ def test_round2_form_is_rewritten(before, after):
     assert log and all(line.startswith("ai_tells: ") for line in log)
 
 
-@pytest.mark.parametrize("cut", [
-    "The temple is not a ruin. It works.",                                 # aphorism pair, bare verb: both go
-    "This kind of visit does not present the village as a stage.",         # lone 'do' denial
-    "The order of the stops is not incidental.",                           # 'not incidental' verdict
-    "The overlap of the two cultures in this province is not accidental.",
-    "The continuity is deliberate.",
-    "Such timing is no coincidence.",
+_COURTYARD = "Visitors walk the courtyard."
+
+
+@pytest.mark.parametrize("cut, rest", [
+    ("The temple is not a ruin. It works.", _COURTYARD),                 # aphorism pair, bare verb: both go
+    # lone 'do' denial (round 3, S252: the village is named again, so the fact invariant lets the cut go)
+    ("This kind of visit does not present the village as a stage.", "Visitors walk the village courtyard."),
+    ("The order of the stops is not incidental.", _COURTYARD),           # 'not incidental' verdict
+    ("The overlap of these cultures in this province is not accidental.", _COURTYARD),
+    ("The continuity is deliberate.", _COURTYARD),
+    ("Such timing is no coincidence.", _COURTYARD),
 ])
-def test_round2_verdict_or_aphorism_is_cut(cut):
-    para = f"The monks gather at dawn. {cut} Visitors walk the courtyard."
+def test_round2_verdict_or_aphorism_is_cut(cut, rest):
+    para = f"The monks gather at dawn. {cut} {rest}"
     text, log = _run(_blog(para))
-    assert "The monks gather at dawn. Visitors walk the courtyard." in text, text
+    assert f"The monks gather at dawn. {rest}" in text, text
     assert len(log) == 1
 
 
 def test_the_pass_is_idempotent_on_round2_forms():
-    text = _blog("The monks gather at dawn. The crater does not announce itself from the road. It is simply there.",
+    text = _blog("The monks gather at dawn. The crater does not announce itself from the ridge. It is simply there.",
                  "The forts are still guarded. The shrines are still lit. The mills are still turning. Then the "
                  "road climbs.",
                  "The bus stops at noon. The order of the stops is not incidental. Lunch is at the camp.")
@@ -81,6 +86,20 @@ def test_the_pass_is_idempotent_on_round2_forms():
     assert census(text, CTX)["fixable_total"] >= 3
     assert census(once, CTX)["fixable_total"] == 0
     assert _run(once) == (once, [])
+
+
+@pytest.mark.parametrize("kept, fact", [
+    # round 3 (S252): the fact-preservation invariant keeps what a round-2 proposer would have dropped
+    ("The crater does not announce itself from the road. It is simply there, tucked into the grass.", "road"),
+    ("This kind of visit does not present the village as a stage.", "village"),      # the only mention
+    ("This kind of stay does not position the village as a backdrop.", "village"),
+    ("The overlap of the two cultures in this province is not accidental.", "two"),  # a number
+])
+def test_round2_proposals_the_fact_invariant_refuses(kept, fact):
+    text = _blog(f"The monks gather at dawn. {kept} Visitors walk the courtyard.")
+    out, log = _run(text)
+    assert out == text
+    assert len(log) == 1 and log[0].startswith("ai_tells: skipped ") and f"drops a fact: {fact}" in log[0]
 
 
 # ---------------------------------------------------------------- left alone (precision first)
@@ -331,15 +350,16 @@ def test_review_r2_tells_are_still_rewritten(before, after):
     assert len(log) == 1
 
 
-@pytest.mark.parametrize("cut", [
-    "It does not sell itself.",
-    "This kind of stay does not position the village as a backdrop.",
-    "This kind of visit does not present the village as a stage.",
-    "The overlap of the two cultures in this province is not accidental.",
+@pytest.mark.parametrize("cut, rest", [
+    ("It does not sell itself.", "Visitors walk the courtyard."),
+    # round 3 (S252): the fact invariant lets a cut go only while the piece still names the village and no number goes
+    ("This kind of stay does not position the village as a backdrop.", "Visitors walk the village courtyard."),
+    ("This kind of visit does not present the village as a stage.", "Visitors walk the village courtyard."),
+    ("The overlap of these cultures in this province is not accidental.", "Visitors walk the courtyard."),
 ])
-def test_review_r2_lone_tells_are_still_cut(cut):
-    text, log = _run(_mid(cut))
-    assert text == _blog("The monks gather at dawn. Visitors walk the courtyard."), text
+def test_review_r2_lone_tells_are_still_cut(cut, rest):
+    text, log = _run(_blog(f"The monks gather at dawn. {cut} {rest}"))
+    assert text == _blog(f"The monks gather at dawn. {rest}"), text
     assert len(log) == 1
 
 

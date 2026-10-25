@@ -429,7 +429,9 @@ def _round3_patterns():
                                                 "_SOURCE_SENTENCE_RE", "_SOURCE_AGE_RE", "_COUNT_AFTER_RE",
                                                 "_PLURAL_AFTER_RE", "_PER_AFTER_RE", "_EXPLICIT_AGE_CUE_RE",
                                                 "_YEARS_AFTER_RE", "_YEARS_OLD_TAIL_RE", "_YEARS_OLD_CUE_RE",
-                                                "_OF_LINK_RE", "_AGE_WORD_RE")]
+                                                "_OF_LINK_RE", "_AGE_WORD_RE",
+                                                # the fact-preservation invariant's tokeniser and particle look
+                                                "_FACT_TOKEN_RE", "_PARTICLE_AFTER_RE", "_SEED_LABEL_RE")]
     start = next(i for i, r in enumerate(hygiene.AI_TELL_LINE_RES)
                  if r.pattern.startswith(r"\b(?:that|this|it)(?:['’]s|\s+is)\s+(?:a|the|one)\s+(?:detail"))
     out += [(f"AI_TELL_LINE_RES[{i}]", r) for i, r in enumerate(hygiene.AI_TELL_LINE_RES) if i >= start]
@@ -495,8 +497,10 @@ def test_colon_not_but_folds_a_staged_noun_the_seed_uses_as_a_plain_noun():
     """The panel's quote: the seed names 'the sacred relic of …' but never denies a relic."""
     ctx = _seed_ctx("The dzong houses the sacred relic of the founder.")
     before = "Few visitors know what a dzong is: not a relic, but a working institution."
-    text, log = rewrite(_blog("The monks gather at dawn. " + before), ctx)
-    assert text == _blog("The monks gather at dawn. Few visitors know what a dzong is: a working institution.")
+    # round 3 (S252): 'relic' is a seed word, so the fact invariant lets it go only while the piece still names the
+    # relic (it does in the panel's text; a lone mention is kept: test_fact_invariant_keeps_a_lone_seed_word)
+    text, log = rewrite(_blog("The monks guard the relic. " + before), ctx)
+    assert text == _blog("The monks guard the relic. Few visitors know what a dzong is: a working institution.")
     assert log == [f"ai_tells: not X but Y: '{before}'"]
 
 

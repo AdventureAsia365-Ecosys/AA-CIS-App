@@ -192,7 +192,7 @@ def angle_text(angle: Optional[dict]) -> str:
 class Edit:
     """One change: text[start:end] → ``text``. ``before`` is the sentence(s) it changes (for the log), ``olds`` the
     clean sentences it replaces and ``new`` the clean sentence it writes ('' for a cut), so a problem the old
-    sentence already had is not read as new."""
+    sentence already had is not read as new, and the fact check (``_fact_losers``) knows what the edit removed."""
     start: int
     end: int
     text: str
@@ -200,6 +200,7 @@ class Edit:
     before: str
     olds: tuple = ()
     new: str = ""
+    heading: bool = False  # a heading label: only its seed words count in the fact check
 
 
 def _words(s: str) -> list[str]:
@@ -1276,12 +1277,12 @@ def _structure_edits(text: str, ctx: TellContext, written: frozenset = frozenset
                     s, _ = _deletion_end(text, sp, spans[j])
                     _, e = _deletion_end(text, spans[j], nxt)
                     out.append(Edit(s, e, "", "aphorism pair (denial + bare verb)",
-                                    f"{sp['clean']} {spans[j]['clean']}"))
+                                    f"{sp['clean']} {spans[j]['clean']}", (sp["clean"], spans[j]["clean"])))
                     used.update({i, j})
                 continue
             if joined == "" and i != first:
                 s, e = _deletion_end(text, sp, spans[j])
-                out.append(Edit(s, e, "", "denial before its affirmation", sp["clean"]))
+                out.append(Edit(s, e, "", "denial before its affirmation", sp["clean"], (sp["clean"],)))
                 used.update({i, j})
                 continue
             if joined:
@@ -1300,7 +1301,7 @@ def _structure_edits(text: str, ctx: TellContext, written: frozenset = frozenset
         if kind:
             nxt = spans[i + 1] if i + 1 < len(spans) else None
             s, e = _deletion_end(text, sp, nxt)
-            out.append(Edit(s, e, "", kind, sp["clean"]))
+            out.append(Edit(s, e, "", kind, sp["clean"], (sp["clean"],)))
             used.add(i)
     return out
 
@@ -1316,17 +1317,18 @@ def _heading_edits(text: str, ctx: TellContext, written: frozenset = frozenset()
             raw = sp["text"]
             title = _heading_title(raw)
             if _cta_heading(title, ctx.cta):
-                out.append(Edit(sp["start"], sp["end"], "", "heading repeats the CTA", title))
+                out.append(Edit(sp["start"], sp["end"], "", "heading repeats the CTA", title, (title,), heading=True))
                 continue
             marks = raw[:len(raw) - len(raw.lstrip("#"))]
             new = _angle_heading(title, angle_words)
             if new is not None:
                 out.append(Edit(sp["start"], sp["end"], f"{marks} {new}" if new else "", "angle label as heading",
-                                title))
+                                title, (title,), new, heading=True))
                 continue
             new = _brief_heading(title, brief_words, src_words)
             if new:
-                out.append(Edit(sp["start"], sp["end"], f"{marks} {new}", "brief words as heading", title))
+                out.append(Edit(sp["start"], sp["end"], f"{marks} {new}", "brief words as heading", title, (title,),
+                                new, heading=True))
         elif sp["kind"] == "prose" and not sp["in_faq"] and _is_cta(sp["clean"], ctx):
             prev = next((spans[p] for p in range(k - 1, -1, -1) if spans[p]["kind"] in ("prose", "heading")), None)
             # only the literal CTA protects it here: a sentence that restates the CTA is CTA-like by design
@@ -1379,23 +1381,63 @@ def _new_problems(before: str, after: str, edits: list[Edit], ctx: TellContext, 
     return out
 
 
-def _accept(text: str, edits: list[Edit], ctx: TellContext) -> tuple[str, list[Edit], list[Edit]]:
-    """Apply the edits all at once when the result is intact; else one at a time, keeping each edit that leaves
-    no new integrity problem. Returns (text, kept, skipped)."""
+def _edit_facts_lost(e: Edit, after_forms, seed: frozenset) -> list[str]:
+    return hygiene.missing_facts(list(e.olds or (e.before,)), e.new, after_forms, seed, heading=e.heading)
+
+
+def _fact_losers(edits: list[Edit], after: str, seed: frozenset) -> dict[int, list[str]]:
+    """The fact-preservation invariant (round 3, S252; ``hygiene.missing_facts``): {index in ``edits``: the facts
+    it drops} for every edit whose removed words hold a fact token the text ``after`` all edits no longer carries.
+    One ``word_forms`` of ``after`` plus each edit's own words: linear in the text."""
+    forms = hygiene.word_forms(after)
+    out = {}
+    for k, e in enumerate(edits):
+        lost = _edit_facts_lost(e, forms, seed)
+        if lost:
+            out[k] = lost
+    return out
+
+
+class _FormsAfter:
+    """The word forms of the text after one more edit, read from running counts (``in`` only): the one-at-a-time
+    path checks each edit in O(its own words), so the whole check stays linear in the text."""
+
+    def __init__(self, counts: dict, minus: dict, plus: dict):
+        self.counts, self.minus, self.plus = counts, minus, plus
+
+    def __contains__(self, form: str) -> bool:
+        return self.counts.get(form, 0) - self.minus.get(form, 0) + self.plus.get(form, 0) > 0
+
+
+def _accept(text: str, edits: list[Edit], ctx: TellContext,
+            seed: frozenset = frozenset()) -> tuple[str, list[Edit], list[tuple[Edit, str]]]:
+    """Apply the edits all at once when the result is intact and keeps every fact; else one at a time, keeping each
+    edit that leaves no new integrity problem and drops no fact (``_fact_losers``: the arbiter over every rule, so
+    no chain of rules can delete a fact). Returns (text, kept, [(skipped edit, why)])."""
     if not edits:
         return text, [], []
     base: list = []
     after = _apply(text, edits)
-    if not _new_problems(text, after, edits, ctx, base):
+    if not _fact_losers(edits, after, seed) and not _new_problems(text, after, edits, ctx, base):
         return after, list(edits), []
     kept: list[Edit] = []
-    skipped: list[Edit] = []
+    skipped: list[tuple[Edit, str]] = []
+    counts = hygiene._form_counts([text])  # the kept text's word forms, kept current edit by edit
     for e in sorted(edits, key=lambda e: e.start):
+        minus, plus = hygiene._form_counts(list(e.olds or (e.before,))), hygiene._form_counts([e.new])
+        lost = _edit_facts_lost(e, _FormsAfter(counts, minus, plus), seed)
+        if lost:
+            skipped.append((e, f"drops a fact: {', '.join(lost[:6])}"))
+            continue
         trial = kept + [e]
         if _new_problems(text, _apply(text, trial), trial, ctx, base):
-            skipped.append(e)
-        else:
-            kept = trial
+            skipped.append((e, "breaks the text"))
+            continue
+        kept = trial
+        for f, n in minus.items():
+            counts[f] = counts.get(f, 0) - n
+        for f, n in plus.items():
+            counts[f] = counts.get(f, 0) + n
     return _apply(text, kept), kept, skipped
 
 
@@ -1404,21 +1446,23 @@ _PASSES: tuple[Callable, ...] = (_sentence_edits, _structure_edits, _structure_e
 
 def rewrite(text: str, ctx: TellContext) -> tuple[str, list[str]]:
     """The deterministic AI-tell pass. Returns (text, log): one ``ai_tells: <kind>: '<sentence>'`` line per kept
-    edit and one ``ai_tells: skipped <kind> (breaks the text): …`` line per edit the integrity check refused. Text
-    with no tell comes back unchanged, byte for byte."""
+    edit and one ``ai_tells: skipped <kind> (<why>): …`` line per edit refused: it breaks the text (the integrity
+    check) or drops a fact (round 3, S252: the fact-preservation invariant, ``_fact_losers``; every rule proposes,
+    the invariant decides). Text with no tell comes back unchanged, byte for byte."""
     log: list[str] = []
     cur = text or ""
+    seed = hygiene.source_forms(ctx.source)
     written: set[str] = set()  # the sentences a pass wrote: no later pass acts on them (second review)
     for make in _PASSES:
         edits = make(cur, ctx, frozenset(written))
         if not edits:
             continue
-        cur, kept, skipped = _accept(cur, edits, ctx)
+        cur, kept, skipped = _accept(cur, edits, ctx, seed)
         # third review: a semicolon split writes two sentences in one edit; each is a written sentence of its own
         written.update(e.new for e in kept if e.new)
         written.update(sp["clean"] for e in kept if e.new for sp in sentence_spans(e.new))
         log += [f"ai_tells: {e.kind}: '{e.before[:200]}'" for e in kept]
-        log += [f"ai_tells: skipped {e.kind} (breaks the text): '{e.before[:200]}'" for e in skipped]
+        log += [f"ai_tells: skipped {e.kind} ({why}): '{e.before[:200]}'" for e, why in skipped]
     log = list(dict.fromkeys(log))  # a refused edit is proposed again by the second structure pass
     return (cur, log) if cur != (text or "") else (text, [ln for ln in log if "skipped" in ln])
 
