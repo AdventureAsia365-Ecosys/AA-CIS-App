@@ -129,10 +129,23 @@ def _description(text: Any) -> str:
     return " ".join(kept)
 
 
+def _unfenced(content: Any) -> Any:
+    """The text inside a ``` / ```json fence around the whole reply (S251 live run: defence in depth for a reply
+    that did not come through the gateway's schema check); anything else unchanged."""
+    if not isinstance(content, str):
+        return content
+    text = content.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else ""
+        text = text.rsplit("```", 1)[0]
+    return text.strip()
+
+
 def parse_output(content: str) -> dict:
-    """The checked draft {description, highlights, good_to_know}; raises DraftUnusable."""
+    """The checked draft {description, highlights, good_to_know}; raises DraftUnusable. A reply wrapped in one
+    ``` fence is accepted; prose around the JSON is not."""
     try:
-        data = json.loads(content)
+        data = json.loads(_unfenced(content))
     except (TypeError, ValueError) as exc:
         raise DraftUnusable(f"reply is not JSON: {exc}") from exc
     if not isinstance(data, dict):
@@ -147,20 +160,29 @@ def parse_output(content: str) -> dict:
 
 def draft_content(entity_type: str, facts: dict, *, client: Optional[Any] = None) -> tuple[dict, dict]:
     """One LLM draft (sync: run it in a thread). Returns (draft, usage); usage = model, tokens, cost_usd.
-    Logs one shared.llm_call_log row per billed reply; raises DraftUnusable or the gateway's error."""
+    Logs one shared.llm_call_log row per billed reply; raises DraftUnusable (also when the gateway itself refused every
+    reply of the route as unusable) or the gateway's error (an outage: the job may retry)."""
     from shared.llm_client.call_log import record_call_sync, record_unusable_sync
-    from shared.llm_client.client import LLMClient
+    from shared.llm_client.client import LLMClient, UnusableReply
     from shared.llm_client.models import LLMRequest
 
     client = client or LLMClient()
-    resp = client.generate(LLMRequest(
-        system_prompt=SYSTEM_PROMPT,
-        user_prompt=user_prompt(entity_type, facts),
-        stage=STAGE,
-        temperature=0.4,
-        max_tokens=1200,
-        json_schema=SCHEMA,
-    ))
+    try:
+        resp = client.generate(LLMRequest(
+            system_prompt=SYSTEM_PROMPT,
+            user_prompt=user_prompt(entity_type, facts),
+            stage=STAGE,
+            temperature=0.4,
+            # S251: 2048, not 1200 — the route is Claude Sonnet 5.5 (CIS 282), whose adaptive thinking counts
+            # against this cap; the reply itself is < 400 tokens. Worst case per job attempt ≈ $0.09 (two Converse
+            # requests after a schema retry, then the legacy Sonnet fallback): CALL_ESTIMATE_USD in the job.
+            max_tokens=2048,
+            json_schema=SCHEMA,
+        ))
+    except UnusableReply as exc:
+        # S251 review: the gateway already wrote a billed_unusable row per attempt; no second row here. Unusable,
+        # not an outage, so the job does not pay for a retry (DraftUnusable is NonRetryable there).
+        raise DraftUnusable(f"gateway refused the reply: {str(exc)[:300]}") from exc
     try:
         draft = parse_output(resp.content)
     except Exception as exc:

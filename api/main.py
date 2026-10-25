@@ -17,6 +17,7 @@ import structlog
 from api.routers.v1_notifications import router as v1_notifications_router
 from api.routers._served import tour_not_served_handler
 from shared.tour_liveness import TourNotServedError
+from services.acp_shared.atom_replaced import AtomReplaced
 from api.routers.auth import (
     _hash_api_key, _create_jwt, verify_jwt, verify_tenant_jwt,
     TenantLoginRequest, TenantLoginResponse,
@@ -36,6 +37,7 @@ from api.routers.v1_pipeline import router as v1_pipeline_router
 from api.routers.v1_publish import router as v1_publish_router
 from api.routers.v1_integrations import router as v1_integrations_router
 from api.routers.v1_account import router as v1_account_router
+from api.routers.v1_account_members import router as v1_account_members_router  # AA-978
 from api.routers.v1_trip_page import router as v1_trip_page_router  # AA-482
 from api.routers.v1_trip_page import admin_router as admin_trip_page_router  # AA-482
 from api.routers.v1_rules import router as v1_rules_router
@@ -291,6 +293,7 @@ app.include_router(v1_publish_router)  # AA-455 bước 1 — tenant self-unpubl
 app.include_router(v1_notifications_router)  # AA-986 L3 — tenant bell: GET /v1/notifications, mark read
 app.include_router(v1_integrations_router)  # AA-457 [T11 PR1] — tenant WordPress credentials
 app.include_router(v1_account_router)  # AA-761 — tenant Account pages: activity trail + CSV, API key facts
+app.include_router(v1_account_members_router)  # AA-978 — tenant Account › Members (CIS 276 directory)
 app.include_router(v1_trip_page_router)  # AA-482 — GET /v1/trip/{tour_id}, public page data
 app.include_router(admin_trip_page_router)  # AA-482 — /admin/trip-pages/{publish,recheck}
 app.include_router(v1_rules_router)
@@ -343,6 +346,9 @@ app.middleware("http")(sentry_context_middleware)
 # answered outside all user middleware, so its handler adds the header itself.
 # AA-986 L3 — new tenant work on a tour AA no longer serves: 409 tour_discontinued / tour_paused, plain sentence.
 app.add_exception_handler(TourNotServedError, tour_not_served_handler)
+# AA-990 — T9 / T8 work on a request whose atom a later atomize run replaced: 409 atom_replaced, plain sentence
+# (same status_code / detail / headers shape as TourNotServedError, so the same handler answers it).
+app.add_exception_handler(AtomReplaced, tour_not_served_handler)
 # AA-976 / AA-978 — contract Problem body; CatalogProblem is api.core.m2m_auth.M2MProblem, also raised by
 # /tenant/membership/v1.
 app.add_exception_handler(CatalogProblem, catalog_problem_handler)

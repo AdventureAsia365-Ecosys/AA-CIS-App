@@ -442,7 +442,10 @@ class TestT9Prompt:
         `single` and `route` change; SYSTEM_PROMPT does not.
         Updated AA-779 (S245): the blog FAQ bullet (both variants) prefers SEARCH QUESTIONS a seed fact answers,
         asks every answer to name its question's subject in the first sentence, 40-60 words, so `single` and
-        `route` change; SYSTEM_PROMPT does not (no search questions are passed here)."""
+        `route` change; SYSTEM_PROMPT does not (no search questions are passed here).
+        Updated AA-790 (S251 pilot, AI-tells 4.08): SYSTEM_PROMPT gets the AI-TELLS rules (ai_tells.PROMPT_RULES) and
+        loses 'genuinely' from its summary line; both blog variants get the heading rule (never the angle's name as
+        a heading, ai_tells.BLOG_HEADING_RULE), so all three change."""
         pack = {"brand_name": "Trail Pulse", "brand_type": "Young active adventure travel brand",
                 "core_idea": "Active trips for people who like to move.", "customer_segment": "25-40 years old",
                 "voice": ["Energetic", "Fresh", "Direct", "Friendly", "Modern", "Confident", "Lightly playful"],
@@ -463,9 +466,9 @@ class TestT9Prompt:
         def sha(s):
             return hashlib.sha256(s.encode()).hexdigest()
         assert GOAL["key"] == GOALS[0]["key"]
-        assert sha(SYSTEM_PROMPT) == "662d4aa598b44a7d63eeca5180655d94505dd1f198edd40b25d556ff60ec3baa"
-        assert sha(single) == "f63cc43a17f47fdcc28ee0a9d677aafddefcb023f18f944f631d6b2aaa6e300d"
-        assert sha(route) == "30520222564557ddb70546bb8a848a6232fbcd1130c13ceffeaff749f7f33084"
+        assert sha(SYSTEM_PROMPT) == "3c078692953f73fec1ef3b4f0f41b73a0a0c5c915e8ce8bb31de40d73ae61757"
+        assert sha(single) == "e0616071ca9e932049f8b25f7739ab1caea5268074854324bb0e7dbcca6c02ca"
+        assert sha(route) == "d44834d1e5be15794544f4af4f136664c3184aafc58084f64616b4de5b8a67ab"
 
     def test_prompts_carry_no_em_dash_but_the_rule(self):
         """AA-778 — our own prompt text primed the habit (S234: 78 in the writer prompts). The one em-dash

@@ -134,7 +134,9 @@ export async function installBypassRoute(context: BrowserContext): Promise<void>
 }
 
 export type ApiFailure = { url: string; status: number; bodyPreview: string };
-export type ConsoleError = { url: string; text: string };
+/** `source` = the URL the message is about (msg.location().url): for "Failed to load resource" it is the failed
+ * request, so an expected API failure can drop its own console line (S251, expectApiFailure). */
+export type ConsoleError = { url: string; text: string; source?: string };
 
 export type PageWatcher = {
   consoleErrors: ConsoleError[];
@@ -159,7 +161,7 @@ export function watchPage(page: Page): PageWatcher {
     if (msg.type() !== 'error') return;
     const text = msg.text();
     if (CONSOLE_ALLOWLIST.some((a) => text.includes(a))) return;
-    consoleErrors.push({ url: page.url(), text });
+    consoleErrors.push({ url: page.url(), text, source: msg.location()?.url || undefined });
   });
   page.on('pageerror', (err) => {
     consoleErrors.push({ url: page.url(), text: err.message });
@@ -433,12 +435,72 @@ export async function assertThemeSwitches(page: Page, label: string): Promise<vo
 }
 
 
+/** S251 — WCAG relative luminance of the first non-transparent background at or above `selector` (fallback: body).
+ * 1 when no colour can be read, so a dark-theme assertion fails loudly. */
+export async function backgroundLuminance(page: Page, selector: string): Promise<number> {
+  return page.evaluate((sel) => {
+    let node: HTMLElement | null = (document.querySelector(sel) as HTMLElement | null) ?? document.body;
+    let bg = '';
+    while (node) {
+      const c = getComputedStyle(node).backgroundColor;
+      if (c && c !== 'rgba(0, 0, 0, 0)' && c !== 'transparent') { bg = c; break; }
+      node = node.parentElement;
+    }
+    const m = bg.match(/rgba?\(([^)]+)\)/);
+    if (!m) return 1;
+    const [r, g, b] = m[1].split(',').slice(0, 3).map((x) => parseInt(x.trim(), 10) / 255);
+    const lin = (v: number) => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+    return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  }, selector);
+}
+
+/** Tallest a full-page shot may get (Chromium's capture limit is 16384 px). */
+export const MAX_SHOT_HEIGHT = 16000;
+
+/**
+ * S251 — how many px the page's tallest inner scroll region hides below its fold. The admin shell is a 100vh column
+ * (app/_kit/AdminShell.tsx) and each page's own <main className="aa-admin-main"> (or an inner overflow-y:auto pane)
+ * is the scroll region, so the DOCUMENT never grows past the viewport: `fullPage: true` captured exactly 1440x900
+ * and cut every long page. Only regions at least half the viewport tall count (a small scrolling list is content).
+ */
+export async function hiddenScrollHeight(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    let hidden = 0;
+    const minHeight = window.innerHeight * 0.5;
+    for (const el of Array.from(document.body.querySelectorAll<HTMLElement>('*'))) {
+      if (el.clientHeight < minHeight) continue;
+      const oy = getComputedStyle(el).overflowY;
+      if (oy !== 'auto' && oy !== 'scroll') continue;
+      hidden = Math.max(hidden, el.scrollHeight - el.clientHeight);
+    }
+    return Math.max(0, Math.ceil(hidden));
+  });
+}
+
+/** S251 — grow the viewport height until the inner scroll region shows everything (bounded: 3 rounds, at most
+ * MAX_SHOT_HEIGHT), so a `fullPage` shot of an admin page is the whole page. Returns the height used. */
+export async function growViewportToContent(page: Page, width: number, height: number): Promise<number> {
+  let h = height;
+  for (let round = 0; round < 3; round++) {
+    const hidden = await hiddenScrollHeight(page);
+    if (hidden <= 1) break;
+    const next = Math.min(h + hidden, MAX_SHOT_HEIGHT);
+    if (next <= h) break;
+    h = next;
+    await page.setViewportSize({ width, height: h });
+    await page.waitForTimeout(150); // let the shell re-lay out at the new height
+  }
+  return h;
+}
+
 /** Capture desktop (1440) + mobile (390) screenshots in both light and dark color schemes on the
  * given (already-loaded, already-checked) page.
  *
  * No reload per shot: viewport size and `prefers-color-scheme` apply live, and reloading a long page
  * 4 times with networkidle + full-page capture blew the 60 s test timeout on Master Content (S220
- * live run). Desktop is full-page; mobile is the first screen (a 390px full-page list is huge). */
+ * live run). Desktop is full-page; mobile is the first screen (a 390px full-page list is huge).
+ * S251: "full-page" on the admin means growing the viewport to the inner scroll region first (growViewportToContent);
+ * `fullPage: true` alone stayed 1440x900 because the document itself never scrolls. */
 export async function screenshotMatrix(page: Page, slug: string): Promise<void> {
   const viewports = [
     { name: 'desktop', width: 1440, height: 900, fullPage: true },
@@ -450,14 +512,16 @@ export async function screenshotMatrix(page: Page, slug: string): Promise<void> 
     for (const scheme of schemes) {
       await page.emulateMedia({ colorScheme: scheme });
       await page.waitForTimeout(300); // let layout / theme transitions settle
+      if (vp.fullPage) await growViewportToContent(page, vp.width, vp.height);
       await page.screenshot({
         path: path.join(SMOKE_RESULTS_DIR, `${slug}-${vp.name}-${scheme}.png`),
         fullPage: vp.fullPage,
       });
     }
   }
-  // Reset color scheme so it does not leak into later navigations on the same page.
+  // Reset color scheme and viewport so they do not leak into later work on the same page.
   await page.emulateMedia({ colorScheme: 'light' }).catch(() => {});
+  await page.setViewportSize({ width: 1440, height: 900 }).catch(() => {});
 }
 
 export function ensureResultsDir(): void {
@@ -507,6 +571,10 @@ export type PageCheckOptions = {
   afterChecks?: (page: Page, spec: PageSpec) => Promise<void>;
   /** Screenshot capture; default = screenshotMatrix (admin: 1440 + 390, light + dark). */
   screenshots?: (page: Page, slug: string) => Promise<void>;
+  /** S251 — a same-origin /api/ failure this page is MEANT to get (e.g. the 404 behind a not-found card). It is left
+   * out of the failing-API check, and so is the browser's own "Failed to load resource" console line for that URL.
+   * Keep it exact (path + status); it never silences any other call. */
+  expectApiFailure?: (failure: { url: string; status: number }) => boolean;
 };
 
 /**
@@ -536,17 +604,23 @@ export async function runPageCheck(
     // Let every in-flight same-origin /api/ body read complete before asserting.
     await watcher.settle();
 
+    const expected = opts.expectApiFailure ?? (() => false);
+    const apiFailures = watcher.apiFailures.filter((f) => !expected(f));
+    const expectedUrls = new Set(watcher.apiFailures.filter((f) => expected(f)).map((f) => f.url));
     expect(
-      watcher.apiFailures,
-      `${spec.label}: failing same-origin /api/ responses:\n${describeApiFailures(watcher.apiFailures)}`,
+      apiFailures,
+      `${spec.label}: failing same-origin /api/ responses:\n${describeApiFailures(apiFailures)}`,
     ).toEqual([]);
 
     const ok = await hasContentOrEmptyState(page, spec.readySelector);
     expect(ok, `${spec.label}: no table rows and no empty state — page looks blank/broken`).toBe(true);
 
+    const consoleErrors = watcher.consoleErrors.filter(
+      (e) => !(e.source && expectedUrls.has(e.source) && e.text.startsWith('Failed to load resource')),
+    );
     expect(
-      watcher.consoleErrors,
-      `${spec.label}: console errors:\n${watcher.consoleErrors.map((e) => `  ${e.text}`).join('\n')}`,
+      consoleErrors,
+      `${spec.label}: console errors:\n${consoleErrors.map((e) => `  ${e.text}`).join('\n')}`,
     ).toEqual([]);
 
     // AA-601 — mobile layout guard (admin only): no page-level horizontal overflow at 390px and the

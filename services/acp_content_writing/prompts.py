@@ -39,6 +39,7 @@ markup the writer wasn't asked for before:
 from __future__ import annotations
 
 from services.acp_angle_gate.brand_audience import BrandAudience
+from services.acp_content_writing.ai_tells import BLOG_HEADING_RULE, PROMPT_RULES, SOCIAL_AUDIENCE_RULE
 from services.acp_shared.brand_pack import render_brand_block
 from services.acp_shared.signature_vocabulary import t9_words_line
 from services.acp_angle_gate.channel_style import ChannelStyle
@@ -115,6 +116,16 @@ BLOG-SPECIFIC FORMAT REQUIREMENTS (this channel only; required markup, not a sty
   such as price, season, visa, transfer time, or similar, tag it [F:<fact id>] using the id shown for
   that fact there, the exact same way, instead of a moment's [R:<id>]."""
 
+# AA-790 (S251 pilot: 'Mongolia's Family Anchor' as an H2 in 2 of 14 blogs) — both blog variants get the heading
+# rule right after the H2 bullet; the rule text lives with the other AI-tell rules (ai_tells.BLOG_HEADING_RULE).
+_H2_BULLET = """- Structure the body with real markdown H2 headers: a line starting with exactly "## " for every
+  major section (e.g. "## Why Southern Laos"). Do not skip this.
+"""
+assert _BLOG_FORMAT_INSTRUCTIONS.count(_H2_BULLET) == 1 and _BLOG_FORMAT_INSTRUCTIONS_ROUTE.count(_H2_BULLET) == 1
+_BLOG_FORMAT_INSTRUCTIONS = _BLOG_FORMAT_INSTRUCTIONS.replace(_H2_BULLET, _H2_BULLET + BLOG_HEADING_RULE + "\n")
+_BLOG_FORMAT_INSTRUCTIONS_ROUTE = _BLOG_FORMAT_INSTRUCTIONS_ROUTE.replace(
+    _H2_BULLET, _H2_BULLET + BLOG_HEADING_RULE + "\n")
+
 # AA-514 — blog channel's writer-output contract becomes a JSON envelope (full port of the
 # origin's structured Piece.seo_title/meta_description/slug fields, Nghiệp-confirmed real
 # architecture decision — see docs/claude_audit/AA-514-step0-investigation.md §4). Appended
@@ -154,7 +165,7 @@ _SUMMARY_INSTRUCTIONS = """
 
 ALSO: after the content itself, on its own new line, write exactly ===SUMMARY=== followed by
 1-2 plain-English sentences summarizing what this piece covers and the angle it takes. This is
-for internal reference only (helping a future rewrite of the same subject pick a genuinely
+for internal reference only (helping a future rewrite of the same subject pick a
 different angle). It is never shown to the reader, so it does not need to read well as prose,
 just be accurate. Skip this entirely for the one channel below whose output format is a JSON
 envelope: put the summary in that envelope's own "summary" field instead, not as a trailing
@@ -238,6 +249,7 @@ Rules:
   "embark on", "immerse yourself", "look no further", "in today's fast-paced world",
   "game-changing", "revolutionary", "unlock your potential").
 - Sound human, specific, and lightly persuasive, not corporate, not hype-driven.
+""" + PROMPT_RULES + """
 - Return ONLY the final content itself: no explanation, no preamble, no markdown code fence,
   no restating the brief back.""" + _SUMMARY_INSTRUCTIONS
 
@@ -251,6 +263,7 @@ def build_user_prompt(
     facts_text: str | None = None, scope: str | None = None,
     sibling_openers: list[str] | None = None,
     search_questions: list[str] | None = None,
+    lead_focus: str | None = None,
 ) -> str:
     """`angle` is the chosen `angle_gate_option` row (name/why_it_works/formula_fit/
     best_final_style). `revision_feedback` (AA-450 Phase 1's confirmed retry shape — specific,
@@ -283,7 +296,11 @@ def build_user_prompt(
 
     `search_questions` (AA-779, blog only): People Also Ask questions already filtered to the
     piece's scope (quality_gates.paa_for_scope); the FAQ bullet tells the writer to prefer one only
-    when the seed answers it. `None`/empty adds nothing."""
+    when the seed answers it. `None`/empty adds nothing.
+
+    `lead_focus` (AA-790 S251, non-blog only): the seed fact a repeated write of one request opens on
+    (ai_tells.lead_focus), so N posts written from one brief do not all open on the same fact. `None` adds
+    nothing. Every non-blog channel also gets the AUDIENCE IN THE POST rule (ai_tells.SOCIAL_AUDIENCE_RULE)."""
     # AA-771 (S233) — the full brand pack (render_brand_block) replaces the AUDIENCE / MINDSET /
     # BRAND NAME lines; the invented "discerning travellers" fallback audience is gone.
 
@@ -371,6 +388,10 @@ def build_user_prompt(
     if sibling_openers and channel_style["channel"] != "blog":
         lines.insert(-2, "EARLIER PIECES FROM THIS BRIEF OPENED WITH (do not reuse these sentences or their "
                          "construction):\n" + "\n".join(f"- {o}" for o in sibling_openers))
+    if lead_focus and channel_style["channel"] != "blog":
+        # AA-790 (S251) — six LinkedIn posts from one request all opened on the same fact
+        lines.insert(-2, "LEAD WITH THIS FACT FROM THE CONTENT SEED (other pieces from this brief lead with other "
+                         f"facts; open on it in your own words, then build the post around it): {lead_focus}")
     if search_questions and channel_style["channel"] == "blog":
         # AA-779 — People Also Ask questions for this piece's own places (quality_gates.paa_for_scope),
         # after the CONTENT SEED so the lines.insert(-2, …) positions above are unchanged.
@@ -389,6 +410,8 @@ def build_user_prompt(
             "seed, and do not add new numbers anywhere else in the piece."
         )
     prompt = "\n".join(lines)
+    if channel_style["channel"] != "blog":
+        prompt += SOCIAL_AUDIENCE_RULE  # AA-790 (S251) — Terra LinkedIn read like an encyclopedia entry
     if channel_style["channel"] in PLAIN_TEXT_CHANNELS:
         prompt += _PLAIN_TEXT_INSTRUCTIONS
     if channel_style["channel"] == "blog":

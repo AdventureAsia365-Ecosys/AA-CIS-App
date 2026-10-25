@@ -293,14 +293,15 @@ body {
 
 /* AA-601 part B (feedback 2) — tell the UA which colour scheme is active so native widgets
    (dropdown popups, date pickers, scrollbars, form-control chrome) render for the right theme.
-   Scoped to the data-theme element: the portal + login pin data-theme="light", so they stay light. */
+   Scoped to the data-theme element: the portal pins data-theme="light", so it stays light (S251: /login follows the
+   theme like the admin). */
 [data-theme="light"] { color-scheme: light; }
 [data-theme="dark"]  { color-scheme: dark; }
 
 /* AA-601 part B (feedback 2) — themed baseline for admin form controls under the dark theme. Inline
    styles still win where a component sets them (those were converted to tokens), but this catches
    controls that rely on UA defaults so none render as a white box with invisible light text. Scoped
-   to [data-theme="dark"] (admin only — portal/login are pinned light). */
+   to [data-theme="dark"] (admin and /login — the portal is pinned light). */
 [data-theme="dark"] input,
 [data-theme="dark"] select,
 [data-theme="dark"] textarea {

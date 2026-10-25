@@ -201,6 +201,18 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
 - **Model Catalog** (`shared.llm_model_catalog`, AA-658, ADR 0005): the admin dropdown options and
   LLM prices come from it (`pricing.py` is the fallback). Non-legacy Model Keys (e.g. `sonnet-5`)
   are called with the Bedrock Converse API on the acc3 satellite.
+- **Structured output (`LLMRequest.json_schema`) per path**: Converse = one tool whose input is the schema, reply
+  conformed (`_checked_json`, AA-659/714); OpenAI = strict `response_format`. The legacy `haiku` / `sonnet` keys
+  (Anthropic Messages API, `invoke_claude`) have neither: since S251 (AA-835) the gateway appends a "one JSON object
+  matching this schema" instruction with the schema to the system prompt, takes the reply's JSON object (a ``` fence
+  is tolerated, prose is not), conforms it, and raises `BilledUnusableReply` otherwise (gateway billed_unusable row,
+  the route moves on). It warns `llm_legacy_key_structured_output` once per stage. A structured stage belongs on a
+  catalog key; `tests/unit/test_s251_legacy_structured_output.py` lists the structured stages and the one known
+  legacy primary (`a3_place_dedupe_check`). A structured request never streams live text (any path). A bad reply is
+  typed: `UnusableReply` (`BilledUnusableReply` from one key, `RouteUnusableReply` when every model of a route
+  answered unusably; an outage stays a plain `RuntimeError`); callers that must not retry or stop on a bad reply catch
+  it, charge `unusable_reply_cost(e)` to their run budget and do not log again (supply writer → `DraftUnusable`;
+  place dedupe check → `unsure` for that pair).
 - **Stage Route** (AA-659, ADR 0006): each stage has a model plus an ordered fallback list and an
   optional shadow model (A/B, `shared.llm_shadow_log`). Only models the route lists are ever
   tried. No judge has its own hardcoded model path any more. **S235 rule (Nghiệp, 14/10/2026,
@@ -912,8 +924,9 @@ Booking bk-023 grants the four `booking.v_supply_*` views to `cis_app`). `servic
   the cost guard row `bedrock / job:supply_content_draft`; copies rights-cleared photos (`photos.py`: source bucket /
   key from `booking.v_supply_media`, checked against the bk-023 naming rule and the sha256; WebP 1600 / 600 under
   `photos/supply/` + the img. CDN); one call on stage `supply_content_writer` (`writer.py`: facts quoted as untrusted
-  data, source fidelity, logged to `shared.llm_call_log` with the job id); writes a new `llm` draft version. Never
-  publishes.
+  data, source fidelity, logged to `shared.llm_call_log` with the job id; route Claude Sonnet 5.5 `sonnet-5-5` →
+  legacy `sonnet` since CIS 282, S251: the 278 seed was the legacy key, which lost the schema); writes a new `llm`
+  draft version. Never publishes.
 - Review (`review.py`, `/admin/supply-content`): an edit is a new `human` version; publish (review.act) refuses an
   inactive entity, a version written against older facts (409 `outdated`) and a photo without usage rights or copy
   (409 `photo_rights`); reject, unpublish, regenerate (content.write). Version content is immutable in the DB (CIS
@@ -962,6 +975,9 @@ a new writer of `shared.tenants` needs INSERT on the event table (migration guar
 signed out; last owner -> agency locked until owner recovery) and agency lifecycle within a minute; it never takes a
 CRM role from CIS. Invitation and activation of identities come with AA-979 (partner-pool re-enrolment); until then
 rows are created only by staff tooling / the Dev seed.
+Tenant read (AA-978 follow-up): `GET /v1/account/members` (`api/routers/v1_account_members.py`,
+`services/tenant_membership/portal.py`), the portal's Account › Members page: the agency's invited + active rows
+(fingerprint, role, status, dates; no staff actor, no invitation id), tenant id from the tenant JWT only, main pool.
 
 ## Staff roles and permissions (AA-656)
 

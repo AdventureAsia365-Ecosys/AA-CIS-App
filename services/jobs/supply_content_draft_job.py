@@ -39,7 +39,10 @@ logger = structlog.get_logger()
 KIND = "supply_content_draft"
 MAX_ATTEMPTS = 2
 DEFAULT_MAX_DRAFTS_PER_DAY = 20
-CALL_ESTIMATE_USD = 0.05          # Sonnet, ~3k in / ~0.8k out is ~$0.02; the check uses a safe upper bound
+# S251 (CIS 282): Sonnet 5.5, ~3k in / <= 2048 out (thinking included) ≈ $0.026 a request; worst case one attempt is
+# two Converse requests (schema retry) + the legacy Sonnet 4.6 fallback ≈ $0.09. The check uses that upper bound
+# (it still fits the $0.10 per-run cap: one call per run).
+CALL_ESTIMATE_USD = 0.10
 
 ENTITY_SQL = """
     SELECT id::text AS id, entity_type, title, facts::text AS facts, applied_supply_version, active

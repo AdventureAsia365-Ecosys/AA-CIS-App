@@ -52,8 +52,9 @@ from services.acp_content_writing.quality_gates import (
     keyword_covered, title_taken,
 )
 from services.acp_content_writing.facts import fetch_facts_for_writing, format_facts_block
-from services.acp_content_writing import (authenticity, faq_answer_fit, faq_filter, hygiene, length_trim,
+from services.acp_content_writing import (ai_tells, authenticity, faq_answer_fit, faq_filter, hygiene, length_trim,
                                           sentence_repair, text_integrity, trip_facts)
+from services.acp_shared.signature_vocabulary import signature_words
 from services.acp_content_writing.generate import (SEO_FIT_STAGE, SentenceRepairError, fit_seo_fields,
                                                    repair_sentences, rewrite_with_feedback, write_content, write_faq)
 from services.acp_content_writing.quality_gates import (CHEAP_REPAIR_GATES, F13_REPEAT_GATE, F14_GATE, F19_GATE,
@@ -66,6 +67,7 @@ from services.acp_content_writing.quality_gates import (CHEAP_REPAIR_GATES, F13_
                                                           replace_faq_section, reshape_like, seed_place_names,
                                                           run_quality_gates, strip_citation_tags,
                                                           unused_source_facts)
+from services.acp_shared.atom_replaced import AtomReplaced
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from services.acp_shared.content_embedding import compute_embedding, embedding_to_pgvector_literal
 from services.acp_shared.piece_similarity import find_similar_pieces
@@ -118,6 +120,12 @@ class MissingCTAError(ContentWritingError):
     the specific CTA" — a human decision, not an inferred one)."""
 
 
+class AtomReplacedError(ContentWritingError, AtomReplaced):
+    """AA-990 — the request's atom (or every Segment of its Route) is no longer live: a later atomize run replaced
+    it. The router answers 409 `atom_replaced` ("start a new post in Social Content"), not the generic 500 of
+    ContentWritingError. Still a ContentWritingError, so every other caller keeps catching it."""
+
+
 _ATOM_TEXT_QUERY = """
     SELECT text FROM acp_contract.v_active_tour_atoms
     WHERE atom_id = $1 AND owner_scope IN ('platform', $2) AND NOT deleted AND NOT is_empty_marker
@@ -136,7 +144,8 @@ async def _fetch_atom_text(tenant_id: UUID, atom_id: str, pool) -> str:
         # AA-768 — the atom's evidence/hook + Segment siblings' evidence, not just its short label.
         seed = await atom_seed_text(conn, atom_id, str(tenant_id)) if row is not None else None
     if row is None:
-        raise ContentWritingError(f"atom_id={atom_id!r} not found (deleted, or not a live platform/tenant atom)")
+        raise AtomReplacedError(
+            f"atom_id={atom_id!r} not found (deleted, or not a live platform/tenant atom)").about(atom_id=atom_id)
     return seed or row["text"]
 
 
@@ -241,10 +250,10 @@ async def _fetch_route_segments(
         atoms = [(r["atom_id"], r["text"]) for _, r in kept]
         segments = await route_moment_seeds(conn, atoms, str(tenant_id)) if atoms else []
     if not segments:
-        raise ContentWritingError(
+        raise AtomReplacedError(
             f"None of route_segment_ids={segment_ids!r} resolved to a live atom for trip_id="
             f"{trip_id!r} — the Route was rebuilt away. Refresh the Slate and pick again."
-        )
+        ).about(segment_ids=segment_ids)
     if atoms_out is not None:
         atoms_out.extend(atoms)
     return segments
@@ -1313,6 +1322,30 @@ async def _sibling_texts(tenant_id: Optional[str], request_id: UUID, piece_id: U
         return []
 
 
+# AA-790 (S251) — the place of this piece among the writes of its request (0 = the first one). Ordered by
+# (created_at, piece_id), so writes started together still get distinct indexes.
+_REQUEST_WRITE_INDEX_QUERY = """
+    SELECT count(*) FROM acp_shared.content_piece o
+    JOIN acp_shared.content_piece me ON me.piece_id = $3::uuid
+    WHERE o.tenant_id = $1::uuid AND o.angle_gate_request_id = $2::uuid AND o.piece_id <> me.piece_id
+      AND (o.created_at, o.piece_id) < (me.created_at, me.piece_id)
+"""
+
+
+async def _request_write_index(tenant_id: Optional[str], request_id: UUID, piece_id: UUID, pool) -> int:
+    """How many pieces of the same request were started before this one (any status). 0 on any error or
+    without a tenant: the lead-focus line is an aid, never a reason to fail a write."""
+    if not tenant_id:
+        return 0
+    try:
+        async with pool.acquire() as conn:
+            n = await conn.fetchval(_REQUEST_WRITE_INDEX_QUERY, str(tenant_id), str(request_id), str(piece_id))
+        return n if isinstance(n, int) and n > 0 else 0
+    except Exception as e:  # noqa: BLE001
+        logger.warning("t9_request_write_index_failed", request_id=str(request_id), error=str(e)[:200])
+        return 0
+
+
 _SIBLING_TITLES_QUERY = """
     SELECT seo_title FROM acp_shared.content_piece
     WHERE tenant_id = $1::uuid AND channel = $2 AND piece_id <> $3::uuid
@@ -1779,6 +1812,14 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
     # splits an over-long first line, in hygiene.autofix after the last LLM step of each attempt.
     sibling_openers = context.get("sibling_openers") or []
     openers_kw = {"sibling_openers": sibling_openers} if sibling_openers else {}
+    # AA-790 (S251) — a repeated write of one request (non-blog) opens on a different seed fact; the S251 pilot's six
+    # Terra LinkedIn posts, started together on one request, all opened on 'Years of practice on a single craft'.
+    lead_kw: dict = {}
+    if channel != "blog":
+        write_index = await _request_write_index(context.get("tenant_id"), request_id, piece_id, pool)
+        context["lead_focus"] = ai_tells.lead_focus(atom_text, write_index)
+        if context["lead_focus"]:
+            lead_kw = {"lead_focus": context["lead_focus"]}
     # AA-779 — the blog's in-scope People Also Ask questions: the writer, the rewrite and the FAQ
     # regeneration (_enforce_faq_contract reads context["paa_questions"]) prefer one a seed fact answers.
     # S247 (AA-779, ADR 0011) — behind T9_FAQ_LLM_FILTER (default off) an LLM step on stage t9_faq_filter
@@ -1844,6 +1885,11 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
         f9_passed: set[str] = F9PassMemory()
         # AA-790 — repair-contract invariant 7 on the deterministic edits below (reverts → degraded: repair_contract)
         step_guard = _StepGuard(hyg, ignore=brand_ignore, cta=cta)
+        # AA-790 (S251) — the writer-side AI-tell pass: the brand's signature words are never stripped, a denial or
+        # verdict that states a seed fact is kept, the chosen angle's name never stays a heading.
+        tell_ctx = ai_tells.TellContext(
+            cta=cta, angle_name=(chosen or {}).get("name"), source=hyg.source_text, ignore=brand_ignore,
+            keep_words=frozenset(hygiene.fold(w) for w in signature_words(brand_audience)))
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
             step_guard.begin_attempt()
@@ -1854,7 +1900,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     destination=destination, trip_name=writer_trip, atom_id=atom_id, scope=context.get("scope"),
                     route_segments=route_segments, keyword=keyword,
                     tenant_id=tenant_id, angle_gate_request_id=str(request_id),
-                    facts_text=facts_text, **openers_kw, **search_kw,
+                    facts_text=facts_text, **openers_kw, **search_kw, **lead_kw,
                 )
                 fresh_text = True
             else:
@@ -1995,7 +2041,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                         destination=destination, trip_name=writer_trip, atom_id=atom_id, scope=context.get("scope"),
                         route_segments=route_segments, keyword=keyword,
                         tenant_id=tenant_id, angle_gate_request_id=str(request_id),
-                        facts_text=facts_text, **openers_kw, **search_kw,
+                        facts_text=facts_text, **openers_kw, **search_kw, **lead_kw,
                     )
                     fresh_text = True
             content_from = attempt  # AA-916 WM-08 — this attempt wrote (or repaired) the current text
@@ -2043,9 +2089,16 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             # sentence splice and SEO fit all ran above), before the gates read the text.
             # AA-790 — each one under repair-contract invariant 7 (`step_guard`): an edit that leaves a new
             # repeat, orphan, dangling opener, fragment, split paragraph or cut sentence is reverted and logged.
+            # AA-790 (S251 pilot, AI-tells 4.08) — the writer-side AI-tell pass first: denials joined to what the
+            # thing is, verdict lines and stock adverbs cut, internal labels and angle-label headings removed.
+            # Deletions and joins only (never a new claim); what it cannot fix is F15 'stock line' residue.
+            before = content_text
+            content_text, tells_log = ai_tells.rewrite(content_text, tell_ctx)
+            content_text, tells_log, _ = step_guard("ai_tells.rewrite", before, content_text, tells_log)
             before = content_text
             content_text, hygiene_log = hygiene.autofix(content_text, hyg)
             content_text, hygiene_log, _ = step_guard("hygiene.autofix", before, content_text, hygiene_log)
+            hygiene_log = tells_log + hygiene_log
             # S234 round 3 (r2 §4 fix 9) — the configured CTA line, word for word, after the last edit
             # (must keep: never reverted, what it leaves is reported)
             before = content_text
@@ -2477,6 +2530,8 @@ def writer_input_snapshot(context: dict) -> dict:
         # AA-918 (WM-16) — the learned lexicon rules this piece got (and the ones skipped, with why); absent when no
         # rule is active for its writer and owner. The rollback drill reads it: the next piece no longer lists it.
         **({"writing_rules": context["writing_rules"]} if context.get("writing_rules") else {}),
+        # AA-790 (S251) — the seed fact a repeated non-blog write was told to open on; absent for the first write.
+        **({"lead_focus": context["lead_focus"]} if context.get("lead_focus") else {}),
     }
 
 
@@ -3194,7 +3249,7 @@ async def fetch_review_list(tenant_id: UUID, pool, request: Optional[Request] = 
 
 
 __all__ = [
-    "ContentWritingError", "RequestNotReadyError", "MissingCTAError", "MAX_ATTEMPTS",
+    "ContentWritingError", "RequestNotReadyError", "MissingCTAError", "AtomReplacedError", "MAX_ATTEMPTS",
     "start_write", "run_write_background", "fetch_piece", "fetch_latest_piece_for_request",
     "fetch_review", "fetch_review_list", "update_piece_content_text",
 ]

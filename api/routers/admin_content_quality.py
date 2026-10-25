@@ -46,7 +46,7 @@ from services.acp_content_writing import hygiene, sentence_repair, text_integrit
 from services.acp_content_writing.generate import SentenceRepairError, repair_sentences_detailed
 from services.acp_content_writing.quality_gates import _length_bounds_for_channel
 from services.acp_content_writing.service import grounding_from_writer_input
-from services.acp_shared import place_cards, route_guard, seed_audit
+from services.acp_shared import atom_replaced, place_cards, route_guard, seed_audit
 from services.acp_shared.atom_seed import WRITER_FACT_KINDS
 from services.acp_shared.audit_log import AdminAuditAction, PlatformAuditAction, write_audit_log
 from services.acp_shared.brand_pack import fetch_brand_pack_conn
@@ -811,7 +811,7 @@ async def regenerate_angles(request_id: str, request: Request, x_admin_secret: s
         async with conn.transaction():
             req = await conn.fetchrow(
                 """
-                SELECT request_id, tenant_id, goal, status FROM acp_shared.angle_gate_request
+                SELECT request_id, tenant_id, atom_id, goal, status FROM acp_shared.angle_gate_request
                 WHERE request_id = $1::uuid FOR UPDATE
                 """, request_id)
             if req is None:
@@ -833,6 +833,14 @@ async def regenerate_angles(request_id: str, request: Request, x_admin_secret: s
                 WHERE request_id = $1::uuid ORDER BY idx
                 """, request_id)
             route_segment_ids = await _regenerate_route_segment_ids(conn, request_id)
+            if route_segment_ids is None and not await atom_replaced.atom_is_live(conn, req["atom_id"],
+                                                                                req["tenant_id"]):
+                # AA-990 — a single-atom request whose atom a later atomize run replaced: the clone's t8_angles job
+                # could only fail ("atom not found"); answer 409 atom_replaced instead of enqueueing it.
+                logger.warning("aa990_atom_replaced", path="admin_regenerate_angles", tenant_id=str(req["tenant_id"]),
+                               request_id=str(request_id), atom_id=req["atom_id"])
+                raise HTTPException(status_code=409, detail=atom_replaced.admin_detail(),
+                                    headers={"X-Error-Code": atom_replaced.ATOM_REPLACED})
             new_id = str(uuid4())
             await conn.execute(
                 """

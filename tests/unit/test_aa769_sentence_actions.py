@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+from structlog.testing import capture_logs
 
 from api.routers import admin_content_quality as cq
 from services.acp_content_writing import generate, service
@@ -530,10 +531,15 @@ def test_repair_sentences_passes_optional_context():
 REQUEST_ID = str(uuid.uuid4())
 
 
-def _angle_request_conn(status="approved", goal="inspire", busy=0):
-    conn = _conn({"request_id": uuid.UUID(REQUEST_ID), "tenant_id": TENANT_ID, "goal": goal, "status": status,
-                  "trip_id": None, "route_segment_ids": None, "route_id": None})  # AA-914: a Segment request
-    conn.fetchval.return_value = busy
+def _angle_request_conn(status="approved", goal="inspire", busy=0, atom_live=True):
+    conn = _conn({"request_id": uuid.UUID(REQUEST_ID), "tenant_id": TENANT_ID, "atom_id": "atom_old", "goal": goal,
+                  "status": status, "trip_id": None, "route_segment_ids": None,
+                  "route_id": None})  # AA-914: a Segment request
+
+    async def _fetchval(sql, *args):
+        # AA-990 — the busy check (shared.job) and the atom liveness check (v_active_tour_atoms)
+        return (1 if atom_live else None) if "v_active_tour_atoms" in sql else busy
+    conn.fetchval.side_effect = _fetchval
     conn.fetch.return_value = [{"idx": 0, "name": "Ruins at dawn", "best_final_style": "s", "recommended": True,
                                 "chosen": True}]
     return conn
@@ -578,7 +584,7 @@ async def test_regenerate_angles_clones_the_request_and_leaves_the_old_one_alone
     assert d["job_id"] == "job-1" and d["previous_status"] == "approved" and d["new_request_id"] == new_id
     assert d["previous_angles"][0]["name"] == "Ruins at dawn"
     # the busy check looks for a regenerate of THIS request still in flight
-    assert "regenerated_from" in conn.fetchval.await_args.args[0]
+    assert any("regenerated_from" in c.args[0] for c in conn.fetchval.await_args_list)
 
 
 @pytest.mark.asyncio
@@ -590,6 +596,23 @@ async def test_regenerate_angles_409_when_generating_or_writing(status, goal, bu
         await _regenerate(conn)
     assert e.value.status_code == 409
     conn.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_regenerate_angles_409_atom_replaced_when_the_atom_is_no_longer_live():
+    """AA-990 — a Segment request whose atom a later atomize run replaced: the clone's t8_angles job could only fail
+    ("atom not found"), so regenerate answers a typed 409 atom_replaced and enqueues nothing."""
+    conn = _angle_request_conn(atom_live=False)
+    with pytest.raises(HTTPException) as e, capture_logs() as logs:
+        await _regenerate(conn)
+    assert e.value.status_code == 409
+    assert e.value.detail.startswith("atom_replaced: ") and "Social Content" in e.value.detail
+    line = [entry for entry in logs if entry["event"] == "aa990_atom_replaced"]
+    assert len(line) == 1 and line[0]["path"] == "admin_regenerate_angles" and line[0]["atom_id"] == "atom_old"
+    assert e.value.headers == {"X-Error-Code": "atom_replaced"}
+    conn.execute.assert_not_awaited()
+    live = [c for c in conn.fetchval.await_args_list if "v_active_tour_atoms" in c.args[0]]
+    assert live and live[0].args[1:] == ("atom_old", str(TENANT_ID))
 
 
 @pytest.mark.asyncio

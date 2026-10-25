@@ -393,9 +393,20 @@ _UNIT_ABBREVIATIONS = frozenset({"ft", "km", "mi", "hr", "hrs", "min", "mins"})
 # AA-912: a backward scan, not search(r"(?<![A-Za-z0-9])[A-Za-z.]+$", text, 0, i), which restarted at
 # offset 0 for every period (O(i) per period on plain prose, O(n^2) on a run of dots).
 _WORD_DOT_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.")
-_NEXT_RUNS_ON_RE = re.compile(r"\s*[a-z0-9]")
 _DOTTED_ACRONYM_RE = re.compile(r"(?:[A-Za-z]\.)+[A-Za-z]")
-_NEXT_IS_NUMBER_RE = re.compile(r"\s*\d")
+_RUNS_ON_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789")
+
+
+def _next_non_space(text: str, j: int) -> str:
+    """The first non-whitespace char at or after text[j] ('' when none). Replaces re.match(r"\\s*[a-z0-9]") and
+    re.match(r"\\s*\\d") at j (CodeQL py/polynomial-redos, S251): str.isspace / str.isdecimal are exactly the
+    regex classes \\s / \\d on str, so the result is the same."""
+    n = len(text)
+    while j < n and text[j].isspace():
+        j += 1
+    return text[j] if j < n else ""
+
+
 
 
 def _word_before_dot(text: str, i: int) -> str:
@@ -430,9 +441,9 @@ def is_sentence_end(text: str, i: int) -> bool:
         w = word.lower()
         if w in _ABBREVIATIONS or (word and _DOTTED_ACRONYM_RE.fullmatch(word)):
             return False
-        if w in _NUMBER_ABBREVIATIONS and _NEXT_IS_NUMBER_RE.match(text, i + 1):
+        if w in _NUMBER_ABBREVIATIONS and _next_non_space(text, i + 1).isdecimal():
             return False
-        if w in _UNIT_ABBREVIATIONS and _NEXT_RUNS_ON_RE.match(text, i + 1):
+        if w in _UNIT_ABBREVIATIONS and _next_non_space(text, i + 1) in _RUNS_ON_CHARS:
             return False
     return True
 
@@ -1619,13 +1630,42 @@ TEMPLATE_LINE_RES = tuple(re.compile(p, re.I) for p in (
 ))
 
 
+# AA-790 (S251 T9 pilot, AI-tells 4.08) — the AI tells the writer-side pass (ai_tells.rewrite) cannot fix in code:
+# they need a rewrite of the sentence, so they ride the stock-line routing above (F15_voice, stored in F2_lexicon:
+# one sentence repair on attempt 1, never a hold). Whole-sentence shapes, never a bare word: 'earns income' and
+# 'rewards points' are facts. The writer is told the same list (ai_tells.PROMPT_RULES).
+AI_TELL_LINE_RES = tuple(re.compile(p, re.I) for p in (
+    # 'This is the day the route earns its reputation.', 'the water earns every second you spend in it'.
+    # Not a history fact: 'earned its name from the legend', 'earned the title of', 'earned its reputation for
+    # weaving' (no name/title/status; never before from/of/as/for — AA-790 review).
+    r"\bearn(?:s|ed)\s+(?:its|that|this|every|the|it)\s+(?:\w+\s+)?(?:reputation|place|distinction|description|"
+    r"keep|second|minute|hour|attention|time)\b(?!\s+(?:from|of|as|for)\b)",
+    # 'Northern Mongolia rewards those who arrive with patience', 'it rewards more than a brief visit'
+    r"\brewards?\s+(?:those|the\s+traveller|the\s+traveler|travell?ers|visitors|families|anyone|patience|"
+    r"more\s+than|a\s+slow|slow)\b",
+    r"^there\s+is\s+a\s+(?:particular|certain|special|specific|distinct)\s+(?:quality|kind|sort|feeling)\b",
+    # not 'has a way of life built around the reindeer' (a fact)
+    r"\bhas\s+a\s+way\s+of\b(?!\s+(?:life|living)\b)",
+    r"^if\s+there\s+is\s+one\s+(?:place|stop|moment|day|thing|site)\b",
+    r"\bis\s+the\s+thing\s+itself\b",
+    # 'a piece of cloth is rarely just cloth'
+    r"\b(\w{3,})\s+(?:is|are)\s+(?:rarely|never|seldom)\s+(?:just|only|simply|merely)\s+\1\b",
+    r"\bworth\s+(?:slowing\s+down|taking\s+time|lingering)\s+(?:for|over|with|on)\b",
+    # 'Kuang Si Falls is not simply a destination in itself.'
+    r"\bnot\s+(?:simply|merely)\s+(?:a|an|the)\s+\w+(?:\s+\w+)?\s+in\s+itself\b",
+    # 'The caldera floor asks nothing of a child except …', 'a forest that asks a great deal of everyone'
+    r"\basks\s+(?:nothing|little|much|more|a\s+great\s+deal|a\s+lot)\s+of\s+(?:a|an|the|every|each|its|you|"
+    r"everyone|visitors?|travell?ers?|families|children|guests?)\b",
+))
+
+
 def template_lines(text: str) -> list[tuple[str, str]]:
-    """[(stock line, its sentence)] for TEMPLATE_LINE_RES, prose / bullets / FAQ answers."""
+    """[(stock line, its sentence)] for TEMPLATE_LINE_RES and AI_TELL_LINE_RES, prose / bullets / FAQ answers."""
     out = []
     for sp in sentence_spans(text or ""):
         if sp["kind"] not in ("prose", "bullet", "faq_a"):
             continue
-        for rx in TEMPLATE_LINE_RES:
+        for rx in TEMPLATE_LINE_RES + AI_TELL_LINE_RES:
             m = rx.search(sp["clean"])
             if m:
                 out.append((" ".join(m.group(0).split()), sp["clean"]))
