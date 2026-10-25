@@ -22,9 +22,9 @@ from shared.sentry_init import release
 
 logger = structlog.get_logger()
 
-# The newest CIS migration this code needs: 273 (AA-645 d06 — the publish upsert and promote write
-# gold_aa_internal.published_tours.updated_at).
-REQUIRED_CIS_SCHEMA = 273
+# The newest CIS migration this code needs: 277 (AA-916 — the admin A1 field edit and both sentence applies write
+# shared.writing_signal inside their own transaction; without the table they fail).
+REQUIRED_CIS_SCHEMA = 277
 READY_CACHE_SECONDS = 5.0
 
 SCHEMA_VERSION_SQL = """

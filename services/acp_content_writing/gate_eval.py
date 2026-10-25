@@ -14,7 +14,8 @@ MAX_VIOLATION_CHARS = 300
 def ledger_snapshot(gate_ledger: list[dict] | None) -> list[dict]:
     """Every gate of one attempt, trimmed to what gate evaluation needs: gate, passed (the verdict),
     blocking and the violations (at most 5, each cut to 300 chars). Passed gates are kept with no
-    violations so a gate's runs per attempt can be counted, not only its failures."""
+    violations so a gate's runs per attempt can be counted, not only its failures. AA-924: a merged entry (F2_lexicon,
+    F15_voice) also keeps `severity` and its `findings` ({text, severity, source}, the same cut)."""
     out: list[dict] = []
     for g in gate_ledger or []:
         if not isinstance(g, dict) or "gate" not in g:
@@ -22,8 +23,15 @@ def ledger_snapshot(gate_ledger: list[dict] | None) -> list[dict]:
         passed = bool(g.get("passed"))
         violations = [] if passed else [
             str(v)[:MAX_VIOLATION_CHARS] for v in (g.get("violations") or [])[:MAX_VIOLATIONS_PER_GATE]]
-        out.append({"gate": g["gate"], "passed": passed, "blocking": g.get("blocking", True),
-                    "violations": violations})
+        entry = {"gate": g["gate"], "passed": passed, "blocking": g.get("blocking", True), "violations": violations}
+        if isinstance(g.get("findings"), list):
+            # AA-924 — a merged entry keeps each finding's severity and source (the same 5 / 300-char cut)
+            entry["severity"] = g.get("severity")
+            entry["findings"] = [] if passed else [
+                {"text": str(f.get("text"))[:MAX_VIOLATION_CHARS], "severity": f.get("severity"),
+                 "source": f.get("source")}
+                for f in g["findings"][:MAX_VIOLATIONS_PER_GATE] if isinstance(f, dict)]
+        out.append(entry)
     return out
 
 

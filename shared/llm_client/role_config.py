@@ -158,6 +158,9 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
     "a3_place_dedupe":    StageConfig("a3_place_dedupe", "validate", "openai", "gpt-6-luna", "acc3",
                                       fallback_model_ids=("gpt-6-luna-openai",)),
     "a3_place_dedupe_check": StageConfig("a3_place_dedupe_check", "validate", "claude", "haiku", "acc3"),
+    # AA-835 (migration 278): the customer description / highlights of a Booking hotel or service, reviewed by a
+    # human before Booking shows it. Customer-facing text → `writer`, Sonnet; no fallback, no shadow.
+    "supply_content_writer": StageConfig("supply_content_writer", "writer", "claude", "sonnet", "acc3"),
 }
 
 _GENERIC_FALLBACK = StageConfig("unknown", "writer", "claude", "haiku", "acc3")

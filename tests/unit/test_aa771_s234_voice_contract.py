@@ -622,11 +622,14 @@ class TestF15Voice:
                                                                  qg._result("F9_brand_style", [], blocking=False)]):
             out = qg.run_quality_gates(content_text=text, atom_text="seed", cta="Ask us",
                                        brand_rubric_text="r", channel="linkedin", brand_pack=TRAIL)
-        gates = {g["gate"]: g for g in out["gate_ledger"]}
+        gates = {g["gate"]: g for g in qg.expand_ledger(out["gate_ledger"])}  # AA-924: the legacy view
         # 13 words, under the band: AA-780 — blocks on attempt 1 (one full rewrite), ahead of F15 in the ledger
         assert gates["F14_social_shape"]["blocking"] and out["first_failure"]["gate"] == "F14_social_shape"
         assert gates["F15_voice"]["blocking"]
         assert not gates["F15_voice_warn"]["passed"] and not gates["F15_voice_warn"]["blocking"]
+        # AA-924 — stored: the stock phrase blocks inside F2_lexicon; F15_voice holds only the warn checks
+        stored = {g["gate"]: g for g in out["gate_ledger"]}
+        assert stored["F2_lexicon"]["blocking"] and not stored["F15_voice"]["blocking"]
         with patch.object(qg, "gate_brand_voice", return_value=[qg._result("F9_cta_fact", []),
                                                                  qg._result("F9_brand_style", [], blocking=False)]):
             later = qg.run_quality_gates(content_text=text, atom_text="seed", cta="Ask us",
