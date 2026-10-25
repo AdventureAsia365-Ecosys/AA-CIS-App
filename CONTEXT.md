@@ -777,6 +777,16 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   `precision`); `catalog.v_destination_shape` (tripplanner only) serves a line's `shape_mid` / `shape_lo` by id;
   `_live_stop` never shows a line. Tests apply 253 + 256 inside one rolled-back transaction
   (`tests/integration/test_aa847_migration_256.py`, with the EXPLAIN checks in the consumer's filter shape).
+- **Countries (CIS 279, AA-851; data standards X5 / DM-2.4 / NAM-11; contract root `catalog.country.v1`).**
+  `shared.countries` is the one ISO 3166-1 table of the ecosystem (249 rows, key `iso2`; `name` = the common English
+  name AA writes, `iso_name`, `aliases`). `shared.country_iso2(text)` is the one free-text resolver (same answers as
+  `services/places/guards.py` for every AA spelling; the integration test pins it). `raw_tours` and
+  `shared.destinations` carry `country_iso2` (FK, filled by the trigger `shared.set_country_iso2()` from `country`
+  for every writer; an explicit value is kept; unknown → NULL, listed by `shared.v_country_unmapped`). A role that
+  writes either table needs SELECT on `shared.countries` and EXECUTE on the resolver (the trigger runs as the writer,
+  MIG-6; 279 grants both to every writer it sees, on Dev `cis_app`, and refuses a writer without them); other apps
+  read `catalog.v_country` and `catalog.v_destination.country_iso2` (booking, tripplanner). New country columns are
+  `country_iso2 char(2)` keyed to `shared.countries`, never a new free-text key.
 - **The CIS runtime role is `cis_app` (X1, AA-860; api + worker switch in S18).** Migration 244 grants it
   DML / sequences / non-trigger function EXECUTE in the 11 CIS runtime schemas (not `catalog`, `booking`,
   `tripplanner`, `public`), default privileges for later objects (`FOR ROLE aa_cis_admin` in 244, restated
