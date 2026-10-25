@@ -66,6 +66,7 @@ from services.acp_content_writing.quality_gates import (CHEAP_REPAIR_GATES, F13_
                                                           replace_faq_section, reshape_like, seed_place_names,
                                                           run_quality_gates, strip_citation_tags,
                                                           unused_source_facts)
+from services.acp_shared.atom_replaced import AtomReplaced
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from services.acp_shared.content_embedding import compute_embedding, embedding_to_pgvector_literal
 from services.acp_shared.piece_similarity import find_similar_pieces
@@ -118,6 +119,12 @@ class MissingCTAError(ContentWritingError):
     the specific CTA" — a human decision, not an inferred one)."""
 
 
+class AtomReplacedError(ContentWritingError, AtomReplaced):
+    """AA-990 — the request's atom (or every Segment of its Route) is no longer live: a later atomize run replaced
+    it. The router answers 409 `atom_replaced` ("pick the angle again"), not the generic 500 of
+    ContentWritingError. Still a ContentWritingError, so every other caller keeps catching it."""
+
+
 _ATOM_TEXT_QUERY = """
     SELECT text FROM acp_contract.v_active_tour_atoms
     WHERE atom_id = $1 AND owner_scope IN ('platform', $2) AND NOT deleted AND NOT is_empty_marker
@@ -136,7 +143,7 @@ async def _fetch_atom_text(tenant_id: UUID, atom_id: str, pool) -> str:
         # AA-768 — the atom's evidence/hook + Segment siblings' evidence, not just its short label.
         seed = await atom_seed_text(conn, atom_id, str(tenant_id)) if row is not None else None
     if row is None:
-        raise ContentWritingError(f"atom_id={atom_id!r} not found (deleted, or not a live platform/tenant atom)")
+        raise AtomReplacedError(f"atom_id={atom_id!r} not found (deleted, or not a live platform/tenant atom)")
     return seed or row["text"]
 
 
@@ -241,7 +248,7 @@ async def _fetch_route_segments(
         atoms = [(r["atom_id"], r["text"]) for _, r in kept]
         segments = await route_moment_seeds(conn, atoms, str(tenant_id)) if atoms else []
     if not segments:
-        raise ContentWritingError(
+        raise AtomReplacedError(
             f"None of route_segment_ids={segment_ids!r} resolved to a live atom for trip_id="
             f"{trip_id!r} — the Route was rebuilt away. Refresh the Slate and pick again."
         )
@@ -3194,7 +3201,7 @@ async def fetch_review_list(tenant_id: UUID, pool, request: Optional[Request] = 
 
 
 __all__ = [
-    "ContentWritingError", "RequestNotReadyError", "MissingCTAError", "MAX_ATTEMPTS",
+    "ContentWritingError", "RequestNotReadyError", "MissingCTAError", "AtomReplacedError", "MAX_ATTEMPTS",
     "start_write", "run_write_background", "fetch_piece", "fetch_latest_piece_for_request",
     "fetch_review", "fetch_review_list", "update_piece_content_text",
 ]

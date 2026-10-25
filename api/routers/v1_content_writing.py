@@ -69,6 +69,8 @@ async def write(request_id: UUID, body: WriteBody, request: Request, tenant=Depe
         raise HTTPException(status_code=409, detail=str(exc))
     except service.MissingCTAError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+    except service.AtomReplacedError as exc:   # AA-990: 409 atom_replaced ("pick the angle again"), was a 500
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail, headers=exc.headers) from exc
     except service.ContentWritingError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
