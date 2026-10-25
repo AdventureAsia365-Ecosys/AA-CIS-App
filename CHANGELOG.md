@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.9.0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/compare/v0.8.0...v0.9.0) (2026-10-25)
+
+
+### Features
+
+* AA-authored content over catalog.http.v1 and the tenant.membership.v1 feed for the partner CRM ([#987](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/987)) ([ba9e786](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/ba9e78673931f862878d96ca557d0fbcacd1d7c3))
+* admin editor page for AA-authored content (CRM prep packs, templates, campaign blocks) ([#993](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/993)) ([6453b74](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/6453b7465b508b3b203399f4a17d86a7237e6cc4))
+* build Redis connections from env with TLS and AUTH token support ([#983](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/983)) ([c15b592](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/c15b592a4e3bab95118ddd26eda4d74364e15823))
+* CIS consumer of the Booking supply feed, LLM draft job, photo purge and supply content review API ([#991](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/991)) ([8107bdb](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/8107bdb07a29f9e3e8053cfd34b5e804935b938e))
+* CIS migration 275, AA-authored content tables (items, versions, published view) ([#980](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/980)) ([d1e0eb4](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/d1e0eb43bfe6e030a7501c2802c16b4a13cf0161))
+* CIS migration 277, shared.writing_signal store for writing-memory signals ([#988](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/988)) ([d798f44](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/d798f4475beccf2bdae0a165aaf30aa6ae2f0548))
+* CIS migration 278, supply content tables and the catalog.v_supply_content read-back view ([#989](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/989)) ([a996cbd](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/a996cbdb7995e599564e3d31070c0188626a38f5))
+* CIS migration 279, shared.countries (ISO 3166-1), country_iso2 and catalog.v_country ([#995](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/995)) ([32b9ed0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/32b9ed065aff146a2fbe4d8679c5c5296b07e141))
+* CIS migration 280, shared.writing_rule store for learned writing rules ([#996](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/996)) ([1021790](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/1021790f722a040cddf83f5da86af1e8cb3827ee))
+* portal /terms AI acceptable-use summary (draft v0.2) ([#981](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/981)) ([32ca42d](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/32ca42d79b522653fec22ccc7779581f68a89083))
+* quality registry, error taxonomy, single thresholds file and lint (Q-1) ([#982](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/982)) ([a8ec0fe](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/a8ec0fe4c51ab7d3ca0bbc4d92dbe5949fe6be4a))
+* seed script and starter content for AA-authored CRM content (10 prep packs, templates, campaign blocks) ([#994](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/994)) ([8952afa](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/8952afa336f6b5f925023a42bdd8980bcecdc820))
+
+
+### Bug Fixes
+
+* retry a failed a3 atomize read and let the job retry failed days ([#985](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/985)) ([58c3ca0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/58c3ca05156e416b13ee03f8b5a09439602756c7))
+
 ## [0.8.0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/compare/v0.7.0...v0.8.0) (2026-10-24)
 
 

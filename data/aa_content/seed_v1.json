@@ -1,0 +1,258 @@
+{
+ "seed": "AA-977 S4 v1",
+ "actor": "seed:AA-977",
+ "note": "AA starter content written by hand for Dev (no LLM). Ms. Thu's team replaces it through the editor; a new version keeps the published one fetchable for the CRM. Visa and entry links are official government sites, checked when written (see docs/implementation-notes/AA-977.md, S4). Placeholders in double braces ({{traveller_first_name}} etc.) are filled by the partner CRM.",
+ "groups": [
+  {
+   "group_key": "prep-pack-vietnam",
+   "kind": "prep_pack",
+   "applies_to": {
+    "country_codes": [
+     "VN"
+    ]
+   },
+   "items": {
+    "en": {
+     "title": "Before you go: Vietnam",
+     "body_markdown": "## Entry and visa\n\nWhether you need a visa depends on your passport, and the rules change. Check them and apply only on the official Vietnam e-visa portal: [evisa.gov.vn](https://evisa.gov.vn). Your passport should be valid for at least six months after you arrive, with blank pages.\n\n## Health and insurance\n\nTake out travel insurance that covers medical treatment, emergency evacuation and trip cancellation, and keep the policy number with you. See a travel clinic 6-8 weeks before you leave about vaccinations and any medicine you need, and pack enough of your own prescription medicine for the whole trip. Drink bottled or filtered water and use insect repellent, especially in the south and the Mekong Delta.\n\n## Money\n\nThe currency is the Vietnamese dong (VND). Cards work in hotels and larger restaurants in the cities; carry cash for markets, small shops and the countryside. ATMs are easy to find in towns.\n\n## Power plugs\n\n220 V. Most sockets take two-pin plugs (types A and C); bring a universal adapter.\n\n## Dress code\n\nCover shoulders and knees when you visit pagodas, temples and mausoleums, and take your shoes off where others do.\n\n## Weather and seasons\n\nVietnam is long, so the weather differs by region. The north has a cool winter (December to February) and a hot, humid summer. The south is warm all year, with a rainy season from about May to October. The central coast gets most of its rain from September to December.\n\n## Local etiquette\n\nGreet people with a smile and a slight nod. Hand things over with both hands. Ask before you photograph people, and keep calm when bargaining in markets."
+    },
+    "vi": {
+     "title": "Trước khi đi: Việt Nam",
+     "body_markdown": "## Nhập cảnh và thị thực\n\nBạn có cần thị thực hay không tuỳ theo hộ chiếu, và quy định có thể thay đổi. Hãy kiểm tra và chỉ nộp đơn trên cổng thị thực điện tử chính thức của Việt Nam: [evisa.gov.vn](https://evisa.gov.vn). Hộ chiếu nên còn hạn ít nhất sáu tháng kể từ ngày nhập cảnh và còn trang trống.\n\n## Sức khoẻ và bảo hiểm\n\nHãy mua bảo hiểm du lịch có chi trả điều trị y tế, vận chuyển cấp cứu và huỷ chuyến, và luôn mang theo số hợp đồng bảo hiểm. Nên gặp phòng khám tư vấn du lịch 6-8 tuần trước khi đi để hỏi về tiêm phòng và thuốc cần mang, và mang đủ thuốc kê đơn của mình cho cả chuyến đi. Uống nước đóng chai hoặc nước đã lọc, và dùng thuốc chống muỗi, nhất là ở miền Nam và Đồng bằng sông Cửu Long.\n\n## Tiền tệ\n\nĐơn vị tiền tệ là đồng Việt Nam (VND). Thẻ được nhận ở khách sạn và nhà hàng lớn trong thành phố; nên mang tiền mặt khi đi chợ, cửa hàng nhỏ và vùng nông thôn. Cây ATM có ở hầu hết các thị trấn.\n\n## Ổ cắm điện\n\nĐiện 220 V. Phần lớn ổ cắm dùng phích hai chấu (loại A và C); nên mang theo bộ chuyển đổi đa năng.\n\n## Trang phục\n\nMặc áo che vai và quần hoặc váy qua gối khi vào chùa, đền và lăng, và cởi giày ở nơi mọi người đều cởi.\n\n## Thời tiết và mùa\n\nViệt Nam trải dài nên thời tiết mỗi miền một khác. Miền Bắc có mùa đông lạnh (tháng 12 đến tháng 2) và mùa hè nóng ẩm. Miền Nam ấm quanh năm, mùa mưa khoảng từ tháng 5 đến tháng 10. Miền Trung mưa nhiều nhất từ tháng 9 đến tháng 12.\n\n## Phép lịch sự\n\nChào hỏi bằng nụ cười và cái gật đầu nhẹ. Đưa và nhận đồ bằng hai tay. Hỏi ý trước khi chụp ảnh người khác, và giữ bình tĩnh khi mặc cả ở chợ."
+    }
+   }
+  },
+  {
+   "group_key": "prep-pack-thailand",
+   "kind": "prep_pack",
+   "applies_to": {
+    "country_codes": [
+     "TH"
+    ]
+   },
+   "items": {
+    "en": {
+     "title": "Before you go: Thailand",
+     "body_markdown": "## Entry and visa\n\nVisa rules depend on your passport and change from time to time. Check them and apply only on the official Thai e-visa website: [thaievisa.go.th](https://www.thaievisa.go.th). Thailand also asks arriving travellers to complete the Thailand Digital Arrival Card online before arrival: [tdac.immigration.go.th](https://tdac.immigration.go.th). Your passport should be valid for at least six months.\n\n## Health and insurance\n\nTake out travel insurance that covers medical treatment, emergency evacuation and trip cancellation, and keep the policy number with you. See a travel clinic 6-8 weeks before you leave about vaccinations and any medicine you need, and pack enough of your own prescription medicine for the whole trip. Drink bottled or filtered water and use insect repellent.\n\n## Money\n\nThe currency is the Thai baht (THB). Cards are widely accepted in cities and resorts; carry cash for street food, markets and taxis. Thai ATMs charge a fee on foreign cards.\n\n## Power plugs\n\n230 V. Sockets take most two-pin and some three-pin plugs (types A, B, C and O); a universal adapter covers them.\n\n## Dress code\n\nAt temples and the Grand Palace, cover shoulders and knees and take your shoes off before you enter a building.\n\n## Weather and seasons\n\nThe cool, dry season runs from about November to February, the hot season from March to May, and the rainy season from June to October. The islands in the Gulf of Thailand, such as Koh Samui, get most of their rain from October to December.\n\n## Local etiquette\n\nTreat the monarchy and images of the Buddha with respect. Do not touch anyone's head or point your feet at people or sacred objects. Greet with a smile; the wai (palms together) is a polite reply."
+    },
+    "vi": {
+     "title": "Trước khi đi: Thái Lan",
+     "body_markdown": "## Nhập cảnh và thị thực\n\nQuy định thị thực tuỳ theo hộ chiếu và thay đổi theo thời gian. Hãy kiểm tra và chỉ nộp đơn trên trang thị thực điện tử chính thức của Thái Lan: [thaievisa.go.th](https://www.thaievisa.go.th). Thái Lan cũng yêu cầu khách nhập cảnh khai Thẻ nhập cảnh điện tử (TDAC) trực tuyến trước khi đến: [tdac.immigration.go.th](https://tdac.immigration.go.th). Hộ chiếu nên còn hạn ít nhất sáu tháng.\n\n## Sức khoẻ và bảo hiểm\n\nHãy mua bảo hiểm du lịch có chi trả điều trị y tế, vận chuyển cấp cứu và huỷ chuyến, và luôn mang theo số hợp đồng bảo hiểm. Nên gặp phòng khám tư vấn du lịch 6-8 tuần trước khi đi để hỏi về tiêm phòng và thuốc cần mang, và mang đủ thuốc kê đơn của mình cho cả chuyến đi. Uống nước đóng chai hoặc nước đã lọc, và dùng thuốc chống muỗi.\n\n## Tiền tệ\n\nĐơn vị tiền tệ là baht Thái (THB). Thẻ được nhận rộng rãi ở thành phố và khu nghỉ dưỡng; nên mang tiền mặt khi ăn hàng rong, đi chợ và đi taxi. ATM ở Thái Lan thu phí với thẻ nước ngoài.\n\n## Ổ cắm điện\n\nĐiện 230 V. Ổ cắm nhận hầu hết phích hai chấu và một số phích ba chấu (loại A, B, C và O); bộ chuyển đổi đa năng dùng được cho tất cả.\n\n## Trang phục\n\nKhi vào chùa và Hoàng cung, mặc áo che vai, quần hoặc váy qua gối, và cởi giày trước khi vào trong.\n\n## Thời tiết và mùa\n\nMùa mát và khô khoảng từ tháng 11 đến tháng 2, mùa nóng từ tháng 3 đến tháng 5, mùa mưa từ tháng 6 đến tháng 10. Các đảo ở vịnh Thái Lan như Koh Samui mưa nhiều nhất từ tháng 10 đến tháng 12.\n\n## Phép lịch sự\n\nTôn trọng Hoàng gia và tượng Phật. Không chạm vào đầu người khác, không chĩa chân về phía người hay vật linh thiêng. Chào bằng nụ cười; chắp tay (wai) là cách đáp lễ lịch sự."
+    }
+   }
+  },
+  {
+   "group_key": "prep-pack-cambodia",
+   "kind": "prep_pack",
+   "applies_to": {
+    "country_codes": [
+     "KH"
+    ]
+   },
+   "items": {
+    "en": {
+     "title": "Before you go: Cambodia",
+     "body_markdown": "## Entry and visa\n\nMost travellers need a visa. Check the rules for your passport and apply only on the official Cambodia e-visa website: [evisa.gov.kh](https://www.evisa.gov.kh). Your passport should be valid for at least six months after you arrive.\n\n## Health and insurance\n\nTake out travel insurance that covers medical treatment, emergency evacuation and trip cancellation, and keep the policy number with you. See a travel clinic 6-8 weeks before you leave about vaccinations and any medicine you need, and pack enough of your own prescription medicine for the whole trip. Drink bottled or filtered water and use insect repellent.\n\n## Money\n\nCambodia uses two currencies: US dollars are accepted almost everywhere, and small change is given in Cambodian riel (KHR). Bring clean, untorn dollar notes; damaged notes are often refused.\n\n## Power plugs\n\n230 V. Most sockets take types A, C and G plugs; bring a universal adapter.\n\n## Dress code\n\nThe Angkor temples and the Royal Palace ask visitors to cover shoulders and knees. Light, long clothes also help with the sun.\n\n## Weather and seasons\n\nThe dry season runs from about November to April, getting hotter from March. The wet season runs from May to October, with short, heavy afternoon showers.\n\n## Local etiquette\n\nGreet with a smile; a slight bow with palms together is polite. Do not touch monks, and women should not hand things directly to a monk. Ask before you photograph people."
+    },
+    "vi": {
+     "title": "Trước khi đi: Campuchia",
+     "body_markdown": "## Nhập cảnh và thị thực\n\nPhần lớn du khách cần thị thực. Hãy kiểm tra quy định cho hộ chiếu của bạn và chỉ nộp đơn trên trang thị thực điện tử chính thức của Campuchia: [evisa.gov.kh](https://www.evisa.gov.kh). Hộ chiếu nên còn hạn ít nhất sáu tháng kể từ ngày nhập cảnh.\n\n## Sức khoẻ và bảo hiểm\n\nHãy mua bảo hiểm du lịch có chi trả điều trị y tế, vận chuyển cấp cứu và huỷ chuyến, và luôn mang theo số hợp đồng bảo hiểm. Nên gặp phòng khám tư vấn du lịch 6-8 tuần trước khi đi để hỏi về tiêm phòng và thuốc cần mang, và mang đủ thuốc kê đơn của mình cho cả chuyến đi. Uống nước đóng chai hoặc nước đã lọc, và dùng thuốc chống muỗi.\n\n## Tiền tệ\n\nCampuchia dùng hai loại tiền: đô la Mỹ được nhận gần như ở mọi nơi, tiền lẻ thối lại bằng riel (KHR). Nên mang tiền đô sạch, không rách; tờ tiền hư thường bị từ chối.\n\n## Ổ cắm điện\n\nĐiện 230 V. Phần lớn ổ cắm nhận phích loại A, C và G; nên mang bộ chuyển đổi đa năng.\n\n## Trang phục\n\nQuần thể Angkor và Hoàng cung yêu cầu khách mặc áo che vai, quần hoặc váy qua gối. Quần áo dài, nhẹ cũng giúp tránh nắng.\n\n## Thời tiết và mùa\n\nMùa khô khoảng từ tháng 11 đến tháng 4, nóng dần từ tháng 3. Mùa mưa từ tháng 5 đến tháng 10, thường có mưa rào ngắn và lớn vào buổi chiều.\n\n## Phép lịch sự\n\nChào bằng nụ cười; cúi nhẹ và chắp tay là cách chào lịch sự. Không chạm vào nhà sư, và phụ nữ không nên trao đồ trực tiếp cho nhà sư. Hỏi ý trước khi chụp ảnh người khác."
+    }
+   }
+  },
+  {
+   "group_key": "prep-pack-laos",
+   "kind": "prep_pack",
+   "applies_to": {
+    "country_codes": [
+     "LA"
+    ]
+   },
+   "items": {
+    "en": {
+     "title": "Before you go: Laos",
+     "body_markdown": "## Entry and visa\n\nMany travellers need a visa. Check the rules for your passport and apply only on the official Lao e-visa website: [laoevisa.gov.la](https://laoevisa.gov.la). Your passport should be valid for at least six months after you arrive.\n\n## Health and insurance\n\nTake out travel insurance that covers medical treatment, emergency evacuation and trip cancellation, and keep the policy number with you. See a travel clinic 6-8 weeks before you leave about vaccinations and any medicine you need, and pack enough of your own prescription medicine for the whole trip. Medical care outside Vientiane is basic, so evacuation cover matters. Drink bottled or filtered water and use insect repellent.\n\n## Money\n\nThe currency is the Lao kip (LAK). Cash is king outside the larger towns; ATMs are found in Vientiane, Luang Prabang and Vang Vieng. Some hotels quote prices in US dollars or Thai baht.\n\n## Power plugs\n\n230 V. Sockets take several plug types (A, B, C, E and F); bring a universal adapter.\n\n## Dress code\n\nCover shoulders and knees in temples and take your shoes off before entering a shrine or a home.\n\n## Weather and seasons\n\nThe dry season runs from about November to April and the wet season from May to October. Nights in the north and the mountains can be cool in December and January.\n\n## Local etiquette\n\nIf you watch the morning alms giving in Luang Prabang, stay quiet, keep your distance and do not use a flash. Do not touch anyone's head, and speak softly: raising your voice is seen as losing face."
+    },
+    "vi": {
+     "title": "Trước khi đi: Lào",
+     "body_markdown": "## Nhập cảnh và thị thực\n\nNhiều du khách cần thị thực. Hãy kiểm tra quy định cho hộ chiếu của bạn và chỉ nộp đơn trên trang thị thực điện tử chính thức của Lào: [laoevisa.gov.la](https://laoevisa.gov.la). Hộ chiếu nên còn hạn ít nhất sáu tháng kể từ ngày nhập cảnh.\n\n## Sức khoẻ và bảo hiểm\n\nHãy mua bảo hiểm du lịch có chi trả điều trị y tế, vận chuyển cấp cứu và huỷ chuyến, và luôn mang theo số hợp đồng bảo hiểm. Nên gặp phòng khám tư vấn du lịch 6-8 tuần trước khi đi để hỏi về tiêm phòng và thuốc cần mang, và mang đủ thuốc kê đơn của mình cho cả chuyến đi. Dịch vụ y tế ngoài Viêng Chăn còn hạn chế, nên bảo hiểm vận chuyển cấp cứu rất quan trọng. Uống nước đóng chai hoặc nước đã lọc, và dùng thuốc chống muỗi.\n\n## Tiền tệ\n\nĐơn vị tiền tệ là kip Lào (LAK). Ngoài các thị trấn lớn, gần như chỉ dùng tiền mặt; ATM có ở Viêng Chăn, Luang Prabang và Vang Vieng. Một số khách sạn báo giá bằng đô la Mỹ hoặc baht Thái.\n\n## Ổ cắm điện\n\nĐiện 230 V. Ổ cắm nhận nhiều loại phích (A, B, C, E và F); nên mang bộ chuyển đổi đa năng.\n\n## Trang phục\n\nMặc áo che vai, quần hoặc váy qua gối khi vào chùa, và cởi giày trước khi vào điện thờ hay nhà dân.\n\n## Thời tiết và mùa\n\nMùa khô khoảng từ tháng 11 đến tháng 4, mùa mưa từ tháng 5 đến tháng 10. Ban đêm ở miền Bắc và vùng núi có thể lạnh vào tháng 12 và tháng 1.\n\n## Phép lịch sự\n\nNếu xem lễ khất thực buổi sáng ở Luang Prabang, hãy giữ yên lặng, đứng cách xa và không dùng đèn flash. Không chạm vào đầu người khác, và nói nhỏ nhẹ: lớn tiếng bị xem là mất thể diện."
+    }
+   }
+  },
+  {
+   "group_key": "prep-pack-myanmar",
+   "kind": "prep_pack",
+   "applies_to": {
+    "country_codes": [
+     "MM"
+    ]
+   },
+   "items": {
+    "en": {
+     "title": "Before you go: Myanmar",
+     "body_markdown": "## Entry and visa\n\nMost travellers need a visa. Check the rules for your passport and apply only on the official Myanmar e-visa website: [evisa.moip.gov.mm](https://evisa.moip.gov.mm). Check your own government's travel advice for Myanmar before you book, and again before you travel.\n\n## Health and insurance\n\nTake out travel insurance that covers medical treatment, emergency evacuation and trip cancellation, and keep the policy number with you. See a travel clinic 6-8 weeks before you leave about vaccinations and any medicine you need, and pack enough of your own prescription medicine for the whole trip. Drink bottled or filtered water and use insect repellent.\n\n## Money\n\nThe currency is the Myanmar kyat (MMK). Card acceptance is limited outside large hotels, and ATMs can run out of cash, so carry enough cash for each stop. Ask your travel consultant how much to bring.\n\n## Power plugs\n\n230 V. Sockets take several plug types (C, D, F and G); bring a universal adapter.\n\n## Dress code\n\nAt pagodas and monasteries, cover shoulders and knees and take off both shoes and socks before you step onto the temple grounds.\n\n## Weather and seasons\n\nThe cool, dry season runs from about November to February, the hot season from March to May, and the monsoon from June to October.\n\n## Local etiquette\n\nWalk clockwise around a pagoda. Do not touch anyone's head or point your feet at people or Buddha images. Ask before you photograph people and monks."
+    },
+    "vi": {
+     "title": "Trước khi đi: Myanmar",
+     "body_markdown": "## Nhập cảnh và thị thực\n\nPhần lớn du khách cần thị thực. Hãy kiểm tra quy định cho hộ chiếu của bạn và chỉ nộp đơn trên trang thị thực điện tử chính thức của Myanmar: [evisa.moip.gov.mm](https://evisa.moip.gov.mm). Hãy xem khuyến cáo du lịch của chính phủ nước bạn về Myanmar trước khi đặt chuyến và một lần nữa trước khi đi.\n\n## Sức khoẻ và bảo hiểm\n\nHãy mua bảo hiểm du lịch có chi trả điều trị y tế, vận chuyển cấp cứu và huỷ chuyến, và luôn mang theo số hợp đồng bảo hiểm. Nên gặp phòng khám tư vấn du lịch 6-8 tuần trước khi đi để hỏi về tiêm phòng và thuốc cần mang, và mang đủ thuốc kê đơn của mình cho cả chuyến đi. Uống nước đóng chai hoặc nước đã lọc, và dùng thuốc chống muỗi.\n\n## Tiền tệ\n\nĐơn vị tiền tệ là kyat Myanmar (MMK). Ngoài các khách sạn lớn, ít nơi nhận thẻ, và ATM có thể hết tiền, nên hãy mang đủ tiền mặt cho mỗi điểm dừng. Hãy hỏi tư vấn viên của bạn nên mang bao nhiêu.\n\n## Ổ cắm điện\n\nĐiện 230 V. Ổ cắm nhận nhiều loại phích (C, D, F và G); nên mang bộ chuyển đổi đa năng.\n\n## Trang phục\n\nỞ chùa tháp và tu viện, mặc áo che vai, quần hoặc váy qua gối, và cởi cả giày lẫn tất trước khi bước vào khuôn viên chùa.\n\n## Thời tiết và mùa\n\nMùa mát và khô khoảng từ tháng 11 đến tháng 2, mùa nóng từ tháng 3 đến tháng 5, mùa mưa từ tháng 6 đến tháng 10.\n\n## Phép lịch sự\n\nĐi vòng quanh chùa theo chiều kim đồng hồ. Không chạm vào đầu người khác, không chĩa chân về phía người hay tượng Phật. Hỏi ý trước khi chụp ảnh người dân và nhà sư."
+    }
+   }
+  },
+  {
+   "group_key": "prep-pack-indonesia",
+   "kind": "prep_pack",
+   "applies_to": {
+    "country_codes": [
+     "ID"
+    ]
+   },
+   "items": {
+    "en": {
+     "title": "Before you go: Indonesia",
+     "body_markdown": "## Entry and visa\n\nMany travellers need a visa on arrival or an e-visa, depending on their passport. Check the rules and apply only on the official Indonesian immigration e-visa website: [evisa.imigrasi.go.id](https://evisa.imigrasi.go.id). Your passport should be valid for at least six months after you arrive.\n\n## Health and insurance\n\nTake out travel insurance that covers medical treatment, emergency evacuation and trip cancellation, and keep the policy number with you. See a travel clinic 6-8 weeks before you leave about vaccinations and any medicine you need, and pack enough of your own prescription medicine for the whole trip. Drink bottled or filtered water and use insect repellent.\n\n## Money\n\nThe currency is the Indonesian rupiah (IDR). Cards are accepted in hotels and larger shops in Bali and Jakarta; carry cash for markets, warungs and the smaller islands. Count your change at money changers.\n\n## Power plugs\n\n230 V. Sockets take types C and F (round two-pin) plugs.\n\n## Dress code\n\nIn Bali, a sarong and sash are needed to enter temples (many temples lend them). Cover shoulders and knees in mosques and away from the beach.\n\n## Weather and seasons\n\nBali and Java are drier from about April to October and wetter from November to March. It is warm all year at the coast and cooler in the highlands.\n\n## Local etiquette\n\nUse your right hand to give and receive things and to eat. Do not step on the small daily offerings (canang sari) on Bali's pavements. Ask before you photograph ceremonies and people."
+    },
+    "vi": {
+     "title": "Trước khi đi: Indonesia",
+     "body_markdown": "## Nhập cảnh và thị thực\n\nTuỳ hộ chiếu, nhiều du khách cần thị thực khi đến hoặc thị thực điện tử. Hãy kiểm tra quy định và chỉ nộp đơn trên trang thị thực điện tử chính thức của Cục Xuất nhập cảnh Indonesia: [evisa.imigrasi.go.id](https://evisa.imigrasi.go.id). Hộ chiếu nên còn hạn ít nhất sáu tháng kể từ ngày nhập cảnh.\n\n## Sức khoẻ và bảo hiểm\n\nHãy mua bảo hiểm du lịch có chi trả điều trị y tế, vận chuyển cấp cứu và huỷ chuyến, và luôn mang theo số hợp đồng bảo hiểm. Nên gặp phòng khám tư vấn du lịch 6-8 tuần trước khi đi để hỏi về tiêm phòng và thuốc cần mang, và mang đủ thuốc kê đơn của mình cho cả chuyến đi. Uống nước đóng chai hoặc nước đã lọc, và dùng thuốc chống muỗi.\n\n## Tiền tệ\n\nĐơn vị tiền tệ là rupiah Indonesia (IDR). Thẻ được nhận ở khách sạn và cửa hàng lớn tại Bali và Jakarta; nên mang tiền mặt khi đi chợ, ăn ở quán nhỏ (warung) và ra các đảo nhỏ. Đếm lại tiền khi đổi ngoại tệ.\n\n## Ổ cắm điện\n\nĐiện 230 V. Ổ cắm nhận phích loại C và F (hai chấu tròn).\n\n## Trang phục\n\nỞ Bali, cần quấn sarong và thắt dây lưng khi vào đền (nhiều đền cho mượn). Mặc áo che vai, quần hoặc váy qua gối khi vào nhà thờ Hồi giáo và khi không ở bãi biển.\n\n## Thời tiết và mùa\n\nBali và Java khô hơn khoảng từ tháng 4 đến tháng 10, mưa nhiều hơn từ tháng 11 đến tháng 3. Vùng ven biển ấm quanh năm, vùng cao mát hơn.\n\n## Phép lịch sự\n\nDùng tay phải để đưa, nhận đồ và ăn. Đừng giẫm lên những lễ vật nhỏ (canang sari) đặt trên vỉa hè ở Bali. Hỏi ý trước khi chụp ảnh nghi lễ và người dân."
+    }
+   }
+  },
+  {
+   "group_key": "prep-pack-japan",
+   "kind": "prep_pack",
+   "applies_to": {
+    "country_codes": [
+     "JP"
+    ]
+   },
+   "items": {
+    "en": {
+     "title": "Before you go: Japan",
+     "body_markdown": "## Entry and visa\n\nMany passports can enter Japan without a visa for a short stay; others need a visa from a Japanese embassy. Check the rules for your passport on the official Ministry of Foreign Affairs of Japan page: [mofa.go.jp/j_info/visit/visa/index.html](https://www.mofa.go.jp/j_info/visit/visa/index.html). Your passport must be valid for your whole stay.\n\n## Health and insurance\n\nTake out travel insurance that covers medical treatment, emergency evacuation and trip cancellation, and keep the policy number with you. See a travel clinic 6-8 weeks before you leave about vaccinations and any medicine you need, and pack enough of your own prescription medicine for the whole trip. Medical care is excellent but expensive for visitors. Tap water is safe to drink. Some common medicines are restricted in Japan; check before you pack them.\n\n## Money\n\nThe currency is the Japanese yen (JPY). Cards are widely accepted in cities, but many small restaurants, temples and rural shops take cash only. ATMs in convenience stores and post offices accept foreign cards.\n\n## Power plugs\n\n100 V, lower than in most countries. Sockets take flat two-pin plugs (types A and B). Check that your chargers accept 100 V.\n\n## Dress code\n\nCasual clothes are fine. Wear socks without holes: you take your shoes off in homes, ryokan inns, some restaurants and temple halls.\n\n## Weather and seasons\n\nSpring (March to May) brings cherry blossom, usually in late March or early April in Tokyo and Kyoto. June is the rainy season, July and August are hot and humid, and typhoons are most likely in August and September. Autumn (October and November) is mild and colourful; winter is cold, with heavy snow in the north and the mountains.\n\n## Local etiquette\n\nTipping is not expected and can cause confusion. Keep your voice down on trains and do not take phone calls there. Queue patiently, and carry your rubbish with you: public bins are rare."
+    },
+    "vi": {
+     "title": "Trước khi đi: Nhật Bản",
+     "body_markdown": "## Nhập cảnh và thị thực\n\nNhiều hộ chiếu được vào Nhật Bản không cần thị thực cho chuyến ngắn ngày; số khác cần xin thị thực tại Đại sứ quán Nhật Bản. Hãy kiểm tra quy định cho hộ chiếu của bạn trên trang chính thức của Bộ Ngoại giao Nhật Bản: [mofa.go.jp/j_info/visit/visa/index.html](https://www.mofa.go.jp/j_info/visit/visa/index.html). Hộ chiếu phải còn hạn trong suốt thời gian lưu trú.\n\n## Sức khoẻ và bảo hiểm\n\nHãy mua bảo hiểm du lịch có chi trả điều trị y tế, vận chuyển cấp cứu và huỷ chuyến, và luôn mang theo số hợp đồng bảo hiểm. Nên gặp phòng khám tư vấn du lịch 6-8 tuần trước khi đi để hỏi về tiêm phòng và thuốc cần mang, và mang đủ thuốc kê đơn của mình cho cả chuyến đi. Dịch vụ y tế rất tốt nhưng đắt với du khách. Nước máy uống được. Một số loại thuốc thông dụng bị hạn chế ở Nhật Bản; hãy kiểm tra trước khi mang theo.\n\n## Tiền tệ\n\nĐơn vị tiền tệ là yên Nhật (JPY). Thẻ được nhận rộng rãi ở thành phố, nhưng nhiều quán ăn nhỏ, đền chùa và cửa hàng ở nông thôn chỉ nhận tiền mặt. ATM trong cửa hàng tiện lợi và bưu điện nhận thẻ nước ngoài.\n\n## Ổ cắm điện\n\nĐiện 100 V, thấp hơn hầu hết các nước. Ổ cắm nhận phích hai chấu dẹt (loại A và B). Hãy kiểm tra bộ sạc của bạn có dùng được điện 100 V.\n\n## Trang phục\n\nQuần áo thường ngày là được. Nên mang tất lành lặn: bạn sẽ cởi giày khi vào nhà dân, nhà trọ ryokan, một số nhà hàng và điện thờ.\n\n## Thời tiết và mùa\n\nMùa xuân (tháng 3 đến tháng 5) có hoa anh đào, thường nở cuối tháng 3 hoặc đầu tháng 4 ở Tokyo và Kyoto. Tháng 6 là mùa mưa, tháng 7 và 8 nóng ẩm, bão thường đến vào tháng 8 và 9. Mùa thu (tháng 10 và 11) dễ chịu và nhiều màu lá; mùa đông lạnh, tuyết nhiều ở miền Bắc và vùng núi.\n\n## Phép lịch sự\n\nKhông cần tiền boa, và tiền boa có thể gây khó xử. Nói nhỏ trên tàu và không nghe điện thoại trên tàu. Xếp hàng kiên nhẫn, và mang rác theo người: thùng rác công cộng rất ít."
+    }
+   }
+  },
+  {
+   "group_key": "prep-pack-south-korea",
+   "kind": "prep_pack",
+   "applies_to": {
+    "country_codes": [
+     "KR"
+    ]
+   },
+   "items": {
+    "en": {
+     "title": "Before you go: South Korea",
+     "body_markdown": "## Entry and visa\n\nVisa-free travellers may need a K-ETA (electronic travel authorization) before they fly, and other passports need a visa. Check the rules for your passport and apply only on the official sites: K-ETA at [k-eta.go.kr](https://www.k-eta.go.kr) and visas at [visa.go.kr](https://www.visa.go.kr).\n\n## Health and insurance\n\nTake out travel insurance that covers medical treatment, emergency evacuation and trip cancellation, and keep the policy number with you. See a travel clinic 6-8 weeks before you leave about vaccinations and any medicine you need, and pack enough of your own prescription medicine for the whole trip. Medical care is excellent. Tap water is safe, though most people drink filtered or bottled water.\n\n## Money\n\nThe currency is the South Korean won (KRW). Cards are accepted almost everywhere, including taxis. Carry some cash for street markets. Not every ATM takes foreign cards; look for a \"Global\" ATM.\n\n## Power plugs\n\n220 V. Sockets take types C and F (round two-pin) plugs.\n\n## Dress code\n\nCasual clothes are fine. Take your shoes off in homes, temple halls and some traditional restaurants.\n\n## Weather and seasons\n\nKorea has four clear seasons. Spring (April and May) and autumn (September to November) are the most comfortable. Summer is hot and humid, with the monsoon from late June to July; winter is cold and dry.\n\n## Local etiquette\n\nGive and receive things with both hands. Tipping is not expected. Bow slightly when you greet older people, and wait for the eldest to start eating."
+    },
+    "vi": {
+     "title": "Trước khi đi: Hàn Quốc",
+     "body_markdown": "## Nhập cảnh và thị thực\n\nDu khách được miễn thị thực có thể cần K-ETA (giấy phép du lịch điện tử) trước khi bay, và các hộ chiếu khác cần thị thực. Hãy kiểm tra quy định cho hộ chiếu của bạn và chỉ nộp đơn trên trang chính thức: K-ETA tại [k-eta.go.kr](https://www.k-eta.go.kr) và thị thực tại [visa.go.kr](https://www.visa.go.kr).\n\n## Sức khoẻ và bảo hiểm\n\nHãy mua bảo hiểm du lịch có chi trả điều trị y tế, vận chuyển cấp cứu và huỷ chuyến, và luôn mang theo số hợp đồng bảo hiểm. Nên gặp phòng khám tư vấn du lịch 6-8 tuần trước khi đi để hỏi về tiêm phòng và thuốc cần mang, và mang đủ thuốc kê đơn của mình cho cả chuyến đi. Dịch vụ y tế rất tốt. Nước máy an toàn, dù phần lớn người dân uống nước lọc hoặc nước đóng chai.\n\n## Tiền tệ\n\nĐơn vị tiền tệ là won Hàn Quốc (KRW). Thẻ được nhận gần như ở mọi nơi, kể cả taxi. Nên mang ít tiền mặt khi đi chợ. Không phải ATM nào cũng nhận thẻ nước ngoài; hãy tìm ATM có chữ \"Global\".\n\n## Ổ cắm điện\n\nĐiện 220 V. Ổ cắm nhận phích loại C và F (hai chấu tròn).\n\n## Trang phục\n\nQuần áo thường ngày là được. Cởi giày khi vào nhà dân, điện thờ và một số nhà hàng truyền thống.\n\n## Thời tiết và mùa\n\nHàn Quốc có bốn mùa rõ rệt. Mùa xuân (tháng 4 và 5) và mùa thu (tháng 9 đến tháng 11) dễ chịu nhất. Mùa hè nóng ẩm, mưa nhiều từ cuối tháng 6 đến tháng 7; mùa đông lạnh và khô.\n\n## Phép lịch sự\n\nĐưa và nhận đồ bằng hai tay. Không cần tiền boa. Cúi chào nhẹ khi gặp người lớn tuổi, và chờ người lớn tuổi nhất bắt đầu ăn trước."
+    }
+   }
+  },
+  {
+   "group_key": "prep-pack-nepal",
+   "kind": "prep_pack",
+   "applies_to": {
+    "country_codes": [
+     "NP"
+    ]
+   },
+   "items": {
+    "en": {
+     "title": "Before you go: Nepal",
+     "body_markdown": "## Entry and visa\n\nMost travellers need a visa, which many passports can get on arrival. Check the rules for your passport on the official Department of Immigration website: [immigration.gov.np](https://www.immigration.gov.np). You can fill in the arrival form online before you fly: [nepaliport.immigration.gov.np](https://nepaliport.immigration.gov.np). Your passport should be valid for at least six months.\n\n## Health and insurance\n\nTake out travel insurance that covers medical treatment, emergency evacuation and trip cancellation, and keep the policy number with you. See a travel clinic 6-8 weeks before you leave about vaccinations and any medicine you need, and pack enough of your own prescription medicine for the whole trip. For treks, check that your insurance covers the altitude you will reach and helicopter rescue. Climb slowly to let your body adjust to the altitude. Drink only bottled, boiled or filtered water.\n\n## Money\n\nThe currency is the Nepalese rupee (NPR). Cards work in larger hotels and shops in Kathmandu and Pokhara; on treks you need cash. ATMs are in the cities, often with a low withdrawal limit.\n\n## Power plugs\n\n230 V. Sockets take types C, D and M plugs. Power cuts happen; bring a power bank.\n\n## Dress code\n\nDress modestly, with shoulders and knees covered, especially at temples. Take your shoes off before entering a temple or a home. Leather items are not allowed in some Hindu temples.\n\n## Weather and seasons\n\nAutumn (October and November) is the main trekking season, with clear mountain views. Spring (March to May) is warm, with flowering rhododendrons. The monsoon runs from June to September, and winter is cold at altitude.\n\n## Local etiquette\n\nGreet with \"Namaste\" and palms together. Walk clockwise around stupas and prayer wheels. Use your right hand to give and receive things, and ask before you photograph people."
+    },
+    "vi": {
+     "title": "Trước khi đi: Nepal",
+     "body_markdown": "## Nhập cảnh và thị thực\n\nPhần lớn du khách cần thị thực, và nhiều hộ chiếu có thể nhận thị thực khi đến. Hãy kiểm tra quy định cho hộ chiếu của bạn trên trang chính thức của Cục Xuất nhập cảnh Nepal: [immigration.gov.np](https://www.immigration.gov.np). Bạn có thể khai tờ khai nhập cảnh trực tuyến trước khi bay: [nepaliport.immigration.gov.np](https://nepaliport.immigration.gov.np). Hộ chiếu nên còn hạn ít nhất sáu tháng.\n\n## Sức khoẻ và bảo hiểm\n\nHãy mua bảo hiểm du lịch có chi trả điều trị y tế, vận chuyển cấp cứu và huỷ chuyến, và luôn mang theo số hợp đồng bảo hiểm. Nên gặp phòng khám tư vấn du lịch 6-8 tuần trước khi đi để hỏi về tiêm phòng và thuốc cần mang, và mang đủ thuốc kê đơn của mình cho cả chuyến đi. Với tour trekking, hãy kiểm tra bảo hiểm có chi trả ở độ cao bạn sẽ lên và cứu hộ bằng trực thăng. Lên cao từ từ để cơ thể thích nghi. Chỉ uống nước đóng chai, nước đun sôi hoặc nước đã lọc.\n\n## Tiền tệ\n\nĐơn vị tiền tệ là rupee Nepal (NPR). Thẻ dùng được ở khách sạn và cửa hàng lớn tại Kathmandu và Pokhara; khi trekking cần tiền mặt. ATM có ở thành phố, thường giới hạn số tiền rút thấp.\n\n## Ổ cắm điện\n\nĐiện 230 V. Ổ cắm nhận phích loại C, D và M. Thỉnh thoảng mất điện; nên mang sạc dự phòng.\n\n## Trang phục\n\nĂn mặc kín đáo, che vai và gối, nhất là khi vào đền. Cởi giày trước khi vào đền hoặc nhà dân. Một số đền Hindu không cho mang đồ da vào.\n\n## Thời tiết và mùa\n\nMùa thu (tháng 10 và 11) là mùa trekking chính, trời trong và thấy rõ núi. Mùa xuân (tháng 3 đến tháng 5) ấm áp, hoa đỗ quyên nở. Mùa mưa từ tháng 6 đến tháng 9, mùa đông lạnh ở vùng cao.\n\n## Phép lịch sự\n\nChào \"Namaste\" và chắp tay. Đi vòng quanh bảo tháp và bánh xe cầu nguyện theo chiều kim đồng hồ. Dùng tay phải để đưa và nhận đồ, và hỏi ý trước khi chụp ảnh người khác."
+    }
+   }
+  },
+  {
+   "group_key": "prep-pack-bhutan",
+   "kind": "prep_pack",
+   "applies_to": {
+    "country_codes": [
+     "BT"
+    ]
+   },
+   "items": {
+    "en": {
+     "title": "Before you go: Bhutan",
+     "body_markdown": "## Entry and visa\n\nEvery visitor except citizens of India, Bangladesh and the Maldives needs a visa issued before travel, and pays Bhutan's Sustainable Development Fee for each night. The visa is usually arranged together with your trip booking. The official rules are on the Bhutan Immigration Services Portal: [immi.gov.bt](https://www.immi.gov.bt) and the Department of Tourism website: [bhutan.travel](https://www.bhutan.travel).\n\n## Health and insurance\n\nTake out travel insurance that covers medical treatment, emergency evacuation and trip cancellation, and keep the policy number with you. See a travel clinic 6-8 weeks before you leave about vaccinations and any medicine you need, and pack enough of your own prescription medicine for the whole trip. Some valleys and passes are high; take the first days slowly. Drink bottled or filtered water.\n\n## Money\n\nThe currency is the Bhutanese ngultrum (BTN), which is pegged to the Indian rupee. Card acceptance is limited and ATMs are found mainly in Thimphu and Paro, so carry cash for small purchases.\n\n## Power plugs\n\n230 V. Sockets take several plug types (C, D, F, G and M); bring a universal adapter.\n\n## Dress code\n\nTo enter a dzong (fortress monastery) or a temple, wear long sleeves and long trousers or a long skirt, and no hat. Take your shoes off inside temples.\n\n## Weather and seasons\n\nSpring (March to May) and autumn (September to November) are the best seasons, with many festivals (tshechu). The monsoon runs from June to August; winter is dry and clear but cold, especially at night.\n\n## Local etiquette\n\nWalk clockwise around chortens, temples and prayer wheels. Do not point your feet at altars or people. Smoking in public places is restricted; ask your guide where it is allowed."
+    },
+    "vi": {
+     "title": "Trước khi đi: Bhutan",
+     "body_markdown": "## Nhập cảnh và thị thực\n\nMọi du khách, trừ công dân Ấn Độ, Bangladesh và Maldives, đều cần thị thực cấp trước khi đi, và đóng Phí Phát triển Bền vững của Bhutan cho mỗi đêm lưu trú. Thị thực thường được làm cùng lúc với việc đặt tour. Quy định chính thức có trên Cổng dịch vụ xuất nhập cảnh Bhutan: [immi.gov.bt](https://www.immi.gov.bt) và trang của Cục Du lịch: [bhutan.travel](https://www.bhutan.travel).\n\n## Sức khoẻ và bảo hiểm\n\nHãy mua bảo hiểm du lịch có chi trả điều trị y tế, vận chuyển cấp cứu và huỷ chuyến, và luôn mang theo số hợp đồng bảo hiểm. Nên gặp phòng khám tư vấn du lịch 6-8 tuần trước khi đi để hỏi về tiêm phòng và thuốc cần mang, và mang đủ thuốc kê đơn của mình cho cả chuyến đi. Một số thung lũng và đèo khá cao; hãy đi chậm trong những ngày đầu. Uống nước đóng chai hoặc nước đã lọc.\n\n## Tiền tệ\n\nĐơn vị tiền tệ là ngultrum Bhutan (BTN), có tỷ giá cố định với rupee Ấn Độ. Ít nơi nhận thẻ và ATM chủ yếu có ở Thimphu và Paro, nên hãy mang tiền mặt cho các khoản chi nhỏ.\n\n## Ổ cắm điện\n\nĐiện 230 V. Ổ cắm nhận nhiều loại phích (C, D, F, G và M); nên mang bộ chuyển đổi đa năng.\n\n## Trang phục\n\nKhi vào dzong (pháo đài tu viện) hoặc đền, mặc áo dài tay và quần dài hoặc váy dài, không đội mũ. Cởi giày khi vào trong đền.\n\n## Thời tiết và mùa\n\nMùa xuân (tháng 3 đến tháng 5) và mùa thu (tháng 9 đến tháng 11) là đẹp nhất, có nhiều lễ hội (tshechu). Mùa mưa từ tháng 6 đến tháng 8; mùa đông khô, trời trong nhưng lạnh, nhất là ban đêm.\n\n## Phép lịch sự\n\nĐi vòng quanh tháp chorten, đền và bánh xe cầu nguyện theo chiều kim đồng hồ. Không chĩa chân về phía bàn thờ hay người khác. Hút thuốc nơi công cộng bị hạn chế; hãy hỏi hướng dẫn viên chỗ được phép.",
+     "keep_draft": true
+    }
+   }
+  },
+  {
+   "group_key": "template-welcome-message",
+   "kind": "starter_template",
+   "applies_to": {},
+   "items": {
+    "en": {
+     "title": "Welcome message after booking",
+     "body_markdown": "Hi {{traveller_first_name}},\n\nThank you for booking {{trip_name}} with {{agency_name}}. We are delighted to be planning this trip with you.\n\nHere is what happens next:\n\n1. Within two working days we send your booking confirmation and the payment schedule.\n2. About six weeks before departure you receive your final itinerary and the Before you go guide for {{destination}}.\n3. A week before you leave we confirm your airport pickup and your guide's contact details.\n\nIf anything changes on your side (names, passports, flights or dietary needs), reply to this message and we will update your booking.\n\nWarm regards,\n{{agent_name}}\n{{agency_name}}"
+    },
+    "vi": {
+     "title": "Thư chào mừng sau khi đặt tour",
+     "body_markdown": "Chào {{traveller_first_name}},\n\nCảm ơn bạn đã đặt chuyến {{trip_name}} cùng {{agency_name}}. Chúng tôi rất vui được chuẩn bị chuyến đi này cùng bạn.\n\nCác bước tiếp theo:\n\n1. Trong hai ngày làm việc, chúng tôi gửi xác nhận đặt tour và lịch thanh toán.\n2. Khoảng sáu tuần trước ngày khởi hành, bạn nhận lịch trình cuối cùng và cẩm nang Trước khi đi cho {{destination}}.\n3. Một tuần trước khi đi, chúng tôi xác nhận xe đón sân bay và thông tin liên lạc của hướng dẫn viên.\n\nNếu có thay đổi từ phía bạn (họ tên, hộ chiếu, chuyến bay hay chế độ ăn), hãy trả lời thư này để chúng tôi cập nhật.\n\nTrân trọng,\n{{agent_name}}\n{{agency_name}}"
+    }
+   }
+  },
+  {
+   "group_key": "template-pre-departure-checklist",
+   "kind": "starter_template",
+   "applies_to": {},
+   "items": {
+    "en": {
+     "title": "Pre-departure checklist",
+     "body_markdown": "Hi {{traveller_first_name}},\n\n{{trip_name}} starts on {{departure_date}}. Here is a short checklist for the weeks before you go:\n\n- [ ] Passport valid for at least six months after your return, with blank pages\n- [ ] Entry requirements checked for every country on the trip (see your Before you go guide for the official links)\n- [ ] Travel insurance bought, with medical evacuation cover; policy number shared with us\n- [ ] Vaccinations and medicine discussed with a travel clinic\n- [ ] Flights and arrival times sent to us for your airport pickup\n- [ ] Bank told about your travel dates; some local cash planned for the first day\n- [ ] Universal plug adapter and a power bank packed\n- [ ] Emergency contact details sent to us\n\nQuestions? Just reply to this message.\n\n{{agent_name}}\n{{agency_name}}"
+    },
+    "vi": {
+     "title": "Danh sách việc cần làm trước khi đi",
+     "body_markdown": "Chào {{traveller_first_name}},\n\nChuyến {{trip_name}} bắt đầu ngày {{departure_date}}. Dưới đây là danh sách ngắn cho những tuần trước khi đi:\n\n- [ ] Hộ chiếu còn hạn ít nhất sáu tháng sau ngày về, còn trang trống\n- [ ] Đã kiểm tra yêu cầu nhập cảnh của mọi nước trong chuyến đi (xem đường dẫn chính thức trong cẩm nang Trước khi đi)\n- [ ] Đã mua bảo hiểm du lịch có vận chuyển cấp cứu; đã gửi số hợp đồng cho chúng tôi\n- [ ] Đã hỏi phòng khám tư vấn du lịch về tiêm phòng và thuốc\n- [ ] Đã gửi chuyến bay và giờ đến để chúng tôi sắp xếp xe đón\n- [ ] Đã báo ngân hàng ngày đi; có sẵn ít tiền địa phương cho ngày đầu\n- [ ] Đã mang bộ chuyển đổi ổ cắm đa năng và sạc dự phòng\n- [ ] Đã gửi thông tin người liên hệ khẩn cấp\n\nCó câu hỏi? Bạn chỉ cần trả lời thư này.\n\n{{agent_name}}\n{{agency_name}}"
+    }
+   }
+  },
+  {
+   "group_key": "campaign-newsletter-intro",
+   "kind": "campaign_block",
+   "applies_to": {},
+   "items": {
+    "en": {
+     "title": "Newsletter introduction",
+     "body_markdown": "Hello {{traveller_first_name}},\n\nAsia rewards travellers who go a little slower: a morning market before the crowds, a family-run guesthouse, a guide who grew up in the valley you are walking through. In this issue we share a few trips our travellers loved this season and the ideas we are planning next.\n\nIf one of them catches your eye, reply to this email and we will shape it around your dates and pace."
+    },
+    "vi": {
+     "title": "Đoạn mở đầu bản tin",
+     "body_markdown": "Xin chào {{traveller_first_name}},\n\nChâu Á dành phần thưởng cho những ai đi chậm lại một chút: phiên chợ sáng trước khi đông người, nhà nghỉ do một gia đình quản lý, người hướng dẫn lớn lên ngay trong thung lũng bạn đang đi qua. Trong số này, chúng tôi giới thiệu vài chuyến đi khách của chúng tôi yêu thích mùa này và những ý tưởng sắp tới.\n\nNếu bạn thích chuyến nào, hãy trả lời email này để chúng tôi thiết kế theo ngày và nhịp đi của bạn."
+    }
+   }
+  },
+  {
+   "group_key": "campaign-seasonal-highlight",
+   "kind": "campaign_block",
+   "applies_to": {},
+   "items": {
+    "en": {
+     "title": "Seasonal highlight: the cool, dry season",
+     "body_markdown": "## The best months for Southeast Asia\n\nFrom November to February much of mainland Southeast Asia enjoys its cool, dry season: clear skies over the temples of Angkor, comfortable days for cycling the Mekong Delta and crisp mornings in the hills of northern Laos and Thailand. It is also the most popular time to travel, so good guides and small hotels fill early.\n\nPlanning a trip for these months? Talk to us now and we will hold the dates while you decide."
+    },
+    "vi": {
+     "title": "Điểm nhấn theo mùa: mùa mát và khô",
+     "body_markdown": "## Những tháng đẹp nhất cho Đông Nam Á\n\nTừ tháng 11 đến tháng 2, phần lớn Đông Nam Á lục địa vào mùa mát và khô: trời trong trên quần thể Angkor, những ngày dễ chịu để đạp xe ở Đồng bằng sông Cửu Long và buổi sáng se lạnh trên vùng đồi phía Bắc Lào và Thái Lan. Đây cũng là mùa đông khách nhất, nên hướng dẫn viên giỏi và khách sạn nhỏ thường kín chỗ sớm.\n\nBạn đang lên kế hoạch cho những tháng này? Hãy liên hệ ngay để chúng tôi giữ ngày trong lúc bạn quyết định."
+    }
+   }
+  }
+ ]
+}
