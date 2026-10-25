@@ -18,6 +18,8 @@ from contextlib import asynccontextmanager
 from typing import Any, Optional
 
 import pytest
+import structlog
+import structlog.testing
 from botocore.stub import Stubber
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
@@ -65,10 +67,11 @@ def test_the_write_allow_list_is_exactly_the_two_sentence_apply_routes():
         ("POST", "/admin/content-quality/pieces/{piece_id}/sentences/apply"),
         ("POST", "/admin/content-quality/tour-versions/{version_id}/sentences/apply"),
     }
-    # Both are real routes of the app, with a POLICY entry, admin-only by capability.
-    routes = {(m, r.path) for r in real_app.routes for m in getattr(r, "methods", ())}
+    # Both are real routes of the app, with a POLICY entry, admin-only by capability. Read from the app's OpenAPI
+    # document, not by walking app.routes: FastAPI >= 0.14x keeps included routers as opaque entries there.
+    paths = real_app.openapi()["paths"]
     for method, route in e2e_staff.E2E_ALLOWED_WRITES:
-        assert (method, route) in routes
+        assert method.lower() in paths.get(route, {})
         assert staff_authz.POLICY[(method, route)] in staff_authz.ROLE_PERMS["admin"]
     # The path regexes and the templates name the same routes.
     assert len(e2e_staff.E2E_ALLOWED_WRITE_PATHS) == len(e2e_staff.E2E_ALLOWED_WRITES)
@@ -312,7 +315,7 @@ def _admin_e2e_token(issuer: StaffIssuer, groups=("cis-admin",)) -> str:
 
 
 @pytest.mark.asyncio
-async def test_resolve_flags_the_admin_e2e_session_read_only_on_dev(issuer, directory, monkeypatch, capsys):
+async def test_resolve_flags_the_admin_e2e_session_read_only_on_dev(issuer, directory, monkeypatch):
     _set_env(monkeypatch, "dev")
     uid = _admin_e2e_row(directory, owner=True)   # an owner flag could only come from a hand-edited row
     identity = await staff_identity.authenticate(directory, _admin_e2e_token(issuer))
@@ -409,16 +412,17 @@ def test_middleware_lets_reads_through_as_admin(issuer, directory, monkeypatch, 
     ("PATCH", f"/admin/content-quality/pieces/{PIECE}/sentences/apply"),
     ("POST", "/admin/waves/check"),
 ])
-def test_middleware_refuses_every_other_write_before_the_route(issuer, directory, monkeypatch, capsys, method, path):
+def test_middleware_refuses_every_other_write_before_the_route(issuer, directory, monkeypatch, method, path):
     _set_env(monkeypatch, "dev")
     _admin_e2e_row(directory)
     app, reached = _echo_app(directory)
-    res = TestClient(app).request(method, path, headers={"Authorization": f"Bearer {_admin_e2e_token(issuer)}"})
+    # capture_logs, not capsys: other tests reconfigure structlog's output stream, so stdout can be empty here.
+    with structlog.testing.capture_logs() as logs:
+        res = TestClient(app).request(method, path, headers={"Authorization": f"Bearer {_admin_e2e_token(issuer)}"})
     assert res.status_code == 403
     assert res.json() == {"detail": "e2e_read_only"}
     assert reached == []
-    out = capsys.readouterr().out
-    assert "staff_bearer_refused" in out and "e2e_read_only" in out
+    assert any(e.get("event") == "staff_bearer_refused" and e.get("reason") == "e2e_read_only" for e in logs)
 
 
 @pytest.mark.parametrize("path", [f"/admin/content-quality/pieces/{PIECE}/sentences/apply",
