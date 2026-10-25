@@ -38,7 +38,8 @@ from uuid import UUID
 import asyncpg
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from api.core.staff_authz import staff_policy
+from api.core import e2e_staff
+from api.core.staff_authz import request_staff_identity, staff_policy
 from pydantic import BaseModel, ConfigDict, Field
 
 from api.routers.admin import verify_admin_secret
@@ -553,6 +554,15 @@ def _sentence_audit(body: "SentenceApplyBody", ref: "wm.SignalRef", warnings: li
             **wm.audit_details(ref, body.reason_code)}
 
 
+def _refuse_e2e_mode(request: Request, mode: str) -> None:
+    """AA-816 A10b (S252): the Dev-only E2E CIS admin may apply a sentence edit (the AA-916 WM-07 sample) only as a Cut
+    or a manual Edit; ``rewrite`` records a model suggestion it could not have asked for (``…/suggest`` is refused to
+    it by the bearer middleware). 403 ``e2e_read_only`` for any other mode."""
+    if (getattr(request_staff_identity(request), "e2e_read_only", False)
+            and mode not in e2e_staff.E2E_SENTENCE_MODES):
+        raise HTTPException(status_code=403, detail=e2e_staff.E2E_READ_ONLY)
+
+
 _ACTION_BY_MODE = {"cut": AdminAuditAction.SENTENCE_CUT, "rewrite": AdminAuditAction.SENTENCE_REWRITTEN,
                    "manual": AdminAuditAction.SENTENCE_EDITED}
 
@@ -574,6 +584,7 @@ async def apply_sentence(piece_id: str, body: SentenceApplyBody, request: Reques
     `tenant_copy.older_copy` (AA-802) then tells the admin the tenant holds the older text."""
     verify_admin_secret(x_admin_secret)
     _require_admin_role(x_admin_role)
+    _refuse_e2e_mode(request, body.mode)
     if body.mode not in _ACTION_BY_MODE:
         raise HTTPException(status_code=422, detail="mode must be cut, rewrite or manual")
     replacement = body.replacement.strip()
@@ -1370,6 +1381,7 @@ async def apply_tour_sentence(version_id: str, body: TourSentenceApplyBody, requ
     status (0 rows → 409) and write the audit row. Returns the refreshed detail + `warnings`."""
     verify_admin_secret(x_admin_secret)
     _require_admin_role(x_admin_role)
+    _refuse_e2e_mode(request, body.mode)
     from services.acp_produce.tenant_pipeline import _t3_structural_issues
     from services.jobs.t2_rewrite_job import brand_rules_from_pack, source_tour_dict
     if body.mode not in _TOUR_ACTION_BY_MODE:

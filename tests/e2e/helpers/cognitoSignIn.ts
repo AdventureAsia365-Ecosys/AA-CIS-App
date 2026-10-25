@@ -5,7 +5,7 @@
 // only). The code is a live credential: it is never logged or printed, and no screenshot is taken while it may be
 // on screen (callers pass a `shot` that runs only before the code is typed).
 import { expect, type Locator, type Page } from '@playwright/test';
-import { E2E_COGNITO_EMAIL, mailboxBaseline, waitForSignInCode } from './mailbox';
+import { E2E_COGNITO_EMAIL, MAILBOX_PREFIX, mailboxBaseline, waitForSignInCode } from './mailbox';
 
 export const STAFF_AUTH_HOST = 'staff-auth.lumiguides.it.com';
 
@@ -46,26 +46,35 @@ export async function reachCodeStep(page: Page): Promise<Locator> {
 /**
  * On the managed-login email form: type the E2E address, ask for a code, read it from the mailbox, submit it.
  * `shot` (optional) runs only before the code is typed: once with the address filled (`emailShot`), once on the
- * empty code field (`codeShot`).
+ * empty code field (`codeShot`). `email` / `prefix` default to the A10 reviewer (E2E_COGNITO_EMAIL, inbound/); the
+ * A10b admin-evidence spec passes E2E_CIS_ADMIN_EMAIL and MAILBOX_ADMIN_PREFIX.
  */
 export async function signInByEmailCode(
   page: Page,
-  opts: { shot?: (name: string) => Promise<void>; emailShot?: string; codeShot?: string } = {},
+  opts: {
+    shot?: (name: string) => Promise<void>;
+    emailShot?: string;
+    codeShot?: string;
+    email?: string;
+    prefix?: string;
+  } = {},
 ): Promise<void> {
+  const email = opts.email ?? E2E_COGNITO_EMAIL;
+  const prefix = opts.prefix ?? MAILBOX_PREFIX;
   const emailField = page.getByLabel(/email/i).first();
   await expect(emailField).toBeVisible({ timeout: 15000 });
-  await emailField.fill(E2E_COGNITO_EMAIL);
+  await emailField.fill(email);
   if (opts.shot && opts.emailShot) await opts.shot(opts.emailShot);
 
   // Snapshot the mailbox BEFORE asking for a code, then ask.
-  const baseline = await mailboxBaseline();
+  const baseline = await mailboxBaseline(prefix);
   const since = new Date();
   await page.getByRole('button', { name: /^next$/i }).click({ timeout: 10000 });
   const codeField = await reachCodeStep(page);
   if (opts.shot && opts.codeShot) await opts.shot(opts.codeShot);
 
   // Code from S3 (hard 90 s cap inside the helper).
-  const code = await waitForSignInCode({ since, baseline, timeoutMs: 90000 });
+  const code = await waitForSignInCode({ since, baseline, timeoutMs: 90000, recipient: email, prefix });
   await codeField.fill(code);
   await page.getByRole('button', { name: /^(continue|sign in|next)$/i }).first().click({ timeout: 10000 });
 }

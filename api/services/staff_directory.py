@@ -15,9 +15,11 @@ called: :data:`COGNITO_OPERATIONS` is enforced by :class:`CognitoDirectory`, so 
 
 Operations
 ----------
-- create: ``@adventure.asia`` only (one temporary exception: :data:`E2E_TEST_STAFF_EMAIL`, reviewer only, no
-  Booking grant — AA-816 E2E, migration 250); username derived from the address's local part (unique); ``password_hash``
-  NULL (Cognito-only member); optional Booking grant. Cognito: ``AdminCreateUser`` with ``MessageAction=SUPPRESS``
+- create: ``@adventure.asia`` only (temporary exceptions: :data:`E2E_TEST_STAFF_EMAIL`, reviewer only, no
+  Booking grant — AA-816 E2E, migration 250; and, Dev only, :data:`E2E_CIS_ADMIN_TEST_STAFF_EMAIL`, admin only, no
+  Booking grant, refused unless ``ENVIRONMENT`` is exactly ``dev`` — A10b, migration 283); username derived from the
+  address's local part (unique); ``password_hash`` NULL (Cognito-only member); optional Booking grant. Cognito:
+  ``AdminCreateUser`` with ``MessageAction=SUPPRESS``
   (always: without it Cognito mails a temporary password and the person could set a permanent password through
   managed login, bypassing email-code-only sign-in) and ``email`` + ``email_verified=true``. Then
   ``AdminAddUserToGroup`` ``cis-<role>`` and, with a grant, ``booking-<role>``. An existing user
@@ -72,6 +74,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, Callable, Optional
 
 import asyncpg
@@ -79,7 +82,7 @@ import structlog
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import BotoCoreError, ClientError
 
-from api.core import identity_config, staff_identity
+from api.core import e2e_staff, identity_config, staff_identity
 from api.services import staff_invite
 from services.acp_shared.audit_log import write_audit_log
 
@@ -104,6 +107,18 @@ APP_BOOKING = "booking"
 # pre token trigger (AA-CIS-Infra) hold the same rule. Removed when the E2E work is finished (AA-816).
 E2E_TEST_STAFF_EMAIL = "e2e@e2e-mail.lumiguides.it.com"
 E2E_TEST_STAFF_ROLE = "reviewer"
+# TEMPORARY (AA-816 A10b, S252; root ADR 0006a A10b): the Dev-only E2E CIS admin (api/core/e2e_staff.py). CIS role admin
+# only, never an owner, no Booking grant (require_e2e_test_scope), and only where ENVIRONMENT is exactly "dev"
+# (require_dev_only_e2e_environment). Migration 283 and the WORKFORCE trigger hold the same rule.
+E2E_CIS_ADMIN_TEST_STAFF_EMAIL = e2e_staff.E2E_CIS_ADMIN_TEST_STAFF_EMAIL
+E2E_CIS_ADMIN_TEST_STAFF_ROLE = e2e_staff.E2E_CIS_ADMIN_TEST_STAFF_ROLE
+# Every E2E address the directory accepts, with the one CIS role it may hold. Read-only.
+_E2E_TEST_STAFF_ROLES = MappingProxyType({
+    E2E_TEST_STAFF_EMAIL: E2E_TEST_STAFF_ROLE,
+    E2E_CIS_ADMIN_TEST_STAFF_EMAIL: E2E_CIS_ADMIN_TEST_STAFF_ROLE,
+})
+# The E2E addresses that may exist only on Dev.
+_DEV_ONLY_E2E_EMAILS = frozenset({E2E_CIS_ADMIN_TEST_STAFF_EMAIL})
 
 # The break-glass account (ADR 0006 decision 11; S242 plan D1). Never written from the UI.
 BREAKGLASS_USERNAMES = frozenset({"admin"})
@@ -195,16 +210,18 @@ def normalise_email(email: Any) -> str:
 
 
 def is_e2e_test_email(email: Any) -> bool:
-    """True only for :data:`E2E_TEST_STAFF_EMAIL` (after trimming and lower-casing)."""
-    return normalise_email(email) == E2E_TEST_STAFF_EMAIL
+    """True only for the E2E test addresses (:data:`E2E_TEST_STAFF_EMAIL`, :data:`E2E_CIS_ADMIN_TEST_STAFF_EMAIL`),
+    after trimming and lower-casing."""
+    return normalise_email(email) in _E2E_TEST_STAFF_ROLES
 
 
 def require_staff_email(email: Any) -> str:
     """The lower-cased ``@adventure.asia`` address, or 400. Mirrors the DB CHECK admin_users_email_chk and the
     WORKFORCE pre sign-up trigger (which refuses other domains too). The one exception is the exact address
-    :data:`E2E_TEST_STAFF_EMAIL` (temporary, AA-816); its role is checked by :func:`require_e2e_test_scope`."""
+    :data:`E2E_TEST_STAFF_EMAIL` and the Dev-only :data:`E2E_CIS_ADMIN_TEST_STAFF_EMAIL` (temporary, AA-816); their
+    role is checked by :func:`require_e2e_test_scope`, the environment by :func:`require_dev_only_e2e_environment`."""
     value = normalise_email(email)
-    if value == E2E_TEST_STAFF_EMAIL:
+    if value in _E2E_TEST_STAFF_ROLES:
         return value
     local, sep, domain = value.rpartition("@")
     if not sep or not local or domain != STAFF_EMAIL_DOMAIN:
@@ -241,14 +258,24 @@ def require_booking_role(role: Any) -> Optional[str]:
 
 
 def require_e2e_test_scope(email: Any, role: Optional[str], booking_role: Optional[str]) -> None:
-    """The E2E test address may only be a CIS ``reviewer`` with no Booking grant (400 ``e2e_test_scope``). No-op
-    for every other address. ``role`` / ``booking_role`` are the values the row would end up with."""
-    if not is_e2e_test_email(email):
+    """An E2E test address may only hold its one CIS role (``reviewer`` for :data:`E2E_TEST_STAFF_EMAIL`, ``admin``
+    for :data:`E2E_CIS_ADMIN_TEST_STAFF_EMAIL`) with no Booking grant (400 ``e2e_test_scope``). No-op for every other
+    address. ``role`` / ``booking_role`` are the values the row would end up with."""
+    allowed = _E2E_TEST_STAFF_ROLES.get(normalise_email(email))
+    if allowed is None:
         return
-    if role != E2E_TEST_STAFF_ROLE or booking_role is not None:
+    if role != allowed or booking_role is not None:
+        name = "E2E CIS admin account" if allowed == E2E_CIS_ADMIN_TEST_STAFF_ROLE else "E2E test account"
         raise StaffDirectoryError(
-            400, f"The E2E test account may only have the CIS role {E2E_TEST_STAFF_ROLE} and no Booking role",
-            "e2e_test_scope")
+            400, f"The {name} may only have the CIS role {allowed} and no Booking role", "e2e_test_scope")
+
+
+def require_dev_only_e2e_environment(email: Any) -> None:
+    """A10b: the Dev-only E2E address may be created, re-enabled or synced into its groups only where the API's
+    ``ENVIRONMENT`` is exactly ``dev`` (403 ``e2e_not_allowed_here``; unset refuses). No-op for every other address.
+    Disabling it stays allowed everywhere, so the account can always be switched off."""
+    if normalise_email(email) in _DEV_ONLY_E2E_EMAILS and not e2e_staff.dev_only_e2e_environment():
+        raise StaffDirectoryError(403, "The E2E CIS admin account exists only on Dev", e2e_staff.E2E_NOT_ALLOWED_HERE)
 
 
 def username_base(email: str) -> str:
@@ -533,6 +560,7 @@ async def create_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, e
     role = require_cis_role(role)
     booking_role = require_booking_role(booking_role)
     require_e2e_test_scope(email, role, booking_role)
+    require_dev_only_e2e_environment(email)
     if email in BREAKGLASS_EMAILS:
         raise StaffDirectoryError(403, "The break-glass address cannot be a directory account", "breakglass")
 
@@ -640,6 +668,7 @@ async def change_roles(pool: Any, cognito: CognitoDirectory, *, actor_id: str, s
             old_booking = await conn.fetchval(SQL_GRANT, staff_id, APP_BOOKING)
             require_e2e_test_scope(target["email"], new_role if new_role is not None else old_role,
                                    new_booking if booking_role is not _UNSET else old_booking)
+            require_dev_only_e2e_environment(target["email"])
             changes: dict[str, Any] = {}
             if new_role is not None and new_role != old_role:
                 if new_role != "admin":
@@ -709,6 +738,7 @@ async def enable_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, s
             await _require_owner(conn, actor_id)
             target = await _load_target(conn, staff_id)
             staff_id = target["id"]
+            require_dev_only_e2e_environment(target["email"])
             if not target["is_active"]:
                 await conn.execute(SQL_SET_ACTIVE, staff_id, True)
                 await _audit(conn, actor_id, StaffAudit.ENABLED, staff_id, {"is_active": {"before": False,
@@ -730,6 +760,7 @@ async def sign_out_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str,
             await _require_owner(conn, actor_id)
             target = await _load_target(conn, staff_id)
             staff_id = target["id"]
+            require_dev_only_e2e_environment(target["email"])   # a sign-out re-enables
             reenabled = not target["is_active"]
             if reenabled:
                 await conn.execute(SQL_SET_ACTIVE, staff_id, True)
@@ -793,6 +824,7 @@ async def sync_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, sta
         steps: list[Step] = _disable_steps(cognito, email)
     else:
         require_e2e_test_scope(email, target["role"], booking)   # never sync a drifted E2E row into more groups
+        require_dev_only_e2e_environment(email)
         wanted = [cis_group(target["role"])] + ([booking_group(booking)] if booking else [])
         steps = [("create_user", lambda: cognito.create_user(email)),
                  ("enable_user", lambda: cognito.enable(email))]

@@ -21,6 +21,11 @@ import { defineConfig, devices } from '@playwright/test';
 //     (set only by .github/workflows/e2e-cognito.yml), so a plain `playwright test` never signs in. The
 //     MIME parser unit test in the same folder needs nothing. No retries (a retry asks for another code),
 //     no automatic screenshots or traces (the code page could be captured); the spec takes its own.
+// AA-816 A10b (S252, root ADR 0006a A10b): one more, agent-only:
+//   • "admin-evidence" — tests/e2e/admin-evidence/*.spec.ts, the Dev-only E2E CIS admin (e2e-cis-admin@) signs in on
+//     the production admin host and screenshots the admin-only pages. Skipped unless E2EADMIN=1, which no workflow
+//     sets (unit guard tests/unit/test_aa816_e2e_cis_admin.py); its code mail is readable only by the MFA admin role,
+//     so the orchestrator runs it locally with AWS_PROFILE=aa365-admin. Same hygiene as "cognito".
 export default defineConfig({
   testDir: './tests/e2e',
   timeout: 60000,
@@ -37,7 +42,7 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      testIgnore: /(smoke|cognito)\//,
+      testIgnore: /(smoke|cognito|admin-evidence)\//,
       use: { ...devices['Desktop Chrome'] },
     },
     {
@@ -65,6 +70,19 @@ export default defineConfig({
       testMatch: /cognito\/.*\.spec\.ts$/,
       retries: 0,
       timeout: 180000,
+      use: {
+        ...devices['Desktop Chrome'],
+        baseURL: 'https://aa-cis.lumiguides.it.com',
+        screenshot: 'off',
+        trace: 'off',
+        video: 'off',
+      },
+    },
+    {
+      name: 'admin-evidence',
+      testMatch: /admin-evidence\/.*\.spec\.ts$/,
+      retries: 0,
+      timeout: 300000,
       use: {
         ...devices['Desktop Chrome'],
         baseURL: 'https://aa-cis.lumiguides.it.com',
