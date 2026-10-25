@@ -89,11 +89,22 @@ def normalise_tenant_id(sub: Any) -> str:
     return str(uuid.UUID(str(sub)))
 
 
+# Date filters outside this window are refused (400). Without a bound, until=9999-12-31 overflowed in
+# build_where (until + 1 day) and answered 500 (S251 review). No audit row predates the platform or is
+# dated past 2100, so the window drops nothing real.
+DATE_FILTER_MIN = date(2000, 1, 1)
+DATE_FILTER_MAX = date(2100, 12, 31)
+
+
 def validate_filters(f: ActivityFilters) -> None:
     if f.category is not None and f.category not in CATEGORIES:
         raise ValueError(f"unknown category '{f.category}'")
     if f.action is not None and f.action not in TENANT_VISIBLE_ACTIONS:
         raise ValueError(f"unknown action '{f.action}'")
+    for name, d in (("since", f.since), ("until", f.until)):
+        if d is not None and not (DATE_FILTER_MIN <= d <= DATE_FILTER_MAX):
+            raise ValueError(f"'{name}' must be between {DATE_FILTER_MIN.isoformat()} and "
+                             f"{DATE_FILTER_MAX.isoformat()}")
     if f.since and f.until and f.since > f.until:
         raise ValueError("'since' is after 'until'")
 

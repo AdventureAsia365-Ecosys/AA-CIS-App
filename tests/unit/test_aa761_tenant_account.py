@@ -69,6 +69,10 @@ def test_visible_actions_narrow_never_widen():
     (ta.ActivityFilters(action="staff.request"), "unknown action"),
     (ta.ActivityFilters(action="content_piece.admin_sentence_cut"), "unknown action"),
     (ta.ActivityFilters(since=date(2026, 10, 2), until=date(2026, 10, 1)), "after"),
+    (ta.ActivityFilters(until=date.max), "'until' must be between"),
+    (ta.ActivityFilters(until=date(2101, 1, 1)), "'until' must be between"),
+    (ta.ActivityFilters(since=date.min), "'since' must be between"),
+    (ta.ActivityFilters(since=date(1999, 12, 31)), "'since' must be between"),
 ])
 def test_invalid_filters_are_refused(f, msg):
     with pytest.raises(ValueError, match=msg):
@@ -248,6 +252,16 @@ def test_bad_filters_are_400(client):
     assert c.get("/v1/account/activity?action=staff.request", headers=h).status_code == 400
     assert c.get("/v1/account/activity?since=2026-10-02&until=2026-10-01", headers=h).status_code == 400
     assert c.get("/v1/account/activity?page_size=101", headers=h).status_code == 422
+    # far dates are a 400, not a 500 from the until + 1 day overflow (S251 review)
+    assert c.get("/v1/account/activity?until=9999-12-31", headers=h).status_code == 400
+    assert c.get("/v1/account/activity/export?until=9999-12-31", headers=h).status_code == 400
+    assert c.get("/v1/account/activity?since=0001-01-01", headers=h).status_code == 400
+
+
+def test_bounds_of_the_date_window_are_accepted():
+    ta.validate_filters(ta.ActivityFilters(since=ta.DATE_FILTER_MIN, until=ta.DATE_FILTER_MAX))
+    _, args = ta.build_where(TENANT_A, ta.ActivityFilters(until=ta.DATE_FILTER_MAX))
+    assert args[-1] == datetime(2101, 1, 1, tzinfo=timezone.utc)
 
 
 def test_export_is_csv(client):
