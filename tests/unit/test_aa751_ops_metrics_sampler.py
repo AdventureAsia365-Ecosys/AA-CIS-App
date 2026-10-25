@@ -324,11 +324,34 @@ _SAMPLE = {"oldest_queued_age_seconds": 0.0, "overdue_running_jobs": 0, "starved
            "queued_due": 3, "running": 2, "live_workers": 1}
 
 
+class _CM:
+    def __init__(self, value=None):
+        self.value = value
+
+    async def __aenter__(self):
+        return self.value
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def _feed_conn(cursor=None):
+    """AA-835: the connection the supply feed pull acquires; cursor None = the cursor row is locked (busy)."""
+    conn = MagicMock()
+    conn.transaction = MagicMock(return_value=_CM())
+    conn.execute = AsyncMock(return_value="INSERT 0 0")
+    conn.fetchval = AsyncMock(return_value=cursor)
+    conn.fetch = AsyncMock(return_value=[])
+    return conn
+
+
 def _pool(rows=None, error=None, execute="UPDATE 0"):
     pool = MagicMock()
     pool.fetch = AsyncMock(return_value=_role_rows() if rows is None else rows, side_effect=error)
     pool.execute = AsyncMock(return_value=execute)   # the retired-kind sweep
     pool.fetchval = AsyncMock(return_value=0)        # AA-987: the TripPlanner purge sweep (jobs created)
+    pool.feed_conn = _feed_conn()
+    pool.acquire = MagicMock(side_effect=lambda *a, **kw: _CM(pool.feed_conn))   # AA-835: the supply feed pull
     return pool
 
 
@@ -497,6 +520,32 @@ async def test_tripplanner_purge_sweep_runs_each_tick_and_its_failure_blocks_not
     with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
         out = await sampler.sample_once(pool, StubCloudWatch(), kinds=with_kind)
     assert "permission denied" in out["tripplanner_purge_error"] and out["jobs_published"] == 2
+
+
+@pytest.mark.asyncio
+async def test_supply_pull_runs_only_with_its_kind_and_its_failure_blocks_nothing(monkeypatch):
+    """AA-835: one feed batch per tick while supply_content_draft is registered; an error is its own field."""
+    monkeypatch.delenv("SUPPLY_FEED_PULL", raising=False)
+    pool = _pool()
+    with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
+        out = await sampler.sample_once(pool, StubCloudWatch(), kinds=KINDS)
+    pool.acquire.assert_not_called()                      # kind not registered
+    with_kind = dict(KINDS, supply_content_draft=K(background=True))
+    pool.feed_conn = _feed_conn(cursor=5)
+    with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
+        out = await sampler.sample_once(pool, StubCloudWatch(), kinds=with_kind)
+    assert "booking.v_supply_outbox" in pool.feed_conn.fetch.call_args[0][0]
+    assert "supply_pull_applied" not in out and "supply_pull_error" not in out   # no events: no field
+    pool.feed_conn.fetch = AsyncMock(side_effect=RuntimeError("relation booking.v_supply_outbox does not exist"))
+    with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
+        out = await sampler.sample_once(pool, StubCloudWatch(), kinds=with_kind)
+    assert "v_supply_outbox" in out["supply_pull_error"] and out["jobs_published"] == 2
+    assert "shared.supply_feed_cursor" in pool.feed_conn.execute.call_args[0][0]     # last_error recorded
+    monkeypatch.setenv("SUPPLY_FEED_PULL", "off")
+    pool = _pool()
+    with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
+        await sampler.sample_once(pool, StubCloudWatch(), kinds=with_kind)
+    pool.acquire.assert_not_called()
 
 
 # ── the loop ────────────────────────────────────────────────────────────────────────────────────

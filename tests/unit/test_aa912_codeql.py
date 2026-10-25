@@ -356,6 +356,68 @@ def test_names_moment_is_linear_on_long_tag():
     assert _elapsed(lambda: tf.names_moment(s, _M)) < BOUND_S
 
 
+# ---------------------------------------------------------------- text_integrity.py structure checks (PR #992)
+
+_OLD_LAST_WORD_RE = re.compile(r"([A-Za-zÀ-ÖØ-öø-ÿ']+)\W*$")
+_OLD_LINK_TAIL_RE = re.compile(
+    r"(?:\S*://\S+|www\.\S+|\S+@\S+\.\w+|\S+\.(?:com|travel|net|org|io|co|asia)\S*)$", re.I)
+_OLD_HASHTAG_LINE_RE = re.compile(r"(?:#[A-Za-z][A-Za-z0-9]+[\s,]*)+")
+
+
+def _random_texts(n: int, alphabet: list[str], max_len: int = 14) -> list[str]:
+    import random
+    rnd = random.Random(992)
+    return ["".join(rnd.choice(alphabet) for _ in range(rnd.randint(0, max_len))) for _ in range(n)]
+
+
+_TI_ALPHABET = list("aZ'_1.é×ÿ@:/#, \t\n!?-wWcomCOMioasiaK\u212a\u017fİ") + [
+    "www.", "://", ".com", ".io", ".Asia", ".co", "#ab", "@x"]
+_TI_SAMPLES = [
+    "", "'", "a", "the trail climbs to the.", "time to swim and", "a place worth coming back to.",
+    "It's", "rock 'n'", "rock 'n' ''", "Day 2", "café ×", "on Day 2_ !", "'' 1", "word''!!",
+    "https://trailpulse.travel/laos", "www.x.com", "hello@wild.travel", "x@y.", "@x.io", "a.COM",
+    "WWW.", "://x", "x://", "a@b.c_d", "a@.c", "#Bhutan #Paro, #TigersNest ", "#A", "#2024 #Trip", "#ab\t#cd",
+    "#ab #c", "#ab,", " #ab",
+]
+
+
+def test_last_word_same_as_old_pattern():  # alert 44
+    for s in _TI_SAMPLES + _random_texts(30_000, _TI_ALPHABET):
+        m = _OLD_LAST_WORD_RE.search(s)
+        assert ti._last_word(s) == (m.group(1) if m else None), repr(s)
+
+
+def test_link_token_same_as_old_pattern():  # alert 41
+    for s in _TI_SAMPLES + _random_texts(30_000, _TI_ALPHABET):
+        tok = "".join(s.split())  # the caller passes clean.split()[-1]: never any whitespace
+        assert ti._is_link_token(tok) == (_OLD_LINK_TAIL_RE.search(tok) is not None), repr(tok)
+
+
+def test_hashtag_line_same_as_old_pattern():  # alerts 42, 43
+    assert hygiene._HASHTAG_LINE_RE.pattern == _OLD_HASHTAG_LINE_RE.pattern
+    for s in _TI_SAMPLES + _random_texts(30_000, _TI_ALPHABET):
+        assert ti._is_hashtag_line(s) == (_OLD_HASHTAG_LINE_RE.fullmatch(s) is not None), repr(s)
+
+
+@pytest.mark.parametrize("fn,adv", [
+    # the old last-word search took ~1.2 s on 1k apostrophes (cubic); the old link search grew with '!' runs
+    (lambda s: ti._last_word(s), "'" * 100_000 + "1"),
+    (lambda s: ti._last_word(s), "a" * 100_000 + "!"),
+    (lambda s: ti._is_link_token(s), "!" * 100_000),
+    (lambda s: ti._is_link_token(s), "://" * 50_000),
+    (lambda s: ti._is_link_token(s), "www." * 50_000),
+    (lambda s: ti._is_link_token(s), "!@" * 50_000),
+    (lambda s: ti._is_link_token(s), "!.io" + "!.co" * 50_000),
+    (lambda s: ti._is_hashtag_line(s), "#ab" + "\t" * 100_000 + "x"),
+    (lambda s: ti.dangling_tails(s), "One two three " + "'" * 100_000 + "1"),
+    (lambda s: ti.structure_findings(s), "Some prose about the trail and\n\n#ab" + "\t" * 100_000 + "x and more"),
+    (lambda s: ti._ends_open(s), "Some prose about the trail ends at " + "!" * 100_000 + "a"),
+], ids=["last_word_apostrophes", "last_word_letters", "link_bang", "link_scheme", "link_www", "link_at", "link_tld",
+        "hashtag_tabs", "dangling_tails", "structure_findings_tabs", "ends_open_bang"])
+def test_text_integrity_structure_checks_are_linear(fn, adv):
+    assert _elapsed(lambda: fn(adv)) < BOUND_S
+
+
 # ---------------------------------------------------------------- photos/match.py
 
 _OLD_TRAILING = re.compile(r"(?:[\s_\-]*(?:\(\d+\)|copy|\d+))+$", re.IGNORECASE)

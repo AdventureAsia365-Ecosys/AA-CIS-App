@@ -58,6 +58,7 @@ from api.routers.admin_decisions import router as admin_decisions_router  # AA-6
 from api.routers.admin_platform import router as admin_platform_router  # AA-883
 from api.routers.admin_photos import router as admin_photos_router, public_router as photos_public_router  # AA-708
 from api.routers.admin_places import router as admin_places_router  # AA-712
+from api.routers.admin_supply_content import router as admin_supply_content_router  # AA-835
 from api.routers.admin_search import router as admin_search_router  # AA-752 — global ⌘K search
 from api.routers.admin_waves import router as admin_waves_router  # AA-727 — rerun waves as objects
 from api.routers.admin_content_quality import router as admin_content_quality_router  # AA-769
@@ -311,6 +312,7 @@ app.include_router(admin_alert_recipients_router)  # AA-913 — /admin/platform/
 app.include_router(admin_aa_content_router)  # AA-977 — /admin/aa-content (AA content editor, no include prefix)
 app.include_router(admin_photos_router)  # AA-708 — /admin/photos (Drive photo sync, matching)
 app.include_router(admin_places_router)  # AA-712 — /admin/places/backfill (place pipeline)
+app.include_router(admin_supply_content_router)  # AA-835 — /admin/supply-content (Booking supply content review)
 app.include_router(admin_search_router)  # AA-752 — GET /admin/search (global ⌘K palette)
 app.include_router(admin_waves_router)  # AA-727 — /admin/waves (expected set, report, check)
 app.include_router(admin_content_quality_router)  # AA-769 — /admin/content-quality (T2/T9 quality, place cards)

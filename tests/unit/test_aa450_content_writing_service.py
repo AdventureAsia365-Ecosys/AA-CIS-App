@@ -621,9 +621,9 @@ class TestGateRegressionGuard:
 
 @pytest.mark.asyncio
 class TestDiscardedAttempts:
-    """AA-570 — content_piece.discarded_attempts (migration 148): the attempt that did NOT
-    become this row's final content_text, {attempt_number, content_text, gate_ledger}. At most
-    one element, since MAX_ATTEMPTS=2."""
+    """AA-570 — content_piece.discarded_attempts (migration 148): the attempts that did NOT
+    become this row's final content_text, {attempt_number, ledger_index, content_text, gate_ledger}.
+    AA-916 WM-08: every one of them (at most MAX_ATTEMPTS - 1), tests in test_aa916_capture_edits.py."""
 
     def _outcome(self, *gates):
         ledger = [{"gate": g, "passed": p, "violations": [] if p else [f"{g} violation"],
@@ -657,7 +657,7 @@ class TestDiscardedAttempts:
 
         discarded = mock_fin.call_args.kwargs["discarded_attempts"]
         assert discarded == [{
-            "attempt_number": 1, "content_text": "draft 1", "gate_ledger": attempt1_ledger,
+            "attempt_number": 1, "ledger_index": 1, "content_text": "draft 1", "gate_ledger": attempt1_ledger,
         }]
 
     async def test_retry_both_fail_same_gate_discards_attempt_one(self):

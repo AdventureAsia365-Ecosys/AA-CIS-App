@@ -34,6 +34,11 @@ samples fire the `*-sampling-stopped` alarms, so a dead api (or a dead loop) is 
   tour lifecycle event of the last 2 h without a `tripplanner_purge` job gets one (one idempotent INSERT ... SELECT),
   so an after-commit enqueue lost to a crash still reaches TripPlanner a few minutes later. Field
   `tripplanner_purge_swept` (jobs created) or `tripplanner_purge_error`.
+- AA-835: each tick also pulls one batch of the Booking supply feed (services/supply_content/pull.pull_once: the
+  booking.v_supply_outbox events after the shared.supply_feed_cursor, applied to shared.supply_entity, one
+  `supply_content_draft` job per applied facts version), DB only. Field `supply_pull_applied` (the batch counts, when
+  it had events) or `supply_pull_error`. Off with SUPPLY_FEED_PULL=off; skipped while the draft kind is not
+  registered.
 - AA-913: each tick also reconciles the platform alert recipients with SNS
   (shared/alert_recipients.periodic_reconcile: one ListSubscriptionsByTopic, throttled like a page view; a no-op
   when ALERTS_TOPIC_ARN / ALERT_BOOTSTRAP_EMAIL are unset). An address removed on the admin page while its
@@ -63,7 +68,7 @@ logger = structlog.get_logger()
 
 OPS_METRICS_INTERVAL_S = 300.0
 OPS_METRICS_FIRST_DELAY_S = 30.0   # let the app finish starting before the first sample
-PART_TIMEOUT_S = 50.0              # bound on each part of a tick (5 parts -> < 300 s interval)
+PART_TIMEOUT_S = 50.0              # bound on each part of a tick (6 parts -> <= 300 s, then the interval sleep)
 
 NAMESPACE_RDS = "AA/RDS"
 METRIC_CONNECTIONS = "RoleConnections"
@@ -194,6 +199,22 @@ async def _tripplanner_purge_part(pool, kinds: dict, out: dict) -> None:
         out["tripplanner_purge_swept"] = n
 
 
+def supply_pull_enabled() -> bool:
+    return (os.environ.get("SUPPLY_FEED_PULL") or "on").strip().lower() not in ("off", "0", "false", "no")
+
+
+async def _supply_pull_part(pool, kinds: dict, out: dict) -> None:
+    """AA-835: one batch of the Booking supply feed into the CIS supply content tables. Only while the draft kind
+    is registered (the batch queues its jobs), and not with SUPPLY_FEED_PULL=off."""
+    from services.supply_content.pull import DRAFT_KIND, pull_once
+
+    if DRAFT_KIND not in kinds or not supply_pull_enabled():
+        return
+    result = await pull_once(pool)
+    if result.get("events"):
+        out["supply_pull_applied"] = result
+
+
 async def _alert_recipients_part(pool, redis, out: dict) -> None:
     from shared import alert_recipients
 
@@ -214,7 +235,7 @@ def _err(e: BaseException) -> str:
 async def sample_once(pool, client, kinds: Optional[dict] = None,
                       part_timeout_s: float = PART_TIMEOUT_S, redis: Any = None) -> dict:
     """One tick: AA/RDS, the alert-recipient reconcile (AA-913), the retired-kind sweep, the TripPlanner purge sweep
-    (AA-987), then AA/Jobs/CIS, each
+    (AA-987), the Booking supply feed pull (AA-835), then AA/Jobs/CIS, each
     part on its own and under part_timeout_s (one failing or hanging never blocks the others). Returns the fields
     of the `ops_metrics_sampled` line. Never raises (except CancelledError)."""
     ts = datetime.now(timezone.utc)
@@ -248,6 +269,11 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
         out["tripplanner_purge_error"] = _err(e)
 
     try:
+        await asyncio.wait_for(_supply_pull_part(pool, kinds, out), timeout=part_timeout_s)
+    except Exception as e:
+        out["supply_pull_error"] = _err(e)
+
+    try:
         await asyncio.wait_for(_jobs_part(pool, client, kinds, ts, out), timeout=part_timeout_s)
     except Exception as e:
         out["jobs_error"] = _err(e)
@@ -269,7 +295,7 @@ async def jev_credit_tick(pool, part_timeout_s: float = PART_TIMEOUT_S) -> Optio
 
 def _log(out: dict) -> None:
     if any(k in out for k in ("rds_error", "retired_error", "jobs_error", "alert_recipients_error",
-                              "tripplanner_purge_error")):
+                              "tripplanner_purge_error", "supply_pull_error")):
         logger.warning("ops_metrics_sampled", **out)
     else:
         logger.info("ops_metrics_sampled", **out)
