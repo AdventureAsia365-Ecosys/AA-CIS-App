@@ -6,8 +6,11 @@
   * the owner filter is explicit (cis_app sees every row): a signal of another piece, of another tenant, or a
     reason-only signal (reject / dismiss / regenerate) is a 404 and nothing changes.
   * unknown / malformed ids are 404; a non-admin role is 403; an unknown value or an extra key is refused by the body.
+  * every change writes one acp_shared.audit_log row (who toggled it, which signal, the value), outside the
+    "Admin edits" action prefixes; a refused call writes none.
 Each test runs in one transaction that is rolled back.
 """
+import json
 import os
 import sys
 import uuid
@@ -82,6 +85,13 @@ async def _pref(c, sid):
     return await c.fetchval("SELECT exemplar_pref FROM shared.writing_signal WHERE signal_id = $1::uuid", sid)
 
 
+async def _audits(c, resource_id):
+    rows = await c.fetch("SELECT tenant_id::text AS tenant_id, actor, action, resource_type, details::text AS details "
+                         "FROM acp_shared.audit_log WHERE resource_id = $1 AND action LIKE '%admin_exemplar_pref' "
+                         "ORDER BY chain_seq", str(resource_id))
+    return [{**dict(r), "details": json.loads(r["details"])} for r in rows]
+
+
 @pytest_asyncio.fixture
 async def conn():
     c = await asyncpg.connect(DSN)
@@ -111,6 +121,13 @@ async def test_piece_route_sets_and_clears_the_preference(conn):
     assert await _patch_piece(conn, piece, sid.upper(), "never") == {"signal_id": sid, "exemplar_pref": "never"}
     assert (await _patch_piece(conn, piece, sid, None))["exemplar_pref"] is None
     assert await _pref(conn, sid) is None
+    # review fix: each toggle is audit-logged (the signal's actor_id is the editor, not the toggler)
+    rows = await _audits(conn, piece)
+    assert [r["action"] for r in rows] == [cq.AdminAuditAction.EXEMPLAR_PREF_SET] * 3
+    assert [r["details"] for r in rows] == [{"signal_id": sid, "exemplar_pref": v} for v in ("use", "never", None)]
+    assert all(r["tenant_id"] == str(a) and r["resource_type"] == "content_piece" and r["actor"].startswith("admin:")
+               for r in rows)
+    assert not rows[0]["action"].startswith(cq.AdminAuditAction.ADMIN_SENTENCE_PREFIX)  # not an "Admin edit"
     # the drawer history reads it back
     edits = await wm.with_signal_texts(conn, [{"details": {"signal_id": sid}}], a)
     assert edits[0]["details"]["exemplar_pref"] is None and edits[0]["details"]["reason_code"] == "ai_phrasing"
@@ -129,6 +146,9 @@ async def test_version_route_sets_the_preference(conn):
         await _patch_piece(conn, version, sid, "use")
     assert e.value.status_code == 404
     assert await _pref(conn, sid) == "never"
+    rows = await _audits(conn, version)
+    assert [(r["action"], r["details"], r["actor"]) for r in rows] == [
+        (cq.AdminAuditAction.TOUR_EXEMPLAR_PREF_SET, {"signal_id": sid, "exemplar_pref": "never"}, "admin:unknown")]
 
 
 @pytest.mark.asyncio
@@ -148,6 +168,7 @@ async def test_a_signal_of_another_object_or_tenant_is_404_and_unchanged(conn):
     with pytest.raises(HTTPException) as e:
         await _patch_piece(conn, piece_b, other_piece, "use")
     assert e.value.status_code == 404
+    assert await _audits(conn, piece_a) == [] and await _audits(conn, piece_b) == []
 
 
 @pytest.mark.asyncio

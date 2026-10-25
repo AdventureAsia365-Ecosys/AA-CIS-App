@@ -678,6 +678,8 @@ _EXEMPLAR_OWNERS = {
     "content_piece": "SELECT tenant_id FROM acp_shared.content_piece WHERE piece_id = $1::uuid",
     "tenant_tour_version": "SELECT tenant_id FROM gold_aa_internal.tenant_tour_versions WHERE id = $1::uuid",
 }
+_EXEMPLAR_AUDIT_ACTIONS = {"content_piece": AdminAuditAction.EXEMPLAR_PREF_SET,
+                           "tenant_tour_version": AdminAuditAction.TOUR_EXEMPLAR_PREF_SET}
 _EXEMPLAR_UPDATE_SQL = """
     UPDATE shared.writing_signal SET exemplar_pref = $5
      WHERE signal_id = $1::uuid AND source_table = $2 AND source_id = $3
@@ -698,18 +700,27 @@ async def _set_exemplar_pref(pool, source_table: str, object_id: str, signal_id:
     """AA-916 WM-07 — set `exemplar_pref` on one admin sentence-edit signal OF THIS OBJECT. cis_app sees every
     signal, so the owner filter is explicit (ADR 0010 decision 10): the signal must name this piece / version as its
     source and belong to the object's tenant (platform rows: tenant NULL). Anything else is a 404, never a write to
-    another tenant's row. 503 while CIS 277 is not applied."""
+    another tenant's row. 503 while CIS 277 is not applied.
+
+    The change is audit-logged in the same transaction (review fix): the signal's own actor_id is the admin who made
+    the edit, not whoever toggles the preference later, and WM-27 picks its examples from this value."""
     oid = _canonical_uuid(object_id, "Piece" if source_table == "content_piece" else "Version")
     sid = _canonical_uuid(signal_id, "Signal")
     try:
         async with pool.acquire() as conn:
-            owner = await conn.fetchrow(_EXEMPLAR_OWNERS[source_table], oid)
-            if owner is None:
-                raise HTTPException(status_code=404, detail="Piece not found" if source_table == "content_piece"
-                                    else "Version not found")
-            _, tenant = wm.scope_for_tenant(owner["tenant_id"])
-            row = await conn.fetchrow(_EXEMPLAR_UPDATE_SQL, sid, source_table, oid, tenant, body.exemplar_pref,
-                                      _EXEMPLAR_ACTIONS)
+            async with conn.transaction():
+                owner = await conn.fetchrow(_EXEMPLAR_OWNERS[source_table], oid)
+                if owner is None:
+                    raise HTTPException(status_code=404, detail="Piece not found" if source_table == "content_piece"
+                                        else "Version not found")
+                _, tenant = wm.scope_for_tenant(owner["tenant_id"])
+                row = await conn.fetchrow(_EXEMPLAR_UPDATE_SQL, sid, source_table, oid, tenant, body.exemplar_pref,
+                                          _EXEMPLAR_ACTIONS)
+                if row is not None:
+                    await write_audit_log(
+                        conn, tenant_id=owner["tenant_id"], actor=f"admin:{wm.admin_actor_id(actor)}",
+                        action=_EXEMPLAR_AUDIT_ACTIONS[source_table], resource_type=source_table, resource_id=oid,
+                        details={"signal_id": sid, "exemplar_pref": body.exemplar_pref})
     except asyncpg.UndefinedTableError:
         raise HTTPException(status_code=503, detail="Writing signals are not available yet (CIS 277)")
     if row is None:
