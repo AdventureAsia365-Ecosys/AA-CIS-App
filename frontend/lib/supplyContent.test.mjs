@@ -80,6 +80,16 @@ test("only the published approved version can be published again, after an unpub
   assert.match(publishBlockers(entity(), version({ status: "rejected" }), [media("m1")])[0], /rejected/);
 });
 
+test("a real stale entity cannot take the same version back: newer facts block the republish", () => {
+  // pull.status_after_apply sets stale only after newer facts were applied, so the published version is outdated
+  const e = entity({ published_version_id: "v1", content_status: "stale", applied_supply_version: 4 });
+  const v = version({ status: "approved" });
+  assert.equal(isRepublish(e, v), true);
+  const b = publishBlockers(e, v, [media("m1")]);
+  assert.equal(b.length, 1);
+  assert.match(b[0], /facts v3; Booking is at v4/);
+});
+
 test("the editor copies the base version and keeps photo captions", () => {
   const base = version();
   const f = formFrom(base);

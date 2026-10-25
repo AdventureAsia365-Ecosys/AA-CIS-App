@@ -115,7 +115,10 @@ export default function SupplyContentDetail({ entityId }: { entityId: string }) 
   if (!d) return <Shell><PageHeader title="Supply content" breadcrumbs={crumbs} /><div style={{ ...card, color: K.muted }}>Loading…</div></Shell>;
 
   const { entity, current_draft: draft, published, media } = d;
-  const republishable = published && isRepublish(entity, published);
+  // A stale entity (newer facts applied) or an unpublished one whose facts moved on can never take the same
+  // version back (review.publish answers 409 outdated), so offer "Publish again" only when nothing blocks it.
+  const republishBlockers = published && isRepublish(entity, published) ? publishBlockers(entity, published, media) : null;
+  const republishable = republishBlockers !== null && republishBlockers.length === 0;
   const editBase = draft ?? published ?? null;
 
   return (
@@ -167,6 +170,11 @@ export default function SupplyContentDetail({ entityId }: { entityId: string }) 
             {canReview && (entity.content_status === "published" || entity.content_status === "stale") && (
               <Button size="sm" variant="danger" onClick={() => setPending({ kind: "unpublish" })}>Unpublish</Button>
             )}
+          </div>
+        )}
+        {canReview && published && republishBlockers && republishBlockers.length > 0 && (
+          <div data-testid="supply-republish-blocked" title={`Why v${published.content_version} cannot be published again`}>
+            <Blockers items={republishBlockers} />
           </div>
         )}
       </section>
@@ -221,7 +229,7 @@ export default function SupplyContentDetail({ entityId }: { entityId: string }) 
       </Section>
 
       <Section title={`History · ${d.versions.length} version${d.versions.length === 1 ? "" : "s"}`}>
-        <History versions={d.versions} publishedId={entity.published_version_id} />
+        <History versions={d.versions} publishedId={entity.published_version_id} media={media} />
       </Section>
 
       {pending && (
@@ -395,7 +403,7 @@ function FactsTable({ facts }: { facts: Record<string, unknown> }) {
   );
 }
 
-function History({ versions, publishedId }: { versions: Version[]; publishedId: string | null }) {
+function History({ versions, publishedId, media }: { versions: Version[]; publishedId: string | null; media: Media[] }) {
   const [open, setOpen] = useState<string | null>(null);
   if (versions.length === 0) return <div style={{ ...card, fontSize: 12.5, color: K.muted }}>No version yet.</div>;
   return (
@@ -413,7 +421,7 @@ function History({ versions, publishedId }: { versions: Version[]; publishedId: 
             </span>
           </button>
           {open === v.id && (
-            <div style={{ marginTop: 8 }}><VersionBody v={v} media={[]} /></div>
+            <div style={{ marginTop: 8 }}><VersionBody v={v} media={media} /></div>
           )}
         </div>
       ))}

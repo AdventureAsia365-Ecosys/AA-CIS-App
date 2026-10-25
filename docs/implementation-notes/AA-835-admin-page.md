@@ -22,6 +22,12 @@ already carries everything the page needs. No migration.
 - **Publish blockers are shown before the click** (`publishBlockers`, the same rules as `review.publish`: not a draft
   and not a republish, inactive entity, written for older facts, a photo not cleared and copied). The button is not
   disabled: the backend stays the authority and its 409 message is shown as a toast and in the confirm.
+- **"Publish vN again" only when nothing blocks it** (review fix): `isRepublish` is true for `stale` too, but
+  `pull.status_after_apply` sets `stale` only after newer facts were applied, so the published version's
+  `supply_version` is always below `applied_supply_version` and `review.publish` answers 409 `outdated`. The same holds
+  for an unpublished entity whose facts moved on. The button is shown only when `publishBlockers(entity, published,
+  media)` is empty; otherwise the blockers are listed under the status card (the way forward is the newer draft or an
+  edit). On a stale entity this means Republish is in practice never offered.
 - **Photo rights state** per photo (`photoState`, the `_photo_problems` rule): Cleared and copied / Not copied yet /
   No usage rights / Removed in Booking / Unknown photo, with thumbnails from the CIS copy (`url_600`).
 - **Edit** opens a modal prefilled from the open draft, else the published version (`based_on_version_id`); photos
@@ -41,8 +47,9 @@ already carries everything the page needs. No migration.
 
 ## Tradeoffs
 
-- The history list expands a version's text in place without photo thumbnails (it passes no media) to keep the
-  section light; the open draft and the published version show their photos with the rights state.
+- The history list expands a version in place with the entity's current media (review fix: with no media every
+  photo read "Unknown photo"). A photo that has since left the entity's facts still reads "Unknown photo", which is
+  the truth for today: that version could not be published with it.
 - No word-level diff: the API's unified diff (S6 tradeoff) is coloured line by line.
 
 ## Should know
