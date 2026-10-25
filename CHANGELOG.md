@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/compare/v0.9.0...v0.10.0) (2026-10-25)
+
+
+### Features
+
+* writing memory P1 (rule mining, backfill, R0 replay, L0 lexicon fast path) ([#998](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/998)) ([4ce6a3a](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/4ce6a3aa3e807dbac14c1e1f61b6052402b0d2ef))
+
 ## [0.9.0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/compare/v0.8.0...v0.9.0) (2026-10-25)
 
 
