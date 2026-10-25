@@ -262,6 +262,90 @@
         "title": "AccountApiKey",
         "type": "object"
       },
+      "AccountMember": {
+        "properties": {
+          "added_at": {
+            "title": "Added At",
+            "type": "string"
+          },
+          "member_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Member Ref"
+          },
+          "membership_id": {
+            "title": "Membership Id",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "owner",
+              "editor",
+              "viewer"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "invited",
+              "active"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "membership_id",
+          "role",
+          "status",
+          "added_at",
+          "updated_at"
+        ],
+        "title": "AccountMember",
+        "type": "object"
+      },
+      "AccountMembers": {
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "integer"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/AccountMember"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "invited": {
+            "title": "Invited",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "data",
+          "total",
+          "active",
+          "invited"
+        ],
+        "title": "AccountMembers",
+        "type": "object"
+      },
       "AccountPagination": {
         "properties": {
           "page": {
@@ -31019,6 +31103,32 @@
           }
         ],
         "summary": "AA-761 — masked API key, issue date and last use",
+        "tags": [
+          "tenant-account"
+        ]
+      }
+    },
+    "/v1/account/members": {
+      "get": {
+        "operationId": "list_members_v1_account_members_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountMembers"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "AA-978 — the agency's Content studio members (invited and active), read only",
         "tags": [
           "tenant-account"
         ]

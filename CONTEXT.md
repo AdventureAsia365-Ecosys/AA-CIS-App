@@ -962,6 +962,9 @@ a new writer of `shared.tenants` needs INSERT on the event table (migration guar
 signed out; last owner -> agency locked until owner recovery) and agency lifecycle within a minute; it never takes a
 CRM role from CIS. Invitation and activation of identities come with AA-979 (partner-pool re-enrolment); until then
 rows are created only by staff tooling / the Dev seed.
+Tenant read (AA-978 follow-up): `GET /v1/account/members` (`api/routers/v1_account_members.py`,
+`services/tenant_membership/portal.py`), the portal's Account › Members page: the agency's invited + active rows
+(fingerprint, role, status, dates; no staff actor, no invitation id), tenant id from the tenant JWT only, main pool.
 
 ## Staff roles and permissions (AA-656)
 
