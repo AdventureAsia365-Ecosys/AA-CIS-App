@@ -35,9 +35,17 @@
 --        text) with a non-NULL country and a NULL country_iso2, and its row count. Expected empty on Dev.
 --     6. Grants. REVOKE ALL from PUBLIC, cis_app, aa_app_user, catalog_owner first (it also takes away what the Dev
 --        default ACL of cis_owner gives cis_app on a new table, view and function in shared, CIS 245), then exactly:
---        cis_app SELECT on shared.countries and shared.v_country_unmapped and EXECUTE on shared.country_iso2(text)
---        (the trigger runs as the writer, cis_app); catalog_owner SELECT on shared.countries (part B). aa_app_user
---        nothing (AA-859 invariant). The trigger function: no EXECUTE for anyone (a trigger fires without it).
+--        cis_app SELECT on shared.countries and shared.v_country_unmapped and EXECUTE on shared.country_iso2(text);
+--        catalog_owner SELECT on shared.countries (part B). The trigger function is SECURITY INVOKER (MIG-6: no
+--        SECURITY DEFINER in CIS schemas), so it runs as whoever writes the table and its call to the resolver (which
+--        reads shared.countries) is checked against that role: every other role that may write raw_tours or
+--        shared.destinations (INSERT at table or column level, UPDATE at table level or on country) also gets
+--        SELECT on shared.countries and EXECUTE on the resolver. On Dev that set is cis_app alone (schema reference
+--        24/10; the master writes as a member of cis_app); in CI it also holds the legacy app_user and the test
+--        writer roles. aa_app_user nothing (AA-859 invariant). The trigger function: no EXECUTE for anyone (EXECUTE
+--        is checked by CREATE TRIGGER only, never when a trigger fires). A role granted INSERT / UPDATE on either
+--        table later must get the same two grants (a writer without them fails every insert: "permission denied for
+--        function country_iso2").
 --   Part B (catalog_owner, the X1 S22 catalog recipe, as 253 / 256 / 257 / 258 / 273 / 274 / 278):
 --     7. catalog.v_country (security_barrier): iso2, iso3, numeric_code, name, iso_name of every shared.countries
 --        row. SELECT to booking and tripplanner (contracts rule 5, unguarded; schema-ownership `catalog.*:booking`,
@@ -57,7 +65,10 @@
 --      country, the AA tour countries of chk_raw_tours_country all resolve; the FKs validated and the triggers
 --      present; no row whose country_iso2 is NULL while its country resolves; privileges exactly as in point 6 for
 --      PUBLIC, cis_app, aa_app_user and catalog_owner (no column-level grant); both functions SECURITY INVOKER with
---      a pinned search_path and no EXECUTE for PUBLIC. NOTICE: the unmapped values (orphan report), never fatal.
+--      a pinned search_path and no EXECUTE for PUBLIC; PUBLIC and aa_app_user may not write either table; cis_app
+--      and every other writer of either table have SELECT on shared.countries and EXECUTE on the resolver (a writer
+--      also USAGE on shared), and no one else holds EXECUTE on either function or SELECT on shared.countries
+--      (catalog_owner aside). NOTICE: the unmapped values (orphan report), never fatal.
 --   3. before, part B: schema catalog owned by cis_owner (245); roles catalog_owner, booking, tripplanner exist;
 --      catalog_owner reads shared.countries; catalog.v_destination is catalog_owner's with 256's columns (or 256's +
 --      country_iso2: re-run); catalog.v_country, if present, is catalog_owner's.
@@ -545,12 +556,41 @@ GRANT SELECT ON shared.countries, shared.v_country_unmapped TO cis_app;
 GRANT EXECUTE ON FUNCTION shared.country_iso2(text) TO cis_app;
 GRANT SELECT ON shared.countries TO catalog_owner;
 
+-- The trigger runs as the writer (not SECURITY DEFINER, MIG-6) and calls the resolver, which reads shared.countries
+-- as that writer: every other role that may write raw_tours or shared.destinations (INSERT at table or column level,
+-- UPDATE at table level or on country) gets SELECT on shared.countries and EXECUTE on the resolver. On Dev that is
+-- cis_app alone (schema reference 24/10); the loop is what makes a writer the file did not foresee keep working.
+-- PUBLIC and aa_app_user (read-only, AA-859) are never given anything: guard 2 refuses them as writers.
+DO $$
+DECLARE
+    w text;
+BEGIN
+    FOR w IN
+        SELECT DISTINCT pg_get_userbyid(a.grantee)
+          FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
+         WHERE c.oid IN ('silver_aa_internal.raw_tours'::regclass, 'shared.destinations'::regclass)
+           AND a.grantee NOT IN (0, c.relowner) AND a.grantee <> 'aa_app_user'::regrole
+           AND a.privilege_type IN ('INSERT', 'UPDATE')
+        UNION
+        SELECT pg_get_userbyid(a.grantee)
+          FROM pg_attribute att JOIN pg_class c ON c.oid = att.attrelid
+         CROSS JOIN LATERAL aclexplode(att.attacl) a
+         WHERE att.attrelid IN ('silver_aa_internal.raw_tours'::regclass, 'shared.destinations'::regclass)
+           AND a.grantee NOT IN (0, c.relowner) AND a.grantee <> 'aa_app_user'::regrole
+           AND (a.privilege_type = 'INSERT' OR (a.privilege_type = 'UPDATE' AND att.attname = 'country'))
+    LOOP
+        EXECUTE format('GRANT SELECT ON shared.countries TO %I', w);
+        EXECUTE format('GRANT EXECUTE ON FUNCTION shared.country_iso2(text) TO %I', w);
+    END LOOP;
+END $$;
+
 -- ── Guard 2 (part A) ──────────────────────────────────────────────────────────────────────────────────────────────
 DO $$
 DECLARE
     privs    text;
     bad      text;
     unmapped text;
+    writers  oid[];
 BEGIN
     IF (SELECT count(*) FROM shared.countries) <> 249 THEN
         RAISE EXCEPTION 'migration 279: shared.countries has % rows, expected 249',
@@ -602,9 +642,56 @@ BEGIN
         RAISE EXCEPTION 'migration 279: the country functions must be SECURITY INVOKER, pin search_path and give '
                         'PUBLIC no EXECUTE';
     END IF;
-    IF NOT has_function_privilege('cis_app', 'shared.country_iso2(text)', 'EXECUTE') THEN
+    -- The trigger runs as the writer: every role that may write raw_tours / shared.destinations (table or column
+    -- level, as the grant loop above) reaches the resolver and its table; cis_app, the runtime writer, always holds
+    -- the two grants. PUBLIC and aa_app_user may not write them at all.
+    IF NOT has_function_privilege('cis_app', 'shared.country_iso2(text)', 'EXECUTE')
+       OR NOT has_table_privilege('cis_app', 'shared.countries', 'SELECT') THEN
         RAISE EXCEPTION 'migration 279: cis_app (the writer the trigger runs as) needs EXECUTE on '
-                        'shared.country_iso2(text)';
+                        'shared.country_iso2(text) and SELECT on shared.countries';
+    END IF;
+    SELECT array_agg(DISTINCT g) INTO writers FROM (
+        SELECT a.grantee AS g
+          FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
+         WHERE c.oid IN ('silver_aa_internal.raw_tours'::regclass, 'shared.destinations'::regclass)
+           AND a.grantee <> c.relowner AND a.privilege_type IN ('INSERT', 'UPDATE')
+        UNION ALL
+        SELECT a.grantee
+          FROM pg_attribute att JOIN pg_class c ON c.oid = att.attrelid
+         CROSS JOIN LATERAL aclexplode(att.attacl) a
+         WHERE att.attrelid IN ('silver_aa_internal.raw_tours'::regclass, 'shared.destinations'::regclass)
+           AND a.grantee <> c.relowner
+           AND (a.privilege_type = 'INSERT' OR (a.privilege_type = 'UPDATE' AND att.attname = 'country'))) w;
+    writers := coalesce(writers, '{}');
+    IF 0::oid = ANY (writers) OR 'aa_app_user'::regrole::oid = ANY (writers) THEN
+        RAISE EXCEPTION 'migration 279: PUBLIC or aa_app_user may write raw_tours / shared.destinations';
+    END IF;
+    SELECT string_agg(g::regrole::text, ', ' ORDER BY g::regrole::text) INTO bad
+      FROM unnest(writers) g
+     WHERE NOT has_schema_privilege(g, 'shared', 'USAGE')
+        OR NOT has_table_privilege(g, 'shared.countries', 'SELECT')
+        OR NOT has_function_privilege(g, 'shared.country_iso2(text)', 'EXECUTE');
+    IF bad IS NOT NULL THEN
+        RAISE EXCEPTION 'migration 279: role(s) % may write raw_tours / shared.destinations but cannot resolve a '
+                        'country (USAGE on shared, SELECT on shared.countries, EXECUTE on shared.country_iso2; the '
+                        'trigger runs as the writer)', bad;
+    END IF;
+    -- … and nobody else: EXECUTE on the resolver only for the writers, on the trigger function for no one, SELECT on
+    -- shared.countries only for the writers and catalog_owner (no PUBLIC, no aa_app_user, no consumer).
+    SELECT string_agg(x, ', ' ORDER BY x) INTO bad FROM (
+        SELECT p.proname || ':' || CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS x
+          FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a
+         WHERE p.oid IN ('shared.country_iso2(text)'::regprocedure, 'shared.set_country_iso2()'::regprocedure)
+           AND a.grantee <> p.proowner
+           AND (p.oid = 'shared.set_country_iso2()'::regprocedure
+                OR a.grantee <> ALL (writers || 'cis_app'::regrole::oid))
+        UNION ALL
+        SELECT 'countries:' || CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END
+          FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
+         WHERE c.oid = 'shared.countries'::regclass AND a.grantee <> c.relowner
+           AND a.grantee <> ALL (writers || ARRAY['cis_app'::regrole::oid, 'catalog_owner'::regrole::oid])) y;
+    IF bad IS NOT NULL THEN
+        RAISE EXCEPTION 'migration 279: grants on the country objects beyond the writers: %', bad;
     END IF;
 
     SELECT string_agg(r || ':' || o || ':' || p, ', ' ORDER BY r, o, p) INTO privs FROM (

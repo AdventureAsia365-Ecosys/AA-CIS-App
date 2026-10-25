@@ -783,7 +783,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   `services/places/guards.py` for every AA spelling; the integration test pins it). `raw_tours` and
   `shared.destinations` carry `country_iso2` (FK, filled by the trigger `shared.set_country_iso2()` from `country`
   for every writer; an explicit value is kept; unknown → NULL, listed by `shared.v_country_unmapped`). A role that
-  writes either table needs SELECT on `shared.countries` and EXECUTE on the resolver (`cis_app` has both); other apps
+  writes either table needs SELECT on `shared.countries` and EXECUTE on the resolver (the trigger runs as the writer,
+  MIG-6; 279 grants both to every writer it sees, on Dev `cis_app`, and refuses a writer without them); other apps
   read `catalog.v_country` and `catalog.v_destination.country_iso2` (booking, tripplanner). New country columns are
   `country_iso2 char(2)` keyed to `shared.countries`, never a new free-text key.
 - **The CIS runtime role is `cis_app` (X1, AA-860; api + worker switch in S18).** Migration 244 grants it

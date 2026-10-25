@@ -575,6 +575,10 @@ def _apply_schema(conn):
         GRANT USAGE ON ALL SEQUENCES IN SCHEMA gold_aa_internal TO app_user;
         GRANT USAGE ON ALL SEQUENCES IN SCHEMA shared TO app_user;
     """)
+    # AA-851 (279): app_user now writes raw_tours / shared.destinations, whose country_iso2 trigger runs as the writer
+    # (MIG-6, no SECURITY DEFINER) and calls shared.country_iso2(): a new writer gets the resolver with the table grant
+    # (279 grants it to the writers it sees; the replay ran before this block). test_aa851's standing check holds it.
+    cur.execute("GRANT EXECUTE ON FUNCTION shared.country_iso2(text) TO app_user")
     # AA-817 (237): on Dev only the owner and aa_app_user hold privileges on shared.tenant_integrations,
     # and 237's guard 1 refuses any other grantee (with RLS on and a policy TO aa_app_user only, it would
     # read 0 rows). Keep the CI-only app_user off it so test_aa817_* can re-apply 237 per test.

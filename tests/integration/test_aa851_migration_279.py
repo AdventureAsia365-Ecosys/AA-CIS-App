@@ -10,8 +10,9 @@ as cis_owner (DB Migrate's live-owner switch), the checks run, and the transacti
 Checks: registered once and re-runnable; 249 rows, the AA spellings resolve exactly as services/places/guards.py
 does; the views catalog_owner's and security_barrier, v_country SELECT to booking and tripplanner only, v_destination
 keeps its grants and rows and gains country_iso2 as its last column; exact privileges on the shared objects; the
-backfill and the orphan report; the trigger as cis_app (insert, rename, explicit override, unknown name); the Done-when
-reads as booking and tripplanner.
+backfill and the orphan report; the trigger as cis_app (insert, rename, explicit override, unknown name); every writer
+of the two tables reaches the resolver (the trigger runs as the writer, MIG-6) and the guard refuses the states that
+break it; the Done-when reads as booking and tripplanner.
 """
 import os
 import re
@@ -149,15 +150,58 @@ def test_registered_rerunnable_owned_and_granted(cur):
         assert cur.fetchone()[0] is True, role
 
 
+# Every role that may write raw_tours / shared.destinations: INSERT (table or column level), UPDATE (table level or
+# on country). The country_iso2 trigger runs as that role (MIG-6: not SECURITY DEFINER).
+WRITERS_SQL = """
+    SELECT DISTINCT g::regrole::text FROM (
+        SELECT a.grantee AS g
+          FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
+         WHERE c.oid IN ('silver_aa_internal.raw_tours'::regclass, 'shared.destinations'::regclass)
+           AND a.grantee <> c.relowner AND a.privilege_type IN ('INSERT', 'UPDATE')
+        UNION ALL
+        SELECT a.grantee
+          FROM pg_attribute att JOIN pg_class c ON c.oid = att.attrelid
+         CROSS JOIN LATERAL aclexplode(att.attacl) a
+         WHERE att.attrelid IN ('silver_aa_internal.raw_tours'::regclass, 'shared.destinations'::regclass)
+           AND a.grantee <> c.relowner
+           AND (a.privilege_type = 'INSERT' OR (a.privilege_type = 'UPDATE' AND att.attname = 'country'))) w
+     ORDER BY 1
+"""
+CANNOT_RESOLVE = """
+    SELECT r FROM unnest(%s::text[]) r
+     WHERE NOT has_schema_privilege(r, 'shared', 'USAGE')
+        OR NOT has_table_privilege(r, 'shared.countries', 'SELECT')
+        OR NOT has_function_privilege(r, 'shared.country_iso2(text)', 'EXECUTE')
+"""
+
+
+def _writers(c):
+    c.execute(WRITERS_SQL)
+    return [r[0] for r in c.fetchall()]
+
+
 def test_shared_privileges_are_exact(cur):
+    writers = _writers(cur)
+    assert "PUBLIC" not in writers and "aa_app_user" not in writers and "-" not in writers
     cur.execute("""
         SELECT c.relname::text, CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END,
                a.privilege_type
           FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
          WHERE c.oid IN ('shared.countries'::regclass, 'shared.v_country_unmapped'::regclass)
            AND a.grantee <> c.relowner""")
-    assert sorted(cur.fetchall()) == [("countries", "catalog_owner", "SELECT"), ("countries", "cis_app", "SELECT"),
-                                      ("v_country_unmapped", "cis_app", "SELECT")]
+    # cis_app and catalog_owner, plus SELECT on shared.countries for every other writer of the two tables (CI's
+    # legacy app_user and the test runner roles; on Dev the set is cis_app alone).
+    expected = {("countries", "catalog_owner", "SELECT"), ("countries", "cis_app", "SELECT"),
+                ("v_country_unmapped", "cis_app", "SELECT")} | {("countries", w, "SELECT") for w in writers}
+    assert sorted(cur.fetchall()) == sorted(expected)
+    cur.execute("""
+        SELECT p.proname::text, CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END,
+               a.privilege_type
+          FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a
+         WHERE p.oid IN ('shared.country_iso2(text)'::regprocedure, 'shared.set_country_iso2()'::regprocedure)
+           AND a.grantee <> p.proowner""")
+    assert sorted(cur.fetchall()) == sorted({("country_iso2", r, "EXECUTE") for r in ["cis_app", *writers]})
+    assert cur.execute(CANNOT_RESOLVE, (writers,)) is None and cur.fetchall() == []
     for role, fn, allowed in (("cis_app", "shared.country_iso2(text)", True),
                               ("aa_app_user", "shared.country_iso2(text)", False),
                               ("booking", "shared.country_iso2(text)", False),
@@ -248,3 +292,77 @@ def test_v_destination_keeps_columns_and_rows(cur):
     assert _cols(cur, "catalog.v_country") == [("iso2", "character(2)"), ("iso3", "character(3)"),
                                                ("numeric_code", "character(3)"), ("name", "text"),
                                                ("iso_name", "text")]
+
+
+def _reapply(c, match):
+    c.execute("SAVEPOINT aa851_reapply")
+    try:
+        if match is None:
+            _apply(c)
+        else:
+            with pytest.raises(psycopg2.errors.RaiseException, match=match):
+                _apply(c)
+    finally:
+        if match is not None:
+            c.execute("ROLLBACK TO SAVEPOINT aa851_reapply")
+
+
+def test_a_new_writer_gets_the_resolver_and_its_inserts_resolve(cur):
+    """The trigger runs as the writer (CI failure 25/10: "permission denied for function country_iso2" as app_user).
+    279 gives every writer it sees SELECT on shared.countries and EXECUTE on the resolver, column-level writers
+    included; a role that may only read or update other columns gets nothing."""
+    cur.execute("CREATE ROLE zz851_writer NOLOGIN; CREATE ROLE zz851_col NOLOGIN; CREATE ROLE zz851_reader NOLOGIN")
+    cur.execute("GRANT USAGE ON SCHEMA shared TO zz851_writer, zz851_col, zz851_reader")
+    cur.execute("GRANT SELECT, INSERT ON shared.destinations TO zz851_writer")
+    cur.execute("GRANT SELECT, UPDATE (country) ON shared.destinations TO zz851_col")
+    cur.execute("GRANT SELECT, UPDATE (lat) ON shared.destinations TO zz851_reader")
+    _reapply(cur, None)
+    for role, allowed in (("zz851_writer", True), ("zz851_col", True), ("zz851_reader", False)):
+        cur.execute("SELECT has_function_privilege(%s, 'shared.country_iso2(text)', 'EXECUTE'), "
+                    "has_table_privilege(%s, 'shared.countries', 'SELECT')", (role, role))
+        assert cur.fetchone() == (allowed, allowed), role
+    tag = uuid.uuid4().hex[:8]
+    out = _as(cur, "zz851_writer", """
+        INSERT INTO shared.destinations (name, country, lat, lng, located_by, geo_status, name_norm)
+        VALUES (%s, 'Cambodia', 13.4, 103.9, 'manual', 'ok', %s) RETURNING country_iso2""",
+              (f"Siem Reap {tag}", f"siem reap {tag}"))
+    assert out == [("KH",)]
+    out = _as(cur, "zz851_col", "UPDATE shared.destinations SET country = 'Nepal' WHERE id = %s::uuid "
+                                "RETURNING country_iso2", (cur.seeded["vn"],))
+    assert out == [("NP",)]
+
+
+def test_guard_refuses_a_writer_that_cannot_reach_the_resolver(cur):
+    cur.execute("CREATE ROLE zz851_noschema NOLOGIN")
+    cur.execute("GRANT USAGE ON SCHEMA silver_aa_internal TO zz851_noschema")
+    cur.execute("GRANT INSERT ON silver_aa_internal.raw_tours TO zz851_noschema")
+    _reapply(cur, r"zz851_noschema may write raw_tours / shared.destinations but cannot resolve")
+
+
+def test_guard_refuses_public_or_aa_app_user_as_writer(cur):
+    cur.execute("SAVEPOINT aa851_ro")
+    cur.execute("GRANT UPDATE (country) ON shared.destinations TO aa_app_user")
+    _reapply(cur, "PUBLIC or aa_app_user may write")
+    cur.execute("ROLLBACK TO SAVEPOINT aa851_ro")
+    cur.execute("GRANT INSERT ON silver_aa_internal.raw_tours TO PUBLIC")
+    _reapply(cur, "PUBLIC or aa_app_user may write")
+
+
+def test_guard_refuses_a_resolver_grant_beyond_the_writers(cur):
+    cur.execute("GRANT EXECUTE ON FUNCTION shared.set_country_iso2() TO booking")
+    _reapply(cur, r"grants on the country objects beyond the writers: set_country_iso2:booking")
+
+
+def test_standing_every_writer_can_resolve_a_country():
+    """Standing check on the shared test DB (replayed part A + whatever later tests granted): every role that may
+    write raw_tours / shared.destinations reaches shared.country_iso2() and shared.countries, or its writes fail."""
+    c = t245._connect()
+    c.autocommit = True
+    try:
+        cur = c.cursor()
+        writers = _writers(cur)
+        assert "aa_app_user" not in writers and "-" not in writers
+        cur.execute(CANNOT_RESOLVE, (writers,))
+        assert cur.fetchall() == []
+    finally:
+        c.close()
