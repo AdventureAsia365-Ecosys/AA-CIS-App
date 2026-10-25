@@ -405,6 +405,11 @@ _ADVERSARIAL = {
     "and-the": "x" + " and" * (_N // 4),
     "because": "was established " + "in " * (_N // 3),
     "letters": "a" * _N,
+    # second review: the source-age cues and their linking words
+    "age-cues": "children aged at least " * (_N // 23) + "x",
+    "under-dash": "under-" * (_N // 6) + "5",
+    "num-and": "7 and " * (_N // 6) + "x",
+    "num-dash": "7-" * (_N // 2),
 }
 
 
@@ -415,7 +420,8 @@ def _round3_patterns():
              "_RELOCATE_X_RE", "_AND_THE_RE", "_Y_PHRASE_RE", "_STAGED_NOUN_X_RE", "_AUDIENCE_RE")
     out = [(n, getattr(ai_tells, n)) for n in names]
     out += [(n, getattr(hygiene, n)) for n in ("_AGE_CLAIM_RE", "_FOUNDING_REASON_RE", "_PURPOSE_RE",
-                                                "_SOURCE_SENTENCE_RE", "_SOURCE_NUMBER_RE")]
+                                                "_SOURCE_SENTENCE_RE", "_SOURCE_AGE_RE", "_COUNT_AFTER_RE",
+                                                "_PLURAL_AFTER_RE")]
     start = next(i for i, r in enumerate(hygiene.AI_TELL_LINE_RES)
                  if r.pattern.startswith(r"\b(?:that|this|it)(?:['’]s|\s+is)\s+(?:a|the|one)\s+(?:detail"))
     out += [(f"AI_TELL_LINE_RES[{i}]", r) for i, r in enumerate(hygiene.AI_TELL_LINE_RES) if i >= start]
@@ -607,3 +613,143 @@ def test_an_anchored_residue_entry_reports_its_own_phrase():
     text = "The camp sits by the lake. The ninth day turns to two temples that reward careful attention. The end."
     assert residue(text) == [("reward careful attention",
                               "The ninth day turns to two temples that reward careful attention.")]
+
+
+# ---------------------------------------------------------------- second review of round 3 (S252, 4 blocking)
+# Every quoted sentence, exact output, at a paragraph start and mid-paragraph. A rule only removes words that are a
+# tell; it never deletes a fact, restriction, audience or seasonal limit, and never acts on a sentence it wrote.
+
+TAKTSANG = ("Paro — Taktsang\nSource itinerary: hike up to Taktsang Monastery, which clings to a cliff above the Paro "
+            "valley. The walk up takes about three hours.")
+
+
+def _placed(sentences: str, where: str) -> str:
+    return _blog(sentences) if where == "paragraph start" else _blog("Pack for the weather. " + sentences)
+
+
+@pytest.mark.parametrize("pair", [
+    # finding 1 — the demonstrative join would read 'This is the …', which the second structure pass cut as a
+    # verdict line: both facts went. The pair now stays whole.
+    "This is not the dry season. It is the tail of the monsoon.",
+    "This is not the end of the climb. It is the halfway point.",
+    "This is not the main entrance. It is the side gate used by pilgrims.",
+    "This is not the last ferry of the day. It is the second-last.",
+    "This is not the only way up. It is the quickest.",
+    # a limit in the denied part ('only'): other routes exist
+    "This is not the only path to the monastery. It is the most direct route.",
+])
+@pytest.mark.parametrize("where", ["paragraph start", "mid paragraph"])
+@pytest.mark.parametrize("source", [TAKTSANG, ""], ids=["taktsang seed", "no source"])
+def test_a_correction_pair_keeps_both_facts(pair, where, source):
+    text = _placed(pair, where)
+    assert rewrite(text, _seed_ctx(source)) == (text, [])
+
+
+def test_the_reviewers_seasonal_paragraph_is_unchanged():
+    text = _blog("Pack for the weather. This is not the dry season. It is the tail of the monsoon.")
+    assert rewrite(text, _seed_ctx(TAKTSANG))[0] == text
+
+
+@pytest.mark.parametrize("lone", ["This is not the only way up.", "It is not the only bridge across."])
+def test_a_lone_denial_with_a_limit_is_never_cut(lone):
+    text = _blog(f"The monks gather at dawn. {lone} The path climbs on loose scree.")
+    assert rewrite(text, CTX)[0] == text
+
+
+@pytest.mark.parametrize("where", ["paragraph start", "mid paragraph"])
+def test_a_sentence_the_pass_wrote_is_never_cut_by_a_later_pass(where):
+    """'not X but Y' writes 'This is the heart of the valley.' (verdict-shaped); the structure passes never cut it."""
+    before = "This is not a museum but the heart of the valley."
+    text, log = rewrite(_placed(before, where), CTX)
+    assert text == _placed("This is the heart of the valley.", where)
+    assert log == [f"ai_tells: not X but Y: '{before}'"]
+
+
+def test_the_tell_join_still_happens():
+    """The round-3 join the panel needed is unaffected: its Y is no verdict shape."""
+    before = "This is not a landscaped garden. It is a place where the frontier war left a mark on the valley."
+    text, log = rewrite(_placed(before, "mid paragraph"), CTX)
+    assert text == _placed("This is a place where the frontier war left a mark on the valley.", "mid paragraph")
+    assert log == [f"ai_tells: denial + affirmation joined: '{before}'"]
+
+
+@pytest.mark.parametrize("sentence", [
+    # finding 3 — an audience limit in the denied part of the three word rules
+    "The ferry is not for foot passengers but for vehicles only.",              # not X but Y, same preposition
+    "The tour suits one group only: not families, but adults.",                 # not X but Y, colon / comma frame
+    "The tour suits one group: not families, but adults.",
+    "This trek suits fit teenagers, not young children.",                       # , not X.
+    "The bridge carries cyclists, not pedestrians.",
+])
+@pytest.mark.parametrize("where", ["paragraph start", "mid paragraph"])
+def test_an_audience_limit_in_a_word_rule_is_never_cut(sentence, where):
+    text = _placed(sentence, where)
+    assert rewrite(text, CTX) == (text, [])
+
+
+@pytest.mark.parametrize("where", ["paragraph start", "mid paragraph"])
+def test_an_audience_inline_pair_keeps_its_denial(where):
+    """'X is not A; it is B' with an audience in A is never folded; the semicolon split (punctuation only, every
+    word kept) still applies, and the structure pass never joins the two sentences it wrote."""
+    before = "The rafting section is not for non-swimmers; it is for confident swimmers aged 12 and over."
+    text, log = rewrite(_placed(before, where), CTX)
+    assert text == _placed("The rafting section is not for non-swimmers. It is for confident swimmers aged 12 and "
+                           "over.", where)
+    assert log == [f"ai_tells: semicolon split: '{before}'"]
+
+
+# findings 2 and 4 — a seed number is a known age only in an age context
+ITINERARY_SEED = "Day 8: Paro. Drive 3-4 hours to the valley, max 12 guests. Lunch at 12:30."
+TERRA_SEED = "Day 7 of the trip\nSource itinerary: 10 km from the hotel. Students train for six years."
+
+
+@pytest.mark.parametrize("sentence, found", [
+    ("Ideal for families with children aged 8 and up.", "aged 8 and up"),            # 8 from 'Day 8'
+    ("A 12-year-old can manage the walk easily.", "12-year-old"),                    # 12 from 'max 12 guests'
+    ("Great for 4-year-olds.", "4-year-olds"),                                       # 4 from '3-4 hours'
+    ("The guide is a 30-year-old who grew up in the valley.", "30-year-old"),        # 30 from '12:30'
+])
+def test_day_duration_group_and_clock_numbers_are_not_known_ages(sentence, found):
+    assert hygiene.unsupported_ages(sentence, ITINERARY_SEED) == [found]
+
+
+@pytest.mark.parametrize("sentence, found", [
+    ("For families travelling with children aged seven and up, the school is a calm stop.", "aged seven and up"),
+    ("Kids aged 10 and over enjoy the carving room.", "aged 10 and over"),
+    ("The visit suits children over six.", "children over six"),
+    ("A 7-year-old can follow the carving from block to panel.", "7-year-old"),
+    ("Kids aged 8 and up join the class.", "aged 8 and up"),
+])
+def test_a_day_number_distance_or_training_years_are_not_known_ages(sentence, found):
+    assert hygiene.unsupported_ages(sentence, TERRA_SEED) == [found]
+
+
+@pytest.mark.parametrize("sentence, source", [
+    # the reviewer's wordings stay known next to day / duration / group numbers
+    ("Kids aged twelve and over can ride the ponies.", ITINERARY_SEED + " Minimum age is 12."),
+    ("Kids aged 8 and up join the class.", ITINERARY_SEED + " Suitable for children from 8 years."),
+    ("Children under 5 stay at the camp.", TERRA_SEED + " Not suitable for under-5s."),
+    ("Riders aged 14 and over may take the long loop.", TERRA_SEED + " Riders must be at least 14."),
+    ("Kids aged 6 to 12 join the class.", TERRA_SEED + " Children 6–12 join the class."),
+    ("Kids aged 7 and up are welcome.", "Day 3 of the trip. Open to children 7 and older."),
+    ("Kids aged 7 and up are welcome.", "Day 3 of the trip. Minimum age: 7."),
+    ("Kids aged 7 and up are welcome.", "Day 3. Children under the age of 7 stay with a carer."),
+    ("Kids aged 10 and over are welcome.", "Day 3. Suitable for 10 years and over."),
+    ("Kids aged 10 and over are welcome.", "Day 3. Recommended for travellers aged 10+."),
+])
+def test_a_seed_stated_age_stays_known_beside_day_numbers(sentence, source):
+    assert hygiene.unsupported_ages(sentence, source) == []
+
+
+@pytest.mark.parametrize("source", [
+    "Day 30 of the trip.", "The ride is over 30 km.", "Over 30 monasteries line the valley.",
+    "Groups of 30 people.", "Dinner at 7:30.", "The festival draws 1,300 dancers.", "At least 30 minutes.",
+])
+def test_non_age_numbers_never_make_an_age_known(source):
+    assert hygiene.unsupported_ages("The guide is a 30-year-old who grew up here.", source) == ["30-year-old"]
+
+
+def test_an_age_the_itinerary_seed_does_not_give_reaches_f15():
+    text = "The camp sits by the lake. A 12-year-old can manage the walk easily. The road north is long."
+    g = gate_voice(text, spec=None, stock_blocking=True, exclude_texts=(ITINERARY_SEED,))
+    assert any(v.startswith(UNSUPPORTED_DETAIL_PREFIX) and "12-year-old" in v for v in g["violations"])

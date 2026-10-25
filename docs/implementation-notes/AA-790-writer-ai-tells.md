@@ -533,3 +533,78 @@ must still go) in `tests/unit/test_aa790_writer_round3.py` (section "round-3 rev
 - Tests: `tests/unit/test_aa790_writer_round3.py` 208 (was 146 + the review cases); the linear-time list gains
   `_STAGED_NOUN_X_RE`, `_AUDIENCE_RE`, `_SOURCE_NUMBER_RE`, the two new look-ahead guards (inside their residue
   entries) and `_seed_denies` / `_audience` in the function timing test.
+
+### Second review (4 blocking findings on d09b5b6c)
+
+Principle for every fix: a rule removes only the words that are the tell. It never deletes a fact, a restriction, an
+audience limit or a seasonal / time limit, and it never acts on a sentence the pass itself wrote. Each finding's
+sentences have exact-output tests (paragraph start and mid-paragraph) in the "second review of round 3" section of
+`tests/unit/test_aa790_writer_round3.py`. Before the fix, 56 of the new tests fail.
+
+- **R3R2-D1 — no pass acts on a sentence an earlier pass wrote; a short 'This is the …' join is not made** (finding
+  1). The demonstrative join turned "This is not the dry season. It is the tail of the monsoon." into "This is the
+  tail of the monsoon.", and the second structure pass then cut that as a verdict line, so both sentences were lost.
+  Two changes. (a) `rewrite` collects the `Edit.new` sentences of every kept edit and hands them to the later passes
+  (`written`). A written sentence is never cut (lone denial, verdict, aphorism pair), never the denial of a pair, never
+  part of an anaphora run, and never cut down by the CTA-clause rule. It may still be the affirmation that a join
+  keeps word for word: the stock-word pass often cleans that sentence first ("… something genuinely rare.").
+  (b) `_pair` returns `KEEP_PAIR` when the demonstrative join would be a short verdict-shaped line
+  (`_verdict_shape`: `_VERDICT_RE` + `_VERDICT_REST_RE`, ≤ 10 words, no seed check). In that case the pair is a
+  correction of which thing it is, not a reframe, so both sentences stay and the lone-denial cut is skipped too.
+  `_LIMIT_RE` (only, until, except …) now guards the round-1 `_pair` and `_lone_denial`, as it already guarded the
+  round-2 pairs: "This is not the only path to the monastery." stays.
+- **R3R2-D2 — the audience guard now covers every rule that drops a denied part** (finding 3): `_not_but` (same
+  preposition and the colon / comma frame), `_not_tail` and `_inline_pair` check `_audience` on X. `_AUDIENCE_RE`
+  gains passengers, pedestrians, cyclists, motorists and drivers ("not for foot passengers but for vehicles only").
+- **R3R2-D3 — a seed number counts as a known age only in an age context** (findings 2 and 4). `_SOURCE_NUMBER_RE`
+  is gone. `_source_ages` reads two things: every `_AGE_CLAIM_RE` match in the source, and `_SOURCE_AGE_RE`, which
+  has two forms. (1) An age cue right before the number: age / ages / aged / minimum age, a person noun, infants,
+  students, riders …, under / over / at least / older than. At most four closed linking words may sit between the cue
+  and the number (is, must, be, at, least, of, the, from …), and the number is not followed by a unit or a head count
+  (`_UNIT_AFTER_RE`, `_COUNT_AFTER_RE`). A bare preposition cue never counts before a plural noun ("over 30
+  monasteries"). (2) The number with an age tail: "12 years old", "12 and over", "10 years and over", "12+ years".
+  This form never counts right after "day(s)". A number next to ':' / '.' / ',' digits (12:30, 1,300) never counts.
+  "Day 8", "3-4 hours", "max 12 guests", "Lunch at 12:30", "Day 7 of the trip", "10 km" and "six years" of training
+  no longer hide "aged 8 and up", "12-year-old", "4-year-olds", "a 30-year-old who", "aged seven and up", "aged 10
+  and over", "children over six" or "a 7-year-old can". Every wording the first review needed is still known: "Minimum
+  age is 12", "Minimum age: 7", "under-5s", "at least 14", "Children 6–12", "from 8 years", "children 10 and older",
+  "under the age of 7", "aged 10+".
+
+#### Changed (vs the review's suggestions)
+
+- Finding 1 suggested `_verdict(joined, src)` as the test. That test depends on the seed: with "monsoon" in the seed,
+  the join would still drop "not the dry season". The shape test does not read the seed, so both facts stay
+  whatever the seed holds. The general `written` guard covers the chain the review describes for every rule, not
+  only for the verdict cut.
+- Finding 3 asked for the rafting sentence to come back unchanged. The inline-pair fold no longer happens. The
+  round-1 semicolon split still applies: "… not for non-swimmers. It is for confident swimmers aged 12 and over."
+  The split changes punctuation only and keeps every word, as it already did for any practical "is not …; it is …".
+  The structure pass never joins the two sentences it wrote. The test pins this exact output.
+- Finding 4 suggested an age cue anywhere in the same seed line or sentence. The cue has to sit right before the
+  number (four closed linking words at most), because a line such as "Day 7: children visit the 10 km gorge" would
+  otherwise count 7 and 10.
+
+#### Tradeoffs
+
+- Census (local scripts, $0; before = 58048707, after = this fix):
+  - AI-tells quotes on the 20 round-2 texts: 63 matchable, 37 caught (11 pass, 26 residue) before and after.
+  - Source-fidelity quotes: 51 matchable, 9 caught (2 pass, 5 residue, 2 seed-aware) before and after.
+  - Seed-aware findings: the same 4 on the round-2 posts (2 ages, 2 founding reasons), 0 on their `before_text`, and
+    the same 1 on the round-1 texts.
+  - The edit log on all three text sets is byte-identical.
+  - AA-729 golden fixture + S234 pack (70 texts): 170 → 169 edits. The one dropped edit is ", not something travellers
+    need to organise independently beforehand", a practical fact that now keeps its audience word. Residue stays at 42.
+- `KEEP_PAIR` also keeps a real tell pair whose affirmation is a short "the …" verdict ("That is not X. It is the
+  opening."). Round 1 cut only the denial there; now neither sentence goes. These pairs are rare in the corpora (0 in
+  the censuses above), and the residue / prompt still see them.
+
+#### Should know
+
+- `_PASSES` functions now take `(text, ctx, written)`. `written` defaults to empty, so any direct caller still works.
+- Tests: `tests/unit/test_aa790_writer_round3.py` has 279 tests (was 208). The linear-time list replaces
+  `_SOURCE_NUMBER_RE` with `_SOURCE_AGE_RE`, `_COUNT_AFTER_RE` and `_PLURAL_AFTER_RE`, and gains four adversarial
+  inputs (age cues, "under-" runs, "7 and" runs, "7-" runs). The unit files that import ai_tells / hygiene / prompts /
+  quality_gates / service (104 files) give 3796 passed and 1 skipped. Before the fix they gave 3723 passed (plus 2
+  that need a git checkout).
+- Also wraps a 121-character `_STAGED_NOUN_X_RE` line (flake8 max 120) that came in with d09b5b6c.
+- No prompt change: `writer_prompt_version` stays `24363541` and `AI_TELLS_VERSION` stays `ai_tells.v3`.

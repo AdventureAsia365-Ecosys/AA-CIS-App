@@ -227,11 +227,12 @@ def _practical(part: str) -> bool:
 
 
 # Round-3 review: who a thing is (not) for is an audience limit, a fact a family plans by ('This is not a walk for
-# small children.'). A denied part that names people is never cut or folded into a join.
+# small children.'). A denied part that names people is never cut or folded into a join, by any rule: the pairs
+# (_pair, _denied_ok), the lone denial, 'not X but Y', ', not X.' and 'X is not A; it is B' (second review).
 _AUDIENCE_RE = re.compile(
     rf"\b(?:{hygiene._PERSON_NOUNS}|toddlers?|infants?|bab(?:y|ies)|beginners?|novices?|first-timers?|seniors?"
     r"|elderly|older[ \t]+(?:people|visitors|walkers)|wheelchair[ \t]+users?|non-swimmers?|swimmers?|walkers?"
-    r"|climbers?|riders?)\b", re.I)
+    r"|climbers?|riders?|passengers?|pedestrians?|cyclists?|motorists?|drivers?)\b", re.I)
 
 
 def _audience(part: str) -> bool:
@@ -399,8 +400,8 @@ def _y_ends_sentence(s: str, start: int) -> bool:
 # (it uses it as a plain noun: 'the sacred relic of …'). Never when the seed itself denies it ('is not a relic').
 _STAGED_NOUN_X_RE = re.compile(
     r"^[ \t]*(?:(?:a|an|the|any|some)[ \t]+)?(?:mere[ \t]+|dead[ \t]+|static[ \t]+)?"
-    r"(?P<n>relics?|museum[ \t]+pieces?|backdrops?|stage[ \t]+sets?|set[ \t]+pieces?|theme[ \t]+parks?|curiosit(?:y|ies)"
-    r"|showpieces?)[ \t]*$", re.I)
+    r"(?P<n>relics?|museum[ \t]+pieces?|backdrops?|stage[ \t]+sets?|set[ \t]+pieces?|theme[ \t]+parks?"
+    r"|curiosit(?:y|ies)|showpieces?)[ \t]*$", re.I)
 
 
 def _staged_noun_x(x: str, src: frozenset) -> bool:
@@ -434,7 +435,7 @@ def _not_but(s: str, src: frozenset) -> tuple[str, list[str]]:
             # uses as a plain noun and never denies ('houses the sacred relic of …' vs '…: not a relic, but …').
             if _seed_fact(m.group("x"), src) and not (colon and _staged_noun_x(m.group("x"), src)):
                 continue
-            if _practical(m.group("x")):
+            if _practical(m.group("x")) or _audience(m.group("x")):
                 continue
             y = m.group("y").lower()
             same_prep = x_words[0].lower() in _PREPOSITIONS and x_words[0].lower() == y
@@ -462,7 +463,7 @@ _NOT_TAIL_RE = re.compile(
 def _not_tail(s: str, src: frozenset) -> tuple[str, list[str]]:
     m = _NOT_TAIL_RE.search(s)
     if (not m or len(m.group("x").split()) > 12 or _protected(s) or _DIGIT_RE.search(m.group("x"))
-            or _practical(s) or _seed_fact(m.group("x"), src)):
+            or _practical(s) or _audience(m.group("x")) or _seed_fact(m.group("x"), src)):
         return s, []
     return s[:m.start()] + m.group("end").strip(), [", not X"]
 
@@ -477,7 +478,7 @@ _INLINE_PAIR_RE = re.compile(
 def _inline_pair(s: str, src: frozenset) -> tuple[str, list[str]]:
     m = _INLINE_PAIR_RE.match(s)
     if (not m or _protected(m.group("subj") + " " + m.group("x")) or _DIGIT_RE.search(m.group("x"))
-            or _practical(m.group("x")) or _seed_fact(m.group("x"), src)):
+            or _practical(m.group("x")) or _audience(m.group("x")) or _seed_fact(m.group("x"), src)):
         return s, []
     cop = m.group("cop2") or {"s": "is", "re": "are"}[m.group("c2").lower()]
     if m.group("cop").lower() in ("are", "were") and cop.lower() in ("is", "was"):
@@ -668,14 +669,20 @@ def _pair(s1: str, s2: str, src: frozenset) -> Optional[str]:
     d, a = _DENIAL_RE.match(_expand(s1)), _AFFIRM_RE.match(_expand(s2))
     if not d or not a or len(_words(s1)) > 22:
         return None
-    if (_protected(s1) or _practical(d.group("x")) or _audience(d.group("x")) or _DIGIT_RE.search(d.group("x"))
-            or _seed_fact(d.group("x"), src)):
+    # second review: a limit in the denied part ('This is not the only path to the monastery.') says other
+    # routes exist, a fact; it is never cut or joined away (the round-2 pairs had the same guard in _denied_ok)
+    if (_protected(s1) or _practical(d.group("x")) or _audience(d.group("x")) or _LIMIT_RE.search(d.group("x"))
+            or _DIGIT_RE.search(d.group("x")) or _seed_fact(d.group("x"), src)):
         return None
     subj = d.group("subj").strip()
     if _subject_is_pronoun(subj):
         if _NOT_ONLY_RE.search(d.group(0)):
             return ""  # 'This is not simply a lake.' asserts the lake: never folded into a join (round 1 cuts it)
-        return _demonstrative_join(subj, a.group("pro"), a.group("verb"), " " + a.group("y"), copula=True)
+        joined = _demonstrative_join(subj, a.group("pro"), a.group("verb"), " " + a.group("y"), copula=True)
+        # second review: a join that would be a short verdict-shaped line ('This is the tail of the monsoon.', 'This is
+        # the halfway point.') is a correction of which thing it is, not a reframe: both sentences stay (KEEP_PAIR).
+        # Joined, the verdict rule cut it on the next pass and both facts were lost.
+        return KEEP_PAIR if joined and _verdict_shape(joined) else joined
     verb = a.group("verb")
     plural = d.group("cop").lower() in ("are", "were")
     if verb.lower() in ("is", "are", "was", "were"):
@@ -726,10 +733,18 @@ def _lone_denial(s: str, src: frozenset) -> bool:
     x_words = d.group("x").split()
     if x_words and _is_participle(x_words[0]):
         return False
-    if (_protected(s) or _practical(d.group("x")) or _audience(d.group("x")) or _DIGIT_RE.search(s)
+    if (_protected(s) or _practical(d.group("x")) or _audience(d.group("x")) or _LIMIT_RE.search(d.group("x"))
+            or _DIGIT_RE.search(s)
             or _NAME_AFTER_FIRST_RE.search(s) or _seed_fact(d.group("x"), src)):
         return False
     return bool(_LONE_SUBJ_RE.match(d.group("subj").strip()))
+
+
+def _verdict_shape(s: str) -> bool:
+    """The sentence has a verdict line's shape and length ('This is the halfway point.', 'This is deliberate.'),
+    whatever its words: ``_verdict`` without the seed and name checks."""
+    m = _VERDICT_RE.match(_expand(s))
+    return bool(m) and len(_words(s)) <= 10 and bool(_VERDICT_REST_RE.match(m.group("rest").strip()))
 
 
 def _verdict(s: str, source_words: frozenset) -> bool:
@@ -828,6 +843,7 @@ def _verb_in_seed(verb: str, src: frozenset) -> bool:
 
 _NOT_ONLY_RE = re.compile(r"\bnot[ \t]+(?:only|just|simply|merely)\b", re.I)
 CUT_BOTH = "\x00cut both"  # _pair2: both sentences go (an aphorism pair: 'X is not a ruin. It works.')
+KEEP_PAIR = "\x00keep pair"  # _pair: a pair, but both sentences stay (no join, no lone-denial cut)
 
 
 def _pair2(s1: str, s2: str, src: frozenset) -> Optional[str]:
@@ -1023,15 +1039,17 @@ def _lower_first(s: str) -> str:
     return s[:1].lower() + s[1:]
 
 
-def _anaphora_edits(text: str, ctx: TellContext) -> list[Edit]:
+def _anaphora_edits(text: str, ctx: TellContext, written: frozenset = frozenset()) -> list[Edit]:
     spans = sentence_spans(text)
     out: list[Edit] = []
     i = 0
     while i < len(spans):
         sp = spans[i]
-        key = _anaphora_key(sp["clean"]) if sp["kind"] == "prose" and not sp["in_faq"] else None
+        key = (_anaphora_key(sp["clean"]) if sp["kind"] == "prose" and not sp["in_faq"] and sp["clean"] not in written
+               else None)
         j = i
         while (key and j + 1 < len(spans) and spans[j + 1]["kind"] == "prose" and not spans[j + 1]["in_faq"]
+               and spans[j + 1]["clean"] not in written
                and "\n" not in text[spans[j]["end"]:spans[j + 1]["start"]]
                and _anaphora_key(spans[j + 1]["clean"]) == key and not _is_cta(spans[j + 1]["clean"], ctx)):
             j += 1
@@ -1150,11 +1168,11 @@ def _source_words(ctx: TellContext) -> frozenset:
     return _SourceWords(ctx.source or "")
 
 
-def _sentence_edits(text: str, ctx: TellContext) -> list[Edit]:
+def _sentence_edits(text: str, ctx: TellContext, written: frozenset = frozenset()) -> list[Edit]:
     out = []
     src = _source_words(ctx)
     for sp in sentence_spans(text):
-        if sp["kind"] not in ("prose", "bullet", "faq_a") or _is_cta(sp["clean"], ctx):
+        if sp["kind"] not in ("prose", "bullet", "faq_a") or _is_cta(sp["clean"], ctx) or sp["clean"] in written:
             continue
         new, kinds = _rewrite_sentence(sp["clean"], ctx, src, prose=sp["kind"] == "prose" and not sp["in_faq"])
         if kinds and new != sp["clean"] and len(_words(new)) >= 3:
@@ -1186,7 +1204,12 @@ def _section_has_other_prose(spans: list[dict], i: int, also: Optional[int] = No
     return any(spans[k]["kind"] in ("prose", "bullet") for k in range(lo, hi + 1) if k not in (i, also))
 
 
-def _structure_edits(text: str, ctx: TellContext) -> list[Edit]:
+def _structure_edits(text: str, ctx: TellContext, written: frozenset = frozenset()) -> list[Edit]:
+    """Joins and cuts of whole sentences. ``written`` holds the sentences an earlier pass of this rewrite wrote:
+    none of them is ever cut or used as the denial of a pair (second review: the second structure pass cut the
+    demonstrative join 'This is the tail of the monsoon.' as a verdict line, so both facts of the pair went). A
+    written sentence may still be the affirmation a join keeps word for word ('It is a meeting with people who …,
+    something rare.' after the stock-word pass dropped 'genuinely')."""
     spans = sentence_spans(text)
     prose = [i for i, sp in enumerate(spans) if sp["kind"] == "prose" and not sp["in_faq"]]
     first = _first_prose(spans)
@@ -1194,7 +1217,7 @@ def _structure_edits(text: str, ctx: TellContext) -> list[Edit]:
     out: list[Edit] = []
     used: set[int] = set()
     for n, i in enumerate(prose):
-        if i in used:
+        if i in used or spans[i]["clean"] in written:
             continue
         sp = spans[i]
         if _is_cta(sp["clean"], ctx):
@@ -1214,8 +1237,11 @@ def _structure_edits(text: str, ctx: TellContext) -> list[Edit]:
                     if alt:
                         joined, join_kind = alt, kind
                         break
+            if joined == KEEP_PAIR:
+                used.update({i, j})
+                continue
             if joined == CUT_BOTH:
-                if i != first and _section_has_other_prose(spans, i, also=j):
+                if i != first and spans[j]["clean"] not in written and _section_has_other_prose(spans, i, also=j):
                     nxt = spans[j + 1] if j + 1 < len(spans) else None
                     s, _ = _deletion_end(text, sp, spans[j])
                     _, e = _deletion_end(text, spans[j], nxt)
@@ -1249,7 +1275,7 @@ def _structure_edits(text: str, ctx: TellContext) -> list[Edit]:
     return out
 
 
-def _heading_edits(text: str, ctx: TellContext) -> list[Edit]:
+def _heading_edits(text: str, ctx: TellContext, written: frozenset = frozenset()) -> list[Edit]:
     spans = sentence_spans(text)
     angle_words = set(content_words(ctx.angle_name or "", ctx.ignore))
     brief_words = set(content_words(" ".join(t for t in (ctx.angle_name, ctx.angle_text) if t), ctx.ignore))
@@ -1274,7 +1300,8 @@ def _heading_edits(text: str, ctx: TellContext) -> list[Edit]:
         elif sp["kind"] == "prose" and not sp["in_faq"] and _is_cta(sp["clean"], ctx):
             prev = next((spans[p] for p in range(k - 1, -1, -1) if spans[p]["kind"] in ("prose", "heading")), None)
             # only the literal CTA protects it here: a sentence that restates the CTA is CTA-like by design
-            if prev is None or prev["kind"] != "prose" or hygiene.has_cta_literal(prev["clean"], ctx.cta):
+            if (prev is None or prev["kind"] != "prose" or prev["clean"] in written
+                    or hygiene.has_cta_literal(prev["clean"], ctx.cta)):
                 continue
             cut = _cta_restating_clause(prev["clean"], ctx.cta, ctx.ignore)
             if cut and len(_words(cut)) >= 5:
@@ -1351,11 +1378,13 @@ def rewrite(text: str, ctx: TellContext) -> tuple[str, list[str]]:
     with no tell comes back unchanged, byte for byte."""
     log: list[str] = []
     cur = text or ""
+    written: set[str] = set()  # the sentences a pass wrote: no later pass acts on them (second review)
     for make in _PASSES:
-        edits = make(cur, ctx)
+        edits = make(cur, ctx, frozenset(written))
         if not edits:
             continue
         cur, kept, skipped = _accept(cur, edits, ctx)
+        written.update(e.new for e in kept if e.new)
         log += [f"ai_tells: {e.kind}: '{e.before[:200]}'" for e in kept]
         log += [f"ai_tells: skipped {e.kind} (breaks the text): '{e.before[:200]}'" for e in skipped]
     log = list(dict.fromkeys(log))  # a refused edit is proposed again by the second structure pass

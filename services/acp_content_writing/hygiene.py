@@ -995,24 +995,55 @@ _AGE_CLAIM_RE = re.compile(
     r"|grandchild(?:ren)?|toddlers?|riders?|swimmers?|hikers?|can|could|will|would|may|might|must|needs?|should"
     r"|is|was|who|as|than|and|or|but|with|in|at|to|for|on)\b))",
     re.I)
-# Any age-sized number the source writes, whatever the wording ('Minimum age is 12', 'under-5s', 'at least 14',
-# 'Children 6–12', 'from 8 years'): a number the seed has is never an unsupported age (the NUMBERS rule allows it).
-_SOURCE_NUMBER_RE = re.compile(rf"(?<![\d,.])(?:\d{{1,3}}(?![\d,])|\b{NUM_TOKEN}\b)", re.I)
+# A number the source writes is a known age only in an age context (second review: 'Day 8', '3-4 hours', 'max 12
+# guests', 'Lunch at 12:30' made 8, 4, 12 and 30 "known", so invented family ages passed on any itinerary seed).
+# Every wording a seed states an age in stays known: 'Minimum age is 12', 'under-5s', 'at least 14', 'Children
+# 6–12', 'from 8 years', 'children 10 and older', 'aged 7 and over', '10 years and over'. Two forms:
+# (1) an age cue right before the number, with at most four closed linking words between ('Riders must be at least
+#     14', 'under the age of 12'); a bare preposition cue (under / over / at least …) never before a plural noun
+#     ('over 30 monasteries'), and no cue before a unit or a head count ('children 2 rooms' is not read either);
+# (2) the number with an age tail ('12 years old', '12 and over', '12+ years'), never right after 'day(s)'.
+# Plus every _AGE_CLAIM_RE match in the source. Numbers next to ':' / '.' / ',' digits (12:30, 1,200) never count.
+_AGE_NUM = rf"(?:{NUM_TOKEN})(?=s?\b)(?![:.,]\d)"
+_SOURCE_AGE_RE = re.compile(
+    rf"\b(?P<cue>(?:minimum|maximum|min|max)\.?\s+age|ages?|aged|{_PERSON_NOUNS}|infants?|toddlers?|bab(?:y|ies)"
+    r"|students?|pupils?|participants?|riders?|swimmers?|under|over|above|at\s+least|older\s+than|younger\s+than)"
+    r"(?:\s*[:(]\s*|[\s-]+)(?:(?:is|are|must|be|of|from|between|aged|age|the|at|least|over|under|above|older"
+    rf"|younger|than)\s+){{0,4}}(?P<a>{_AGE_NUM})(?:\s*(?:–|-|to|and)\s*(?P<b>{_AGE_NUM}))?"
+    rf"|(?<![\d:.,])(?<!\bday\s)(?<!\bdays\s)(?P<c>{_AGE_NUM})(?:\s*(?:–|-|to)\s*(?P<d>{_AGE_NUM}))?"
+    r"(?:[\s-]+years?[\s-]+(?:old|of\s+age)\b|\s+years?\s+(?:and|or)\s+(?:over|older|up|above)\b"
+    r"|\s+(?:and|or)\s+(?:over|older|up|above)\b|\s*\+\s*years?\b)",
+    re.I)
+_PREPOSITION_CUE_RE = re.compile(r"(?:under|over|above|at\s+least|older\s+than|younger\s+than)", re.I)
+_COUNT_AFTER_RE = re.compile(
+    rf"^(?:\s+(?:{_PERSON_NOUNS}|people|persons?|pax|seats?|rooms?|beds?)\b|\s*(?:am|pm|a\.m|p\.m|o['’]clock|h)\b)",
+    re.I)
+_PLURAL_AFTER_RE = re.compile(r"^\s+(?!years?\b|yrs?\b)[a-z]{2,}s\b", re.I)
 _FOUNDING_REASON_RE = re.compile(
     r"\b(?:was|were|is|are|had\s+been|has\s+been)\s+(?:originally\s+|first\s+|largely\s+|partly\s+|mainly\s+)?"
     r"(?:established|founded|created|set\s+up|built|opened|started)\s+(?:(?:in|around)\s+[\w-]+\s+)?because\b"
     r"|\bexists?\s+(?:largely\s+|partly\s+|mainly\s+)?because\b", re.I)
 
 
-def _source_numbers(text: str) -> set[int]:
-    return {small_number(m.group(0)) for m in _SOURCE_NUMBER_RE.finditer(text or "")} - {None}
+def _source_ages(text: str) -> set[int]:
+    """The ages the source states, in an age context only (``_SOURCE_AGE_RE``, ``_AGE_CLAIM_RE``)."""
+    text = text or ""
+    out = {small_number(v) for m in _AGE_CLAIM_RE.finditer(text) for v in m.groups() if v}
+    for m in _SOURCE_AGE_RE.finditer(text):
+        rest = text[m.end():m.end() + 60]  # a unit / count word sits right after the number: a bounded look
+        if m.group("a") and (_UNIT_AFTER_RE.match(rest) or _COUNT_AFTER_RE.match(rest)
+                             or (_PREPOSITION_CUE_RE.fullmatch(m.group("cue")) and _PLURAL_AFTER_RE.match(rest))):
+            continue
+        out |= {small_number(v) for v in (m.group("a"), m.group("b"), m.group("c"), m.group("d")) if v}
+    return out - {None}
 
 
 def unsupported_ages(sentence: str, source: Optional[str]) -> list[str]:
     """The age claims in ``sentence`` ('aged seven and up', 'ages 8+', 'children over ten', '10-year-olds', 'a
-    10-year-old can …') whose number the source never writes, in any wording. A thing's age ('300 years old', 'the
+    10-year-old can …') whose number the source never states as an age, in any wording (``_source_ages``: a day
+    number, a duration, a group size or a clock time is not an age). A thing's age ('300 years old', 'the
     300-year-old temple') is not one: only the person forms of 'year-old(s)'."""
-    known = _source_numbers(source or "")
+    known = _source_ages(source or "")
     out = []
     for m in _AGE_CLAIM_RE.finditer(sentence or ""):
         values = {small_number(v) for v in m.groups() if v} - {None}
