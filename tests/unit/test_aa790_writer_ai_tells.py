@@ -216,7 +216,8 @@ def test_practical_facts_are_kept(para):
 
 @pytest.mark.parametrize("before, after", [
     # the copula fold still fires on a parallel complement
-    ("The hall is not grey but very green.", "The hall is very green."),
+    # (fourth review of round 3: 'not grey' is a denied word, a fact; test_aa790_fact_invariant keeps it)
+    ("The hall is not a relic but a working temple.", "The hall is a working temple."),
     ("The dzong is not a museum but a working monastery where monks still live.",
      "The dzong is a working monastery where monks still live."),
     # 631f8533: a wh-clause inside Y's noun phrase is not a new clause
@@ -237,8 +238,10 @@ def test_a_denial_the_seed_states_is_kept():
     out, log = _run(_blog(para), ctx)
     assert "The reindeer are not raised primarily for meat. They are used for riding" in out
     assert not any("X is not A" in ln for ln in log)
-    joined, _ = _run(_blog(para))  # without the seed it is a set-up: the denial goes
-    assert "The reindeer are used for riding and as pack animals." in joined
+    # fourth review of round 3: without the seed the denied words (raised, primarily, meat) are facts by default
+    kept, log = _run(_blog(para))
+    assert para in kept  # the refused pair carries the semicolon split with it: the sentence is left whole
+    assert any("skipped X is not A; it is B (drops a fact: raised, primarily, meat)" in ln for ln in log), log
 
 
 def test_a_contrast_the_seed_states_is_kept():

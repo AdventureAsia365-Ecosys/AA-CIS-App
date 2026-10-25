@@ -32,8 +32,8 @@ def _run(text: str, ctx: TellContext = CTX) -> tuple[str, list[str]]:
 
 @pytest.mark.parametrize("before, after", [
     # a 'do' denial with a personifying verb + its affirmation (the volcano / Mongolia shapes)
-    # (round 3, S252: 'from the road' would be an access fact the fact-preservation invariant keeps; a ridge is not)
-    ("The crater does not announce itself from the ridge. It is simply there, tucked into the grass.",
+    # (round 3, S252: 'from the road' / 'from the ridge' is a denied place word, a fact the invariant keeps)
+    ("The crater does not announce itself. It is simply there, tucked into the grass.",
      "The crater is simply there, tucked into the grass."),
     ("The shrines do not advertise their age. They are still repainted every spring.",
      "The shrines are still repainted every spring."),
@@ -46,8 +46,9 @@ def _run(text: str, ctx: TellContext = CTX) -> tuple[str, list[str]]:
      "The bridges on this route are repaired by students of the school."),
     ("The thread that ties this section together is this: the river has fed these valleys for centuries.",
      "The river has fed these valleys for centuries."),
-    # round-1 join keeps the affirmation's tense (review: it read 'The bridge is rebuilt.')
-    ("The bridge is not the original. It was rebuilt.", "The bridge was rebuilt."),
+    # round-1 join keeps the affirmation's tense (review: it read 'The bridge is rebuilt.'); fourth review of round 3:
+    # 'not the original' is a denied word, a fact, so the staged noun stands in for it here
+    ("The bridge is not a replica. It was rebuilt.", "The bridge was rebuilt."),
     # three short sentences built the same way → one sentence (nothing cut, nothing added)
     ("The forts are still guarded. The shrines are still lit. The mills are still turning.",
      "The forts are still guarded, the shrines are still lit and the mills are still turning."),
@@ -78,7 +79,7 @@ def test_round2_verdict_or_aphorism_is_cut(cut, rest):
 
 
 def test_the_pass_is_idempotent_on_round2_forms():
-    text = _blog("The monks gather at dawn. The crater does not announce itself from the ridge. It is simply there.",
+    text = _blog("The monks gather at dawn. The crater does not announce itself. It is simply there.",
                  "The forts are still guarded. The shrines are still lit. The mills are still turning. Then the "
                  "road climbs.",
                  "The bus stops at noon. The order of the stops is not incidental. Lunch is at the camp.")
@@ -91,6 +92,9 @@ def test_the_pass_is_idempotent_on_round2_forms():
 @pytest.mark.parametrize("kept, fact", [
     # round 3 (S252): the fact-preservation invariant keeps what a round-2 proposer would have dropped
     ("The crater does not announce itself from the road. It is simply there, tucked into the grass.", "road"),
+    # fourth review of round 3: a denied word is a fact by default
+    ("The crater does not announce itself from the ridge. It is simply there, tucked into the grass.", "ridge"),
+    ("The bridge is not the original. It was rebuilt.", "original"),
     ("This kind of visit does not present the village as a stage.", "village"),      # the only mention
     ("This kind of stay does not position the village as a backdrop.", "village"),
     ("The overlap of the two cultures in this province is not accidental.", "two"),  # a number

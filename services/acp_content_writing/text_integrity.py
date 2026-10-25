@@ -522,32 +522,38 @@ def edit_findings(old_text: str, new_text: str, cta: Optional[str], brand_name: 
     return list(dict.fromkeys(out))
 
 
-def final_pass(text: str, hyg, *, cta: Optional[str] = None) -> tuple[str, list[str], list[str]]:
+def final_pass(text: str, hyg, *, cta: Optional[str] = None,
+               source: Optional[str] = None) -> tuple[str, list[str], list[str]]:
     """The last deterministic step before the gates read a piece and before it is stored:
     normalise → one CTA → delete later duplicates (every `hygiene.near_duplicates` kind that is safe
     to delete, orphan lines, far near-verbatim repeats) → delete broken fragments → normalise.
     Returns (text, log, residue) — residue is `hygiene.find_issues(text, hyg)["repeat"]`, the
-    F13_repeat findings left (the caller holds the piece on them)."""
+    F13_repeat findings left (the caller holds the piece on them). ``source`` (default: ``hyg.source_text``, the seed
+    + Facts) feeds the fact-preservation invariant of the repeat deletes (round-3 fourth review: without it the
+    seed-word class was off in the last step before storage)."""
     from services.acp_content_writing.hygiene import find_issues
     cta = cta if cta is not None else getattr(hyg, "cta", None)
-    text, log = _fix_all(text, cta, brand_words(getattr(hyg, "brand_name", None)))
+    source = source if source is not None else getattr(hyg, "source_text", None)
+    text, log = _fix_all(text, cta, brand_words(getattr(hyg, "brand_name", None)), source)
     residue = find_issues(text, hyg)["repeat"] if hyg is not None else integrity_findings(text, cta)
     return text, log, residue
 
 
-def settle(text: str, hyg, *, cta: Optional[str] = None) -> str:
+def settle(text: str, hyg, *, cta: Optional[str] = None, source: Optional[str] = None) -> str:
     """AA-790 — the text `final_pass` would leave, without its residue read: what the gates see of an edit made
     before the final pass. The repair contract compares two settled texts, so a step is not reverted for a
     duplicate or a fragment the final pass deletes anyway."""
     cta = cta if cta is not None else getattr(hyg, "cta", None)
-    return _fix_all(text, cta, brand_words(getattr(hyg, "brand_name", None)))[0]
+    source = source if source is not None else getattr(hyg, "source_text", None)
+    return _fix_all(text, cta, brand_words(getattr(hyg, "brand_name", None)), source)[0]
 
 
-def _fix_all(text: str, cta: Optional[str], ignore: frozenset) -> tuple[str, list[str]]:
+def _fix_all(text: str, cta: Optional[str], ignore: frozenset,
+             source: Optional[str] = None) -> tuple[str, list[str]]:
     text, log = normalise(text)
     text, more = fix_cta(text, cta)
     log += more
-    text, more = dedupe(text, ignore, cta)
+    text, more = dedupe(text, ignore, cta, source)
     log += more
     text, more = fix_fragments(text, cta)
     log += more

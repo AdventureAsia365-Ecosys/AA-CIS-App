@@ -44,10 +44,12 @@ def test_demonstrative_denial_is_joined_at_a_paragraph_start(before, after):
 
 
 def test_relocated_narrative_verb_is_joined_even_as_the_hook():
-    """'X's story does not begin in A. It begins in B, …' → one sentence; a join keeps the first sentence (hook)."""
-    hook = ("The valley's story does not begin in the capital. It begins in the south, where rice terraces climb "
+    """'X's story does not begin in A. It begins in B, …' → one sentence; a join keeps the first sentence (hook).
+    Fourth review of round 3: A is a name (the panel's 'does not begin in Thimphu'); a common noun ('the capital')
+    is a denied word, a fact by default, and the join is refused (test_aa790_fact_invariant)."""
+    hook = ("The valley's story does not begin in Thimphu. It begins in the south, where rice terraces climb "
             "from the river.")
-    text, log = rewrite(hook + "\n\n## The South\n\nThe road south follows the river for a day.", CTX)
+    text, log = rewrite(hook + "\n\n## The South\n\nThe road south from Thimphu follows the river for a day.", CTX)
     assert text.startswith("The valley's story begins in the south, where rice terraces climb from the river.\n")
     assert log == ["ai_tells: denial + relocation joined: '" + hook + "'"]
 

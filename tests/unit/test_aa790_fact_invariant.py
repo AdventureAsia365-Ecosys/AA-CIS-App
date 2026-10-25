@@ -19,7 +19,7 @@ import time
 
 import pytest
 
-from services.acp_content_writing import ai_tells, hygiene
+from services.acp_content_writing import ai_tells, hygiene, text_integrity
 from services.acp_content_writing.ai_tells import TellContext, rewrite
 
 CTA = "Message us to start planning your trip."
@@ -222,6 +222,14 @@ _FACTS = [
     ("the leech zone", "leech", "Leeches are common from June to September."),
     ("the prayer flag hill", "prayer", "Prayer flags line the ridge above the pass."),
     ("a pottery stall", "pottery", "Villagers sell pottery at the roadside."),
+    # fourth review of round 3: open-class practical words in none of the closed lists the check uses (a denial's
+    # own words are facts by default), so the test is not drawn from the lists it checks
+    ("a potable spring", "potable", None), ("a paved stretch", "paved", None),
+    ("a waymarked stretch", "waymarked", None), ("an insured activity", "insured", None),
+    ("a lit passage", "lit", None), ("an air-conditioned hall", "conditioned", None),
+    ("a smoking area", "smoking", None), ("a plowed pass", "plowed", None), ("a covered deck", "covered", None),
+    ("an insulated hut", "insulated", None), ("an unmarked ledge", "unmarked", None),
+    ("an unroped scramble", "unroped", None),
 ]
 _Y = "a working stop"
 _FRAMES = {
@@ -308,9 +316,161 @@ def test_seed_words_skip_the_seed_template():
 def test_missing_facts_counts_closed_words_and_finds_names_anywhere():
     after = hygiene.word_forms("The day ends at the camp near Paro.")
     # 'end' is in the text but the edit removed its own occurrence: a closed word must survive in the edit itself
-    assert hygiene.missing_facts(["This is not the end of the climb."], "", after) == ["end"]
+    # (fourth review: 'climb' is a denied word, read the same way)
+    assert hygiene.missing_facts(["This is not the end of the climb."], "", after) == ["end", "climb"]
     # a name only needs to be somewhere in the text after the edit
-    assert hygiene.missing_facts(["It does not begin in Paro."], "", after) == []
+    assert hygiene.missing_facts(["It is not Paro."], "", after) == []
+    assert hygiene.missing_facts(["It does not begin in Paro."], "", after) == ["begin"]  # a denied verb
+
+
+# ---------------------------------------------------------------- fourth review: a denied word is a fact by default
+
+# Finding 1: practical facts in none of the closed lists. Each sentence must come back byte for byte, with no seed, with
+# an unrelated seed, at a paragraph start and mid-paragraph.
+_DENIED_FACTS = [
+    "The spring water is not potable; it is glacier melt.",
+    "This is not an insured activity. The views from the ridge are wide.",
+    "The trail is not waymarked. It is an old trade path.",
+    "The pass is not plowed; it is a summer route.",
+    "This is not a paved route. The views over the valley are wide all the way.",
+    "The track is not paved; it is an old mule track.",
+    "The rooms are not air-conditioned; they are simple and clean.",
+    "The dzong is not air-conditioned; it is a seventeenth-century fortress.",
+    "The cave is not lit; it is a short crawl from the entrance.",
+    "It is not a smoking area. The courtyard fills with pilgrims at dusk.",
+    "The ferry is not covered; it is an open longboat.",
+    "The farmhouse is not insulated; it is a three-storey rammed-earth house.",
+]
+UNRELATED_SEED = "Day 5: Punakha to Gangtey. Cash only in the valley; no ATM."
+
+
+@pytest.mark.parametrize("sentences", _DENIED_FACTS)
+@pytest.mark.parametrize("source", ["", UNRELATED_SEED])
+@_BOTH_PLACES
+def test_fourth_review_denied_practical_facts_are_kept(sentences, source, where):
+    _unchanged(_placed(sentences, where), source)
+
+
+@pytest.mark.parametrize("sentences, fact", [
+    ("The spring water is not potable; it is glacier melt.", "potable"),
+    ("This is not an insured activity. The views from the ridge are wide.", "insured"),
+    ("The trail is not waymarked. It is an old trade path.", "waymarked"),
+    ("It is not a smoking area. The courtyard fills with pilgrims at dusk.", "smoking"),
+])
+def test_fourth_review_refusal_names_the_denied_word(sentences, fact):
+    out, log = rewrite(_placed(sentences, "mid paragraph"), _ctx(UNRELATED_SEED))
+    assert out == _placed(sentences, "mid paragraph")
+    assert any("drops a fact:" in line and fact in line for line in log), log
+
+
+@pytest.mark.parametrize("text, expected", [
+    # the denied clause's own content words are DENIED tokens; staged / framing nouns and the frame words are not
+    ("The water is not potable.", [("water", True), ("potable", hygiene.DENIED)]),
+    ("It carries no lifejackets.", [("lifejackets", hygiene.DENIED)]),
+    ("The trail isn't waymarked, but the path is clear.", [("trail", True), ("waymarked", hygiene.DENIED),
+                                                          ("path", True)]),
+    ("The dzong is not a museum or a backdrop.", []),
+    ("It is not a performance of tradition.", [("tradition", hygiene.DENIED)]),
+    # 'not because …' and 'not just …' deny nothing
+    ("We start early, not because it is remote.", [("start", True), ("early", True)]),
+    ("They want to walk the valley, not just pass through it.", []),
+    # the scope ends at the clause
+    ("The room is not heated; the views are wide.", [("room", True), ("heated", True)]),
+])
+def test_fact_tokens_read_a_denials_own_words(text, expected):
+    assert hygiene.fact_tokens(text) == expected
+
+
+@pytest.mark.parametrize("before, after", [
+    # staging and framing denials still go: the denied word is on the allowlist, or the affirmation repeats it
+    ("The seasonal movement of the monk body is not a performance of tradition. It is tradition, still practised.",
+     "The seasonal movement of the monk body is tradition, still practised."),
+    ("The hall is not a relic. It hosts weddings.", "The hall hosts weddings."),
+    ("The dzong is not a museum but a working monastery where monks still live.",
+     "The dzong is a working monastery where monks still live."),
+    ("The NHDC centre is a government enterprise, not a heritage attraction.",
+     "The NHDC centre is a government enterprise."),
+])
+def test_fourth_review_staging_denials_still_go(before, after):
+    out, _ = rewrite(_placed(before, "mid paragraph"), _ctx())
+    assert out == _placed(after, "mid paragraph")
+
+
+@pytest.mark.parametrize("sentences, fact", [
+    # proposals the fourth-review reading refuses on purpose (each a denied open-class word)
+    ("The hall is not grey but very green.", "grey"),
+    ("The bridge is not the original. It was rebuilt.", "original"),
+    ("Tsaatan settlements are not permanent villages. They are seasonal camps moved several times a year.",
+     "permanent"),
+    ("The reindeer are not raised primarily for meat; they are used for riding and as pack animals.", "meat"),
+    ("The valley's story does not begin in the capital. It begins in the south, where rice terraces climb.",
+     "capital"),
+])
+def test_fourth_review_denied_words_refuse_old_proposals(sentences, fact):
+    out, log = rewrite(_placed(sentences, "mid paragraph"), _ctx())
+    assert out == _placed(sentences, "mid paragraph")
+    assert any("drops a fact:" in line and fact in line for line in log), log
+
+
+# Finding 2: the last step before storage (final_pass / settle) reads the seed + Facts, and a repeat delete never
+# takes a word out of the piece.
+_HAA = ("Haa lakes — trek\nSource itinerary: Day 6: Trek from Haa to the lakes. Leeches are common from June to "
+        "September. No phone coverage beyond Haa.")
+_REPEATS = [
+    ("We leave Haa early. The path to the lakes follows the stream through the forest.",
+     "The path to the lakes follows the stream through the forest, thick with leeches."),
+    ("We leave Haa early. The last stretch to the lakes follows the ridge.",
+     "The last stretch to the lakes follows the ridge, crawling with leeches."),
+    ("We cross the lake by boat. The longboat leaves the pier at nine every morning.",
+     "The longboat leaves the pier at nine every morning and carries no lifejackets."),
+    ("We climb to the hut. The last stretch to the hut follows the ridge.",
+     "The last stretch to the hut follows the ridge, unroped and unmarked."),
+]
+
+
+def _repeat_piece(first: str, repeat: str) -> str:
+    return f"## The Lakes\n\n{first} {repeat} Lunch is at the top.\n\n{CTA}"
+
+
+@pytest.mark.parametrize("first, repeat", _REPEATS)
+@pytest.mark.parametrize("seed", [_HAA, ""])
+def test_fourth_review_repeat_that_adds_a_word_survives_autofix_and_final_pass(first, repeat, seed):
+    text = _repeat_piece(first, repeat)
+    hyg = hygiene.HygieneContext(seed=seed or "Lakes — trek", cta=CTA)
+    fixed, _ = hygiene.autofix(text, hyg)
+    assert fixed == text
+    out, log, residue = text_integrity.final_pass(fixed, hyg)
+    assert out == text and not log
+    assert residue  # F13_repeat still sees the repeat: the repair, not a delete, fixes it
+    assert text_integrity.settle(fixed, hyg) == text
+    assert text_integrity.final_pass(fixed, None, cta=CTA, source=seed)[0] == text
+
+
+def test_final_pass_and_settle_forward_the_seed_to_dedupe(monkeypatch):
+    seen = []
+    real = text_integrity.dedupe
+
+    def spy(text, ignore=frozenset(), cta=None, source=None):
+        seen.append(source)
+        return real(text, ignore, cta, source)
+
+    monkeypatch.setattr(text_integrity, "dedupe", spy)
+    hyg = hygiene.HygieneContext(seed=_HAA, cta=CTA)
+    text = _repeat_piece(*_REPEATS[0])
+    text_integrity.final_pass(text, hyg)
+    text_integrity.settle(text, hyg)
+    text_integrity.final_pass(text, hyg, source="explicit seed")
+    assert seen == [hyg.source_text, hyg.source_text, "explicit seed"] and "Leeches" in seen[0]
+
+
+@pytest.mark.parametrize("later, other, expected", [
+    ("The ridge path is unroped and unmarked.", "The ridge path climbs.", ["unroped", "unmarked"]),
+    ("The lake holds seventy percent of the water.", "The lake, holding seventy percent of the water.", []),
+    ("This route rewards those who travel with patience.", "The route crosses the steppe.", []),
+    ("The boat leaves at 9.", "The boat leaves at 8.", ["9"]),
+])
+def test_added_words(later, other, expected):
+    assert hygiene.added_words(later, other) == expected
 
 
 # ---------------------------------------------------------------- ages: explicit cue only (findings 5 and 7)
@@ -384,6 +544,13 @@ _INPUTS = {
     "years-and": "7 years and " * (_N // 12),
     "children-of": "children of " * (_N // 12) + "8 years",
     "aged-of": "aged of " * (_N // 8) + "7",
+    # fourth review: the denial scope, the repeat-word check and the age look-backs
+    "denials": "The pass is not plowed; " * (_N // 24),
+    "nots": "not " * (_N // 4),
+    "no-commas": "no lifejackets, " * (_N // 16),
+    "from-to": "Visitors from 10 to 12 " * (_N // 23),
+    "aged-years": "a malt aged 12 years " * (_N // 21),
+    "ages-n": "Middle Ages 12 " * (_N // 15),
 }
 
 
@@ -396,6 +563,11 @@ def test_the_invariant_check_is_linear(label):
                                hygiene._keeps_facts(s, s, seed), ai_tells._fact_losers([], s, seed)))
                for _ in range(2))
     assert best < 0.05 * 2, f"{label}: {best * 1000:.0f} ms"  # four passes over 8000 characters
+    # fourth review: the repeat-delete check (every content word stays in the piece) is one pass each
+    counts = hygiene._word_keys(s)
+    best = min(_timed(lambda: (hygiene.added_words(s, s), hygiene._repeat_delete_ok(counts, s, s, seed, frozenset())))
+               for _ in range(2))
+    assert best < 0.05, f"{label}: {best * 1000:.0f} ms"
 
 
 def test_the_invariant_check_scales_linearly():
@@ -415,6 +587,14 @@ def test_the_age_readers_are_linear(label):
 def test_the_pass_with_many_refused_edits_stays_fast():
     text = "We camp here. This is not drinking water. Boil it first. " * 140   # ~8000 characters, 140 refusals
     assert min(_timed(lambda: rewrite(text, _ctx())) for _ in range(2)) < 0.5
+
+
+def test_dedupe_with_many_refused_repeats_stays_fast():
+    """Fourth review: a refused repeat costs O(its own words) (``_TextWithout``), not O(text) per candidate."""
+    names = "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima".split()
+    text = " ".join(f"The last stretch to the hut follows the ridge above the lake, unroped {names[i % 12]}{i // 12}x."
+                    for i in range(100))   # ~8000 characters; every near-duplicate adds a word
+    assert min(_timed(lambda: hygiene.dedupe(text)) for _ in range(2)) < 2.0
 
 
 def _timed(fn) -> float:

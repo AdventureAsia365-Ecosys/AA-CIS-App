@@ -729,10 +729,42 @@ _FACT_TOPIC_WORDS = frozenset("village town city hamlet settlement".split())
 _FACT_CLASSES = (_FACT_NUMBER_WORDS | _FACT_TIME_WORDS | _FACT_LIMIT_WORDS | _FACT_PERSON_WORDS | _FACT_PLACE_WORDS
                  | SUPERLATIVE_WORDS | _FACT_PRACTICAL_WORDS)
 _FACT_TOKEN_RE = re.compile(r"[^\W\d_]+|\d+|[%°]")
+# Round-3 fourth review (S252): the closed lists cannot name every practical fact ('The spring water is not potable',
+# 'The trail is not waymarked', 'This is not an insured activity', 'The rooms are not air-conditioned'). So what a
+# denial denies is a fact by default: every content word in the scope of not / no / never / nor / n't (to the end of
+# its clause: , ; : . ! ? ( ) — or 'but', at most _DENIAL_SCOPE words) is a DENIED fact token, kept only when the
+# edit's own new text still carries it ('This is not a performance of tradition. It is tradition, still practised.'
+# keeps 'tradition'). 'not because …' and 'not just / merely / simply …' deny nothing (the clause after them is a
+# reason or is asserted). The exceptions are the words a staging or framing denial is about, which carry no fact a
+# reader plans by: a staged, dead or packaged thing ('not a museum', 'not a performance', 'not a backdrop'), the
+# tourist gaze ('not a photo stop', 'not a postcard', 'not a single sudden view'), a thing that sells or announces
+# itself ('does not sell itself', 'does not advertise its age'), and the abstract frame of a reframe ('not a gradual
+# fade', 'not incidental', 'not by a calendar', 'no guidebook can substitute'). Stop words, evaluative and generic
+# frame words (``_FACT_GENERIC``) never count; a name, a settlement or a seed word keeps its own reading.
+_DENIAL_WORDS = frozenset("not no never nor cannot neither".split())
+_DENIAL_VOID_NEXT = frozenset("because just merely simply".split())
+_DENIAL_SCOPE = 8
+DENIED = "denied"  # fact_tokens kind of a denied word (closed: True, name / seed word: False)
+_DENIABLE_WORDS = frozenset("""museum exhibit exhibition show showpiece performance performed performing spectacle
+staged scripted display displayed replica relic ruin backdrop postcard picture photo photograph snapshot souvenir
+attraction sight sightseeing scenery spectator view viewing sudden theme park set stage piece curiosity curiositie
+novelty noveltie gimmick costume costumed artefact artifact archive archival object note static frozen dead preserved
+polished packaged curated manufactured artificial decorative ornamental quaint picturesque pretty exotic nostalgic
+romantic cultural heritage add addon landscaped manicured garden memorial glimpse spot landmark destination headline
+checklist box tick list bucket detour
+stopover filler footnote afterthought interlude formality gesture token symbol metaphor abstraction idea concept
+theory cliche slogan label accident accidental incidental coincidence coincidental random arbitrary chance
+significance importance gradual fade fading blur blurred line boundary sequence separate approach building
+calendar guidebook substitute replicate rival encounter itself themselves himself herself announce advertise
+monument commemorating commemorate commemorative version softened watered diluted sanitised sanitized dramatic
+revelation distance historical historic studied regarded treated any trick illusion
+sell shout boast brag flaunt trumpet pretend posture present position charm age something anything nothing
+everything someone anyone thing lot much many few little sense matter question""".split())
 # A word right before a particle is a phrasal verb or noun, not its fact sense: 'warm-up', 'check-in', 'opens up'
 # ('up to 12' is a limit and stays).
 _PARTICLE_AFTER_RE = re.compile(r"-(?:up|in|off|out|over|down)\b|[ \t]up\b(?![ \t]+to\b)")
 _SENTENCE_BREAK_CHARS = frozenset(".!?\n")
+_CLAUSE_BREAK_CHARS = frozenset(".!?\n,;:()—–")
 
 
 def _forms(token: str) -> tuple:
@@ -765,18 +797,24 @@ def source_forms(source: Optional[str]) -> frozenset:
 
 
 def fact_tokens(text: Optional[str], seed_forms: frozenset = frozenset(), *,
-                heading: bool = False) -> list[tuple[str, bool]]:
-    """The fact tokens of ``text`` in order: (lower-case token, closed) where ``closed`` marks the closed classes
-    (number, unit, time, limit, person, place / amenity, position, superlative, practical word) and False a name or
-    a seed word. One pass, linear in the text. A ``heading`` is a title-case label over its section: only its seed
+                heading: bool = False) -> list[tuple[str, object]]:
+    """The fact tokens of ``text`` in order: (lower-case token, kind) where the kind is True for the closed classes
+    (number, unit, time, limit, person, place / amenity, position, superlative, practical word), False for a name or
+    a seed word and ``DENIED`` for any other content word a denial denies (fourth review). One pass, linear in the
+    text. A ``heading`` is a title-case label over its section: only its seed
     and settlement words count (an angle label's 'Two Worlds', 'Family Anchor' are brief words, not facts)."""
     raw = strip_tags(text or "")
     out: list[tuple[str, bool]] = []
     prev_end, prev = -1, ""
+    denied, prev_neg = 0, False  # words left in the scope of the last denial word (fourth review)
     for m in _FACT_TOKEN_RE.finditer(raw):
         word = m.group(0)
         t = fold(word)
         forms = _forms(t)
+        gap = raw[prev_end:m.start()] if prev_end >= 0 else "."
+        if denied and (any(c in _CLAUSE_BREAK_CHARS for c in gap) or t == "but"
+                       or (prev_neg and t in _DENIAL_VOID_NEXT)):
+            denied = 0  # the clause ends; or 'not because …', 'not just …': nothing is denied
         number_before = prev.isdigit() or prev in _FACT_NUMBER_WORDS
         if heading or _PARTICLE_AFTER_RE.match(raw, m.end()):  # 'warm-up', 'opens up', 'check-in': phrasal
             pass
@@ -785,12 +823,19 @@ def fact_tokens(text: Optional[str], seed_forms: frozenset = frozenset(), *,
                 or (prev in ("most", "least") and t not in EVALUATIVE_WORDS and t not in _STOP)):
             out.append((t, True))
         else:
-            gap = raw[prev_end:m.start()] if prev_end >= 0 else "."
             initial = prev_end < 0 or any(c in _SENTENCE_BREAK_CHARS for c in gap)
             if ((not heading and not initial and word[:1].isupper() and word != "I") or t in _FACT_TOPIC_WORDS
                     or (len(t) > 2 and t not in _STOP and t not in _FACT_GENERIC
                         and any(f in seed_forms for f in forms))):
                 out.append((t, False))
+            elif (denied and len(t) > 2 and t not in _STOP and t not in _FACT_GENERIC
+                    and not any(f in _DENIABLE_WORDS for f in forms)):
+                out.append((t, DENIED))  # 'not potable', 'not waymarked', 'no lifejackets'
+        prev_neg = t in _DENIAL_WORDS or (t == "t" and raw[m.start() - 1:m.start()] in ("'", "’"))  # n't
+        if prev_neg and not heading:
+            denied = _DENIAL_SCOPE + 1
+        if denied:
+            denied -= 1
         prev_end, prev = m.end(), t
     return out
 
@@ -812,16 +857,23 @@ def missing_facts(olds: list[str], new: str, after_forms: frozenset, seed_forms:
     its ``word_forms``). A closed-class token (a number, a limit, a time, an audience, a place, a superlative …) is
     kept only when ``new`` carries it as often as the ``olds`` did (``closed_by_count``): the same word elsewhere
     in the piece is another claim ('The day ends at the camp.' does not keep 'This is not the end of the climb.').
-    A delete of a repeat (hygiene.dedupe) passes ``closed_by_count=False``: its facts are, by design, elsewhere.
-    Linear in the texts."""
-    old_counts = new_counts = None
+    A ``DENIED`` word ('not potable') is kept only when ``new`` still has it (the joined 'It is tradition' keeps the
+    'tradition' of 'not a performance of tradition'). A delete of a repeat (hygiene.dedupe) passes
+    ``closed_by_count=False``: its facts are, by design, elsewhere, so every kind is read by presence. Linear in the
+    texts."""
+    old_counts = new_counts = new_forms = None
     out: dict[str, None] = {}
     for r in olds:
         for t, closed in fact_tokens(r, seed_forms, heading=heading):
             if t in out:
                 continue
             forms = _forms(t)
-            if closed and closed_by_count:
+            if closed is DENIED and closed_by_count:
+                if new_forms is None:
+                    new_forms = word_forms(new)
+                if not any(f in new_forms for f in forms):
+                    out[t] = None
+            elif closed and closed_by_count:
                 if old_counts is None:
                     old_counts, new_counts = _form_counts(olds), _form_counts([new])
                 if max(new_counts.get(f, 0) for f in forms) < max(old_counts.get(f, 0) for f in forms):
@@ -1621,11 +1673,79 @@ def _closing_zone(text: str, cta: Optional[str]) -> Optional[tuple[int, int]]:
     return start, spans[k]["end"]
 
 
-def _keeps_facts(after: str, removed: str, seed: frozenset) -> bool:
+# Round-3 fourth review (S252): a repeat delete may not lose a word the piece tells nowhere else, fact class or not
+# ('…, thick with leeches', '…, unroped and unmarked', '… and carries no lifejackets'). The words a paraphrase or a
+# closing recap adds about the experience itself carry no fact and do not block it ('rewards those who travel with
+# patience', 'offers a quieter rhythm'); nor do function words the stop list leaves out.
+_REPEAT_FREE_WORDS = frozenset("""all both own alike together still here there also even ever every much many
+reward rewards rewarded offer offers offered give gives gave bring brings brought travel travels travelling traveling
+patience curiosity rhythm pace quieter calmer slower gentler softer feel feels felt sense register registers
+registered immediately notice notices noticed appreciate appreciates enjoy enjoys love loves""".split())
+
+
+def _repeat_stem(t: str) -> str:
+    """A rough stem for the repeat comparison only: 'holding' / 'holds' / 'held' are not told apart from 'hold' by
+    ``_forms``; '-ing', '-ed', '-es', '-s' come off ('holding' → 'hold', 'offered' → 'offer')."""
+    for suf, keep in (("ing", 4), ("ed", 4), ("es", 4), ("s", 3)):
+        if t.endswith(suf) and len(t) - len(suf) >= keep and not t.endswith("ss"):
+            return t[:-len(suf)]
+    return t
+
+
+def _word_keys(text: Optional[str]) -> dict[str, int]:
+    """How many words of ``text`` each form and each '~stem' key stands for: one pass, linear."""
+    counts: dict[str, int] = {}
+    for m in _FACT_TOKEN_RE.finditer(fold(strip_tags(text or ""))):
+        t = m.group(0)
+        for k in set(_forms(t)) | {"~" + _repeat_stem(t)}:
+            counts[k] = counts.get(k, 0) + 1
+    return counts
+
+
+class _TextWithout:
+    """The forms and stems of a text without one removed span, read from the text's counts (``in`` only): the repeat
+    deletes check each candidate in O(its own words), so a pass that refuses many candidates stays linear in the text
+    per candidate checked (a refused repeat was O(text) per candidate before)."""
+
+    def __init__(self, counts: dict[str, int], removed: str):
+        self.counts, self.minus = counts, _word_keys(removed)
+
+    def __contains__(self, key: str) -> bool:
+        return self.counts.get(key, 0) - self.minus.get(key, 0) > 0
+
+
+def added_words(later: str, other, ignore: frozenset = frozenset()) -> list[str]:
+    """The words ``later`` would take out of the piece if it were deleted: every number and every content word (stop
+    words, evaluative and generic frame words, ``_REPEAT_FREE_WORDS`` and ``ignore`` out) that ``other`` (the text
+    after the delete or the sentence it repeats, as a string or a ``_TextWithout``) does not have in any form or stem.
+    A repeat delete needs this empty. Linear in the two texts."""
+    have = _word_keys(other) if isinstance(other, str) or other is None else other
+    out: dict[str, None] = {}
+    for m in _FACT_TOKEN_RE.finditer(fold(strip_tags(later or ""))):
+        t = m.group(0)
+        forms = _forms(t)
+        if not t.isdigit() and (len(t) <= 2 or t in _STOP or t in _REPEAT_FREE_WORDS or t in ignore
+                                or any(f in _FACT_GENERIC for f in forms)):
+            continue
+        if not (any(f in have for f in forms) or "~" + _repeat_stem(t) in have):
+            out[t] = None
+    return list(out)
+
+
+def _keeps_facts(after, removed: str, seed: frozenset) -> bool:
     """AA-790 round 3 (S252) — the fact-preservation invariant for a repeat delete: every fact token of the removed
     words is still in the text after the delete (a repeat's facts are, by design, in the sentence it repeats; when
-    one is not, the delete would lose it). Linear in the text."""
-    return not missing_facts([removed], "", word_forms(after), seed, closed_by_count=False)
+    one is not, the delete would lose it). ``after`` is the text after the delete or a ``_TextWithout``. Linear."""
+    forms = word_forms(after) if isinstance(after, str) else after
+    return not missing_facts([removed], "", forms, seed, closed_by_count=False)
+
+
+def _repeat_delete_ok(counts: dict[str, int], removed: str, clean: str, seed: frozenset, ignore: frozenset) -> bool:
+    """A repeat delete keeps every fact token (``_keeps_facts``) and takes no other word out of the piece
+    (``added_words``, round-3 fourth review). ``counts`` = ``_word_keys`` of the text before the delete and
+    ``removed`` the span the delete takes out: O(the removed words) per candidate."""
+    after = _TextWithout(counts, removed)
+    return not added_words(clean, after, ignore) and _keeps_facts(after, clean, seed)
 
 
 def dedupe(text: str, ignore: frozenset = frozenset(), cta: Optional[str] = None,
@@ -1640,6 +1760,7 @@ def dedupe(text: str, ignore: frozenset = frozenset(), cta: Optional[str] = None
     log: list[str] = []
     for _ in range(10):  # one edit per pass: offsets move after each
         changed = False
+        counts = _word_keys(text)  # text changes only on an applied edit, which ends the pass
         for d in near_duplicates(text, ignore, cta):
             later, earlier = d["later"], d["earlier"]
             lw = copy_words(later["clean"], ignore)
@@ -1648,10 +1769,9 @@ def dedupe(text: str, ignore: frozenset = frozenset(), cta: Optional[str] = None
                 m = _LEAD_PHRASE_RE.match(later["text"])
                 if m and all(w in copy_words(m.group(0), ignore) for w in d["shared"].split()):
                     rest = later["text"][m.end():]
-                    trial = text[:later["start"]] + rest[:1].upper() + rest[1:] + text[later["end"]:]
-                    if not _keeps_facts(trial, m.group(0), seed):
+                    if not _keeps_facts(_TextWithout(counts, m.group(0)), m.group(0), seed):
                         continue
-                    text = trial
+                    text = text[:later["start"]] + rest[:1].upper() + rest[1:] + text[later["end"]:]
                     log.append(f"trimmed an echoed opening ('{m.group(0).strip(', ')}'): '{later['clean'][:160]}'")
                     changed = True
                     break
@@ -1659,18 +1779,18 @@ def dedupe(text: str, ignore: frozenset = frozenset(), cta: Optional[str] = None
             contained = sum(w in ew for w in lw) / len(lw) if lw else 0.0
             if d["kind"] in _DELETE_KINDS or (len(lw) <= _DUP_SHORT_WORDS and contained >= _DUP_CONTAINED):
                 after = later["end"] + 1 if text[later["end"]:later["end"] + 1] == " " else later["end"]
-                trial = tidy_after_cut(text[:later["start"]] + text[after:])
-                if _dup_safe_delete(text, later) and _keeps_facts(trial, later["clean"], seed):
-                    text = trial
+                if (_dup_safe_delete(text, later)
+                        and _repeat_delete_ok(counts, text[later["start"]:after], later["clean"], seed, ignore)):
+                    text = tidy_after_cut(text[:later["start"]] + text[after:])
                     log.append(f"deleted a sentence that {d['why']}: '{later['clean'][:160]}'")
                     changed = True
                     break
         if not changed:
             for o in orphan_lines(text, ignore, cta):
                 span = next(s for s in _dup_spans(text, cta) if s["clean"] == o)
-                trial = tidy_after_cut(text[:span["start"]] + text[span["end"]:])
-                if _dup_safe_delete(text, span) and _keeps_facts(trial, o, seed):
-                    text = trial
+                if _dup_safe_delete(text, span) and _keeps_facts(_TextWithout(counts, text[span["start"]:span["end"]]),
+                                                                 o, seed):
+                    text = tidy_after_cut(text[:span["start"]] + text[span["end"]:])
                     log.append(f"deleted a line that adds nothing to the sentences around it: '{o[:160]}'")
                     changed = True
                     break
@@ -1700,9 +1820,10 @@ def dedupe(text: str, ignore: frozenset = frozenset(), cta: Optional[str] = None
                 else:
                     real = any(adds_nothing(r, e, ignore) for e in prior)
                 after = span["end"] + 1 if text[span["end"]:span["end"] + 1] == " " else span["end"]
-                trial = tidy_after_cut(text[:span["start"]] + text[after:])
-                if real and _dup_safe_delete(text, span) and _keeps_facts(trial, r, seed):
-                    text = trial
+                # round-3 fourth review: and it takes no word out of the piece (added_words)
+                if (real and _dup_safe_delete(text, span)
+                        and _repeat_delete_ok(counts, text[span["start"]:after], r, seed, ignore)):
+                    text = tidy_after_cut(text[:span["start"]] + text[after:])
                     log.append(f"deleted a sentence that repeats an earlier one: '{r[:160]}'")
                     changed = True
                     break
@@ -2894,13 +3015,15 @@ def autofix(content_text: str, ctx: HygieneContext) -> tuple[str, list[str]]:
         return k in edits and not edits[k][0]
 
     seed = source_forms(ctx.source_text)
+    counts = _word_keys(text)
     for a, i in enumerate(prose):
         if deleted(i) or _is_cta(spans[i]["clean"], ctx.cta):
             continue
         for j in prose[max(0, a - _DUP_WINDOW):a]:
             if not deleted(j) and near_verbatim(spans[i]["clean"], spans[j]["clean"], ignore):
-                # AA-790 round 3: every fact of the repeat is still in the text without it (the fact invariant)
-                if _keeps_facts(text[:spans[i]["start"]] + text[spans[i]["end"]:], spans[i]["clean"], seed):
+                # AA-790 round 3: every fact of the repeat is still in the text without it (the fact invariant), and
+                # (fourth review) it takes no word out of the piece (added_words)
+                if _repeat_delete_ok(counts, text[spans[i]["start"]:spans[i]["end"]], spans[i]["clean"], seed, ignore):
                     edits[i] = ("", f"deleted a repeat of a nearby sentence: '{spans[i]['clean'][:160]}'")
                 break
     if edits:
