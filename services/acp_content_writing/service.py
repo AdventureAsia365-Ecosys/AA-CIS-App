@@ -3054,7 +3054,7 @@ def _review_dict(req: dict, piece_row, atom_context: Optional[dict], trips: list
 # expand-fetch. Deliberately does NOT select gate_ledger/repair_log/held_reason, same as
 # fetch_review().
 _TENANT_REVIEWS_QUERY = """
-    SELECT * FROM (
+    SELECT latest.*, pub.published_at, pub.external_url AS published_url FROM (
         SELECT DISTINCT ON (cp.angle_gate_request_id)
             cp.piece_id, cp.angle_gate_request_id, cp.status, cp.content_text,
             cp.created_at, cp.route_hub_name, cp.route_segment_count, cp.flags,
@@ -3077,6 +3077,17 @@ _TENANT_REVIEWS_QUERY = """
         WHERE cp.tenant_id = $1
         ORDER BY cp.angle_gate_request_id, cp.created_at DESC
     ) latest
+    -- AA-669: the piece's live post (status 'published'), for My Content's "Published" status / published-at column
+    -- and its link. Same tenant bound again (defence in depth next to the publish_log RLS of the tenant pool); a
+    -- since-unpublished or failed attempt is not "published". At most one live row per piece (the publish layer's
+    -- idempotency key), LIMIT 1 keeps the list one row per request even if that ever changed.
+    LEFT JOIN LATERAL (
+        SELECT pl.published_at, pl.external_url
+        FROM acp_shared.publish_log pl
+        WHERE pl.piece_id = latest.piece_id AND pl.tenant_id = $1 AND pl.status = 'published'
+        ORDER BY pl.published_at DESC NULLS LAST
+        LIMIT 1
+    ) pub ON true
     ORDER BY latest.created_at DESC
 """
 # Live-verify (30/08/2026) caught a real bug here: using the SAME placeholder ($1) both bare
@@ -3167,6 +3178,9 @@ async def fetch_review_list(tenant_id: UUID, pool, request: Optional[Request] = 
             "dfs_paa_snapshot": snapshot,
             "cta": r["cta"],
             "created_at": r["created_at"].isoformat(),
+            # AA-669 — the piece's live post (None when it was never published, or was unpublished since).
+            "published_at": r["published_at"].isoformat() if r["published_at"] else None,
+            "published_url": r["published_url"],
         })
         _tl.with_served(items[-1], served.get(str(r["angle_gate_request_id"])))   # AA-986 L3
     return items

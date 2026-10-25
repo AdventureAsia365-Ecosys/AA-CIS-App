@@ -186,3 +186,45 @@ async def test_publish_refuses_a_superseded_piece(ctx):
         await pub_mod.publish(old, _request(p), tenant={"sub": str(tid)})
     assert exc_info.value.status_code == 409
     assert await p.fetchval("SELECT count(*) FROM acp_shared.publish_log WHERE tenant_id = $1", tid) == 0
+
+
+# ── AA-669: My Content's published status comes from the piece's live publish_log row ─────────────
+@pytest.mark.asyncio
+async def test_my_content_shows_the_live_post_of_the_latest_piece_only(ctx):
+    p, tid = ctx
+    req, opt = await _request_row(p, tid)
+    latest = await _piece(p, tid, req, opt, status="approved", minutes=0)
+    await _log(p, tid, latest, "failed")  # a failed attempt is not a post
+    [item] = await cw_service.fetch_review_list(tid, p)
+    assert item["published_at"] is None and item["published_url"] is None
+    await p.execute(
+        "INSERT INTO acp_shared.publish_log (piece_id, tenant_id, channel, status, published_at, external_url) "
+        "VALUES ($1, $2, 'blog', 'published', $3, 'https://blog.example.com/two-worlds')", latest, tid, T0)
+    [item] = await cw_service.fetch_review_list(tid, p)
+    assert item["published_at"] == T0.isoformat() and item["published_url"] == "https://blog.example.com/two-worlds"
+    await p.execute("UPDATE acp_shared.publish_log SET status = 'unpublished', unpublished_at = now() "
+                    "WHERE piece_id = $1 AND status = 'published'", latest)
+    [item] = await cw_service.fetch_review_list(tid, p)
+    assert item["published_at"] is None  # taken down: not published any more
+
+
+@pytest.mark.asyncio
+async def test_my_content_never_reads_another_tenants_publish_row(ctx):
+    """AA-669 cross-tenant refusal: a publish_log row that names this tenant's piece under another tenant id (a
+    corrupt or forged row) never marks it published, and the other tenant's list does not get the piece."""
+    p, tid = ctx
+    other = uuid.uuid4()
+    await p.execute("INSERT INTO shared.tenants (tenant_id, name, slug, posts_per_week) VALUES ($1, 'AA-669 B', $2, 3)",
+                    other, f"aa669-{other.hex[:8]}")
+    try:
+        req, opt = await _request_row(p, tid)
+        piece = await _piece(p, tid, req, opt, status="approved", minutes=0)
+        await p.execute(
+            "INSERT INTO acp_shared.publish_log (piece_id, tenant_id, channel, status, published_at, external_url) "
+            "VALUES ($1, $2, 'blog', 'published', now(), 'https://other.example.com/x')", piece, other)
+        [item] = await cw_service.fetch_review_list(tid, p)
+        assert item["published_at"] is None and item["published_url"] is None
+        assert await cw_service.fetch_review_list(other, p) == []
+    finally:
+        await p.execute("DELETE FROM acp_shared.publish_log WHERE tenant_id = $1", other)
+        await p.execute("DELETE FROM shared.tenants WHERE tenant_id = $1", other)

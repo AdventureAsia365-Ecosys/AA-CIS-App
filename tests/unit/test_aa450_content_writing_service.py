@@ -943,6 +943,8 @@ def _review_piece_row(**over):
         "created_at": datetime.now(timezone.utc),
         # AA-519 Việc 4/5 — now selected by _LATEST_PIECE_FOR_REQUEST_QUERY.
         "route_hub_name": None, "route_segment_count": None, "flags": None,
+        # AA-669 — the live post joined from acp_shared.publish_log (none by default).
+        "published_at": None, "published_url": None,
     }
     base.update(over)
     return base
@@ -1094,6 +1096,8 @@ def _review_list_row(**over):
         "atom_emotional_hook": "awe", "atom_season_note": "dry season best",
         # AA-519 Việc 4/5 — now selected by _TENANT_REVIEWS_QUERY.
         "route_hub_name": None, "route_segment_count": None, "flags": None,
+        # AA-669 — the live post joined from acp_shared.publish_log (none by default).
+        "published_at": None, "published_url": None,
     }
     base.update(over)
     return base
@@ -1133,6 +1137,34 @@ class TestFetchReviewList:
         pool = _make_pool(conn)
         result = await service.fetch_review_list(TENANT_ID, pool)
         assert result == []
+
+    async def test_published_piece_carries_its_live_post(self):
+        """AA-669 — My Content's Published status / published-at column / link come from the piece's
+        'published' publish_log row; a never-published piece reads None."""
+        when = datetime(2026, 10, 20, 8, 30, tzinfo=timezone.utc)
+        conn = AsyncMock()
+        conn.fetch = AsyncMock(return_value=[
+            _review_list_row(piece_id=uuid.uuid4(), channel="blog", published_at=when,
+                             published_url="https://blog.example.com/sapa"),
+            _review_list_row(piece_id=uuid.uuid4()),
+        ])
+        pool = _make_pool(conn)
+        with patch.object(service, "get_goal", return_value=GOAL):
+            published, draft = await service.fetch_review_list(TENANT_ID, pool)
+        assert published["published_at"] == when.isoformat()
+        assert published["published_url"] == "https://blog.example.com/sapa"
+        assert draft["published_at"] is None and draft["published_url"] is None
+
+    async def test_publish_join_is_bound_to_the_tenant_and_live_rows_only(self):
+        """AA-669 — the publish_log join names the same tenant ($1) and only status 'published', so an
+        unpublished / failed attempt or another tenant's row never marks a piece published."""
+        conn = AsyncMock()
+        conn.fetch = AsyncMock(return_value=[])
+        pool = _make_pool(conn)
+        await service.fetch_review_list(TENANT_ID, pool)
+        query = " ".join(conn.fetch.call_args.args[0].split())
+        assert "pl.piece_id = latest.piece_id AND pl.tenant_id = $1 AND pl.status = 'published'" in query
+        assert "last_error" not in query and "idempotency_key" not in query
 
     async def test_held_row_reads_as_ready_processing_row_content_hidden(self):
         # AA-614 — held reads as ready_state='ready' in the list too (same rule as fetch_review()
