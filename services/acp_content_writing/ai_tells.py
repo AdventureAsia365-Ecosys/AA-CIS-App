@@ -232,7 +232,9 @@ def _practical(part: str) -> bool:
 _AUDIENCE_RE = re.compile(
     rf"\b(?:{hygiene._PERSON_NOUNS}|toddlers?|infants?|bab(?:y|ies)|beginners?|novices?|first-timers?|seniors?"
     r"|elderly|older[ \t]+(?:people|visitors|walkers)|wheelchair[ \t]+users?|non-swimmers?|swimmers?|walkers?"
-    r"|climbers?|riders?|passengers?|pedestrians?|cyclists?|motorists?|drivers?)\b", re.I)
+    r"|climbers?|riders?|passengers?|pedestrians?|cyclists?|motorists?|drivers?"
+    # third review: 'not a trek for people with vertigo', 'for anyone with …', 'not for vegetarians', 'for the unfit'
+    r"|people|persons?|anyone|those|visitors?|vegetarians?|vegans?|the[ \t]+(?:unfit|faint-hearted))\b", re.I)
 
 
 def _audience(part: str) -> bool:
@@ -435,10 +437,16 @@ def _not_but(s: str, src: frozenset) -> tuple[str, list[str]]:
             # uses as a plain noun and never denies ('houses the sacred relic of …' vs '…: not a relic, but …').
             if _seed_fact(m.group("x"), src) and not (colon and _staged_noun_x(m.group("x"), src)):
                 continue
-            if _practical(m.group("x")) or _audience(m.group("x")):
+            # third review: a limit ('not the only route up, but the shortest') is a fact in every frame
+            if _practical(m.group("x")) or _audience(m.group("x")) or _LIMIT_RE.search(m.group("x")):
                 continue
             y = m.group("y").lower()
-            same_prep = x_words[0].lower() in _PREPOSITIONS and x_words[0].lower() == y
+            # third review: after ', but' or ': not' only the copula path folds, plus the role frame 'not as X, but
+            # as Y' (the panel's 'not as cultural artefacts, but as living practice'). Any other same-preposition
+            # contrast there is a place or time choice ('Dinner is not at the lodge, but at a farmhouse.', ': not on
+            # Sundays, but on Saturdays'); the bare 'set not by a calendar but by the forest' form still folds.
+            same_prep = (x_words[0].lower() in _PREPOSITIONS and x_words[0].lower() == y
+                         and (y == "as" or not (m.group("comma") or colon)))
             copula = (bool(m.group("lead")) or colon) and _parallel_copula(x_words, _y_phrase(s, m.start("y")))
             if m.group("comma") and not _y_ends_sentence(s, m.start("y")):
                 continue
@@ -463,7 +471,8 @@ _NOT_TAIL_RE = re.compile(
 def _not_tail(s: str, src: frozenset) -> tuple[str, list[str]]:
     m = _NOT_TAIL_RE.search(s)
     if (not m or len(m.group("x").split()) > 12 or _protected(s) or _DIGIT_RE.search(m.group("x"))
-            or _practical(s) or _audience(m.group("x")) or _seed_fact(m.group("x"), src)):
+            or _practical(s) or _audience(m.group("x")) or _LIMIT_RE.search(m.group("x"))
+            or _seed_fact(m.group("x"), src)):
         return s, []
     return s[:m.start()] + m.group("end").strip(), [", not X"]
 
@@ -478,7 +487,8 @@ _INLINE_PAIR_RE = re.compile(
 def _inline_pair(s: str, src: frozenset) -> tuple[str, list[str]]:
     m = _INLINE_PAIR_RE.match(s)
     if (not m or _protected(m.group("subj") + " " + m.group("x")) or _DIGIT_RE.search(m.group("x"))
-            or _practical(m.group("x")) or _audience(m.group("x")) or _seed_fact(m.group("x"), src)):
+            or _practical(m.group("x")) or _audience(m.group("x")) or _LIMIT_RE.search(m.group("x"))
+            or _seed_fact(m.group("x"), src)):
         return s, []
     cop = m.group("cop2") or {"s": "is", "re": "are"}[m.group("c2").lower()]
     if m.group("cop").lower() in ("are", "were") and cop.lower() in ("is", "was"):
@@ -747,6 +757,26 @@ def _verdict_shape(s: str) -> bool:
     return bool(m) and len(_words(s)) <= 10 and bool(_VERDICT_REST_RE.match(m.group("rest").strip()))
 
 
+# Third review: 'This is the coldest part of the trek.' / 'This is the wettest month.' / 'This is the only day off.'
+# rank a thing on a measurable scale (a practical fact a reader plans by), not the piece judging itself. A closed list
+# of -est forms (never 'forest', 'interest', 'harvest'), and most / least + a word that is not a closed evaluative
+# judgement ('the most rewarding part' is still a verdict line; 'the most exposed stretch' is a fact).
+_SUPERLATIVES = """best worst highest lowest longest shortest hardest easiest coldest hottest warmest coolest wettest
+driest busiest quietest calmest oldest newest youngest biggest largest smallest steepest deepest shallowest fastest
+quickest slowest nearest closest furthest farthest safest cheapest latest earliest toughest windiest sunniest
+rainiest muddiest narrowest widest emptiest fullest"""
+_EVALUATIVE = """important striking telling memorable rewarding interesting remarkable significant meaningful beautiful
+moving powerful revealing compelling evocative satisfying special impressive affecting atmospheric extraordinary
+fascinating intriguing"""
+_SUPERLATIVE_RE = re.compile(
+    rf"\b(?:{'|'.join(_SUPERLATIVES.split())}|(?:most|least)[ \t]+(?!(?:{'|'.join(_EVALUATIVE.split())})\b)[a-z-]+)\b",
+    re.I)
+
+
+def _superlative_fact(rest: str) -> bool:
+    return bool(_SUPERLATIVE_RE.search(rest))
+
+
 def _verdict(s: str, source_words: frozenset) -> bool:
     m = _VERDICT_RE.match(_expand(s))
     if not m or len(_words(s)) > 10:
@@ -755,7 +785,7 @@ def _verdict(s: str, source_words: frozenset) -> bool:
     if not _VERDICT_REST_RE.match(rest.strip()):
         return False
     if (_DIGIT_RE.search(rest) or _NAME_AFTER_FIRST_RE.search(" " + rest) or _PERSON_RE.search(rest) or _protected(s)
-            or _practical(rest)):
+            or _practical(rest) or _LIMIT_RE.search(rest) or _superlative_fact(rest)):
         return False
     concrete = [w for w in content_words(rest) if w not in _META_NOUNS]
     return not any(w in source_words for w in concrete)
@@ -1384,7 +1414,9 @@ def rewrite(text: str, ctx: TellContext) -> tuple[str, list[str]]:
         if not edits:
             continue
         cur, kept, skipped = _accept(cur, edits, ctx)
+        # third review: a semicolon split writes two sentences in one edit; each is a written sentence of its own
         written.update(e.new for e in kept if e.new)
+        written.update(sp["clean"] for e in kept if e.new for sp in sentence_spans(e.new))
         log += [f"ai_tells: {e.kind}: '{e.before[:200]}'" for e in kept]
         log += [f"ai_tells: skipped {e.kind} (breaks the text): '{e.before[:200]}'" for e in skipped]
     log = list(dict.fromkeys(log))  # a refused edit is proposed again by the second structure pass

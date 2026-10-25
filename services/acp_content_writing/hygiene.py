@@ -1008,8 +1008,8 @@ _AGE_NUM = rf"(?:{NUM_TOKEN})(?=s?\b)(?![:.,]\d)"
 _SOURCE_AGE_RE = re.compile(
     rf"\b(?P<cue>(?:minimum|maximum|min|max)\.?\s+age|ages?|aged|{_PERSON_NOUNS}|infants?|toddlers?|bab(?:y|ies)"
     r"|students?|pupils?|participants?|riders?|swimmers?|under|over|above|at\s+least|older\s+than|younger\s+than)"
-    r"(?:\s*[:(]\s*|[\s-]+)(?:(?:is|are|must|be|of|from|between|aged|age|the|at|least|over|under|above|older"
-    rf"|younger|than)\s+){{0,4}}(?P<a>{_AGE_NUM})(?:\s*(?:–|-|to|and)\s*(?P<b>{_AGE_NUM}))?"
+    r"(?:\s*[:(]\s*|[\s-]+)(?P<link>(?:(?:is|are|must|be|of|from|between|aged|age|the|at|least|over|under|above"
+    rf"|older|younger|than)\s+){{0,4}})(?P<a>{_AGE_NUM})(?:\s*(?:–|-|to|and)\s*(?P<b>{_AGE_NUM}))?"
     rf"|(?<![\d:.,])(?<!\bday\s)(?<!\bdays\s)(?P<c>{_AGE_NUM})(?:\s*(?:–|-|to)\s*(?P<d>{_AGE_NUM}))?"
     r"(?:[\s-]+years?[\s-]+(?:old|of\s+age)\b|\s+years?\s+(?:and|or)\s+(?:over|older|up|above)\b"
     r"|\s+(?:and|or)\s+(?:over|older|up|above)\b|\s*\+\s*years?\b)",
@@ -1018,21 +1018,73 @@ _PREPOSITION_CUE_RE = re.compile(r"(?:under|over|above|at\s+least|older\s+than|y
 _COUNT_AFTER_RE = re.compile(
     rf"^(?:\s+(?:{_PERSON_NOUNS}|people|persons?|pax|seats?|rooms?|beds?)\b|\s*(?:am|pm|a\.m|p\.m|o['’]clock|h)\b)",
     re.I)
-_PLURAL_AFTER_RE = re.compile(r"^\s+(?!years?\b|yrs?\b)[a-z]{2,}s\b", re.I)
+# Third review: a plural noun after the number makes it a count ('Students from 8 villages', 'Travellers from 12
+# countries'); never 'years' (an age: 'children from 8 years') and never a verb that ends in -s after an age
+# ('Children under 12 stays free').
+_PLURAL_AFTER_RE = re.compile(
+    r"^\s+(?!years?\b|yrs?\b|(?:stays|pays|travels|goes|gets|eats|sleeps|needs|joins|rides|costs|receives|requires"
+    r"|shares|enters|walks|swims|sits|is|was|has|does)\b)[a-z]{2,}s\b", re.I)
+# ...and 'per …' after a number or range is a group size ('Participants: 2-12 per departure').
+_PER_AFTER_RE = re.compile(r"^\s+per\b", re.I)
+_EXPLICIT_AGE_CUE_RE = re.compile(r"(?:(?:minimum|maximum|min|max)\.?\s+age|ages?|aged)", re.I)
+# A bare preposition cue + 'N years' is a duration ('for over 12 years', 'opened over 8 years ago') unless 'old' or
+# 'of age' follows.
+_YEARS_AFTER_RE = re.compile(r"^[\s-]*(?:years?|yrs?)\b(?![\s-]+(?:old|of\s+age)\b)", re.I)
+# Form 2 'N years old / of age' is a person's age only after an age cue (a person noun, an age word, 'must be',
+# 'minimum') at most four linking words back in the same clause: 'children 12 years old', 'riders must be 12 years
+# old'; 'The new visitor centre is 6 years old', 'The festival, now 12 years old' are a thing's age.
+_YEARS_OLD_TAIL_RE = re.compile(r"^[\s-]+years?[\s-]+(?:old|of\s+age)\b", re.I)
+_YEARS_OLD_CUE_RE = re.compile(
+    rf"\b(?:{_PERSON_NOUNS}|infants?|toddlers?|bab(?:y|ies)|students?|pupils?|participants?|riders?|swimmers?|aged?"
+    r"|ages|must|minimum|min\.?)(?:\s*[:(]\s*|[\s-]+)(?:(?:is|are|must|be|of|from|between|aged|age|the|at|least"
+    r"|over|under|above|older|younger|than)\s+){0,4}$", re.I)
+_OF_LINK_RE = re.compile(r"\bof\b", re.I)
+_AGE_WORD_RE = re.compile(r"\bage\b", re.I)
 _FOUNDING_REASON_RE = re.compile(
     r"\b(?:was|were|is|are|had\s+been|has\s+been)\s+(?:originally\s+|first\s+|largely\s+|partly\s+|mainly\s+)?"
     r"(?:established|founded|created|set\s+up|built|opened|started)\s+(?:(?:in|around)\s+[\w-]+\s+)?because\b"
     r"|\bexists?\s+(?:largely\s+|partly\s+|mainly\s+)?because\b", re.I)
 
 
+def _count_after(rest: str) -> bool:
+    """A unit, a head count or 'per …' right after the number: a measurement or a group size, never an age."""
+    return bool(_UNIT_AFTER_RE.match(rest) or _COUNT_AFTER_RE.match(rest) or _PER_AFTER_RE.match(rest))
+
+
+def _cue_is_count(m: re.Match, rest: str) -> bool:
+    """Form 1 (an age cue before the number) reads a count or a duration, not an age (third review): a unit / head
+    count / 'per' after it; a plural noun after it for every cue but the explicit age words (age / aged / minimum
+    age); a person noun joined by 'of' ('Families of 4') unless 'age' or 'years' says otherwise; a bare preposition
+    cue before 'N years' with no 'old' / 'of age' ('for over 12 years')."""
+    cue, link = m.group("cue"), m.group("link") or ""
+    if _count_after(rest):
+        return True
+    if not _EXPLICIT_AGE_CUE_RE.fullmatch(cue) and _PLURAL_AFTER_RE.match(rest):
+        return True
+    preposition = bool(_PREPOSITION_CUE_RE.fullmatch(cue))
+    if (not preposition and not _EXPLICIT_AGE_CUE_RE.fullmatch(cue) and _OF_LINK_RE.search(link)
+            and not _AGE_WORD_RE.search(link) and not re.match(r"^[\s-]*(?:years?|yrs?)\b", rest, re.I)):
+        return True
+    return preposition and bool(_YEARS_AFTER_RE.match(rest))
+
+
 def _source_ages(text: str) -> set[int]:
-    """The ages the source states, in an age context only (``_SOURCE_AGE_RE``, ``_AGE_CLAIM_RE``)."""
+    """The ages the source states, in an age context only (``_SOURCE_AGE_RE``, ``_AGE_CLAIM_RE``): a day number, a
+    duration, a distance, a group size, a count of things or a thing's age is never one."""
     text = text or ""
-    out = {small_number(v) for m in _AGE_CLAIM_RE.finditer(text) for v in m.groups() if v}
+    out: set = set()
+    for m in _AGE_CLAIM_RE.finditer(text):
+        # third review: the seed's own age-claim shapes pass the unit / count check too ('Adults over 2 nights')
+        if (m.group("a") or m.group("c")) and _count_after(text[m.end():m.end() + 60]):
+            continue
+        out |= {small_number(v) for v in m.groups() if v}
     for m in _SOURCE_AGE_RE.finditer(text):
         rest = text[m.end():m.end() + 60]  # a unit / count word sits right after the number: a bounded look
-        if m.group("a") and (_UNIT_AFTER_RE.match(rest) or _COUNT_AFTER_RE.match(rest)
-                             or (_PREPOSITION_CUE_RE.fullmatch(m.group("cue")) and _PLURAL_AFTER_RE.match(rest))):
+        if m.group("a") and _cue_is_count(m, rest):
+            continue
+        num_end = m.end("d") if m.group("d") else m.end("c")
+        if (m.group("c") and _YEARS_OLD_TAIL_RE.match(text[num_end:num_end + 40])
+                and not _YEARS_OLD_CUE_RE.search(text[max(0, m.start() - 80):m.start()])):
             continue
         out |= {small_number(v) for v in (m.group("a"), m.group("b"), m.group("c"), m.group("d")) if v}
     return out - {None}

@@ -410,6 +410,12 @@ _ADVERSARIAL = {
     "under-dash": "under-" * (_N // 6) + "5",
     "num-and": "7 and " * (_N // 6) + "x",
     "num-dash": "7-" * (_N // 2),
+    # third review: superlatives, 'years' runs, years-old cue chains, 'per' and plural runs
+    "most": "the most " * (_N // 9) + "x",
+    "years": "7 years " * (_N // 8),
+    "years-old": "children must be " * (_N // 17) + "7 years old",
+    "per": "7 per " * (_N // 6),
+    "of-link": "families of " * (_N // 12) + "4 x",
 }
 
 
@@ -417,11 +423,13 @@ def _round3_patterns():
     """Every regex this round adds or changes: ai_tells (round-1 _NOT_BUT_RE gains the comma group, _MEANT_RE the
     'to its …' tail), hygiene's two seed-aware patterns and every round-3 AI_TELL_LINE_RES entry."""
     names = ("_NOT_BUT_RE", "_STAGING_TAIL_RE", "_SOMETHING_RE", "_MEANT_RE", "_CHANGES_VERDICT_RE",
-             "_RELOCATE_X_RE", "_AND_THE_RE", "_Y_PHRASE_RE", "_STAGED_NOUN_X_RE", "_AUDIENCE_RE")
+             "_RELOCATE_X_RE", "_AND_THE_RE", "_Y_PHRASE_RE", "_STAGED_NOUN_X_RE", "_AUDIENCE_RE", "_SUPERLATIVE_RE")
     out = [(n, getattr(ai_tells, n)) for n in names]
     out += [(n, getattr(hygiene, n)) for n in ("_AGE_CLAIM_RE", "_FOUNDING_REASON_RE", "_PURPOSE_RE",
                                                 "_SOURCE_SENTENCE_RE", "_SOURCE_AGE_RE", "_COUNT_AFTER_RE",
-                                                "_PLURAL_AFTER_RE")]
+                                                "_PLURAL_AFTER_RE", "_PER_AFTER_RE", "_EXPLICIT_AGE_CUE_RE",
+                                                "_YEARS_AFTER_RE", "_YEARS_OLD_TAIL_RE", "_YEARS_OLD_CUE_RE",
+                                                "_OF_LINK_RE", "_AGE_WORD_RE")]
     start = next(i for i, r in enumerate(hygiene.AI_TELL_LINE_RES)
                  if r.pattern.startswith(r"\b(?:that|this|it)(?:['’]s|\s+is)\s+(?:a|the|one)\s+(?:detail"))
     out += [(f"AI_TELL_LINE_RES[{i}]", r) for i, r in enumerate(hygiene.AI_TELL_LINE_RES) if i >= start]
@@ -447,6 +455,9 @@ def test_round3_functions_run_in_linear_time():
         ai_tells._not_but(s, frozenset())
         ai_tells._seed_denies("relic", ai_tells._SourceWords(s))
         ai_tells._audience(s)
+        ai_tells._superlative_fact(s)
+        ai_tells._verdict(s, frozenset())
+        hygiene._source_ages(s)
         assert time.perf_counter() - t < 0.5
 
 
@@ -753,3 +764,155 @@ def test_an_age_the_itinerary_seed_does_not_give_reaches_f15():
     text = "The camp sits by the lake. A 12-year-old can manage the walk easily. The road north is long."
     g = gate_voice(text, spec=None, stock_blocking=True, exclude_texts=(ITINERARY_SEED,))
     assert any(v.startswith(UNSUPPORTED_DETAIL_PREFIX) and "12-year-old" in v for v in g["violations"])
+
+
+# ---------------------------------------------------------------- third review of round 3 (S252, 6 blocking)
+# Every quoted sentence, exact output, at a paragraph start and mid-paragraph, with no source and with the Taktsang
+# seed. A rule only removes the words that are the tell: never a limit, a place / time choice, an audience, a
+# superlative or 'only' fact, and never a sentence the pass itself wrote.
+
+_BOTH_SOURCES = pytest.mark.parametrize("source", [TAKTSANG, ""], ids=["taktsang seed", "no source"])
+_BOTH_PLACES = pytest.mark.parametrize("where", ["paragraph start", "mid paragraph"])
+
+
+@pytest.mark.parametrize("sentence", [
+    # finding 1 — the comma / colon 'not X, but Y' frame folds only on the copula path, never on a limit
+    "The east trail is not the only route up, but the shortest.",
+    "The tour is not for vegetarians, but for meat lovers.",
+    "Dinner is not at the lodge, but at a farmhouse.",
+    "The ferry runs on one day only: not on Sundays, but on Saturdays.",
+    # finding 2 — a limit ('only') in the denied part of 'not X but Y', ', not X.' and 'X is not A; it is B'
+    "This is not the only path to the monastery; it is the most direct.",
+    "This is not the only ferry to the island; it is the fastest.",
+    "This is not the only path to the monastery but the most direct one.",
+    "The ferry is the quickest crossing, not the only one.",
+    # finding 4 — audience words in a lone denial
+    "Bring water. This is not a trek for people with vertigo.",
+    "Bring water. This is not a walk for anyone with vertigo.",
+    # finding 5 (b) — a superlative or 'only' fact after its practical sentence is no verdict line
+    "Bring a jacket. This is the coldest part of the trek.",
+    "Do not come in July. This is the wettest month.",
+    "The museum is closed on Mondays. This is the only day off.",
+])
+@_BOTH_PLACES
+@_BOTH_SOURCES
+def test_third_review_sentences_are_unchanged(sentence, where, source):
+    text = _placed(sentence, where)
+    assert rewrite(text, _seed_ctx(source)) == (text, [])
+
+
+@pytest.mark.parametrize("before, after", [
+    # finding 2 — 'after heavy rain' is a limit: the inline pair keeps it; only the semicolon split applies
+    ("The bridge is not passable after heavy rain; it is a simple log crossing.",
+     "The bridge is not passable after heavy rain. It is a simple log crossing."),
+    # finding 4 — the split's second sentence names an audience ('the unfit') and was written by the pass
+    ("We walk for two hours along the ridge; this is not a hike for the unfit.",
+     "We walk for two hours along the ridge. This is not a hike for the unfit."),
+    # finding 5 (a) — the split's second sentence is a written sentence: never cut as a verdict line
+    ("The road climbs through pine forest for most of the morning; this is the hardest section of the whole walk.",
+     "The road climbs through pine forest for most of the morning. This is the hardest section of the whole walk."),
+])
+@_BOTH_PLACES
+@_BOTH_SOURCES
+def test_third_review_semicolon_sentences_keep_every_word(before, after, where, source):
+    text, log = rewrite(_placed(before, where), _seed_ctx(source))
+    assert text == _placed(after, where)
+    assert log == [f"ai_tells: semicolon split: '{before}'"]
+
+
+@_BOTH_PLACES
+def test_a_split_marks_each_written_sentence(where):
+    """The guard behind finding 5 (a), without the superlative guard: each half of a split is a written sentence,
+    so the structure passes never cut the verdict-shaped second half ('Edit.new' alone held both halves joined)."""
+    before = "The road climbs through pine forest for most of the morning; this is the section worth a slow pace."
+    text, log = rewrite(_placed(before, where), CTX)
+    assert text == _placed("The road climbs through pine forest for most of the morning. This is the section worth a "
+                           "slow pace.", where)
+    assert log == [f"ai_tells: semicolon split: '{before}'"]
+
+
+@pytest.mark.parametrize("before, after", [
+    # the role frame 'not as X, but as Y' still folds (the panel's 'not as cultural artefacts, but as living …')
+    ("The craft is taught not as a museum object, but as living practice.",
+     "The craft is taught as living practice."),
+    # the bare same-preposition frame still folds (no comma, no colon)
+    ("The hour is set not by a calendar but by the forest.", "The hour is set by the forest."),
+    # the copula path after a comma still folds
+    ("The dzong is not a relic, but a working institution.", "The dzong is a working institution."),
+])
+def test_third_review_tell_frames_still_fold(before, after):
+    text, log = rewrite(_placed(before, "mid paragraph"), CTX)
+    assert text == _placed(after, "mid paragraph")
+    assert log == [f"ai_tells: not X but Y: '{before}'"]
+
+
+@pytest.mark.parametrize("cut", [
+    "This is the most rewarding part of the day.",       # an evaluative 'most' is still a verdict
+    "This is the section worth slowing down for.",
+])
+def test_an_evaluative_verdict_is_still_cut(cut):
+    text, log = rewrite(_blog(f"The falls drop into turquoise pools. {cut} The water is cold."), CTX)
+    assert text == _blog("The falls drop into turquoise pools. The water is cold.")
+    assert log == [f"ai_tells: verdict line: '{cut}'"]
+
+
+@pytest.mark.parametrize("rest, fact", [
+    ("the coldest part of the trek", True), ("the wettest month", True), ("the most exposed stretch", True),
+    ("the least crowded hour", True), ("the most rewarding part", False), ("the forest edge", False),
+    ("the harvest", False), ("the opening", False),
+])
+def test_superlative_fact(rest, fact):
+    assert ai_tells._superlative_fact(rest) is fact
+
+
+# findings 3 and 6 — counts, durations, group sizes and a thing's age never make a number a known age
+DORJI_SEED = ("Day 4 of the trip. The Dorji family has run this weaving workshop for over 12 years. Students from 8 "
+              "villages train here for at least 10 years.")
+
+
+@pytest.mark.parametrize("sentence, source, found", [
+    ("Ideal for families with children aged 12 and up.", DORJI_SEED, "aged 12 and up"),
+    ("Kids aged 10 and over can try the loom.", DORJI_SEED, "aged 10 and over"),
+    ("Children over 8 will love it.", DORJI_SEED, "Children over 8"),
+    ("A 8-year-old can manage the walk.", DORJI_SEED, "8-year-old"),
+    ("Ideal for families with children aged 12 and up.", "Day 4 of the trip.", "aged 12 and up"),
+    ("Children aged 4 and up will love it.", "Families of 4 share one farmhouse room.", "aged 4 and up"),
+    ("Great for 4-year-olds.", "Ideal for families of 4. Day 2 walk.", "4-year-olds"),
+    ("Children aged 12 and over can join the class.", "Students from 12 districts train here for six years.",
+     "aged 12 and over"),
+    ("Ideal for children aged 12 and up.", "Travellers from 12 countries join each departure.", "aged 12 and up"),
+    ("Children over 3 can ride.", "Families from 3 villages farm the valley.", "Children over 3"),
+    ("Suitable for children aged 12 and up.", "Participants: 2-12 per departure.", "aged 12 and up"),
+    ("Ideal for travellers over 30.", "Guests at over 30 stalls taste cheese.", "travellers over 30"),
+    ("Children aged 7 and up.", "Hikers at 7 viewpoints stop for tea.", "aged 7 and up"),
+    ("Kids aged 8 and up join in.", "Students of 8 schools perform.", "aged 8 and up"),
+    ("Kids aged 10 and over enjoy it.", "The institute has trained artisans for over 10 years.", "aged 10 and over"),
+    ("Children aged 8 and up.", "The school opened over 8 years ago.", "aged 8 and up"),
+    ("Great for children aged 6 and up.", "The new visitor centre is 6 years old.", "aged 6 and up"),
+    ("A 12-year-old can follow the dances.", "The festival, now 12 years old, fills the square.", "12-year-old"),
+])
+def test_counts_durations_and_thing_ages_are_not_known_ages(sentence, source, found):
+    assert hygiene.unsupported_ages(sentence, source) == [found]
+
+
+@pytest.mark.parametrize("source, number", [
+    ("The family has run it for over 12 years.", 12), ("They have trained for at least 10 years.", 10),
+    ("Children from 8 villages attend.", 8), ("Students from 3 universities visit.", 3), ("Adults over 2 nights.", 2),
+    ("Families of 4 share a room.", 4), ("Participants: 2-12 per departure.", 12),
+    ("The new visitor centre is 6 years old.", 6), ("The festival, now 12 years old, fills the square.", 12),
+])
+def test_a_count_or_duration_never_makes_an_age_known(source, number):
+    assert number not in hygiene._source_ages(source)
+
+
+@pytest.mark.parametrize("source, number", [
+    # every wording a seed states an age in stays known
+    ("Suitable for children from 8 years.", 8), ("Riders must be at least 14.", 14), ("Children 6–12 join.", 12),
+    ("Open to children 7 and older.", 7), ("Suitable for 10 years and over.", 10),
+    ("Children under the age of 7 stay with a carer.", 7), ("Minimum age is 12.", 12), ("Not for under-5s.", 5),
+    ("Children 12 years old and up.", 12), ("Riders must be 12 years old.", 12), ("Must be 12 years of age.", 12),
+    ("Children under 12 stays free.", 12), ("Families with children of 8 years and over.", 8),
+    ("At least 12 years old.", 12), ("Kids aged 10+.", 10),
+])
+def test_every_age_wording_stays_known(source, number):
+    assert number in hygiene._source_ages(source)

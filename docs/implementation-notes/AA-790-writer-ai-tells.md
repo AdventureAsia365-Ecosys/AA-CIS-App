@@ -608,3 +608,80 @@ sentences have exact-output tests (paragraph start and mid-paragraph) in the "se
   that need a git checkout).
 - Also wraps a 121-character `_STAGED_NOUN_X_RE` line (flake8 max 120) that came in with d09b5b6c.
 - No prompt change: `writer_prompt_version` stays `24363541` and `AI_TELLS_VERSION` stays `ai_tells.v3`.
+
+### Third review (6 blocking findings on 67bb5550)
+
+Same principle as the second review. Every quoted sentence has an exact-output test, at a paragraph start and
+mid-paragraph, with no source and with the Taktsang seed, in the "third review of round 3" section of
+`tests/unit/test_aa790_writer_round3.py`. Before the fix, 98 of the new tests fail.
+
+- **R3R3-D1 — the comma / colon 'not X, but Y' frame folds on the copula path only** (finding 1). After ', but' or
+  ': not', a same-preposition contrast is a place or time choice ("Dinner is not at the lodge, but at a farmhouse.",
+  ": not on Sundays, but on Saturdays"), so `same_prep` no longer fires there. The bare frame ("set not by a calendar
+  but by the forest") still folds.
+- **R3R3-D2 — `_LIMIT_RE` guards every rule that drops a denied part** (finding 2, and the limit half of finding 1):
+  `_not_but`, `_not_tail` and `_inline_pair` now check it, as `_pair`, `_lone_denial` and `_denied_ok` already did.
+  "not the only route up, but the shortest", "not the only path …; it is the most direct", ", not the only one." and
+  "not passable after heavy rain; it is …" keep their limit.
+- **R3R3-D3 — no-age numbers in the seed** (findings 3 and 6). `_source_ages` now treats these as counts, durations or
+  a thing's age:
+  (1) Form 1 (cue before the number): a unit, a head count or 'per …' after the number (`_PER_AFTER_RE`:
+  "Participants: 2-12 per departure"). A plural noun after it for every cue except the explicit age words (age, ages,
+  aged, minimum age): "Students from 12 districts", "Hikers at 7 viewpoints", "Guests at over 30 stalls". A person
+  noun joined by 'of' ("Families of 4"), unless 'age' is in the link or 'years' follows ("children of 8 years and
+  over" stays known). A bare preposition cue before 'N years' with no 'old' / 'of age' (`_YEARS_AFTER_RE`: "for over
+  12 years", "opened over 8 years ago", "for at least 10 years").
+  (2) Form 2 'N years old / of age' counts only when an age cue (a person noun, age / aged, 'must', 'minimum') sits at
+  most four linking words before it (`_YEARS_OLD_CUE_RE`, on an 80-character window). So "The new visitor centre is 6
+  years old" and "The festival, now 12 years old" are a thing's age.
+  (3) The seed's own `_AGE_CLAIM_RE` matches pass the unit / count / per check ("Adults over 2 nights").
+  `_PLURAL_AFTER_RE` no longer reads a verb ending in -s as a plural noun ("Children under 12 stays free" stays known).
+- **R3R3-D4 — audience words** (finding 4): `_AUDIENCE_RE` gains people, persons, anyone, those, visitor(s),
+  vegetarian(s), vegan(s), 'the unfit', 'the faint-hearted' ('guests' was already in `_PERSON_NOUNS`).
+- **R3R3-D5 — split sentences are written sentences; superlative and 'only' facts are no verdict lines** (finding
+  5). (a) `rewrite` adds each sentence of `Edit.new` (`sentence_spans(e.new)`) to `written`, so the two halves of a
+  semicolon split are never cut by a later pass. (b) `_verdict` returns False when the complement holds a
+  `_LIMIT_RE` word or a superlative (`_SUPERLATIVE_RE`: a closed list of -est forms, or most / least + a word).
+
+#### Changed (vs the review's suggestions)
+
+- Finding 1: the role frame 'not as X, but as Y' still folds after a comma. It is the panel's quoted tell ("not as
+  cultural artefacts, but as living practice", one of the 11 pass catches). 'as' names a role, not a place or time,
+  so the place / time reasoning does not apply to it. Without this exception the census loses that quote.
+- Finding 4: the bare words (anyone, people, those, visitors) cover the suggested 'for anyone / people / those /
+  visitors with / who' frame, so there is no separate frame pattern.
+- Finding 5 (b): most / least + a closed evaluative word (important, rewarding, striking, memorable, meaningful …)
+  is still a verdict ("This is the most rewarding part of the day." is still cut). Those words judge the piece; they
+  do not rank a thing on a scale a reader plans by. 'best' is in the fact list (precision first: "This is the best
+  month to visit.").
+- Finding 6 (2): the review allows 'N years' after a bare preposition cue when a person noun sits before the cue.
+  That is not implemented as a free look-back: "The Dorji family has run this workshop for over 12 years" has a
+  person noun before 'over' in the same clause. A person noun right before the cue, with only linking words between
+  ("children over 10 years"), is already form 1 with the person noun as the cue, so it stays known.
+
+#### Tradeoffs
+
+- Census (local scripts, $0; before = 67bb5550, after = this fix):
+  - AI-tells quotes on the 20 round-2 texts: 63 matchable, 37 caught (11 pass, 26 residue) before and after.
+  - Source-fidelity quotes: 51 matchable, 9 caught (2 pass, 5 residue, 2 seed-aware) before and after.
+  - Seed-aware findings: the same 4 on the round-2 posts and 1 on the round-1 texts. Residue is unchanged.
+  - Edit log: the round-2 `text` set is byte-identical. The round-2 `before_text` set loses two edits: ", not a craft
+    market and not a demonstration staged for visitors" ('visitors' is now an audience word) and ": not with an
+    itinerary handed over at check-in, but with a conversation" (a colon + comma same-preposition frame). The pilot
+    set is unchanged.
+  - AA-729 golden fixture + S234 pack (70 texts): 169 → 168 edits. The one dropped edit is the verdict line "This is a
+    useful lens before the day moves outward." ('before' is a `_LIMIT_RE` word). Residue stays at 42.
+- `_AUDIENCE_RE` with bare 'those' / 'people' keeps a few denials that are not about an audience ("not those of
+  the coast"). This is precision first: the denial stays and goes to the prompt / residue.
+
+#### Should know
+
+- Tests: `tests/unit/test_aa790_writer_round3.py` has 408 tests (was 279). The linear-time list gains
+  `_SUPERLATIVE_RE`, `_PER_AFTER_RE`, `_EXPLICIT_AGE_CUE_RE`, `_YEARS_AFTER_RE`, `_YEARS_OLD_TAIL_RE`,
+  `_YEARS_OLD_CUE_RE`, `_OF_LINK_RE` and `_AGE_WORD_RE`. It also gains five adversarial inputs ("the most" runs, "7
+  years" runs, "children must be" chains, "7 per" runs, "families of" runs), and `_superlative_fact`, `_verdict` and
+  `_source_ages` in the function timing test. `_AUDIENCE_RE`, `_PLURAL_AFTER_RE` and `_SOURCE_AGE_RE` changed and
+  were already in the list.
+- The unit files that import ai_tells / hygiene / prompts / quality_gates / service (97 files) give 3916 passed and
+  1 skipped. On 67bb5550 the same files give 3787 passed and 1 skipped.
+- No prompt change: `writer_prompt_version` stays `24363541` and `AI_TELLS_VERSION` stays `ai_tells.v3`.
