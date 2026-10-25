@@ -22,6 +22,14 @@ The 4-week gate freeze (S250 go/no-go 6b) allows no new gate, so this is a WRITE
   sentence repair on attempt 1, never a hold).
 
 Pure: no LLM, no DB. ``lead_focus`` (LinkedIn slate diversity) is here too because it reads the same seed lines.
+
+Round 2 (S251 re-panel of the round-1 rewrite: AI-tells 4.15 → 5.12, bar 5.5; LinkedIn source fidelity 8.92 →
+7.08): ``VISIT_DETAIL_RULE`` (every channel) and a new ``SOCIAL_AUDIENCE_RULE`` stop the writer inventing what a
+visit shows; ``brand_voice_rule`` adds a PACE line for energetic brands and a RESTRAINT line for calm ones; the pass
+also takes 'do' denials with a personifying verb ("does not shout about itself. It is …"), aphorism pairs ("is not a
+ruin. It works."), "is not incidental" verdicts, verdict lead-ins before a colon ("The circle is complete: …") and
+runs of three short sentences built the same way; the rest (internal labels, "is where the trip gets going", "worth
+holding", invented visit logistics …) is residue in ``hygiene.AI_TELL_LINE_RES``.
 """
 from __future__ import annotations
 
@@ -33,36 +41,84 @@ from services.acp_content_writing import hygiene
 from services.acp_content_writing.hygiene import content_words, cta_norm, fold, sentence_spans, tidy_after_cut
 from services.acp_shared.citation_tags import TAG
 
-AI_TELLS_VERSION = "ai_tells.v1"
+AI_TELLS_VERSION = "ai_tells.v2"  # v2: AA-790 round 2 (S251 re-panel)
 
 # ---------------------------------------------------------------- the brief (rendered into SYSTEM_PROMPT)
 
 PROMPT_RULES = """- AI TELLS (an editor must not be able to tell a model wrote this piece):
-  * Never set a claim up by denying another. No "X is not A. It is B.", "not A but B", "not because A, but
-    because B", "X is more than A. It is B.", "These are not A." Say what the thing is, once, directly.
+  * Never set a claim up by denying another. No "X is not A. It is B.", "X does not A. It B.", "not A but B",
+    "not because A, but because B", "X is more than A. It is B.", "These are not A.", "X is not incidental."
+    Say what the thing is, once, directly.
   * No verdict lines: a short sentence that comments on the piece or the moment instead of telling the reader
     something ("That's the opening.", "This is the section worth slowing down for.", "The geology is the thing
-    itself."). Every sentence carries a fact from the content seed, a place, or what the reader does there.
+    itself.", "X is where the trip gets going.", "This one fact is the key to understanding ...", "These
+    numbers are worth holding.", "The circle is complete:", "A meal here is rarely just a meal."). Every
+    sentence carries a fact from the content seed, a place, or what the reader does there.
   * No template openers: "There is a particular quality to ...", "X has a way of ...", "If there is one place
     ..., it is ...".
+  * Never stack short sentences that open the same way ("The forts are still ... The shrines are still ...
+    The mills are still ..."); say it once.
   * Never write genuinely, genuine, truly, precisely, crucially, importantly, notably, "earns its ...", "rewards
     those who ...", "worth slowing down for".
   * Short, varied sentences: most under 25 words, none over 40. Split a sentence that strings more than three
     clauses together, and never join two sentences with a semicolon.
   * Name a place once in full, then use the name. Never write an internal label such as "referred to throughout
     as" or "hereafter".
+  * Never name your inputs: the words seed, content seed, angle, brief and atom never appear as words about this
+    piece or where its facts come from ("What the seed says ...", "the angle here"). Never comment on your
+    own text: no remark about a word, a sentence or the piece ("The hedge in that last sentence matters",
+    "The word 'might' is doing honest work", "This is the argument that ...").
   * Say the call to action once. No heading and no lead-in sentence that repeats its words, and add nothing to
     it (no place name, no "today")."""
+
+# AA-790 round 2 (S251 re-panel: LinkedIn source fidelity 8.92 → 7.08) — every channel, blog included: the round-1
+# AUDIENCE rule ("say what they see or do") pushed the writer to invent what a visit shows. Rendered into
+# SYSTEM_PROMPT right after PROMPT_RULES.
+VISIT_DETAIL_RULE = """- VISIT DETAIL: never say what a visit shows, includes or lets the reader watch, see or do,
+  what is visible there, how the reader will react to it, or how a stop fits into a day (its pace, ease or
+  logistics: "a chance to watch ...", "puts you right in the middle of ...", "slots easily into a day", "an easy
+  part of the afternoon"), unless the content seed states it. Say who the stop is for and why its facts matter
+  to them."""
 
 # Blog only (both format variants): the chosen angle is a brief, never a heading.
 BLOG_HEADING_RULE = """- Every "## " heading names the place or what happens there. Never use the SELECTED ANGLE's name
   (or most of its words) as a heading or a title: it is an internal brief label, not copy."""
 
-# Non-blog channels: the audience in the post, from the seed only (S251 panel: Terra LinkedIn 5.25 voice).
+# Non-blog channels: the audience in the post (S251 panel: Terra LinkedIn 5.25 voice). Round 2: the round-1 text
+# ("say what they see or do at this place") made the writer invent the visit ("a chance to watch the students at
+# work", "slots easily into a day"); the audience stays, the visit content comes from the seed only.
 SOCIAL_AUDIENCE_RULE = """
-AUDIENCE IN THE POST: write to the AUDIENCE of the BRAND block. Say what they see or do at this place, using
-only what the CONTENT SEED states they see or do; when it states nothing of the kind, say why the place matters to
-them in the seed's own facts. A post that only defines the place, like an encyclopedia entry, is not finished."""
+AUDIENCE IN THE POST: write to the AUDIENCE of the BRAND block. Name who they are (a family brand writes to the
+family) and say why the CONTENT SEED's facts matter to them. Never describe what the visit shows, includes or lets
+them watch or do, what they will notice or feel there, or how it fits into their day (pace, ease, logistics),
+unless the CONTENT SEED says so. A post that only defines the place, like an encyclopedia entry, is not finished;
+a post that invents the visit is wrong."""
+
+# AA-790 round 2 (S251 re-panel: Trail Pulse voice 6.5 → 6.0, WildKind 7.5 → 6.75) — one line per brand energy,
+# from the brand pack's own voice words, every channel.
+_ENERGETIC_VOICE = frozenset("""energetic active dynamic lively upbeat playful bold adventurous spirited vibrant punchy
+sporty high-energy""".split())
+_CALM_VOICE = frozenset("""calm respectful thoughtful grounded discreet elegant measured quiet serene reflective
+understated considered gentle contemplative""".split())
+_ENERGETIC_RULE = """
+PACE FOR THIS BRAND (its voice: {words}): short paragraphs of two or three sentences, written to the reader as
+"you". Give a background fact (history, geology, dates, figures) one sentence at most, then go back to the trip's
+own moments in the CONTENT SEED; never a paragraph of background facts."""
+_CALM_RULE = """
+RESTRAINT FOR THIS BRAND (its voice: {words}): state each fact and move on. No meta-commentary about the text
+itself: never comment on a word, a sentence, a section or the piece ("The hedge in that last sentence
+matters", "This is the argument that ...", "That detail is worth holding"), and never close a section on a
+reflection about what it all means."""
+
+
+def brand_voice_rule(brand_audience: Optional[dict]) -> str:
+    """The PACE line for an energetic brand, the RESTRAINT line for a calm / respectful one ('' for neither; both
+    when the voice has both kinds of word). Read from the brand pack's own ``voice`` words."""
+    voice = [str(v) for v in (brand_audience or {}).get("voice") or [] if v]
+    energetic = [v for v in voice if set(re.split(r"[^a-z-]+", v.lower())) & _ENERGETIC_VOICE]
+    calm = [v for v in voice if set(re.split(r"[^a-z-]+", v.lower())) & _CALM_VOICE]
+    return ((_ENERGETIC_RULE.format(words=", ".join(energetic)) if energetic else "")
+            + (_CALM_RULE.format(words=", ".join(calm)) if calm else ""))
 
 # ---------------------------------------------------------------- context
 
@@ -78,7 +134,8 @@ _PROTECTED_RE = re.compile(
 # Checked on that part only, so a tell elsewhere in a sentence that mentions 'free time' is still fixed.
 _PRACTICAL_RE = re.compile(
     r"\b(?:compulsory|mandatory|essential|obligatory|free|extra|charged?|charges|costs?|costly|fees?|paid|payable|"
-    r"prices?|priced|refundable|bookable|booked|reservations?|reachable|cash|cards?|easy|easier|difficult|hard|"
+    r"prices?|priced|refundable|bookable|booked|reservations?|reachable|cash|cards?|easy|easier|difficult|difficulty|"
+    r"difficulties|hard|"
     r"strenuous|steep|tiring|demanding|physical|far|long|short|deep|shallow|cold|hot|crowded|busy|quiet|noisy|"
     r"cheap|cheaper|expensive|affordable|wheelchair|strollers?|prams?|toilets?|tipping)\b", re.I)
 _DIGIT_RE = re.compile(r"\d")
@@ -368,7 +425,34 @@ def _semicolons(s: str) -> tuple[str, list[str]]:
     return "".join(out), ["semicolon split"] * len(cuts)
 
 
-_WORD_RULES: tuple[Callable, ...] = (_labels, _not_because, _not_but, _not_tail, _inline_pair)
+# AA-790 round 2 — a verdict lead-in before a colon: "The circle is complete: the bridges … are repaired by …",
+# "The thread that ties this section of the trip together is this: …" → the statement after the colon. The
+# generic "<subject> is this:" form fires only when the subject talks about the piece or names an abstraction
+# (a meta noun or one of _LEAD_IN_NOUNS): "The rule at the temple is this: …" keeps its subject.
+_LEAD_IN_RE = re.compile(
+    r"^(?P<lead>The[ \t]+circle[ \t]+(?:closes|is[ \t]+complete)|Here[ \t]+is[ \t]+the[ \t]+thing"
+    r"|(?P<subj>(?:The|This|That)[ \t][^:;,.!?\n]{1,110}?)[ \t]+is[ \t]+this):[ \t]+(?P<rest>[a-zA-Z][^\n]+)$")
+_LEAD_IN_NOUNS = frozenset("""point result answer logic lesson upshot difference truth idea convergence argument
+pattern thread takeaway""".split())
+
+
+_FINITE_RE = re.compile(r"\b(?:is|are|was|were|has|have|had|can|could|will|would|may|might|must|does|do|did)\b", re.I)
+
+
+def _lead_in(s: str, src: frozenset) -> tuple[str, list[str]]:
+    m = _LEAD_IN_RE.match(s)
+    # what is left must be a sentence of its own: 'the bridges … are repaired …', never a bare noun phrase
+    # ('a river and the towns along it, fed by …' stays, and goes to the F15 repair as residue)
+    if not m or len(_words(m.group("rest"))) < 5 or not _FINITE_RE.search(m.group("rest").split(",")[0]):
+        return s, []
+    if m.group("subj") is not None:
+        subj_words = {w.lower() for w in _words(m.group("subj"))}
+        if not subj_words & (_META_NOUNS | _LEAD_IN_NOUNS):
+            return s, []
+    return _cap(m.group("rest")), ["verdict lead-in"]
+
+
+_WORD_RULES: tuple[Callable, ...] = (_labels, _not_because, _not_but, _not_tail, _inline_pair, _lead_in)
 
 
 def _rewrite_sentence(clean: str, ctx: TellContext, src: frozenset, *, prose: bool) -> tuple[str, list[str]]:
@@ -390,6 +474,7 @@ _CONTRACTIONS = (
     (re.compile(r"\b(That|This|It|What|There|Here)['’]s\b"), r"\1 is"),
     (re.compile(r"\b(They|These|Those|We|You)['’]re\b"), r"\1 are"),
     (re.compile(r"\b(is|are|was|were)n['’]t\b", re.I), r"\1 not"),
+    (re.compile(r"\b(does|do|did)n['’]t\b", re.I), r"\1 not"),
 )
 
 
@@ -435,7 +520,10 @@ def _pair(s1: str, s2: str, src: frozenset) -> Optional[str]:
     verb = a.group("verb")
     plural = d.group("cop").lower() in ("are", "were")
     if verb.lower() in ("is", "are", "was", "were"):
-        verb = d.group("cop").lower()
+        # the affirmation's tense, the subject's number (round 2 review: 'The bridge is not the original. It was
+        # rebuilt.' read 'The bridge is rebuilt.')
+        past = verb.lower() in ("was", "were")
+        verb = ("were" if plural else "was") if past else ("are" if plural else "is")
     elif plural:
         verb = _PLURAL_VERB.get(verb.lower(), verb)
     return f"{subj} {verb} {a.group('y')}"
@@ -463,6 +551,189 @@ def _verdict(s: str, source_words: frozenset) -> bool:
         return False
     concrete = [w for w in content_words(rest) if w not in _META_NOUNS]
     return not any(w in source_words for w in concrete)
+
+
+# ---------------------------------------------------------------- round 2 (S251 re-panel): more denial shapes
+
+# "The steppe does not announce its scale. It builds." / "The crater does not announce itself from the road. It is
+# simply there, …" — a denial with 'do'. Only verbs that personify the place or comment on how it presents
+# itself: a 'do' denial is often a fact ("The ferry does not run on Sundays.", "The bus does not stop at the falls.",
+# "The herders do not live in fixed villages."), so the verb list is closed (precision first).
+_DO_DENIAL_RE = re.compile(
+    r"^(?P<subj>[^;:!?\n]{1,90}?)[ \t]+(?P<aux>does|do|did)[ \t]+not[ \t]+(?P<verb>[a-z]+)"
+    r"(?P<x>[^.;:!?\n]{0,90}?)[ \t]*[.!]$")
+_PERFORMATIVE_VERBS = frozenset("""announce advertise shout perform pretend position present frame stage showcase
+market sell rush hurry compete try insist beg reveal hide explain impose feel exist""".split())
+# The affirmation after a denial, any verb: 'It builds.', 'It works.', 'They rise from the rock.' Only
+# 'It' / 'They': 'This means …' / 'That changes …' point at the whole statement, not at its subject.
+_AFFIRM_VERB_RE = re.compile(r"^(?P<pro>It|They)[ \t]+(?P<verb>[a-z]+)(?P<y>(?:[ \t,].*)?)[.!]$")
+# What a 'do' denial in a pair may deny: the subject itself ('does not announce itself', 'does not advertise its
+# age') or nothing after the verb / an adverb or preposition. 'The guide does not explain the ritual. It is …'
+# has an object the next 'It' may point at, so it is never joined.
+_DO_X_OK_RE = re.compile(r"^(?:$|[ \t]+(?:itself|themselves|its|their|his|her|much|anything|everything|in|from|at|on"
+                         r"|to|with|by|as|for|loudly|openly|quickly|easily|immediately|all|at[ \t]+once)\b)")
+_NOT_A_VERB = frozenset("""is are was were be been has have had does do did can could will would may might must shall
+should not also still never only just remains remained stays stayed becomes became seems seemed""".split())
+# A word in Y that points back to what the denial named ('they rise from it' after 'above the ridge'): the join
+# would leave it with no referent.
+_BACK_REFERENCE = frozenset("it its itself them they their theirs".split())
+_SINGULAR_PRONOUNS = frozenset({"it", "this", "that"})
+
+
+def _lemma(verb: str) -> str:
+    v = verb.lower()
+    for suffix in ("ies", "es", "s"):
+        if v.endswith(suffix) and len(v) - len(suffix) >= 3:
+            return v[:-len(suffix)] + ("y" if suffix == "ies" else "")
+    return v
+
+
+# A denial that states a limit ('does not reveal itself until the last bend') is a fact, not a set-up.
+_LIMIT_RE = re.compile(r"\b(?:until|unless|except|before|after|only|without|till)\b", re.I)
+
+
+def _denied_ok(part: str, s1: str, src: frozenset) -> bool:
+    """The denied part may be dropped: no rule / access / practical / limit word, no digit, no name, not the seed's
+    own."""
+    return not (_protected(s1) or _practical(part) or _LIMIT_RE.search(part) or _DIGIT_RE.search(part)
+                or _NAME_AFTER_FIRST_RE.search(" " + part) or _seed_fact(part, src))
+
+
+def _verb_in_seed(verb: str, src: frozenset) -> bool:
+    """A bare affirmation whose verb the seed uses ('It floods.') is a fact: the pair is left alone."""
+    return bool(set(content_words(verb)) & src) or bool(set(content_words(_lemma(verb))) & src)
+
+
+CUT_BOTH = "\x00cut both"  # _pair2: both sentences go (an aphorism pair: 'X is not a ruin. It works.')
+
+
+def _pair2(s1: str, s2: str, src: frozenset) -> Optional[str]:
+    """Round 2 denial + affirmation pairs the round-1 ``_pair`` does not take: a 'do' denial with a personifying
+    verb, or a copula denial of a noun phrase followed by a short non-copula affirmation. Returns the joined
+    sentence, '' to drop the denial only (pronoun subject), ``CUT_BOTH`` for a bare aphorism pair ('It
+    works.' / 'It builds.': joining would leave 'The temple works.'), or None."""
+    e1, e2 = _expand(s1), _expand(s2)
+    if len(_words(s1)) > 14 or len(_words(s2)) > 14:
+        return None
+    a_cop, a_verb = _AFFIRM_RE.match(e2), _AFFIRM_VERB_RE.match(e2)
+    d = _DO_DENIAL_RE.match(e1)
+    if d:
+        if _lemma(d.group("verb")) not in _PERFORMATIVE_VERBS:
+            return None
+        if not _DO_X_OK_RE.match(d.group("x")) or not _denied_ok(d.group("verb") + d.group("x"), s1, src):
+            return None
+        # 'It' / 'They' only: 'The town does not hurry. That is the appeal.' is about the statement, not the town
+        a = ((a_cop if a_cop and a_cop.group("pro") in ("It", "They") else None)
+             or (a_verb if a_verb and a_verb.group("verb") not in _NOT_A_VERB else None))
+        if not a:
+            return None
+        pro = a.group("pro").lower()
+        aux = d.group("aux")
+        if (aux == "does" and pro not in _SINGULAR_PRONOUNS) or (aux == "do" and pro in _SINGULAR_PRONOUNS):
+            return None
+        verb, y = a.group("verb"), a.group("y")
+        if a is a_verb and _lemma(verb) == _lemma(d.group("verb")):
+            return None  # 'does not run on Sundays. It runs daily otherwise.' is a restriction, not a set-up
+        if _BACK_REFERENCE & {w.lower() for w in _words(y)}:
+            return None
+        subj = d.group("subj").strip()
+        if _subject_is_pronoun(subj):
+            return ""
+        if a is a_verb and not _words(y):
+            return None if _verb_in_seed(verb, src) else CUT_BOTH
+        if verb.lower() in ("is", "are", "was", "were"):
+            past = verb.lower() in ("was", "were")
+            plural = aux == "do" or (aux == "did" and pro not in _SINGULAR_PRONOUNS)
+            verb = ("were" if plural else "was") if past else ("are" if plural else "is")
+        return f"{subj} {verb}{y}." if a is a_verb else f"{subj} {verb} {y}"
+    d = _DENIAL_RE.match(e1)
+    if not d or "more than" in d.group(0).lower() or not a_verb or a_verb.group("verb") in _NOT_A_VERB:
+        return None
+    x_words = d.group("x").split()
+    if not x_words or x_words[0].lower() not in ("a", "an", "the") or not _denied_ok(d.group("x"), s1, src):
+        return None
+    if len(_words(s2)) > 4 or _BACK_REFERENCE & {w.lower() for w in _words(a_verb.group("y"))}:
+        return None
+    plural = d.group("cop").lower() in ("are", "were")
+    if plural != (a_verb.group("pro").lower() not in _SINGULAR_PRONOUNS):
+        return None
+    if _subject_is_pronoun(d.group("subj").strip()):
+        return ""
+    if not _words(a_verb.group("y")):
+        return None if _verb_in_seed(a_verb.group("verb"), src) else CUT_BOTH
+    return f"{d.group('subj').strip()} {a_verb.group('verb')}{a_verb.group('y')}."
+
+
+# "This kind of visit does not present the village as a stage." — a lone 'do' denial with a pronoun or
+# 'This (kind of) N' subject and a personifying verb.
+_LONE_DO_SUBJ_RE = re.compile(r"^(?:this|that|these|those|it|they|(?:this|that|these|those)(?:[ \t]+(?:kind|sort|type)"
+                              r"[ \t]+of)?[ \t]+[a-z]+)$", re.I)
+
+
+def _lone_do_denial(s: str, src: frozenset) -> bool:
+    d = _DO_DENIAL_RE.match(_expand(s))
+    if not d or len(_words(s)) > 14 or _lemma(d.group("verb")) not in _PERFORMATIVE_VERBS:
+        return False
+    return bool(_LONE_DO_SUBJ_RE.match(d.group("subj").strip())) and _denied_ok(d.group("verb") + d.group("x"), s,
+                                                                                 src)
+
+
+# "The order of the stops is not incidental." / "The overlap of two cultures here is not accidental." / "The
+# continuity is deliberate." — a verdict on a noun subject: the sentence says nothing but that the thing was meant.
+_MEANT_RE = re.compile(
+    r"^(?:The|This|That|These|Those|Such|Its|Their)[ \t][^,;:!?\n]{1,60}?[ \t]+(?:is|are|was|were)[ \t]+"
+    r"(?:not[ \t]+(?:incidental|accidental|arbitrary|random|a[ \t]+coincidence|an[ \t]+accident|by[ \t]+chance)"
+    r"|no[ \t]+(?:accident|coincidence)|(?:entirely[ \t]+|quite[ \t]+|fully[ \t]+)?(?:deliberate|intentional))[.!]$")
+
+
+def _meant_verdict(s: str, src: frozenset) -> bool:
+    return (bool(_MEANT_RE.match(_expand(s))) and len(_words(s)) <= 12 and not _DIGIT_RE.search(s)
+            and not _protected(s) and not _practical(s) and not _seed_fact(s, src))
+
+
+# "The forts are still guarded. The shrines are still lit. The mills are still turning." — three or more short
+# sentences in one paragraph built the same way (same opener, same verb and the word after it). Joined into one
+# sentence: nothing is cut, nothing added.
+_ANAPHORA_MAX_WORDS = 8
+
+
+def _anaphora_key(s: str) -> Optional[tuple[str, str, str]]:
+    w = _words(s)
+    if not 4 <= len(w) <= _ANAPHORA_MAX_WORDS or not s.rstrip().endswith(".") or _DIGIT_RE.search(s):
+        return None
+    if w[0] not in ("The", "Each", "Every", "Its", "Their", "Some", "Many", "No"):
+        return None
+    return w[0], w[2].lower(), w[3].lower()
+
+
+def _lower_first(s: str) -> str:
+    """'The temples …' → 'the temples …' when the first word is the shared opener (never a name)."""
+    return s[:1].lower() + s[1:]
+
+
+def _anaphora_edits(text: str, ctx: TellContext) -> list[Edit]:
+    spans = sentence_spans(text)
+    out: list[Edit] = []
+    i = 0
+    while i < len(spans):
+        sp = spans[i]
+        key = _anaphora_key(sp["clean"]) if sp["kind"] == "prose" and not sp["in_faq"] else None
+        j = i
+        while (key and j + 1 < len(spans) and spans[j + 1]["kind"] == "prose" and not spans[j + 1]["in_faq"]
+               and "\n" not in text[spans[j]["end"]:spans[j + 1]["start"]]
+               and _anaphora_key(spans[j + 1]["clean"]) == key and not _is_cta(spans[j + 1]["clean"], ctx)):
+            j += 1
+        if key and j - i >= 2 and not _is_cta(sp["clean"], ctx) and i != _first_prose(spans):
+            run = [s["clean"].rstrip().rstrip(".") for s in spans[i:j + 1]]
+            joined = ", ".join([run[0]] + [_lower_first(r) for r in run[1:-1]]) + " and " + _lower_first(run[-1]) + "."
+            tags = _tags(" ".join(s["text"] for s in spans[i:j + 1]))
+            out.append(Edit(sp["start"], spans[j]["end"], _with_tags(joined, tags), "anaphora run joined",
+                            " ".join(s["clean"] for s in spans[i:j + 1]), tuple(s["clean"] for s in spans[i:j + 1]),
+                            joined))
+            i = j + 1
+            continue
+        i += 1
+    return out
 
 
 # ---------------------------------------------------------------- headings and the CTA
@@ -550,16 +821,16 @@ def _deletion_end(text: str, sp: dict, nxt: Optional[dict]) -> tuple[int, int]:
     return start, end
 
 
-def _section_has_other_prose(spans: list[dict], i: int) -> bool:
-    """True when the heading section of spans[i] keeps another prose sentence after it is cut (a cut never
-    empties a section: tidy_after_cut would drop its heading)."""
+def _section_has_other_prose(spans: list[dict], i: int, also: Optional[int] = None) -> bool:
+    """True when the heading section of spans[i] keeps another prose sentence after it (and spans[also], when
+    given) is cut (a cut never empties a section: tidy_after_cut would drop its heading)."""
     lo = i
     while lo > 0 and spans[lo - 1]["kind"] != "heading":
         lo -= 1
     hi = i
     while hi + 1 < len(spans) and spans[hi + 1]["kind"] != "heading":
         hi += 1
-    return any(spans[k]["kind"] in ("prose", "bullet") for k in range(lo, hi + 1) if k != i)
+    return any(spans[k]["kind"] in ("prose", "bullet") for k in range(lo, hi + 1) if k not in (i, also))
 
 
 def _structure_edits(text: str, ctx: TellContext) -> list[Edit]:
@@ -579,6 +850,19 @@ def _structure_edits(text: str, ctx: TellContext) -> list[Edit]:
         same_para = j is not None and "\n" not in text[sp["end"]:spans[j]["start"]]
         if same_para and j not in used and not _is_cta(spans[j]["clean"], ctx):
             joined = _pair(sp["clean"], spans[j]["clean"], source_words)
+            join_kind = "denial + affirmation joined"
+            if joined is None:  # AA-790 round 2: 'do' denials and short verb affirmations
+                joined = _pair2(sp["clean"], spans[j]["clean"], source_words)
+                join_kind = "denial + verb affirmation joined"
+            if joined == CUT_BOTH:
+                if i != first and _section_has_other_prose(spans, i, also=j):
+                    nxt = spans[j + 1] if j + 1 < len(spans) else None
+                    s, _ = _deletion_end(text, sp, spans[j])
+                    _, e = _deletion_end(text, spans[j], nxt)
+                    out.append(Edit(s, e, "", "aphorism pair (denial + bare verb)",
+                                    f"{sp['clean']} {spans[j]['clean']}"))
+                    used.update({i, j})
+                continue
             if joined == "" and i != first:
                 s, e = _deletion_end(text, sp, spans[j])
                 out.append(Edit(s, e, "", "denial before its affirmation", sp["clean"]))
@@ -587,14 +871,15 @@ def _structure_edits(text: str, ctx: TellContext) -> list[Edit]:
             if joined:
                 tags = _tags(sp["text"] + " " + spans[j]["text"])
                 out.append(Edit(sp["start"], spans[j]["end"], _with_tags(_cap(joined), tags),
-                                "denial + affirmation joined", f"{sp['clean']} {spans[j]['clean']}",
+                                join_kind, f"{sp['clean']} {spans[j]['clean']}",
                                 (sp["clean"], spans[j]["clean"]), _cap(joined)))
                 used.update({i, j})
                 continue
         if i == first or not _section_has_other_prose(spans, i):
             continue
-        kind = ("lone denial" if _lone_denial(sp["clean"], source_words)
-                else "verdict line" if _verdict(sp["clean"], source_words) else None)
+        kind = ("lone denial" if _lone_denial(sp["clean"], source_words) or _lone_do_denial(sp["clean"], source_words)
+                else "verdict line" if _verdict(sp["clean"], source_words) or _meant_verdict(sp["clean"], source_words)
+                else None)
         if kind:
             nxt = spans[i + 1] if i + 1 < len(spans) else None
             s, e = _deletion_end(text, sp, nxt)
@@ -690,7 +975,7 @@ def _accept(text: str, edits: list[Edit], ctx: TellContext) -> tuple[str, list[E
     return _apply(text, kept), kept, skipped
 
 
-_PASSES: tuple[Callable, ...] = (_sentence_edits, _structure_edits, _structure_edits, _heading_edits)
+_PASSES: tuple[Callable, ...] = (_sentence_edits, _structure_edits, _structure_edits, _anaphora_edits, _heading_edits)
 
 
 def rewrite(text: str, ctx: TellContext) -> tuple[str, list[str]]:
@@ -774,5 +1059,5 @@ def lead_focus(seed: Optional[str], index: int) -> Optional[str]:
     return facts[index % len(facts)]
 
 
-__all__ = ["AI_TELLS_VERSION", "BLOG_HEADING_RULE", "PROMPT_RULES", "SOCIAL_AUDIENCE_RULE", "TellContext", "census",
-           "lead_focus", "residue", "rewrite", "seed_facts"]
+__all__ = ["AI_TELLS_VERSION", "BLOG_HEADING_RULE", "PROMPT_RULES", "SOCIAL_AUDIENCE_RULE", "VISIT_DETAIL_RULE",
+           "TellContext", "brand_voice_rule", "census", "lead_focus", "residue", "rewrite", "seed_facts"]

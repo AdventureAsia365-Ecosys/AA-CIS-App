@@ -39,7 +39,8 @@ markup the writer wasn't asked for before:
 from __future__ import annotations
 
 from services.acp_angle_gate.brand_audience import BrandAudience
-from services.acp_content_writing.ai_tells import BLOG_HEADING_RULE, PROMPT_RULES, SOCIAL_AUDIENCE_RULE
+from services.acp_content_writing.ai_tells import (BLOG_HEADING_RULE, PROMPT_RULES, SOCIAL_AUDIENCE_RULE,
+                                                   VISIT_DETAIL_RULE, brand_voice_rule)
 from services.acp_shared.brand_pack import render_brand_block
 from services.acp_shared.signature_vocabulary import t9_words_line
 from services.acp_angle_gate.channel_style import ChannelStyle
@@ -249,7 +250,7 @@ Rules:
   "embark on", "immerse yourself", "look no further", "in today's fast-paced world",
   "game-changing", "revolutionary", "unlock your potential").
 - Sound human, specific, and lightly persuasive, not corporate, not hype-driven.
-""" + PROMPT_RULES + """
+""" + PROMPT_RULES + "\n" + VISIT_DETAIL_RULE + """
 - Return ONLY the final content itself: no explanation, no preamble, no markdown code fence,
   no restating the brief back.""" + _SUMMARY_INSTRUCTIONS
 
@@ -300,7 +301,9 @@ def build_user_prompt(
 
     `lead_focus` (AA-790 S251, non-blog only): the seed fact a repeated write of one request opens on
     (ai_tells.lead_focus), so N posts written from one brief do not all open on the same fact. `None` adds
-    nothing. Every non-blog channel also gets the AUDIENCE IN THE POST rule (ai_tells.SOCIAL_AUDIENCE_RULE)."""
+    nothing. Every non-blog channel also gets the AUDIENCE IN THE POST rule (ai_tells.SOCIAL_AUDIENCE_RULE).
+    AA-790 round 2: every channel, blog included, gets the brand-energy line (ai_tells.brand_voice_rule: PACE for an
+    energetic brand voice, RESTRAINT for a calm one, nothing otherwise)."""
     # AA-771 (S233) — the full brand pack (render_brand_block) replaces the AUDIENCE / MINDSET /
     # BRAND NAME lines; the invented "discerning travellers" fallback audience is gone.
 
@@ -412,6 +415,8 @@ def build_user_prompt(
     prompt = "\n".join(lines)
     if channel_style["channel"] != "blog":
         prompt += SOCIAL_AUDIENCE_RULE  # AA-790 (S251) — Terra LinkedIn read like an encyclopedia entry
+    # AA-790 round 2 — every channel: the PACE (energetic brand) / RESTRAINT (calm brand) line from the brand's voice
+    prompt += brand_voice_rule(brand_audience)
     if channel_style["channel"] in PLAIN_TEXT_CHANNELS:
         prompt += _PLAIN_TEXT_INSTRUCTIONS
     if channel_style["channel"] == "blog":
