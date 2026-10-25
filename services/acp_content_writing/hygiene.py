@@ -986,31 +986,37 @@ _AGE_CLAIM_RE = re.compile(
     rf"|(?:–|-|to)\s*(?P<b>{NUM_TOKEN})))?(?![\w-])"
     rf"|\b(?:{_PERSON_NOUNS})\s+(?:over|above|under|older\s+than|younger\s+than)\s+(?:the\s+age\s+of\s+)?"
     rf"(?P<c>{NUM_TOKEN})(?![\w-])"
-    rf"|(?<![\w-])(?P<d>{NUM_TOKEN})(?:\s*(?:–|-|to)\s*(?P<e>{NUM_TOKEN}))?(?:\s*\+)?"
-    r"[\s-]+year[\s-]+olds?\b",
+    # Round-3 review: 'N-year-old' is a person's age only as 'year-olds', or 'year-old' used as a noun: before a
+    # person noun, a verb, a function word or nothing ('a 10-year-old can manage it', 'legible to a twelve-year-old as
+    # to …'); 'the 300-year-old temple' (an adjective before a thing) is a thing's age. A grouped number
+    # ('2,000-year-old') is never read from its last group.
+    rf"|(?<![\w,.-])(?P<d>{NUM_TOKEN})(?:\s*(?:–|-|to)\s*(?P<e>{NUM_TOKEN}))?(?:\s*\+)?"
+    rf"[\s-]+year[\s-]+(?:olds\b|old\b(?=\s*(?:[.,;:!?)]|$)|[\s-]+(?:{_PERSON_NOUNS}|boys?|girls?|sons?|daughters?"
+    r"|grandchild(?:ren)?|toddlers?|riders?|swimmers?|hikers?|can|could|will|would|may|might|must|needs?|should"
+    r"|is|was|who|as|than|and|or|but|with|in|at|to|for|on)\b))",
     re.I)
+# Any age-sized number the source writes, whatever the wording ('Minimum age is 12', 'under-5s', 'at least 14',
+# 'Children 6–12', 'from 8 years'): a number the seed has is never an unsupported age (the NUMBERS rule allows it).
+_SOURCE_NUMBER_RE = re.compile(rf"(?<![\d,.])(?:\d{{1,3}}(?![\d,])|\b{NUM_TOKEN}\b)", re.I)
 _FOUNDING_REASON_RE = re.compile(
     r"\b(?:was|were|is|are|had\s+been|has\s+been)\s+(?:originally\s+|first\s+|largely\s+|partly\s+|mainly\s+)?"
     r"(?:established|founded|created|set\s+up|built|opened|started)\s+(?:(?:in|around)\s+[\w-]+\s+)?because\b"
     r"|\bexists?\s+(?:largely\s+|partly\s+|mainly\s+)?because\b", re.I)
 
 
-def _age_values(text: str) -> set[int]:
-    out = set()
-    for m in _AGE_CLAIM_RE.finditer(text or ""):
-        out |= {small_number(v) for v in m.groups() if v} - {None}
-    return out
+def _source_numbers(text: str) -> set[int]:
+    return {small_number(m.group(0)) for m in _SOURCE_NUMBER_RE.finditer(text or "")} - {None}
 
 
 def unsupported_ages(sentence: str, source: Optional[str]) -> list[str]:
-    """The age claims in ``sentence`` ('aged seven and up', 'ages 8+', 'children over ten', '10-year-olds') whose
-    number the source's own age claims do not have. A thing's age ('300 years old') is not one: only the person
-    form 'year-old(s)'."""
-    known = _age_values(source or "")
+    """The age claims in ``sentence`` ('aged seven and up', 'ages 8+', 'children over ten', '10-year-olds', 'a
+    10-year-old can …') whose number the source never writes, in any wording. A thing's age ('300 years old', 'the
+    300-year-old temple') is not one: only the person forms of 'year-old(s)'."""
+    known = _source_numbers(source or "")
     out = []
     for m in _AGE_CLAIM_RE.finditer(sentence or ""):
         values = {small_number(v) for v in m.groups() if v} - {None}
-        if values and not values <= known:
+        if values and max(values) <= 120 and not values <= known:  # 'the 300-year-old' is never a person
             out.append(" ".join(m.group(0).split()))
     return out
 
@@ -1702,6 +1708,15 @@ TEMPLATE_LINE_RES = tuple(re.compile(p, re.I) for p in (
 # they need a rewrite of the sentence, so they ride the stock-line routing above (F15_voice, stored in F2_lexicon:
 # one sentence repair on attempt 1, never a hold). Whole-sentence shapes, never a bare word: 'earns income' and
 # 'rewards points' are facts. The writer is told the same list (ai_tells.PROMPT_RULES).
+# Round-3 review guards for two residue entries, one look-ahead from the sentence start each (linear): a practical
+# booking / limit / footing / weather word, or a day / time / season word, makes the sentence a fact.
+_ATTENTION_FACT_NEG = (r"(?![^\n]*\b(?:book(?:s|ing|ed)?|limited|seats?|footing|wet|rain(?:s|y)?|slippery|muddy|icy"
+                       r"|permits?|tickets?|reserv(?:e|ed|ations?)|queues?|weather|safety|sell\s+out|sells\s+out)\b)")
+_SCHEDULE_NEG = (r"(?![^\n]*\b(?:mondays?|tuesdays?|wednesdays?|thursdays?|fridays?|saturdays?|sundays?|weekends?"
+                 r"|weekdays?|today|tonight|tomorrow|mornings?|afternoons?|evenings?|nights?|daily|days?|weeks?"
+                 r"|months?|seasons?|ramadan|lent|holidays?|festivals?|during|until|till|after|before|when|while"
+                 r"|closed|open|opens|cancell?ed|winter|summer|spring|autumn|monsoon|january|february|march|april|may"
+                 r"|june|july|august|september|october|november|december|\d)\b)")
 AI_TELL_LINE_RES = tuple(re.compile(p, re.I) for p in (
     # 'This is the day the route earns its reputation.', 'the water earns every second you spend in it'.
     # Not a history fact: 'earned its name from the legend', 'earned the title of', 'earned its reputation for
@@ -1805,9 +1820,13 @@ AI_TELL_LINE_RES = tuple(re.compile(p, re.I) for p in (
     r"^(?:those|these|the)\s+(?:numbers|figures|facts|statistics|details)\s+matter\s+less\s+than\b",
     # 'This is the section of the journey that rewards the greatest attention.', 'This is the section worth the
     # most of your attention on Day 2' (not 'This is the section that crosses the pass.')
-    r"^(?:this|that|it)\s+is\s+the\s+(?:section|part|stretch|stage|leg)\b(?:\s+of\s+the\s+(?:journey|trip|route))?"
-    r"\s+(?:that\s+(?:rewards|deserves|earns|repays)|worth)\b"
-    r"|\brewards?\s+(?:the\s+)?(?:greatest|most|closest|close|careful|real)\s+attention\b",
+    # Round-3 review: never a sentence that holds a booking, limit, footing or weather word ('This is the stage of
+    # the route worth booking early, as seats … are limited.', 'The steep path rewards careful attention to footing in
+    # the wet season.'): a look-ahead from the sentence start, once (both alternatives are anchored at '^').
+    rf"^{_ATTENTION_FACT_NEG}(?:this|that|it)\s+is\s+the\s+(?:section|part|stretch|stage|leg)\b"
+    r"(?:\s+of\s+the\s+(?:journey|trip|route))?\s+(?:that\s+(?:rewards|deserves|earns|repays)|worth)\b"
+    rf"|^{_ATTENTION_FACT_NEG}[^\n]*?\b(?P<p>rewards?\s+(?:the\s+)?(?:greatest|most|closest|close|careful|real)"
+    r"\s+attention)\b",
     # 'Kuang Si Falls is where the route begins to reveal its logic.'
     r"\b(?:reveals?|begins?\s+to\s+reveal|starts?\s+to\s+reveal)\s+(?:its|their)\s+"
     r"(?:logic|purpose|true\s+character)\b",
@@ -1836,12 +1855,17 @@ AI_TELL_LINE_RES = tuple(re.compile(p, re.I) for p in (
     r"^(?:their|its|this|that)\s+[\w-]+(?:\s+here)?\s+is\s+(?:a|the)\s+(?:product|result|consequence)\s+of\s+(?:it|this"
     r"|that)\s*[.!]?$",
     r"\bis\s+part\s+of\s+what\s+(?:the|this|that)\s+(?:[\w-]+\s+)?means\b",
-    r"\bclos(?:es|ing)\s+the\s+circle\b",
+    # not a route that goes back somewhere ('The loop road closes the circle back to Paro on the last day.')
+    r"\bclos(?:es|ing)\s+the\s+circle\b(?!\s+(?:back|to|at|in|on|by|from|via|with|around|round)\b)",
     # 'For families travelling with children, that context matters.', 'That context changes what a visit means.'
     r"^(?:for\s+[^,]{1,80},\s+)?(?:that|this)\s+(?:single\s+)?(?:context|fact|detail|distinction|background"
     r"|connection)\s+(?:matters\s*[.!]?$|changes\s+(?:how|what|the\s+way)\b)",
-    # 'There is no performance in this, no arranged demonstration.'
-    r"^there\s+is\s+no\s+(?:performance|staging|show|pretence|pretense|script|artifice)\b",
+    # 'There is no performance in this, no arranged demonstration.' Round-3 review: the aphorism form only ('in this /
+    # here / about it' or ', no …'), never a schedule ('There is no show on Mondays …', '… during Ramadan.'): no day,
+    # time or season word anywhere in the sentence (one look-ahead from the start).
+    rf"^{_SCHEDULE_NEG}there\s+is\s+no\s+(?:performance|staging|show|pretence|pretense|script|artifice)"
+    r"(?:\s+(?:in\s+(?:this|it|that|any\s+of\s+(?:this|it))|here|about\s+(?:it|this|that)))?"
+    r"(?:\s*,\s*(?:and\s+)?no\b|(?<=this|that|here)\s*[.!]|(?<=\sit)\s*[.!])",
 ))
 
 
@@ -1854,7 +1878,9 @@ def template_lines(text: str) -> list[tuple[str, str]]:
         for rx in TEMPLATE_LINE_RES + AI_TELL_LINE_RES:
             m = rx.search(sp["clean"])
             if m:
-                out.append((" ".join(m.group(0).split()), sp["clean"]))
+                # a pattern anchored at the sentence start for a whole-sentence guard names its phrase as group 'p'
+                phrase = (m.group("p") if "p" in rx.groupindex else None) or m.group(0)
+                out.append((" ".join(phrase.split()), sp["clean"]))
                 break
     return out
 

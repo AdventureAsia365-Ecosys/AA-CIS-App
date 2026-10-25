@@ -458,3 +458,77 @@ assertion. Test sentences are synthetic; no tenant text in the repo.
   adversarial inputs < 50 ms for every new or changed regex incl. `_NOT_BUT_RE` and every round-3 residue entry).
 - No migration, Terraform, new gate / registry / taxonomy entry, LLM call site or frontend change. Needs a CIS api +
   worker deploy in a wave gap; the measure is a re-panel (with the repair step, see Tradeoffs).
+
+## Round 3 review fixes (S252)
+
+Input: an independent review of the round-3 commit (444b489a), six blocking findings, each with the reviewer's own
+sentences. Every fix has exact-text regression tests (the finding's sentences must stay; the panel's quoted tells
+must still go) in `tests/unit/test_aa790_writer_round3.py` (section "round-3 review fixes").
+
+### Decisions
+
+- **R3R-D1 — the seed-fact guard holds in the colon 'not X, but Y' frame** (finding 1). Round 3 skipped it for any
+  one-word X, so "The best months are dry: not in the monsoon, but in April." (seed: avoid the monsoon) lost its
+  seasonal limit. The only exception now is a staged-thing noun (`_STAGED_NOUN_X_RE`: relic, museum piece, backdrop,
+  stage set, set piece, theme park, curiosity, showpiece) that the seed uses as a plain noun and never denies
+  (`_seed_denies`: no "not / no / never / nor … relic" in the source text). The panel's "not a relic, but a working
+  institution" (seed: "houses the sacred relic of …") is still folded; a seed that says "is not a relic" keeps it.
+  The source text reaches the rule through `_SourceWords` (a frozenset of the seed words, as every rule reads it,
+  that also carries `.text`).
+- **R3R-D2 — staging tails keep only words that say "put on for show"** (finding 3): staged, scripted,
+  choreographed, stage-managed, museum piece, backdrop, stage set, incidental detail / feature, trick of the light.
+  Show, performance, demonstration, spectacle, relic, footnote, coincidence … left the list (expectation and welfare
+  facts: "see the dance rehearsal rather than the full performance", "rather than used in shows"). Between the
+  article and the word only a closed modifier list (mere, carefully, artfully, painted …), never a free word or a
+  verb ("rather than used as backdrops" stays).
+- **R3R-D3 — an audience in a denial is a fact** (finding 4): `_audience` (hygiene `_PERSON_NOUNS` + toddlers,
+  infants, babies, beginners, novices, first-timers, seniors, elderly, wheelchair users, walkers, riders, swimmers,
+  climbers) guards `_denied_ok` (the round-2/3 verb and pronoun joins, the lone 'do' denial), `_lone_denial` and the
+  round-1 `_pair` (the copula join the demonstrative join rides on). "This is not a walk for small children. It
+  climbs …" is never joined or cut, at a paragraph start or inside one.
+- **R3R-D4 — residue entries no longer match schedules and practical sentences** (finding 5). "There is no
+  performance / show …" needs the aphorism form ("in this / here / about it", or ", no …") and no day, time, season
+  or schedule word anywhere in the sentence (`_SCHEDULE_NEG`, one look-ahead from the sentence start). "This is the
+  section … worth / that rewards" and "rewards … attention" never match a sentence with a booking, limit, footing or
+  weather word (`_ATTENTION_FACT_NEG`); the second is now anchored at the sentence start for that guard and names its
+  phrase as group `p` (`template_lines` reports `p` when a pattern has it). "closes the circle" is not followed by
+  back / to / at / on / via … (a loop road).
+- **R3R-D5 — an age is known when the seed writes the number in any wording** (findings 2 and 6):
+  `unsupported_ages` builds `known` from every age-sized number in the source (`_SOURCE_NUMBER_RE`: digits and number
+  words, never a group of "2,000"), so "Minimum age is 12", "under-5s", "at least 14", "Children 6–12", "from 8 years",
+  "children 10 and older" all make the age known. 'N-year-old' counts only as a person: "year-olds", or "year-old"
+  used as a noun (before a person noun, a modal or verb, a function word, or nothing: "a 10-year-old can …", "legible
+  to a twelve-year-old as …"); "the 300-year-old temple" never counts, "2,000-year-old" is never read as "000", and a
+  value over 120 is never an age.
+
+### Changed (vs the review's suggestions)
+
+- Finding 6 suggested 'year-old' + nothing / a person noun only. The round-1 blog's "as legible to a twelve-year-old
+  as to a geographer" (a real unsupported age the census found) has 'as' after it, so a closed function-word list (as,
+  and, or, who, than, with, in, at, to, for, on) also counts as the noun use; an attributive thing age is never
+  followed by one of those in the corpus.
+- `_seed_denies` reads the source text with a bounded window (up to three words between the negation and the
+  noun's stem): linear, tested with the 8000-char inputs.
+
+### Tradeoffs
+
+- **Recall given back for precision.** On the AA-729 golden fixture + S234 pack (70 texts) the fixed code makes the
+  same 170 edits minus one staging tail ("… rather than performance"); on the pilot texts two edits go ("geology
+  rather than spectacle", and "These are not details to hide from children. They are …", an audience word). The
+  panel's quoted forms are unaffected (below).
+- `_SCHEDULE_NEG` is broad (any day / month / season / 'during' / 'when' / digit): some real "There is no
+  performance …" aphorisms that mention a time stay. They go to the prompt, not the residue.
+
+### Should know
+
+- **$0 quote census on the 20 round-2 texts** (local script, not committed: every quote in an r2 AI-tells or
+  source-fidelity judgment matched to its sentence in the stored text; "caught" = the pass changes the sentence, or
+  residue / a seed-aware finding flags it after the pass). AI-tells: 63 matchable quotes; origin/main (round 2) 3
+  (0 pass, 3 residue); round 3 as first committed 37 (11 pass, 26 residue); after these fixes 37 (11 pass, 26
+  residue): no panel quote lost. Source fidelity: 51 quotes; 0 → 9 → 9. Seed-aware findings: 4 on the round-2
+  LinkedIn posts (2 ages, 2 founding reasons, exactly the judges' quotes) and 1 on the round-1 texts, unchanged by
+  the fixes. (The round-3 note above counted 68 / 41 with a looser quote split; same direction.)
+- No prompt change in this fix: `writer_prompt_version` stays `24363541`, `AI_TELLS_VERSION` stays `ai_tells.v3`.
+- Tests: `tests/unit/test_aa790_writer_round3.py` 208 (was 146 + the review cases); the linear-time list gains
+  `_STAGED_NOUN_X_RE`, `_AUDIENCE_RE`, `_SOURCE_NUMBER_RE`, the two new look-ahead guards (inside their residue
+  entries) and `_seed_denies` / `_audience` in the function timing test.

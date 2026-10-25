@@ -116,7 +116,6 @@ def test_a_passive_denial_is_a_fact_and_is_never_cut():
      "The blue colour comes from dissolved limestone."),
     ("The mix of peoples in the province is a long-standing condition rather than an incidental detail.",
      "The mix of peoples in the province is a long-standing condition."),
-    ("The weaving is a long commitment rather than a demonstration.", "The weaving is a long commitment."),
     ("The brand plans trips for people who want to move through a valley, not just pass through it.",
      "The brand plans trips for people who want to move through a valley."),
     ("The brand plans journeys that give children real access to the towns, not just a view of them.",
@@ -413,10 +412,10 @@ def _round3_patterns():
     """Every regex this round adds or changes: ai_tells (round-1 _NOT_BUT_RE gains the comma group, _MEANT_RE the
     'to its …' tail), hygiene's two seed-aware patterns and every round-3 AI_TELL_LINE_RES entry."""
     names = ("_NOT_BUT_RE", "_STAGING_TAIL_RE", "_SOMETHING_RE", "_MEANT_RE", "_CHANGES_VERDICT_RE",
-             "_RELOCATE_X_RE", "_AND_THE_RE", "_Y_PHRASE_RE")
+             "_RELOCATE_X_RE", "_AND_THE_RE", "_Y_PHRASE_RE", "_STAGED_NOUN_X_RE", "_AUDIENCE_RE")
     out = [(n, getattr(ai_tells, n)) for n in names]
     out += [(n, getattr(hygiene, n)) for n in ("_AGE_CLAIM_RE", "_FOUNDING_REASON_RE", "_PURPOSE_RE",
-                                                "_SOURCE_SENTENCE_RE")]
+                                                "_SOURCE_SENTENCE_RE", "_SOURCE_NUMBER_RE")]
     start = next(i for i, r in enumerate(hygiene.AI_TELL_LINE_RES)
                  if r.pattern.startswith(r"\b(?:that|this|it)(?:['’]s|\s+is)\s+(?:a|the|one)\s+(?:detail"))
     out += [(f"AI_TELL_LINE_RES[{i}]", r) for i, r in enumerate(hygiene.AI_TELL_LINE_RES) if i >= start]
@@ -440,6 +439,8 @@ def test_round3_functions_run_in_linear_time():
         ai_tells._staging_tail(s, frozenset())
         ai_tells._something_lead(s, frozenset())
         ai_tells._not_but(s, frozenset())
+        ai_tells._seed_denies("relic", ai_tells._SourceWords(s))
+        ai_tells._audience(s)
         assert time.perf_counter() - t < 0.5
 
 
@@ -448,3 +449,161 @@ def _timed(rx: re.Pattern, s: str) -> float:
     rx.search(s)
     rx.match(s)
     return time.perf_counter() - t
+
+
+# ---------------------------------------------------------------- round-3 review fixes (S252, blocking findings)
+# Each finding's own sentences: the fact must stay. The tells the panel quoted still go (tests above).
+
+def _seed_ctx(source: str) -> TellContext:
+    return TellContext(cta=CTX.cta, source=source)
+
+
+@pytest.mark.parametrize("sentence, source", [
+    # finding 1 — the seed-fact guard holds in the colon 'not X, but Y' frame
+    ("The best months are dry: not in the monsoon, but in April.",
+     "Avoid the monsoon months; April is the best time to visit."),
+    ("The dzong is what it has always been: not a museum, but a working institution.",
+     "The dzong is not a museum; it is a working institution."),
+    ("Families stay in the lodge: not in tents, but in rooms.", "The lodge has rooms; there are no tents."),
+    # a staged-thing noun the seed itself denies keeps its contrast
+    ("Few visitors know what a dzong is: not a relic, but a working institution.",
+     "The dzong is not a relic of the past; it is a working institution."),
+])
+def test_colon_not_but_keeps_a_contrast_the_seed_states(sentence, source):
+    text = _blog("The monks gather at dawn. " + sentence)
+    assert rewrite(text, _seed_ctx(source))[0] == text
+
+
+def test_colon_not_but_folds_a_staged_noun_the_seed_uses_as_a_plain_noun():
+    """The panel's quote: the seed names 'the sacred relic of …' but never denies a relic."""
+    ctx = _seed_ctx("The dzong houses the sacred relic of the founder.")
+    before = "Few visitors know what a dzong is: not a relic, but a working institution."
+    text, log = rewrite(_blog("The monks gather at dawn. " + before), ctx)
+    assert text == _blog("The monks gather at dawn. Few visitors know what a dzong is: a working institution.")
+    assert log == [f"ai_tells: not X but Y: '{before}'"]
+
+
+@pytest.mark.parametrize("sentence, source", [
+    # finding 3 — itinerary nouns and verbs in a 'rather than / instead of' tail are expectation or welfare facts
+    ("On the third morning you will see the dance rehearsal rather than the full performance.", ""),
+    ("Most departures fall before the festival, so you see the village preparations rather than the festival "
+     "performances.", ""),
+    ("The elephants are watched from a raised platform rather than used in shows.", ""),
+    ("Children can join the cooking class rather than watch a demonstration.", ""),
+    ("The elephants live in the forest rather than used as backdrops.", ""),
+    ("The weaving is a long commitment rather than a demonstration.", ""),
+    ("On the third morning you will see the dance rehearsal rather than the full performance.",
+     "Visitors watch rehearsals; the masked dances themselves are held only at Tshechu."),
+])
+def test_staging_tail_keeps_itinerary_and_welfare_facts(sentence, source):
+    text = _blog("The monks gather at dawn. " + sentence)
+    assert rewrite(text, _seed_ctx(source))[0] == text
+
+
+@pytest.mark.parametrize("before, after", [
+    ("The welcome in the village is a working morning rather than a mere backdrop.",
+     "The welcome in the village is a working morning."),
+    ("The masks are carved for the monastery rather than as museum pieces.",
+     "The masks are carved for the monastery."),
+])
+def test_staging_tail_still_cuts_staging_words(before, after):
+    text, log = rewrite(_blog("The monks gather at dawn. " + before), CTX)
+    assert text == _blog("The monks gather at dawn. " + after)
+    assert log == [f"ai_tells: staging contrast tail: '{before}'"]
+
+
+@pytest.mark.parametrize("pair", [
+    # finding 4 — an audience limit in the denial is a fact: never joined, never cut, at a paragraph start too
+    "This is not a walk for small children. It climbs steeply on loose scree for most of the morning.",
+    "This is not a hike for beginners. It climbs over the ridge to the lake.",
+    "This is not a stop for toddlers. It is a long climb on worn stone steps.",
+    "These are not rooms for families. They are small cells built for the monks.",
+    "This is not a trail for wheelchair users. It crosses two rope bridges.",
+])
+@pytest.mark.parametrize("where", ["paragraph start", "mid paragraph"])
+def test_an_audience_denial_is_never_joined_or_cut(pair, where):
+    text = _blog(pair) if where == "paragraph start" else _blog("The monks gather at dawn. " + pair)
+    assert rewrite(text, CTX)[0] == text
+
+
+@pytest.mark.parametrize("lone", ["This is not a place for small children.", "It is not for seniors."])
+def test_an_audience_lone_denial_is_never_cut(lone):
+    text = _blog(f"The monks gather at dawn. {lone} The path climbs on loose scree.")
+    assert rewrite(text, CTX)[0] == text
+
+
+@pytest.mark.parametrize("sentence", [
+    # finding 5 — schedules, bookings, footing and routes are facts, never F15 stock lines
+    "There is no show on Mondays, when the theatre is closed.",
+    "There is no performance during Ramadan.",
+    "There is no performance here on the first evening.",
+    "There is no show.",
+    "This is the stage of the route worth booking early, as seats on the boat are limited.",
+    "The steep path rewards careful attention to footing in the wet season.",
+    "After rain the stone steps reward close attention.",
+    "The loop road closes the circle back to Paro on the last day.",
+])
+def test_round3_residue_leaves_schedule_and_practical_sentences_alone(sentence):
+    text = f"The camp sits by the lake. {sentence} The road north is long."
+    assert not residue(text), sentence
+    g = gate_voice(text, spec=None, stock_blocking=True)
+    assert not any(sentence in v for v in g["violations"])
+
+
+@pytest.mark.parametrize("sentence", [
+    "There is no performance in this, no arranged demonstration.",
+    "There is no performance here.",
+    "There is no show, no script.",
+    "This is the section of the journey that rewards the greatest attention.",
+    "The final stretch rewards careful attention.",
+    "The school sends its graduates to the temples, closing the circle.",
+])
+def test_round3_residue_still_flags_the_aphorism_forms(sentence):
+    assert residue(f"The camp sits by the lake. {sentence} The road north is long."), sentence
+
+
+@pytest.mark.parametrize("sentence, source", [
+    # findings 2 and 6 — a number the seed writes in any wording is a known age
+    ("Kids aged twelve and over can ride the ponies.", "Minimum age is 12."),
+    ("Kids aged 8 and up join the class.", "Suitable for children from 8 years."),
+    ("Children under 5 stay at the camp.", "Not suitable for under-5s."),
+    ("Riders aged 14 and over may take the long loop.", "Riders must be at least 14."),
+    ("Kids aged 6 to 12 join the class.", "Children 6–12 join the class."),
+    ("Kids aged 6 and up are welcome.", "Minimum age: 6."),
+    ("The class is a hit with 10-year-olds.", "Open to children 10 and older."),
+    ("Kids aged 6 and up are welcome.", "Open to children from 6 years."),
+    # a thing's age, attributive: never a person's age, whatever the seed says
+    ("The 300-year-old monastery stands above the river.", "The monastery is about 300 years old."),
+    ("The 300-year-old temple still stands.", "The temple was built 300 years ago. The city is over 600 years old."),
+    ("The 600-year-old city walls are intact.", "The temple was built 300 years ago."),
+    ("The 2,000-year-old clay tradition lives on in the village.", ""),
+    ("A 12-year-old tradition of mask carving survives.", ""),
+    ("The 300-year-old is the oldest tree in the valley.", ""),
+])
+def test_age_known_from_the_seed_or_a_things_age_is_not_found(sentence, source):
+    assert hygiene.unsupported_ages(sentence, source) == []
+
+
+@pytest.mark.parametrize("sentence, found", [
+    ("It is as legible to a twelve-year-old as to a geographer.", "twelve-year-old"),
+    ("The seven-year-old girl in the group carried the lantern.", "seven-year-old"),
+    ("The class is a hit with 10-year-olds.", "10-year-olds"),
+    ("Kids aged 8 and up join the class.", "aged 8 and up"),
+])
+def test_unsupported_person_age_is_still_found(sentence, found):
+    assert hygiene.unsupported_ages(sentence, "The monastery is 300 years old; the class runs for 3 hours.") == [
+        found]
+
+
+def test_a_seed_stated_age_reaches_no_f15_finding():
+    text = "The camp sits by the lake. Kids aged twelve and over can ride the ponies. The road north is long."
+    g = gate_voice(text, spec=None, stock_blocking=True, exclude_texts=("Minimum age is 12.",))
+    assert not any(v.startswith(UNSUPPORTED_DETAIL_PREFIX) for v in g["violations"])
+
+
+def test_an_anchored_residue_entry_reports_its_own_phrase():
+    """The 'rewards … attention' entry is anchored at the sentence start for its fact guard; the F15 finding still
+    names the phrase, not the sentence's first words."""
+    text = "The camp sits by the lake. The ninth day turns to two temples that reward careful attention. The end."
+    assert residue(text) == [("reward careful attention",
+                              "The ninth day turns to two temples that reward careful attention.")]

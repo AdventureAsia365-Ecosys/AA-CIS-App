@@ -226,6 +226,18 @@ def _practical(part: str) -> bool:
     return bool(_PRACTICAL_RE.search(part))
 
 
+# Round-3 review: who a thing is (not) for is an audience limit, a fact a family plans by ('This is not a walk for
+# small children.'). A denied part that names people is never cut or folded into a join.
+_AUDIENCE_RE = re.compile(
+    rf"\b(?:{hygiene._PERSON_NOUNS}|toddlers?|infants?|bab(?:y|ies)|beginners?|novices?|first-timers?|seniors?"
+    r"|elderly|older[ \t]+(?:people|visitors|walkers)|wheelchair[ \t]+users?|non-swimmers?|swimmers?|walkers?"
+    r"|climbers?|riders?)\b", re.I)
+
+
+def _audience(part: str) -> bool:
+    return bool(_AUDIENCE_RE.search(part))
+
+
 def _seed_fact(denied: str, src: frozenset) -> bool:
     """The denied part is the seed's own statement ('the herds are not primarily raised for meat'): a contrast
     whose other half the seed states is allowed (prompts.py SOURCE FIDELITY) and is a fact, so it stays."""
@@ -383,6 +395,26 @@ def _y_ends_sentence(s: str, start: int) -> bool:
     return len(m.group(0).split()) <= 5 and not s[m.end():].strip(" \t.!?\"'”’)")
 
 
+# A thing presented as staged or dead: the only nouns a colon 'not X, but Y' may fold although the seed uses the word
+# (it uses it as a plain noun: 'the sacred relic of …'). Never when the seed itself denies it ('is not a relic').
+_STAGED_NOUN_X_RE = re.compile(
+    r"^[ \t]*(?:(?:a|an|the|any|some)[ \t]+)?(?:mere[ \t]+|dead[ \t]+|static[ \t]+)?"
+    r"(?P<n>relics?|museum[ \t]+pieces?|backdrops?|stage[ \t]+sets?|set[ \t]+pieces?|theme[ \t]+parks?|curiosit(?:y|ies)"
+    r"|showpieces?)[ \t]*$", re.I)
+
+
+def _staged_noun_x(x: str, src: frozenset) -> bool:
+    m = _STAGED_NOUN_X_RE.match(x)
+    return bool(m) and not _seed_denies(m.group("n"), src)
+
+
+def _seed_denies(noun: str, src: frozenset) -> bool:
+    """The source text itself denies ``noun`` ('is not a relic', 'no relics', 'never a museum piece')."""
+    text = getattr(src, "text", "")
+    stem = re.escape(noun.split()[0][:5].lower())  # relic(s), museu(m), curio(sity / sities)
+    return bool(text) and bool(re.search(rf"\b(?:not|no|never|nor)[ \t]+(?:[\w'’-]+[ \t]+){{0,3}}?{stem}", text, re.I))
+
+
 def _not_but(s: str, src: frozenset) -> tuple[str, list[str]]:
     if _protected(s):
         return s, []
@@ -397,7 +429,10 @@ def _not_but(s: str, src: frozenset) -> tuple[str, list[str]]:
             colon = not m.group("lead") and s[:m.start()].rstrip().endswith(":")
             if not x_words or len(x_words) > 9:
                 continue
-            if _seed_fact(m.group("x"), src) and not (colon and len(content_words(m.group("x"))) < 2):
+            # Round-3 review: the seed-fact guard holds in the colon frame too ('Avoid the monsoon months; April is
+            # …' keeps '…: not in the monsoon, but in April.'). The one exception is a staged-thing noun the seed
+            # uses as a plain noun and never denies ('houses the sacred relic of …' vs '…: not a relic, but …').
+            if _seed_fact(m.group("x"), src) and not (colon and _staged_noun_x(m.group("x"), src)):
                 continue
             if _practical(m.group("x")):
                 continue
@@ -515,16 +550,20 @@ def _lead_in(s: str, src: frozenset) -> tuple[str, list[str]]:
 # at a local home rather than a restaurant"): STAGING words deny that a thing is put on for show, which no seed
 # states as a fact; SPECTATOR words follow 'not just / merely / only / simply' ('not just a view of them'), where
 # the asserted half (a view, a glimpse) carries no fact either. Only at the sentence end; the main clause stays.
-_STAGING = (r"relics?|museum[ \t]+pieces?|backdrops?|stage[ \t]+sets?|set[ \t]+pieces?|shows?|spectacles?"
-            r"|performances?|demonstrations?|theme[ \t]+parks?|photo[ \t]+(?:opportunit(?:y|ies)|ops?)"
-            r"|footnotes?|afterthoughts?|curiosit(?:y|ies)|coincidences?|incidental[ \t]+(?:details?|features?)"
-            r"|tricks?[ \t]+of[ \t]+the[ \t]+light|staged|scripted|choreographed")
+# Round-3 review: only words that say a thing is put on for show. Itinerary nouns (show, performance,
+# demonstration, spectacle) left the list: 'see the dance rehearsal rather than the full performance', 'watched from
+# a platform rather than used in shows' are expectation and welfare facts. Between the article and the word only a
+# closed modifier ('a mere backdrop', 'carefully staged'): never a verb ('rather than used as a backdrop') or a
+# free word ('the festival performances').
+_STAGING = (r"staged|scripted|choreographed|stage-managed|museum[ \t]+pieces?|backdrops?|stage[ \t]+sets?"
+            r"|incidental[ \t]+(?:details?|features?)|tricks?[ \t]+of[ \t]+the[ \t]+light")
+_STAGING_MODIFIERS = r"mere|purely|carefully|artfully|deliberately|elaborately|neatly|painted|pretty"
 _SPECTATOR = (r"views?|glimpses?|snapshots?|photos?|photographs?|postcards?|backdrops?"
               r"|pass(?:ing)?[ \t]+through(?:[ \t]+(?:it|them))?")
 # Starts at the keyword after a blank (a lookbehind, never a leading blank run: CodeQL py/polynomial-redos).
 _STAGING_TAIL_RE = re.compile(
     r"(?<=[ \t])(?:(?:rather[ \t]+than|instead[ \t]+of|not)[ \t]+(?:(?:by|as)[ \t]+)?(?:(?:a|an|any|the|some)[ \t]+)?"
-    rf"(?!(?:just|merely|only|simply)\b)(?:[\w'’-]+[ \t]+){{0,2}}?(?:{_STAGING})"
+    rf"(?!(?:just|merely|only|simply)\b)(?:(?:{_STAGING_MODIFIERS})[ \t]+)?(?:{_STAGING})\b"
     r"|not[ \t]+(?:just|merely|only|simply)[ \t]+(?:(?:a|an|the|any)[ \t]+)?(?:[\w'’-]+[ \t]+)?"
     rf"(?:{_SPECTATOR}))"
     r"(?:[ \t]+of[ \t]+(?:it|them|(?:the|a|an|this|that)[ \t]+[\w'’-]+))?"
@@ -629,7 +668,8 @@ def _pair(s1: str, s2: str, src: frozenset) -> Optional[str]:
     d, a = _DENIAL_RE.match(_expand(s1)), _AFFIRM_RE.match(_expand(s2))
     if not d or not a or len(_words(s1)) > 22:
         return None
-    if _protected(s1) or _practical(d.group("x")) or _DIGIT_RE.search(d.group("x")) or _seed_fact(d.group("x"), src):
+    if (_protected(s1) or _practical(d.group("x")) or _audience(d.group("x")) or _DIGIT_RE.search(d.group("x"))
+            or _seed_fact(d.group("x"), src)):
         return None
     subj = d.group("subj").strip()
     if _subject_is_pronoun(subj):
@@ -686,8 +726,8 @@ def _lone_denial(s: str, src: frozenset) -> bool:
     x_words = d.group("x").split()
     if x_words and _is_participle(x_words[0]):
         return False
-    if (_protected(s) or _practical(d.group("x")) or _DIGIT_RE.search(s) or _NAME_AFTER_FIRST_RE.search(s)
-            or _seed_fact(d.group("x"), src)):
+    if (_protected(s) or _practical(d.group("x")) or _audience(d.group("x")) or _DIGIT_RE.search(s)
+            or _NAME_AFTER_FIRST_RE.search(s) or _seed_fact(d.group("x"), src)):
         return False
     return bool(_LONE_SUBJ_RE.match(d.group("subj").strip()))
 
@@ -777,8 +817,8 @@ _LIMIT_RE = re.compile(r"\b(?:until|unless|except|before|after|only|without|till
 def _denied_ok(part: str, s1: str, src: frozenset) -> bool:
     """The denied part may be dropped: no rule / access / practical / limit word, no digit, no name, not the seed's
     own."""
-    return not (_protected(s1) or _practical(part) or _LIMIT_RE.search(part) or _DIGIT_RE.search(part)
-                or _NAME_AFTER_FIRST_RE.search(" " + part) or _seed_fact(part, src))
+    return not (_protected(s1) or _practical(part) or _audience(part) or _LIMIT_RE.search(part)
+                or _DIGIT_RE.search(part) or _NAME_AFTER_FIRST_RE.search(" " + part) or _seed_fact(part, src))
 
 
 def _verb_in_seed(verb: str, src: frozenset) -> bool:
@@ -1095,8 +1135,19 @@ def _first_prose(spans: list[dict]) -> Optional[int]:
     return next((i for i, sp in enumerate(spans) if sp["kind"] == "prose" and not sp["in_faq"]), None)
 
 
+class _SourceWords(frozenset):
+    """The seed + Facts content words (a frozenset, as every rule reads it) that also carry the source text, for the
+    one rule that must see the seed's own wording (``_seed_denies``)."""
+    text: str = ""
+
+    def __new__(cls, text: str):
+        obj = super().__new__(cls, content_words(text or ""))
+        obj.text = text or ""
+        return obj
+
+
 def _source_words(ctx: TellContext) -> frozenset:
-    return frozenset(content_words(ctx.source or ""))
+    return _SourceWords(ctx.source or "")
 
 
 def _sentence_edits(text: str, ctx: TellContext) -> list[Edit]:
