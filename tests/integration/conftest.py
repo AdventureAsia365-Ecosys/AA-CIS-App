@@ -351,10 +351,10 @@ def _apply_schema(conn):
         # AA-847: 258 (raw_tours.source_key under catalog._live_tour) needs 253 / 256 / 257 and the catalog recipe;
         # test_aa847_migration_258 applies 253 + 256 + 257 + 258 the DB Migrate way in one transaction, rolled back.
         and not f.startswith('258')
-        # AA-853: 282 (Dev's hand-made schema state) runs as cis_owner with the catalog recipe on the views over
+        # AA-853: 281 (Dev's hand-made schema state) runs as cis_owner with the catalog recipe on the views over
         # raw_tours (needs 245's owners); this superuser replay would refuse its SET LOCAL ROLE steps' ownership.
-        # test_aa853_migration_282 applies it the DB Migrate way on the RDS-like state and rolls back.
-        and not f.startswith('282')
+        # test_aa853_migration_281 applies it the DB Migrate way on the RDS-like state and rolls back.
+        and not f.startswith('281')
     ])
 
     for mf in migration_files:

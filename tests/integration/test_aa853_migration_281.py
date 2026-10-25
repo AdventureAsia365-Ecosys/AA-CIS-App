@@ -1,9 +1,9 @@
-"""AA-853 (S251 D2) — migration 282: codify the CIS schema state Dev has but no migration makes.
+"""AA-853 (S251 D2) — migration 281: codify the CIS schema state Dev has but no migration makes.
 
-The CI DB is built from the files alone, so it is in the OLD shape 282 converges (raw_tours varchar columns,
+The CI DB is built from the files alone, so it is in the OLD shape 281 converges (raw_tours varchar columns,
 membership_plans numeric(10,4), 058's NOT NULL flags, 044 / 048's index names, the tables AA-598 / AA-603 dropped by
-hand on Dev, no hand-made columns). conftest skips 282; each test runs in ONE transaction on the RDS-like state of
-test_aa860_migration_245 (module fixture), applies 282 as cis_owner (DB Migrate's live-owner switch: the file itself
+hand on Dev, no hand-made columns). conftest skips 281; each test runs in ONE transaction on the RDS-like state of
+test_aa860_migration_245 (module fixture), applies 281 as cis_owner (DB Migrate's live-owner switch: the file itself
 switches to catalog_owner for the catalog views, the X1 S22 recipe) and is rolled back.
 
 Checks: every column type, nullability, index and CHECK ends as on Dev; the hand-dropped tables are gone; every view
@@ -11,7 +11,7 @@ that depended on a changed column is back with its owner, columns, options and p
 catalog_owner keeps no CREATE on schema catalog; registered once. A second apply is a no-op (no view or table is
 recreated or rewritten). Refusals: a materialized view on a changed column, a non-empty table Dev dropped. The v1
 schemas: dropped when cis_owner may (RESTRICT, with their enums and cross-schema foreign keys), left (NOTICE) when they
-are another role's, refused when something outside them depends on them or they hold an object 282 does not drop.
+are another role's, refused when something outside them depends on them or they hold an object 281 does not drop.
 The two raw_tours CHECKs are put in Dev's form even when no column type is pending.
 """
 import os
@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import test_aa860_migration_245 as t245  # noqa: E402
 from test_aa860_migration_245 import rds_like_245  # noqa: E402,F401  (module fixture: Dev after 244 + 245)
 
-MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations", "282_schema_drift_reconcile.sql")
+MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations", "281_schema_drift_reconcile.sql")
 CHANGED = {("silver_aa_internal.raw_tours", c): "text"
            for c in ("country", "duration", "group_size", "period", "price_raw", "sku", "tour_id_external")}
 CHANGED.update({("shared.membership_plans", c): "numeric(8,4)"
@@ -97,7 +97,7 @@ def _rows(c, views):
 
 
 class _Cur(psycopg2.extensions.cursor):
-    """Carries the state before 282."""
+    """Carries the state before 281."""
 
 
 @pytest.fixture
@@ -118,14 +118,14 @@ PLANS_STANDIN = """
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(), plan_name TEXT NOT NULL UNIQUE,
         overage_rate_usd_per_tour NUMERIC(10, 4) NOT NULL DEFAULT 0,
         overage_rate_usd_per_1k_calls NUMERIC(10, 4) NOT NULL DEFAULT 0);
-    INSERT INTO shared.membership_plans (plan_name, overage_rate_usd_per_tour) VALUES ('zz282', 4.0)
+    INSERT INTO shared.membership_plans (plan_name, overage_rate_usd_per_tour) VALUES ('zz281', 4.0)
         ON CONFLICT DO NOTHING;
-    CREATE OR REPLACE VIEW shared.zz282_v_plans WITH (security_invoker = true) AS
+    CREATE OR REPLACE VIEW shared.zz281_v_plans WITH (security_invoker = true) AS
         SELECT plan_name, overage_rate_usd_per_tour FROM shared.membership_plans;
-    COMMENT ON VIEW shared.zz282_v_plans IS 'zz282 stand-in';
+    COMMENT ON VIEW shared.zz281_v_plans IS 'zz281 stand-in';
     ALTER TABLE shared.membership_plans OWNER TO cis_owner;
-    ALTER VIEW shared.zz282_v_plans OWNER TO cis_owner;
-    GRANT SELECT ON shared.zz282_v_plans TO cis_app;
+    ALTER VIEW shared.zz281_v_plans OWNER TO cis_owner;
+    GRANT SELECT ON shared.zz281_v_plans TO cis_app;
 """
 
 
@@ -139,7 +139,7 @@ def _standins(c):
 def cur(conn):
     c = conn.cursor(cursor_factory=_Cur)
     _standins(c)
-    c.execute("DELETE FROM shared.schema_versions WHERE version = '282'")
+    c.execute("DELETE FROM shared.schema_versions WHERE version = '281'")
     c.before_views = _views(c)
     c.before_rows = _rows(c, c.before_views)
     _apply(c)
@@ -209,14 +209,14 @@ def test_registered_once_and_a_second_apply_is_a_no_op(conn, cur):
     assert {n: oid for n, oid, *_ in _views(cur)} == after          # no view dropped and recreated
     cur.execute("SELECT relfilenode FROM pg_class WHERE oid = 'shared.membership_plans'::regclass")
     assert cur.fetchone()[0] == filenode                            # no rewrite
-    cur.execute("SELECT count(*) FROM shared.schema_versions WHERE version = '282'")
+    cur.execute("SELECT count(*) FROM shared.schema_versions WHERE version = '281'")
     assert cur.fetchone()[0] == 1
 
 
 def test_refuses_a_materialized_view_on_a_changed_column(conn):
     c = conn.cursor()
     _standins(c)
-    c.execute("CREATE MATERIALIZED VIEW shared.zz282_mv AS SELECT country FROM silver_aa_internal.raw_tours")
+    c.execute("CREATE MATERIALIZED VIEW shared.zz281_mv AS SELECT country FROM silver_aa_internal.raw_tours")
     with pytest.raises(psycopg2.Error, match="cannot recreate these dependent views faithfully"):
         _apply(c)
 
@@ -236,8 +236,8 @@ def test_v1_schemas_dropped_only_when_cis_owner_may(conn):
     c = conn.cursor()
     _standins(c)
     c.execute("CREATE SCHEMA IF NOT EXISTS silver AUTHORIZATION cis_owner")
-    c.execute("CREATE TABLE silver.zz282_empty (x int)")
-    c.execute("ALTER TABLE silver.zz282_empty OWNER TO cis_owner")
+    c.execute("CREATE TABLE silver.zz281_empty (x int)")
+    c.execute("ALTER TABLE silver.zz281_empty OWNER TO cis_owner")
     c.execute("CREATE SCHEMA IF NOT EXISTS gold")                   # the superuser's, like the master's on Dev
     del conn.notices[:]
     _apply(c)
@@ -250,9 +250,9 @@ def _v1_with_enum_and_fk(c):
     c.execute("CREATE SCHEMA IF NOT EXISTS bronze AUTHORIZATION cis_owner")
     c.execute("CREATE SCHEMA IF NOT EXISTS silver AUTHORIZATION cis_owner")
     c.execute("SET LOCAL ROLE cis_owner")
-    c.execute("CREATE TYPE silver.zz282_status AS ENUM ('a', 'b')")
-    c.execute("CREATE TABLE bronze.zz282_src (id serial PRIMARY KEY)")
-    c.execute("CREATE TABLE silver.zz282_ver (id int REFERENCES bronze.zz282_src (id), s silver.zz282_status)")
+    c.execute("CREATE TYPE silver.zz281_status AS ENUM ('a', 'b')")
+    c.execute("CREATE TABLE bronze.zz281_src (id serial PRIMARY KEY)")
+    c.execute("CREATE TABLE silver.zz281_ver (id int REFERENCES bronze.zz281_src (id), s silver.zz281_status)")
     c.execute("RESET ROLE")
 
 
@@ -271,9 +271,9 @@ def test_v1_schemas_refused_when_something_outside_depends_on_them(conn):
     c = conn.cursor()
     _standins(c)
     _v1_with_enum_and_fk(c)
-    c.execute("CREATE VIEW shared.zz282_on_v1 AS SELECT id FROM bronze.zz282_src")
-    c.execute("ALTER VIEW shared.zz282_on_v1 OWNER TO cis_owner")
-    with pytest.raises(psycopg2.Error, match=r"objects outside the v1 schemas .* depend on them: .*zz282_on_v1"):
+    c.execute("CREATE VIEW shared.zz281_on_v1 AS SELECT id FROM bronze.zz281_src")
+    c.execute("ALTER VIEW shared.zz281_on_v1 OWNER TO cis_owner")
+    with pytest.raises(psycopg2.Error, match=r"objects outside the v1 schemas .* depend on them: .*zz281_on_v1"):
         _apply(c)
 
 
@@ -281,17 +281,17 @@ def test_v1_schemas_refused_when_an_outside_column_uses_their_type(conn):
     c = conn.cursor()
     _standins(c)
     _v1_with_enum_and_fk(c)
-    c.execute("CREATE TABLE shared.zz282_uses_enum (s silver.zz282_status)")
+    c.execute("CREATE TABLE shared.zz281_uses_enum (s silver.zz281_status)")
     with pytest.raises(psycopg2.Error, match="objects outside the v1 schemas"):
         _apply(c)
 
 
-def test_v1_schema_with_an_object_282_does_not_drop_fails_instead_of_sweeping_it(conn):
+def test_v1_schema_with_an_object_281_does_not_drop_fails_instead_of_sweeping_it(conn):
     c = conn.cursor()
     _standins(c)
     c.execute("CREATE SCHEMA IF NOT EXISTS ops AUTHORIZATION cis_owner")
-    c.execute("CREATE FUNCTION ops.zz282_f() RETURNS int LANGUAGE sql AS 'SELECT 1'")
-    c.execute("ALTER FUNCTION ops.zz282_f() OWNER TO cis_owner")
+    c.execute("CREATE FUNCTION ops.zz281_f() RETURNS int LANGUAGE sql AS 'SELECT 1'")
+    c.execute("ALTER FUNCTION ops.zz281_f() OWNER TO cis_owner")
     with pytest.raises(psycopg2.Error, match="cannot drop schema ops because other objects depend on it"):
         _apply(c)
 
