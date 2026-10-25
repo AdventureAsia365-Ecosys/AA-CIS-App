@@ -454,7 +454,12 @@ class TestT9Prompt:
         content seed and adds one priority line (SOURCE FIDELITY and VISIT DETAIL override the brand's style guide
         and its examples; the style guide sets tone and sentence shape, not content): writer_prompt_version
         751b0a34 → afc08095. The PACE line's "you" is bounded to the CONTENT SEED, so `single` and `route` change
-        too."""
+        too.
+        Updated AA-790 round 3 (S252 re-panel of round 2, 26/10/2026): SYSTEM_PROMPT's SOURCE FIDELITY block gets
+        an AGES rule (no age, age band or minimum age the seed does not state; the AUDIENCE line's ages are the
+        brand's customers), a CAUSE AND SCOPE rule (no 'established because …' the seed does not link, no widened
+        fact) and 'feels like (cold water, a quiet hall)' in the scene-detail line; NUMBERS no longer lists 'age':
+        writer_prompt_version afc08095 → 24363541. `single` and `route` do not change."""
         pack = {"brand_name": "Trail Pulse", "brand_type": "Young active adventure travel brand",
                 "core_idea": "Active trips for people who like to move.", "customer_segment": "25-40 years old",
                 "voice": ["Energetic", "Fresh", "Direct", "Friendly", "Modern", "Confident", "Lightly playful"],
@@ -475,7 +480,7 @@ class TestT9Prompt:
         def sha(s):
             return hashlib.sha256(s.encode()).hexdigest()
         assert GOAL["key"] == GOALS[0]["key"]
-        assert sha(SYSTEM_PROMPT) == "afc08095b970d6d314cffa8396eef75f9404a116aaeff56b88efda8db4329d18"
+        assert sha(SYSTEM_PROMPT) == "24363541add37e3176a6dd461aa3f9dcc5240e7846b426735f07da793c42a725"
         assert sha(single) == "30305b79dd6ff24837d28da9639d06e32a6cefbaf78eca0aff7fe8478883458a"
         assert sha(route) == "c212a3a201ac00f5d8c3f20d9889b1a58e893375c5d93d1e45fa2669720be78a"
 

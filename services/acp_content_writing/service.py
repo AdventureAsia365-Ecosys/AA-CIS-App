@@ -1889,7 +1889,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
         # verdict that states a seed fact is kept, the chosen angle's name never stays a heading.
         tell_ctx = ai_tells.TellContext(
             cta=cta, angle_name=(chosen or {}).get("name"), source=hyg.source_text, ignore=brand_ignore,
-            keep_words=frozenset(hygiene.fold(w) for w in signature_words(brand_audience)))
+            keep_words=frozenset(hygiene.fold(w) for w in signature_words(brand_audience)),
+            angle_text=ai_tells.angle_text(chosen))
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
             step_guard.begin_attempt()

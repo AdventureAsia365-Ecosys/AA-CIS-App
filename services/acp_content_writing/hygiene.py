@@ -975,6 +975,74 @@ def audience_leaks(sentence: str, audience: Optional[str], own_text: Optional[st
     return [m.group(0) for m in _audience_hits(sentence, want)]
 
 
+# AA-790 round 3 (S252 re-panel: LinkedIn source fidelity 7.08 vs pilot 8.83) — two claims the judges quoted that
+# the seed never made: an age band for the visit ('For families travelling with children aged seven and up …', the
+# brand's audience '7–16' turned into a minimum age; audience_leaks only knows the brand's exact range) and a reason
+# for a founding ('The institute was established because these skills supply the artisans …', where the seed says
+# it was established to pass the skills on and, separately, that it supplies artisans). Both read the moment's own
+# source text (seed lines + Facts): a seed that states the age or the reason is never flagged.
+_AGE_CLAIM_RE = re.compile(
+    rf"\b(?:aged|ages?)\s+(?P<a>{NUM_TOKEN})(?:\s*(?:\+|and\s+(?:up|over|above|older)|or\s+(?:older|over|above)"
+    rf"|(?:–|-|to)\s*(?P<b>{NUM_TOKEN})))?(?![\w-])"
+    rf"|\b(?:{_PERSON_NOUNS})\s+(?:over|above|under|older\s+than|younger\s+than)\s+(?:the\s+age\s+of\s+)?"
+    rf"(?P<c>{NUM_TOKEN})(?![\w-])"
+    rf"|(?<![\w-])(?P<d>{NUM_TOKEN})(?:\s*(?:–|-|to)\s*(?P<e>{NUM_TOKEN}))?(?:\s*\+)?"
+    r"[\s-]+year[\s-]+olds?\b",
+    re.I)
+_FOUNDING_REASON_RE = re.compile(
+    r"\b(?:was|were|is|are|had\s+been|has\s+been)\s+(?:originally\s+|first\s+|largely\s+|partly\s+|mainly\s+)?"
+    r"(?:established|founded|created|set\s+up|built|opened|started)\s+(?:(?:in|around)\s+[\w-]+\s+)?because\b"
+    r"|\bexists?\s+(?:largely\s+|partly\s+|mainly\s+)?because\b", re.I)
+
+
+def _age_values(text: str) -> set[int]:
+    out = set()
+    for m in _AGE_CLAIM_RE.finditer(text or ""):
+        out |= {small_number(v) for v in m.groups() if v} - {None}
+    return out
+
+
+def unsupported_ages(sentence: str, source: Optional[str]) -> list[str]:
+    """The age claims in ``sentence`` ('aged seven and up', 'ages 8+', 'children over ten', '10-year-olds') whose
+    number the source's own age claims do not have. A thing's age ('300 years old') is not one: only the person
+    form 'year-old(s)'."""
+    known = _age_values(source or "")
+    out = []
+    for m in _AGE_CLAIM_RE.finditer(sentence or ""):
+        values = {small_number(v) for v in m.groups() if v} - {None}
+        if values and not values <= known:
+            out.append(" ".join(m.group(0).split()))
+    return out
+
+
+_PURPOSE_RE = re.compile(
+    r"\b(?:established|founded|created|set\s+up|built|opened|started)\s+(?:(?:in|around)\s+[\w-]+\s+)?"
+    r"(?:to|in\s+order\s+to|so\s+that|as\s+a\s+way\s+to)\b", re.I)
+_SOURCE_SENTENCE_RE = re.compile(r"[^.\n]+")
+
+
+def unsupported_reasons(sentence: str, source: Optional[str]) -> list[str]:
+    """A founding / existence reason ('The institute was established because …', '… exists because …') for a thing
+    whose purpose the source states in its own words ('The institute was established to ensure …'): the 'because'
+    replaces the seed's purpose with another fact. Only when the subject (its last content words before the verb)
+    is the subject of one of the source's purpose sentences, and the source has no founding 'because' of its own; a
+    reason for something the source gives no purpose for ('The preserve exists because the takin kept returning') is
+    background the SOURCE FIDELITY rule allows, and is not flagged."""
+    if not sentence or _FOUNDING_REASON_RE.search(source or ""):
+        return []
+    purposes = []  # the subject of each source purpose sentence: its last content words before the verb
+    for m in _SOURCE_SENTENCE_RE.finditer(source or ""):
+        p = _PURPOSE_RE.search(m.group(0))
+        if p:
+            purposes.append(set(content_words(m.group(0)[:p.start()])[-4:]))
+    out = []
+    for m in _FOUNDING_REASON_RE.finditer(sentence):
+        subject = set(content_words(sentence[:m.start()])[-3:])
+        if subject and any(subject & p for p in purposes):
+            out.append(" ".join(m.group(0).split()))
+    return out
+
+
 # A pronoun or demonstrative that needs the sentence before it. 'This dzong…' (a determiner and a
 # noun) is fine; 'This is…', 'It was…', 'They…', 'What they find…' are not, at a piece or paragraph
 # opening (S234 #19 opened on "What they find at Lake Khövsgöl is…" after a repair cut its referent).
@@ -1725,6 +1793,55 @@ AI_TELL_LINE_RES = tuple(re.compile(p, re.I) for p in (
     # the hyphenated adjective only: 'The museum is easy to navigate with a stroller.' is an access fact
     r"\beasy-to-navigate\b",
     r"\b(?:visible|obvious|clear|apparent)\s+the\s+moment\s+you\b",
+    # AA-790 round 3 (S252 re-panel of round 2, AI-tells 5.33) — the verdicts and aphorisms the judges still quoted
+    # that the pass cannot rewrite in code (each with negative tests: test_aa790_writer_round3.py).
+    # 'After a long ride, that's a detail worth knowing.' (not 'The detail worth knowing is the closing time.')
+    r"\b(?:that|this|it)(?:['’]s|\s+is)\s+(?:a|the|one)\s+(?:detail|point|fact|thing)\s+worth\s+(?:knowing|noting"
+    r"|remembering|holding|keeping\s+in\s+mind|bearing\s+in\s+mind)\b",
+    # 'The word "may" is worth noting: …' (a comment on the text itself)
+    r"^the\s+word\s+[\"“'‘][^\"”'’]{1,30}[\"”'’]\s+is\s+worth\s+(?:noting|stressing|underlining|pausing\s+on)\b",
+    r"\bworth\s+pausing\s+(?:on|over)\b",
+    # 'Those numbers matter less than what they produce: …'
+    r"^(?:those|these|the)\s+(?:numbers|figures|facts|statistics|details)\s+matter\s+less\s+than\b",
+    # 'This is the section of the journey that rewards the greatest attention.', 'This is the section worth the
+    # most of your attention on Day 2' (not 'This is the section that crosses the pass.')
+    r"^(?:this|that|it)\s+is\s+the\s+(?:section|part|stretch|stage|leg)\b(?:\s+of\s+the\s+(?:journey|trip|route))?"
+    r"\s+(?:that\s+(?:rewards|deserves|earns|repays)|worth)\b"
+    r"|\brewards?\s+(?:the\s+)?(?:greatest|most|closest|close|careful|real)\s+attention\b",
+    # 'Kuang Si Falls is where the route begins to reveal its logic.'
+    r"\b(?:reveals?|begins?\s+to\s+reveal|starts?\s+to\s+reveal)\s+(?:its|their)\s+"
+    r"(?:logic|purpose|true\s+character)\b",
+    # 'earns its place as the anchor of this route', 'the place earns both names', 'makes the swim feel earned'
+    # (not 'earned both names from …')
+    r"\bearns?\s+(?:its|their)\s+place\s+as\b|\bearns?\s+(?:both|all)\s+(?:of\s+)?(?:its\s+|their\s+)?"
+    r"(?:names|titles)\b(?!\s+(?:from|for)\b)|\bfeels?\s+earned\b",
+    # 'The trip begins the way most good journeys should: …'
+    r"\bthe\s+way\s+(?:most|all|every|any)\s+(?:good|great|the\s+best)\s+(?:[\w-]+\s+)?(?:should|do|does)\b",
+    # 'It asks something of a young mind in a way that a photograph does not.', '… in a way a market stall cannot
+    # replicate', '… something that no classroom exercise replicates'
+    r"\bin\s+a\s+way\s+(?:that\s+)?(?:a|an|no)\s+(?:[\w'’-]+\s+){1,3}?(?:does\s+not|doesn['’]t|cannot|can['’]t"
+    r"|could\s+not|couldn['’]t)\b",
+    r"\bthat\s+no\s+(?:[\w'’-]+\s+){1,3}?(?:can\s+)?(?:replicates?|substitutes?\s+for|replaces?|rivals?)\b",
+    # 'the training carries real weight', 'carries weight because …' (not 'carries weight of up to 15 kg', 'carry
+    # weight up the pass')
+    r"\bcarries\s+(?:real\s+|genuine\s+|particular\s+|special\s+)?weight\b(?!\s+(?:of|limits?|up|down|on|in|for)\b)",
+    r"\blong\s+after\s+the\s+(?:day|trip|journey|visit|holiday|trek)\s+(?:is\s+over|ends|has\s+ended)\b",
+    # 'resets a family's sense of scale'
+    r"\bresets?\s+(?:[\w'’-]+\s+){0,2}?sense\s+of\s+(?:scale|time|proportion|place)\b",
+    # 'The geography is the lesson, and every stop builds on it.', 'Each step adds a layer to the same story'
+    r"^the\s+(?:geography|landscape|land|journey|route|trip|terrain|history|place)\s+is\s+the\s+lesson\b"
+    r"|\b(?:every|each)\s+(?:stop|day|stage|step)\s+builds\s+on\s+(?:it|this|that)\b"
+    r"|\badd(?:s|ing)\s+(?:a|another)\s+layer\s+to\s+(?:the\s+same\s+story|what\b)",
+    # 'Their presence here is a product of it.' (the whole sentence)
+    r"^(?:their|its|this|that)\s+[\w-]+(?:\s+here)?\s+is\s+(?:a|the)\s+(?:product|result|consequence)\s+of\s+(?:it|this"
+    r"|that)\s*[.!]?$",
+    r"\bis\s+part\s+of\s+what\s+(?:the|this|that)\s+(?:[\w-]+\s+)?means\b",
+    r"\bclos(?:es|ing)\s+the\s+circle\b",
+    # 'For families travelling with children, that context matters.', 'That context changes what a visit means.'
+    r"^(?:for\s+[^,]{1,80},\s+)?(?:that|this)\s+(?:single\s+)?(?:context|fact|detail|distinction|background"
+    r"|connection)\s+(?:matters\s*[.!]?$|changes\s+(?:how|what|the\s+way)\b)",
+    # 'There is no performance in this, no arranged demonstration.'
+    r"^there\s+is\s+no\s+(?:performance|staging|show|pretence|pretense|script|artifice)\b",
 ))
 
 

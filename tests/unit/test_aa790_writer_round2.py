@@ -404,7 +404,9 @@ def test_review_r2_prompt_bounds_reader_action_to_the_seed():
 
 
 def test_review_r2_writer_prompt_version():
-    assert service.WRITER_PROMPT_VERSION == "afc08095"  # round 2 + review (round 2 as pushed: 751b0a34)
+    # round 2 + review was afc08095 (round 2 as pushed: 751b0a34); round 3 (S252) moved it on, see
+    # test_aa790_writer_round3.test_writer_prompt_version_moves_off_round_two
+    assert service.WRITER_PROMPT_VERSION not in ("751b0a34", "afc08095")
 
 
 # ---------------------------------------------------------------- linear time (CodeQL py/polynomial-redos)

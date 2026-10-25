@@ -30,6 +30,12 @@ also takes 'do' denials with a personifying verb ("does not shout about itself. 
 ruin. It works."), "is not incidental" verdicts, verdict lead-ins before a colon ("The circle is complete: …") and
 runs of three short sentences built the same way; the rest (internal labels, "is where the trip gets going", "worth
 holding", invented visit logistics …) is residue in ``hygiene.AI_TELL_LINE_RES``.
+
+Round 3 (S252 blind 3-arm panel of round 2: AI-tells 5.33, bar 5.5): the denial frames round 2 refused or missed are
+joined or cut ("This is not a landscaped garden. It is a place …" → "This is a place …"; "The story does not begin
+in A. It begins in B, …"; "…: not a relic, but a working institution"; staging tails "rather than staged", "not
+just a view of them"; "offers something rarer than scenery: …"; "That single fact changes how you think …"), a
+heading built from the angle brief's words loses that part, and more verdicts go to the residue list.
 """
 from __future__ import annotations
 
@@ -41,7 +47,7 @@ from services.acp_content_writing import hygiene
 from services.acp_content_writing.hygiene import content_words, cta_norm, fold, sentence_spans, tidy_after_cut
 from services.acp_shared.citation_tags import TAG
 
-AI_TELLS_VERSION = "ai_tells.v2"  # v2: AA-790 round 2 (S251 re-panel)
+AI_TELLS_VERSION = "ai_tells.v3"  # v2: AA-790 round 2 (S251 re-panel); v3: round 3 (S252 re-panel)
 
 # ---------------------------------------------------------------- the brief (rendered into SYSTEM_PROMPT)
 
@@ -166,12 +172,20 @@ _PRONOUN_SUBJECTS = frozenset({"it", "this", "that", "these", "those", "they", "
 class TellContext:
     """What the pass needs about one piece. ``source`` is the seed's own lines plus the Facts (a verdict line that
     names a seed fact is not cut); ``keep_words`` are the brand's signature words (folded), never stripped;
-    ``ignore`` the brand-name words the integrity check skips (``hygiene.brand_words``)."""
+    ``ignore`` the brand-name words the integrity check skips (``hygiene.brand_words``); ``angle_text`` the whole
+    chosen angle (name, why it works, formula fit, best final style: round 3, a heading lifted from the brief)."""
     cta: Optional[str] = None
     angle_name: Optional[str] = None
     source: str = ""
     keep_words: frozenset = frozenset()
     ignore: frozenset = frozenset()
+    angle_text: str = ""
+
+
+def angle_text(angle: Optional[dict]) -> str:
+    """The chosen angle's own words (name, why it works, formula fit, best final style) for ``TellContext``."""
+    return " ".join(str((angle or {}).get(k) or "") for k in ("name", "why_it_works", "formula_fit",
+                                                               "best_final_style")).strip()
 
 
 @dataclass(frozen=True)
@@ -314,7 +328,8 @@ _NOT_BUT_RE = re.compile(
     r"\b(?P<lead>(?:is|are|was|were|be|been|being)[ \t]+)?not[ \t]+"
     r"(?!only\b|just\b|merely\b|simply\b|because\b|that\b|even\b|least\b|much\b|many\b|enough\b|anything\b"
     r"|nothing\b|everything\b|all\b|to\b)"
-    r"(?P<x>[^.,;:!?()\"“”\n]{1,70}?)[ \t]+but[ \t]+(?:rather[ \t]+)?(?!also\b|not\b|only\b)(?P<y>\w+)", re.I)
+    r"(?P<x>[^.,;:!?()\"“”\n]{1,70}?)(?P<comma>,)?[ \t]+but[ \t]+(?:rather[ \t]+)?(?!also\b|not\b|only\b)(?P<y>\w+)",
+    re.I)
 _PREPOSITIONS = frozenset("by for with in on at from through to into as about".split())
 # AA-790 review: "is not difficult but it is long" / "is not paved but the jeeps manage it fine": after "but" a new
 # clause starts, so cutting "not X but" leaves "is it is long". A subject pronoun, a finite verb or an object
@@ -360,6 +375,14 @@ def _parallel_copula(x_words: list[str], y_words: list[str]) -> bool:
     return len(y_words) == 2 and (y0 in _DEGREE_WORDS or y0.endswith("ly"))
 
 
+def _y_ends_sentence(s: str, start: int) -> bool:
+    """Y's phrase runs to the end of the sentence (only closing punctuation after it) and is short: after ', but'
+    a new clause often starts ('is not a museum, but the monks welcome visitors'), so the comma form is folded only
+    when Y is the sentence's last phrase ('…: not a relic, but a working institution.')."""
+    m = _Y_PHRASE_RE.match(s, start)
+    return len(m.group(0).split()) <= 5 and not s[m.end():].strip(" \t.!?\"'”’)")
+
+
 def _not_but(s: str, src: frozenset) -> tuple[str, list[str]]:
     if _protected(s):
         return s, []
@@ -368,13 +391,21 @@ def _not_but(s: str, src: frozenset) -> tuple[str, list[str]]:
         hit = None
         for m in _NOT_BUT_RE.finditer(s):
             x_words = m.group("x").split()
-            if not x_words or len(x_words) > 9 or _seed_fact(m.group("x"), src):
+            # AA-790 round 3: the frame may also follow a colon ('what a dzong is: not a relic, but a working
+            # institution'); with a comma before 'but', only when Y ends the sentence (_y_ends_sentence). In the colon
+            # frame a one-word X the seed uses elsewhere ('the sacred relic of …') is not the seed's contrast.
+            colon = not m.group("lead") and s[:m.start()].rstrip().endswith(":")
+            if not x_words or len(x_words) > 9:
+                continue
+            if _seed_fact(m.group("x"), src) and not (colon and len(content_words(m.group("x"))) < 2):
                 continue
             if _practical(m.group("x")):
                 continue
             y = m.group("y").lower()
             same_prep = x_words[0].lower() in _PREPOSITIONS and x_words[0].lower() == y
-            copula = bool(m.group("lead")) and _parallel_copula(x_words, _y_phrase(s, m.start("y")))
+            copula = (bool(m.group("lead")) or colon) and _parallel_copula(x_words, _y_phrase(s, m.start("y")))
+            if m.group("comma") and not _y_ends_sentence(s, m.start("y")):
+                continue
             if same_prep or copula:
                 hit = m
                 break
@@ -477,7 +508,68 @@ def _lead_in(s: str, src: frozenset) -> tuple[str, list[str]]:
     return _cap(m.group("rest")), ["verdict lead-in"]
 
 
-_WORD_RULES: tuple[Callable, ...] = (_labels, _not_because, _not_but, _not_tail, _inline_pair, _lead_in)
+# AA-790 round 3 (S252 re-panel of round 2: AI-tells 5.33, bar 5.5) — a contrast tail whose denied half is a
+# staging word: "… is direct rather than staged.", "… a colour produced by the limestone rather than by any trick of
+# the light.", "… a long-standing condition rather than an incidental detail.", "… to move through a place, not just
+# pass through it." Closed lists, because a 'rather than' tail is often a fact ("by bus rather than by boat", "lunch
+# at a local home rather than a restaurant"): STAGING words deny that a thing is put on for show, which no seed
+# states as a fact; SPECTATOR words follow 'not just / merely / only / simply' ('not just a view of them'), where
+# the asserted half (a view, a glimpse) carries no fact either. Only at the sentence end; the main clause stays.
+_STAGING = (r"relics?|museum[ \t]+pieces?|backdrops?|stage[ \t]+sets?|set[ \t]+pieces?|shows?|spectacles?"
+            r"|performances?|demonstrations?|theme[ \t]+parks?|photo[ \t]+(?:opportunit(?:y|ies)|ops?)"
+            r"|footnotes?|afterthoughts?|curiosit(?:y|ies)|coincidences?|incidental[ \t]+(?:details?|features?)"
+            r"|tricks?[ \t]+of[ \t]+the[ \t]+light|staged|scripted|choreographed")
+_SPECTATOR = (r"views?|glimpses?|snapshots?|photos?|photographs?|postcards?|backdrops?"
+              r"|pass(?:ing)?[ \t]+through(?:[ \t]+(?:it|them))?")
+# Starts at the keyword after a blank (a lookbehind, never a leading blank run: CodeQL py/polynomial-redos).
+_STAGING_TAIL_RE = re.compile(
+    r"(?<=[ \t])(?:(?:rather[ \t]+than|instead[ \t]+of|not)[ \t]+(?:(?:by|as)[ \t]+)?(?:(?:a|an|any|the|some)[ \t]+)?"
+    rf"(?!(?:just|merely|only|simply)\b)(?:[\w'’-]+[ \t]+){{0,2}}?(?:{_STAGING})"
+    r"|not[ \t]+(?:just|merely|only|simply)[ \t]+(?:(?:a|an|the|any)[ \t]+)?(?:[\w'’-]+[ \t]+)?"
+    rf"(?:{_SPECTATOR}))"
+    r"(?:[ \t]+of[ \t]+(?:it|them|(?:the|a|an|this|that)[ \t]+[\w'’-]+))?"
+    r"(?P<end>[ \t]*[.!?]+[\"'”’)]*)$", re.I)
+
+
+def _staging_tail(s: str, src: frozenset) -> tuple[str, list[str]]:
+    m = _STAGING_TAIL_RE.search(s)
+    if not m:
+        return s, []
+    head = s[:m.start()].rstrip(" \t")
+    part = m.group(0)
+    # a bare 'not' tail only after a comma: 'The dance is not staged.' would read 'The dance is.'
+    if part[:3].lower() == "not" and not head.endswith(","):
+        return s, []
+    head = head.rstrip(",").rstrip()
+    # the tail only: 'Excursions are included, and the contact is direct rather than staged.' keeps its rule word
+    if (len(_words(head)) < 4 or _protected(part) or _practical(part) or _DIGIT_RE.search(part)
+            or _seed_fact(part, src)):
+        return s, []
+    return head + m.group("end").strip(), ["staging contrast tail"]
+
+
+# "… the Tsaatan settlements offer something rarer than scenery: a way of life …" / "… offers something specific:
+# the chance to …" / "… offers something that no guided commentary can substitute: a person's own account …" — a
+# build-up before a colon. The verb keeps what follows the colon as its object: "offer a way of life …".
+_SOMETHING_RE = re.compile(
+    r"(?<=[ \t])(?:offers?|offered|gives?|provides?|holds?|brings?|adds?|carries|reveals?|shows?)[ \t]+"
+    r"(?P<lead>something[ \t]+(?:(?:rarer|richer|deeper|better|more[ \t]+[\w-]+|other|specific|concrete|particular"
+    r"|different|rare|special|unusual|valuable)(?:[ \t]+than[ \t]+(?:(?:a|an|the|just|mere|any)[ \t]+)?[\w'’-]+"
+    r"(?:[ \t]+[\w'’-]+)?)?"
+    r"|that[ \t]+no[ \t]+(?:[\w'’-]+[ \t]+){1,4}?(?:can|could|will)(?:[ \t]+not|not)?[ \t]+"
+    r"(?:substitute|replicate|replace|match|rival)(?:[ \t]+for)?)"
+    r"[ \t]*:[ \t]+)(?=(?:a|an|the|its|their|his|her|our|your)\b)", re.I)
+
+
+def _something_lead(s: str, src: frozenset) -> tuple[str, list[str]]:
+    m = _SOMETHING_RE.search(s)
+    if not m or _practical(m.group("lead")) or _seed_fact(m.group("lead"), src):
+        return s, []
+    return s[:m.start("lead")] + s[m.end("lead"):], ["'something …:' build-up"]
+
+
+_WORD_RULES: tuple[Callable, ...] = (_labels, _not_because, _not_but, _not_tail, _inline_pair, _lead_in,
+                                     _staging_tail, _something_lead)
 
 
 def _rewrite_sentence(clean: str, ctx: TellContext, src: frozenset, *, prose: bool) -> tuple[str, list[str]]:
@@ -541,7 +633,9 @@ def _pair(s1: str, s2: str, src: frozenset) -> Optional[str]:
         return None
     subj = d.group("subj").strip()
     if _subject_is_pronoun(subj):
-        return ""
+        if _NOT_ONLY_RE.search(d.group(0)):
+            return ""  # 'This is not simply a lake.' asserts the lake: never folded into a join (round 1 cuts it)
+        return _demonstrative_join(subj, a.group("pro"), a.group("verb"), " " + a.group("y"), copula=True)
     verb = a.group("verb")
     plural = d.group("cop").lower() in ("are", "were")
     if verb.lower() in ("is", "are", "was", "were"):
@@ -554,9 +648,43 @@ def _pair(s1: str, s2: str, src: frozenset) -> Optional[str]:
     return f"{subj} {verb} {a.group('y')}"
 
 
+_DEMONSTRATIVES = {"this": False, "that": False, "these": True, "those": True}  # → plural
+_PRONOUN_PLURAL = {"it": False, "this": False, "that": False, "they": True, "these": True, "those": True}
+
+
+def _demonstrative_join(subj: str, pro: str, verb: str, y: str, *, copula: bool) -> str:
+    """AA-790 round 3 — a demonstrative denial + an affirmation on another pronoun: "This is not a landscaped
+    memorial. It is a place where …" → "This is a place where …". Cutting the denial (round 1) left the paragraph
+    opening on "It is …" with no referent, so the integrity check refused it and the pair stayed (S252 re-panel).
+    The joined sentence keeps the denial's own subject, so its referent is unchanged. '' (cut the denial, as
+    before) for the same pronoun twice ('It is not … It is …' cut = join), for 'it' / 'they' / 'such' subjects, or
+    when the two pronouns differ in number."""
+    s, p = subj.lower(), pro.lower()
+    if s not in _DEMONSTRATIVES or s == p or _DEMONSTRATIVES[s] != _PRONOUN_PLURAL.get(p, not _DEMONSTRATIVES[s]):
+        return ""
+    if copula and verb.lower() in ("is", "are", "was", "were"):
+        past = verb.lower() in ("was", "were")
+        verb = ("were" if _DEMONSTRATIVES[s] else "was") if past else ("are" if _DEMONSTRATIVES[s] else "is")
+    return f"{subj} {verb}{y}"  # ``y`` carries its own end punctuation
+
+
+# AA-790 round 3: a passive denial states what happened ('They were not saved.' about monasteries destroyed in a
+# purge): a fact, never a lone-denial cut. The denied part opens on a past participle.
+_PARTICIPLES = frozenset("""built made done known seen taken given kept held lost left found born sold shown spared
+rebuilt destroyed""".split())
+
+
+def _is_participle(word: str) -> bool:
+    w = word.lower()
+    return w in _PARTICIPLES or (len(w) > 4 and w.endswith("ed"))
+
+
 def _lone_denial(s: str, src: frozenset) -> bool:
     d = _DENIAL_RE.match(_expand(s))
     if not d or "more than" in d.group(0).lower() or len(_words(s)) > 9:
+        return False
+    x_words = d.group("x").split()
+    if x_words and _is_participle(x_words[0]):
         return False
     if (_protected(s) or _practical(d.group("x")) or _DIGIT_RE.search(s) or _NAME_AFTER_FIRST_RE.search(s)
             or _seed_fact(d.group("x"), src)):
@@ -721,6 +849,61 @@ def _pair2(s1: str, s2: str, src: frozenset) -> Optional[str]:
     return f"{d.group('subj').strip()} {a_verb.group('verb')}{a_verb.group('y')}."
 
 
+def _pronoun_verb_pair(s1: str, s2: str, src: frozenset) -> Optional[str]:
+    """AA-790 round 3 — a demonstrative copula denial of a noun phrase + an 'It' / 'They' affirmation with any
+    verb and any length: "This is not a single dramatic revelation. It builds across several days, …" → "This
+    builds across several days, …". The lone-denial cut left "It builds …" with no referent (refused by the
+    integrity check). The denied part goes only (round-2 guards: a/an/the noun phrase, no rule / practical /
+    limit word, digit, name or seed fact; never 'not only'); the affirmation is kept whole."""
+    e1, e2 = _expand(s1), _expand(s2)
+    d, a = _DENIAL_RE.match(e1), _AFFIRM_VERB_RE.match(e2)
+    if not d or not a or "more than" in d.group(0).lower() or _NOT_ONLY_RE.search(d.group(0)):
+        return None
+    if len(_words(s1)) > 12 or a.group("verb") in _NOT_A_VERB or not _words(a.group("y")):
+        return None
+    x_words = d.group("x").split()
+    if not x_words or x_words[0].lower() not in ("a", "an", "the") or not _denied_ok(d.group("x"), s1, src):
+        return None
+    return _demonstrative_join(d.group("subj").strip(), a.group("pro"), a.group("verb"), a.group("y") + ".",
+                               copula=False) or None
+
+
+# "Bhutan's cultural story does not begin in Thimphu. It begins in the east, where …" — the same verb moved from
+# one place to another. Only for an abstract, narrative subject (story, history, heritage …): "The trek does not
+# begin in Paro. It begins in Haa." is logistics and is never touched; the verb list is closed.
+_NARRATIVE_NOUNS = frozenset("""story stories history histories tale tales narrative narratives heritage significance
+meaning appeal interest character identity roots""".split())
+_RELOCATE_VERBS = frozenset("begin start end lie live rest".split())
+_RELOCATE_X_RE = re.compile(r"^[ \t]+(?P<prep>in|at|on|with|from)[ \t]+[^,;:!?.\n]{1,60}$")
+
+
+def _relocation_pair(s1: str, s2: str, src: frozenset) -> Optional[str]:
+    """The joined sentence ('<subject> begins in the east, …'), or None. The affirmation must repeat the verb and
+    open on the same preposition; the denied place may be a name (the point of the frame), but no rule / practical
+    / limit word, no digit and not the seed's own words."""
+    e1, e2 = _expand(s1), _expand(s2)
+    d, a = _DO_DENIAL_RE.match(e1), _AFFIRM_VERB_RE.match(e2)
+    if not d or not a or len(_words(s1)) > 14:
+        return None
+    lemmas = _lemmas(d.group("verb"))
+    if not lemmas & _RELOCATE_VERBS or not _lemmas(a.group("verb")) & lemmas:
+        return None
+    subj_words = _words(d.group("subj"))
+    if not subj_words or subj_words[-1].lower() not in _NARRATIVE_NOUNS:
+        return None
+    mx = _RELOCATE_X_RE.match(d.group("x"))
+    if not mx or not a.group("y").lower().startswith(f" {mx.group('prep').lower()} "):
+        return None
+    aux, pro = d.group("aux"), a.group("pro")
+    if (aux == "does" and pro != "It") or (aux == "do" and pro != "They"):
+        return None
+    part = d.group("verb") + d.group("x")
+    if (_protected(s1) or _practical(part) or _LIMIT_RE.search(part) or _DIGIT_RE.search(part)
+            or _seed_fact(part, src) or _BACK_REFERENCE & {w.lower() for w in _words(a.group("y"))}):
+        return None
+    return f"{d.group('subj').strip()} {a.group('verb')}{a.group('y')}."
+
+
 # "This kind of visit does not present the village as a stage." — a lone 'do' denial with a pronoun or
 # 'This (kind of) N' subject and a personifying verb.
 _LONE_DO_SUBJ_RE = re.compile(r"^(?:this|that|these|those|it|they|(?:this|that|these|those)(?:[ \t]+(?:kind|sort|type)"
@@ -744,6 +927,9 @@ def _lone_do_denial(s: str, src: frozenset) -> bool:
 _MEANT_RE = re.compile(
     r"^(?:The|This|That|These|Those|Such|Its|Their)[ \t][^,;:!?\n]{1,60}?[ \t]+(?:is|are|was|were)[ \t]+"
     r"(?:not[ \t]+(?:incidental|accidental|arbitrary|random|a[ \t]+coincidence|an[ \t]+accident|by[ \t]+chance)"
+    # AA-790 round 3: 'The position is not incidental to its significance.'
+    r"(?:[ \t]+to[ \t]+(?:its|their|the)[ \t]+(?:significance|meaning|importance|story|character|appeal|identity"
+    r"|history|role))?"
     r"|no[ \t]+(?:accident|coincidence)|(?:entirely[ \t]+|quite[ \t]+|fully[ \t]+)?(?:deliberate|intentional))[.!]$")
 
 
@@ -760,6 +946,21 @@ def _meant_verdict(s: str, src: frozenset) -> bool:
     return (bool(_MEANT_RE.match(_expand(s))) and len(_words(s)) <= 12 and not _DIGIT_RE.search(s)
             and not _NAME_AFTER_FIRST_RE.search(s) and not _SCHEDULE_RE.search(s)
             and not _protected(s) and not _practical(s) and not _seed_fact(s, src))
+
+
+# AA-790 round 3 — "That single fact changes how you think about the country." A whole-sentence verdict on the
+# sentence before it, about the reader's view ('how you / families / a visit …'); "That fact changes how the
+# festival is scheduled." is a fact and stays. Never the first sentence or a section's only one (as every cut).
+_CHANGES_VERDICT_RE = re.compile(
+    r"^(?:That|This)[ \t]+(?:(?:single|one|simple|small|last)[ \t]+)?(?:fact|detail|number|figure|statistic|point"
+    r"|distinction|context|contrast)[ \t]+(?:alone[ \t]+)?(?:changes|reshapes|reframes|shifts|alters|transforms"
+    r"|upends)[ \t]+(?:how|what|the[ \t]+way)[ \t]+(?:you|we|a[ \t]+family|families|travell?ers|visitors|people"
+    r"|children|a[ \t]+visit|the[ \t]+visit)\b[^.!?\n]{0,80}[.!]$")
+
+
+def _changes_verdict(s: str) -> bool:
+    return (bool(_CHANGES_VERDICT_RE.match(s)) and len(_words(s)) <= 16 and not _DIGIT_RE.search(s)
+            and not _protected(s) and not _practical(s))
 
 
 # "The forts are still guarded. The shrines are still lit. The mills are still turning." — three or more short
@@ -829,6 +1030,33 @@ def _angle_heading(title: str, angle_words: set) -> Optional[str]:
         return None
     kept = [p for p, h in zip(parts, hit) if not h and p]
     return ": ".join(kept)
+
+
+# AA-790 round 3 — "## Northern Mongolia and the Logic of Convergence": the angle's best final style said "the idea
+# of convergence … as the organising logic"; the writer lifted two brief words into a heading and the angle-name
+# check (_angle_heading) did not see it (the angle's NAME was different). A heading part whose words are the brief's
+# and not the seed's is a brief label: the part goes, the place stays.
+_AND_THE_RE = re.compile(r"(?<![ \t])[ \t]+and[ \t]+(?=the[ \t])", re.I)  # starts where a blank run starts
+
+
+def _brief_heading(title: str, brief_words: set, src_words: frozenset) -> Optional[str]:
+    """The heading without its brief-label part ('Northern Mongolia and the Logic of Convergence' → 'Northern
+    Mongolia'), or None. A part (split at ':' and at ' and the ') is a brief label when at least two of its content
+    words are not in the seed + Facts and every such word is in the chosen angle's text. Never empties a heading."""
+    if not brief_words:
+        return None
+    parts, cut = [], False
+    for part in title.split(":"):
+        kept = []
+        for sub in _AND_THE_RE.split(part.strip()):
+            novel = [w for w in content_words(sub) if w not in src_words]
+            if len(novel) >= 2 and all(w in brief_words for w in novel):
+                cut = True
+                continue
+            kept.append(sub)
+        if kept:
+            parts.append(" and ".join(kept))
+    return ": ".join(parts) if cut and parts else None
 
 
 def _cta_heading(title: str, cta: Optional[str]) -> bool:
@@ -928,6 +1156,13 @@ def _structure_edits(text: str, ctx: TellContext) -> list[Edit]:
             if joined is None:  # AA-790 round 2: 'do' denials and short verb affirmations
                 joined = _pair2(sp["clean"], spans[j]["clean"], source_words)
                 join_kind = "denial + verb affirmation joined"
+            if not joined:  # AA-790 round 3: a moved narrative verb, a demonstrative + a long verb affirmation
+                for fn, kind in ((_relocation_pair, "denial + relocation joined"),
+                                 (_pronoun_verb_pair, "denial + verb affirmation joined")):
+                    alt = fn(sp["clean"], spans[j]["clean"], source_words)
+                    if alt:
+                        joined, join_kind = alt, kind
+                        break
             if joined == CUT_BOTH:
                 if i != first and _section_has_other_prose(spans, i, also=j):
                     nxt = spans[j + 1] if j + 1 < len(spans) else None
@@ -952,7 +1187,8 @@ def _structure_edits(text: str, ctx: TellContext) -> list[Edit]:
         if i == first or not _section_has_other_prose(spans, i):
             continue
         kind = ("lone denial" if _lone_denial(sp["clean"], source_words) or _lone_do_denial(sp["clean"], source_words)
-                else "verdict line" if _verdict(sp["clean"], source_words) or _meant_verdict(sp["clean"], source_words)
+                else "verdict line" if (_verdict(sp["clean"], source_words) or _meant_verdict(sp["clean"], source_words)
+                                        or _changes_verdict(sp["clean"]))
                 else None)
         if kind:
             nxt = spans[i + 1] if i + 1 < len(spans) else None
@@ -965,6 +1201,8 @@ def _structure_edits(text: str, ctx: TellContext) -> list[Edit]:
 def _heading_edits(text: str, ctx: TellContext) -> list[Edit]:
     spans = sentence_spans(text)
     angle_words = set(content_words(ctx.angle_name or "", ctx.ignore))
+    brief_words = set(content_words(" ".join(t for t in (ctx.angle_name, ctx.angle_text) if t), ctx.ignore))
+    src_words = _source_words(ctx)
     out: list[Edit] = []
     for k, sp in enumerate(spans):
         if sp["kind"] == "heading" and not sp["in_faq"]:
@@ -973,11 +1211,15 @@ def _heading_edits(text: str, ctx: TellContext) -> list[Edit]:
             if _cta_heading(title, ctx.cta):
                 out.append(Edit(sp["start"], sp["end"], "", "heading repeats the CTA", title))
                 continue
+            marks = raw[:len(raw) - len(raw.lstrip("#"))]
             new = _angle_heading(title, angle_words)
             if new is not None:
-                marks = raw[:len(raw) - len(raw.lstrip("#"))]
                 out.append(Edit(sp["start"], sp["end"], f"{marks} {new}" if new else "", "angle label as heading",
                                 title))
+                continue
+            new = _brief_heading(title, brief_words, src_words)
+            if new:
+                out.append(Edit(sp["start"], sp["end"], f"{marks} {new}", "brief words as heading", title))
         elif sp["kind"] == "prose" and not sp["in_faq"] and _is_cta(sp["clean"], ctx):
             prev = next((spans[p] for p in range(k - 1, -1, -1) if spans[p]["kind"] in ("prose", "heading")), None)
             # only the literal CTA protects it here: a sentence that restates the CTA is CTA-like by design
@@ -1134,4 +1376,5 @@ def lead_focus(seed: Optional[str], index: int) -> Optional[str]:
 
 
 __all__ = ["AI_TELLS_VERSION", "BLOG_HEADING_RULE", "PROMPT_RULES", "SOCIAL_AUDIENCE_RULE", "VISIT_DETAIL_RULE",
-           "TellContext", "brand_voice_rule", "census", "lead_focus", "residue", "rewrite", "seed_facts"]
+           "TellContext", "angle_text", "brand_voice_rule", "census", "lead_focus", "residue", "rewrite",
+           "seed_facts"]

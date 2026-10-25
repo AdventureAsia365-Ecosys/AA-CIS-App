@@ -317,3 +317,144 @@ the facts that must stay and the tells that must still go) in `tests/unit/test_a
   lookbehind.
 - The linear-time test covers every regex this PR adds or changes (the ai_tells round-2 patterns and every
   `AI_TELL_LINE_RES` entry after the round-1 'asks … of' line): 12 adversarial 8000-char inputs, < 50 ms each.
+
+## Round 3 (S252)
+
+Input: a blind 3-arm panel (same judges; pilot / round 1 / round 2, 20 pieces each) on round 2 as live
+(`writer_prompt_version` `afc08095`): AI-tells 5.33 (bar 5.5, not met; blog 4.96, LinkedIn 6.17, Atlas & Hearth blog
+4.4), brand voice 7.33 (met, every tenant ≥ 7: must not regress), source fidelity 7.25 (LinkedIn 7.08 vs pilot 8.83:
+not recovered), reader value 7.28. The round-2 pass log showed why the top denial frames survived: it SAW them but
+its only move (cut the denial) left a paragraph opening on "It …", so the integrity check refused the edit
+("skipped denial before its affirmation (breaks the text)"). Same constraints: gate freeze, writer side, precision
+first, delete / join only, never drop a practical fact, a restriction, a superlative of access or a 'not only'
+assertion. Test sentences are synthetic; no tenant text in the repo.
+
+### Decisions
+
+- **R3-D1 — join on the denial's own subject instead of cutting it.** A demonstrative denial + an affirmation on
+  another pronoun: "This is not A. It is B …" → "This is B …" (copula, `_pair` → `_demonstrative_join`); "This is not
+  A. It builds …" → "This builds …" (any verb, any length, `_pronoun_verb_pair`). The referent is unchanged, so the
+  integrity check accepts it. The same pronoun twice ("It is not A. It is B.") keeps the round-1 cut (identical
+  text, stable logs); 'not only / just / simply / merely' is never folded (it asserts A); round-2 `_denied_ok`
+  guards (rule / practical / limit word, digit, name, seed fact) on A.
+- **R3-D2 — a moved narrative verb** ("The valley's story does not begin in A. It begins in B, …" → "The valley's
+  story begins in B, …", `_relocation_pair`): only for an abstract subject (story, history, heritage, significance,
+  meaning, appeal, roots …), a closed verb list (begin, start, end, lie, live, rest), the same verb and the same
+  preposition in the affirmation, no back-reference. "The trek / ferry does not begin / stop in A" is logistics and
+  never matches. The denied place may be a name (that is the frame); the seed-fact check reads verb + place. A join
+  is allowed on the first sentence (the hook is kept, only the denial goes).
+- **R3-D3 — 'not A, but B' after a colon, and with a comma** (`_NOT_BUT_RE` gains an optional comma group): "what a
+  dzong is: not a relic, but a working institution" → "…: a working institution"; "…, not as artefacts, but as
+  living practice" → "…, as living practice". With a comma the fold happens only when B is the sentence's last phrase
+  of ≤ 5 words (`_y_ends_sentence`: after ", but" a new clause often starts). In the colon frame a one-word A the
+  seed uses elsewhere ("the sacred relic of …") does not count as the seed's contrast.
+- **R3-D4 — staging contrast tails** (`_staging_tail`): "rather than / instead of / , not" + a closed STAGING list
+  (relic, museum piece, backdrop, show, spectacle, performance, demonstration, footnote, coincidence, incidental
+  detail, trick of the light, staged, scripted, choreographed …) at the sentence end, and ", not just / merely /
+  only / simply" + a closed SPECTATOR list (view, glimpse, photo, postcard, backdrop, pass through it). These words
+  deny that a thing is put on for show or only looked at: no seed fact sits in them, so the 'not just' half is not a
+  'not only' fact. Rule / practical / digit / seed-fact checks read the tail only ("Visits are included, and the
+  contact is direct rather than staged." → "…is direct."). A bare 'not' tail needs a comma ("The dance is not
+  staged." would read "The dance is.").
+- **R3-D5 — 'something … :' build-ups** (`_something_lead`): "offer something rarer than scenery: a way of life" →
+  "offer a way of life"; also "something specific / concrete / different:" and "something that no X can substitute:".
+  Only after offer / give / provide / hold / bring / add / carry / reveal / show and before an article or possessive.
+- **R3-D6 — verdicts cut:** "That single fact changes how you think about …" (`_changes_verdict`: about the reader's
+  view only, "how you / families / a visit …"; "That fact changes how the festival is scheduled." stays) and
+  "The position is not incidental to its significance." (`_MEANT_RE` gains "to its significance / meaning / history
+  …"). The round-1 protections hold (never the first sentence, never a section's only sentence).
+- **R3-D7 — a heading built from the brief** (`_brief_heading`): "## Northern Mongolia and the Logic of Convergence"
+  came from the angle's best final style ("convergence … as the organising logic"), not its name, so the round-1
+  angle-name check missed it. A heading part (split at ':' and ' and the ') whose words outside the seed + Facts
+  (≥ 2) are all the brief's is dropped; a heading is never emptied. `TellContext.angle_text` (`ai_tells.angle_text`:
+  name, why it works, formula fit, best final style) is passed by `run_write_background` and the re-panel script.
+- **R3-D8 — residue (F15 'stock line', one cheap repair on attempt 1, never a hold)** for what code cannot rewrite:
+  "that's a detail worth knowing", 'The word "may" is worth noting', "worth pausing on", "Those numbers matter less
+  than", "This is the section … that rewards / worth …", "rewards the greatest attention", "begins to reveal its
+  logic", "earns its place as", "earns both names", "feel earned", "the way most good journeys should", "in a way
+  that a photograph does not / a stall cannot …", "that no classroom exercise replicates", "carries real weight",
+  "long after the day is over", "resets a family's sense of scale", "The geography is the lesson", "builds on it",
+  "adds a layer to the same story", "Their presence here is a product of it.", "is part of what the site means",
+  "closing the circle", "For families …, that context matters." / "that context changes what …", "There is no
+  performance in this". Each has negative tests (porters carry weight of 15 kg, closes the loop, earned both names
+  from …, a recipe no other valley uses, "That detail matters for the permit …").
+- **R3-D9 — LinkedIn source fidelity, prompt (narrowest rules, SOURCE FIDELITY block of SYSTEM_PROMPT):**
+  AGES ("never give an age, an age band or a minimum age … unless the content seed states it; the AUDIENCE line's
+  ages describe the brand's customers, not this trip"; NUMBERS no longer lists 'age', which it allowed from the
+  AUDIENCE line: that is how Terra's '7–16' became "children aged seven and up"); CAUSE AND SCOPE (never make one fact
+  the reason for another, "established because it supplies artisans", unless the seed links them; never widen a
+  fact: "plays a role in supplying" is not "trained here" / "a single school", "like most" is not "every", "one of
+  the" is not "the"); the scene-detail line gains "feels like (cold water, a quiet hall)".
+- **R3-D10 — LinkedIn source fidelity, deterministic flag that reads the seed** (`hygiene.unsupported_ages`,
+  `hygiene.unsupported_reasons`, reported by `gate_voice` from the `exclude_texts` run_quality_gates already passes:
+  the moment's own seed lines + Facts): an age claim ("aged seven and up", "ages 8+", "children over ten",
+  "10-year-old") whose number the source's own age claims lack; a founding reason ("was established because", "exists
+  because") for a subject whose PURPOSE the source states ("The institute was established to ensure …") and no
+  founding 'because' of its own. Finding text "unsupported detail: an age ('…') the source does not give — say it
+  without the age: '<sentence>'" (sentence_repair's quote shape), kind `UNSUPPORTED_DETAIL_PREFIX` appended last to
+  `_F15_KIND_ORDER`: F15_voice, blocking on attempt 1 only, one sentence repair, `never_holds`.
+
+### Changed (vs the round-3 brief)
+
+- The brief asked for "a deterministic residue flag". The round-1/2 residue list (`AI_TELL_LINE_RES`) is
+  seed-agnostic (`template_lines(text)` has no seed), so the seed-aware flag sits in `gate_voice` next to it, on the
+  same F15 route, reading `exclude_texts`. It is a new finding KIND in an existing gate (like the residue widening);
+  no new gate, registry, taxonomy or ledger entry. F13_hygiene (warn-only, no repair) was the alternative; F15 was
+  chosen so the flagged sentence actually gets the one repair.
+- "Established because" is flagged only against a seed-stated purpose of the same subject: an 'exists because' for
+  something the seed gives no purpose for (the takin preserve story, allowed background) is not flagged. "Trained at a
+  single government school" (an absolute overclaim) has no safe deterministic check: prompt only (CAUSE AND SCOPE).
+- Found while measuring: the round-1 lone-denial cut removed "They were not saved." (monasteries lost in a purge, a
+  fact). A passive denial (`_is_participle`: -ed or a closed irregular list) is never a lone-denial cut now.
+- `test_aa777_r6_fixes.test_job_reverts_a_repair_that_adds_a_time_and_logs_it` holds `ai_tells.rewrite` to identity
+  like the other deterministic steps it patches: the pass now cuts its fixture's ", not just photos." tail (a
+  spectator contrast), so the fixture never reached the gate it tests.
+- Not taken (fact-preserving rule wins over the panel): "offered as a possibility, not a fixed feature" (a
+  restriction), "neither guaranteed nor effortless" (guarantee), "not merely documentation" / "not its scale alone,
+  … though both are real" ('not only' assertions), "Most people arrive in X and stay. This route uses it as a launch
+  pad." (the hook), triads and anaphora with different verbs ("still governing, still worshipping, still producing"),
+  "The form and the function have travelled together." (no safe pattern). "Ready to go?" is Trail Pulse's own CTA.
+
+### Tradeoffs
+
+- **Residue grows again.** On the 20 round-2 texts after the pass: 34 residue sentences on 17 pieces (round-2 code: 4
+  on 4); round-1 texts 38 → 40; pilot 17 → 18; golden fixture + S234 pack 29 → 42 (every new hit read by hand: a real
+  tell). Each flagged piece gets one cheap sentence repair on attempt 1 (t9_repair), never a hold; the seed-aware
+  findings add 4 on the 6 round-2 LinkedIn posts (exactly the judges' quotes), 0 on the pilot texts, 1 on a round-1
+  blog ("as legible to a twelve-year-old as to a geographer": an age the seed lacks; the repair drops the age).
+- **The re-panel script runs no gates**, so residue and the seed-aware findings do NOT reach a re-panel built with
+  `t9_writer_repanel.py`; only the pass edits and the prompt do. A re-panel that should show their effect needs the
+  F15 sentence repair step (or a live T9 write) in the loop.
+- **Joins read a little flatter than the writer's rhythm** ("This builds across several days, …"). Grammatical,
+  nothing added; the prompt is the real fix.
+- **Closed lists again** (narrative nouns, relocation verbs, staging / spectator words): real tells outside them stay.
+
+### What could move brand voice (watch in the re-panel)
+
+- PACE / RESTRAINT are unchanged (test pins their text). Voice risk comes from three places: (1) staging tails and
+  'something …:' cuts remove contrast flourishes Atlas & Hearth's 'Atmospheric / Intelligent' voice may have earned
+  credit for (the round-2 judges scored A&H voice ≥ 7 with them in); (2) the AGES rule removes the explicit age line
+  Terra's family voice used ("for families with children aged …"): the post must say who it is for without an age;
+  (3) CAUSE AND SCOPE may make LinkedIn posts read as a list of facts if the writer stops linking them at all. If
+  Terra or A&H voice drops below 7, soften CAUSE AND SCOPE to the founding / purpose case only, and drop the
+  SPECTATOR 'not just' tail (keep STAGING).
+
+### Should know
+
+- **$0 measure on the 20 round-2 texts** (the 68 phrases the AI-tells judges quoted, as stored after the round-2
+  pass; scratch census, not committed): round-2 code catches 3 (0 by the pass, 3 by residue); round-3 code catches
+  41 (14 by the pass with 18 edits on 12 pieces, 0 refused; 27 by residue). Blog 34 / 53, LinkedIn 7 / 15, Atlas &
+  Hearth 14 / 21. All seven forms named in the brief are fixed by the pass. Every changed sentence was read by hand.
+- **Other corpora (edit logs, $0):** pilot texts 62 → 64 edits (a staging tail, a colon 'not … but'; one cut became a
+  join, a brief-words heading); round-1 texts 8 → 10; golden fixture + S234 pack 171 → 170 log lines (7 denial cuts
+  became joins with the same text after them, 1 refused pair now joins, the "They were not saved." cut is gone, 3
+  sentences already edited for a stock word also lose a 'not … but' / staging tail; the LinkedIn "That's not filler.
+  It's a structural choice." pairs are still refused by the integrity check, as before).
+- **`writer_prompt_version` moves `afc08095` → `24363541`** (SYSTEM_PROMPT hash). The guard test
+  `test_blog_prompts_are_byte_identical` has a dated note; `single` and `route` do not change. `AI_TELLS_VERSION` →
+  `ai_tells.v3`.
+- Tests: `tests/unit/test_aa790_writer_round3.py` (146: exact before / after text, negatives for every rule, the
+  seed-aware findings with and without the seed stating them, prompt text, PACE / RESTRAINT pinned, 8000-char
+  adversarial inputs < 50 ms for every new or changed regex incl. `_NOT_BUT_RE` and every round-3 residue entry).
+- No migration, Terraform, new gate / registry / taxonomy entry, LLM call site or frontend change. Needs a CIS api +
+  worker deploy in a wave gap; the measure is a re-panel (with the repair step, see Tradeoffs).

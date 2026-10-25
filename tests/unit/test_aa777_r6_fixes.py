@@ -345,7 +345,9 @@ class TestStickyKey:
 @pytest.mark.asyncio
 async def test_job_reverts_a_repair_that_adds_a_time_and_logs_it():
     """r6 R1 through run_write_background: the attempt-2 repair returns 'the afternoon starts…'; the job keeps
-    the old sentence (no new F17), logs `specifics_reverts`, and the gates never see the new sentence."""
+    the old sentence (no new F17), logs `specifics_reverts`, and the gates never see the new sentence.
+    AA-790 round 3: the writer-side AI-tell pass would cut R1_BEFORE's ', not just photos.' tail (a spectator
+    contrast), so it is held to identity like the other deterministic steps and the fixture reaches the gates."""
     from uuid import uuid4
     from unittest.mock import AsyncMock, MagicMock
     from tests.unit.test_aa777_f9_sticky_cut import _context, _outcome
@@ -371,6 +373,7 @@ async def test_job_reverts_a_repair_that_adds_a_time_and_logs_it():
          patch("services.acp_content_writing.service.hygiene.autofix", side_effect=ident), \
          patch("services.acp_content_writing.service.hygiene.ensure_cta", side_effect=ident), \
          patch("services.acp_content_writing.service.trip_facts.fix_trip_facts", side_effect=ident), \
+         patch("services.acp_content_writing.service.ai_tells.rewrite", side_effect=ident), \
          patch("services.acp_content_writing.service.text_integrity.final_pass",
                side_effect=lambda t, hyg, **kw: (t, [], [])), \
          patch.object(service, "_finalize_piece", new=AsyncMock(return_value={})) as fin:
