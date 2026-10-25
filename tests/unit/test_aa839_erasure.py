@@ -381,6 +381,7 @@ def test_review_tenant_data_keyed_without_tenant_id_is_registered():
     assert "tenant_tour_version_id" in by["acp_contract.atomize_day_fingerprint"].where_any[0][0]
     assert ("silver_aa_internal.raw_sources", "s3_path") in inv.TENANT_S3_REF_COLUMNS
     assert any("retention archives" in i.item for i in inv.TENANT_CHECKLIST)
+    assert any("scripts/out/aa729/" in i.item for i in inv.TENANT_CHECKLIST)       # AA-919 golden-set fixture copies
 
 
 def _review_catalog(with_ttv=True):

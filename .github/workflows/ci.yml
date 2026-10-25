@@ -42,6 +42,18 @@ jobs:
       - name: Resource-ID check (public repo)
         run: python3 .github/scripts/check_resource_ids.py
 
+      # AA-919 (WM-17): no real golden-set / tenant text in this public repo. Fixture markers always; keyed
+      # fingerprints (.github/golden_text_fingerprints.txt, key = secret GOLDEN_GUARD_KEY) on this repo's own pushes
+      # and PRs, where a missing key fails the step. A fork or Dependabot run (no secret) checks the markers only.
+      # Prints paths and counts, never the matched text. Standard library only (services/golden_set/text_guard.py).
+      - name: Golden-set text guard (public repo)
+        env:
+          GOLDEN_GUARD_KEY: ${{ secrets.GOLDEN_GUARD_KEY }}
+          GOLDEN_GUARD_REQUIRE_KEY: >-
+            ${{ github.actor != 'dependabot[bot]' && (github.event_name == 'push'
+            || github.event.pull_request.head.repo.full_name == github.repository) }}
+        run: python3 -m services.golden_set.text_guard scan
+
       # AA-926 (Quality System v1): no gate-name or 7.0 pass-line literal outside services/quality/, every
       # gate / chip / Jev key / A1 code mapped to a class, YAML schema, path map, generated TS fresh.
       # Blocking on errors; the report (errors, warnings, qlint: allow) goes to the step summary.
