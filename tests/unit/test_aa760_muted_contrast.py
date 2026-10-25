@@ -1,4 +1,4 @@
-"""AA-760 — the secondary text colours of the admin (frontend/) and the tenant portal (portal/) must read at WCAG AA
+"""AA-760 — the secondary text colours of the admin (frontend/) must read at WCAG AA
 (≥ 4.5:1) on every surface they are used on as text, in both themes, so a later edit cannot slip back under 4.5:1.
 
 History: light --aa-muted2 was #9099A6 (2.9:1 on card, 2.7:1 on the page background) in both apps — the portal was
@@ -20,7 +20,9 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-APPS = ["frontend", "portal"]
+# AA-979: frontend only. The portal moved to AA-Partner (its guard checks the portal tokens there); the copy left in
+# portal/ is frozen, so an admin palette edit must not need a matching edit of it.
+APPS = ["frontend"]
 THEMES = ["light", "dark"]
 
 
@@ -83,12 +85,6 @@ def test_muted2_stays_the_quieter_tone(app, theme):
     block = _block(app, theme)
     card = _token(block, "card")
     assert contrast(_token(block, "muted"), card) >= contrast(_token(block, "muted2"), card)
-
-
-def test_admin_and_portal_share_the_muted_palette():
-    for theme in THEMES:
-        for name in ("muted", "muted2", "neutral-fg2"):
-            assert _token(_block("frontend", theme), name) == _token(_block("portal", theme), name), (theme, name)
 
 
 @pytest.mark.parametrize("app", APPS)

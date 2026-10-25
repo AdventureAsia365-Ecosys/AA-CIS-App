@@ -14,7 +14,7 @@
 // The legacy password mode is gone (AA-816 S2: the API refuses every HS256 session on /auth/verify-admin). Without
 // E2ECOGNITO=1 (a local run has no mailbox access) the setup fails with a clear message: run `smoke-public` locally.
 //
-// The tenant storageState is NOT created here (the portal smoke has its own setup, tests/e2e/smoke-portal/).
+// The tenant storageState is NOT created here (the portal smoke, with its own setup, lives in AA-Partner since AA-979).
 import { test as setup, type Browser } from '@playwright/test';
 import { STAFF_AUTH_HOST, signInByEmailCode } from '../helpers/cognitoSignIn';
 import fs from 'fs';

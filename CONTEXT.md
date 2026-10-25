@@ -7,7 +7,7 @@ status: active
 owner: nghiep
 audience: [engineer, agent]
 applies_to: [aa-cis-api, aa-cis-worker, aa-cis-frontend, aa-cis-portal]
-last_reviewed: 2026-10-21
+last_reviewed: 2026-10-25
 review_every_days: 90
 related: [ARCH-01, ARCH-05, ARCH-08, docs/adr/README.md]
 ---
@@ -52,8 +52,13 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   - `frontend/` = the **Admin** console (`app/admin/*`), Vercel `aa-cis-frontend`,
     `https://aa-cis.lumiguides.it.com`, workflow `Vercel Deploy` (job "Vercel deploy").
   - `portal/` = the **Tenant portal** (`portal/app/portal/*`), Vercel `aa-cis-portal` (Root Directory
-    `portal`), `https://portal.lumiguides.it.com`, workflow `Vercel Deploy (portal)`. See "Tenant portal
-    app" below.
+    `portal`), `https://portal.lumiguides.it.com`. **Since AA-979 (CRM-P2a) its source lives in
+    `AdventureAsia365-Ecosys/AA-Partner/portal`** (moved with its history; same Vercel project, host, env and
+    tenant API-key sign-in; deployed by AA-Partner's `Vercel Deploy (portal)`). The `portal/` folder here is a
+    **frozen, undeployed copy** (`tests/unit/test_aa885_portal_split.py` `test_portal_copy_is_frozen` fails on any
+    change) until it is deleted at P2b + 7 days (root ADR 0010 §6). Make portal changes in AA-Partner. The Content
+    studio API (`/v1/*`, `/auth/tenant-login`) stays here (ADR 0010 §7). The description of the portal app below is
+    kept for the API side and as the state of the frozen copy.
   - Admin pages: `dashboard`, `upload` (A0), `s1-rewrite`, `review` (A2 Review Queue — table
     view with a Dismiss action, AA-626; migrated to the UI kit + react-query with multi-select
     bulk regenerate and non-blocking regenerate, AA-662 PR 2 / AA-719), `master-content` (AA-718:
@@ -141,8 +146,9 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
       sidebar footer) and on `/tenant-login`.
     - Staff have **no** access to the tenant portal (no staff session there; a support view is future
       work). Staff sign in on the admin host (the tenant-login "← Staff login" link).
-    - **Vendored UI kit** (byte copies, guarded by `tests/unit/test_aa885_portal_split.py`): a change to
-      any of these admin files must be copied into `portal/` in the same PR, or the unit tests go red —
+    - **Vendored UI kit** (byte copies; since AA-979 guarded by AA-Partner's "Vendored CIS copies" check against
+      `frontend/` on this repo's main, not here): after a change to any of these admin files, copy it into
+      AA-Partner `portal/` (the frozen copy here is not updated) —
       `portal/app/_kit/tokens.ts`, `portal/app/_kit/primitives.tsx`, `portal/app/_kit/Modal.tsx`,
       `portal/app/_kit/Drawer.tsx`, `portal/app/_kit/Toast.tsx`, `portal/app/_kit/api.ts`,
       `portal/app/_kit/useMediaQuery.ts`, `portal/app/_kit/Providers.tsx`, `portal/app/_kit/DataTable.tsx`,
@@ -682,13 +688,10 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   production (production only from `main`). Needs the repo secret `VERCEL_TOKEN` (team-scoped);
   without it the job fails red on every target (nothing else deploys the frontend). A PR
   that touches no frontend file gets no preview. The check to look at is "Vercel deploy".
-- **Portal (Vercel, AA-885)**: `.github/workflows/vercel-deploy-portal.yml` is the same workflow for
-  `portal/**` (project id from the repo **variable** `VERCEL_PORTAL_PROJECT_ID`, red while unset; production
-  check with the repo secret `VERCEL_PORTAL_BYPASS_SECRET`), check "Vercel deploy (portal)", then
-  `ui-smoke-portal.yml` on the preview. The path filters are disjoint: a portal-only PR deploys once, an
-  admin-only PR once, a PR touching both twice per push — count it against the Hobby cap (~100/day for
-  the team, 4 projects). `portal/**` is not in `deploy-dev.yml`, so a portal change never redeploys ECS.
-  `portal/vercel.json` also sets `git.deploymentEnabled: false`.
+- **Portal (Vercel)**: since AA-979 (CRM-P2a) no workflow here deploys the portal: AA-Partner's
+  `vercel-deploy-portal.yml` deploys the same Vercel project (`aa-cis-portal`) from `AA-Partner/portal`, and its
+  `ui-smoke-portal.yml` runs the portal smoke. The frozen `portal/` here is still built by "Portal Build" (required
+  check) and linted by "Portal Lint" until it is deleted. `portal/**` is not in `deploy-dev.yml`.
 - **UI smoke (AA-732, `.github/workflows/ui-smoke.yml`)**: called by `vercel-deploy.yml` after a
   successful deploy (`workflow_call`, inputs `base_url` + `sha` + `staff_session`), or run by hand
   (`workflow_dispatch`); Vercel's `deployment_status` no longer arrives. A Playwright suite (`tests/e2e/smoke/`)
@@ -710,16 +713,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   never to a third-party host. The `E2E_ADMIN_*` password secrets are no longer passed, and since S2 the smoke setup
   has no password mode (locally, run `--project=smoke-public`; agents have no mailbox access). The admin suite also checks that the old portal URLs answer 308
   to the portal host (`aa885-portal-redirect.spec.ts`). Not a required check.
-- **Portal UI smoke (AA-885, `.github/workflows/ui-smoke-portal.yml`)**: Playwright project
-  `smoke-portal` (`tests/e2e/smoke-portal/`) against a portal preview: host checks without a session
-  (redirects, the AA-759 old-slug 308s, forged cookies refused, no admin routes = 404, security headers, `/privacy` +
-  `/terms` draft pages), and
-  logged in as a test tenant (API key in `E2E_TENANT_API_KEY`, copied by hand from Secrets Manager
-  `aa-cis/dev/e2e-tenant/<slug>` — re-copy after a key rotation) every portal page with the shared
-  `runPageCheck` + a 390 px no-sideways-scroll check, screenshots 1440 + 390 in light and dark (AA-759), and the
-  host-only cookie check.
-  Logged-in tests skip without the key. The preview needs `VERCEL_PORTAL_BYPASS_SECRET` (passed to the
-  helpers as `VERCEL_AUTOMATION_BYPASS_SECRET`). Lint: `portal-lint` CI job (non-required); `tsc` + `next build` in the `portal-build` job (AA-879). e2e specs carry no hardcoded credentials (shared helper
+- **Portal UI smoke**: moved to AA-Partner with the portal (AA-979: `e2e/smoke-portal/`, `ui-smoke-portal.yml`).
+  Lint: `portal-lint` CI job (non-required); `tsc` + `next build` in the `portal-build` job (AA-879). e2e specs carry no hardcoded credentials (shared helper
   `tests/e2e/helpers/auth.ts` reads the env). ESLint enforces UI-kit conventions in
   `frontend/eslint.config.mjs` (`frontend-lint` CI job, non-required) and `portal/eslint.config.mjs` (AA-759/AA-760: `error`
   for every portal file except the 3 legacy ones listed in `KIT_LEGACY_FILES`, which stay `warn` until migrated).

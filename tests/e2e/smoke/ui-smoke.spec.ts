@@ -243,4 +243,4 @@ test.describe('UI smoke — viewer (read-only)', { tag: '@staff' }, () => {
 });
 
 // AA-885 — the tenant portal is its own app (portal/, its own host); its smoke is the
-// `smoke-portal` project (tests/e2e/smoke-portal/), run by ui-smoke-portal.yml on portal previews.
+// portal smoke moved to AA-Partner with the portal (AA-979: e2e/smoke-portal/, ui-smoke-portal.yml there).

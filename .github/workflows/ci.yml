@@ -321,6 +321,7 @@ jobs:
           exit $STATUS 
 
   # AA-885 — ESLint for the tenant portal app (portal/, same UI-kit rules as the admin). NON-required,
+  # AA-979: lints the frozen copy only; the portal is developed in AA-Partner now.
   # same shape as frontend-lint. The 9 errors it starts with came over with the moved portal files
   # (set-state-in-effect, no-explicit-any, one unescaped quote) — not new code.
   portal-lint:
@@ -388,6 +389,8 @@ jobs:
         run: npm run build
 
   # AA-879 — the same for the tenant portal (portal/, AA-885). Its tsc step moved here from "Portal Lint".
+  # AA-979: the portal source now lives in AA-Partner; this job builds the frozen copy until it is deleted (P2b + 7
+  # days, together with this job and its required-check entry).
   portal-build:
     name: Portal Build
     runs-on: ubuntu-latest

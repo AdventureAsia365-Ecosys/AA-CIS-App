@@ -12,7 +12,7 @@ pages and social content (T-series, tenant portal).
 ## Architecture
 
 ```
-Admin + tenant portal (Next.js, Vercel)  ──/api/* BFF (holds the admin secret / tenant JWT)──┐
+Admin console (Next.js, Vercel)          ──/api/* BFF (holds the admin secret / tenant JWT)──┐
                                                                                                ▼
                                API Gateway (4ylo382khg) → ALB → ECS Fargate
                                    ├─ aa-cis-dev-api     FastAPI (api.main:app)
@@ -31,7 +31,8 @@ Admin + tenant portal (Next.js, Vercel)  ──/api/* BFF (holds the admin secre
 | `services/` | Pipeline and domain logic (content generation, A3 atomize, Segments/Routes, T-series, publish, waves) |
 | `shared/` | LLM client + Model Gateway, Jev decision layer, job queue, cost guard, secrets |
 | `worker/` | Entry point of the job worker service (`python -m worker`) |
-| `frontend/` | Next.js admin (`app/admin/*`) and tenant portal (`app/(tenant)/portal/*`); UI kit in `app/_kit/` |
+| `frontend/` | Next.js admin (`app/admin/*`); UI kit in `app/_kit/` |
+| `portal/` | Frozen, undeployed copy of the tenant portal: since AA-979 its source is `AdventureAsia365-Ecosys/AA-Partner/portal` (deleted here at P2b + 7 days) |
 | `tests/` | `unit/` (no DB), `integration/` (real Postgres), `acp/`, `e2e/` (Playwright) |
 
 ## Local setup
