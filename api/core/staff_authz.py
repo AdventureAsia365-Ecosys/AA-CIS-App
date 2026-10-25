@@ -50,6 +50,7 @@ from typing import Any, Optional
 import structlog
 from fastapi import Header, HTTPException, Request
 
+from api.core import e2e_staff
 from api.core.secret_compare import secrets_equal
 
 logger = structlog.get_logger()
@@ -458,6 +459,8 @@ class StaffPrincipal:
     perms: frozenset[str] = field(default_factory=frozenset)
     auth: Optional[str] = None      # "cognito" | None (legacy session, secret-only, machine)
     is_owner: bool = False
+    # AA-816 A10b: the verified identity is the Dev-only E2E CIS admin (reads + api/core/e2e_staff.E2E_ALLOWED_WRITES).
+    e2e_read_only: bool = False
 
     @property
     def is_machine(self) -> bool:
@@ -483,6 +486,7 @@ def principal_from_role(role_header: Optional[str], identity: Any = None) -> Sta
         kind="staff", role=role, perms=ROLE_PERMS.get(role, frozenset()),
         auth="cognito" if cognito else None,
         is_owner=bool(cognito and getattr(identity, "is_owner", False)),
+        e2e_read_only=bool(identity is not None and getattr(identity, "e2e_read_only", False)),
     )
 
 
@@ -494,6 +498,10 @@ def denial_reason(principal: StaffPrincipal, method: str, route: str) -> Optiona
     """None when the principal may call (method, route); otherwise the 403 detail."""
     if principal.role in READ_ONLY_ROLES and method.upper() not in READ_METHODS:
         return READ_ONLY_DENIED.format(role=principal.role)
+    # AA-816 A10b, defence in depth behind the bearer middleware (covers a route reached by any other path).
+    if (principal.e2e_read_only and method.upper() not in READ_METHODS
+            and not e2e_staff.is_allowed_e2e_write_route(method, route)):
+        return e2e_staff.E2E_READ_ONLY
     capability = POLICY.get((method, route))
     if capability is None:
         return None  # a GET open to every staff role and the machine (writes all have an entry)

@@ -987,11 +987,28 @@ One staff identity model. Every staff user is a row in `shared.admin_users` (rol
 `email` lower-case `@adventure.asia` only — one TEMPORARY exception until the Cognito E2E work is done (AA-816,
 S243 option B, root ADR 0006a): the exact address `e2e@e2e-mail.lumiguides.it.com` as a reviewer, not an owner,
 no password, no Booking grant (migration 250 CHECK + `staff_directory.E2E_TEST_STAFF_EMAIL` /
-`require_e2e_test_scope` + the WORKFORCE triggers) —, `display_name`, `cognito_iss` + `cognito_sub`, `last_login_at`
+`require_e2e_test_scope` + the WORKFORCE triggers); and, **Dev only** (A10b, AA-816 S252, root ADR 0006a A10b),
+`e2e-cis-admin@e2e-mail.lumiguides.it.com` as an admin, not an owner, no password, no Booking grant (migration 283
+CHECK + `api/core/e2e_staff.py` / `staff_directory.require_e2e_test_scope` / `require_dev_only_e2e_environment` +
+the WORKFORCE triggers' dev-only map) —, `display_name`, `cognito_iss` + `cognito_sub`, `last_login_at`
 ("last seen"), `is_owner`; `password_hash` nullable, NULL fails closed). A staff member's role in another app
 lives in `shared.staff_app_grant (admin_user_id, app, role)` (`app` = `booking`, roles `admin` / `sales` /
 `contracting` / `content_creator`). Root ADR 0006 + amendment 0006a are the design; tenants are separate
 (`cis_tenant_token`, role `tenant`).
+
+**Dev-only E2E CIS admin (A10b, AA-816 S252, root ADR 0006a A10b).** The agent's own admin identity for evidence
+screenshots of the admin-only pages and the AA-916 WM-07 sentence-action sample. `api/core/e2e_staff.py` holds the
+rules: the directory creates, re-enables or syncs it only where `ENVIRONMENT` is exactly `dev` (403
+`e2e_not_allowed_here`; disable stays allowed everywhere); `staff_identity.resolve_staff` refuses its token (403
+`e2e_not_allowed_here`) unless `ENVIRONMENT` is exactly `dev`, else flags the identity `e2e_read_only` (log
+`staff_identity_e2e_read_only`, owner flag forced false); the bearer middleware answers every non-GET/HEAD/OPTIONS on a
+staff path with 403 `e2e_read_only` before the route runs, except POST
+`/admin/content-quality/{pieces,tour-versions}/{id}/sentences/apply` (Cut / manual Edit with a reason chip; the
+routes accept only `cut` / `manual` from it, `…/suggest` stays refused); `staff_authz.denial_reason` refuses the same
+writes again by route template. `/auth/verify-admin` returns `admin`, so the BFF opens the admin pages. Its sign-in
+codes land in the mailbox prefix `inbound-admin/`, readable only by the MFA admin role, so only the orchestrator signs
+in with it, locally (Playwright project `admin-evidence`, `E2EADMIN=1`, never CI). Removed with A10 / A10a at the end
+of project code.
 
 **Sign-in (ADR 0006 Phase 1, live on Dev).** Staff sign in with an email one-time code on Cognito WORKFORCE
 (pool `us-west-1_bCcFvbSOS`) through managed login on our own domain `https://staff-auth.lumiguides.it.com`

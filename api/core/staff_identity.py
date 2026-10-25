@@ -36,6 +36,14 @@ Rules
    ``viewer`` and ``staff_authz`` refuses every write (``READ_ONLY_ROLES``); ``/auth/verify-admin`` returns
    ``viewer`` to the BFF. The row lookup and first-sign-in link are the same as on Production (the identity is
    Cognito's, not the preview code's); only the session is capped.
+5b. **Dev-only E2E CIS admin (AA-816 A10b, S252, root ADR 0006a A10b; api/core/e2e_staff.py).** When the row bound to
+   this ``(iss, sub)`` (or the token's ``email``) is ``e2e-cis-admin@e2e-mail.lumiguides.it.com``: if the API's
+   ``ENVIRONMENT`` is not exactly ``dev`` the token is refused, 403 ``e2e_not_allowed_here`` (logged
+   ``staff_identity_refused``); else the identity carries ``e2e_read_only = True`` (``staff_identity_e2e_read_only``
+   logged once per cache load). The bearer middleware then refuses every non-GET/HEAD/OPTIONS on the staff paths with
+   403 ``e2e_read_only`` except the content-quality sentence-apply allow-list, and ``staff_authz`` refuses the same
+   writes again by route template. ``/auth/verify-admin`` still returns role ``admin`` (it only reads, plus
+   ``last_login_at``), so the BFF opens the admin pages.
 6. Rows are cached for :data:`STAFF_STATE_TTL_S` keyed by ``(iss, sub)`` (misses too), like the legacy
    verify-admin cache, so a deactivation takes effect within that TTL (plus the BFF's own verify cache).
 
@@ -63,7 +71,7 @@ import asyncpg
 import jwt
 import structlog
 
-from api.core import identity_config
+from api.core import e2e_staff, identity_config
 from api.core.identity_verifier import MAX_TOKEN_CHARS, AuthUnavailable, InvalidToken, Principal
 
 logger = structlog.get_logger()
@@ -138,6 +146,8 @@ class StaffIdentity:
     is_owner: bool = False
     # AA-911 D-1: the token came from the Preview-only client; role is then always PREVIEW_ROLE, is_owner False.
     preview: bool = False
+    # AA-816 A10b: the Dev-only E2E CIS admin; reads only, plus the e2e_staff.E2E_ALLOWED_WRITES allow-list.
+    e2e_read_only: bool = False
 
 
 def legacy_login_enabled() -> bool:
@@ -327,6 +337,15 @@ async def resolve_staff(db: Any, principal: Principal, *, touch_login: bool = Fa
         # The group decides (ADR 0006); the reconcile job (C7) reports the difference.
         logger.warning("staff_role_drift", admin_id=row.admin_id, group_role=role, db_role=row.db_role,
                        sub=principal.sub)
+    e2e_read_only = e2e_staff.is_e2e_cis_admin(row.email) or e2e_staff.is_e2e_cis_admin(principal.email)
+    if e2e_read_only:
+        if not e2e_staff.dev_only_e2e_environment():
+            logger.warning("staff_identity_refused", reason=e2e_staff.E2E_NOT_ALLOWED_HERE, admin_id=row.admin_id,
+                           sub=principal.sub, client_id=principal.client_id)
+            raise StaffAuthError(403, e2e_staff.E2E_NOT_ALLOWED_HERE, e2e_staff.E2E_NOT_ALLOWED_HERE)
+        if loaded_now:
+            logger.info("staff_identity_e2e_read_only", admin_id=row.admin_id, sub=principal.sub,
+                        client_id=principal.client_id)
     preview = identity_config.is_preview_client(principal.client_id)
     if preview:
         # AA-911 D-1: a Preview-host session is the viewer, never the group role and never an owner.
@@ -336,7 +355,8 @@ async def resolve_staff(db: Any, principal: Principal, *, touch_login: bool = Fa
         admin_id=row.admin_id, username=row.username, role=PREVIEW_ROLE if preview else role,
         db_role=row.db_role, email=row.email or principal.email, display_name=row.display_name,
         iss=principal.iss, sub=principal.sub, client_id=principal.client_id,
-        is_owner=False if preview else row.is_owner, preview=preview,
+        is_owner=False if preview or e2e_read_only else row.is_owner, preview=preview,
+        e2e_read_only=e2e_read_only,
     )
 
 
