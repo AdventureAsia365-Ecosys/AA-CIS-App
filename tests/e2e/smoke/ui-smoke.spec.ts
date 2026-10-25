@@ -21,10 +21,18 @@
 // Cognito E2E user, a reviewer). Per-PR previews run the `smoke-public` project, which skips @staff. Any other
 // non-admin role (reviewer, content) runs the page list against frontend/lib/rbac.ts PAGE_RULES: a page it may not
 // open must be refused like the viewer's; it does no write and no admin-only check (Production stays read-only).
-import { test, expect } from '@playwright/test';
+//
+// S251 (AA-835, AA-916) — also: Supply content (Booking) list + a made-up id's not-found card; the Review Queue's
+// Reject / Dismiss / Regenerate modals opened and cancelled (reason chips in a screenshot, every admin write blocked
+// and asserted absent); the sidebar labels fit at 1440; /login follows the colour scheme (public, no session).
+import { randomUUID } from 'crypto';
+import { test, expect, type Locator } from '@playwright/test';
+import { can } from '../../../frontend/lib/rbac';
 import {
   ADMIN_STATE,
   SMOKE_RESULTS_DIR,
+  backgroundLuminance,
+  baseOrigin,
   baseUrl,
   installBypassRoute,
   ensureResultsDir,
@@ -35,6 +43,9 @@ import {
   roleMaySeePage,
   runPageCheck,
   smokeRole,
+  waitForSkeletonGone,
+  watchPage,
+  describeApiFailures,
   type PageSpec,
 } from './smoke-helpers';
 
@@ -70,6 +81,8 @@ const ADMIN_PAGES: PageSpec[] = [
   { id: 'photos', label: 'Photos', path: '/admin/photos', viewerRefused: true },
   // AA-977 — CIS Content › Assets › AA content (CRM): every staff role reads (the viewer too; write controls hidden).
   { id: 'aa-content', label: 'AA content (CRM)', path: '/admin/aa-content' },
+  // AA-835 — CIS Content › Assets › Supply (Booking): every staff role reads (lib/rbac.ts PAGE_RULES ALL_STAFF).
+  { id: 'supply-content', label: 'Supply content (Booking)', path: '/admin/supply-content' },
   { id: 'platform-stats', label: 'A4 Quality', path: '/admin/platform-stats', readySelector: '[data-testid="admin-content-ready"]', viewerRefused: true },
   // AA-769 — Content Quality (T2/T9 quality signals for every tenant; tenants never see them).
   { id: 'content-quality', label: 'Content Quality', path: '/admin/content-quality', readySelector: '[data-testid="content-quality-ready"]', viewerRefused: true },
@@ -158,6 +171,33 @@ async function firstStaffId(browser: import('@playwright/test').Browser): Promis
   }
 }
 
+/** Screenshot / id prefix of a non-admin run (the page list does the same with `${smokeRole()}-`). */
+function rolePrefix(): string {
+  return isAdminRun() ? '' : `${smokeRole()}-`;
+}
+
+// S251 — /login follows the colour scheme like the admin (it pinned light before). No session: runs in smoke-public on
+// every per-PR preview. Dark: background luminance < 0.2; light: > 0.8 (same thresholds as assertThemeSwitches).
+test.describe('UI smoke — /login follows the colour scheme', () => {
+  for (const scheme of ['light', 'dark'] as const) {
+    test(`/login renders ${scheme} under prefers-color-scheme: ${scheme}`, async ({ browser }) => {
+      const context = await browser.newContext({ baseURL: baseUrl(), colorScheme: scheme, viewport: { width: 1440, height: 900 } });
+      await installBypassRoute(context);
+      const page = await context.newPage();
+      try {
+        await assertNavOk(page, '/login');
+        await expect(page.getByTestId('login-page')).toBeVisible({ timeout: 15000 });
+        const lum = await backgroundLuminance(page, '[data-testid="login-page"]');
+        if (scheme === 'dark') expect(lum, `/login background luminance ${lum.toFixed(3)} under dark`).toBeLessThan(0.2);
+        else expect(lum, `/login background luminance ${lum.toFixed(3)} under light`).toBeGreaterThan(0.8);
+        await page.screenshot({ path: `${SMOKE_RESULTS_DIR}/login-desktop-${scheme}.png` });
+      } finally {
+        await context.close();
+      }
+    });
+  }
+});
+
 // AA-816 S2 path — no session needed (runs in smoke-public too): the viewer flags on the page list say exactly
 // what the frontend page matrix says, so viewer mode and the rbac-driven reviewer mode never disagree.
 test.describe('UI smoke — page list matches the page matrix', () => {
@@ -195,6 +235,117 @@ test.describe('UI smoke — admin', { tag: '@staff' }, () => {
       path: `/admin/platform/staff/${id}`,
       readySelector: '[data-testid="staff-detail-ready"]',
     }, { checkMobileLayout: true });
+  });
+
+  // AA-835 — Booking's "Edit in CIS" link lands on /admin/supply-content/<id>; an id CIS does not know answers 404
+  // and the page shows its not-found card (not a blank page, not an error). Every staff role may open it.
+  test('admin: Supply content · unknown id shows the not-found card', async ({ browser }) => {
+    const id = randomUUID();
+    const detailPath = `/api/admin/supply-content/${id}`;
+    await runPageCheck(browser, ADMIN_STATE, {
+      id: `${rolePrefix()}supply-content-not-found`,
+      label: 'Supply content · not found',
+      path: `/admin/supply-content/${id}`,
+      readySelector: '[data-testid="supply-error"]',
+    }, {
+      checkMobileLayout: true,
+      // the one expected failure: this page's own detail read of the made-up id
+      expectApiFailure: (f) => f.status === 404 && new URL(f.url).pathname === detailPath,
+      afterChecks: async (page) => {
+        await expect(page.getByTestId('supply-error')).toContainText('No hotel or service with this id');
+      },
+    });
+  });
+
+  // S251 — every visible sidebar label fits at 1440 (the kit cuts a long one with an ellipsis: "Supply content
+  // (Booking)" was cut). Checked on the Supply content page, which opens the CIS Content section.
+  test('admin: sidebar labels are not cut at 1440 (CIS Content section)', async ({ browser }) => {
+    const context = await browser.newContext({ baseURL: baseUrl(), storageState: ADMIN_STATE, viewport: { width: 1440, height: 900 } });
+    await installBypassRoute(context);
+    const page = await context.newPage();
+    try {
+      await assertNavOk(page, '/admin/supply-content');
+      await expect(page.locator('.aa-sidebar-label').first()).toBeVisible({ timeout: 15000 });
+      const cut = await page.evaluate(() => Array.from(document.querySelectorAll<HTMLElement>('.aa-sidebar-label'))
+        .filter((el) => el.offsetParent !== null && el.clientWidth > 0 && el.scrollWidth > el.clientWidth + 1)
+        .map((el) => `"${(el.textContent ?? '').trim()}" (${el.scrollWidth}px in ${el.clientWidth}px)`));
+      expect(cut, `sidebar labels cut with an ellipsis at 1440:\n  ${cut.join('\n  ')}`).toEqual([]);
+      await page.screenshot({ path: `${SMOKE_RESULTS_DIR}/${rolePrefix()}sidebar-cis-desktop-light.png` });
+    } finally {
+      await context.close();
+    }
+  });
+
+  // AA-916 WM-07 — Reject, Dismiss and Regenerate open a modal with the reason chip row (one chip preselected). Each
+  // is opened, captured (light + dark) and CANCELLED. Every same-origin non-GET /api/admin/ call is aborted and the
+  // test fails if one was attempted, so the run can never act on the queue (Production stays read-only).
+  test('admin: Review Queue · Reject / Dismiss / Regenerate modals show the reason chips and cancel', async ({ browser }) => {
+    test.skip(!can(smokeRole(), 'review.act'), `${smokeRole()} has no review.act: the queue shows no action buttons`);
+    const context = await browser.newContext({ baseURL: baseUrl(), storageState: ADMIN_STATE, viewport: { width: 1440, height: 900 } });
+    await installBypassRoute(context);
+    const writes: string[] = [];
+    const origin = baseOrigin();
+    await context.route('**/api/admin/**', async (route) => {
+      const req = route.request();
+      if (new URL(req.url()).origin === origin && !['GET', 'HEAD', 'OPTIONS'].includes(req.method())) {
+        writes.push(`${req.method()} ${req.url()}`);
+        await route.abort();
+        return;
+      }
+      await route.fallback(); // on to the bypass route (installed first)
+    });
+    const page = await context.newPage();
+    const watcher = watchPage(page);
+    try {
+      await assertNavOk(page, '/admin/review');
+      await waitForSkeletonGone(page);
+      const rows = page.locator('[data-testid="kit-datatable-row"]');
+      const rowCount = await rows.count();
+      test.skip(rowCount === 0, 'the Review Queue has no rows to open the modals on');
+
+      const opened: string[] = [];
+      const openAndCancel = async (name: string, button: Locator) => {
+        if ((await button.count()) === 0) {
+          test.info().annotations.push({ type: 'note', description: `${name}: no row offers this action now` });
+          return;
+        }
+        await button.first().click();
+        const dialog = page.getByRole('dialog');
+        await expect(dialog, `${name}: the modal did not open`).toBeVisible({ timeout: 10000 });
+        const chips = dialog.getByTestId('wm-reason-chips');
+        await expect(chips, `${name}: no reason chip row in the modal`).toBeVisible();
+        await expect(chips.locator('[role="radio"][aria-checked="true"]'), `${name}: no chip preselected`).toHaveCount(1);
+        for (const scheme of ['light', 'dark'] as const) {
+          await page.emulateMedia({ colorScheme: scheme });
+          await page.waitForTimeout(300);
+          await page.screenshot({ path: `${SMOKE_RESULTS_DIR}/${rolePrefix()}review-modal-${name.toLowerCase()}-desktop-${scheme}.png` });
+        }
+        await page.emulateMedia({ colorScheme: 'light' });
+        await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+        await expect(dialog, `${name}: Cancel did not close the modal`).toHaveCount(0);
+        opened.push(name);
+      };
+
+      // enabled buttons only (a row being regenerated disables its actions)
+      const actions = rows.locator('button:not([disabled])');
+      const reject = actions.filter({ hasText: /^\s*Reject\s*$/ });
+      const dismiss = actions.and(page.locator('[title^="Dismiss"]'));
+      // every row busy (being regenerated) leaves no enabled action: nothing to open, not a failure
+      test.skip((await reject.count()) + (await dismiss.count()) === 0,
+        'every Review Queue row is busy (regenerating): no enabled Reject / Dismiss to open');
+      await openAndCancel('Reject', reject);
+      await openAndCancel('Dismiss', dismiss);
+      await openAndCancel('Regenerate', actions.and(page.locator('[title^="Regenerate"]')));
+
+      expect(opened, 'Reject and Dismiss are on every actionable row').toEqual(expect.arrayContaining(['Reject', 'Dismiss']));
+      expect(writes, 'a modal sent a write although it was cancelled').toEqual([]);
+      await watcher.settle();
+      expect(watcher.apiFailures, `Review Queue: failing same-origin /api/ responses:\n${describeApiFailures(watcher.apiFailures)}`)
+        .toEqual([]);
+      expect(watcher.consoleErrors.map((e) => e.text), 'Review Queue: console errors').toEqual([]);
+    } finally {
+      await context.close();
+    }
   });
 
   // AA-722 — the legacy /admin/dashboard page is retired. As an admin, a request to it must land

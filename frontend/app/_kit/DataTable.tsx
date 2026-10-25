@@ -12,6 +12,10 @@
 //   - saved views (localStorage, per user)
 //   - CSV export of the current (filtered) rows
 //
+// S251: a sorted header carries `aria-sort` ("ascending" / "descending"; an unsorted header has none, as WAI-ARIA
+// advises), so a screen reader hears the sort. `compact` narrows the cell padding (10 px a side instead of 16 px) for a
+// wide table that must fit its page without a sideways scroll (tenant portal My Content).
+//
 // Column meta (S243): `meta: { align: "right" }` right-aligns a column's header AND cells (numbers),
 // so a header sits over its right-aligned values. AA-760: `meta: { hideLabelOnCard: true }` drops the
 // column's label row label in phone card mode (an actions column: the button says what it does). `paginate={false}` shows every row and no pager,
@@ -127,6 +131,8 @@ export type DataTableProps<T> = {
    * a wide actions column), the table keeps this width and the wrapper (overflow:auto) scrolls
    * horizontally with a visible scrollbar, instead of squeezing columns and clipping their content. */
   tableMinWidth?: number;
+  /** S251 — narrower cell padding (10 px a side instead of 16 px) for a table with many columns. Default false. */
+  compact?: boolean;
 
   /** AA-755 — opt-in controlled + server-side sorting. When `onSortingChange` is given the caller
    * owns the sort state (`sorting`), the table never sorts the rows itself (`manualSorting`), and a
@@ -183,6 +189,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
     stickyHeader = true,
     maxBodyHeight,
     tableMinWidth,
+    compact = false,
     paginate = true,
     onRowClick,
     sorting: controlledSorting,
@@ -364,6 +371,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
   const pageIndex = table.getState().pagination.pageIndex;
   const pageCount = table.getPageCount();
   const effPageSize = sp ? sp.pageSize : pageSizeState;
+  const padX = compact ? 10 : 16;
 
   return (
     <div style={{ fontFamily: sans, position: "relative" }}>
@@ -648,9 +656,10 @@ export function DataTable<T>(props: DataTableProps<T>) {
                     return (
                       <th
                         key={header.id}
+                        aria-sort={sorted === "asc" ? "ascending" : sorted === "desc" ? "descending" : undefined}
                         onClick={canSort ? header.column.getToggleSortingHandler() : undefined}
                         style={{
-                          padding: "10px 16px",
+                          padding: `10px ${padX}px`,
                           fontSize: 11,
                           fontWeight: 600,
                           textTransform: "uppercase",
@@ -696,7 +705,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                     <td
                       key={cell.id}
                       style={{
-                        padding: "13px 16px",
+                        padding: `${compact ? 12 : 13}px ${padX}px`,
                         fontSize: 13,
                         color: K.body,
                         borderBottom: `1px solid ${K.line2}`,
