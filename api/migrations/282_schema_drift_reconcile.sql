@@ -14,8 +14,10 @@
 --   b. nullability changed by hand: shared.tenant_brand_rules.brand_name NOT NULL (043 adds it nullable; the 104 copy
 --      has NOT NULL too), shared.tenants.is_canary / skip_hitl nullable (058 adds them NOT NULL);
 --   c. indexes as Dev has them: 044 ran in an earlier form (143's header lists the live constraint as
---      uq_tenant_brand_name_version; the file names it uq_brand_rules_tenant_brand_version), and 048's GIN index on
---      generated_content.metadata is idx_generated_content_metadata_gin with jsonb_path_ops on Dev (the file:
+--      uq_tenant_brand_name_version; the file names it uq_brand_rules_tenant_brand_version; assumption: on Dev it is a
+--      UNIQUE constraint, as 143 says, not a bare unique index: the dump lists no p/u constraints, so the drift report
+--      cannot tell the two apart; 282 renames 044's constraint, so a converged database has a constraint), and 048's
+--      GIN index on generated_content.metadata is idx_generated_content_metadata_gin with jsonb_path_ops on Dev (the file:
 --      idx_generated_content_metadata_brand_rule, default opclass);
 --   d. tables dropped by hand: acp_shared.unknown_ledger (AA-598 G3, 16/09/2026) and acp_shared.content_metric_snapshot,
 --      acp_deliver.pieces / packets, acp_shared.acp_v2_slots / acp_v2_runs (AA-603, 21/09/2026); the scripts are in
@@ -40,16 +42,19 @@
 --   3. Indexes (c): rename 044's constraint (its index follows) to uq_tenant_brand_name_version; replace 048's index by
 --      idx_generated_content_metadata_gin (jsonb_path_ops); 123's partial unique index on raw_sources.file_hash.
 --   4. Hand drops (d): each table only when it exists and is EMPTY (refused otherwise: the drop on Dev removed 0-row
---      tables, a database with rows there needs a decision, not a migration); the four v1 schemas with CASCADE only
---      when every table in them is empty AND the running role may drop them (on a database migrated by DB Migrate
---      they are the RDS master's, from 001, and 245 did not move them: left with a NOTICE, recorded as an owner
---      decision in AA-CIS-Infra db/schema_drift_decisions.json).
+--      tables, a database with rows there needs a decision, not a migration); the four v1 schemas only when the
+--      running role may drop them (on a database migrated by DB Migrate they are the RDS master's, from 001, and 245
+--      did not move them: left with a NOTICE, recorded as an owner decision in AA-CIS-Infra
+--      db/schema_drift_decisions.json), every table in them is empty and nothing outside them depends on anything
+--      in them (pg_depend; refused otherwise). No CASCADE: their tables, then their enum / domain types, then the
+--      schemas themselves are dropped RESTRICT, so anything else in them makes the file fail instead of vanishing.
 --   5. Types (e): only when a column differs. Every view that depends on a changed column, and every view on those
 --      (transitively), is saved (definition, reloptions, owner, privileges, comments), dropped as its owner (catalog
 --      views as catalog_owner, the X1 S22 catalog recipe), the columns are altered (varchar -> text is binary
 --      coercible: no rewrite; numeric(10,4) -> numeric(8,4) rewrites the small plans table), triggers on the changed
 --      columns are recreated from pg_get_triggerdef, and the views are recreated in dependency order with the same
---      options, owner, privileges and comments. The two CHECKs are then put in Dev's form when their values match.
+--      options, owner, privileges and comments. The two CHECKs are put in Dev's form when their values match, also
+--      when no type was pending (columns already text, CHECK still in the old form).
 --      Refused (RAISE) on anything it cannot recreate faithfully: a materialized view, a view owned by a role other
 --      than cis_owner / catalog_owner, a cis_owner view on a catalog view, a policy or rule other than a view's own
 --      _RETURN on a changed column, a column grant or default on a view.
@@ -218,10 +223,13 @@ END $$;
 -- ── 4. Objects Dev dropped by hand ─────────────────────────────────────────────────────────────────────────────────
 DO $$
 DECLARE
-    t      text;
-    s      text;
-    n      bigint;
-    tables text[];
+    t       text;
+    s       text;
+    n       bigint;
+    tables  text[];
+    v1      text[] := ARRAY[]::text[];
+    types   text;
+    outside text;
 BEGIN
     -- children first (AA-603's order: content_metric_snapshot -> pieces -> packets -> acp_v2_slots -> acp_v2_runs)
     FOREACH t IN ARRAY ARRAY['acp_shared.unknown_ledger', 'acp_shared.content_metric_snapshot', 'acp_deliver.pieces',
@@ -236,6 +244,7 @@ BEGIN
         EXECUTE format('DROP TABLE %s', t);
         RAISE NOTICE 'migration 282: dropped % (empty; dropped by hand on Dev)', t;
     END LOOP;
+    -- The v1 schemas: the ones present that the running role may drop (v1), all checked first, then dropped together.
     FOREACH s IN ARRAY ARRAY['bronze', 'gold', 'ops', 'silver'] LOOP
         IF to_regnamespace(s) IS NULL THEN
             CONTINUE;
@@ -246,17 +255,67 @@ BEGIN
                          s, (SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = s), current_user;
             CONTINUE;
         END IF;
-        SELECT array_agg(format('%I.%I', s, c.relname)) INTO tables
-          FROM pg_class c WHERE c.relnamespace = to_regnamespace(s)::oid AND c.relkind IN ('r', 'p');
-        FOREACH t IN ARRAY coalesce(tables, ARRAY[]::text[]) LOOP
-            EXECUTE format('SELECT count(*) FROM %s', t) INTO n;
-            IF n > 0 THEN
-                RAISE EXCEPTION 'migration 282: % has % row(s); Dev has no schema %: decide first', t, n, s;
-            END IF;
-        END LOOP;
-        EXECUTE format('DROP SCHEMA %I CASCADE', s);
-        RAISE NOTICE 'migration 282: dropped schema % (001''s v1 layer, empty; gone on Dev)', s;
+        v1 := v1 || s;
     END LOOP;
+    IF cardinality(v1) = 0 THEN
+        RETURN;
+    END IF;
+    SELECT array_agg(c.oid::regclass::text ORDER BY c.oid) INTO tables
+      FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
+     WHERE ns.nspname = ANY (v1) AND c.relkind IN ('r', 'p');
+    FOREACH t IN ARRAY coalesce(tables, ARRAY[]::text[]) LOOP
+        EXECUTE format('SELECT count(*) FROM %s', t) INTO n;
+        IF n > 0 THEN
+            RAISE EXCEPTION 'migration 282: % has % row(s); Dev has no v1 schema: decide first', t, n;
+        END IF;
+    END LOOP;
+    -- Nothing outside these schemas may depend on anything in them (a view, a foreign key, a column of an enum
+    -- type, ...): the drop below must not reach past them. A dependent's schema comes from pg_identify_object, or,
+    -- for the catalogs without a namespace column, from the relation it hangs on.
+    WITH inside AS (
+        SELECT 'pg_class'::regclass AS cls, c.oid FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
+         WHERE ns.nspname = ANY (v1)
+        UNION ALL
+        SELECT 'pg_type'::regclass, t2.oid FROM pg_type t2 JOIN pg_namespace ns ON ns.oid = t2.typnamespace
+         WHERE ns.nspname = ANY (v1)
+        UNION ALL
+        SELECT 'pg_proc'::regclass, p.oid FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
+         WHERE ns.nspname = ANY (v1)
+    ), dep AS (
+        SELECT d.classid, d.objid, d.objsubid,
+               coalesce((pg_identify_object(d.classid, d.objid, d.objsubid)).schema,
+                        CASE d.classid
+                            WHEN 'pg_rewrite'::regclass THEN (SELECT k.relnamespace::regnamespace::text
+                                FROM pg_rewrite r JOIN pg_class k ON k.oid = r.ev_class WHERE r.oid = d.objid)
+                            WHEN 'pg_trigger'::regclass THEN (SELECT k.relnamespace::regnamespace::text
+                                FROM pg_trigger tg JOIN pg_class k ON k.oid = tg.tgrelid WHERE tg.oid = d.objid)
+                            WHEN 'pg_attrdef'::regclass THEN (SELECT k.relnamespace::regnamespace::text
+                                FROM pg_attrdef ad JOIN pg_class k ON k.oid = ad.adrelid WHERE ad.oid = d.objid)
+                            WHEN 'pg_policy'::regclass THEN (SELECT k.relnamespace::regnamespace::text
+                                FROM pg_policy po JOIN pg_class k ON k.oid = po.polrelid WHERE po.oid = d.objid)
+                        END) AS dep_schema
+          FROM pg_depend d JOIN inside i ON d.refclassid = i.cls AND d.refobjid = i.oid
+    )
+    SELECT string_agg(DISTINCT pg_describe_object(classid, objid, objsubid), ', ') INTO outside
+      FROM dep WHERE dep_schema IS NULL OR NOT (dep_schema = ANY (v1));
+    IF outside IS NOT NULL THEN
+        RAISE EXCEPTION 'migration 282: objects outside the v1 schemas % depend on them: %; decide first', v1, outside;
+    END IF;
+    -- RESTRICT throughout: the tables together (foreign keys between them), then the enum / domain types, then the
+    -- schemas, which must be empty by then. Anything else in them (a function, a view, a free sequence) makes the
+    -- drop fail instead of being swept away.
+    IF tables IS NOT NULL THEN
+        EXECUTE 'DROP TABLE ' || array_to_string(tables, ', ');
+    END IF;
+    SELECT string_agg(format('%I.%I', ns.nspname, t2.typname), ', ') INTO types
+      FROM pg_type t2 JOIN pg_namespace ns ON ns.oid = t2.typnamespace
+     WHERE ns.nspname = ANY (v1) AND t2.typtype IN ('e', 'd');
+    IF types IS NOT NULL THEN
+        EXECUTE 'DROP TYPE ' || types;
+    END IF;
+    EXECUTE 'DROP SCHEMA ' || (SELECT string_agg(quote_ident(x), ', ') FROM unnest(v1) x);
+    RAISE NOTICE 'migration 282: dropped schema(s) % (001''s v1 layer, empty; gone on Dev): % table(s)',
+                 v1, cardinality(coalesce(tables, ARRAY[]::text[]));
 END $$;
 
 -- ── 5. Column types: save the dependent views, drop, alter, recreate ───────────────────────────────────────────────
@@ -297,7 +356,8 @@ BEGIN
     -- What on a changed column the file cannot recreate faithfully.
     SELECT string_agg(DISTINCT pg_describe_object(d.classid, d.objid, d.objsubid), ', ') INTO bad
       FROM pg_depend d
-      JOIN jsonb_to_recordset(pending) p(relid oid, attnum int) ON d.refobjid = p.relid AND d.refobjsubid = p.attnum
+      JOIN jsonb_to_recordset(pending) p(relid oid, attnum int)
+        ON d.refclassid = 'pg_class'::regclass AND d.refobjid = p.relid AND d.refobjsubid = p.attnum
      WHERE d.classid NOT IN ('pg_class'::regclass, 'pg_constraint'::regclass, 'pg_attrdef'::regclass,
                              'pg_trigger'::regclass, 'pg_rewrite'::regclass, 'pg_type'::regclass)
         OR (d.classid = 'pg_class'::regclass
@@ -315,11 +375,12 @@ BEGIN
           FROM pg_depend d
           JOIN pg_rewrite r ON r.oid = d.objid AND d.classid = 'pg_rewrite'::regclass
           JOIN jsonb_to_recordset(pending) p(relid oid, attnum int)
-            ON d.refobjid = p.relid AND d.refobjsubid = p.attnum
+            ON d.refclassid = 'pg_class'::regclass AND d.refobjid = p.relid AND d.refobjsubid = p.attnum
         UNION
         SELECT r.ev_class, v.depth + 1
           FROM v
-          JOIN pg_depend d ON d.refobjid = v.oid AND d.classid = 'pg_rewrite'::regclass
+          JOIN pg_depend d ON d.refclassid = 'pg_class'::regclass AND d.refobjid = v.oid
+                          AND d.classid = 'pg_rewrite'::regclass
           JOIN pg_rewrite r ON r.oid = d.objid AND r.ev_class <> v.oid
          WHERE v.depth < 50
     ), deepest AS (
@@ -368,7 +429,8 @@ BEGIN
       FROM jsonb_array_elements(views) a
       JOIN pg_rewrite r ON r.ev_class = (a->>'oid')::oid
       JOIN pg_depend d ON d.objid = r.oid AND d.classid = 'pg_rewrite'::regclass
-      JOIN jsonb_array_elements(views) b ON (b->>'oid')::oid = d.refobjid AND b->>'oid' <> a->>'oid'
+      JOIN jsonb_array_elements(views) b ON d.refclassid = 'pg_class'::regclass AND (b->>'oid')::oid = d.refobjid
+                                        AND b->>'oid' <> a->>'oid'
      WHERE a->>'owner' = 'cis_owner' AND b->>'owner' = 'catalog_owner';
     IF bad IS NOT NULL THEN
         RAISE EXCEPTION 'migration 282: cis_owner view(s) % read a catalog view of the set', bad;
@@ -380,7 +442,8 @@ BEGIN
       INTO trigs
       FROM pg_depend d
       JOIN pg_trigger tg ON tg.oid = d.objid AND d.classid = 'pg_trigger'::regclass
-      JOIN jsonb_to_recordset(pending) p(relid oid, attnum int) ON d.refobjid = p.relid AND d.refobjsubid = p.attnum;
+      JOIN jsonb_to_recordset(pending) p(relid oid, attnum int)
+        ON d.refclassid = 'pg_class'::regclass AND d.refobjid = p.relid AND d.refobjsubid = p.attnum;
 
     IF EXISTS (SELECT 1 FROM jsonb_array_elements(views) e WHERE e->>'owner' = 'catalog_owner') THEN
         GRANT CREATE ON SCHEMA catalog TO catalog_owner;
@@ -407,8 +470,8 @@ BEGIN
     END LOOP;
 END $$;
 
--- 5c. As cis_owner: drop its views, drop the triggers on the changed columns, alter the columns, recreate the
---     triggers, put the two CHECKs in Dev's form.
+-- 5c. As cis_owner: when a type is pending, drop its views, drop the triggers on the changed columns, alter the
+--     columns, recreate the triggers; always: put the two CHECKs in Dev's form where they are not.
 SET LOCAL ROLE cis_owner;
 DO $$
 DECLARE
@@ -420,34 +483,35 @@ DECLARE
     norm text;
     cmt  text;
 BEGIN
-    IF NOT (st->>'pending')::boolean THEN
-        RETURN;
+    IF (st->>'pending')::boolean THEN
+        FOR e IN SELECT x FROM jsonb_array_elements(st->'views') x
+                  WHERE x->>'owner' = current_user ORDER BY (x->>'depth')::int DESC, x->>'name' LOOP
+            EXECUTE format('DROP VIEW %s', e->>'name');
+        END LOOP;
+        FOR e IN SELECT x FROM jsonb_array_elements(st->'triggers') x LOOP
+            EXECUTE format('DROP TRIGGER %I ON %s', e->>'name', e->>'rel');
+        END LOOP;
+        FOR rel IN SELECT DISTINCT x->>'rel' FROM jsonb_array_elements(st->'columns') x LOOP
+            SELECT string_agg(format('ALTER COLUMN %I TYPE %s', x->>'col', x->>'to'), ', ') INTO alt
+              FROM jsonb_array_elements(st->'columns') x WHERE x->>'rel' = rel;
+            EXECUTE format('ALTER TABLE %s %s', rel, alt);
+            RAISE NOTICE 'migration 282: ALTER TABLE % %', rel, alt;
+        END LOOP;
+        FOR e IN SELECT x FROM jsonb_array_elements(st->'triggers') x LOOP
+            EXECUTE e->>'def';
+            IF e->>'enabled' <> 'O' THEN
+                EXECUTE format('ALTER TABLE %s %s TRIGGER %I', e->>'rel',
+                               CASE e->>'enabled' WHEN 'D' THEN 'DISABLE' WHEN 'A' THEN 'ENABLE ALWAYS'
+                                                  ELSE 'ENABLE REPLICA' END, e->>'name');
+            END IF;
+            IF e->>'comment' IS NOT NULL THEN
+                EXECUTE format('COMMENT ON TRIGGER %I ON %s IS %L', e->>'name', e->>'rel', e->>'comment');
+            END IF;
+        END LOOP;
     END IF;
-    FOR e IN SELECT x FROM jsonb_array_elements(st->'views') x
-              WHERE x->>'owner' = current_user ORDER BY (x->>'depth')::int DESC, x->>'name' LOOP
-        EXECUTE format('DROP VIEW %s', e->>'name');
-    END LOOP;
-    FOR e IN SELECT x FROM jsonb_array_elements(st->'triggers') x LOOP
-        EXECUTE format('DROP TRIGGER %I ON %s', e->>'name', e->>'rel');
-    END LOOP;
-    FOR rel IN SELECT DISTINCT x->>'rel' FROM jsonb_array_elements(st->'columns') x LOOP
-        SELECT string_agg(format('ALTER COLUMN %I TYPE %s', x->>'col', x->>'to'), ', ') INTO alt
-          FROM jsonb_array_elements(st->'columns') x WHERE x->>'rel' = rel;
-        EXECUTE format('ALTER TABLE %s %s', rel, alt);
-        RAISE NOTICE 'migration 282: ALTER TABLE % %', rel, alt;
-    END LOOP;
-    FOR e IN SELECT x FROM jsonb_array_elements(st->'triggers') x LOOP
-        EXECUTE e->>'def';
-        IF e->>'enabled' <> 'O' THEN
-            EXECUTE format('ALTER TABLE %s %s TRIGGER %I', e->>'rel',
-                           CASE e->>'enabled' WHEN 'D' THEN 'DISABLE' WHEN 'A' THEN 'ENABLE ALWAYS'
-                                              ELSE 'ENABLE REPLICA' END, e->>'name');
-        END IF;
-        IF e->>'comment' IS NOT NULL THEN
-            EXECUTE format('COMMENT ON TRIGGER %I ON %s IS %L', e->>'name', e->>'rel', e->>'comment');
-        END IF;
-    END LOOP;
-    -- The CHECKs in Dev's form (same values; the form follows from when they were created, see the header).
+    -- The CHECKs in Dev's form (same values; the form follows from when they were created, see the header). Runs
+    -- whether or not a column type was pending: a database whose columns are already text can still carry the old
+    -- form. On Dev both definitions already match: nothing is issued.
     FOR con IN SELECT * FROM (VALUES
             ('chk_raw_tours_country',
              'CHECK (((country IS NULL) OR (country = ANY (ARRAY[''Bhutan''::text, ''Cambodia''::text, '

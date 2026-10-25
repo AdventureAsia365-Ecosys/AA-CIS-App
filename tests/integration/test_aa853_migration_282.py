@@ -10,7 +10,9 @@ Checks: every column type, nullability, index and CHECK ends as on Dev; the hand
 that depended on a changed column is back with its owner, columns, options and privileges, and returns the same rows;
 catalog_owner keeps no CREATE on schema catalog; registered once. A second apply is a no-op (no view or table is
 recreated or rewritten). Refusals: a materialized view on a changed column, a non-empty table Dev dropped. The v1
-schemas: dropped when cis_owner may, left (NOTICE) when they are another role's.
+schemas: dropped when cis_owner may (RESTRICT, with their enums and cross-schema foreign keys), left (NOTICE) when they
+are another role's, refused when something outside them depends on them or they hold an object 282 does not drop.
+The two raw_tours CHECKs are put in Dev's form even when no column type is pending.
 """
 import os
 import re
@@ -156,7 +158,8 @@ def test_the_ci_db_starts_in_the_old_shape(conn):
 def test_columns_and_nullability_as_on_dev(cur):
     for (rel, col), typ in CHANGED.items():
         assert _type(cur, rel, col)[0] == typ, (rel, col)
-    for rel, col, typ in (("shared.pipeline_runs", "llm_model", "text"), ("shared.pipeline_runs", "llm_provider", "text"),
+    for rel, col, typ in (("shared.pipeline_runs", "llm_model", "text"),
+                          ("shared.pipeline_runs", "llm_provider", "text"),
                           ("shared.pipeline_runs", "step_name", "text"),
                           ("shared.tenant_brand_rules", "created_at", "timestamp with time zone"),
                           ("silver_aa_internal.raw_sources", "file_hash", "character varying(64)")):
@@ -241,3 +244,72 @@ def test_v1_schemas_dropped_only_when_cis_owner_may(conn):
     c.execute("SELECT to_regnamespace('silver') IS NULL, to_regnamespace('gold') IS NOT NULL")
     assert c.fetchone() == (True, True)
     assert any("schema gold" in n and "left as is" in n for n in conn.notices), conn.notices
+
+
+def _v1_with_enum_and_fk(c):
+    c.execute("CREATE SCHEMA IF NOT EXISTS bronze AUTHORIZATION cis_owner")
+    c.execute("CREATE SCHEMA IF NOT EXISTS silver AUTHORIZATION cis_owner")
+    c.execute("SET LOCAL ROLE cis_owner")
+    c.execute("CREATE TYPE silver.zz282_status AS ENUM ('a', 'b')")
+    c.execute("CREATE TABLE bronze.zz282_src (id serial PRIMARY KEY)")
+    c.execute("CREATE TABLE silver.zz282_ver (id int REFERENCES bronze.zz282_src (id), s silver.zz282_status)")
+    c.execute("RESET ROLE")
+
+
+def test_v1_schemas_with_enums_and_cross_schema_keys_are_dropped_without_cascade(conn):
+    c = conn.cursor()
+    _standins(c)
+    _v1_with_enum_and_fk(c)
+    del conn.notices[:]
+    _apply(c)
+    c.execute("SELECT to_regnamespace('bronze') IS NULL, to_regnamespace('silver') IS NULL")
+    assert c.fetchone() == (True, True)
+    assert any("dropped schema(s)" in n for n in conn.notices), conn.notices
+
+
+def test_v1_schemas_refused_when_something_outside_depends_on_them(conn):
+    c = conn.cursor()
+    _standins(c)
+    _v1_with_enum_and_fk(c)
+    c.execute("CREATE VIEW shared.zz282_on_v1 AS SELECT id FROM bronze.zz282_src")
+    c.execute("ALTER VIEW shared.zz282_on_v1 OWNER TO cis_owner")
+    with pytest.raises(psycopg2.Error, match=r"objects outside the v1 schemas .* depend on them: .*zz282_on_v1"):
+        _apply(c)
+
+
+def test_v1_schemas_refused_when_an_outside_column_uses_their_type(conn):
+    c = conn.cursor()
+    _standins(c)
+    _v1_with_enum_and_fk(c)
+    c.execute("CREATE TABLE shared.zz282_uses_enum (s silver.zz282_status)")
+    with pytest.raises(psycopg2.Error, match="objects outside the v1 schemas"):
+        _apply(c)
+
+
+def test_v1_schema_with_an_object_282_does_not_drop_fails_instead_of_sweeping_it(conn):
+    c = conn.cursor()
+    _standins(c)
+    c.execute("CREATE SCHEMA IF NOT EXISTS ops AUTHORIZATION cis_owner")
+    c.execute("CREATE FUNCTION ops.zz282_f() RETURNS int LANGUAGE sql AS 'SELECT 1'")
+    c.execute("ALTER FUNCTION ops.zz282_f() OWNER TO cis_owner")
+    with pytest.raises(psycopg2.Error, match="cannot drop schema ops because other objects depend on it"):
+        _apply(c)
+
+
+def test_checks_put_in_devs_form_without_a_pending_type(conn, cur):
+    # the columns are text now (first apply); a CHECK in another form with the same values still converges
+    cur.execute("""ALTER TABLE silver_aa_internal.raw_tours DROP CONSTRAINT IF EXISTS raw_tours_review_status_check,
+                   ADD CONSTRAINT raw_tours_review_status_check
+                   CHECK (review_status::text IN ('pending_review', 'reviewed', 'approved', 'rejected'))""")
+    cur.execute("""SELECT pg_get_constraintdef(oid) FROM pg_constraint
+                    WHERE conrelid = 'silver_aa_internal.raw_tours'::regclass
+                      AND conname = 'raw_tours_review_status_check'""")
+    assert cur.fetchone()[0] != DEV_CHECKS["raw_tours_review_status_check"]
+    del conn.notices[:]
+    _apply(cur)
+    assert any("step 5 is a no-op" in n for n in conn.notices), conn.notices
+    assert any("raw_tours_review_status_check in Dev's form" in n for n in conn.notices), conn.notices
+    cur.execute("""SELECT pg_get_constraintdef(oid) FROM pg_constraint
+                    WHERE conrelid = 'silver_aa_internal.raw_tours'::regclass
+                      AND conname = 'raw_tours_review_status_check'""")
+    assert cur.fetchone()[0] == DEV_CHECKS["raw_tours_review_status_check"]
