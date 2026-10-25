@@ -203,6 +203,9 @@ Rules:
 - Combine the BRAND block, the channel's structure and style, the selected goal's writing method,
   and the chosen angle every time. Do not write from channel style alone. Where the brand's
   style guide and the channel or angle disagree, the brand's style guide wins.
+- SOURCE FIDELITY and VISIT DETAIL override the brand's style guide and its examples: what the
+  traveller does, feels or discovers comes only from the content seed. The style guide sets tone
+  and sentence shape, not content.
 - Use concrete, verifiable details from the content seed given. Never invent a fact, number,
   measurement, or claim that is not in the content seed.
 - SOURCE FIDELITY (same policy as the tour writer):

@@ -1661,10 +1661,11 @@ AI_TELL_LINE_RES = tuple(re.compile(p, re.I) for p in (
     r"\b(?:is|are)\s+(?:rarely|seldom|never)\s+(?:just|only|simply|merely)\s+(?:a|an)\s+"
     r"(?!few\b|couple\b|bit\b|little\b|handful\b|short\b|quick\b|minute\b|matter\b)\w+",
     # 'The waterfall is where the ride gets serious.', 'Day 3 is where the trip properly opens up.', '… is where the
-    # route earns its keep.' Not 'Paro is where the trek begins on the second day.' (a fact).
+    # route earns its keep.' Not 'Paro is where the trek begins on the second day.' (a fact), nor 'Kathmandu is where
+    # the trip finally ends.' (where it ends: round-2 review dropped 'finally').
     r"\b(?:is|was)\s+where\s+(?:the|a|an|your|this|every|most|many|a\s+lot\s+of)\s+(?:[\w'’-]+\s+){0,3}?"
     r"(?:ride|route|trip|trips|journey|journeys|day|story|road|adventure|itinerary|holiday|tour|week|experience)\s+"
-    r"(?:(?:really|properly|truly|finally)\s+\w+|gets?\s+(?:real|serious|interesting|good|going)"
+    r"(?:(?:really|properly|truly)\s+\w+|gets?\s+(?:real|serious|interesting|good|going)"
     r"|finds?\s+(?:its|their)\s+(?:footing|feet|rhythm|stride|voice)|earns?\b|comes?\s+(?:alive|together|into\s+"
     r"(?:its|their)\s+own)|opens?\s+up|turns?\s+(?:serious|real)|hits?\s+(?:its|their)\s+stride)",
     # 'That is the shape of the valley on two wheels.' (not 'This is the heart of the old town.')
@@ -1678,7 +1679,9 @@ AI_TELL_LINE_RES = tuple(re.compile(p, re.I) for p in (
     r"\bdeserves?\s+(?:its|their)\s+own\s+(?:attention|time|space|look)\b|\bdeserves?\s+(?:more\s+)?(?:time|attention)"
     r"\s*[.!]?$",
     # the whole sentence is 'X matters.': 'This matters as evidence.', 'The age of the crater matters here too.'
-    r"^(?:this|that|it|the\s+[\w\s'’-]{1,50}?)\s+matters?(?:\s+(?:here|too|now|again|as\s+evidence|most))*\s*[.!]?$",
+    # Word tokens, so the separators cannot overlap (round-2 review: '[\w\s…]' between two '\s+' was quadratic on a
+    # whitespace run, the CodeQL py/polynomial-redos shape).
+    r"^(?:this|that|it|the(?:\s+[\w'’-]+){1,8}?)\s+matters?(?:\s+(?:here|too|now|again|as\s+evidence|most))*\s*[.!]?$",
     # commenting on the text itself: 'The hedge in that last sentence matters', 'The word "might" is honest here',
     # 'This is the argument that the old fort makes' (not 'the first sentence of the prayer', 'the last sentence of
     # the inscription')
@@ -1698,9 +1701,9 @@ AI_TELL_LINE_RES = tuple(re.compile(p, re.I) for p in (
     r"\b(?:does|do|did)(?:\s+not|n['’]t)\s+announce\s+(?:itself|themselves|its|their)\b",
     # a verdict lead-in the pass cannot cut (what follows the colon is not a sentence of its own)
     # ('The thread running through this part of the journey is this: a river and its towns.'; not 'The rule at
-    # the temple is this: …')
-    r"^the\s+circle\s+(?:closes|is\s+complete)\b|^(?:the|this|that)\s[^:]{0,110}?\b(?:section|journey|trip|route"
-    r"|day|piece|point|result|answer|logic|lesson|difference|truth|idea|convergence|argument|pattern|thread|takeaway)"
+    # the temple is this: …', nor 'The route is this: …' / 'The plan for the day is this: …', round-2 review)
+    r"^the\s+circle\s+(?:closes|is\s+complete)\b|^(?:the|this|that)\s[^:]{0,110}?\b(?:section|journey|trip"
+    r"|piece|point|result|answer|logic|lesson|difference|truth|idea|convergence|argument|pattern|thread|takeaway)"
     r"\b[^:]{0,110}?\bis\s+this:",
     # the writer's inputs named in the copy (the seed itself is LEAK_RE's, F13): 'the chosen angle', 'the brief
     # says', 'this atom'. Never a brief stop ('a brief visit'), an angle of light or a slope, carbon atoms.

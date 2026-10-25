@@ -53,7 +53,8 @@ PROMPT_RULES = """- AI TELLS (an editor must not be able to tell a model wrote t
     something ("That's the opening.", "This is the section worth slowing down for.", "The geology is the thing
     itself.", "X is where the trip gets going.", "This one fact is the key to understanding ...", "These
     numbers are worth holding.", "The circle is complete:", "A meal here is rarely just a meal."). Every
-    sentence carries a fact from the content seed, a place, or what the reader does there.
+    sentence carries a fact from the content seed, a place, or what the content seed says the reader does
+    there.
   * No template openers: "There is a particular quality to ...", "X has a way of ...", "If there is one place
     ..., it is ...".
   * Never stack short sentences that open the same way ("The forts are still ... The shrines are still ...
@@ -102,8 +103,8 @@ _CALM_VOICE = frozenset("""calm respectful thoughtful grounded discreet elegant 
 understated considered gentle contemplative""".split())
 _ENERGETIC_RULE = """
 PACE FOR THIS BRAND (its voice: {words}): short paragraphs of two or three sentences, written to the reader as
-"you". Give a background fact (history, geology, dates, figures) one sentence at most, then go back to the trip's
-own moments in the CONTENT SEED; never a paragraph of background facts."""
+"you" (only what the CONTENT SEED states). Give a background fact (history, geology, dates, figures) one sentence
+at most, then go back to the trip's own moments in the CONTENT SEED; never a paragraph of background facts."""
 _CALM_RULE = """
 RESTRAINT FOR THIS BRAND (its voice: {words}): state each fact and move on. No meta-commentary about the text
 itself: never comment on a word, a sentence, a section or the piece ("The hedge in that last sentence
@@ -111,12 +112,24 @@ matters", "This is the argument that ...", "That detail is worth holding"), and 
 reflection about what it all means."""
 
 
+_VOICE_WORD_RE = re.compile(r"[a-z-]+")
+_VOICE_NEGATIONS = frozenset({"not", "never", "no", "nor"})
+
+
+def _voice_words(entry: str) -> set[str]:
+    """The voice words of one pack entry, without a word right after not / never / no / nor ('Calm, never
+    playful' is calm, not playful; 'Not loud, not bold' is neither)."""
+    words = _VOICE_WORD_RE.findall(entry.lower())
+    return {w for k, w in enumerate(words) if k == 0 or words[k - 1] not in _VOICE_NEGATIONS}
+
+
 def brand_voice_rule(brand_audience: Optional[dict]) -> str:
     """The PACE line for an energetic brand, the RESTRAINT line for a calm / respectful one ('' for neither; both
-    when the voice has both kinds of word). Read from the brand pack's own ``voice`` words."""
+    when the voice has both kinds of word). Read from the brand pack's own ``voice`` words; a negated word ('never
+    playful') does not count."""
     voice = [str(v) for v in (brand_audience or {}).get("voice") or [] if v]
-    energetic = [v for v in voice if set(re.split(r"[^a-z-]+", v.lower())) & _ENERGETIC_VOICE]
-    calm = [v for v in voice if set(re.split(r"[^a-z-]+", v.lower())) & _CALM_VOICE]
+    energetic = [v for v in voice if _voice_words(v) & _ENERGETIC_VOICE]
+    calm = [v for v in voice if _voice_words(v) & _CALM_VOICE]
     return ((_ENERGETIC_RULE.format(words=", ".join(energetic)) if energetic else "")
             + (_CALM_RULE.format(words=", ".join(calm)) if calm else ""))
 
@@ -428,12 +441,20 @@ def _semicolons(s: str) -> tuple[str, list[str]]:
 # AA-790 round 2 — a verdict lead-in before a colon: "The circle is complete: the bridges … are repaired by …",
 # "The thread that ties this section of the trip together is this: …" → the statement after the colon. The
 # generic "<subject> is this:" form fires only when the subject talks about the piece or names an abstraction
-# (a meta noun or one of _LEAD_IN_NOUNS): "The rule at the temple is this: …" keeps its subject.
+# (one of _LEAD_IN_NOUNS, or a piece-meta noun: section, piece, 'part of the journey'): "The rule at the temple
+# is this: …" keeps its subject. Round-2 review: the broad _META_NOUNS (way, place, day, route, stop …) cut
+# informative subjects ("The only way in is this: …", "The best place to stay is this: …"), so they are not
+# used here, and a subject that holds a superlative / 'only', a rule, access or practical word, a digit or a
+# name is a fact and is never cut.
 _LEAD_IN_RE = re.compile(
     r"^(?P<lead>The[ \t]+circle[ \t]+(?:closes|is[ \t]+complete)|Here[ \t]+is[ \t]+the[ \t]+thing"
     r"|(?P<subj>(?:The|This|That)[ \t][^:;,.!?\n]{1,110}?)[ \t]+is[ \t]+this):[ \t]+(?P<rest>[a-zA-Z][^\n]+)$")
 _LEAD_IN_NOUNS = frozenset("""point result answer logic lesson upshot difference truth idea convergence argument
 pattern thread takeaway""".split())
+_PIECE_META_NOUNS = frozenset("section sections piece post article paragraph".split())
+_PART_OF_RE = re.compile(r"\bparts?[ \t]+of[ \t]+(?:the|this|our|your)[ \t]+(?:journey|trip|route|day|story)\b", re.I)
+_LEAD_IN_FACT_WORDS = frozenset("""only best safest easiest quickest fastest cheapest shortest main first last
+nearest closest""".split())
 
 
 _FINITE_RE = re.compile(r"\b(?:is|are|was|were|has|have|had|can|could|will|would|may|might|must|does|do|did)\b", re.I)
@@ -445,9 +466,13 @@ def _lead_in(s: str, src: frozenset) -> tuple[str, list[str]]:
     # ('a river and the towns along it, fed by …' stays, and goes to the F15 repair as residue)
     if not m or len(_words(m.group("rest"))) < 5 or not _FINITE_RE.search(m.group("rest").split(",")[0]):
         return s, []
-    if m.group("subj") is not None:
-        subj_words = {w.lower() for w in _words(m.group("subj"))}
-        if not subj_words & (_META_NOUNS | _LEAD_IN_NOUNS):
+    subj = m.group("subj")
+    if subj is not None:
+        subj_words = {w.lower() for w in _words(subj)}
+        if not (subj_words & (_LEAD_IN_NOUNS | _PIECE_META_NOUNS) or _PART_OF_RE.search(subj)):
+            return s, []
+        if (subj_words & _LEAD_IN_FACT_WORDS or _protected(subj) or _practical(subj) or _DIGIT_RE.search(subj)
+                or _NAME_AFTER_FIRST_RE.search(subj)):
             return s, []
     return _cap(m.group("rest")), ["verdict lead-in"]
 
@@ -564,14 +589,27 @@ _DO_DENIAL_RE = re.compile(
     r"(?P<x>[^.;:!?\n]{0,90}?)[ \t]*[.!]$")
 _PERFORMATIVE_VERBS = frozenset("""announce advertise shout perform pretend position present frame stage showcase
 market sell rush hurry compete try insist beg reveal hide explain impose feel exist""".split())
+# Round-2 review: with any object these verbs state a plain fact ("This shop does not sell alcohol.", "The troupe does
+# not perform in winter.", "The workshop does not sell to visitors."); only the reflexive form ("does not sell
+# itself", "does not market itself") is a tell.
+_TRANSACTIONAL_VERBS = frozenset("sell market perform explain compete".split())
 # The affirmation after a denial, any verb: 'It builds.', 'It works.', 'They rise from the rock.' Only
 # 'It' / 'They': 'This means …' / 'That changes …' point at the whole statement, not at its subject.
 _AFFIRM_VERB_RE = re.compile(r"^(?P<pro>It|They)[ \t]+(?P<verb>[a-z]+)(?P<y>(?:[ \t,].*)?)[.!]$")
-# What a 'do' denial in a pair may deny: the subject itself ('does not announce itself', 'does not advertise its
-# age') or nothing after the verb / an adverb or preposition. 'The guide does not explain the ritual. It is …'
-# has an object the next 'It' may point at, so it is never joined.
-_DO_X_OK_RE = re.compile(r"^(?:$|[ \t]+(?:itself|themselves|its|their|his|her|much|anything|everything|in|from|at|on"
-                         r"|to|with|by|as|for|loudly|openly|quickly|easily|immediately|all|at[ \t]+once)\b)")
+# What a 'do' denial may deny: the subject itself ('does not announce itself', 'does not shout about itself', 'does
+# not advertise its age'), nothing after the verb, or a manner adverb. 'The guide does not explain the ritual. It is
+# …' has an object the next 'It' may point at, so it is never joined. Round-2 review: a preposition alone is not
+# enough: "do not perform in the rainy season", "does not sell to visitors" are a season or an audience the join
+# would drop.
+_DO_X_OK_RE = re.compile(r"^(?:$|[ \t]+(?:(?:about|to|for|with|in|on|at|from|by)[ \t]+(?:itself|themselves)"
+                         r"|itself|themselves|its|their|his|her|much|anything|everything|loudly|openly|quickly|easily"
+                         r"|immediately|all)\b)")
+_DO_X_REFLEXIVE_RE = re.compile(r"^[ \t]+(?:(?:about|to|for|with|in|on|at|from|by)[ \t]+)?(?:itself|themselves)\b")
+# A lone denial may also frame its object: "does not present the village as a stage", "does not position the town as
+# a backdrop".
+_FRAMING_VERBS = frozenset("present position frame stage showcase".split())
+_FRAMING_AS_RE = re.compile(r"^[ \t]+(?:the|this|that|these|those|its|their|a|an)[ \t]+[\w'’-]+(?:[ \t]+[\w'’-]+){0,2}"
+                            r"[ \t]+as[ \t]+(?:a|an)[ \t]")
 _NOT_A_VERB = frozenset("""is are was were be been has have had does do did can could will would may might must shall
 should not also still never only just remains remained stays stayed becomes became seems seemed""".split())
 # A word in Y that points back to what the denial named ('they rise from it' after 'above the ridge'): the join
@@ -580,12 +618,28 @@ _BACK_REFERENCE = frozenset("it its itself them they their theirs".split())
 _SINGULAR_PRONOUNS = frozenset({"it", "this", "that"})
 
 
-def _lemma(verb: str) -> str:
+def _lemmas(verb: str) -> frozenset:
+    """The base forms ``verb`` may have: 'hides' → {hides, hide, hid}, 'rushes' → {rushes, rushe, rush}, 'carries' →
+    {…, carry}. Round-2 review: one stem stripped '-es' from verbs that end in -e ('hides' → 'hid', 'stages' →
+    'stag'), so the same-verb guard missed 'does not hide …. It hides …'. Compared as sets: a candidate that is not a
+    word matches nothing."""
     v = verb.lower()
-    for suffix in ("ies", "es", "s"):
-        if v.endswith(suffix) and len(v) - len(suffix) >= 3:
-            return v[:-len(suffix)] + ("y" if suffix == "ies" else "")
-    return v
+    out = {v}
+    if v.endswith("ies") and len(v) > 4:
+        out.add(v[:-3] + "y")
+    if v.endswith("es") and len(v) > 4:
+        out.add(v[:-2])
+    if v.endswith("s") and not v.endswith("ss") and len(v) > 3:
+        out.add(v[:-1])
+    return frozenset(out)
+
+
+def _do_x_ok(verb: str, x: str, *, lone: bool = False) -> bool:
+    """The denied part after a 'do' denial's verb may go: see _DO_X_OK_RE / _TRANSACTIONAL_VERBS / _FRAMING_AS_RE."""
+    lemmas = _lemmas(verb)
+    if lemmas & _TRANSACTIONAL_VERBS:
+        return bool(_DO_X_REFLEXIVE_RE.match(x))
+    return bool(_DO_X_OK_RE.match(x)) or (lone and bool(lemmas & _FRAMING_VERBS) and bool(_FRAMING_AS_RE.match(x)))
 
 
 # A denial that states a limit ('does not reveal itself until the last bend') is a fact, not a set-up.
@@ -601,9 +655,10 @@ def _denied_ok(part: str, s1: str, src: frozenset) -> bool:
 
 def _verb_in_seed(verb: str, src: frozenset) -> bool:
     """A bare affirmation whose verb the seed uses ('It floods.') is a fact: the pair is left alone."""
-    return bool(set(content_words(verb)) & src) or bool(set(content_words(_lemma(verb))) & src)
+    return any(set(content_words(v)) & src for v in _lemmas(verb))
 
 
+_NOT_ONLY_RE = re.compile(r"\bnot[ \t]+(?:only|just|simply|merely)\b", re.I)
 CUT_BOTH = "\x00cut both"  # _pair2: both sentences go (an aphorism pair: 'X is not a ruin. It works.')
 
 
@@ -618,9 +673,9 @@ def _pair2(s1: str, s2: str, src: frozenset) -> Optional[str]:
     a_cop, a_verb = _AFFIRM_RE.match(e2), _AFFIRM_VERB_RE.match(e2)
     d = _DO_DENIAL_RE.match(e1)
     if d:
-        if _lemma(d.group("verb")) not in _PERFORMATIVE_VERBS:
+        if not _lemmas(d.group("verb")) & _PERFORMATIVE_VERBS:
             return None
-        if not _DO_X_OK_RE.match(d.group("x")) or not _denied_ok(d.group("verb") + d.group("x"), s1, src):
+        if not _do_x_ok(d.group("verb"), d.group("x")) or not _denied_ok(d.group("verb") + d.group("x"), s1, src):
             return None
         # 'It' / 'They' only: 'The town does not hurry. That is the appeal.' is about the statement, not the town
         a = ((a_cop if a_cop and a_cop.group("pro") in ("It", "They") else None)
@@ -632,7 +687,7 @@ def _pair2(s1: str, s2: str, src: frozenset) -> Optional[str]:
         if (aux == "does" and pro not in _SINGULAR_PRONOUNS) or (aux == "do" and pro in _SINGULAR_PRONOUNS):
             return None
         verb, y = a.group("verb"), a.group("y")
-        if a is a_verb and _lemma(verb) == _lemma(d.group("verb")):
+        if a is a_verb and _lemmas(verb) & _lemmas(d.group("verb")):
             return None  # 'does not run on Sundays. It runs daily otherwise.' is a restriction, not a set-up
         if _BACK_REFERENCE & {w.lower() for w in _words(y)}:
             return None
@@ -649,6 +704,8 @@ def _pair2(s1: str, s2: str, src: frozenset) -> Optional[str]:
     d = _DENIAL_RE.match(e1)
     if not d or "more than" in d.group(0).lower() or not a_verb or a_verb.group("verb") in _NOT_A_VERB:
         return None
+    if _NOT_ONLY_RE.search(d.group(0)):
+        return None  # 'is not only a temple. It hosts weddings.': 'not only X' asserts X, the join would drop it
     x_words = d.group("x").split()
     if not x_words or x_words[0].lower() not in ("a", "an", "the") or not _denied_ok(d.group("x"), s1, src):
         return None
@@ -671,8 +728,12 @@ _LONE_DO_SUBJ_RE = re.compile(r"^(?:this|that|these|those|it|they|(?:this|that|t
 
 
 def _lone_do_denial(s: str, src: frozenset) -> bool:
+    """Round-2 review: the denied part is checked as in the pair path (``_do_x_ok``, plus the framing 'as a …'
+    form), so 'This shop does not sell alcohol.' / 'It does not perform for tourists.' stay."""
     d = _DO_DENIAL_RE.match(_expand(s))
-    if not d or len(_words(s)) > 14 or _lemma(d.group("verb")) not in _PERFORMATIVE_VERBS:
+    if not d or len(_words(s)) > 14 or not _lemmas(d.group("verb")) & _PERFORMATIVE_VERBS:
+        return False
+    if not _do_x_ok(d.group("verb"), d.group("x"), lone=True):
         return False
     return bool(_LONE_DO_SUBJ_RE.match(d.group("subj").strip())) and _denied_ok(d.group("verb") + d.group("x"), s,
                                                                                  src)
@@ -686,8 +747,18 @@ _MEANT_RE = re.compile(
     r"|no[ \t]+(?:accident|coincidence)|(?:entirely[ \t]+|quite[ \t]+|fully[ \t]+)?(?:deliberate|intentional))[.!]$")
 
 
+# Round-2 review: a count or an order of days, or a rest day, is pace / schedule information ('The slow pace of the
+# first two days is deliberate.', 'The rest day is deliberate.'), like a digit. 'the two cultures' is not.
+_SCHEDULE_RE = re.compile(
+    r"\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|first|second|third|fourth|fifth|last|both"
+    r"|half)[ \t]+(?:[a-z]+[ \t]+)?(?:days?|nights?|mornings?|afternoons?|evenings?|weeks?|hours?|stages?|legs?)\b"
+    r"|\b(?:rest|free|spare|buffer)[ \t]+(?:days?|mornings?|afternoons?|evenings?)\b|\bacclimati[sz]", re.I)
+
+
 def _meant_verdict(s: str, src: frozenset) -> bool:
+    """A name ('The rest day in Leh is deliberate.', as in _verdict) or a schedule phrase keeps the sentence."""
     return (bool(_MEANT_RE.match(_expand(s))) and len(_words(s)) <= 12 and not _DIGIT_RE.search(s)
+            and not _NAME_AFTER_FIRST_RE.search(s) and not _SCHEDULE_RE.search(s)
             and not _protected(s) and not _practical(s) and not _seed_fact(s, src))
 
 
@@ -723,7 +794,10 @@ def _anaphora_edits(text: str, ctx: TellContext) -> list[Edit]:
                and "\n" not in text[spans[j]["end"]:spans[j + 1]["start"]]
                and _anaphora_key(spans[j + 1]["clean"]) == key and not _is_cta(spans[j + 1]["clean"], ctx)):
             j += 1
-        if key and j - i >= 2 and not _is_cta(sp["clean"], ctx) and i != _first_prose(spans):
+        if key and i == _first_prose(spans):
+            i = j + 1  # a run that opens the piece is its hook: none of it is joined (round-2 review)
+            continue
+        if key and j - i >= 2 and not _is_cta(sp["clean"], ctx):
             run = [s["clean"].rstrip().rstrip(".") for s in spans[i:j + 1]]
             joined = ", ".join([run[0]] + [_lower_first(r) for r in run[1:-1]]) + " and " + _lower_first(run[-1]) + "."
             tags = _tags(" ".join(s["text"] for s in spans[i:j + 1]))

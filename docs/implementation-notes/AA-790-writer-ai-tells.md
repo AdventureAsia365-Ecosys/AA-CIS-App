@@ -241,3 +241,79 @@ source fidelity first, precision-first rules. Test sentences are synthetic; no t
 - No migration, no Terraform, no new gate / registry / taxonomy entry, no new LLM call site, no frontend change.
   Needs a CIS api + worker deploy in a wave gap; a re-panel (script + 4-lens panel) is the measure.
 - Tests: `tests/unit/test_aa790_writer_round2.py` (synthetic sentences; every fix rule has negative cases).
+
+## Round 2 review fixes (S252)
+
+Input: two independent reviews of CIS #1017 (correctness lens, fidelity lens), both "request changes": six
+blocking findings and a list of nits. Every fix has exact-text regression tests (the review's own sentences, both
+the facts that must stay and the tells that must still go) in `tests/unit/test_aa790_writer_round2.py`.
+
+### Decisions
+
+- **R2R-D1 — the reader's action comes from the seed only.** `PROMPT_RULES` said every sentence may carry "what the
+  reader does there", with no seed bound, a few lines above `VISIT_DETAIL_RULE`, which forbids exactly that. It now
+  reads "what the content seed says the reader does there".
+- **R2R-D2 — one explicit priority line in `SYSTEM_PROMPT`:** "SOURCE FIDELITY and VISIT DETAIL override the brand's
+  style guide and its examples: what the traveller does, feels or discovers comes only from the content seed. The
+  style guide sets tone and sentence shape, not content." It sits right after "the brand's style guide wins", so the
+  two read together. Reason: Trail Pulse's live style guide asks for what the traveller "does, feels, and discovers"
+  and its examples are invented visit content; `render_brand_block` says "follow every rule in it". The PACE line's
+  "you" sentences are bounded the same way ("(only what the CONTENT SEED states)").
+- **R2R-D3 — 'do' denials: the denied part is checked on both paths.** `_DO_X_OK_RE` no longer accepts a bare
+  preposition (a season or an audience: "do not perform in the rainy season", "does not sell to visitors"); it keeps
+  empty, reflexive / possessive (itself, its age, "about itself") and manner adverbs. `sell / market / perform /
+  explain / compete` (`_TRANSACTIONAL_VERBS`) count only in the reflexive form ("does not sell itself"). The lone
+  path (`_lone_do_denial`) now runs the same check, plus the framing form "present / position / frame / stage /
+  showcase <the N> as a …" ("does not position the village as a backdrop" is still cut).
+- **R2R-D4 — verdict lead-ins use their own noun list.** The generic "<subject> is this:" form matches only
+  `_LEAD_IN_NOUNS` plus piece-meta nouns (section, piece, post, article, paragraph, "part of the journey / trip"),
+  not the broad `_META_NOUNS` (way, place, day, route, stop …), and never when the subject holds only / a superlative
+  / first / last / main, a rule, access or practical word, a digit or a name.
+- **R2R-D5 — 'X matters.' residue regex is word-token based** (`the(?:\s+[\w'’-]+){1,8}?`): the old `[\w\s'’-]{1,50}?`
+  between two `\s+` was quadratic on whitespace (12.8 s on 'The' + 8000 spaces locally), the CodeQL
+  py/polynomial-redos shape #1011 just removed. Same hits on the review's cases.
+- **Nits taken:** `_lemma` → `_lemmas` (a candidate set: 'hides' → hide, 'stages' → stage; '-ss' never stripped);
+  `_meant_verdict` gets the name guard and a schedule guard (a counted / ordered day, a rest day, acclimatisation);
+  `_pair2`'s copula branch skips "not only / just / simply / merely" ('not only X' asserts X; round-1 `_pair` keeps
+  its documented behaviour); an anaphora run that starts at the first prose sentence is skipped whole (it was only
+  half protected); `brand_voice_rule` skips a voice word right after not / never / no / nor; residue drops
+  'finally' from the "is where the trip …" pattern and route / day from the lead-in nouns.
+
+### Changed (vs the review's suggestions)
+
+- `_meant_verdict`: the review's second example ("The slow pace of the first two days is deliberate.") has no name,
+  so a name guard alone does not keep it. A schedule guard (`_SCHEDULE_RE`) does; a plain number word was too broad
+  ("the two cultures … is not accidental" is a real tell and is still cut).
+- The optional prompt nits (SOCIAL_AUDIENCE "in the seed's own words", a WildKind 'nature-led' line, a softer PACE
+  background cap) are not in this change; see Should know.
+
+### Tradeoffs
+
+- **WildKind: lone-denial cut vs voice.** The round-2 lone 'do' denial cut still removes lines like "This kind of
+  stay does not position the village as a backdrop." The round-1 voice judge quoted exactly that line as on-brand
+  for WildKind (7.5). We keep the cut (it is the AI-tells panel's top pattern) and accept that the WildKind voice
+  score may not move, or may drop a little, in the re-panel. RESTRAINT also does not address WildKind's 'Nature-led'
+  gap (habitat and landscape specificity), and "state each fact and move on" may make the "dry and info-heavy"
+  remark worse.
+- **Precision over recall, again.** Without the preposition allowance some real tells are left ("does not hurry in
+  the mornings. It …"); without the broad meta nouns some lead-ins are left. They go to the prompt, not the pass.
+- **Priority line vs brand voice.** Ranking source fidelity over the style guide may flatten brands whose guide is
+  built on traveller experience (Trail Pulse). That is the intended trade: fidelity is a hard rule, voice is shaped.
+
+### Should know
+
+- **`writer_prompt_version` moves `751b0a34` → `afc08095`** (SYSTEM_PROMPT hash: the seed-bounded reader clause and
+  the priority line). The guard test `test_blog_prompts_are_byte_identical` has a dated note; `single` and `route`
+  change too (the PACE line's seed bound, energetic fixture pack).
+- **Atlas & Hearth RESTRAINT risk.** Its voice (Elegant / Discreet / Calm) matches the calm words, so round 2 gives
+  the best-scoring tenant (7.90) the RESTRAINT line. "State each fact and move on" may flatten its 'Atmospheric'
+  voice. Watch A&H brand voice in the re-panel; if it drops, exclude 'elegant' / 'discreet' or make RESTRAINT only
+  about meta-commentary.
+- **Watch Trail Pulse source fidelity in the re-panel:** PACE caps background at one sentence; with a thin seed, the
+  blog length rule and the LinkedIn word target, the writer has little it may say and may pad.
+- **Pre-existing, not changed here:** two round-1 regexes are quadratic on long whitespace runs (`_LABEL_RE` ~0.75 s
+  and `_NOT_BECAUSE_RE` ~0.12 s at 8000 spaces, both start with `,?[ \t]*` / `,?[ \t]+`). Live risk is low (they see
+  whitespace-normalised sentences), but they are the same CodeQL shape; a follow-up can anchor them with a
+  lookbehind.
+- The linear-time test covers every regex this PR adds or changes (the ai_tells round-2 patterns and every
+  `AI_TELL_LINE_RES` entry after the round-1 'asks … of' line): 12 adversarial 8000-char inputs, < 50 ms each.

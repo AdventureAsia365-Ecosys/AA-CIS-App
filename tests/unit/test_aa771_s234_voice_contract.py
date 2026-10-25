@@ -449,7 +449,12 @@ class TestT9Prompt:
         Updated AA-790 round 2 (S251 re-panel, 25/10/2026): SYSTEM_PROMPT gets more AI-tell rules (do-denials, more
         verdict lines, anaphora, never naming the seed / angle / brief / atom, no comment on the text itself) and the
         VISIT DETAIL rule (ai_tells.VISIT_DETAIL_RULE); every channel gets the brand-energy line
-        (ai_tells.brand_voice_rule; the fixture pack's voice is energetic, so a PACE line), so all three change."""
+        (ai_tells.brand_voice_rule; the fixture pack's voice is energetic, so a PACE line), so all three change.
+        Updated AA-790 round 2 review (S252, 25/10/2026): SYSTEM_PROMPT bounds "what the reader does there" to the
+        content seed and adds one priority line (SOURCE FIDELITY and VISIT DETAIL override the brand's style guide
+        and its examples; the style guide sets tone and sentence shape, not content): writer_prompt_version
+        751b0a34 → afc08095. The PACE line's "you" is bounded to the CONTENT SEED, so `single` and `route` change
+        too."""
         pack = {"brand_name": "Trail Pulse", "brand_type": "Young active adventure travel brand",
                 "core_idea": "Active trips for people who like to move.", "customer_segment": "25-40 years old",
                 "voice": ["Energetic", "Fresh", "Direct", "Friendly", "Modern", "Confident", "Lightly playful"],
@@ -470,9 +475,9 @@ class TestT9Prompt:
         def sha(s):
             return hashlib.sha256(s.encode()).hexdigest()
         assert GOAL["key"] == GOALS[0]["key"]
-        assert sha(SYSTEM_PROMPT) == "751b0a34135d9d08855e9d9c802822597e3cf44d0dfeda5412385d4f5ae1bd01"
-        assert sha(single) == "6180ebc7cf76b865aa688527ab9aad4acf65e4a76b6f1a6348d96829e0110615"
-        assert sha(route) == "6b9d0f7c70cf7e1eb567868111c3220cfdf33b072ea990d0ece3a967902f6d91"
+        assert sha(SYSTEM_PROMPT) == "afc08095b970d6d314cffa8396eef75f9404a116aaeff56b88efda8db4329d18"
+        assert sha(single) == "30305b79dd6ff24837d28da9639d06e32a6cefbaf78eca0aff7fe8478883458a"
+        assert sha(route) == "c212a3a201ac00f5d8c3f20d9889b1a58e893375c5d93d1e45fa2669720be78a"
 
     def test_prompts_carry_no_em_dash_but_the_rule(self):
         """AA-778 — our own prompt text primed the habit (S234: 78 in the writer prompts). The one em-dash
