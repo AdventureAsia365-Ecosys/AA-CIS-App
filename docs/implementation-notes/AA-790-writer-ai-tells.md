@@ -142,3 +142,178 @@ gate, registry gate count unchanged. So the fix is on the writer side.
 - **Residue list narrowed.** `has a way of` skips "way of life / living"; the `earn` pattern drops name / title /
   status and never matches before from / of / as / for ("earned its name from the legend", "earned its reputation
   for weaving"). This list widens the existing F15 stock-line detection during the gate freeze, so it errs narrow.
+
+## Round 2 (S251)
+
+Input: a blind 4-lens panel on the same 20 pieces, pilot vs round-1 rewrite (CIS #1015, `3c078692`): AI-tells
+4.15 → 5.12 (bar 5.5, not met; blog 3.36 → 4.50, LinkedIn 6.0 → 6.58); brand voice 6.70 → 7.12 overall but Trail
+Pulse 6.5 → 6.0 and WildKind 7.5 → 6.75 (per-tenant bar 7 not met); source fidelity 7.58 → 7.12 with a LinkedIn
+regression 8.92 → 7.08; reader value 6.88 → 7.20. Same constraints as round 1: gate freeze, writer side only,
+source fidelity first, precision-first rules. Test sentences are synthetic; no tenant text in the repo.
+
+### Decisions
+
+- **R2-D1 — the round-1 AUDIENCE rule caused the LinkedIn regression; it is replaced, not removed.** It said "say
+  what they see or do at this place", and the writer invented the visit (a chance to watch the training, families
+  put in the middle of it, a stop that slots easily into a day). The new `SOCIAL_AUDIENCE_RULE` names who the
+  audience is (a family brand writes to the family) and why the seed's facts matter to them, and forbids describing
+  what the visit shows, includes, lets them watch or do, what they will notice or feel, or how it fits their day,
+  unless the seed says so. The same guard reaches every channel, blog included, as `VISIT_DETAIL_RULE` in
+  `SYSTEM_PROMPT` (one system prompt for every T9 channel, so the blog user prompt needs no line of its own).
+- **R2-D2 — brand energy is one line from the brand's own voice words** (`ai_tells.brand_voice_rule`, every
+  channel). Energetic words (energetic, active, playful, bold, …) → PACE: short paragraphs, second person, a
+  background fact one sentence at most, then back to the seed's moments. Calm words (calm, respectful, thoughtful,
+  grounded, discreet, …) → RESTRAINT: no meta-commentary about the text, no closing reflection. Neither → nothing
+  (Terra's voice words match neither). Both kinds → both lines.
+- **R2-D3 — new deterministic rules (delete or join only, under the round-1 integrity check).**
+  1. A 'do' denial + its affirmation ("The crater does not announce itself from the road. It is simply there.") →
+     joined. Closed verb list (`_PERFORMATIVE_VERBS`: announce, advertise, present, reveal, rush, feel, …), because
+     a 'do' denial is often a fact ("does not run on Sundays", "does not stop at the falls", "do not live in fixed
+     villages"). The denied part must be the subject itself or nothing / an adverb / a preposition (`_DO_X_OK_RE`:
+     "does not explain the ritual. It is …" has an object the next 'It' may mean); the affirmation pronoun is It /
+     They and agrees with does / do; never the same verb twice ("does not run …. It runs …"); no back-reference
+     pronoun in what is kept; no practical / protected / limit (until, only, before …) / digit / name / seed-fact
+     word in the denied part.
+  2. A copula denial of a noun phrase + a short (≤ 4 words) It / They verb affirmation: joined ("The hall is not a
+     relic. It hosts weddings." → "The hall hosts weddings."); with a bare verb ("It works.") both sentences go (the
+     join would read "The temple works."), unless the seed uses that verb.
+  3. A lone 'do' denial with a pronoun / "This kind of N" subject and a performative verb is cut.
+  4. "<the N> is not incidental / accidental / a coincidence", "is no accident", "is deliberate" (≤ 12 words, no
+     digit, no practical word: "The difficulty of the climb is not incidental." stays) is cut as a verdict line.
+  5. A verdict lead-in before a colon ("The circle is complete:", "Here is the thing:", "<the point / thread / this
+     section …> is this:") is cut when what follows is a sentence of its own (a finite verb before its first comma);
+     a bare noun phrase after the colon stays and is residue.
+  6. Three or more short sentences in one paragraph built the same way (same opener, same verb, same next word,
+     ≤ 8 words, no digit) are joined into one sentence "A, B and C." Nothing is cut; never the piece's first
+     sentence.
+  All keep the round-1 protections: never the first prose sentence, never empty a section, never the CTA.
+- **R2-D4 — residue (the existing F15 "stock line" routing → one cheap t9_repair on attempt 1, never a hold)** for
+  what code cannot rewrite safely: "is rarely just a N", "X is where the ride gets serious / the route earns …",
+  "That is the shape of …", "is the key to understanding", "is what it is", "worth holding", "deserves its own
+  attention", a whole-sentence "X matters.", comments on the text ("that last sentence", "The word 'x' is honest",
+  "This is the argument that …"), "X persists because the Y persists.", "reframes everything", "each day builds on
+  the last", "no two days look alike", "it happens when it happens", "does not announce itself" (a first sentence
+  the pass may not cut), a lead-in whose colon is followed by a noun phrase, the writer's inputs named in the copy
+  (the chosen angle, the brief says, this atom covers, seed facts), and invented visit logistics (fits naturally into
+  a day, puts your family in the middle of, a chance to watch, easy-to-navigate, visible the moment you walk in).
+- **R2-D5 — internal-label leak.** "the seed" is already `hygiene.LEAK_RE` (F13_leak, blocking, sentence repair):
+  in the live T9 loop the round-1 "What the seed describes …" sentence would have been blocked and repaired; the
+  re-panel script runs no gates, which is why the panel saw it. Round 2 adds the brief rule (never name the seed,
+  content seed, angle, brief or atom; never comment on the own text) and residue for the angle / brief / atom /
+  "seed facts" forms LEAK_RE does not have. `LEAK_RE` itself is a gate pattern and is not touched (freeze).
+
+### Changed (vs the round-2 brief)
+
+- "Ready to go?" before the CTA is not a lead-in the writer added: it is Trail Pulse's configured CTA text, which
+  `hygiene.ensure_cta` restores word for word. Code cannot drop it; it is a brand setting (the tenant's CTA).
+- Anaphora runs are joined, not cut or routed to repair: a per-sentence residue pattern cannot see a run of three,
+  and the join keeps every fact.
+- Round-1 fix found while probing: `_pair`'s copula join took the denial's tense ("The bridge is not the original.
+  It was rebuilt." → "The bridge is rebuilt."); it now keeps the affirmation's tense with the subject's number. The
+  pilot and golden edit logs do not change (no such pair there).
+- `AI_TELLS_VERSION` → `ai_tells.v2`. `_PRACTICAL_RE` gains difficulty / difficulties.
+
+### Tradeoffs
+
+- **Many more F15 stock-line repairs.** On the 20 stored round-1 texts every piece (20 / 20) carries at least one
+  residue sentence after the pass (38 sentences), so each gets one cheap sentence repair on attempt 1 (t9_repair,
+  ~$0.003–0.009 a piece): never a hold, never a new gate. On the pilot texts 10 / 20 (round 1: 9 / 20).
+- **A residue pattern can flag a legitimate sentence** (a short "The weather matters.", "worth holding" about a
+  handrail). The repair is told "say it plainly or cut it" and its replacement is checked for new specifics, so a
+  false positive costs one rephrased sentence. Patterns are narrow and each group has negative tests.
+- **Joins can read flat** ("The forts are still guarded, the shrines are still lit and the mills are still
+  turning." is still a list of three, just not staccato). The prompt is the real fix; the pass is the net.
+- **Closed verb list for 'do' denials** leaves real tells with other verbs ("does not feel staged. It is …" with an
+  adjective is left). Precision over recall.
+
+### Should know
+
+- **$0 census (local, counts only).** 20 stored round-1 texts: fixable 8 → 0 (8 edits on 4 pieces, none refused:
+  3 "not incidental / deliberate" verdicts, 1 lone 'do' denial, 1 lead-in, 1 anaphora run, 1 'do' denial joined,
+  1 aphorism pair cut); residue 40 → 38 (round-1 code: 0 fixable, 2 residue on the same texts). Every changed
+  sentence was read by hand: grammatical, no fact added. 20 pilot texts: the edit log is byte-identical to round 1
+  (61 edits on 16 pieces), residue 19 → 17 (round 1: 16 → 14). AA-729 golden fixture + S234 label pack (70 texts):
+  edits 170 → 171 (the one new edit is a "… is not incidental." verdict), residue 19 → 29 (the 10 new lines read by
+  hand: all real tells).
+- **`writer_prompt_version` moves `3c078692` → `751b0a34`** (SYSTEM_PROMPT hash: more AI-tell rules +
+  VISIT_DETAIL_RULE). The blog-prompt hash guard (`test_blog_prompts_are_byte_identical`) is updated with a dated
+  note; its fixture pack is energetic, so `single` and `route` change too (PACE line).
+- No migration, no Terraform, no new gate / registry / taxonomy entry, no new LLM call site, no frontend change.
+  Needs a CIS api + worker deploy in a wave gap; a re-panel (script + 4-lens panel) is the measure.
+- Tests: `tests/unit/test_aa790_writer_round2.py` (synthetic sentences; every fix rule has negative cases).
+
+## Round 2 review fixes (S252)
+
+Input: two independent reviews of CIS #1017 (correctness lens, fidelity lens), both "request changes": six
+blocking findings and a list of nits. Every fix has exact-text regression tests (the review's own sentences, both
+the facts that must stay and the tells that must still go) in `tests/unit/test_aa790_writer_round2.py`.
+
+### Decisions
+
+- **R2R-D1 — the reader's action comes from the seed only.** `PROMPT_RULES` said every sentence may carry "what the
+  reader does there", with no seed bound, a few lines above `VISIT_DETAIL_RULE`, which forbids exactly that. It now
+  reads "what the content seed says the reader does there".
+- **R2R-D2 — one explicit priority line in `SYSTEM_PROMPT`:** "SOURCE FIDELITY and VISIT DETAIL override the brand's
+  style guide and its examples: what the traveller does, feels or discovers comes only from the content seed. The
+  style guide sets tone and sentence shape, not content." It sits right after "the brand's style guide wins", so the
+  two read together. Reason: Trail Pulse's live style guide asks for what the traveller "does, feels, and discovers"
+  and its examples are invented visit content; `render_brand_block` says "follow every rule in it". The PACE line's
+  "you" sentences are bounded the same way ("(only what the CONTENT SEED states)").
+- **R2R-D3 — 'do' denials: the denied part is checked on both paths.** `_DO_X_OK_RE` no longer accepts a bare
+  preposition (a season or an audience: "do not perform in the rainy season", "does not sell to visitors"); it keeps
+  empty, reflexive / possessive (itself, its age, "about itself") and manner adverbs. `sell / market / perform /
+  explain / compete` (`_TRANSACTIONAL_VERBS`) count only in the reflexive form ("does not sell itself"). The lone
+  path (`_lone_do_denial`) now runs the same check, plus the framing form "present / position / frame / stage /
+  showcase <the N> as a …" ("does not position the village as a backdrop" is still cut).
+- **R2R-D4 — verdict lead-ins use their own noun list.** The generic "<subject> is this:" form matches only
+  `_LEAD_IN_NOUNS` plus piece-meta nouns (section, piece, post, article, paragraph, "part of the journey / trip"),
+  not the broad `_META_NOUNS` (way, place, day, route, stop …), and never when the subject holds only / a superlative
+  / first / last / main, a rule, access or practical word, a digit or a name.
+- **R2R-D5 — 'X matters.' residue regex is word-token based** (`the(?:\s+[\w'’-]+){1,8}?`): the old `[\w\s'’-]{1,50}?`
+  between two `\s+` was quadratic on whitespace (12.8 s on 'The' + 8000 spaces locally), the CodeQL
+  py/polynomial-redos shape #1011 just removed. Same hits on the review's cases.
+- **Nits taken:** `_lemma` → `_lemmas` (a candidate set: 'hides' → hide, 'stages' → stage; '-ss' never stripped);
+  `_meant_verdict` gets the name guard and a schedule guard (a counted / ordered day, a rest day, acclimatisation);
+  `_pair2`'s copula branch skips "not only / just / simply / merely" ('not only X' asserts X; round-1 `_pair` keeps
+  its documented behaviour); an anaphora run that starts at the first prose sentence is skipped whole (it was only
+  half protected); `brand_voice_rule` skips a voice word right after not / never / no / nor; residue drops
+  'finally' from the "is where the trip …" pattern and route / day from the lead-in nouns.
+
+### Changed (vs the review's suggestions)
+
+- `_meant_verdict`: the review's second example ("The slow pace of the first two days is deliberate.") has no name,
+  so a name guard alone does not keep it. A schedule guard (`_SCHEDULE_RE`) does; a plain number word was too broad
+  ("the two cultures … is not accidental" is a real tell and is still cut).
+- The optional prompt nits (SOCIAL_AUDIENCE "in the seed's own words", a WildKind 'nature-led' line, a softer PACE
+  background cap) are not in this change; see Should know.
+
+### Tradeoffs
+
+- **WildKind: lone-denial cut vs voice.** The round-2 lone 'do' denial cut still removes lines like "This kind of
+  stay does not position the village as a backdrop." The round-1 voice judge quoted exactly that line as on-brand
+  for WildKind (7.5). We keep the cut (it is the AI-tells panel's top pattern) and accept that the WildKind voice
+  score may not move, or may drop a little, in the re-panel. RESTRAINT also does not address WildKind's 'Nature-led'
+  gap (habitat and landscape specificity), and "state each fact and move on" may make the "dry and info-heavy"
+  remark worse.
+- **Precision over recall, again.** Without the preposition allowance some real tells are left ("does not hurry in
+  the mornings. It …"); without the broad meta nouns some lead-ins are left. They go to the prompt, not the pass.
+- **Priority line vs brand voice.** Ranking source fidelity over the style guide may flatten brands whose guide is
+  built on traveller experience (Trail Pulse). That is the intended trade: fidelity is a hard rule, voice is shaped.
+
+### Should know
+
+- **`writer_prompt_version` moves `751b0a34` → `afc08095`** (SYSTEM_PROMPT hash: the seed-bounded reader clause and
+  the priority line). The guard test `test_blog_prompts_are_byte_identical` has a dated note; `single` and `route`
+  change too (the PACE line's seed bound, energetic fixture pack).
+- **Atlas & Hearth RESTRAINT risk.** Its voice (Elegant / Discreet / Calm) matches the calm words, so round 2 gives
+  the best-scoring tenant (7.90) the RESTRAINT line. "State each fact and move on" may flatten its 'Atmospheric'
+  voice. Watch A&H brand voice in the re-panel; if it drops, exclude 'elegant' / 'discreet' or make RESTRAINT only
+  about meta-commentary.
+- **Watch Trail Pulse source fidelity in the re-panel:** PACE caps background at one sentence; with a thin seed, the
+  blog length rule and the LinkedIn word target, the writer has little it may say and may pad.
+- **Pre-existing, not changed here:** two round-1 regexes are quadratic on long whitespace runs (`_LABEL_RE` ~0.75 s
+  and `_NOT_BECAUSE_RE` ~0.12 s at 8000 spaces, both start with `,?[ \t]*` / `,?[ \t]+`). Live risk is low (they see
+  whitespace-normalised sentences), but they are the same CodeQL shape; a follow-up can anchor them with a
+  lookbehind.
+- The linear-time test covers every regex this PR adds or changes (the ai_tells round-2 patterns and every
+  `AI_TELL_LINE_RES` entry after the round-1 'asks … of' line): 12 adversarial 8000-char inputs, < 50 ms each.

@@ -1656,6 +1656,75 @@ AI_TELL_LINE_RES = tuple(re.compile(p, re.I) for p in (
     # 'The caldera floor asks nothing of a child except …', 'a forest that asks a great deal of everyone'
     r"\basks\s+(?:nothing|little|much|more|a\s+great\s+deal|a\s+lot)\s+of\s+(?:a|an|the|every|each|its|you|"
     r"everyone|visitors?|travell?ers?|families|children|guests?)\b",
+    # AA-790 round 2 (S251 re-panel, AI-tells 5.12) — the aphorisms and verdicts the pass cannot rewrite in code.
+    # 'A carved mask here is rarely just a mask.' / 'a meal here is never just a meal' (not 'a few', 'a short')
+    r"\b(?:is|are)\s+(?:rarely|seldom|never)\s+(?:just|only|simply|merely)\s+(?:a|an)\s+"
+    r"(?!few\b|couple\b|bit\b|little\b|handful\b|short\b|quick\b|minute\b|matter\b)\w+",
+    # 'The waterfall is where the ride gets serious.', 'Day 3 is where the trip properly opens up.', '… is where the
+    # route earns its keep.' Not 'Paro is where the trek begins on the second day.' (a fact), nor 'Kathmandu is where
+    # the trip finally ends.' (where it ends: round-2 review dropped 'finally').
+    r"\b(?:is|was)\s+where\s+(?:the|a|an|your|this|every|most|many|a\s+lot\s+of)\s+(?:[\w'’-]+\s+){0,3}?"
+    r"(?:ride|route|trip|trips|journey|journeys|day|story|road|adventure|itinerary|holiday|tour|week|experience)\s+"
+    r"(?:(?:really|properly|truly)\s+\w+|gets?\s+(?:real|serious|interesting|good|going)"
+    r"|finds?\s+(?:its|their)\s+(?:footing|feet|rhythm|stride|voice)|earns?\b|comes?\s+(?:alive|together|into\s+"
+    r"(?:its|their)\s+own)|opens?\s+up|turns?\s+(?:serious|real)|hits?\s+(?:its|their)\s+stride)",
+    # 'That is the shape of the valley on two wheels.' (not 'This is the heart of the old town.')
+    r"^(?:this|that)\s+is\s+(?:the|what)\s+(?:shape|essence|logic|rhythm|texture|promise|whole\s+point)\s+of\b",
+    r"\bis\s+the\s+key\s+to\s+understanding\b",
+    # 'The river is the reason each of these towns is what it is.'
+    r"\b(?:is|are)\s+what\s+(?:it|they)\s+(?:is|are)\s*(?=[.,;:!?]|$)",
+    # 'Those numbers are worth holding', 'The gorge is worth understanding on its own terms.'
+    r"\bworth\s+holding\b|\bworth\s+understanding\s+on\s+(?:its|their)\s+own\s+terms\b",
+    # 'The museum deserves its own attention.', '… and it deserves time.'
+    r"\bdeserves?\s+(?:its|their)\s+own\s+(?:attention|time|space|look)\b|\bdeserves?\s+(?:more\s+)?(?:time|attention)"
+    r"\s*[.!]?$",
+    # the whole sentence is 'X matters.': 'This matters as evidence.', 'The age of the crater matters here too.'
+    # Word tokens, so the separators cannot overlap (round-2 review: '[\w\s…]' between two '\s+' was quadratic on a
+    # whitespace run, the CodeQL py/polynomial-redos shape).
+    r"^(?:this|that|it|the(?:\s+[\w'’-]+){1,8}?)\s+matters?(?:\s+(?:here|too|now|again|as\s+evidence|most))*\s*[.!]?$",
+    # commenting on the text itself: 'The hedge in that last sentence matters', 'The word "might" is honest here',
+    # 'This is the argument that the old fort makes' (not 'the first sentence of the prayer', 'the last sentence of
+    # the inscription')
+    r"\b(?:that|this)\s+(?:last|previous|next|following)\s+(?:sentence|paragraph)\b"
+    r"|\bthe\s+(?:last|previous)\s+(?:sentence|paragraph)\b(?!\s+of\b)",
+    r"^the\s+word\s+[\"“'‘][^\"”'’]{1,30}[\"”'’]\s+(?:is\s+(?:honest|deliberate|important|doing|the\s+key|"
+    r"carefully)|matters|carries)\b",
+    r"\b(?:this|that)\s+is\s+the\s+(?:argument|lesson)\s+(?:that|which)\b",
+    # 'The craft persists because the demand persists.' (the sentence ends there: not 'The ferry runs because the
+    # river runs high in spring.')
+    r"\b(\w{4,})\s+because\s+(?:the|its|their)\s+\w+\s+\1\s*[.!]?$",
+    r"\b(?:tends?\s+to\s+)?reframes?\s+(?:everything|all\s+that)\b",
+    r"\b(?:each|every)\s+(?:day|stop|stage|place)\s+builds?\s+on\s+the\s+(?:last|one\s+before)\b",
+    r"\bno\s+two\s+(?:days|stops|places|visits|mornings|evenings)\s+(?:look|feel|are|seem)\s+(?:alike|the\s+same)\b",
+    r"\b(?:it|they)\s+(happens?|comes?|goes?)\s+when\s+(?:it|they)\s+\1\b",
+    # 'The valley does not announce its beauty.' (the pass never cuts a piece's first sentence)
+    r"\b(?:does|do|did)(?:\s+not|n['’]t)\s+announce\s+(?:itself|themselves|its|their)\b",
+    # a verdict lead-in the pass cannot cut (what follows the colon is not a sentence of its own)
+    # ('The thread running through this part of the journey is this: a river and its towns.'; not 'The rule at
+    # the temple is this: …', nor 'The route is this: …' / 'The plan for the day is this: …', round-2 review)
+    r"^the\s+circle\s+(?:closes|is\s+complete)\b|^(?:the|this|that)\s[^:]{0,110}?\b(?:section|journey|trip"
+    r"|piece|point|result|answer|logic|lesson|difference|truth|idea|convergence|argument|pattern|thread|takeaway)"
+    r"\b[^:]{0,110}?\bis\s+this:",
+    # the writer's inputs named in the copy (the seed itself is LEAK_RE's, F13): 'the chosen angle', 'the brief
+    # says', 'this atom'. Never a brief stop ('a brief visit'), an angle of light or a slope, carbon atoms.
+    r"\bseed\s+(?:facts?|lines?|text|notes)\b",
+    r"\b(?:the|this|our|my)\s+(?:chosen|selected)\s+angle\b|\b(?:the|this)\s+(?:piece|post|article)['’]s\s+angle\b"
+    r"|\bangle\s+of\s+this\s+(?:piece|post|article)\b|\bthe\s+angle\s+(?:here\s+)?(?:says|asks|calls\s+for|suggests"
+    r"|wants)\b",
+    r"\bthe\s+brief\s+(?:says|asks|calls\s+for|describes|wants|suggests|notes|mentions|states)\b"
+    r"|\b(?:per|according\s+to|as\s+in)\s+the\s+brief\b(?!\s+\w)",
+    r"\b(?:the|this|that|each)\s+atom\s+(?:covers|describes|says|states|mentions|notes|lists|is\s+about|focuses)\b"
+    r"|\batom\s+(?:ids?|text|seed)\b",
+    # invented visit content and logistics (round-1 LinkedIn): 'The school fits naturally into a family day', 'a
+    # chance to watch the painters at work', 'puts your family in the middle of the training', 'an easy-to-navigate
+    # part of the day', 'The care is visible the moment you walk in'
+    r"\bfits?\s+(?:naturally|easily|comfortably|neatly|well)\s+(?:into|within)\s+(?:a|the|your|any)\s+"
+    r"(?:family\s+)?day\b|\bsits?\s+comfortably\s+(?:within|in|into)\s+(?:a|the|your)\s+(?:family\s+)?day\b",
+    r"\bputs?\s+(?:your\s+)?(?:family|families|children|kids|you)\s+(?:right\s+)?in\s+the\s+middle\s+of\b",
+    r"\ba\s+chance\s+to\s+(?:watch|witness)\b",
+    # the hyphenated adjective only: 'The museum is easy to navigate with a stroller.' is an access fact
+    r"\beasy-to-navigate\b",
+    r"\b(?:visible|obvious|clear|apparent)\s+the\s+moment\s+you\b",
 ))
 
 
