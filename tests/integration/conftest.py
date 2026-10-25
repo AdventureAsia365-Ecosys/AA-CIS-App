@@ -87,12 +87,13 @@ X1_POST_244_RLS = ("shared.tenant_brand_rules", "shared.tenant_seo_config",
                    "acp_shared.subject", "acp_shared.quarter_plan", "acp_shared.quarter_plan_version",
                    "acp_shared.year_plan", "acp_deliver.tenant_tour_pages", "acp_contract.tour_atoms",
                    "shared.notifications",   # 274 part A (AA-986 L3)
-                   "shared.writing_signal")  # 277 (AA-916), FORCE: also X1_POST_245_FORCE_RLS
-# FORCE RLS tables of migrations applied on Dev AFTER 245 (CIS 277, AA-916): their own <table>_cis_owner_all policy
-# (X1 S21 standing check). 245's guards and test_aa860_migration_245 know only its 8 FORCE tables, and its teardown
-# (x1_245_undo: DROP OWNED BY cis_owner) drops every policy TO cis_owner: x1_244_ci_shape takes the policy off with
-# the RLS, x1_244_ci_unshape (always after x1_245_undo) puts it back.
-X1_POST_245_FORCE_RLS = ("shared.writing_signal",)
+                   "shared.writing_signal",  # 277 (AA-916), FORCE: also X1_POST_245_FORCE_RLS
+                   "shared.writing_rule")    # 280 (AA-917), FORCE: also X1_POST_245_FORCE_RLS
+# FORCE RLS tables of migrations applied on Dev AFTER 245 (CIS 277, AA-916; CIS 280, AA-917): their own
+# <table>_cis_owner_all policy (X1 S21 standing check). 245's guards and test_aa860_migration_245 know only its 8 FORCE
+# tables, and its teardown (x1_245_undo: DROP OWNED BY cis_owner) drops every policy TO cis_owner: x1_244_ci_shape
+# takes the policy off with the RLS, x1_244_ci_unshape (always after x1_245_undo) puts it back.
+X1_POST_245_FORCE_RLS = ("shared.writing_signal", "shared.writing_rule")
 
 
 def _post_244_rls(cur, on):
@@ -398,6 +399,14 @@ def _apply_schema(conn):
             part_a = sql.split("-- ── Part A")[1].split("-- ── Part B")[0]
             part_a = part_a.split("\n", 1)[1]
             sql = "BEGIN;\n" + part_a + "COMMIT;\n"
+        if mf.startswith("279_"):
+            # AA-851: 279's part B (catalog.v_country, v_destination.country_iso2) needs 245's owners, 253-258 and the
+            # catalog recipe. Replay only part A (shared.countries, the resolver, raw_tours / destinations
+            # country_iso2 + trigger, the orphan report); not registered, so test_aa851_migration_279 can apply the
+            # whole file the DB Migrate way.
+            part_a = sql.split("-- ── Part A")[1].split("-- ── Part B")[0]
+            part_a = part_a.split("\n", 1)[1]
+            sql = "BEGIN;\n" + part_a + "COMMIT;\n"
         if mf.startswith("262_"):
             # AA-859 wave 3: CI's legacy app_user is a LOGIN role here (ci.yml creates it; Dev has no grant for it)
             # and holds 005's grants on tenant_brand_rules. 262's guard 1 refuses a login role with privileges on
@@ -567,6 +576,10 @@ def _apply_schema(conn):
         GRANT USAGE ON ALL SEQUENCES IN SCHEMA gold_aa_internal TO app_user;
         GRANT USAGE ON ALL SEQUENCES IN SCHEMA shared TO app_user;
     """)
+    # AA-851 (279): app_user now writes raw_tours / shared.destinations, whose country_iso2 trigger runs as the writer
+    # (MIG-6, no SECURITY DEFINER) and calls shared.country_iso2(): a new writer gets the resolver with the table grant
+    # (279 grants it to the writers it sees; the replay ran before this block). test_aa851's standing check holds it.
+    cur.execute("GRANT EXECUTE ON FUNCTION shared.country_iso2(text) TO app_user")
     # AA-817 (237): on Dev only the owner and aa_app_user hold privileges on shared.tenant_integrations,
     # and 237's guard 1 refuses any other grantee (with RLS on and a policy TO aa_app_user only, it would
     # read 0 rows). Keep the CI-only app_user off it so test_aa817_* can re-apply 237 per test.

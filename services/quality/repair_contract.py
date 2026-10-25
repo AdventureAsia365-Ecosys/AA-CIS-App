@@ -4,8 +4,8 @@ silently broke another: flag_fix re-adding "explore" to a meta (S218 Sri Lanka),
 "…a 20-kilometre walk" to "…a 20-kilometre." (S2), a sentence repair writing "the afternoon" the source never
 gave (AA-777 r6).
 
-Six invariants, checked per changed field (A1 flag_fix, A1 grounding repair, T3 sentence repair) or per
-replaced sentence (T9 sentence repair):
+Seven invariants, checked per changed field (A1 flag_fix, A1 grounding repair, T3 sentence repair) or per
+replaced sentence (T9 sentence repair); the seventh per deterministic T9 edit:
 
 1. ``gates_kept``       — a gate that passed before the repair does not fail after it. The gate runner is
                           injected per field (``gate_runner(field, text) -> set[str]``): this module imports no
@@ -27,6 +27,17 @@ replaced sentence (T9 sentence repair):
                           with Days 1–10 of 15, ending on a full sentence, and invariants 1–5 all passed. Only the
                           itinerary field is read (``DAY_FIELDS``); a field with no "Day N" heading before the
                           repair has nothing to keep.
+7. ``integrity_kept``   — (AA-790, S250) a T9 edit leaves no new broken text: no new repeat or near-duplicate, no
+                          orphan line, no paragraph opener with no referent, no broken fragment, no sentence split
+                          across two paragraphs, no sentence cut mid-clause ("…before lunch at the."). This module
+                          detects nothing itself: ``integrity_problems`` delegates to ``hygiene.integrity_problems``
+                          (which reads ``text_integrity.fragments`` and ``text_integrity.structure_findings``), the
+                          same function the sentence splice, the FAQ regeneration and the first-line rewrite already
+                          check. ``enforce_step`` applies it to the deterministic edits of the T9 attempt loop
+                          (``hygiene.autofix``, ``trip_facts.add_family_caveats``, the FAQ droppers,
+                          ``trip_facts.fix_trip_facts``, ``length_trim.trim_to_band``): S234 r4 #16 (an orphan
+                          "Access requires…" opening a section) and #18 (a split paragraph) were left by steps that
+                          ran with no check after them.
 
 The design's sixth idea, "no blanding" (a repair may not lower the source fact coverage), needs the fact
 coverage measure of Q-LEARN and is left to that issue.
@@ -44,7 +55,8 @@ from typing import Callable, Iterable, Optional
 from services.acp_shared.citation_tags import strip_citation_tags
 from services.acp_shared.grounding import find_novel_numeric_claims
 
-INVARIANTS = ("gates_kept", "no_new_specifics", "no_truncation", "scope_kept", "tags_balanced", "days_kept")
+INVARIANTS = ("gates_kept", "no_new_specifics", "no_truncation", "scope_kept", "tags_balanced", "days_kept",
+              "integrity_kept")
 DAY_FIELDS = frozenset({"itineraries", "aa_itineraries"})
 
 GateRunner = Callable[[str, str], set]
@@ -351,3 +363,39 @@ def enforce_spans(items: list[dict], replacements: list[str]) -> tuple[list[dict
         keep_items.append(item)
         keep_reps.append(rep)
     return keep_items, keep_reps, reverted
+
+
+# ── the step contract (T9 deterministic edits, invariant 7) ──────────────────────────────────────
+
+
+def integrity_problems(before: str, after: str, *, ignore: frozenset = frozenset(),
+                       cta: Optional[str] = None) -> list[str]:
+    """Invariant 7: what ``after`` newly broke against ``before`` ([] = nothing, or no change). Delegates to
+    ``hygiene.integrity_problems`` (lazy import: this module stays free of writer modules at load time)."""
+    if (after or "") == (before or ""):
+        return []
+    from services.acp_content_writing.hygiene import integrity_problems as _problems
+    return _problems(before or "", after or "", ignore, cta)
+
+
+def enforce_step(step: str, before: str, after: str, *, ignore: frozenset = frozenset(), cta: Optional[str] = None,
+                 must_keep: bool = False,
+                 settle: Optional[Callable[[str], str]] = None) -> tuple[str, list[str], list[str]]:
+    """Invariant 7 on one deterministic T9 edit: ``(text, log, problems)``.
+
+    A clean edit is kept byte for byte with an empty log. An edit that broke the text is reverted to ``before``,
+    with one ``reverted <step>: <problem>`` line per problem (at most 3) for the admin-only F13_autofix flag; the
+    caller counts it as ``degraded: repair_contract`` (soft). A ``must_keep`` step (``hygiene.ensure_cta``: the
+    configured CTA line is a contract of its own) is never reverted; its problems are logged as ``kept <step>: …``
+    and left to ``text_integrity.final_pass`` and the F13 gates.
+
+    ``settle(text)`` — for a step that runs before ``text_integrity.final_pass`` — compares the two texts as the
+    final pass will leave them (``text_integrity.settle``), so a duplicate or a fragment the final pass deletes
+    anyway does not cost the step its fix (a hazard caveat, a trip-fact correction)."""
+    b, a = (settle(before), settle(after)) if settle is not None and after != before else (before, after)
+    problems = integrity_problems(b, a, ignore=ignore, cta=cta)
+    if not problems:
+        return after, [], []
+    if must_keep:
+        return after, [f"kept {step} (must keep): {p}" for p in problems[:3]], problems
+    return before, [f"reverted {step}: {p}" for p in problems[:3]], problems

@@ -248,6 +248,12 @@ async def _seed(pools, tid: str, stage: str) -> dict:
                                                source_table, source_id)
             VALUES ('t9_blog', $1, $2::uuid, 'text', repeat('a', 64), 'tenant_edit', 'tenant', 'content_piece', $3)""",
                             scope, tenant, stage)
+    # AA-917 (280): a tenant rule (derived from the tenant's text, deleted) and a platform rule (kept)
+    for scope, tenant in (("tenant", tid), ("platform", None)):
+        await admin.execute("""
+            INSERT INTO shared.writing_rule (kind, scope, tenant_id, writer, cluster_key, rule_text)
+            VALUES ('writer_instruction', $1, $2::uuid, 't9_blog', $3, 'Cut stock openers.')""",
+                            scope, tenant, stage)
     return {"plan_id": plan_id, "version_id": version_id, "job_id": job_id, "v1": str(v1), "v2": str(v2),
             "master": master, "own_tour": own}
 
@@ -307,6 +313,7 @@ async def test_tenant_dry_run_counts_and_writes_nothing(pool):
     assert rows[("acp_contract.tour_atoms", "delete")] == 2            # owned on the master tour + on its own tour
     assert rows[("shared.pipeline_jobs", "delete")] == 2               # tenant id and slug
     assert rows[("shared.writing_signal", "delete")] == 1              # AA-916: the tenant row, not the platform one
+    assert rows[("shared.writing_rule", "delete")] == 1                # AA-917: the tenant rule, not the platform one
     assert res["tenant_state"] == "offboarded" and res["unregistered"] == []
     assert res["s3"][1] == {"prefix": f"bronze:brand-identity/{tid}/", "objects": 2}
     assert {s["name"]: s["exists"] for s in res["secrets"]} == {f"acp/cms/{tid}": True, f"acp/social/{tid}": False}
@@ -428,9 +435,13 @@ async def test_tenant_apply_erases_children_first_and_leaves_other_tenants(pool)
     # AA-916: the tenant's writing signals are gone, the platform one of the same seed stays
     assert [r["scope"] for r in await admin.fetch("SELECT scope FROM shared.writing_signal WHERE source_id = $1",
                                                   stage)] == ["platform"]
+    # AA-917: the tenant's writing rules are gone, the platform one of the same seed stays
+    assert [r["scope"] for r in await admin.fetch("SELECT scope FROM shared.writing_rule WHERE cluster_key = $1",
+                                                  stage)] == ["platform"]
     # the other tenant is untouched
     assert await admin.fetchval("SELECT count(*) FROM acp_shared.quarter_plan WHERE tenant_id = $1::uuid", other) == 1
     assert await admin.fetchval("SELECT count(*) FROM shared.writing_signal WHERE tenant_id = $1::uuid", other) == 1
+    assert await admin.fetchval("SELECT count(*) FROM shared.writing_rule WHERE tenant_id = $1::uuid", other) == 1
     assert await admin.fetchval("SELECT count(*) FROM shared.llm_call_log WHERE tenant_id = $1::uuid", other) == 2
     assert await admin.fetchval("SELECT count(*) FROM gold_aa_internal.tenant_tour_versions "
                                 "WHERE tenant_id = $1::uuid", other) == 2

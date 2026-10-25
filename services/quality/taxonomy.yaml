@@ -219,7 +219,7 @@ classes:
     definition: The tenant persona or audience turned into a product promise (private, suitable for ages 7+).
     detectors:
       - {ref: F13_leak, kind: rule, writers: [T9_blog, T9_social], mode: enforce}
-      - {ref: F15_voice_warn, kind: rule, writers: [T9_social], mode: warn}
+      - {ref: F15_voice, kind: rule, writers: [T9_social], mode: warn}  # AA-924: F15_voice_warn's warn findings
     synthetic_examples:
       - {truth: positive, source: "Brand audience: families with children.", text: "This private journey suits children aged 7 and above."}
       - {truth: negative, source: "Brand audience: families with children.", text: "Days are spent on gentle valley walks."}
@@ -320,13 +320,13 @@ classes:
      writers: [A1, T2, T9_blog, T9_social], definition: "Purple prose, stock phrasing or off-voice wording.",
      detectors: [{ref: F9_brand_style, kind: llm, writers: [T9_blog, T9_social], mode: warn},
                  {ref: F15_voice, kind: rule, writers: [T9_blog, T9_social], mode: enforce},
-                 {ref: F2_banned_patterns, kind: rule, writers: [T9_blog, T9_social], mode: enforce},
+                 {ref: F2_lexicon, kind: rule, writers: [T9_blog, T9_social], mode: enforce},
                  {ref: a1_brand_fit, kind: jev, writers: [A1, T2], mode: enforce}], synthetic_examples: []}
   # AA-926: two warn classes beyond design §3.3 (allowed by §7.6) so every existing detector maps somewhere.
   - {id: other.lexicon, since: qtax-v1, severity: warn, checkability: oracle, artefact: output,
      writers: [A1, T2, T9_blog, T9_social], definition: "A word the platform or the brand forbids (forbidden list, package words, positioning words the brand did not declare).",
      detectors: [{ref: FORBIDDEN_WORD, kind: rule, writers: [A1, T2], mode: enforce},
-                 {ref: F2_brand_forbidden, kind: rule, writers: [T9_blog, T9_social], mode: enforce},
+                 {ref: F2_lexicon, kind: rule, writers: [T9_blog, T9_social], mode: enforce},
                  {ref: F2_style_warn, kind: rule, writers: [T9_blog, T9_social], mode: warn}], synthetic_examples: []}
   - {id: other.length_shape, since: qtax-v1, severity: warn, checkability: oracle, artefact: output,
      writers: [A1, T2, T9_blog, T9_social], definition: "A length, count or channel-shape rule (SEO title/meta length, piece length, LinkedIn shape).",
@@ -360,8 +360,9 @@ classes:
 gates:
   F0_complete: {kind: gate, label: "Text cut off", classes: [struct.truncated], channels: all}
   F1_grounding: {kind: gate, label: "Number not in source", classes: [fact.number], channels: all}
-  F2_banned_patterns: {kind: gate, label: "Cliché / banned phrase", classes: [other.v1], channels: all}
-  F2_brand_forbidden: {kind: gate, label: "Brand-forbidden word", classes: [other.lexicon], channels: all}
+  # AA-924: folded into F2_lexicon (a finding's `source` keeps the name); older pieces still carry these entries.
+  F2_banned_patterns: {kind: gate, label: "Cliché / banned phrase", classes: [other.v1], retired: true}
+  F2_brand_forbidden: {kind: gate, label: "Brand-forbidden word", classes: [other.lexicon], retired: true}
   F11_brand_name: {kind: gate, label: "Wrong brand name", classes: [safety.tenant_isolation], channels: all}
   F10_cannibalization_cross_tenant: {kind: gate, label: "Too close to another tenant", classes: [safety.tenant_isolation], channels: all}
   promises_an_option: {kind: gate, label: "Optional item stated as included", classes: [other.f6], retired: true, lint_exact: true}
@@ -386,8 +387,9 @@ gates:
   F14_social_shape: {kind: gate, label: "LinkedIn length / hashtags", classes: [other.length_shape], channels: all}
   F14_first_line: {kind: gate, label: "LinkedIn first line too long", classes: [other.length_shape], channels: [linkedin]}
   F16_faq: {kind: gate, label: "Blog FAQ under 3 pairs", classes: [other.s5, other.c5], channels: [blog]}
-  F15_voice: {kind: gate, label: "Stock phrase", classes: [other.v1], channels: all}
-  F15_voice_warn: {kind: gate, label: "Trade register / audience leak / opener", classes: [other.v1, scope.persona_promise], channels: all}
+  # AA-924: F15_voice also holds F15_voice_warn's findings (as warn); its stock-list findings moved to F2_lexicon.
+  F15_voice: {kind: gate, label: "Voice: stock frames, templates, register", classes: [other.v1, scope.persona_promise], channels: all}
+  F15_voice_warn: {kind: gate, label: "Trade register / audience leak / opener", classes: [other.v1, scope.persona_promise], retired: true}
   within_tenant_reuse: {kind: flag, label: "Repeats this tenant", class: none, reason: "same-tenant near-duplicate signal (AA-499), not a writing error", lint_exact: true}
   T3_grounding: {kind: gate, label: "Number not in the source tour", classes: [fact.number, fact.inclusion], channels: [t2_version], lint_exact: true}
   FORBIDDEN_WORD: {kind: gate, label: "Forbidden word", classes: [other.lexicon], channels: [t2_version], note: "also an A1 validate code (a1_codes), so not lint_exact"}
@@ -398,6 +400,8 @@ gates:
   F19_authenticity: {kind: gate, label: "Review / testimonial / customer voice", classes: [fact.embellish], channels: all}
   # AA-926 (S250): the AA-780 stock-line cut (#916) — a fixer log like F7_faq_autofix, listed after the four above.
   F15_stock_cut: {kind: flag, label: "Stock lines cut", class: none, reason: "fixer log: stock-phrase sentences service._cut_stock_lines removed after the gates"}
+  # AA-924: the lexicon gate (F2_banned_patterns + F2_brand_forbidden + the F15 stock list, one finding per word).
+  F2_lexicon: {kind: gate, label: "Banned / forbidden / stock wording", classes: [other.lexicon, other.v1], channels: all}
   # Telemetry names (never a ledger gate).
   F9_brand_voice: {kind: telemetry, class: none, reason: "llm_call_log.quality_signal.gate of the F9 judge call (admin LLM ops reads it)"}
   F9_sticky_pass: {kind: telemetry, class: none, reason: "structlog event: sentences an earlier F9 verdict passed were dropped from the re-judge"}

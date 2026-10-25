@@ -81,7 +81,7 @@ def _t10() -> dict:
                 "style_only_repair": service._style_only_repair(ledger),
                 "ledger_snapshot": ledger_snapshot(ledger),
             }
-        # Gate order per channel (the AA-787 counts: 25 blog, 24 LinkedIn, 23 the others).
+        # Gate order per channel (AA-924: 23 blog, 22 LinkedIn, 21 the others; AA-787 had 25 / 24 / 23).
         clean = next(c for c in fs.CLEAN_CASES if c.channel == "facebook")
         order = {}
         for ch in _CHANNELS:

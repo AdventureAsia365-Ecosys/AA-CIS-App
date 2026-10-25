@@ -216,7 +216,8 @@ class TestRunQualityGates:
         # AA-819: + F19_authenticity (after F11, every channel).
         # AA-800: + F2_platform_truth, F2_superlatives, F2_style_warn (the word layers, every channel).
         # AA-787: - promises_an_option, - F8_framework (25 → 23).
-        assert len(outcome["gate_ledger"]) == 23
+        # AA-924: F2_banned_patterns + F2_brand_forbidden → F2_lexicon, F15_voice_warn → F15_voice (23 → 21).
+        assert len(outcome["gate_ledger"]) == 21
         assert not {"promises_an_option", "F8_framework"} & {g["gate"] for g in outcome["gate_ledger"]}
 
     def test_first_det_failure_used_for_repair_targeting(self):
