@@ -59,6 +59,12 @@ def test_the_exact_address_is_accepted_normalised(value):
     "e2e@e2e-mail.lumiguides.it.co",
     "e2e @e2e-mail.lumiguides.it.com",
     "someone@gmail.com",
+    # AA-816 A10b (S252): look-alikes of the Dev-only CIS admin address (api/core/e2e_staff.py) stay refused too.
+    "e2e-cis-admin2@e2e-mail.lumiguides.it.com",
+    "e2e-cis-admin+x@e2e-mail.lumiguides.it.com",
+    "e2e-admin@e2e-mail.lumiguides.it.com",
+    "e2e-cis-admin@x.e2e-mail.lumiguides.it.com",
+    "e2e-cis-admin@lumiguides.it.com",
 ])
 def test_every_other_non_company_address_is_still_refused(email):
     with pytest.raises(sd.StaffDirectoryError) as err:

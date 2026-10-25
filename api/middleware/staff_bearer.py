@@ -14,6 +14,12 @@ tracking and every route below see the verified identity, never the client's.
   goes to ``scope["state"]["staff_access_token"]`` (AA-941: the crm.ops.v1 relays send the staff member's own token
   on; never logged); one ``staff_bearer_verified`` line is logged. Refused: 401 (bad token, unknown / inactive
   user), 403 (no ``cis-*`` group), 503 (verifier, JWKS or directory unavailable). The request never reaches the route.
+- **A10b read-only cap** (AA-816, S252, root ADR 0006a A10b; ``api/core/e2e_staff.py``): when the verified identity is
+  the Dev-only E2E CIS admin (``identity.e2e_read_only``), every method other than GET / HEAD / OPTIONS is refused
+  here with 403 ``{"detail": "e2e_read_only"}`` (logged ``staff_bearer_refused reason=e2e_read_only``) before the route
+  runs, except the explicit allow-list ``e2e_staff.E2E_ALLOWED_WRITE_PATHS`` (POST on the two content-quality
+  ``…/sentences/apply`` routes, matched in full on the concrete path; the route then accepts only ``cut`` /
+  ``manual``). ``/auth/verify-admin`` is not a staff path, so sign-in still works.
 - **Any other Bearer** (legacy HS256 staff or tenant JWT without ``iss``, a JWT from another issuer such as a
   future EXTERNAL ``cis-portal`` token or the CIS-minted Booking RS256 token, or not a JWT) and **no Bearer**:
   passed through untouched; the route's own guard decides (``/admin/brand-identity`` and ``/admin/atoms`` take
@@ -39,7 +45,7 @@ import structlog
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from api.core import staff_credential, staff_identity
+from api.core import e2e_staff, staff_credential, staff_identity
 from api.core.staff_authz import STAFF_PATH_PREFIXES, _is_valid_secret, main_secrets
 
 logger = structlog.get_logger()
@@ -120,8 +126,16 @@ class StaffBearerMiddleware:
             await JSONResponse({"detail": exc.detail}, status_code=exc.status, headers=extra)(scope, receive, send)
             return
 
+        if (identity.e2e_read_only and method not in e2e_staff.READ_METHODS
+                and not e2e_staff.is_allowed_e2e_write_path(method, path)):
+            logger.warning("staff_bearer_refused", status=403, reason=e2e_staff.E2E_READ_ONLY, method=method,
+                           path=path, admin_id=identity.admin_id)
+            await JSONResponse({"detail": e2e_staff.E2E_READ_ONLY}, status_code=403)(scope, receive, send)
+            return
+
         logger.info("staff_bearer_verified", admin_id=identity.admin_id, role=identity.role,
-                    client_id=identity.client_id, method=method, path=path)
+                    client_id=identity.client_id, method=method, path=path,
+                    **({"e2e_read_only": True} if identity.e2e_read_only else {}))
         state = dict(scope.get("state") or {})
         state["staff_identity"] = identity
         # AA-941: the verified access token itself, for the routes that relay the staff member's own token to another

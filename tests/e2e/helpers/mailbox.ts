@@ -10,6 +10,11 @@
 // via execFile (fixed argv, no shell). In CI the credentials are the read-only role
 // aa-cis-dev-e2e-mail-reader (configure-aws-credentials); it has NO delete permission, so this helper never
 // deletes — the bucket lifecycle does. The code is a live credential: never log or print it.
+//
+// AA-816 A10b (S252, root ADR 0006a A10b): the Dev-only E2E CIS admin e2e-cis-admin@ gets its codes through its own
+// rule `e2e-cognito-admin` into inbound-admin/, which ONLY the MFA admin role can read (bucket policy Deny for every
+// other principal, the CI reader role included). The list / baseline / wait helpers take that prefix; the defaults
+// keep the inbound/ behaviour. Used only by the agent-run Playwright project admin-evidence (never CI).
 import { execFile } from 'child_process';
 import { mkdtemp, readFile, rm } from 'fs/promises';
 import os from 'os';
@@ -25,6 +30,9 @@ export const MAILBOX_PREFIX = 'inbound/';
 export const MAILBOX_REGION = 'us-west-1';
 // Must equal api/services/staff_directory.py E2E_TEST_STAFF_EMAIL (the only non-company staff address).
 export const E2E_COGNITO_EMAIL = 'e2e@e2e-mail.lumiguides.it.com';
+// A10b: must equal api/core/e2e_staff.py E2E_CIS_ADMIN_TEST_STAFF_EMAIL; its codes land under MAILBOX_ADMIN_PREFIX.
+export const E2E_CIS_ADMIN_EMAIL = 'e2e-cis-admin@e2e-mail.lumiguides.it.com';
+export const MAILBOX_ADMIN_PREFIX = 'inbound-admin/';
 
 /** Each AWS CLI call has its own cap; the whole wait has another (lesson: every wait is bounded). */
 const CLI_TIMEOUT_MS = 20_000;
@@ -72,10 +80,10 @@ export function mailboxBucket(): Promise<string> {
   return mailboxBucketName;
 }
 
-/** Every object under inbound/ (the CLI paginates). */
-export async function listMailObjects(): Promise<MailObject[]> {
+/** Every object under `prefix` (default inbound/; the CLI paginates). */
+export async function listMailObjects(prefix: string = MAILBOX_PREFIX): Promise<MailObject[]> {
   const bucket = await mailboxBucket();
-  const out = await aws(['s3api', 'list-objects-v2', '--bucket', bucket, '--prefix', MAILBOX_PREFIX]);
+  const out = await aws(['s3api', 'list-objects-v2', '--bucket', bucket, '--prefix', prefix]);
   const parsed = (out.trim() ? JSON.parse(out) : {}) as {
     Contents?: { Key: string; LastModified: string; Size: number }[];
   };
@@ -236,11 +244,13 @@ export type CodeWait = {
   baseline: Set<string>;
   recipient?: string;
   timeoutMs?: number;
+  /** The mailbox prefix to poll (default inbound/; the A10b admin uses MAILBOX_ADMIN_PREFIX). */
+  prefix?: string;
 };
 
-/** Snapshot of inbound/ keys, taken BEFORE the code is requested. */
-export async function mailboxBaseline(): Promise<Set<string>> {
-  return new Set((await listMailObjects()).map((o) => o.key));
+/** Snapshot of the keys under `prefix` (default inbound/), taken BEFORE the code is requested. */
+export async function mailboxBaseline(prefix: string = MAILBOX_PREFIX): Promise<Set<string>> {
+  return new Set((await listMailObjects(prefix)).map((o) => o.key));
 }
 
 /**
@@ -249,6 +259,7 @@ export async function mailboxBaseline(): Promise<Set<string>> {
  */
 export async function waitForSignInCode(opts: CodeWait): Promise<string> {
   const recipient = opts.recipient ?? E2E_COGNITO_EMAIL;
+  const prefix = opts.prefix ?? MAILBOX_PREFIX;
   const deadline = Date.now() + (opts.timeoutMs ?? DEFAULT_WAIT_MS);
   const notBefore = opts.since.getTime() - CLOCK_SKEW_MS;
   const checked = new Set<string>(opts.baseline);
@@ -257,7 +268,7 @@ export async function waitForSignInCode(opts: CodeWait): Promise<string> {
   while (Date.now() < deadline) {
     polls++;
     try {
-      const fresh = (await listMailObjects())
+      const fresh = (await listMailObjects(prefix))
         .filter((o) => !checked.has(o.key) && o.lastModified.getTime() >= notBefore && o.size <= MAX_OBJECT_BYTES)
         .sort((a, b) => b.lastModified.getTime() - a.lastModified.getTime());
       for (const obj of fresh) {
@@ -277,9 +288,10 @@ export async function waitForSignInCode(opts: CodeWait): Promise<string> {
     await new Promise((r) => setTimeout(r, Math.min(POLL_INTERVAL_MS, left)));
   }
   throw new Error(
-    `No sign-in code for ${recipient} in s3://${MAILBOX_BUCKET_PREFIX}<account>/${MAILBOX_PREFIX} within ` +
+    `No sign-in code for ${recipient} in s3://${MAILBOX_BUCKET_PREFIX}<account>/${prefix} within ` +
       `${Math.round((opts.timeoutMs ?? DEFAULT_WAIT_MS) / 1000)} s (${polls} polls, ${checked.size - opts.baseline.size} ` +
       `new message(s) checked)${lastError ? `; last error: ${lastError}` : ''}. Check that the E2E staff user ` +
-      `exists with this address and the SES receipt rule e2e-cognito is active.`,
+      `exists with this address and the SES receipt rule ` +
+      `${prefix === MAILBOX_ADMIN_PREFIX ? 'e2e-cognito-admin' : 'e2e-cognito'} is active.`,
   );
 }
