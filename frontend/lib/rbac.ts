@@ -76,6 +76,9 @@ export const PAGE_RULES: PageRule[] = [
   { prefix: "/admin/master-content", roles: ALL_STAFF },
   { prefix: "/admin/review", roles: ALL_STAFF },
   { prefix: "/admin/settings", roles: ALL_STAFF },
+  // AA-977 — AA content for the partner CRM: every staff role reads; drafts need content.write, publish / retire /
+  // restore need master.admin (backend staff_authz POLICY; the page hides the controls with can()).
+  { prefix: "/admin/aa-content", roles: ALL_STAFF },
 ];
 
 export function pageRule(pathname: string): PageRule | undefined {

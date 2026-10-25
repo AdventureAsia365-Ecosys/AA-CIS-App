@@ -68,6 +68,8 @@ const ADMIN_PAGES: PageSpec[] = [
   // AA-941 — Platform › Tenants › Agencies (CRM): the partner CRM's L1 console (admin only; needs a Cognito sign-in).
   { id: 'platform-agencies', label: 'Agencies (CRM)', path: '/admin/platform/agencies', viewerRefused: true },
   { id: 'photos', label: 'Photos', path: '/admin/photos', viewerRefused: true },
+  // AA-977 — CIS Content › Assets › AA content (CRM): every staff role reads (the viewer too; write controls hidden).
+  { id: 'aa-content', label: 'AA content (CRM)', path: '/admin/aa-content' },
   { id: 'platform-stats', label: 'A4 Quality', path: '/admin/platform-stats', readySelector: '[data-testid="admin-content-ready"]', viewerRefused: true },
   // AA-769 — Content Quality (T2/T9 quality signals for every tenant; tenants never see them).
   { id: 'content-quality', label: 'Content Quality', path: '/admin/content-quality', readySelector: '[data-testid="content-quality-ready"]', viewerRefused: true },
