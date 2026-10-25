@@ -14,6 +14,8 @@ Guards (no AWS, no paid call: invoke_claude / the satellite session are stubs):
 5. one warning per stage.
 6. SAFE_DEFAULTS: a stage whose caller sends json_schema has a catalog (Converse / OpenAI) primary, except the
    listed, known legacy check stage.
+7. review fixes: a route where every model answered unusably raises RouteUnusableReply (not on an outage); no live
+   text for a structured request on the legacy path; an empty zero-token legacy reply writes no billed row.
 """
 import json
 from unittest.mock import MagicMock, patch
@@ -23,7 +25,13 @@ import pytest
 from shared.llm_client import bedrock_satellite as bs
 from shared.llm_client import client as client_mod
 from shared.llm_client.catalog import LEGACY_KEYS
-from shared.llm_client.client import BilledUnusableReply, LLMClient
+from shared.llm_client.client import (
+    BilledUnusableReply,
+    LLMClient,
+    RouteUnusableReply,
+    UnusableReply,
+    unusable_reply_cost,
+)
 from shared.llm_client.models import LLMRequest
 from shared.llm_client.role_config import SAFE_DEFAULTS, StageConfig
 
@@ -52,8 +60,8 @@ def _result(text, model="sonnet-4-6"):
 
 
 def _request(**kw):
-    base = dict(system_prompt="You write hotel copy.", user_prompt="facts", stage="supply_content_writer",
-                temperature=0.4, max_tokens=1200, json_schema=SCHEMA)
+    base = {"system_prompt": "You write hotel copy.", "user_prompt": "facts", "stage": "supply_content_writer",
+            "temperature": 0.4, "max_tokens": 1200, "json_schema": SCHEMA}
     base.update(kw)
     return LLMRequest(**base)
 
@@ -122,9 +130,9 @@ def test_billed_rows_are_built_like_the_converse_path_rows():
     written = []
     with patch("shared.llm_client.bedrock_satellite.invoke_claude", return_value=_result("not json")), \
             patch("shared.llm_client.client.get_stage_config_sync", return_value=STAGE_CFG), \
-            patch("shared.llm_client.call_log._in_background", side_effect=lambda fn, kw: written.extend(kw["rows"])):
-        with pytest.raises(BilledUnusableReply):
-            _client().generate(_request())
+            patch("shared.llm_client.call_log._in_background", side_effect=lambda fn, kw: written.extend(kw["rows"])), \
+            pytest.raises(BilledUnusableReply):
+        _client().generate(_request())
     assert len(written) == 1
     row = written[0]
     assert row["stage"] == "supply_content_writer" and row["model"] == "satellite-sonnet-4-6"
@@ -227,3 +235,68 @@ def test_supply_content_writer_default_is_sonnet_5_5_with_the_legacy_sonnet_last
     cfg = SAFE_DEFAULTS["supply_content_writer"]
     assert (cfg.model_id, cfg.fallback_model_ids, cfg.role, cfg.account_route) == \
         ("sonnet-5-5", ("sonnet",), "writer", "acc3")
+
+
+# ── 7. review fixes ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+ROUTE_CFG = StageConfig("supply_content_writer", "writer", "claude", "sonnet", "acc3", fallback_model_ids=("haiku",))
+
+
+def test_route_with_only_unusable_replies_raises_route_unusable_with_the_logged_usage():
+    exc, _calls, billed = _generate(_request(), [_result("no json"), _result("still prose", model="haiku-4-5")],
+                                    stage_cfg=ROUTE_CFG)
+    assert isinstance(exc, RouteUnusableReply) and isinstance(exc, UnusableReply), exc
+    assert str(exc).startswith("All models in the route failed for stage 'supply_content_writer'")
+    assert len(billed) == 2                                   # the gateway wrote one row per attempt
+    assert [u["model"] for u in exc.logged_usage] == ["satellite-sonnet-4-6", "satellite-haiku-4-5"]
+    assert not getattr(exc, "billed_usage", ())               # never re-logged through _billed_usage_of
+    assert client_mod._billed_usage_of(exc) == []
+    assert unusable_reply_cost(exc) == pytest.approx(sum(r["billed"][0]["cost_usd"] for r in billed))
+
+
+def test_route_with_an_outage_keeps_the_plain_runtime_error():
+    exc, _calls, billed = _generate(_request(), [_result("no json"), bs.BedrockUnavailable("down")],
+                                    stage_cfg=ROUTE_CFG)
+    assert type(exc) is RuntimeError and "All models in the route failed" in str(exc), exc
+    assert len(billed) == 1
+
+
+def test_unusable_reply_cost_of_other_errors_is_zero():
+    assert unusable_reply_cost(RuntimeError("down")) == 0.0
+    assert issubclass(BilledUnusableReply, UnusableReply) and issubclass(UnusableReply, RuntimeError)
+
+
+def test_structured_request_on_the_legacy_satellite_streams_nothing():
+    with patch("shared.llm_client.client.stream_sink.delta_callback", return_value=lambda t: None):
+        _resp, calls, _billed = _generate(_request(), [_result(json.dumps(GOOD))])
+        _resp2, calls2, _billed2 = _generate(_request(json_schema=None), [_result("text")])
+    assert calls[0]["on_delta"] is None                       # structured: no live raw JSON
+    assert calls2[0]["on_delta"] is not None                  # free text keeps its live view
+
+
+def test_structured_request_on_legacy_bedrock_streams_nothing():
+    chunks = [{"type": "message_start", "message": {"usage": {"input_tokens": 9}}},
+              {"type": "content_block_delta", "delta": {"type": "text_delta", "text": json.dumps(GOOD)}},
+              {"type": "message_delta", "usage": {"output_tokens": 5}, "delta": {"stop_reason": "end_turn"}}]
+
+    def run(request):
+        seen = []
+        c = _client()
+        c._bedrock = MagicMock()
+        c._bedrock.invoke_model_with_response_stream.return_value = {
+            "body": [{"chunk": {"bytes": json.dumps(ch).encode()}} for ch in chunks]}
+        with patch("shared.llm_client.client.stream_sink.delta_callback", return_value=seen.append):
+            c._call_bedrock(request, "us.anthropic.claude-sonnet-4-6")
+        return seen
+
+    assert run(_request()) == []
+    assert run(_request(json_schema=None)) == [json.dumps(GOOD)]
+
+
+def test_empty_zero_token_legacy_reply_writes_no_billed_row():
+    empty = MagicMock(text="", model_used="sonnet-4-6", latency_ms=5.0, stop_reason="end_turn",
+                      usage={"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0,
+                             "cache_creation_input_tokens": 0})
+    exc, _calls, billed = _generate(_request(), [empty])
+    assert type(exc) is RuntimeError and "empty content" in str(exc), exc
+    assert billed == []

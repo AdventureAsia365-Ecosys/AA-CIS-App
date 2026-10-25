@@ -140,3 +140,46 @@ def test_draft_content_leaves_room_for_adaptive_thinking(logged):
     client = _Client(FENCED)
     writer.draft_content("hotel", HOTEL, client=client)
     assert client.requests[0].max_tokens == 2048
+
+
+# ── S251 review: the gateway refused the reply -> DraftUnusable (no retry), no second row ───────────────────────────
+
+class _RaisingClient:
+    def __init__(self, exc):
+        self.exc = exc
+
+    def generate(self, request):
+        raise self.exc
+
+
+def _route_unusable():
+    from shared.llm_client.client import RouteUnusableReply
+    exc = RouteUnusableReply("All models in the route failed for stage 'supply_content_writer': ...")
+    exc.logged_usage = ({"model": "satellite-sonnet-5-5", "cost_usd": 0.03},)
+    return exc
+
+
+@pytest.mark.parametrize("make", [
+    lambda: __import__("shared.llm_client.client", fromlist=["x"])._billed_unusable(
+        "sonnet-5-5 output does not match schema 'supply_content'", [{"model": "sonnet-5-5", "cost_usd": 0.03}]),
+    _route_unusable,
+])
+def test_draft_content_gateway_unusable_is_draft_unusable_without_a_second_row(logged, make):
+    with pytest.raises(writer.DraftUnusable, match="gateway refused the reply"):
+        writer.draft_content("hotel", HOTEL, client=_RaisingClient(make()))
+    assert not logged["ok"] and not logged["unusable"]
+
+
+def test_draft_content_outage_is_left_to_the_job_retry(logged):
+    with pytest.raises(RuntimeError, match="All models in the route failed") as info:
+        writer.draft_content("hotel", HOTEL, client=_RaisingClient(
+            RuntimeError("All models in the route failed for stage 'supply_content_writer': sonnet-5-5: throttled")))
+    assert not isinstance(info.value, writer.DraftUnusable)
+
+
+def test_job_pre_call_estimate_covers_the_worst_attempt_and_fits_the_run_cap():
+    from services.jobs import supply_content_draft_job as job
+    # two Sonnet 5.5 requests (schema retry) + legacy Sonnet 4.6, ~3k in / 2048 out each
+    worst = 2 * (3000 * 2 + 2048 * 10) / 1e6 + (3000 * 3 + 2048 * 15) / 1e6
+    assert job.CALL_ESTIMATE_USD >= worst
+    assert not (0.0 + job.CALL_ESTIMATE_USD > 0.10)          # 278's $0.10 per-run cap still allows the one call

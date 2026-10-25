@@ -125,3 +125,53 @@ def test_new_write_routes_have_a_policy():
     for route in ("/admin/places/merges/{merge_id}/undo", "/admin/places/dedupe/countries",
                   "/admin/places/dedupe/run"):
         assert POLICY[("POST", route)] == OPS_WRITE
+
+
+# ── S251 (AA-835): the gateway checks the verdict schema on the legacy haiku check key ──────────────────────────────
+
+def _unusable(cost=0.0015):
+    from shared.llm_client.client import _billed_unusable
+    return _billed_unusable("satellite-haiku-4-5 output does not match schema 'place_verdict'",
+                            [{"model": "satellite-haiku-4-5", "cost_usd": cost}])
+
+
+def _models_raising(answers, budget=None):
+    """Like _models, but an answer that is an exception is raised by the stubbed gateway."""
+    from services.jobs import place_dedupe_job as job
+    seq = list(answers)
+
+    def gen(stage, system, user):
+        a = seq.pop(0)
+        if isinstance(a, BaseException):
+            raise a
+        return _resp(*a)
+    return job.make_models(object(), budget, ["a3_place_dedupe:gpt-6-luna", "a3_place_dedupe_check:haiku"],
+                           generate_sync=gen)
+
+
+def test_an_unusable_check_reply_makes_only_that_pair_unsure_and_is_charged_not_relogged():
+    budget = _Budget(cap=1.0)
+    models = _models_raising([("same", "gpt-6-luna"), ("same", "gpt-6-luna"), _unusable(0.0015)], budget)
+    with patch("shared.llm_client.call_log.record_call_with_pool", new=AsyncMock()) as log:
+        out = asyncio.run(dd.adjudicate(INP, models.primary, models.check))
+    assert out["verdict"] == "unsure"                                    # not raised: the band goes on
+    assert models.calls == 3 and round(models.cost_usd, 6) == round(0.002 + 0.0015, 6)
+    assert round(budget.spent, 6) == round(0.002 + 0.0015, 6)
+    assert [k.kwargs["stage"] for k in log.await_args_list] == [dd.STAGE, dd.STAGE]   # the gateway logged the 3rd
+
+
+def test_an_unusable_primary_reply_is_charged_and_still_raises():
+    from shared.llm_client.client import UnusableReply
+    budget = _Budget(cap=1.0)
+    models = _models_raising([_unusable(0.0002)], budget)
+    with patch("shared.llm_client.call_log.record_call_with_pool", new=AsyncMock()) as log, \
+            pytest.raises(UnusableReply):
+        asyncio.run(dd.adjudicate(INP, models.primary, models.check))
+    assert models.calls == 1 and round(budget.spent, 6) == 0.0002 and log.await_count == 0
+
+
+def test_a_check_outage_still_stops_the_band():
+    models = _models_raising([("same", "gpt-6-luna"), ("same", "gpt-6-luna"), RuntimeError("Satellite down")])
+    with patch("shared.llm_client.call_log.record_call_with_pool", new=AsyncMock()), \
+            pytest.raises(RuntimeError, match="Satellite down"):
+        asyncio.run(dd.adjudicate(INP, models.primary, models.check))

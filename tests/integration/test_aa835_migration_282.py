@@ -55,7 +55,8 @@ def _seed_278(c):
 
 
 def _run(c):
-    c.execute(open(MIGRATION, encoding="utf-8").read())
+    with open(MIGRATION, encoding="utf-8") as f:
+        c.execute(f.read())
 
 
 def _row(c):
@@ -107,8 +108,8 @@ def test_no_row_is_a_notice_not_an_error(cur):
 
 @pytest.mark.parametrize("change", [
     "UPDATE shared.llm_model_catalog SET enabled = false, blocked_reason = 'test' WHERE model_key = 'sonnet-5-5'",
-    "UPDATE shared.llm_model_catalog SET bedrock_profile_ids = bedrock_profile_ids - 'acc3' "
-    "WHERE model_key = 'sonnet-5-5'",
+    ("UPDATE shared.llm_model_catalog SET bedrock_profile_ids = bedrock_profile_ids - 'acc3' "
+     "WHERE model_key = 'sonnet-5-5'"),
 ])
 def test_guard_refuses_an_unroutable_sonnet_5_5(cur, change):
     cur.execute("SELECT bedrock_profile_ids::text FROM shared.llm_model_catalog WHERE model_key = 'sonnet-5-5'")

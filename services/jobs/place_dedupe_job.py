@@ -56,6 +56,7 @@ def make_models(pool, budget, names: list[str], generate_sync=_generate_sync) ->
     shared.llm_call_log (role validate) and charged on Models.cost_usd. A check answered by the primary's vendor is
     returned as `unsure` (no two-vendor agreement)."""
     from shared.llm_client import call_log
+    from shared.llm_client.client import UnusableReply, unusable_reply_cost
 
     state: dict = {"primary_vendor": None}
     models = dedupe_run.Models(None, None, names)
@@ -63,7 +64,17 @@ def make_models(pool, budget, names: list[str], generate_sync=_generate_sync) ->
     async def call(stage: str, system: str, user: str):
         if budget is not None:
             budget.check(ESTIMATE_USD[stage])
-        resp = await asyncio.to_thread(generate_sync, stage, system, user)
+        try:
+            resp = await asyncio.to_thread(generate_sync, stage, system, user)
+        except UnusableReply as e:
+            # S251 (AA-835): billed but unusable (the gateway checks the verdict schema on every key now). Charge the
+            # run like any paid call; the gateway already wrote its llm_call_log row(s), so none here.
+            cost = unusable_reply_cost(e)
+            if budget is not None:
+                budget.charge(cost)
+            models.calls += 1
+            models.cost_usd += cost
+            raise
         if budget is not None:
             budget.charge(resp.cost_usd)
         models.calls += 1
@@ -84,7 +95,13 @@ def make_models(pool, budget, names: list[str], generate_sync=_generate_sync) ->
         return resp.content
 
     async def check(system: str, user: str) -> str:
-        resp = await call(dd.CHECK_STAGE, system, user)
+        try:
+            resp = await call(dd.CHECK_STAGE, system, user)
+        except UnusableReply as e:
+            # S251: one off-schema check reply makes only this pair unsure (as parse_verdict did before the gateway
+            # checked the schema on the legacy haiku key), instead of stopping the rest of the run's model band.
+            logger.warning("place_dedupe_check_unusable", error=str(e)[:200])
+            return '{"verdict": "unsure", "confidence": 0, "reason": "check reply did not match the schema"}'
         if vendor_of(resp.model_used) == state["primary_vendor"]:
             logger.warning("place_dedupe_check_same_vendor", model=resp.model_used)
             return '{"verdict": "unsure", "confidence": 0, "reason": "check answered by the primary\'s vendor"}'

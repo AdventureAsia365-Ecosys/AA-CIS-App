@@ -16,17 +16,22 @@
 -- the result (AA-803). It takes no temperature (supports_temperature = false: the writer's 0.4 is left out).
 -- Price: $2 / $10 per MTok against $3 / $15 for the legacy Sonnet 4.6, so the job's budget (bedrock /
 -- job:supply_content_draft, $0.10 a run, $1.00 a day, 278) is unchanged; the app raises the call's max_tokens to
--- 2048 for its adaptive thinking (worst case ≈ $0.02 a call, under the job's $0.05 pre-call estimate).
--- Fallback {sonnet}: the legacy Sonnet 4.6 on the satellites, now schema-checked by the gateway; same vendor
--- (writers are Anthropic), and it keeps the stage drafting when the catalog is unreadable (SAFE_DEFAULTS mirrors
--- this row). No shadow.
+-- 2048 for its adaptive thinking (≈ $0.026 a request; worst case per job attempt ≈ $0.09: two Converse requests after
+-- a schema retry, then the legacy fallback; the job's pre-call estimate is $0.10, and an unusable reply is not
+-- retried).
+-- Fallback {sonnet}: the legacy Sonnet 4.6 on the satellites (may degrade to Haiku 4.5 inside the legacy chain when
+-- both Sonnet satellites fail; the row then has fallback_used), schema-checked by the gateway from the new app
+-- image on; same vendor (writers are Anthropic), and it keeps the stage drafting when the catalog is unreadable
+-- (SAFE_DEFAULTS mirrors this row). No shadow.
 --
 -- Idempotent and respectful of an admin choice: the UPDATE matches only while the row is still 278's seed (model_id
 -- 'sonnet', no fallback). A row an admin already changed in Settings is left alone (NOTICE). A re-run is a no-op.
 -- Guard: sonnet-5-5 must be in shared.llm_model_catalog, enabled, Converse, with an acc3 profile — otherwise the
 -- route would fail every call, so the file refuses (a human decision, not a data patch).
--- No deploy order: the gateway reads the row per call (20 s cache), and the legacy fallback works with the old and
--- the new app image. Apply through AA-CIS-Infra DB Migrate (byte copy in db/migrations/cis/).
+-- Deploy order: the gateway reads the row per call (20 s cache), so 282 alone fixes the live failure (the Sonnet 5.5
+-- primary enforces the schema on any image). Deploy the app soon after: the old image still sends max_tokens 1200
+-- (a long think can end before the tool call) and its legacy fallback drops the schema. Apply in version order
+-- (281 before 282). Apply through AA-CIS-Infra DB Migrate (byte copy in db/migrations/cis/).
 --
 -- Rollback (the 278 row):
 --   UPDATE shared.llm_role_config

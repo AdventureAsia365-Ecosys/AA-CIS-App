@@ -160,22 +160,29 @@ def parse_output(content: str) -> dict:
 
 def draft_content(entity_type: str, facts: dict, *, client: Optional[Any] = None) -> tuple[dict, dict]:
     """One LLM draft (sync: run it in a thread). Returns (draft, usage); usage = model, tokens, cost_usd.
-    Logs one shared.llm_call_log row per billed reply; raises DraftUnusable or the gateway's error."""
+    Logs one shared.llm_call_log row per billed reply; raises DraftUnusable (also when the gateway itself refused every
+    reply of the route as unusable) or the gateway's error (an outage: the job may retry)."""
     from shared.llm_client.call_log import record_call_sync, record_unusable_sync
-    from shared.llm_client.client import LLMClient
+    from shared.llm_client.client import LLMClient, UnusableReply
     from shared.llm_client.models import LLMRequest
 
     client = client or LLMClient()
-    resp = client.generate(LLMRequest(
-        system_prompt=SYSTEM_PROMPT,
-        user_prompt=user_prompt(entity_type, facts),
-        stage=STAGE,
-        temperature=0.4,
-        # S251: 2048, not 1200 — the route is Claude Sonnet 5.5 (CIS 282), whose adaptive thinking counts against
-        # this cap; the reply itself is < 400 tokens. Worst case 2048 out ≈ $0.02, under CALL_ESTIMATE_USD.
-        max_tokens=2048,
-        json_schema=SCHEMA,
-    ))
+    try:
+        resp = client.generate(LLMRequest(
+            system_prompt=SYSTEM_PROMPT,
+            user_prompt=user_prompt(entity_type, facts),
+            stage=STAGE,
+            temperature=0.4,
+            # S251: 2048, not 1200 — the route is Claude Sonnet 5.5 (CIS 282), whose adaptive thinking counts
+            # against this cap; the reply itself is < 400 tokens. Worst case per job attempt ≈ $0.09 (two Converse
+            # requests after a schema retry, then the legacy Sonnet fallback): CALL_ESTIMATE_USD in the job.
+            max_tokens=2048,
+            json_schema=SCHEMA,
+        ))
+    except UnusableReply as exc:
+        # S251 review: the gateway already wrote a billed_unusable row per attempt; no second row here. Unusable,
+        # not an outage, so the job does not pay for a retry (DraftUnusable is NonRetryable there).
+        raise DraftUnusable(f"gateway refused the reply: {str(exc)[:300]}") from exc
     try:
         draft = parse_output(resp.content)
     except Exception as exc:

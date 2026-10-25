@@ -208,7 +208,11 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   is tolerated, prose is not), conforms it, and raises `BilledUnusableReply` otherwise (gateway billed_unusable row,
   the route moves on). It warns `llm_legacy_key_structured_output` once per stage. A structured stage belongs on a
   catalog key; `tests/unit/test_s251_legacy_structured_output.py` lists the structured stages and the one known
-  legacy primary (`a3_place_dedupe_check`).
+  legacy primary (`a3_place_dedupe_check`). A structured request never streams live text (any path). A bad reply is
+  typed: `UnusableReply` (`BilledUnusableReply` from one key, `RouteUnusableReply` when every model of a route
+  answered unusably; an outage stays a plain `RuntimeError`); callers that must not retry or stop on a bad reply catch
+  it, charge `unusable_reply_cost(e)` to their run budget and do not log again (supply writer → `DraftUnusable`;
+  place dedupe check → `unsure` for that pair).
 - **Stage Route** (AA-659, ADR 0006): each stage has a model plus an ordered fallback list and an
   optional shadow model (A/B, `shared.llm_shadow_log`). Only models the route lists are ever
   tried. No judge has its own hardcoded model path any more. **S235 rule (Nghiệp, 14/10/2026,
