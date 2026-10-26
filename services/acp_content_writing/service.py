@@ -83,6 +83,7 @@ from services.quality import degraded  # AA-925
 from services.quality import repair_contract  # AA-790
 from services.quality import registry as qr
 from services.writing_memory import l0 as wm_l0  # AA-918
+from services.writing_memory import insertion as wm_insertion  # AA-919 (WM-18 / WM-20)
 from services.writing_memory import signals as wm_signals  # AA-916
 from services.acp_content_writing.prompts import SYSTEM_PROMPT  # AA-916 WM-08 (writer_prompt_version)
 from services.content_generation.batch_prompt import prompt_version_of
@@ -1540,6 +1541,9 @@ async def start_write(
     # the prompt and the gates read them; none active → the pack is unchanged (release 0 is a no-op).
     brand_audience, writing_rules = await wm_l0.l0_for_write(pool, tenant_id=tenant_id, channel=req["channel"],
                                                              pack=brand_audience, cta=cta, trip_name=trip_name)
+    # AA-919 (WM-18 / WM-20) — the writing-memory releases this piece is written with, resolved once so every attempt
+    # uses the same one (None = memory off for the writer; fails open). Release 0 changes no prompt byte.
+    writing_memory = await wm_insertion.resolve(pool, wm_insertion.writer_for_channel(req["channel"]), str(tenant_id))
 
     # AA-497 — angle_gate_option_id (migration 124's Decision 2 column, unpopulated until now):
     # denormalized record of WHICH of the 3 options this specific piece was written from, so a
@@ -1617,6 +1621,7 @@ async def start_write(
         "scope": scope,  # S233
         "trip_places": trip_places,  # S234 round 3 — the full trip's places outside the scope
         **({"writing_rules": writing_rules} if writing_rules else {}),  # AA-918 — L0 rules applied / skipped
+        **({"writing_memory": writing_memory} if writing_memory else {}),  # AA-919 — the release view (ids only)
         "tenant_id": str(tenant_id),  # AA-505 — attribution for llm_call_log
         "facts_text": None,  # AA-529 — filled by resolve_facts() in the job ("" when none exist)
         "facts_pending": True,  # AA-764
@@ -1812,6 +1817,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
     # splits an over-long first line, in hygiene.autofix after the last LLM step of each attempt.
     sibling_openers = context.get("sibling_openers") or []
     openers_kw = {"sibling_openers": sibling_openers} if sibling_openers else {}
+    # AA-919 — the writing-memory view start_write resolved (absent = memory off: the call is unchanged)
+    memory_kw = {"memory": context["writing_memory"]} if context.get("writing_memory") else {}
     # AA-790 (S251) — a repeated write of one request (non-blog) opens on a different seed fact; the S251 pilot's six
     # Terra LinkedIn posts, started together on one request, all opened on 'Years of practice on a single craft'.
     lead_kw: dict = {}
@@ -1901,7 +1908,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     destination=destination, trip_name=writer_trip, atom_id=atom_id, scope=context.get("scope"),
                     route_segments=route_segments, keyword=keyword,
                     tenant_id=tenant_id, angle_gate_request_id=str(request_id),
-                    facts_text=facts_text, **openers_kw, **search_kw, **lead_kw,
+                    facts_text=facts_text, **openers_kw, **search_kw, **lead_kw, **memory_kw,
                 )
                 fresh_text = True
             else:
@@ -2042,7 +2049,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                         destination=destination, trip_name=writer_trip, atom_id=atom_id, scope=context.get("scope"),
                         route_segments=route_segments, keyword=keyword,
                         tenant_id=tenant_id, angle_gate_request_id=str(request_id),
-                        facts_text=facts_text, **openers_kw, **search_kw, **lead_kw,
+                        facts_text=facts_text, **openers_kw, **search_kw, **lead_kw, **memory_kw,
                     )
                     fresh_text = True
             content_from = attempt  # AA-916 WM-08 — this attempt wrote (or repaired) the current text
@@ -2533,6 +2540,10 @@ def writer_input_snapshot(context: dict) -> dict:
         **({"writing_rules": context["writing_rules"]} if context.get("writing_rules") else {}),
         # AA-790 (S251) — the seed fact a repeated non-blog write was told to open on; absent for the first write.
         **({"lead_focus": context["lead_focus"]} if context.get("lead_focus") else {}),
+        # AA-919 (WM-18 / WM-20) — the writing-memory releases the piece was written with (ids and numbers); absent
+        # when memory is off for the writer. The rollback drill reads it: the next piece names the previous release.
+        **({"writing_release": wm_insertion.stamp(context["writing_memory"])}
+           if context.get("writing_memory") else {}),
     }
 
 

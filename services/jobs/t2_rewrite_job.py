@@ -130,12 +130,9 @@ async def _prepare(pool, pt, tenant_id: str, rewrite_language: str) -> tuple[dic
     return tour_dict, brand_rules
 
 
-async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant_id: str,
-                            version_id: str, published_tour_id: str) -> dict:
-    """SEO lookup, rewrite, T3 QA gate, save — unchanged from the pre-AA-652 router closure
-    except that a failure raises (so the job retries) instead of silently marking the version."""
-    from api.routers.v1_pipeline import _rewrite_tour as _do_rewrite
-
+async def t2_seo(pool, pt, tenant_id: str) -> tuple[dict, dict]:
+    """(seo_data, diag): the SEO the T2 rewrite passes to the graph, read from the caches only (moved out of
+    `_rewrite_and_save`, AA-919, so the WM-20 release-0 replay rebuilds the same T2 prompt)."""
     # AA-445-02 — T2 passes the tour's SEO context to the shared rewrite graph (it used to reach it
     # as {}). AA-646 follow-up (KAN-90, 29/09/2026): a tenant action never buys DataForSEO, so T2
     # only READS the cached seo_context row; it no longer calls process_seo() on a miss (~$0.18
@@ -187,6 +184,23 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
         _sl_seo.get_logger().warning("t2_seo_step_failed", tour_id=pt["tour_id"], error=str(_seo_err))
         diag["seo_source"] = "error"
         diag["seo_error"] = str(_seo_err)[:300]
+    return seo_data, diag
+
+
+async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant_id: str,
+                            version_id: str, published_tour_id: str) -> dict:
+    """SEO lookup, rewrite, T3 QA gate, save — unchanged from the pre-AA-652 router closure
+    except that a failure raises (so the job retries) instead of silently marking the version."""
+    from api.routers.v1_pipeline import _rewrite_tour as _do_rewrite
+
+    seo_data, diag = await t2_seo(pool, pt, tenant_id)
+    # AA-919 (WM-18 / WM-20): the T2 writing-memory release of this tenant (platform + tenant pointer; None = memory
+    # off, fails open). Every T2 write (the first and the T3 repair rounds) goes through build_t2_system_prompt, which
+    # consumes it; the job result records it (`writing_release`). Release 0 changes no prompt byte.
+    from services.writing_memory.insertion import resolve as _wm_resolve, stamp as _wm_stamp
+    writing_memory = await _wm_resolve(pool, "t2", tenant_id)
+    if writing_memory:
+        diag["writing_release"] = _wm_stamp(writing_memory)
 
     try:
         result = await _do_rewrite(
@@ -196,6 +210,7 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
             is_tenant_rewrite=True,  # skips name-match check in validate_node
             tenant_id=tenant_id,             # AA-620: log this tenant in llm_call_log
             generate_stage="t2_generate",    # AA-620: tenant writer stage (admin-tunable)
+            writing_memory=writing_memory,   # AA-919
         )
         if result.get("status") == "success" and result.get("generated"):
             # AA-425 T3 — QA gate (grounding + structural), self-repair up to
@@ -209,6 +224,7 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
                 tour_dict, source_texts, result, brand_rules,
                 seo_data=seo_data,  # AA-445-02 — repair-round rewrites also carry seo_data
                 tenant_id=tenant_id,  # AA-620 — repair-round logs t2_generate + this tenant
+                writing_memory=writing_memory,  # AA-919 — the repair rounds write with the same release
             )
             result = qa["result"]  # possibly a later repair round's output
             # AA-793: which draft was kept and every draft's score, in job.result — the rerun's

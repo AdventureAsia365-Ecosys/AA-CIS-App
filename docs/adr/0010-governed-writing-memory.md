@@ -41,6 +41,18 @@ tenant. It reaches a writer only through a versioned **release**. Dated invarian
 1. **Nothing auto-activates (D6a).** Every release, tenant releases included, needs one human
    click. This is enforced twice: by a DB CHECK and by the API, which refuses to activate a release
    that lacks its eval and shadow evidence.
+   - *Amended 26/10/2026 (S252, AA-919 WM-18, critic 23):* the evidence depends on what the release
+     holds. A release with rules (`repair_hint_only`, `rules`) needs an R2 eval pass and a shadow
+     pass; a `lexicon_only` release needs R0 only (decision 6, D11); an `empty` release (release 0
+     and the empty releases of the rollback drill) needs the R0 replay (0 byte differences over ≥ 20
+     stored inputs) and the AA-729 baseline as its eval, and no shadow: an empty release changes no
+     prompt byte, so there is nothing to shadow. CIS 287 (CHECK + trigger) and
+     `services/writing_memory/releases.py` hold the same rule.
+   - *Note, release 0 only (26/10/2026):* until the admin Releases panel (WM-22) exists, release 0
+     of a writer may be approved and activated by the `services.writing_memory.release0` CLI with
+     `approved_by = agent:<session>` and `approval_ref` = the link of Nghiệp's decision. The DB and
+     the API accept the agent only for an `empty` release with an `approval_ref`; every release
+     with content needs a signed-in admin's click.
 2. **No fine-tuning in v1 (D2).** Revisit at ≥ 1 000 clean pairs per writer. Until then, keep a
    "clean pairs per writer" count on the metrics tab, but build no export path.
 3. **Rules only constrain.** They may cut, ban, rephrase or format. They never add content.
@@ -57,7 +69,12 @@ tenant. It reaches a writer only through a versioned **release**. Dated invarian
 5. **Rule drafting and judging use the existing non-Anthropic judge route (D10)**, following
    ADR 0006 §5 as amended by ADR 0008: writers stay Anthropic, the judge is another vendor. The
    OpenAI-direct route is only the last fallback. Accounts are named by role only, not by number.
-6. **Monthly release train (E1).** Rule and example releases ship once a month.
+6. **Monthly release train (E1).** Rule and example releases ship once a month: one `regular`
+   release per writer and owner (the platform, or one tenant) per calendar month (UTC), counted
+   when it first goes active (amended 26/10/2026, AA-919 WM-18, critic 22). Closing a month
+   (`writing_memory_writer.train_closed_month`) refuses later regular activations of that month.
+   An `emergency` release clears an open hard stop of the active release (it names the run that
+   stopped) and does not take the month's slot.
    - `lexicon` (L0) rules may ship any time, proved by a $0 replay of stored text and gate ledgers,
      and may ship before the AA-729 golden set exists (D11).
    - A lexicon rule applies **before** the gates (or v1 uses ban rules only, which trigger the
@@ -104,6 +121,12 @@ tenant. It reaches a writer only through a versioned **release**. Dated invarian
     release 0 (empty memory) through the new insertion path must give a prompt byte-identical to the
     **post-AA-915 prompt (`PIPELINE_LESSONS_ENABLED` off)** (WM-20, R0, $0). The lessons-bearing
     prompt from before AA-915 is not the baseline.
+    - *How it is proved (26/10/2026, AA-919 WM-20):* the reference is independent of the new code:
+      in CI, sha256 pins of 4 × 20 invented inputs committed on the unchanged writers; on Dev, a
+      replay of the same stored inputs on the image before the deploy, compared with the deployed
+      image without memory and with release 0, plus the prompt hashes the writers stored. Release 0
+      is drafted by a $0 CLI from that report, never seeded by a migration (its evidence can only
+      exist after the replay).
 13. **Capture is implicit only (D7).** For now the tenant portal adds no feedback question; edits
     are recorded silently. Revisit at the first real tenant.
 

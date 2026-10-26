@@ -278,6 +278,7 @@ def build_user_prompt(
     sibling_openers: list[str] | None = None,
     search_questions: list[str] | None = None,
     lead_focus: str | None = None,
+    memory_lines: list[str] | None = None,
 ) -> str:
     """`angle` is the chosen `angle_gate_option` row (name/why_it_works/formula_fit/
     best_final_style). `revision_feedback` (AA-450 Phase 1's confirmed retry shape — specific,
@@ -320,7 +321,10 @@ def build_user_prompt(
     brand type names families or children) also gets the FAMILY BRAND line (ai_tells.family_presence_rule); round 5:
     a plain-text post also gets its one-concrete-family-moment line (ai_tells.FAMILY_SHORT_POST_RULE). AA-790 round 6:
     a non-family pack with an energetic, luxury / cultural or nature / respectful signal gets the BRAND TEXTURE block
-    right after the PACE / RESTRAINT line (ai_tells.brand_texture_rule; the FAQ lines on a blog only)."""
+    right after the PACE / RESTRAINT line (ai_tells.brand_texture_rule; the FAQ lines on a blog only).
+
+    `memory_lines` (AA-919): the writing-memory lines of the tenant slot (services/writing_memory/insertion
+    t9_tenant_lines), placed right after the brand's words line; None / [] adds nothing."""
     # AA-771 (S233) — the full brand pack (render_brand_block) replaces the AUDIENCE / MINDSET /
     # BRAND NAME lines; the invented "discerning travellers" fallback audience is gone.
 
@@ -382,6 +386,9 @@ def build_user_prompt(
         # AA-800 — the word layers for THIS brand: platform truth never, one stock superlative at most,
         # its declared signature words allowed, service-level claims only from the seed.
         t9_words_line(brand_audience),
+        # AA-919 (WM-18 / WM-20) — the writing-memory slot `t9_tenant` of the resolved release, right after the
+        # brand's words line; [] for release 0 and without memory (byte-identical prompt).
+        *(memory_lines or []),
         "",
         f"SELECTED ANGLE: {angle['name']}",
         f"WHY THIS ANGLE WORKS: {angle['why_it_works']}",

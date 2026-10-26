@@ -131,9 +131,12 @@ def build_t2_system_prompt(state: dict) -> str:
     system += _core_idea_lens_block(pack.get("core_idea"))
     if has_brand_signals(state):
         system += _brand_contrast_rules()
+    # AA-919 (WM-18 / WM-20): the writing-memory slot `t2_block` of the release this run resolved; "" for release 0
+    # and without memory (byte-identical prompt).
+    from services.writing_memory.insertion import t2_block
     # AA-778: the contrast rules and the forbidden-words block are shared with A1 (pinned); T2 reads them
     # without the em-dash.
-    return t2_dashless(system + _forbidden_words_block(state))
+    return t2_dashless(system + _forbidden_words_block(state) + t2_block(state.get("writing_memory")))
 
 
 def _core_idea_lens_block(core_idea) -> str:

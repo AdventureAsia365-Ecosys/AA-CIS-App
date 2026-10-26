@@ -22,10 +22,12 @@ from shared.sentry_init import release
 
 logger = structlog.get_logger()
 
-# The newest CIS migration this code needs: 280 (AA-917 — the writing-memory jobs and /admin/writing-memory read and
-# write shared.writing_rule; 277, AA-916: the admin A1 field edit and both sentence applies write shared.writing_signal
-# inside their own transaction; without the table they fail).
-REQUIRED_CIS_SCHEMA = 280
+# The newest CIS migration this code needs: 287 (AA-919 WM-18 — the writers resolve their writing-memory release from
+# shared.writing_memory_release / writing_memory_writer on every call (failing open without them) and
+# /admin/writing-memory/releases reads and writes them). Before: 280 (AA-917 — the writing-memory jobs and
+# /admin/writing-memory read and write shared.writing_rule; 277, AA-916: the admin A1 field edit and both sentence
+# applies write shared.writing_signal inside their own transaction; without the table they fail).
+REQUIRED_CIS_SCHEMA = 287
 READY_CACHE_SECONDS = 5.0
 
 SCHEMA_VERSION_SQL = """

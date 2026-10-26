@@ -224,7 +224,9 @@ def _forbidden_line(words: list[str]) -> str:
             if words else "")
 
 
-def w_system_prompt(forbidden: list[str], background: str = "allow") -> str:
+def w_system_prompt(forbidden: list[str], background: str = "allow", house_rules: str = "") -> str:
+    """The W writer's system prompt. `house_rules` (AA-919, the writing-memory slot `a1_house_rules`) sits after the
+    forbidden-words line; "" (release 0, no memory) is dropped by the filter, so the prompt is byte-identical."""
     return "\n".join(filter(None, [
         "You write the master page of one tour for a white-label tour catalogue. Travel agencies resell the page",
         "unchanged, so it must be accurate, neutral and free of any brand.",
@@ -255,6 +257,7 @@ def w_system_prompt(forbidden: list[str], background: str = "allow") -> str:
         "9. Voice: calm, factual, third person, present tense. No hype, no superlative the source does not make, no"
         " abstract filler (\"unhurried\", \"rewards attention\", \"a different register\"), no second person.",
         _forbidden_line(forbidden),
+        house_rules,
         "",
         "Output ONLY valid JSON. No preamble, no markdown.",
     ]))

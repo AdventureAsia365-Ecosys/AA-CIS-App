@@ -409,6 +409,21 @@ POLICY: dict[tuple[str, str], str] = {
     ("POST", "/admin/writing-memory/candidates/{rule_id}/r0"): AI_ADMIN,
     ("POST", "/admin/writing-memory/candidates/{rule_id}/activate"): AI_ADMIN,
     ("POST", "/admin/writing-memory/candidates/{rule_id}/rollback"): AI_ADMIN,
+    # AA-919 (WM-18) — releases: reads admin only (tenant.read; ids, statuses and numbers, no text); every write (draft,
+    # evidence, approve, activate, rollback, reject, the reverify scan, the memory switch and the monthly close)
+    # changes what a live writer is told: ai.admin, the tier of L0 activation and the LLM stage config.
+    ("GET", "/admin/writing-memory/releases"): TENANT_READ,
+    ("GET", "/admin/writing-memory/releases/active"): TENANT_READ,
+    ("GET", "/admin/writing-memory/releases/{release_id}"): TENANT_READ,
+    ("POST", "/admin/writing-memory/releases"): AI_ADMIN,
+    ("POST", "/admin/writing-memory/releases/reverify-scan"): AI_ADMIN,
+    ("POST", "/admin/writing-memory/releases/{release_id}/evidence"): AI_ADMIN,
+    ("POST", "/admin/writing-memory/releases/{release_id}/approve"): AI_ADMIN,
+    ("POST", "/admin/writing-memory/releases/{release_id}/activate"): AI_ADMIN,
+    ("POST", "/admin/writing-memory/releases/{release_id}/rollback"): AI_ADMIN,
+    ("POST", "/admin/writing-memory/releases/{release_id}/reject"): AI_ADMIN,
+    ("GET", "/admin/writing-memory/writers"): TENANT_READ,
+    ("PATCH", "/admin/writing-memory/writers/{writer}"): AI_ADMIN,
 
     # ── admin_data_model (AA-894 scope 2) — Developer › Data model: the live ERD from the nightly schema dump
     # (every schema of the shared RDS, PII tags included), admin only.

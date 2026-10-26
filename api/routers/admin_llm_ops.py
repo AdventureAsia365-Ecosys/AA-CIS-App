@@ -216,6 +216,7 @@ async def patch_llm_config(
     body: LlmConfigPatch,
     x_admin_secret: str = Header(None),
     x_admin_user_id: Optional[str] = Header(None),
+    request: Request = None,  # AA-919: injected by FastAPI (the reverify scan's pool); None in direct calls
 ):
     verify_admin_secret(x_admin_secret)
     admin_actor = x_admin_user_id or "unknown"  # same fallback shape as admin_a4.py::force_unpublish
@@ -242,6 +243,7 @@ async def patch_llm_config(
     updated["route"] = _route_view(updated, await _load_catalog())
     logger.info("admin_llm_config_changed", stage=stage, model_id=body.model_id,
                 account_route=body.account_route, admin_actor=admin_actor)
+    await _wm_reverify(request, stage, admin_actor)
     return updated
 
 
@@ -265,6 +267,7 @@ async def patch_llm_route(
     body: LlmRoutePatch,
     x_admin_secret: str = Header(None),
     x_admin_user_id: Optional[str] = Header(None),
+    request: Request = None,  # AA-919: injected by FastAPI (the reverify scan's pool); None in direct calls
 ):
     verify_admin_secret(x_admin_secret)
     admin_actor = x_admin_user_id or "unknown"
@@ -325,7 +328,19 @@ async def patch_llm_route(
     updated["route"] = _route_view(updated, await _load_catalog())
     logger.info("admin_llm_route_changed", stage=stage, fallback_model_ids=fallbacks,
                 shadow_model_id=shadow, shadow_sample_pct=sample_pct, admin_actor=admin_actor)
+    await _wm_reverify(request, stage, admin_actor)
     return updated
+
+
+async def _wm_reverify(request: Request, stage: str, admin_actor: str) -> None:
+    """AA-919 (WM-18 scope 5): a route change of a writer stage or of the writing-memory judge flags the active
+    releases whose fingerprint names the old route (`reverify`; they keep serving). Its own transaction, after the
+    route change committed; never fails the route change."""
+    from services.writing_memory.releases import JUDGE_STAGE, WRITER_STAGES, reverify_scan_safe
+    pool = getattr(getattr(getattr(request, "app", None), "state", None), "pool", None)
+    if pool is None or stage not in set(WRITER_STAGES.values()) | {JUDGE_STAGE}:
+        return
+    await reverify_scan_safe(pool, actor=f"admin:{admin_actor}")
 
 
 # ── AA-686 — model catalog read + price/enabled edit ───────────────────────────────────────────

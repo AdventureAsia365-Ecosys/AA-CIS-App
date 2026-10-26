@@ -58,3 +58,94 @@ def test_memory_off_prompts_match_the_pins():
     diffs = sorted(k for k in pins if captured.get(k) != pins[k])
     assert set(captured) == set(pins)
     assert diffs == [], f"{len(diffs)} prompts differ from the pre-AA-919 pins: {diffs[:5]}"
+
+
+# ── WM-20: the insertion path changes no byte (release 0), and it is wired (positive control) ───────────────────────
+
+def test_release0_view_prompts_match_the_pins():
+    """Release 0 through the new insertion path gives the pinned (pre-AA-919) prompts, for all 4 x 20 inputs."""
+    captured = _capture_all(view_for=replay.release0_view)
+    pins = json.loads(PINS.read_text())
+    diffs = sorted(k for k in pins if captured.get(k) != pins[k])
+    assert diffs == [], f"{len(diffs)} release-0 prompts differ from the pins: {diffs[:5]}"
+
+
+def test_replay_one_reports_zero_diffs_and_the_a1_stamp():
+    for writer, inputs in fakes.all_inputs(3).items():
+        for inp in inputs:
+            row = replay.replay_one(writer, inp, phase="post")
+            assert "error" not in row, row
+            assert row["none_vs_r0_equal"] is True
+            assert (row["r0_system_sha256"], row["r0_user_sha256"]) == (row["system_sha256"], row["user_sha256"])
+            if writer == "a1":     # the v2 writer consumed the view: it stamps it (critic 29)
+                assert row["r0_stamp"] == {"writer": "a1", "platform": {
+                    "release_id": "00000000-0000-0000-0000-000000000000", "release_no": 0}, "tenant": None,
+                    "ignored": False, "writer_version": "v2"}
+
+
+SENTINEL = "⟦WM-SENTINEL⟧"
+
+
+def _sentinel(monkeypatch):
+    """A test-only renderer: every slot renders the sentinel (the real one renders "" until WM-23 / 24 / 25)."""
+    from services.writing_memory import insertion
+    monkeypatch.setattr(insertion, "_content", lambda view, slot: f"{SENTINEL}:{slot}" if view else "")
+
+
+def test_positive_control_a1_slot_after_the_forbidden_line(monkeypatch):
+    _sentinel(monkeypatch)
+    inp = fakes.a1_inputs(1)[0]
+    off = replay.capture_a1(inp)
+    on = replay.capture_a1(inp, replay.release0_view("a1"))
+    assert SENTINEL not in off["system"]
+    assert on["user"] == off["user"]
+    # exactly one inserted line, right after the forbidden-words line and before "Output ONLY" (w_system_prompt's
+    # filter(None) also drops its "" spacer, so the two are adjacent)
+    assert on["system"] == off["system"].replace(
+        "\nOutput ONLY valid JSON", f"\n{SENTINEL}:a1_house_rules\nOutput ONLY valid JSON", 1)
+    lines = on["system"].split("\n")
+    i = lines.index(f"{SENTINEL}:a1_house_rules")
+    assert lines[i - 1].startswith("Never use these words or phrases") and lines[i + 1].startswith("Output ONLY")
+
+
+def test_positive_control_t2_slot_at_the_end_of_the_system_prompt(monkeypatch):
+    _sentinel(monkeypatch)
+    inp = fakes.t2_inputs(1)[0]
+    off = replay.capture_t2(inp)
+    on = replay.capture_t2(inp, replay.release0_view("t2"))
+    assert on["system"] == off["system"] + f"{SENTINEL}:t2_block" and on["user"] == off["user"]
+
+
+def test_positive_control_t9_platform_and_tenant_slots(monkeypatch):
+    from services.acp_content_writing.prompts import SYSTEM_PROMPT, t9_words_line
+
+    _sentinel(monkeypatch)
+    for inp in (fakes.t9_inputs(1, blog=True)[0], fakes.t9_inputs(1, blog=False)[0]):
+        off = replay.capture_t9(inp)
+        on = replay.capture_t9(inp, replay.release0_view("t9_blog"))
+        assert off["system"] == SYSTEM_PROMPT
+        assert on["system"] == SYSTEM_PROMPT + f"{SENTINEL}:t9_platform"
+        words = t9_words_line(inp["writer_input"]["brand_pack"])
+        assert on["user"] == off["user"].replace(words + "\n", words + f"\n{SENTINEL}:t9_tenant\n", 1)
+
+
+def test_mirror_state_equals_the_live_state_builder():
+    """The pre-image copy of the graph state (replay script) equals v1_pipeline.initial_state_for (post image)."""
+    from api.routers.v1_pipeline import initial_state_for
+
+    for inp in fakes.a1_inputs(3):
+        kw = dict(brand_rules=inp["brand_rules"], tour_agency=inp["tour_agency"], generate_stage="s1_generate")
+        assert replay._mirror_initial_state(inp["tour"], **kw) == initial_state_for(inp["tour"], **kw)
+    for inp in fakes.t2_inputs(3):
+        kw = dict(brand_rules=inp["brand_rules"], seo=inp["seo"], is_tenant_rewrite=True,
+                  tenant_id=inp["tenant_id"], generate_stage="t2_generate")
+        assert replay._mirror_initial_state(inp["tour"], **kw) == initial_state_for(inp["tour"], **kw)
+
+
+def test_summarize_counts_diffs_against_the_pre_report():
+    rows = [{"writer": "t2", "input_id": "x", "system_sha256": "a", "user_sha256": "b", "none_vs_r0_equal": True},
+            {"writer": "t2", "input_id": "y", "system_sha256": "a", "user_sha256": "c", "none_vs_r0_equal": False},
+            {"writer": "t2", "input_id": "z", "error": "boom"}]
+    pre = {"x": {"system_sha256": "a", "user_sha256": "b"}, "y": {"system_sha256": "a", "user_sha256": "d"}}
+    s = replay.summarize(rows, phase="post", pre=pre)["t2"]
+    assert (s["inputs"], s["errors"], s["byte_diffs_none_vs_r0"], s["byte_diffs_vs_pre"]) == (2, 1, 1, 1)

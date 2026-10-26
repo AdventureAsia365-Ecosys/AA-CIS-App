@@ -106,6 +106,11 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     # results. Platform (A1) items have no tenant; the set row and the run rows hold no tenant text and stay.
     _d("shared.eval_golden_item", "golden-set items built from the tenant's content (eval inputs and outputs)"),
     _d("shared.eval_item_result", "eval results of the tenant's golden items (regenerated outputs)"),
+    # AA-919 (287): shadow outputs written from the tenant's inputs (a cross-tenant probe row belongs to the probed
+    # tenant) and the tenant's own releases (ids only; another tenant release naming one as previous is set NULL).
+    # Platform releases have no tenant and stay.
+    _d("shared.writing_memory_shadow", "writing-memory shadow outputs written from the tenant's inputs"),
+    _d("shared.writing_memory_release", "the tenant's writing-memory releases (ids only, no text)"),
     _d("shared.pipeline_runs", "tenant pipeline batches (acp_runs and raw rows follow through FKs)"),
     _d("shared.acp_runs", "ACP run rows"),
     _d("shared.tenant_api_usage", "per-request API usage; a CHECK forbids a tenant-actor row without a tenant"),

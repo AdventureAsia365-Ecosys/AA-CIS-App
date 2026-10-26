@@ -414,6 +414,7 @@ async def run_t3_qa_gate(
     max_repairs: int = TENANT_QA_MAX_REPAIRS,
     seo_data: dict = None,
     tenant_id: str = None,  # AA-620: thread through so a T3 repair-round logs t2_generate + tenant
+    writing_memory: dict = None,  # AA-919: the release view of the first write (None = memory off)
 ) -> dict:
     """Self-repair loop, max `max_repairs` repair rounds (default 2). Attempt 0
     checks `initial_result` (T2's already-computed output — no extra LLM call for the
@@ -545,6 +546,7 @@ async def run_t3_qa_gate(
             seo=seo_data,
             tenant_id=tenant_id,             # AA-620: same tenant as attempt 0
             generate_stage="t2_generate",    # AA-620: T2 repair-round stays on the tenant stage
+            writing_memory=writing_memory,   # AA-919: the same release as the first write
             # AA-639: tell the writer WHAT failed. Before this, a repair round was a blind
             # re-roll (feedback="") hoping the next draft happened to pass — live, a tour took
             # 1 write + 3 full rewrites (~4 min) to clear T3.
