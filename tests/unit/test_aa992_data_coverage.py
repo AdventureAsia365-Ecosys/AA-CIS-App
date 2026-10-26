@@ -104,6 +104,13 @@ def test_every_drill_link_is_an_admin_nav_route():
             assert r.drill.split("?")[0] in hrefs, f"{r.id}: {r.drill} is not an admin nav route"
 
 
+def test_the_page_entry_is_in_the_nav_and_rbac_admin_only():
+    nav = (ROOT / "frontend" / "app" / "_kit" / "adminNav.tsx").read_text(encoding="utf-8")
+    rbac = (ROOT / "frontend" / "lib" / "rbac.ts").read_text(encoding="utf-8")
+    assert 'href: "/admin/data-coverage"' in nav
+    assert re.search(r'\{\s*prefix:\s*"/admin/data-coverage",\s*roles:\s*\["admin"\]\s*\}', rbac)
+
+
 # ── status maths ─────────────────────────────────────────────────────────────────────────────────────────────────────
 def _eval(row, **sources):
     full = {"raw": _ok(), **sources}
