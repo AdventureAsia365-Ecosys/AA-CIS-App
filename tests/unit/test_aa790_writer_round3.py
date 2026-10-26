@@ -456,7 +456,8 @@ def _round3_patterns():
 def test_round3_regexes_run_in_linear_time(name, rx):
     for label, s in _ADVERSARIAL.items():
         best = min(_timed(rx, s) for _ in range(2))
-        assert best < 0.05, f"{name} on {label}: {best * 1000:.0f} ms"
+        # 5x CI slack: runners are 2-3x slower; a quadratic regex takes seconds at 8000 chars
+        assert best < 0.25, f"{name} on {label}: {best * 1000:.0f} ms"
 
 
 def test_round3_functions_run_in_linear_time():
@@ -473,7 +474,7 @@ def test_round3_functions_run_in_linear_time():
         ai_tells._superlative_fact(s)
         ai_tells._verdict(s, frozenset())
         hygiene._source_ages(s)
-        assert time.perf_counter() - t < 0.5
+        assert time.perf_counter() - t < 2.5  # 5x CI slack
 
 
 def _timed(rx: re.Pattern, s: str) -> float:

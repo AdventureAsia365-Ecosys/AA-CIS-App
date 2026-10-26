@@ -473,7 +473,8 @@ def test_review_r2_regexes_run_in_linear_time(name, rx):
     took 12 s on 'The' + 8000 spaces)."""
     for label, s in _ADVERSARIAL.items():
         best = min(_timed(rx, s) for _ in range(2))
-        assert best < 0.05, f"{name} on {label}: {best * 1000:.0f} ms"
+        # 5x CI slack: runners are 2-3x slower; a quadratic regex takes seconds at 8000 chars
+        assert best < 0.25, f"{name} on {label}: {best * 1000:.0f} ms"
 
 
 def _timed(rx: re.Pattern, s: str) -> float:

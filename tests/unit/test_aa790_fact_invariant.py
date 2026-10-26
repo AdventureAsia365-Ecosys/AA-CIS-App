@@ -832,12 +832,14 @@ def test_the_invariant_check_scales_linearly():
 @pytest.mark.parametrize("label", list(_INPUTS))
 def test_the_age_readers_are_linear(label):
     s = _INPUTS[label]
-    assert min(_timed(lambda: (hygiene._source_ages(s), hygiene.unsupported_ages(s, s))) for _ in range(2)) < 0.1
+    # 5x CI slack: runners are 2-3x slower; a quadratic path costs seconds here
+    assert min(_timed(lambda: (hygiene._source_ages(s), hygiene.unsupported_ages(s, s))) for _ in range(2)) < 0.5
 
 
 def test_the_pass_with_many_refused_edits_stays_fast():
     text = "We camp here. This is not drinking water. Boil it first. " * 140   # ~8000 characters, 140 refusals
-    assert min(_timed(lambda: rewrite(text, _ctx())) for _ in range(2)) < 0.5
+    # 5x CI slack (runners are 2-3x slower); the S252 quadratic refusal path took 1 h 42 m for the suite
+    assert min(_timed(lambda: rewrite(text, _ctx())) for _ in range(2)) < 2.5
 
 
 def test_dedupe_with_many_refused_repeats_stays_fast():
