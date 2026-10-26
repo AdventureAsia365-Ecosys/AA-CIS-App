@@ -22,7 +22,7 @@ from services.places.names import country_norm, locality_key, name_norm
 
 logger = structlog.get_logger()
 
-UNRESOLVABLE_LOCALITY = "?"   # locality_norm of a generic name with no locality: never matches a key
+UNRESOLVABLE_LOCALITY = comp_mod.UNRESOLVABLE_LOCALITY   # "?": a generic name with no locality, never matches a key
 
 
 class _NotLive(Exception):
@@ -158,6 +158,10 @@ async def extract_tour_places(pool, tour: dict, deps: ExtractDeps, *, force: boo
     carry, carry_counts = comp_mod.carry_over_ids(comps, comp_dest, previous)
     comp_dest = comp_mod.apply_carry_over(comps, comp_dest, carry)
     counts.update(carry_counts)
+    # AA-990: every previous id the carry-over could not keep → a redirect to the component that took its place,
+    # written to geo.component_redirect (CIS 285) with the place rows below; TripPlanner follows it.
+    redirects, redirect_counts, redirect_rules = comp_mod.redirect_dropped(comps, comp_dest, previous)
+    counts.update(redirect_counts)
     counts["places_linked"] = sum(1 for v in comp_dest.values() if v)
     counts["nights_linked"] = sum(1 for v in night_dest.values() if v)
     counts["names_new_pending"] = sum(1 for r in new_rows if r[-1] == "pending")
@@ -213,6 +217,9 @@ async def extract_tour_places(pool, tour: dict, deps: ExtractDeps, *, force: boo
                 # names only once the version is known live: a rolled-back build queues no paid geocode
                 await store.insert_names(conn, name_rows)
                 await store.replace_source_rows(conn, source_id, tour_id, day_rows, place_rows, vectors)
+                # AA-990: same transaction as the place rows — a pin never sees the id gone without its redirect
+                counts["ids_redirects_cleared"] = await store.write_redirects(
+                    conn, source_id, redirects, redirect_rules, [c.component_id for c in comps])
                 await store.write_build(conn, source_id, tour_id=tour_id, country=country, days_hash=dh,
                                         components_hash=ch, rule_version=days_mod.RULE_VERSION, status=status,
                                         counts=counts, cost_usd=cost, job_id=job_id)

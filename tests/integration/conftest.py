@@ -368,6 +368,9 @@ def _apply_schema(conn):
         # raw_tours (needs 245's owners); this superuser replay would refuse its SET LOCAL ROLE steps' ownership.
         # test_aa853_migration_281 applies it the DB Migrate way on the RDS-like state and rolls back.
         and not f.startswith('281')
+        # AA-990: 285 creates catalog.v_component_redirect through the X1 S22 catalog recipe (needs 245's owners);
+        # test_aa990_migration_285 applies it the DB Migrate way on the RDS-like state and rolls back.
+        and not f.startswith('285')
     ])
 
     for mf in migration_files:
