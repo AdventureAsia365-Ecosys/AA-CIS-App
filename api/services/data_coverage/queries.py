@@ -454,7 +454,8 @@ SELECT count(*)::int AS served_tours,
                       WHERE p.tour_id = t.tour_id AND p.lat IS NOT NULL
                       LIMIT 1) l ON true"""
 
-TENANT_TP_PLACES = TENANT_TP_PLACES_WHOLE
+# S252 live through the tenant pool: 1.55 s per tour vs 6.0-6.5 s for the whole form, same counts (892 / 737).
+TENANT_TP_PLACES = TENANT_TP_PLACES_PER_TOUR
 
 TENANT_TP_COMPONENTS = """
 SELECT count(*)::int AS served_components,
