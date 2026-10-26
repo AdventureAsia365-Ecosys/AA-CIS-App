@@ -230,9 +230,12 @@ async def test_tenant_pool_logs_one_timing_line(call, row, route):
 
 # The inline SQL of v1_tours.py before AA-859 (b478a18b), for the flag-off path of the two job-joined reads.
 # AA-760: the flag-off SQL also breaks created_at ties on ttv.id (page boundaries never skip or repeat a version).
+# AA-990: both reads also select pt.updated_at AS master_updated_at (the master_newer notice).
 _OLD_MY_VERSIONS_ROWS = """
     SELECT ttv.id, ttv.version_number, ttv.status, ttv.edit_source, ttv.rewrite_language, ttv.created_at,
-           ttv.rewritten_content, pt.id AS published_tour_id, pt.tour_id, pt.aa_name, rt.country, rt.duration,
+           ttv.rewritten_content, pt.id AS published_tour_id, pt.tour_id, pt.aa_name,
+           pt.updated_at AS master_updated_at,  -- AA-990: master_newer is derived from it (project_version)
+           rt.country, rt.duration,
            -- AA-652 — the rewrite job's status (queued/running/succeeded/failed/...),
            -- NULL for manual edits and pre-AA-652 rows. No job error text (tenant-safe).
            j.status AS job_status
@@ -248,6 +251,7 @@ _OLD_VERSION = """
     SELECT ttv.*, pt.tour_id, pt.aa_name, pt.aa_subtitle, pt.aa_summary,
            pt.aa_description, pt.aa_highlights, pt.aa_itineraries,
            pt.seo_title AS aa_seo_title, pt.seo_meta AS aa_seo_meta,
+           pt.updated_at AS master_updated_at,  -- AA-990: master_newer is derived from it (project_version)
            rt.country, rt.duration, rt.price_raw, rt.inclusions, rt.exclusions,
            j.status AS job_status  -- AA-652
     FROM gold_aa_internal.tenant_tour_versions ttv
