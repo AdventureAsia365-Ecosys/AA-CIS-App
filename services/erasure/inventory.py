@@ -102,6 +102,10 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     _d("shared.writing_signal", "writing-memory signals (before/after text) of the tenant"),
     # AA-917 (280): tenant-scoped learned writing rules (derived from the tenant's text). Platform rules have no tenant.
     _d("shared.writing_rule", "writing-memory rules learned from the tenant's own edits"),
+    # AA-919 (284): golden-set items made from the tenant's text (input, brand pack, outputs, labels) and their scored
+    # results. Platform (A1) items have no tenant; the set row and the run rows hold no tenant text and stay.
+    _d("shared.eval_golden_item", "golden-set items built from the tenant's content (eval inputs and outputs)"),
+    _d("shared.eval_item_result", "eval results of the tenant's golden items (regenerated outputs)"),
     _d("shared.pipeline_runs", "tenant pipeline batches (acp_runs and raw rows follow through FKs)"),
     _d("shared.acp_runs", "ACP run rows"),
     _d("shared.tenant_api_usage", "per-request API usage; a CHECK forbids a tenant-actor row without a tenant"),
@@ -282,6 +286,11 @@ TENANT_CHECKLIST: tuple[ChecklistItem, ...] = (
                   "tenant_api_usage,job,decision_log}/ (gzipped JSONL rows that still carry the tenant id)",
                   "runbook section 4: scan for the tenant id (S3 Select), then rewrite or remove the object, or "
                   "record the decision to keep it until its lifecycle expiry"),
+    ChecklistItem("AA-CIS (operator)", "AA-729 / AA-919 golden-set fixture and score files under bronze "
+                  "scripts/out/aa729/ (frozen tenant inputs and outputs; the DB rows go with the apply, these "
+                  "objects do not), and any repo copy of that fixture",
+                  "runbook section 4: cut a new fixture version without the tenant, import it, then delete the old "
+                  "objects (WRITE); the importer refuses an offboarded tenant, so a stale fixture cannot come back"),
     ChecklistItem("AA-Partner (crm)", "the tenant's CRM rows (DM-6.8 hard delete on offboarding)",
                   "AA-Partner tenant erasure, owner crm; cis_app has no grant on crm.*"),
     ChecklistItem("Cognito", "tenant portal users (AA-813, once built)", "runbook section 4"),
