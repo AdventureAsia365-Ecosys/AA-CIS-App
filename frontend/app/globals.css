@@ -489,10 +489,12 @@ body {
    (`aa-page-header--stack`) gives the text the full row so the actions drop under it, left aligned.
    CSS, not a JS media query, so the server HTML is already right on a phone (no hydration shift). */
 .aa-page-header-text { flex: 1 1 240px; }
-.aa-page-header-actions { justify-content: flex-end; }
+.aa-page-header-actions { justify-content: flex-end; max-width: 100%; }
 
 @media (max-width: 767px) {
   .aa-page-header--stack > .aa-page-header-text { flex-basis: 100%; }
-  .aa-page-header--stack > .aa-page-header-actions { justify-content: flex-start; }
+  /* The full row too, so a long action row (As of + Refresh + Export CSV on Data coverage) wraps
+     instead of running past the screen edge (S252 UI verify at 390px). */
+  .aa-page-header--stack > .aa-page-header-actions { justify-content: flex-start; flex-basis: 100%; min-width: 0; }
 }
 
