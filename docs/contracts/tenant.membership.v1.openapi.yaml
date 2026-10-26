@@ -188,7 +188,9 @@ components:
           oneOf:
             - {$ref: "#/components/schemas/Identity"}
             - {type: "null"}
-          description: Null while status is invited (the identity binds at activation, ADR 0006b decision 5).
+          description: >-
+            Null while status is invited (the identity binds at activation, ADR 0006b decision 5), and on a removed
+            membership that was never activated (a withdrawn invitation). Never null while status is active.
         content_studio_role: {$ref: "#/components/schemas/ContentStudioRole"}
         status: {$ref: "#/components/schemas/MembershipStatus"}
         invitation_id:

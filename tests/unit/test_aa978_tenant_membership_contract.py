@@ -36,7 +36,7 @@ CONTRACT = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "tenant.
 DOC = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
 # sha256 of AA-Ecosys docs/contracts/tenant.membership.v1.openapi.yaml (info.version 1.1, AA-979 activateInvitation).
 # Update the root file first, copy it here byte for byte, then set this to `sha256sum` of the root file.
-ROOT_CONTRACT_SHA256 = "44ee8453dad1ee9fd1993f11f8792ce52857976d2a2585365d1e26e41bc39609"
+ROOT_CONTRACT_SHA256 = "d74fdaa2849fe784eb96e885a613f73f037c084a04b320136a85183137da1377"
 
 TENANT = str(uuid.uuid4())
 ISS = "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_zz978partner"
