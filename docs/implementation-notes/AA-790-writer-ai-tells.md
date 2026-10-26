@@ -927,3 +927,107 @@ a seed number a known age.
   `test_aa790_writer_ai_tells.py` 100, `test_aa768_s234_round4.py` 70. The 101 unit files that import
   `acp_content_writing` give 4170 passed.
 - No prompt change: `writer_prompt_version` and `AI_TELLS_VERSION` stay the same.
+
+## Round 3: ship criterion (S252)
+
+Input: seven blocking findings on dd5b649c (fifth review). The ship criterion for this round: on every case the
+reviews quote, and on the generated property test, the branch never loses a fact that origin/main keeps. A harness
+outside the repo (`.tmp-session/s252/aa790/compare_main.py`) checks this. It runs `ai_tells.rewrite` +
+`text_integrity.final_pass` from both trees, each in its own subprocess, and compares the fact tokens of each case
+before and after.
+
+### Decisions
+
+- **SC-D1 — the staging exemption holds only in the copula frame** (`hygiene._deniable_frame`). A `_DENIABLE_WORDS`
+  word is free only when its denial follows a copula or a 'do' auxiliary ('is not a museum', 'is no accident', 'does
+  not present itself as a backdrop'), a relative 'that / which' ('that no guidebook can substitute'), or opens a
+  role or agent phrase ('not as …', 'not by …'). A colon frame ('…: not a relic, but …') and a ', not X' tail on a
+  copula complement ('a government enterprise, not a heritage attraction') also count. It never holds in these cases:
+  - a ', not X' tail after a lexical verb, a modal or a prepositional complement ('You can sketch the murals, not
+    photograph them', 'sells raw wool, not souvenirs', 'is for prayer, not photos');
+  - a denial that opens on a place, time or purpose preposition ('not in the garden'; 'not to the lake', while 'not
+    to encounter' stays an infinitive);
+  - a sentence that opens on its denial ('No photos inside the temple.');
+  - an inline pair ('The water is not treated; it is drawn …').
+
+  Each look-around reads at most 200 characters, so the read stays linear. The word list itself is unchanged.
+- **SC-D2 — 'not only / just / simply / merely X' is never cut alone.** `_pair` returns KEEP_PAIR for any such
+  denial (the pronoun-subject cut lost the glacier, and the next 'It' then pointed at the previous sentence). The
+  noun-subject join is kept whole too. `_lone_denial` and `_inline_pair` skip the frame.
+- **SC-D3 — a 'This / That is …' sentence names facts by presence** (`hygiene._verdict_nouns`). The nouns of its
+  complement's first noun phrase (at most 3 words; it stops at a stop word, 'worth' or an -ly word), and the N of
+  'This kind of N', are `fact_tokens` of kind False. A verdict cut therefore stands only while the piece names them
+  elsewhere. Piece-meta words, generic and evaluative words, -ing words and judging adjectives (good, great, proper …)
+  never count, so 'This is the section worth slowing down for.', 'That's the opening.' and 'This is the most
+  rewarding part of the day.' still go.
+- **SC-D4 — an aphorism-pair cut keeps a subject named nowhere else** (`ai_tells._cut_both_subject`, inside
+  `_edit_facts_lost`). The invariant adds the head noun of the denial's subject as a presence fact for a CUT_BOTH
+  edit. So 'The old forge is not a relic. It works.' stays unless the piece mentions the forge again.
+- **SC-D5 — quantity and frequency words are facts in a repeat** (`_REPEAT_QUANTITY_WORDS`). every, each, all,
+  both, only, still, always, never, ever, own, even, alone, once, twice, daily … are out of `_REPEAT_FREE_WORDS`, and
+  `added_words` counts them even when the stop list holds them. The one exception is a floating quantifier right after
+  a copula or an auxiliary ('… are all available as optional activities'), which adds no scope.
+- **SC-D6 — an output 'aged N' is a person's age by default** (`hygiene._thing_aged_out`). It is a thing's age only
+  right after a closed list of aged goods or objects (malt, whisky, wine, tea, pu'er, cheese, ham, cask, barrel,
+  temple, tree …), and only if no person noun or age word appears anywhere in the sentence. `_AGE_LOOKBACK_CUE_RE`
+  gains the grand- forms (no word boundary before 'kids' in 'grandkids') and activity nouns (trekkers, beginners,
+  novices, cyclists, rafters, pilgrims, members, all …). The source side reads them as cues too.
+- **SC-D7 — head counts and space-grouped altitudes are never known ages.** A person noun + N with an 'and over / up'
+  or '+' tail, or + N–M, counts only for an age-only noun (children, kids, teens, infants, toddlers, babies, juniors,
+  minors, students, pupils, boys, girls). Any other noun counts only with 'aged' / 'between', a 'years' tail, 'must
+  be', or an age word earlier in the clause. 'Families of 4 and over', 'Travellers 6 and up', 'Participants 4-8',
+  'Couples 2 to 4' and 'Explorers 4 to 6' are group sizes. A number followed by a space-grouped thousand ('3 500 m',
+  '4 000 m', with a thin or no-break space too) is never read.
+
+### How each finding is handled
+
+| Finding | Handled by | Result |
+|---|---|---|
+| 1 `_DENIABLE_WORDS` in tails and inline pairs | SC-D1 | (a) with the Tango seed, (b) with the camp seed, and the six no-seed sentences come back unchanged at both positions |
+| 2 'not just X' cut alone | SC-D2 | glacier / monastery / pond (+ 'not merely') unchanged at both positions, with and without a seed |
+| 3 verdict cut of an identification | SC-D3 | sky burial site, cremation ground, herders' pasture and 'where the porters change shifts' kept; one is cut when the piece names the pasture elsewhere |
+| 4 CUT_BOTH removes the subject | SC-D4 | forge and mill pairs kept; the forge pair goes when the forge is named elsewhere |
+| 5 frequency words free in a repeat | SC-D5 | ferry text unchanged through autofix, `final_pass` and `settle`, with and without a seed |
+| 6 output 'aged N' passed by default | SC-D6 | all 13 quoted sentences flagged with an empty source and with a Punakha seed; single malt, pu'er and barrels are not flagged |
+| 7 group sizes / spaced altitudes known | SC-D7 | the 9 seeds give no known age, and each paired claim is flagged; 'Children 6–12', 'children 7 and older', 'Travellers aged 6 to 12' and 'Minimum age: travellers 10 and over' still count |
+
+### Changed (vs the review's suggestions)
+
+- Finding 1: we took the frame fix only. The practical words stay on `_DENIABLE_WORDS`, and there is no stem match
+  with the seed ('photograph' ~ 'photography'). Outside the copula frame those words are facts anyway, and inside it
+  they are the staging nouns the list is for.
+- Finding 3: the fix is in the invariant (presence of the noun phrase), not in `_verdict`, so every rule that deletes
+  a 'This is …' sentence is covered.
+- Finding 4: the pair is kept, not joined ('The old forge works.').
+
+### Tradeoffs
+
+- **Panel tells now kept (each has a test):** the pilot inline pair 'This is not a performance; it is an offer that
+  depends on the evening.' (d99c621c) is refused ('drops a fact: performance'). In the $0 census (below), '…
+  something real to encounter, not a softened version of the destination.' also stays, because it is a tail after a
+  lexical verb.
+- **Test fixtures that changed:** the round-2 aphorism-cut case now names the temple elsewhere ('Visitors walk the
+  temple courtyard.'). 'heritage is not only preserved. It remains in active use.' is no longer proposed, so it moved
+  from the refusal list to its own test. The inline 'performance' pilot moved from the rewritten list to the refusal
+  list.
+- A false "unknown" age costs one F15 repair. This round prefers that to a false "known" (SC-D6, SC-D7).
+
+### Should know
+
+- **Comparison harness** (`.tmp-session/s252/aa790/compare_main.py`; origin/main 303ae6e9 in the
+  `.tmp-session/wt/cis-main-ref` worktree). It runs 3056 cases: the generated property test, plus the 150 sentences
+  quoted in r3-review{2,3,5}-blocking.json. Each quoted sentence runs with no seed, an unrelated seed, a seed that
+  states it, and the finding's own seeds, at a paragraph start and mid-paragraph.
+  - Fact losses: main 1012, branch 6. Regressions vs main (main keeps a fact, the branch loses it): **0**.
+  - The 6 branch losses are the reviewer's elided seed quote 'Day 8: … Drive 3-4 hours … max 12 guests.' used as
+    prose. `fix_fragments` deletes 'max 12 guests.' as a broken sentence, on main as well.
+  - Before these fixes (dd5b649c) the branch lost facts in 40 cases, also with 0 regressions.
+- **$0 census, 60 judge-view texts** (local scratch, dd5b649c → this commit, seed from `source_facts`):
+  - `ai_tells.rewrite` edits 69 → 67 and refusals 9 → 11. The two outputs that differ are the tradeoffs above.
+  - `final_pass` deletes 0 → 0. Age flags 3 → 3.
+- Linear time: new adversarial inputs (', not X' tail runs, 'This is …' runs, 'Grandkids aged' runs, aged-thing runs,
+  'Families of N and over' runs) stay inside the existing budgets.
+- Tests: `test_aa790_fact_invariant.py` 440, `test_aa790_writer_round3.py` 420, `test_aa790_writer_round2.py` 203,
+  `test_aa790_writer_ai_tells.py` 100. The 98 unit files that import `acp_content_writing` give 4271 passed in about
+  47 s.
+- No prompt change: `writer_prompt_version` and `AI_TELLS_VERSION` stay the same.
