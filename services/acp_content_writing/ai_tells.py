@@ -186,15 +186,157 @@ def _voice_words(entry: str) -> set[str]:
     return {w for k, w in enumerate(words) if k == 0 or words[k - 1] not in _VOICE_NEGATIONS}
 
 
+def _pack_voice(brand_audience: Optional[dict]) -> list[str]:
+    return [str(v) for v in (brand_audience or {}).get("voice") or [] if v]
+
+
+def _energetic_entries(voice: list[str]) -> list[str]:
+    """The voice entries that make a brand energetic: the PACE line's and the MOMENTUM texture's one test."""
+    return [v for v in voice if _voice_words(v) & _ENERGETIC_VOICE]
+
+
 def brand_voice_rule(brand_audience: Optional[dict]) -> str:
     """The PACE line for an energetic brand, the RESTRAINT line for a calm / respectful one ('' for neither; both
     when the voice has both kinds of word). Read from the brand pack's own ``voice`` words; a negated word ('never
     playful') does not count."""
-    voice = [str(v) for v in (brand_audience or {}).get("voice") or [] if v]
-    energetic = [v for v in voice if _voice_words(v) & _ENERGETIC_VOICE]
+    voice = _pack_voice(brand_audience)
+    energetic = _energetic_entries(voice)
     calm = [v for v in voice if _voice_words(v) & _CALM_VOICE]
     return ((_ENERGETIC_RULE.format(words=", ".join(energetic)) if energetic else "")
             + (_CALM_RULE.format(words=", ".join(calm)) if calm else ""))
+
+
+# AA-790 round 6 (S252 6-arm panel of round 5: AI-tells 5.58 kept, but non-family brand voice fell against round 3:
+# Trail Pulse 6.83 → 6.0 "long middle stretches read like an encyclopedia", "the FAQ is formal brochure copy";
+# Atlas & Hearth 8.2 → 7.4 "reference prose with little atmosphere"; WildKind 7.5 → 7.0 "encyclopedia more than
+# observant nature writing; brand voice in one bolted-on line"). Rounds 4/5 removed the verdict, denial and aphorism
+# lines that carried those voices ("Four days in.", "that matters", "the land is still deciding what it wants to
+# be"), and the writer fell back to reference prose. BRAND TEXTURE says where the voice comes from instead, per
+# brand type read from the pack: MOMENTUM (energetic: the PACE line's own test), ATMOSPHERE (luxury / cultural),
+# OBSERVATION (nature / respectful). A family brand gets none (FAMILY_RULE carries its voice; round 5 fixed it); a
+# pack with no texture signal gets none, so its prompt is byte-identical to round 5.
+_ATMOSPHERE_VOICE = frozenset("""elegant atmospheric refined sophisticated cultured luxurious polished""".split())
+_ATMOSPHERE_TYPE = frozenset("""luxury luxurious upscale high-end cultural culture heritage""".split())
+_OBSERVATION_VOICE = frozenset("""nature-led observant respectful ethical responsible sustainable""".split())
+_OBSERVATION_TYPE = frozenset("""nature nature-led wildlife conservation responsible eco eco-friendly ecological
+sustainable""".split())
+
+BRAND_TEXTURE_COMMON = """
+- Every factual paragraph comes back to the traveller within two sentences: after at most two sentences about
+  what a place is (its history, geology, figures or other names), the next sentence puts the reader there, in a
+  moment the CONTENT SEED gives (where they ride, walk, eat or sleep). A stretch that reads like a reference work
+  or an encyclopedia entry is not finished. When the seed gives no moment for a place, keep its facts to two
+  sentences and move on.
+- Texture never adds content and never needs a tell: SOURCE FIDELITY, VISIT DETAIL and the AI TELLS rules apply to
+  every line. No verdict line, no aphorism, no praise, no denial set-up and no list of three to make the voice.
+- In the DON'T / WRITE INSTEAD pairs below, <...> is a fact from the content seed, never an invented one."""
+BRAND_TEXTURE_FAQ = """
+- The FAQ answers are written in this voice too, never as formal brochure copy; each still answers with one fact
+  from the CONTENT SEED or FACTS."""
+BRAND_TEXTURE_MOMENTUM = """
+- MOMENTUM: momentum comes from short, concrete action sentences built on what the CONTENT SEED says the reader
+  does (riding, walking, swimming, climbing, paddling), written to "you", with the verb early. A short sentence
+  carries an action or a fact, never a comment on the trip ("Four days in.", "That's the pace this route sets.",
+  "This is the day the route announces itself."). Plain speech and contractions are welcome; no hype.
+  - DON'T "The falls are a multi-tiered limestone system known for their turquoise pools." (a reference opener
+    with no reader in it)
+    WRITE "You ride <the distance or road the content seed gives> to <place>,
+    then <do what the content seed says you do there>."
+  - DON'T "After a long morning on the road, that matters."
+    WRITE the action itself:
+    "After <the morning's ride the content seed gives>, you <do what the content seed says comes next>.\""""
+BRAND_TEXTURE_MOMENTUM_FAQ = """
+  In the FAQ: "you", short sentences, the fact first."""
+BRAND_TEXTURE_ATMOSPHERE = """
+- ATMOSPHERE: atmosphere comes from the concrete sensory or material detail the CONTENT SEED or FACTS give (light,
+  stone, wood, a river, silence, a meal, the time of day), told in unhurried, well-built sentences (still within
+  the AI TELLS length limits) with the reader present in the moment. Only detail the seed gives: SOURCE FIDELITY
+  forbids inventing what a place looks, sounds or feels like. Never reach for atmosphere with an aphorism ("The
+  architecture is the devotion made structural.", "the land is still deciding what it wants to be"), with praise
+  ("one of the most layered destinations in ...") or with a line about what a place asks of or gives the reader.
+  When the seed gives no sensory detail, the calm comes from the sentence itself: one fact, fully and plainly told.
+  - DON'T "The valley is one of the most layered destinations in the region."
+    WRITE the seed's own detail, with the reader in it:
+    "You reach <place> <at the time of day the content seed gives>,
+    when <the light or stone the content seed names>."
+  - DON'T "The river, also known by its local name, flows through the valley and joins a larger river downstream."
+    (a reference entry)
+    WRITE the river where the reader meets it:
+    "You <stay or eat where the content seed says>, beside <the river the content seed names>.\""""
+BRAND_TEXTURE_ATMOSPHERE_FAQ = """
+  In the FAQ: the same calm, full sentences, the fact told plainly, no brochure phrasing ("is renowned for",
+  "boasts")."""
+BRAND_TEXTURE_OBSERVATION = """
+- OBSERVATION: an observant, specific voice: name what the CONTENT SEED says is there (the habitat, the plants
+  and animals, the village and the people who live there) in plain, exact words, and what the reader does among
+  them. No drama words ("dramatic", "spectacular", "stunning") and no verdict about what a place means or drives
+  ("The geology here drives everything visible above it.", "This stop gives the route its northernmost cultural
+  depth."). Respect shows in what the sentence says: who lives or works there and what the seed says about how the
+  visit happens; never a sighting or an encounter the seed does not give.
+  - DON'T "The geology here drives everything visible above it."
+    WRITE what the seed says is there, with the reader on the way:
+    "On the way to <place>, you pass <the habitat the content seed names>."
+  - DON'T "This stop gives the route its northernmost cultural depth."
+    WRITE who lives there and what the seed says happens:
+    "In <village>, <the people the content seed names> <do what the content seed says>,
+    and you <join the moment the content seed gives>.\""""
+BRAND_TEXTURE_OBSERVATION_FAQ = """
+  In the FAQ: plain and exact, the fact the seed gives in the same observant words as the body."""
+_TEXTURES = (("momentum", BRAND_TEXTURE_MOMENTUM, BRAND_TEXTURE_MOMENTUM_FAQ),
+             ("atmosphere", BRAND_TEXTURE_ATMOSPHERE, BRAND_TEXTURE_ATMOSPHERE_FAQ),
+             ("observation", BRAND_TEXTURE_OBSERVATION, BRAND_TEXTURE_OBSERVATION_FAQ))
+
+
+def _texture_words(entry: str) -> set[str]:
+    """The words of one pack entry that count as a texture signal: clause by clause, each clause up to its first
+    not / never / no / nor ('Not a luxury brand' and 'Calm, never sporty' do not count the denied word)."""
+    out: set[str] = set()
+    for clause in _PACK_CLAUSE_RE.split(entry.lower()):
+        for w in _VOICE_WORD_RE.findall(clause):
+            if w in _VOICE_NEGATIONS:
+                break
+            out.add(w)
+    return out
+
+
+def brand_textures(brand_audience: Optional[dict]) -> dict[str, list[str]]:
+    """{texture: the pack entries that signal it} for MOMENTUM (an energetic voice word, the same test as the PACE
+    line), ATMOSPHERE (a luxury / cultural voice word or brand type) and OBSERVATION (a nature / respectful voice
+    word or brand type). Empty for a family brand (``family_presence_rule``: FAMILY_RULE carries its voice) and for
+    a pack with no signal. Read from the pack's words only, never from a tenant name."""
+    pack = brand_audience or {}
+    if family_presence_rule(pack):
+        return {}
+    voice = _pack_voice(pack)
+    brand_type = str(pack.get("brand_type") or "")
+    kind = [brand_type] if brand_type else []
+    found = {
+        "momentum": _energetic_entries(voice),
+        "atmosphere": ([v for v in voice if _texture_words(v) & _ATMOSPHERE_VOICE]
+                       + [t for t in kind if _texture_words(t) & _ATMOSPHERE_TYPE]),
+        "observation": ([v for v in voice if _texture_words(v) & _OBSERVATION_VOICE]
+                        + [t for t in kind if _texture_words(t) & _OBSERVATION_TYPE]),
+    }
+    return {k: v for k, v in found.items() if v}
+
+
+def brand_texture_rule(brand_audience: Optional[dict], channel: Optional[str] = None) -> str:
+    """The BRAND TEXTURE block for a pack with a texture signal (``brand_textures``), '' otherwise: one header
+    naming the pack words it was read from, the common lines (back to the traveller within two sentences; texture
+    never needs a tell), then one block per texture in a fixed order (MOMENTUM, ATMOSPHERE, OBSERVATION). A blog
+    (``channel == "blog"``) also gets the FAQ line and each texture's FAQ sentence; other channels have no FAQ."""
+    found = brand_textures(brand_audience)
+    if not found:
+        return ""
+    words = list(dict.fromkeys(w for k, _, _ in _TEXTURES for w in found.get(k, [])))
+    blog = channel == "blog"
+    out = ("\nBRAND TEXTURE FOR THIS BRAND (from its pack: " + ", ".join(words) + "): the brand's voice comes from"
+           " how each sentence is built and where the reader stands, never from a line that comments on the trip."
+           + BRAND_TEXTURE_COMMON + (BRAND_TEXTURE_FAQ if blog else ""))
+    for key, body, faq in _TEXTURES:
+        if key in found:
+            out += body + (faq if blog else "")
+    return out
 
 
 # AA-790 round 4 (S252 4-arm panel: Terra Family brand voice 6.85; "children show up once", "the child perspective

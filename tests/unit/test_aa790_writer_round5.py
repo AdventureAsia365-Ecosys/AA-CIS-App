@@ -51,7 +51,9 @@ def _sha16(s: str) -> str:
 
 def test_writer_prompt_version_is_round_five():
     """VISIT DETAIL (SYSTEM_PROMPT) gains the FAMILY BRAND bridge sentence, so the SYSTEM_PROMPT hash moves."""
-    assert service.WRITER_PROMPT_VERSION == "79cd046a"  # round 4: 2b510e08; round 3: 24363541
+    # round 4: 2b510e08; round 3: 24363541; round 5 shipped 79cd046a, round 6 pins its own:
+    # test_aa790_writer_round6.test_writer_prompt_version_is_round_six
+    assert service.WRITER_PROMPT_VERSION not in ("24363541", "2b510e08")
     assert ai_tells.AI_TELLS_VERSION == "ai_tells.v3"  # the pass makes no new edit
 
 
@@ -249,9 +251,14 @@ _PACKS = {"TRAIL": TRAIL, "ATLAS": ATLAS, "WILD": WILD, "FAMRUN": FAMRUN}
 
 @pytest.mark.parametrize("name, channel", sorted(_ROUND4_USER_PROMPTS))
 def test_non_family_user_prompts_are_byte_identical_to_round_four(name, channel):
+    """Round 6 adds the BRAND TEXTURE block (ai_tells.brand_texture_rule) to a pack with a texture signal: without
+    that block the prompt is still the round-4 one, byte for byte (the family-run lodge has no signal at all)."""
     p = _prompt(channel, _PACKS[name])
     assert "FAMILY BRAND" not in p and FAMILY_SHORT_POST_RULE not in p
-    assert _sha16(p) == _ROUND4_USER_PROMPTS[(name, channel)]
+    texture = ai_tells.brand_texture_rule(_PACKS[name], channel)
+    assert bool(texture) == (name != "FAMRUN")
+    assert p.count(texture) == 1 if texture else "BRAND TEXTURE" not in p
+    assert _sha16(p.replace(texture, "") if texture else p) == _ROUND4_USER_PROMPTS[(name, channel)]
 
 
 def test_energy_lines_are_unchanged():
