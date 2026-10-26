@@ -36,7 +36,7 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    # Dispatched runs share `post-deploy-verify-cis` and queue there (never cancelled in progress). The call from
+    # Dispatched runs share `post-deploy-verify-cis` and queue there (one running, one pending: a newer dispatch cancels the older pending one). The call from
     # Deploy Dev gets a group of its own run: GitHub cancels the older PENDING job of a group when another one
     # queues, so a shared group would let a dispatch cancel a Deploy Dev verify (and turn that run red). Deploy Dev
     # runs are already one at a time (group deploy-dev-cis), so their verify jobs need nothing more.
@@ -54,7 +54,7 @@ jobs:
         run: |
           set -euo pipefail
           if ! [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::expected_sha must be a full 40-character commit SHA, got '$EXPECTED_SHA'"
+            echo "::error::expected_sha must be a full 40-character commit SHA (value not printed)"
             exit 1
           fi
           git cat-file -e "${EXPECTED_SHA}^{commit}" 2>/dev/null \

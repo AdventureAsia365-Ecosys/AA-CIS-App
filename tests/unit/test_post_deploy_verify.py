@@ -408,3 +408,23 @@ def test_result_is_red_when_a_job_result_is_missing():
     needs = _needs()
     del needs["verify"]
     assert _result_step(needs).returncode == 1
+
+
+def test_required_schema_sed_reads_the_live_constant():
+    """The verify reads REQUIRED_CIS_SCHEMA with sed (post-deploy-verify.yml); a reformatted line would turn every
+    deploy red with 'not set: REQUIRED_SCHEMA'. Keep the sed and the constant in step."""
+    import re
+    import subprocess
+    from api.core import readiness
+
+    wf = (REPO / ".github/workflows/post-deploy-verify.yml").read_text()
+    expr = re.search(r"sed -n '([^']+)'", wf).group(1)
+    out = subprocess.run(["sed", "-n", expr, str(REPO / "api/core/readiness.py")], capture_output=True, text=True,
+                         check=True).stdout.splitlines()
+    assert out and int(out[0]) == int(readiness.REQUIRED_CIS_SCHEMA)
+
+
+def test_aws_errors_are_scrubbed_before_the_summary():
+    script = (REPO / ".github/scripts/post_deploy_verify.sh").read_text()
+    assert "s/[0-9]{12}/<acct>/g" in script and "s/arn:aws:[^ ]*/<arn>/g" in script
+    assert "got '${EXPECTED_SHA}'" not in script

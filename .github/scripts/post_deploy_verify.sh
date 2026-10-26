@@ -82,7 +82,7 @@ check_inputs() {  # sets BLOCKED=1 when the ECS/HTTP checks cannot run at all
     record admin-secret FAIL "ADMIN_SECRET is not set: the admin and worker rows cannot run"
   fi
   if [ -n "${EXPECTED_SHA:-}" ] && ! [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-    record expected-sha FAIL "EXPECTED_SHA must be a full 40-character commit SHA, got '${EXPECTED_SHA}'"
+    record expected-sha FAIL "EXPECTED_SHA must be a full 40-character commit SHA (value not printed)"
     BLOCKED=1
   fi
   if [ -n "${REQUIRED_SCHEMA:-}" ] && ! [[ "$REQUIRED_SCHEMA" =~ ^[0-9]+$ ]]; then
@@ -105,7 +105,7 @@ describe_service() {  # $1 = service -> $WORK/svc-$1.json ({"services":[...]})
 check_rollout() {  # $1 = service
   local svc="$1" f="$WORK/svc-$1.json" status desired running ndeps rollout
   if ! describe_service "$svc"; then
-    DETAIL="describe-services failed: $(head -c 200 "$WORK/svc-$svc.err")"; return 1
+    DETAIL="describe-services failed: $(sed -E 's/arn:aws:[^ ]*/<arn>/g; s/[0-9]{12}/<acct>/g' "$WORK/svc-$svc.err" | head -c 200)"; return 1
   fi
   status=$(jq -r '.services[0].status // "MISSING"' "$f")
   if [ "$status" != "ACTIVE" ]; then DETAIL="service $svc is $status"; return 1; fi
