@@ -1031,3 +1031,48 @@ before and after.
   `test_aa790_writer_ai_tells.py` 100. The 98 unit files that import `acp_content_writing` give 4271 passed in about
   47 s.
 - No prompt change: `writer_prompt_version` and `AI_TELLS_VERSION` stay the same.
+
+### Comparative review: regressions vs main (S252)
+
+Input: a comparative review found 15 sentences that origin/main keeps and the branch cut. None of them is in
+r3-review*-blocking.json, so `compare_main.py` did not see them. All 15 come from two round-3 rules that main does
+not have.
+
+#### Decisions
+
+- **CR-D1: the `_staging_tail` spectator branch cuts a tail only when the tail names nothing.** Before the spectator
+  word, only a closed modifier is allowed (`_SPECTATOR_MODIFIERS`: quick, brief, passing, fleeting, distant …).
+  Before this fix any free word was allowed, so 'not just a rim view' lost the rim. After the spectator word, only
+  'of it' or 'of them' is allowed. Before, any 'of the / a X' was allowed, so 'glimpses of the leopards', 'a view
+  of the volcano' and 'a backdrop of the hearth' lost the thing seen. This limit on 'of …' also covers the staging
+  branch.
+- **CR-D2: the `_something_lead` 'than X' comparand comes from a closed list** (`_SOMETHING_COMPARANDS`: scenery,
+  sightseeing, views, glimpses, photos, postcards, snapshots, pretty views or pictures). Before, the comparand could
+  be any one or two words, and the cut took an amenity (air conditioning), an activity (trekking), a road (the main
+  highway) or an effort level (more relaxed than the trek). The lead without 'than' ('something specific:',
+  'something that no guidebook can substitute:') is unchanged.
+- **CR-D3: `_PRACTICAL_RE` now lists air conditioning (and its -ed / -er forms) and Wi-Fi.** Whether a room has or
+  lacks these is a fact a family plans by. The pattern only guards: a denied or judged part that names one is kept,
+  and nothing new is cut.
+
+#### Changed (vs the review)
+
+- Nothing beyond the 15 findings. The rules still cut a tail or comparand that names nothing: 'not just a view of
+  them', 'not just a quick glimpse of them', 'something rarer than scenery / sightseeing:'.
+
+#### Tradeoffs
+
+- A 'not just a view of the X' tail where X is also named in the main clause stays. The branch no longer checks the
+  seed or the rest of the piece for X. Main keeps these sentences too, so this is not a regression.
+
+#### Should know
+
+- Tests: `test_a_tail_or_comparand_that_names_a_thing_stays` runs the 15 sentences x seed '' / unrelated seed x
+  paragraph start / mid paragraph (60 cases). `test_a_tail_or_comparand_that_names_nothing_is_still_cut` covers what
+  is still cut. `test_aa790_writer_round3.py` has 482 tests. `fact_invariant` 440, `round2` 203 and `ai_tells` 100
+  are unchanged. The 98 unit files that import `acp_content_writing` give 4364 passed in about 52 s.
+- `compare_main.py` (3056 cases): main losses 1012, branch losses 6, regressions vs main 0. These numbers did not
+  change, because the harness does not contain the 15 sentences.
+- A separate run of the 15 sentences (both seeds, both positions, rewrite + `final_pass`) gives 0 changed on main and
+  0 changed on the branch.
+- The $0 census was not rerun. The regexes changed only toward cutting less, and linear-time budgets are unchanged.
