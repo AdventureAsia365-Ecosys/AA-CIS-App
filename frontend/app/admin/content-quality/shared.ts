@@ -2,6 +2,7 @@
 // (GET /admin/content-quality/*). Cross-tenant, admin only.
 
 import type { SeedInfo } from "../_components/SeedLine";
+import { gateFilterGroups, gateLabelOf } from "@/lib/gateLabels";
 import { GATE_LABELS, RETIRED_GATES } from "@/lib/quality-registry.generated";
 import type { ExemplarPref, ReasonCode } from "@/lib/writingReasons";
 
@@ -293,10 +294,10 @@ export const fmtTime = (iso: string | null | undefined) =>
 // active gates that showed as raw codes (F2_platform_truth, F2_superlatives, F2_style_warn, F19_authenticity).
 export { GATE_LABELS, RETIRED_GATES };
 
-export const gateLabel = (g: string) => {
-  const label = GATE_LABELS[g] ?? g;
-  return RETIRED_GATES.has(g) ? `${label} (retired)` : label;
-};
+export const gateLabel = (g: string) => gateLabelOf(GATE_LABELS, RETIRED_GATES, g);
+
+/** AA-924 scope 4: the gate filter's options (active, then retired gates labelled "(retired)"). */
+export const GATE_FILTER = gateFilterGroups(GATE_LABELS, RETIRED_GATES);
 
 /** Backend offsets are Python code-point indices; JS strings index UTF-16 units. Returns a mapper
  *  from code-point index to JS index (the identity when the text has no astral chars, e.g. emoji). */
