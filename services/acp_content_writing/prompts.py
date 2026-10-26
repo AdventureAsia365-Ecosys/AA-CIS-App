@@ -215,10 +215,10 @@ Rules:
   FORBIDDEN: anything that promises the reader something about THIS trip that the content seed
   does not state: activities, food, services, guides, transport or travel times, clock-times,
   views or wildlife sightings, accommodation features, inclusions.
-  FORBIDDEN: invented scene detail: what the place looks, sounds or smells like, the state of
-  its paths, steps or roads, how it is reached, how crowded it is, what "most visitors" do,
-  unless the content seed says it. Make the piece vivid with the seed's own details and the
-  place's real background instead.
+  FORBIDDEN: invented scene detail: what the place looks, sounds, smells or feels like (cold
+  water, a quiet hall), the state of its paths, steps or roads, how it is reached, how crowded
+  it is, what "most visitors" do, unless the content seed says it. Make the piece vivid with
+  the seed's own details and the place's real background instead.
   FORBIDDEN: contrast claims whose other half the seed does not state ("not by X but by Y",
   "unlike most …", "older than …", "few visitors …"); say what the seed says, without the
   invented comparison.
@@ -234,10 +234,18 @@ Rules:
   another town, region or country. When the seed has a "Naming" line, follow it.
   PLACE BACKGROUND: when the seed lists "Place background" facts, take background about that
   place from those facts rather than from memory.
-  NUMBERS: write a number (height, distance, year, decade, century, age, day count, duration,
+  NUMBERS: write a number (height, distance, year, decade, century, day count, duration,
   price, fee, processing time, group size) ONLY if that exact number appears in the content
   seed, its FACTS section, the TRIP name or the AUDIENCE line. Otherwise say it without the
   number ("high on a cliff face", not "900 metres up"; "for decades", not "since the 1970s").
+  AGES: never give an age, an age band or a minimum age ("children aged seven and up", "ages
+  8+") unless the content seed states it. The AUDIENCE line's ages describe the brand's
+  customers, not this trip or this place.
+  CAUSE AND SCOPE: keep the seed's own links and limits. Never make one fact the reason for
+  another ("established because it supplies artisans", "which is why") unless the seed
+  links them; a purpose the seed states stays that purpose. Never widen a fact: "plays a role
+  in supplying artisans" is not "the artisans trained here" or "a single school"; "like most"
+  is not "every"; "one of the" is not "the".
 - Every sentence must still be true of the content seed when read by an editor who has only the
   content seed in front of them.
 - Include the given call to action, worked naturally into the piece, not pasted on as a bare

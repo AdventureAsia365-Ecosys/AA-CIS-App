@@ -169,12 +169,23 @@ def test_autofix_social_proof_deleted_only_when_the_seed_does_not_support_it():
 
 
 def test_autofix_deletes_the_later_near_verbatim_repeat():
+    first = ("Optional activities also include boat rides on the water, visits to local nomadic families when "
+             "available and horseback riding across surrounding terrain.")
+    second = ("Boat rides, horseback riding across the surrounding terrain, and visits to local nomadic "
+              "families are all available as optional activities.")
+    text, log = h.autofix(f"{first} {second} The lake is deep.", _ctx())
+    assert text == f"{first} The lake is deep." and "repeat" in log[0]
+
+
+def test_autofix_keeps_a_repeat_that_adds_a_fact():
+    """AA-790 round 3 (S252), the fact-preservation invariant: the later sentence adds the visits to local nomadic
+    families and says they are available; deleting it would lose that, so it stays for F13_repeat."""
     first = ("Optional activities also include boat rides on the water and horseback riding across "
              "surrounding terrain.")
     second = ("Boat rides, horseback riding across the surrounding terrain, and visits to local nomadic "
               "families are all available as optional activities.")
     text, log = h.autofix(f"{first} {second} The lake is deep.", _ctx())
-    assert text == f"{first} The lake is deep." and "repeat" in log[0]
+    assert second in text and not any("repeat" in ln for ln in log)
 
 
 def test_autofix_empties_a_section_and_drops_its_heading():

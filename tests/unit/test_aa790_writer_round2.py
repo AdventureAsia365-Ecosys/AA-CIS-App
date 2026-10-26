@@ -32,7 +32,8 @@ def _run(text: str, ctx: TellContext = CTX) -> tuple[str, list[str]]:
 
 @pytest.mark.parametrize("before, after", [
     # a 'do' denial with a personifying verb + its affirmation (the volcano / Mongolia shapes)
-    ("The crater does not announce itself from the road. It is simply there, tucked into the grass.",
+    # (round 3, S252: 'from the road' / 'from the ridge' is a denied place word, a fact the invariant keeps)
+    ("The crater does not announce itself. It is simply there, tucked into the grass.",
      "The crater is simply there, tucked into the grass."),
     ("The shrines do not advertise their age. They are still repainted every spring.",
      "The shrines are still repainted every spring."),
@@ -45,8 +46,9 @@ def _run(text: str, ctx: TellContext = CTX) -> tuple[str, list[str]]:
      "The bridges on this route are repaired by students of the school."),
     ("The thread that ties this section together is this: the river has fed these valleys for centuries.",
      "The river has fed these valleys for centuries."),
-    # round-1 join keeps the affirmation's tense (review: it read 'The bridge is rebuilt.')
-    ("The bridge is not the original. It was rebuilt.", "The bridge was rebuilt."),
+    # round-1 join keeps the affirmation's tense (review: it read 'The bridge is rebuilt.'); fourth review of round 3:
+    # 'not the original' is a denied word, a fact, so the staged noun stands in for it here
+    ("The bridge is not a replica. It was rebuilt.", "The bridge was rebuilt."),
     # three short sentences built the same way → one sentence (nothing cut, nothing added)
     ("The forts are still guarded. The shrines are still lit. The mills are still turning.",
      "The forts are still guarded, the shrines are still lit and the mills are still turning."),
@@ -57,23 +59,29 @@ def test_round2_form_is_rewritten(before, after):
     assert log and all(line.startswith("ai_tells: ") for line in log)
 
 
-@pytest.mark.parametrize("cut", [
-    "The temple is not a ruin. It works.",                                 # aphorism pair, bare verb: both go
-    "This kind of visit does not present the village as a stage.",         # lone 'do' denial
-    "The order of the stops is not incidental.",                           # 'not incidental' verdict
-    "The overlap of the two cultures in this province is not accidental.",
-    "The continuity is deliberate.",
-    "Such timing is no coincidence.",
+_COURTYARD = "Visitors walk the courtyard."
+
+
+@pytest.mark.parametrize("cut, rest", [
+    # aphorism pair, bare verb: both go while the piece still names the temple (fifth review of round 3: the
+    # subject is a fact by presence, fact_invariant tests keep 'The mill is not a ruin. It grinds.' when it is not)
+    ("The temple is not a ruin. It works.", "Visitors walk the temple courtyard."),
+    # lone 'do' denial (round 3, S252: the village is named again, so the fact invariant lets the cut go)
+    ("This kind of visit does not present the village as a stage.", "Visitors walk the village courtyard."),
+    ("The order of the stops is not incidental.", _COURTYARD),           # 'not incidental' verdict
+    ("The overlap of these cultures in this province is not accidental.", _COURTYARD),
+    ("The continuity is deliberate.", _COURTYARD),
+    ("Such timing is no coincidence.", _COURTYARD),
 ])
-def test_round2_verdict_or_aphorism_is_cut(cut):
-    para = f"The monks gather at dawn. {cut} Visitors walk the courtyard."
+def test_round2_verdict_or_aphorism_is_cut(cut, rest):
+    para = f"The monks gather at dawn. {cut} {rest}"
     text, log = _run(_blog(para))
-    assert "The monks gather at dawn. Visitors walk the courtyard." in text, text
+    assert f"The monks gather at dawn. {rest}" in text, text
     assert len(log) == 1
 
 
 def test_the_pass_is_idempotent_on_round2_forms():
-    text = _blog("The monks gather at dawn. The crater does not announce itself from the road. It is simply there.",
+    text = _blog("The monks gather at dawn. The crater does not announce itself. It is simply there.",
                  "The forts are still guarded. The shrines are still lit. The mills are still turning. Then the "
                  "road climbs.",
                  "The bus stops at noon. The order of the stops is not incidental. Lunch is at the camp.")
@@ -81,6 +89,23 @@ def test_the_pass_is_idempotent_on_round2_forms():
     assert census(text, CTX)["fixable_total"] >= 3
     assert census(once, CTX)["fixable_total"] == 0
     assert _run(once) == (once, [])
+
+
+@pytest.mark.parametrize("kept, fact", [
+    # round 3 (S252): the fact-preservation invariant keeps what a round-2 proposer would have dropped
+    ("The crater does not announce itself from the road. It is simply there, tucked into the grass.", "road"),
+    # fourth review of round 3: a denied word is a fact by default
+    ("The crater does not announce itself from the ridge. It is simply there, tucked into the grass.", "ridge"),
+    ("The bridge is not the original. It was rebuilt.", "original"),
+    ("This kind of visit does not present the village as a stage.", "village"),      # the only mention
+    ("This kind of stay does not position the village as a backdrop.", "village"),
+    ("The overlap of the two cultures in this province is not accidental.", "two"),  # a number
+])
+def test_round2_proposals_the_fact_invariant_refuses(kept, fact):
+    text = _blog(f"The monks gather at dawn. {kept} Visitors walk the courtyard.")
+    out, log = _run(text)
+    assert out == text
+    assert len(log) == 1 and log[0].startswith("ai_tells: skipped ") and f"drops a fact: {fact}" in log[0]
 
 
 # ---------------------------------------------------------------- left alone (precision first)
@@ -331,15 +356,16 @@ def test_review_r2_tells_are_still_rewritten(before, after):
     assert len(log) == 1
 
 
-@pytest.mark.parametrize("cut", [
-    "It does not sell itself.",
-    "This kind of stay does not position the village as a backdrop.",
-    "This kind of visit does not present the village as a stage.",
-    "The overlap of the two cultures in this province is not accidental.",
+@pytest.mark.parametrize("cut, rest", [
+    ("It does not sell itself.", "Visitors walk the courtyard."),
+    # round 3 (S252): the fact invariant lets a cut go only while the piece still names the village and no number goes
+    ("This kind of stay does not position the village as a backdrop.", "Visitors walk the village courtyard."),
+    ("This kind of visit does not present the village as a stage.", "Visitors walk the village courtyard."),
+    ("The overlap of these cultures in this province is not accidental.", "Visitors walk the courtyard."),
 ])
-def test_review_r2_lone_tells_are_still_cut(cut):
-    text, log = _run(_mid(cut))
-    assert text == _blog("The monks gather at dawn. Visitors walk the courtyard."), text
+def test_review_r2_lone_tells_are_still_cut(cut, rest):
+    text, log = _run(_blog(f"The monks gather at dawn. {cut} {rest}"))
+    assert text == _blog(f"The monks gather at dawn. {rest}"), text
     assert len(log) == 1
 
 
@@ -404,7 +430,9 @@ def test_review_r2_prompt_bounds_reader_action_to_the_seed():
 
 
 def test_review_r2_writer_prompt_version():
-    assert service.WRITER_PROMPT_VERSION == "afc08095"  # round 2 + review (round 2 as pushed: 751b0a34)
+    # round 2 + review was afc08095 (round 2 as pushed: 751b0a34); round 3 (S252) moved it on, see
+    # test_aa790_writer_round3.test_writer_prompt_version_moves_off_round_two
+    assert service.WRITER_PROMPT_VERSION not in ("751b0a34", "afc08095")
 
 
 # ---------------------------------------------------------------- linear time (CodeQL py/polynomial-redos)
@@ -445,7 +473,8 @@ def test_review_r2_regexes_run_in_linear_time(name, rx):
     took 12 s on 'The' + 8000 spaces)."""
     for label, s in _ADVERSARIAL.items():
         best = min(_timed(rx, s) for _ in range(2))
-        assert best < 0.05, f"{name} on {label}: {best * 1000:.0f} ms"
+        # 5x CI slack: runners are 2-3x slower; a quadratic regex takes seconds at 8000 chars
+        assert best < 0.25, f"{name} on {label}: {best * 1000:.0f} ms"
 
 
 def _timed(rx: re.Pattern, s: str) -> float:
