@@ -1122,25 +1122,53 @@ post-pass gets no new deletion.
     families'. It is not keyed on `core_idea` either.
   - What it says:
     - SOURCE FIDELITY comes first.
-    - The family appears in every section, but only through seed or FACTS facts: who in the family each fact is
-      for, and what a parent can plan from it (timing, effort, what is optional, where the night is) when the seed
-      states it.
+    - The family appears in every section, but only through seed or FACTS facts. Who an activity is for, or who
+      does it, is said only when the seed or FACTS say so; otherwise the piece speaks to the family as a whole
+      ('your family') and never assigns an activity to the children or the parents.
+    - At most one family sentence per section, built on a seed fact a parent can plan from (timing, effort, what
+      is optional, where the night is, a meal or rest stop).
     - An age, an age band or 'suitable for children' appears only when the seed or FACTS state one. The AUDIENCE
       line's ages are the brand's customers, never this trip (the same rule as round 3's AGES).
     - The writer never invents what children feel, learn or remember, never writes 'works for every age', and uses
       no school-trip framing (the panel flagged 'something a classroom cannot' and 'easy to explain to younger
       travellers').
-    - One plain family sentence per section is enough. When a section's seed facts give a family nothing to use,
-      the section states those facts and adds no made-up family line.
+    - When a section's seed facts give a family nothing to use, the section states those facts and adds no
+      made-up family line.
+    - Ownership is not audience: 'Family-run', 'family owned since 1990', 'family business' (and -owned,
+      -operated, -led, -founded) never trigger it. 'Kid-friendly' and 'child-friendly' do.
   - Why it is separate from `brand_voice_rule`: the round-2 contract test pins `brand_voice_rule(FAMILY) == ""`,
     and the PACE and RESTRAINT lines must not move (round-3 test). The line is appended in `build_user_prompt`
     right after `brand_voice_rule`, on every channel.
 - **R4-D4: the versions.**
-  - `writer_prompt_version` moves from `24363541` to **`0463a554`**. This is the `SYSTEM_PROMPT` hash, and the
-    guard docstring carries a dated note.
+  - `writer_prompt_version` moves from `24363541` to **`2b510e08`** (`0463a554` before the review fixes below).
+    This is the `SYSTEM_PROMPT` hash, and the guard docstring carries a dated note.
   - `single` and `route` (the user-prompt hashes) do not change: the fixture pack is Trail Pulse, not a family
     brand.
   - `AI_TELLS_VERSION` stays `ai_tells.v3`, because `rewrite` and `census` behave the same.
+
+### Review fixes (26/10/2026)
+
+An independent review of the first round-4 commit raised four blocking points. All four are fixed in a second
+commit.
+
+- **Family attribution was not bounded by the seed.** 'With each fact the seed gives, say who in the family it is
+  for' would push the writer to write 'the children ride …' for a steep or age-limited activity, an invented
+  suitability claim. The rule now says who only when the seed or FACTS say it, speaks to 'your family' otherwise,
+  and allows at most one family sentence per section.
+- **The self-check listed bare "more than A".** Read literally, it would delete or reword a seed quantity ('more
+  than 300 monks'). It now quotes the full set-up ("X is more than A. It is B." / "more than just A") and says a
+  seed quantity stays word for word.
+- **The family trigger fired on ownership.** `family_presence_rule({'voice': ['Family-run']})` returned the rule,
+  so a family-run luxury or cultural brand would have been told to write for families, silently (the line is
+  user-prompt only). Ownership compounds and a following 'owned' / 'run' / 'business' / 'operated' / 'led' /
+  'founded' no longer count.
+- **Two CTA pairs contradicted the system rule** "worked naturally into the piece, not pasted on as a bare final
+  sentence". The WRITE halves now ban only the label line and keep the CTA worked into the last fact.
+
+Each fix has a test (`test_family_rule_bounds_who_does_what_by_the_seed`,
+`test_self_check_quotes_the_full_more_than_set_up_and_keeps_seed_quantities`, five ownership non-triggers, three
+'-friendly' triggers, `test_cta_pairs_do_not_contradict_the_worked_in_cta_rule`). The $0 baseline below does not
+change: it measures the round-3 texts.
 
 ### Changed (vs the round-4 brief)
 
@@ -1194,11 +1222,11 @@ and brand words only.
 ### Should know
 
 - Tests:
-  - New file `tests/unit/test_aa790_writer_round4.py` (27 tests): brief frames, 6–10 pairs, each positive is a
+  - New file `tests/unit/test_aa790_writer_round4.py` (38 tests after the review fixes): brief frames, 6–10 pairs, each positive is a
     slot / delete / CTA, each negative ≤ 16 words, self-check position, no em-dash / 'premium' / AA, the version,
     family-rule triggers (5) and non-triggers (9), its source-fidelity wording, every channel, order after the
     energy line and before the blog format, PACE / RESTRAINT unchanged.
-  - The 30 unit files that touch the writer prompt or `ai_tells`: 2071 passed. The 99 files that import
-    `acp_content_writing` (round 4 included): 4360 passed in about 52 s, run on the final prompt text.
+  - After the review fixes, the 102 unit files that import `acp_content_writing` (round 4 included): 4402 passed
+    in about 54 s, run on the final prompt text (`2b510e08`).
 - `tests/unit/test_aa771_s234_voice_contract.py:140` has an E501 (123 characters). It is already on main, and this
   branch does not touch that line.

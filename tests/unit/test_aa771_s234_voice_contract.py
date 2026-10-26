@@ -463,7 +463,9 @@ class TestT9Prompt:
         Updated AA-790 round 4 (S252 4-arm panel of round 3, AI-tells 5.22, 26/10/2026): PROMPT_RULES adds 'not as A
         but as B' / 'A rather than B', more verdict lines, template closers, lists of three, CTA label lines and ten
         DON'T / WRITE INSTEAD pairs from the panel quotes; SYSTEM_PROMPT gets the silent self-check
-        (ai_tells.SELF_CHECK_RULE) before the output line: writer_prompt_version 24363541 → 0463a554. The FAMILY
+        (ai_tells.SELF_CHECK_RULE) before the output line; after review, the last two WRITE halves keep the CTA worked
+        into the piece and the self-check quotes the full 'more than' set-up (seed quantities stay):
+        writer_prompt_version 24363541 → 2b510e08. The FAMILY
         BRAND line (ai_tells.family_presence_rule) is user-prompt only and the fixture pack is not a family brand,
         so `single` and `route` do not change."""
         pack = {"brand_name": "Trail Pulse", "brand_type": "Young active adventure travel brand",
@@ -486,7 +488,7 @@ class TestT9Prompt:
         def sha(s):
             return hashlib.sha256(s.encode()).hexdigest()
         assert GOAL["key"] == GOALS[0]["key"]
-        assert sha(SYSTEM_PROMPT) == "0463a5546d3f86d681fdcfc45053f5da14a09d6de8646b84753b4fa9b7c81f95"
+        assert sha(SYSTEM_PROMPT) == "2b510e08961722cf7d9b7ef0fe13d7ca3362d4fa12cb02f0df7735afc827b4ed"
         assert sha(single) == "30305b79dd6ff24837d28da9639d06e32a6cefbaf78eca0aff7fe8478883458a"
         assert sha(route) == "c212a3a201ac00f5d8c3f20d9889b1a58e893375c5d93d1e45fa2669720be78a"
 

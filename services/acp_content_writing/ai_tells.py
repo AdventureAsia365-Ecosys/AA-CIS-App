@@ -108,18 +108,19 @@ PROMPT_RULES = """- AI TELLS (an editor must not be able to tell a model wrote t
       what the content seed says>."
     - DON'T "the valley is still making up its mind" / "volcanic candour". WRITE what it is: "<Place> is <what the
       content seed says it is>."
-    - DON'T "It is the kind of memory that stays with them long after the trip." WRITE nothing: end on the last
-      fact, then the call to action.
+    - DON'T "It is the kind of memory that stays with them long after the trip." WRITE nothing: delete the line,
+      so the piece closes on its last fact with the call to action worked into it.
     - DON'T "that link is concrete and real" / "a grounded, accessible stop". WRITE the link itself: "<Who> <does
       what> at <place>."
     - DON'T "This is one moment of the <trip>. If a journey like this sounds right, message us." WRITE the call
-      to action alone, after the last fact."""
+      to action as the piece's own sentence, worked into the last fact, with no label line before it."""
 
 # AA-790 round 4 (S252 4-arm panel: AI-tells 5.22, bar 5.5; the writer itself still produced the shapes above) — the
 # last rule before the output line, so it is the last thing the writer reads.
 SELF_CHECK_RULE = """- BEFORE YOU RETURN THE PIECE, reread it once, sentence by sentence. Make sure no sentence has
-  the form "X is not A. It is B.", "not A but B", "not as A but as B", "A rather than B" or "more than A" (unless
-  the denial is a practical fact from the content seed); no line judges instead of telling ("earns its place",
+  the form "X is not A. It is B.", "not A but B", "not as A but as B", "A rather than B", "X is more than A. It
+  is B." or "more than just A" (unless the denial is a practical fact from the content seed; a quantity from the
+  seed, such as "more than 300 monks", stays word for word); no line judges instead of telling ("earns its place",
   "that matters", "is the point", "worth holding", "the shape of", "the kind of ... that"); no list of three that
   the content seed does not give; no opening or closing line about what a place asks, gives or leaves with the
   reader; no label line before the call to action. Rewrite any such sentence as the plain fact, or delete it.
@@ -191,30 +192,36 @@ def brand_voice_rule(brand_audience: Optional[dict]) -> str:
 # stays generic", "long stretches read like a gazetteer with no family lens") — a family brand gets the family in
 # every section, from the seed's own facts only. Separate from brand_voice_rule (PACE / RESTRAINT): a family brand
 # may be neither energetic nor calm, and those two lines stay as they are.
-_FAMILY_WORD_RE = re.compile(r"^(?:famil(?:y|ies)(?:-[a-z]+)?|kids?|child(?:ren)?|parents?)$")
+# 'family-run' / 'family owned since 1990' describe who owns the business, not who travels: never a trigger.
+_FAMILY_OWNERSHIP = frozenset({"run", "owned", "operated", "led", "business", "businesses", "founded"})
+_FAMILY_WORD_RE = re.compile(r"^(?:famil(?:y|ies)(?:-(?!(?:run|owned|operated|led|business|founded)$)[a-z]+)?"
+                             r"|kids?|child(?:ren)?|parents?|(?:kid|child)-friendly)$")
 FAMILY_RULE = """
 FAMILY BRAND: this brand writes for families, so the family is present in every section, concretely, and only
 through the CONTENT SEED and FACTS. SOURCE FIDELITY comes first: a family detail the seed does not give is left
 out, never guessed.
-- With each fact the seed gives, say who in the family it is for or who does it (the parents, the children, the
-  whole family), and what a parent can plan from it when the seed states it: timing, effort, what is optional,
-  where the night is, a meal or rest stop.
+- When the CONTENT SEED or FACTS say who an activity is for or who does it, say so. Otherwise speak to the
+  family as a whole ("your family") and never assign an activity to the children or to the parents.
+- At most one family sentence per section, built on a seed fact a parent can plan from: timing, effort, what is
+  optional, where the night is, a meal or rest stop.
 - An age, an age band or "suitable for children" appears ONLY when the CONTENT SEED or FACTS state it. The
   AUDIENCE line's ages describe the brand's customers, never this trip.
 - Never invent what children feel, notice, learn, understand or remember; never say a stop "works for every
   age" or is "easy to explain to younger travellers"; no school-trip framing ("a lesson", "a classroom").
-- One plain family sentence in a section is enough. A section whose seed facts give a family nothing to use
-  states those facts plainly, without a made-up family line."""
+- A section whose seed facts give a family nothing to use states those facts plainly, without a made-up family
+  line."""
 
 
 def family_presence_rule(brand_audience: Optional[dict]) -> str:
     """The FAMILY BRAND line for a pack whose voice or brand type names families or children ('Family-aware',
     'Premium family adventure travel brand'); '' otherwise. The audience line alone never triggers it (a general
-    brand can list 'couples and families'), and a negated word ('not a family brand') does not count."""
+    brand can list 'couples and families'), a negated word ('not a family brand') does not count, and neither does
+    ownership ('Family-run', 'family owned since 1990'): that is who runs the business, not who travels."""
     pack = brand_audience or {}
     for entry in [str(v) for v in pack.get("voice") or [] if v] + [str(pack.get("brand_type") or "")]:
         words = _VOICE_WORD_RE.findall(entry.lower())
         if any(_FAMILY_WORD_RE.match(w) and not _VOICE_NEGATIONS & set(words[max(0, k - 2):k])
+               and (k + 1 == len(words) or words[k + 1] not in _FAMILY_OWNERSHIP)
                for k, w in enumerate(words)):
             return FAMILY_RULE
     return ""

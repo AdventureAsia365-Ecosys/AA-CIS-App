@@ -97,7 +97,7 @@ def test_new_prompt_text_keeps_the_prompt_contracts():
 
 
 def test_writer_prompt_version_is_round_four():
-    assert service.WRITER_PROMPT_VERSION == "0463a554"  # round 3: 24363541
+    assert service.WRITER_PROMPT_VERSION == "2b510e08"  # round 3: 24363541; round 4 before review: 0463a554
 
 
 # ---------------------------------------------------------------- FAMILY BRAND
@@ -108,6 +108,9 @@ def test_writer_prompt_version_is_round_four():
     {"brand_type": "Premium family adventure travel brand"},
     {"brand_type": "Adventure trips for families with children"},
     {"voice": ["Kid-friendly"], "brand_type": "Holidays for parents and kids"},
+    {"voice": ["Kid-friendly"]},
+    {"voice": ["Child-friendly", "Warm"]},
+    {"voice": ["Family-friendly"]},
 ])
 def test_family_rule_for_a_family_brand(pack):
     assert family_presence_rule(pack) == FAMILY_RULE
@@ -119,6 +122,12 @@ def test_family_rule_for_a_family_brand(pack):
     {"brand_type": "Not a family brand", "voice": ["Calm"]},
     {"voice": ["Never childish"]},
     {"core_idea": "Family time in nature."},
+    # ownership, not audience: who runs the business never makes it a family brand
+    {"voice": ["Family-run", "Calm"]},
+    {"brand_type": "Boutique tours, family owned since 1990"},
+    {"voice": ["Family-owned", "Family-operated", "Family-led", "Family-founded"]},
+    {"brand_type": "A family business since 1990"},
+    {"brand_type": "Small group tours, family run"},
 ])
 def test_no_family_rule_otherwise(pack):
     assert family_presence_rule(pack) == ""
@@ -133,6 +142,34 @@ def test_family_rule_keeps_source_fidelity_first():
     assert "Never invent what children feel, notice, learn, understand or remember" in rule
     assert '"works for every age"' in rule and "school-trip framing" in rule
     assert "without a made-up family line" in rule
+
+
+def test_family_rule_bounds_who_does_what_by_the_seed():
+    """Review fix: the writer never assigns an activity to the children or the parents unless the seed does, and
+    the family appears at most once per section (no per-fact attribution)."""
+    rule = _flat(FAMILY_RULE)
+    assert ("When the CONTENT SEED or FACTS say who an activity is for or who does it, say so. Otherwise speak to "
+            'the family as a whole ("your family") and never assign an activity to the children or to the parents.'
+            in rule)
+    assert "At most one family sentence per section" in rule
+    assert "With each fact" not in rule
+
+
+def test_self_check_quotes_the_full_more_than_set_up_and_keeps_seed_quantities():
+    check = _flat(SELF_CHECK_RULE)
+    assert '"more than A"' not in check
+    assert '"X is more than A. It is B." or "more than just A"' in check
+    assert 'a quantity from the seed, such as "more than 300 monks", stays word for word' in check
+
+
+def test_cta_pairs_do_not_contradict_the_worked_in_cta_rule():
+    """Review fix: SYSTEM_PROMPT says the CTA is worked into the piece, not pasted on as a bare final sentence; the
+    DON'T / WRITE pairs ban only the label line and never ask for the CTA 'alone' or 'then the call to action'."""
+    assert "worked naturally into the piece, not pasted on as a bare" in _flat(prompts.SYSTEM_PROMPT)
+    writes = [w for _, w in _pairs() if "call to action" in w]
+    assert len(writes) == 2
+    for w in writes:
+        assert "worked into" in w and "alone" not in w and "then the call to action" not in w, w
 
 
 @pytest.mark.parametrize("channel", ["linkedin", "blog", "facebook"])
