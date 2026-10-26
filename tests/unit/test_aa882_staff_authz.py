@@ -511,9 +511,12 @@ def test_policy_and_machine_routes_exist():
 
 
 def test_ci_deploy_workflow_calls_only_machine_routes():
-    """deploy-dev.yml curls /admin with the secret and no x-admin-role: each path must be a machine
-    GET, or the next deploy's preflight / smoke gets 403 once GĐ3 puts the GETs under POLICY."""
-    workflow = (REPO / ".github" / "workflows" / "deploy-dev.yml").read_text()
+    """deploy-dev.yml and its post-deploy verify (AA-993: workflow, script, rows) curl /admin with the secret and no
+    x-admin-role: each path must be a machine GET, or the next deploy's preflight / verify gets 403 once GĐ3 puts the
+    GETs under POLICY."""
+    workflow = "\n".join((REPO / rel).read_text() for rel in (
+        ".github/workflows/deploy-dev.yml", ".github/workflows/post-deploy-verify.yml",
+        ".github/scripts/post_deploy_verify.sh", ".github/verify/cis.rows"))
     paths = set(re.findall(r"(/admin/[A-Za-z0-9_\-/]+)", workflow))
     assert paths, "the scan found no /admin path in deploy-dev.yml"
     machine_gets = {p for m, p in MACHINE_ROUTES if m == "GET"}

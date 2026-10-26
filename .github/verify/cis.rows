@@ -1,0 +1,19 @@
+# AA-993 V1 (ADR 0016 D3) — HTTP rows of the CIS post-deploy verify, read by .github/scripts/post_deploy_verify.sh.
+#
+# One row per line: name|auth|METHOD path|expected HTTP|jq assertion
+#   auth       public (no header) or admin (x-admin-secret: $ADMIN_SECRET; the path must be a machine GET in
+#              api/core/staff_authz.py MACHINE_ROUTES, tests/unit/test_aa882_staff_authz.py checks it)
+#   METHOD     GET only (the verify never writes)
+#   assertion  a jq expression on the response body that must be true; empty = only the HTTP code is checked.
+#              Variables: $sha (deployed commit), $version (.release-please-manifest.json of that commit),
+#              $required (REQUIRED_CIS_SCHEMA in api/core/readiness.py of that commit).
+# A row fails after 3 tries. A PR that adds or changes an endpoint worth guarding adds a row here.
+#
+# The ECS rows (rollout COMPLETED, image = built tag, api and worker) and the worker rows (a live worker on $sha,
+# its caps = the registered kinds) need more than one call, so they are fixed in the script, not listed here.
+
+health|public|GET /health|200|.status == "ok" and .git_sha == $sha and .version == $version
+health-ready|public|GET /health/ready|200|.status == "ok" and .db == "ok" and .git_sha == $sha and .required_schema == $required and ((.schema_version // "-1") | tonumber) >= ($required | tonumber)
+job-runner-summary|admin|GET /admin/job-runner/summary|200|(.kinds | length) > 0
+deploy-gate|admin|GET /admin/job-runner/deploy-gate|200|has("safe_to_deploy")
+overview|admin|GET /admin/overview|200|type == "object"

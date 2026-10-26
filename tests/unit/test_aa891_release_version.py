@@ -6,7 +6,8 @@
   holding every file that carries the version.
 - release-please.yml: App token (aa-ecosys-ci-bot) minted in environment "release", GITHUB_TOKEN read-only, only on
   push to main + workflow_dispatch, actions pinned to a released major.
-- deploy-dev.yml: a release PR (CHANGELOG.md + manifest + api/version.py) does not deploy; the smoke checks version.
+- deploy-dev.yml: a release PR (CHANGELOG.md + manifest + api/version.py) does not deploy; the post-deploy verify
+  (AA-993, post-deploy-verify.yml + .github/verify/cis.rows) checks version.
 
 Static text checks like test_aa725_image_pin.py / test_aa879_ci_gates.py (no YAML parser in requirements.txt).
 """
@@ -21,6 +22,8 @@ MANIFEST = json.loads((REPO / ".release-please-manifest.json").read_text(encodin
 CONFIG = json.loads((REPO / "release-please-config.json").read_text(encoding="utf-8"))
 RELEASE_WF = (REPO / ".github" / "workflows" / "release-please.yml").read_text(encoding="utf-8")
 DEPLOY_WF = (REPO / ".github" / "workflows" / "deploy-dev.yml").read_text(encoding="utf-8")
+VERIFY_WF = (REPO / ".github" / "workflows" / "post-deploy-verify.yml").read_text(encoding="utf-8")
+VERIFY_ROWS = (REPO / ".github" / "verify" / "cis.rows").read_text(encoding="utf-8")
 SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 
 
@@ -107,5 +110,8 @@ def test_release_pr_files_do_not_trigger_the_deploy():
 
 
 def test_deploy_smoke_checks_the_manifest_version():
-    assert "APP_VERSION=$(jq -r '.\".\"' .release-please-manifest.json)" in DEPLOY_WF
-    assert '.version == \\"${APP_VERSION}\\"' in DEPLOY_WF
+    # AA-993: the verify reads the manifest of the deployed commit and the /health row asserts it.
+    assert 'git show "${EXPECTED_SHA}:.release-please-manifest.json" | jq -r \'."."\'' in VERIFY_WF
+    assert "EXPECTED_VERSION: ${{ steps.expect.outputs.version }}" in VERIFY_WF
+    health = [ln for ln in VERIFY_ROWS.splitlines() if ln.startswith("health|")]
+    assert health and ".version == $version" in health[0], health

@@ -677,6 +677,13 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
 - **Backend (ECS)**: shipped via CI; a new task definition rolls out on the `aa-cis-dev-api`
   service. This repo has **branch protection with 5 required CI jobs** — merge PRs with
   `gh pr merge --auto` (auto-merge once checks pass). Agents must not push to `main` directly.
+- **Post-deploy verify (AA-993 V1, ADR 0016 D3)**: `deploy-dev.yml` calls `post-deploy-verify.yml` after `deploy`
+  (also dispatchable with `expected_sha`; its own concurrency group, never `deploy-dev-cis`). Script
+  `.github/scripts/post_deploy_verify.sh`, HTTP rows in `.github/verify/cis.rows` (a PR that adds an endpoint worth
+  guarding adds a row). Red, never a warning: api/worker rollout not COMPLETED, desired 0, an image other than
+  `dev-<sha>`, `/health` git_sha/version or `/health/ready` (required schema of the commit) off, an admin row failing
+  after 3 tries, no live worker on the SHA serving every registered kind, or `ADMIN_SECRET` missing. The job
+  **Deploy Dev result** is red when any job (verify included) did not succeed, skipped included.
 - **CI gate parity (AA-879)**: `ci.yml` also runs **Frontend Build** and **Portal Build** (`tsc --noEmit` +
   `next build` of `frontend/` and `portal/`, no secret needed; meant to be required checks next to the 5).
 - **Secret scan (AA-981 follow-up)**: `secret-scan.yml`, check **gitleaks** on every PR (lines the PR adds, rules
