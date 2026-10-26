@@ -84,6 +84,10 @@ args = sys.argv[1:]
 def opt(name):
     return args[args.index(name) + 1]
 ecs = json.load(open(os.environ["FAKE_ECS"]))
+if os.environ.get("FAKE_AWS_ERR") and args[:2] == ["ecs", "describe-services"]:
+    sys.stderr.write("An error occurred (AccessDeniedException): User: arn:aws:sts::123456789012:assumed-role/x/y "
+                     "is not authorized; account 123456789012")
+    sys.exit(255)
 if args[:2] == ["ecs", "describe-services"]:
     svc = ecs["services"].get(opt("--services"))
     print(json.dumps({"services": [svc]} if svc else {"services": [], "failures": [{"reason": "MISSING"}]}))
@@ -428,3 +432,21 @@ def test_aws_errors_are_scrubbed_before_the_summary():
     script = (REPO / ".github/scripts/post_deploy_verify.sh").read_text()
     assert "s/[0-9]{12}/<acct>/g" in script and "s/arn:aws:[^ ]*/<arn>/g" in script
     assert "got '${EXPECTED_SHA}'" not in script
+
+
+@needs_tools
+def test_aws_error_text_is_scrubbed_from_the_output(run_verify):
+    r, summary = run_verify(*_good(), FAKE_AWS_ERR="1")
+    assert r.returncode == 1
+    assert "api-rollout" in _failed_rows(summary)
+    for leak in ("123456789012", "arn:aws"):
+        assert leak not in summary and leak not in r.stdout and leak not in r.stderr
+
+
+@needs_tools
+@pytest.mark.parametrize("image", [IMAGE, IMAGE.replace(SHA, "not-a-sha-SENTINEL")])
+def test_an_invalid_expected_sha_is_never_echoed(run_verify, image):
+    r, summary = run_verify(*_good(), EXPECTED_SHA="not-a-sha-SENTINEL", EXPECTED_IMAGE=image)
+    assert r.returncode == 1
+    assert "Expected commit `invalid`" in summary
+    assert "SENTINEL" not in summary and "SENTINEL" not in r.stdout and "SENTINEL" not in r.stderr
