@@ -6,11 +6,13 @@
 #
 # Modes
 #   (default) fast  checks picked from `git diff --name-only <base>...<head>`; flake8 on the changed files only,
-#                   unit tests of the changed modules plus the files that failed last time; never `next build`.
+#                   unit tests of the changed files (importers, tests that name the file, a changed conftest's tree)
+#                   plus the files that failed last time (both capped); never `next build`.
 #   --full          the exact CI Unit Tests command (with coverage) + coverage ratchet, flake8 on the whole CI scope.
 #                   AA_PREPUSH=full in the environment does the same.
 #   --ci            reserved for H2 (CI calls `scripts/pre-push.sh --full --ci`): never skips by diff, and a missing
-#                   tool or node_modules is a failure instead of a skip.
+#                   node_modules is a failure instead of a skip. A missing Python tool (flake8 + flake8-bugbear,
+#                   pytest) is a failure in every mode.
 #   --self-test     runs the decision logic on fixture diffs; invokes no lint/test tool.
 #   --dry-run       prints the changed-file count and the checks it would run, then exits.
 #   --only a,b      run only these check ids (see CHECK_IDS).
@@ -32,23 +34,28 @@ FLAKE8_ARGS=(--max-line-length=120
 FLAKE8_SCOPE=(api/ services/ shared/)
 declare -A CI_CMD
 CI_CMD[flake8]="flake8 api/ services/ shared/ ${FLAKE8_ARGS[*]}   (ci.yml Lint > Run flake8; CI installs: pip install flake8 flake8-bugbear pyyaml==6.0.3)"
+FLAKE8_INSTALL="pip install flake8 flake8-bugbear pyyaml==6.0.3"
 CI_CMD[resource_ids]="python3 .github/scripts/check_resource_ids.py   (ci.yml Lint > Resource-ID check)"
 CI_CMD[text_guard]="python3 -m services.golden_set.text_guard scan   (ci.yml Lint > Golden-set text guard; locally markers only unless GOLDEN_GUARD_KEY is set)"
 CI_CMD[quality_lint]="python -m services.quality.lint --report   (ci.yml Lint > Quality registry lint)"
-CI_CMD[unit]="pytest tests/unit/ -v --tb=short --cov=services --cov=shared --cov-report=term-missing --cov-report=xml:coverage.xml && pytest tests/acp/ -v --tb=short && python3 .github/scripts/coverage_ratchet.py coverage.xml --base <base>   (ci.yml Unit Tests)"
+CI_CMD[unit]="COVERAGE_CORE=sysmon pytest tests/unit/ -v --tb=short --cov=services --cov=shared --cov-report=term-missing --cov-report=xml:coverage.xml && pytest tests/acp/ -v --tb=short && python3 .github/scripts/coverage_ratchet.py coverage.xml --base <base>   (ci.yml Unit Tests; CI installs: uv pip install --system -r requirements.txt -r requirements-dev.txt)"
+UNIT_INSTALL="pip install -r requirements.txt -r requirements-dev.txt"
 CI_CMD[frontend_tsc]="cd frontend && npx tsc --noEmit -p .   (ci.yml Frontend Build > Type-check; next build stays CI-only)"
 CI_CMD[frontend_lint]="cd frontend && npm run lint   (ci.yml Frontend Lint; continue-on-error in CI, so report-only here)"
 CI_CMD[portal_tsc]="cd portal && npx tsc --noEmit -p .   (ci.yml Portal Build > Type-check; next build stays CI-only)"
 CI_CMD[portal_lint]="cd portal && npm run lint   (ci.yml Portal Lint; continue-on-error in CI, so report-only here)"
 # Checks that CI runs with continue-on-error: a failure is reported, never blocks.
 REPORT_ONLY=" frontend_lint portal_lint "
-# Unit Tests job env (ci.yml test-unit > Run unit tests): dummy values only, no real secret.
-UNIT_ENV=(ENVIRONMENT=test AWS_REGION=us-west-1 AWS_DEFAULT_REGION=us-west-1
+# Unit Tests job env (ci.yml test-unit > Run unit tests): dummy values only, no real secret. COVERAGE_CORE only matters
+# with --cov (full mode); CI pins the coverage version it was verified on in requirements-dev.txt.
+UNIT_ENV=(COVERAGE_CORE=sysmon ENVIRONMENT=test AWS_REGION=us-west-1 AWS_DEFAULT_REGION=us-west-1
   DATABASE_URL=postgresql://test:test@localhost:5432/test OPENAI_API_KEY=sk-test-dummy
   JWT_SECRET=test-jwt-secret-ci-only-not-real DATAFORSEO_LOGIN=test DATAFORSEO_PASSWORD=test
   LANGFUSE_SECRET_KEY=test LANGFUSE_PUBLIC_KEY=test LANGFUSE_HOST=http://localhost:3000)
-# Fast mode: above this many test files importing the changed modules, run only the name-matched ones (+ --full hint).
+# Fast mode: above this many test files matched by grep, run only the name-matched ones (+ --full hint); above this
+# many last-failed files, drop them (+ --full hint). Keeps a fast run small on a low-RAM machine.
 MAX_TEST_FILES=${AA_PREPUSH_MAX_TEST_FILES:-30}
+TEST_DIRS=(tests/unit tests/acp)
 
 # --- decision logic (pure: file names in, check ids out; used by --self-test) -------------------------------------
 
@@ -65,8 +72,10 @@ plan_checks() {
     case $f in
       api/*.py|services/*.py|shared/*.py) py_lint=1; py=1 ;;
       *.py) py=1 ;;
+      # Data the unit tests read: test fixtures and Q0 cases, workflows / CI scripts / ratchet config, migrations.
+      tests/unit/*|tests/acp/*|.github/*|api/migrations/*) py=1 ;;
     esac
-    [[ $f == pyproject.toml || $f == requirements.txt || $f == .github/coverage-ratchet.json ]] && py=1
+    case $f in pyproject.toml|requirements.txt|requirements-dev.txt|.trivyignore) py=1 ;; esac
     [[ $f == frontend/* ]] && fe=1
     [[ $f == portal/* ]] && po=1
   done
@@ -98,22 +107,64 @@ module_of() {
   echo "${m//\//.}"
 }
 
-# unit_targets FILE...: test files to run in fast mode. Changed test files themselves, plus the test files under
-# tests/unit and tests/acp that import a changed module (`services.x.y` or `from services.x import y`).
-# Prints "OVER <n>" first when more than MAX_TEST_FILES import-matches were cut to the name-matched ones.
+# import_pattern FILE: ERE for an import of FILE's module (`a.b.c`, or `from a.b import ... c`).
+import_pattern() {
+  local mod pkg leaf pat
+  mod=$(module_of "$1"); leaf=${mod##*.}; pkg=${mod%.*}
+  pat="\\b${mod//./\\.}\\b"
+  [[ $pkg != "$mod" ]] && pat+="|from ${pkg//./\\.} import .*\\b${leaf}\\b"
+  echo "$pat"
+}
+
+# unit_targets FILE...: test files to run in fast mode, from the test dirs CI runs (tests/unit, tests/acp):
+#   - a changed test_*.py: itself;
+#   - a changed conftest.py: every test file in its directory tree; the root conftest of tests/unit or tests/acp
+#     prints "WARN <reason>" instead (everything depends on it: --full);
+#   - any other changed file: the test files that name it (its file name), plus
+#       .py module (also helpers under tests/): the test files that import it, and name-matched test_*<leaf>*.py;
+#       a helper under a tests/ sub-folder: also the test files beside it that use the word <leaf>;
+#       a data file under tests/unit or tests/acp: the test files in its folder and the folder above
+#         (quality/cases/*.json -> quality/test_*.py), never the whole root;
+#       .github/workflows/*: the test files that read the workflows folder (paths are often built in segments);
+#       api/migrations/*.sql: the test files that glob the migrations.
+# Prints "OVER <n>" first when more than MAX_TEST_FILES grep matches were cut to the name-matched ones.
 unit_targets() {
-  local f mod pkg leaf hits=() named=() direct=()
+  local f name dir parent leaf hits=() named=() direct=()
   for f in "$@"; do
+    name=${f##*/}; dir=.; [[ $f == */* ]] && dir=${f%/*}
+    if [[ $f == tests/unit/* || $f == tests/acp/* ]]; then
+      if [[ $name == test_*.py ]]; then direct+=("$f"); continue; fi
+      if [[ $name == conftest.py ]]; then
+        if [[ $dir == tests/unit || $dir == tests/acp ]]; then
+          echo "WARN $f changed: every test under $dir depends on it"
+        else
+          mapfile -t -O "${#direct[@]}" direct < <(find "$dir" -name 'test_*.py' 2>/dev/null)
+        fi
+        continue
+      fi
+    fi
+    [[ $name != __init__.py ]] &&
+      mapfile -t -O "${#hits[@]}" hits < <(grep -rlF --include='test_*.py' -- "$name" "${TEST_DIRS[@]}" 2>/dev/null)
     case $f in
-      tests/unit/*test_*.py|tests/acp/*test_*.py) direct+=("$f") ;;
-      tests/*) ;;
       *.py)
-        mod=$(module_of "$f"); leaf=${mod##*.}; pkg=${mod%.*}
-        local pat="\\b${mod//./\\.}\\b"
-        [[ $pkg != "$mod" ]] && pat+="|from ${pkg//./\\.} import .*\\b${leaf}\\b"
-        mapfile -t -O "${#hits[@]}" hits < <(grep -rlE --include='test_*.py' "$pat" tests/unit tests/acp 2>/dev/null)
-        mapfile -t -O "${#named[@]}" named < <(find tests/unit tests/acp -name "test_*${leaf}*.py" 2>/dev/null)
+        mapfile -t -O "${#hits[@]}" hits < <(grep -rlE --include='test_*.py' "$(import_pattern "$f")" "${TEST_DIRS[@]}" 2>/dev/null)
+        leaf=$(module_of "$f"); leaf=${leaf##*.}
+        mapfile -t -O "${#named[@]}" named < <(find "${TEST_DIRS[@]}" -name "test_*${leaf}*.py" 2>/dev/null)
+        if [[ $f == tests/*/*/* && $dir != tests/unit && $dir != tests/acp ]]; then
+          mapfile -t -O "${#hits[@]}" hits < <(grep -rlE --include='test_*.py' "\\b${leaf}\\b" "$dir" 2>/dev/null)
+        fi
         ;;
+      tests/unit/*|tests/acp/*)
+        parent=${dir%/*}
+        [[ $dir != tests/unit && $dir != tests/acp ]] &&
+          mapfile -t -O "${#hits[@]}" hits < <(find "$dir" -maxdepth 1 -name 'test_*.py' 2>/dev/null)
+        [[ $parent != tests && $parent != tests/unit && $parent != tests/acp ]] &&
+          mapfile -t -O "${#hits[@]}" hits < <(find "$parent" -maxdepth 1 -name 'test_*.py' 2>/dev/null)
+        ;;
+      .github/workflows/*)
+        mapfile -t -O "${#hits[@]}" hits < <(grep -rlF --include='test_*.py' -- workflows "${TEST_DIRS[@]}" 2>/dev/null) ;;
+      api/migrations/*.sql)
+        mapfile -t -O "${#hits[@]}" hits < <(grep -rlE --include='test_*.py' 'glob\(.*\.sql' "${TEST_DIRS[@]}" 2>/dev/null) ;;
     esac
   done
   mapfile -t hits < <(printf '%s\n' "${hits[@]}" | sed '/^$/d' | sort -u)
@@ -123,6 +174,10 @@ unit_targets() {
   fi
   printf '%s\n' "${direct[@]}" "${hits[@]}" | sed '/^$/d' | sort -u
 }
+
+# changed_files BASE HEAD: the changed paths, NUL-separated and never C-quoted (git quotes non-ASCII names by default,
+# which no `case` pattern or -f test would then match). Read with: mapfile -d '' -t ARRAY < <(changed_files ...)
+changed_files() { git -c core.quotePath=false diff --name-only -z "$1...$2"; }
 
 # last_failed_files: test files pytest recorded as failed last run (the `--lf` part of fast mode).
 last_failed_files() {
@@ -164,11 +219,16 @@ self_test() {
   expect "test file only: no flake8 (CI scope)"    fast 0 "resource_ids text_guard quality_lint unit" tests/unit/test_x.py
   expect "worker only: no flake8 (CI scope)"       fast 0 "resource_ids text_guard quality_lint unit" worker/main.py
   expect "requirements bump: unit"                 fast 0 "resource_ids text_guard quality_lint unit" requirements.txt
-  expect "migration sql: no python tool"           fast 0 "resource_ids text_guard quality_lint" api/migrations/300_x.sql
+  expect "requirements-dev bump: unit"             fast 0 "resource_ids text_guard quality_lint unit" requirements-dev.txt
+  expect "migration sql: unit (tests read them)"   fast 0 "resource_ids text_guard quality_lint unit" api/migrations/300_x.sql
+  expect "test helper module: unit, no flake8"     fast 0 "resource_ids text_guard quality_lint unit" tests/unit/quality/chain.py
+  expect "Q0 case json: unit"                      fast 0 "resource_ids text_guard quality_lint unit" tests/unit/quality/cases/a1_contract.json
+  expect ".trivyignore: unit"                      fast 0 "resource_ids text_guard quality_lint unit" .trivyignore
   expect "yaml registry: quality lint"             fast 0 "resource_ids text_guard quality_lint" services/quality/registry.yaml
   expect "frontend only: tsc + lint, never build"  fast 0 "resource_ids text_guard quality_lint frontend_tsc frontend_lint" frontend/app/page.tsx
   expect "portal only"                             fast 0 "resource_ids text_guard quality_lint portal_tsc portal_lint" portal/app/x.tsx
-  expect "workflow only"                           fast 0 "resource_ids text_guard quality_lint" .github/workflows/ci.yml
+  expect "workflow only: unit (CI gate tests)"     fast 0 "resource_ids text_guard quality_lint unit" .github/workflows/ci.yml
+  expect "ratchet config: unit"                    fast 0 "resource_ids text_guard quality_lint unit" .github/coverage-ratchet.json
   expect "mixed backend + frontend"                fast 0 "resource_ids text_guard quality_lint flake8 unit frontend_tsc frontend_lint" shared/db.py frontend/lib/a.ts
   expect "full mode, docs only: python checks"     full 0 "resource_ids text_guard quality_lint flake8 unit" docs/a.md
   expect "full mode + frontend"                    full 0 "resource_ids text_guard quality_lint flake8 unit frontend_tsc frontend_lint" frontend/a.tsx
@@ -187,6 +247,29 @@ self_test() {
   r=0; [[ $got == *"tests/unit/test_aa926_lint.py"* && $got != *docs* ]] || r=1; verdict "unit targets for a changed module" "$got" "$r"
   got=$(MAX_TEST_FILES=0 unit_targets services/quality/lint.py | head -1)
   r=0; [[ $got == OVER* ]] || r=1; verdict "unit targets over the cap fall back to name matches" "$got" "$r"
+  got=$(unit_targets tests/unit/conftest.py | tr '\n' ' ')
+  r=0; [[ $got == WARN* ]] || r=1; verdict "root conftest: WARN (run --full), not a quiet skip" "$got" "$r"
+  got=$(MAX_TEST_FILES=1000 unit_targets tests/unit/quality/conftest.py | tr '\n' ' ')
+  r=0; [[ $got == *tests/unit/quality/test_q0_corpus.py* && $got != *tests/unit/test_* ]] || r=1
+  verdict "sub-folder conftest: the tests in its tree only" "$got" "$r"
+  got=$(MAX_TEST_FILES=1000 unit_targets tests/unit/quality/chain.py | tr '\n' ' ')
+  r=0; [[ $got == *test_q0_corpus.py* && $got == *test_red_on_base_script.py* ]] || r=1
+  verdict "test helper module: its importers and the tests that name it" "$got" "$r"
+  got=$(MAX_TEST_FILES=1000 unit_targets tests/unit/quality/cases/a1_contract.json | tr '\n' ' ')
+  r=0; [[ $got == *tests/unit/quality/test_q0_corpus.py* ]] || r=1; verdict "Q0 case json: the Q0 corpus test" "$got" "$r"
+  got=$(MAX_TEST_FILES=1000 unit_targets .github/workflows/ci.yml | tr '\n' ' ')
+  r=0; [[ $got == *tests/unit/test_aa879_ci_gates.py* ]] || r=1; verdict "ci.yml: the CI gate tests" "$got" "$r"
+  got=$(MAX_TEST_FILES=1000 unit_targets api/migrations/261_place_locate_sonnet.sql | tr '\n' ' ')
+  r=0; [[ $got == *tests/unit/test_aa847_backfill_ids_prices.py* ]] || r=1; verdict "migration sql: the tests that read it" "$got" "$r"
+  # A throwaway repo (no network, no tool): a non-ASCII name with a space comes back raw, not C-quoted.
+  local tmp; tmp=$(mktemp -d "${TMPDIR:-/tmp}/pre-push-st.XXXXXX")
+  got=$(
+    cd "$tmp" && git init -q . && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m a &&
+      mkdir services && : >$'services/\xc3\xa9 a.py' && git add -A &&
+      git -c user.name=t -c user.email=t@t commit -q -m b && changed_files HEAD~1 HEAD | tr '\0' '\n'
+  )
+  rm -rf "$tmp"
+  r=0; [[ $got == $'services/\xc3\xa9 a.py' ]] || r=1; verdict "non-ASCII file name is listed raw (core.quotePath=false)" "$got" "$r"
 
   echo
   if (( fails )); then echo "self-test: $fails of $n FAILED"; return 1; fi
@@ -236,6 +319,38 @@ skip_check() {  # skip_check ID REASON  (a failure in --ci)
   if [[ $CI_MODE == 1 ]]; then RESULTS+=("FAIL  -     $1 ($2)"); BLOCKED=1
   else RESULTS+=("SKIP  -     $1 ($2)"); fi
 }
+fail_check() {  # fail_check ID REASON HINT: a check that cannot run the way CI runs it (missing tool) blocks, any mode.
+  RESULTS+=("FAIL  -     $1 ($2)")
+  BLOCKED=1
+  echo "!! [$1] $2"
+  echo "   $3"
+}
+warn_result() {  # warn_result ID TEXT: printed now and listed in the summary; never blocks.
+  echo "warning: [$1] $2"
+  RESULTS+=("WARN  -     $1 ($2)")
+}
+
+# need_pytest: pytest importable by $PY, else a blocking FAIL with the install line.
+need_pytest() {
+  "$PY" -m pytest --version >/dev/null 2>&1 && return 0
+  fail_check unit "pytest is not installed for $PY" "install: \"$PY\" -m $UNIT_INSTALL"
+  return 1
+}
+
+# check_versions: warn when the local tools differ from what CI pins (Python 3.12; in full mode the coverage pin in
+# requirements-dev.txt, which the sysmon tracer was verified on).
+check_versions() {
+  local v pin cov
+  v=$("$PY" -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null)
+  [[ $v == 3.12.* ]] || warn_result python "$PY is Python ${v:-unknown}; CI runs 3.12"
+  [[ $MODE == full ]] || return 0
+  pin=$(sed -n 's/^coverage==\([^ #]*\).*/\1/p' requirements-dev.txt 2>/dev/null | head -n 1)
+  cov=$("$PY" -c 'import coverage; print(coverage.__version__)' 2>/dev/null)
+  if [[ -n $pin && $cov != "$pin" ]]; then
+    warn_result coverage "coverage ${cov:-not installed}, CI pins $pin; reinstall: \"$PY\" -m $UNIT_INSTALL"
+  fi
+  return 0
+}
 
 pick_python() {
   if [[ -n ${AA_PREPUSH_PYTHON:-} ]]; then echo "$AA_PREPUSH_PYTHON"; return; fi
@@ -256,6 +371,7 @@ node_check() {
 
 do_unit() {
   if [[ $MODE == full ]]; then
+    need_pytest || return
     run_check unit "full CI unit command with coverage + ratchet vs $BASE" bash -c '
       env "${@:3}" "$1" -m pytest tests/unit/ -v --tb=short --cov=services --cov=shared \
         --cov-report=term-missing --cov-report=xml:coverage.xml || exit $?
@@ -263,15 +379,28 @@ do_unit() {
       "$1" .github/scripts/coverage_ratchet.py coverage.xml --base "$2"' _ "$PY" "$BASE" "${UNIT_ENV[@]}"
     return
   fi
-  local targets=() lf=() line over=""
+  local targets=() lf=() warns=() line over="" full_hint="scripts/pre-push.sh --full runs the whole suite"
   while IFS= read -r line; do
-    if [[ $line == OVER* ]]; then over=${line#OVER }; else targets+=("$line"); fi
+    case $line in
+      OVER*) over=${line#OVER } ;;
+      WARN*) warns+=("${line#WARN }") ;;
+      *) targets+=("$line") ;;
+    esac
   done < <(unit_targets "${CHANGED[@]}")
+  for line in "${warns[@]}"; do warn_result unit "$line; run --full"; done
+  [[ -n $over ]] && echo "note: $over test files match the changed files (cap $MAX_TEST_FILES); fast mode runs the name-matched ones. $full_hint."
+  if (( ${#targets[@]} == 0 && ${#warns[@]} == 0 )); then
+    warn_result unit "no test file matches the changed files; run --full"
+  fi
   mapfile -t lf < <(last_failed_files)
+  if (( ${#lf[@]} > MAX_TEST_FILES )); then
+    echo "note: ${#lf[@]} test files failed last run (cap $MAX_TEST_FILES); fast mode drops them. $full_hint."
+    lf=()
+  fi
   mapfile -t targets < <(printf '%s\n' "${targets[@]}" "${lf[@]}" | sed '/^$/d' | sort -u)
-  [[ -n $over ]] && echo "note: $over test files import the changed modules (cap $MAX_TEST_FILES); fast mode runs the name-matched ones. Run scripts/pre-push.sh --full for all."
-  if (( ${#targets[@]} == 0 )); then RESULTS+=("SKIP  -     unit (no test file matches the changed modules)"); return; fi
-  run_check unit "pytest on ${#targets[@]} test file(s): changed modules + last failed (${#lf[@]})" \
+  (( ${#targets[@]} == 0 )) && return
+  need_pytest || return
+  run_check unit "pytest on ${#targets[@]} test file(s): changed files + last failed (${#lf[@]})" \
     env "${UNIT_ENV[@]}" "$PY" -m pytest -q --tb=short "${targets[@]}"
 }
 
@@ -286,10 +415,11 @@ main() {
       --ci) CI_MODE=1; MODE=full ;;
       --self-test) self_test; exit $? ;;
       --dry-run) DRY=1 ;;
-      --only) ONLY=",$2,"; shift ;;
-      --base) BASE=$2; shift ;;
-      --head) HEAD_REF=$2; shift ;;
-      -h|--help) sed -n '2,21p' "$SELF"; exit 0 ;;
+      --only|--base|--head)
+        if (( $# < 2 )); then echo "pre-push: $1 needs a value (usage: $1 <value>; see --help)" >&2; exit 2; fi
+        case $1 in --only) ONLY=",$2,";; --base) BASE=$2;; --head) HEAD_REF=$2;; esac
+        shift ;;
+      -h|--help) sed -n '2,/^set /{/^#/p}' "$SELF"; exit 0 ;;
       *) echo "pre-push: unknown argument $1 (see --help)" >&2; exit 2 ;;
     esac
     shift
@@ -299,7 +429,7 @@ main() {
   CHANGED=()
   if [[ $CI_MODE == 0 ]]; then
     if git rev-parse -q --verify "$BASE^{commit}" >/dev/null && git merge-base "$BASE" "$HEAD_REF" >/dev/null 2>&1; then
-      mapfile -t CHANGED < <(git diff --name-only "$BASE...$HEAD_REF")
+      mapfile -d '' -t CHANGED < <(changed_files "$BASE" "$HEAD_REF")
     else
       echo "pre-push: cannot diff $HEAD_REF against $BASE. Run: git fetch origin   (or pass --base <ref>, or --ci for every check)"
       echo "Bypass this hook once with: git push --no-verify"
@@ -315,6 +445,7 @@ main() {
   local label=$MODE; [[ $CI_MODE == 1 ]] && label+=", --ci"
   echo "pre-push ($label): ${#CHANGED[@]} changed file(s) vs $BASE; python: $PY"
   echo "checks: ${plan[*]}"
+  check_versions
   if [[ $CI_MODE == 0 && -n $(git status --porcelain --untracked-files=no 2>/dev/null) ]]; then
     echo "note: the working tree has uncommitted changes; the checks read the working tree, the push sends commits."
   fi
@@ -336,14 +467,22 @@ main() {
         fi ;;
       quality_lint) run_check "$id" "$PY -m services.quality.lint --report" "$PY" -m services.quality.lint --report ;;
       flake8)
-        local flake=()
-        if "$PY" -m flake8 --version >/dev/null 2>&1; then flake=("$PY" -m flake8)
-        elif command -v flake8 >/dev/null 2>&1; then flake=(flake8)
-        else skip_check "$id" "flake8 not installed: pip install flake8 flake8-bugbear"; continue; fi
         local targets=()
         if [[ $MODE == full ]]; then targets=("${FLAKE8_SCOPE[@]}")
         else mapfile -t targets < <(flake8_targets "${existing[@]}"); fi
         if (( ${#targets[@]} == 0 )); then RESULTS+=("SKIP  -     flake8 (only deleted files in scope)"); continue; fi
+        # CI installs flake8 + flake8-bugbear: without the plugin the B checks silently do not run, so it is required.
+        local flake=() fver=""
+        if fver=$("$PY" -m flake8 --version 2>/dev/null); then flake=("$PY" -m flake8)
+        elif command -v flake8 >/dev/null 2>&1 && fver=$(flake8 --version 2>/dev/null); then flake=(flake8)
+        fi
+        if (( ${#flake[@]} == 0 )); then
+          fail_check "$id" "flake8 is not installed" "install: \"$PY\" -m $FLAKE8_INSTALL"; continue
+        fi
+        if [[ $fver != *flake8-bugbear* ]]; then
+          fail_check "$id" "flake8 runs without flake8-bugbear (CI runs the B checks)" "install: \"$PY\" -m $FLAKE8_INSTALL"
+          continue
+        fi
         run_check "$id" "flake8 ${targets[*]} (CI flags)" "${flake[@]}" "${targets[@]}" "${FLAKE8_ARGS[@]}" ;;
       unit) do_unit ;;
       frontend_tsc) node_check frontend "$id" npx tsc --noEmit -p . ;;
@@ -358,7 +497,7 @@ main() {
   printf '  %s\n' "${RESULTS[@]}"
   if (( BLOCKED )); then
     echo
-    echo "Push blocked: a check above fails the same way in CI (the CI command is printed under each failure)."
+    echo "Push blocked: a check above fails the same way in CI, or a tool CI uses is missing (see the lines under each failure)."
     echo "Fix it, or bypass this hook once with: git push --no-verify"
     exit 1
   fi
