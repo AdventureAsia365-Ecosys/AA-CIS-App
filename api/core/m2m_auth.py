@@ -72,6 +72,9 @@ ENV_M2M_CRM_CLIENT_ID = "COGNITO_M2M_CRM_CLIENT_ID"
 SCOPE_CATALOG_READ = "cis.catalog/read"
 # Resource server "cis.tenant" (AA-978, AA-CIS-Infra identity_m2m.tf); contract tenant.membership.v1.
 SCOPE_TENANT_READ = "cis.tenant/read"
+# AA-979 P2b: the CRM binds an accepted studio invitation's partner-pool identity (tenant.membership.v1 1.1,
+# POST /tenant/membership/v1/invitations/{id}/activate). Granted to the CRM client only (AA-CIS-Infra identity_m2m.tf).
+SCOPE_TENANT_ACTIVATE = "cis.tenant/activate"
 
 # The shared verifier's message for a validly signed token of a client this route class does not accept.
 CLIENT_NOT_ALLOWED = "client not allowed"

@@ -11,6 +11,9 @@ locked / unlocked / deleted agencies), never to grant a CRM role.
   GET /tenant/membership/v1/events?after=&limit=           cursor feed of tenant.* and membership.* events, oldest
                                                            first, never skipping a late commit (services/
                                                            tenant_membership/feed.py)
+  POST /tenant/membership/v1/invitations/{invitation_id}/activate   (contract 1.1, AA-979 P2b) the CRM binds the
+                                                           partner-pool identity of an accepted studio invitation:
+                                                           body {"identity": {iss, sub}}, scope cis.tenant/activate
 
 Storage: ``shared.tenant_members`` and ``shared.tenant_membership_event`` (CIS 276), read on the main pool (cis_app),
 one READ ONLY transaction per request. 503 while the migration is not applied.
@@ -32,17 +35,20 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+import asyncpg
 import structlog
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from api.core import m2m_auth
 from api.core.m2m_auth import M2MProblem
 from api.schemas.public_api import (  # AA-899: doc only
-    MembershipEventPage, MembershipIdentityMemberships, MembershipTenantMembers,
+    MembershipActivated, MembershipEventPage, MembershipIdentityMemberships, MembershipTenantMembers,
 )
 from services.tenant_membership import feed
 from services.tenant_membership import reader
+from services.tenant_membership import session as studio
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/tenant/membership/v1", tags=["tenant-membership"])
@@ -53,6 +59,13 @@ NO_STORE = "no-store"
 require_tenant_reader = m2m_auth.require_m2m(
     m2m_auth.SCOPE_TENANT_READ, realm="tenant.membership.v1",
     refused="This client may not read tenant memberships.", log_prefix="tenant_membership")
+
+
+require_tenant_activator = m2m_auth.require_m2m(
+    m2m_auth.SCOPE_TENANT_ACTIVATE, realm="tenant.membership.v1",
+    refused="This client may not activate memberships.", log_prefix="tenant_membership_activate")
+
+ACTIVATE_ACTOR = "m2m:crm"
 
 
 def _unavailable(exc: Exception) -> M2MProblem:
@@ -148,3 +161,56 @@ async def list_membership_events(request: Request, after: Optional[str] = None, 
     logger.info("tenant_membership_served", op="listMembershipEvents", client_id=caller.client_id,
                 items=len(body["items"]))
     return JSONResponse(content=body, headers={"Cache-Control": NO_STORE})
+
+
+class _Identity(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    iss: str
+    sub: str
+
+
+class _ActivateIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    identity: _Identity
+
+
+@router.post("/invitations/{invitation_id}/activate", responses={200: {"model": MembershipActivated}})
+async def activate_invitation(invitation_id: str, request: Request,
+                              caller: m2m_auth.M2MCaller = Depends(require_tenant_activator)) -> Response:
+    """AA-979 P2b (contract 1.1): bind the accepted person's partner-pool identity to the invited membership.
+
+    The identity must be of the partner pool (``api.core.partner_identity.partner_issuer``): a Content studio member
+    signs in there and nowhere else. 200 with the Membership (``changed`` false for the same identity again: the CRM's
+    retry), 404 unknown invitation, 409 ``conflict`` with ``reason`` identity_mismatch / membership_removed /
+    already_member, 400 a body the contract does not accept."""
+    from api.core.partner_identity import partner_issuer
+
+    key = reader.parse_tenant_id(invitation_id)
+    if key is None:
+        raise M2MProblem(404, "not_found", "No membership has this invitation id.")
+    try:
+        body = _ActivateIn.model_validate_json(await request.body())
+        iss, sub = reader.check_identity(body.identity.iss, body.identity.sub)
+    except (ValidationError, ValueError) as exc:
+        raise M2MProblem(400, "invalid", "The body must be {\"identity\": {\"iss\", \"sub\"}}.") from exc
+    if iss != partner_issuer():
+        raise M2MProblem(400, "invalid", "The identity must be of the partner pool.")
+    pool = _pool(request)
+    if pool is None:
+        raise _unavailable(RuntimeError("pool not configured"))
+    try:
+        async with pool.acquire(timeout=reader.ACQUIRE_TIMEOUT_S) as conn:
+            row, changed = await studio.activate(conn, key, iss, sub, ACTIVATE_ACTOR)
+    except studio.InvitationNotFound as exc:
+        raise M2MProblem(404, "not_found", "No membership has this invitation id.") from exc
+    except studio.InvitationClosed as exc:
+        logger.info("tenant_membership_activate_refused", reason=exc.code, client_id=caller.client_id)
+        raise M2MProblem(409, "conflict", "This invitation cannot be activated for this identity.",
+                         reason=exc.code) from exc
+    except (asyncpg.UndefinedTableError, asyncpg.PostgresConnectionError, asyncpg.InterfaceError,
+            asyncpg.TooManyConnectionsError, OSError) as exc:
+        raise _unavailable(exc) from exc
+    logger.info("tenant_membership_activated", client_id=caller.client_id, tenant_id=str(row["tenant_id"]),
+                membership_id=str(row["membership_id"]), changed=changed)
+    return JSONResponse(content={"membership": reader.membership_body(row), "changed": changed},
+                        headers={"Cache-Control": NO_STORE})

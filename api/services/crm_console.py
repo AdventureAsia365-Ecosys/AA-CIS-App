@@ -60,6 +60,9 @@ ALLOWED: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         ("POST", rf"{_T}/members/{_ID}/deactivate"),
         ("PUT", rf"{_T}/(entitlements-allowed|insights-opt-out)"),
         ("POST", rf"{_T}/jobs/{_ID}/retry"),
+        # AA-979 P2b — Content studio invitation delivery (Tenant 360 Members invite / send again), relayed by
+        # api/routers/admin_tenant360.py: the CRM sends the AA system mail and owns the claim (crm.studio_invitation).
+        ("POST", rf"{_T}/studio-invitations"),
     )
 )
 

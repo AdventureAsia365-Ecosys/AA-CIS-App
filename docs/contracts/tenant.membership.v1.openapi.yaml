@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: tenant.membership.v1 (AA-CIS-App → AA-Partner CRM, agency membership feed)
-  version: "1.0"
+  version: "1.1"
   description: >-
     CIS is the directory of agencies (tenants) and of who belongs to them. This contract tells the partner CRM only
     "identity (iss, sub) belongs to agency X" plus the person's Content studio role (owner / editor / viewer) and the
@@ -21,10 +21,15 @@ info:
     horizon), so an event committed out of order is delivered later, never skipped (contracts rule 4); a consumer
     stores event_id and applies each event once. Auth: M2M token of the aa-m2m pool, scope cis.tenant/read (root ADR
     0006b decision 7). Path prefix /tenant/membership/v1 is provisional until ADR 0013 (AA-899).
+    1.1 (AA-979 P2b, root ADR 0010a, additive): POST /invitations/{invitation_id}/activate, scope
+    cis.tenant/activate. CIS creates a Content studio invitation (an invited membership with its invitation_id) and
+    the CRM delivers it (AA system mail, claim, accept in the partner pool); once the person accepted, the CRM binds
+    the person's partner-pool identity to that invitation here. CIS still decides the Content studio role; the call
+    carries only the verified identity, never a role and never an e-mail. Idempotent for the same identity.
   x-aa-contract: tenant.membership.v1
   x-aa-producer: AA-CIS-App
   x-aa-consumers: [AA-Partner]
-  x-aa-issues: [AA-928, AA-978, AA-813]
+  x-aa-issues: [AA-928, AA-978, AA-813, AA-979]
 servers:
   - url: /tenant/membership/v1
 security:
@@ -93,6 +98,33 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/MembershipEventPage"}
+  /invitations/{invitation_id}/activate:
+    parameters:
+      - name: invitation_id
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    post:
+      operationId: activateInvitation
+      summary: Bind the accepted person's partner-pool identity to an invited membership (1.1)
+      security:
+        - m2m: [cis.tenant/activate]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ActivationRequest"}
+      responses:
+        "200":
+          description: >-
+            The membership, active with that identity. changed is false when it already was (a retry after a lost
+            answer).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ActivationResult"}
+        "400": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "409": {$ref: "#/components/responses/Problem"}
 components:
   securitySchemes:
     m2m:
@@ -103,6 +135,7 @@ components:
           tokenUrl: https://m2m-auth.example.invalid/oauth2/token
           scopes:
             cis.tenant/read: Read tenants and memberships
+            cis.tenant/activate: Bind an accepted invitation's partner-pool identity (1.1)
   responses:
     Problem:
       description: Error
@@ -115,8 +148,12 @@ components:
       additionalProperties: false
       required: [error, message]
       properties:
-        error: {type: string, enum: [unauthorized, forbidden, not_found, invalid]}
+        error: {type: string, enum: [unauthorized, forbidden, not_found, invalid, conflict]}
         message: {type: string, maxLength: 500}
+        reason:
+          type: string
+          enum: [identity_mismatch, membership_removed, already_member]
+          description: Only on 409 conflict of activateInvitation (1.1).
     Identity:
       type: object
       additionalProperties: false
@@ -151,7 +188,9 @@ components:
           oneOf:
             - {$ref: "#/components/schemas/Identity"}
             - {type: "null"}
-          description: Null while status is invited (the identity binds at activation, ADR 0006b decision 5).
+          description: >-
+            Null while status is invited (the identity binds at activation, ADR 0006b decision 5), and on a removed
+            membership that was never activated (a withdrawn invitation). Never null while status is active.
         content_studio_role: {$ref: "#/components/schemas/ContentStudioRole"}
         status: {$ref: "#/components/schemas/MembershipStatus"}
         invitation_id:
@@ -208,3 +247,18 @@ components:
           type: array
           items: {$ref: "#/components/schemas/MembershipEvent"}
         next_cursor: {type: string, maxLength: 200}
+    ActivationRequest:
+      type: object
+      additionalProperties: false
+      required: [identity]
+      properties:
+        identity:
+          $ref: "#/components/schemas/Identity"
+          description: The partner-pool identity of the person who accepted (the pool issuer, never another pool).
+    ActivationResult:
+      type: object
+      additionalProperties: false
+      required: [membership, changed]
+      properties:
+        membership: {$ref: "#/components/schemas/Membership"}
+        changed: {type: boolean}

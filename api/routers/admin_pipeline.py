@@ -25,6 +25,7 @@ from typing import Awaitable, Callable, Optional, List
 from api.routers._billing import usage_row_to_dict
 from api.routers.admin import verify_admin_secret
 from api.routers.auth import verify_tenant_jwt
+from api.middleware import tenant_role as _tenant_role  # AA-979 csr check in the dependency
 from api.routers.v1_pipeline import _rewrite_tour
 from services.content_generation.pipeline_lessons import load_s1_lessons_block
 from shared.aws_client.bronze import bronze_bucket
@@ -4963,6 +4964,7 @@ _AA_INTERNAL_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 def _resolve_brand_tenant_id(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_brand_identity_bearer),
     x_admin_secret: str = Header(None),
+    request: Request = None,
 ) -> str:
     if credentials is not None:
         try:
@@ -4971,6 +4973,7 @@ def _resolve_brand_tenant_id(
             raise
         except Exception:
             raise HTTPException(status_code=401, detail="Invalid or expired token")
+        _tenant_role.enforce(request, payload)   # AA-979: csr also checked where the token is accepted
         return payload["sub"]
     verify_admin_secret(x_admin_secret)
     return _AA_INTERNAL_TENANT_ID

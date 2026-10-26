@@ -24,6 +24,16 @@ AA-978 adds the Members routes over the CIS membership directory (``shared.tenan
 
 Both writes need tenant.write (staff_authz POLICY) and write an acp_shared.audit_log row with the change.
 
+AA-979 P2b adds the Content studio invitation (re-enrolment in the partner pool, root ADR 0010a):
+
+* ``POST /admin/tenants/{id}/members/invitations``                 — create an ``invited`` membership with the
+  Content studio role CIS decides, then relay the e-mail ONCE to the CRM (``crm.ops.v1`` ``POST
+  /tenants/{id}/studio-invitations``, the staff member's own Cognito token through ``api/services/crm_console.py``):
+  the CRM sends the AA system mail and owns the claim. CIS never stores the e-mail. 201 even when the delivery
+  failed: the row stays ``invited`` and the answer says ``delivery.status = failed`` (send again).
+* ``POST /admin/tenants/{id}/members/{membership_id}/invitation/send`` — send the invitation of an ``invited`` row
+  again (the CRM is idempotent on ``cis_invitation_id``: it re-issues the same invitation with a new link).
+
 Cost definition is the AA-798 one (migration 223): ``shared.llm_call_log.cost_usd`` for the
 tenant, current calendar month (``date_trunc('month', now())``), Jev included, shadow rows
 (``quality_signal @> {"shadow": true}``) excluded — so the totals here add up to the
@@ -38,13 +48,16 @@ from uuid import UUID
 import asyncpg
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from api.core.staff_authz import staff_policy
 
 from api.routers._billing import usage_row_to_dict
 from api.routers.admin import _admin_actor, verify_admin_secret
+from services.tenant_membership import session as members_session
 from services.tenant_membership import writer as members_writer
+from api.services import crm_console
+from api.services.platform_apps import relay_authorization
 
 logger = structlog.get_logger()
 
@@ -503,3 +516,88 @@ async def remove_tenant_member(
     logger.info("tenant_member_removed", tenant_id=str(tenant_id), membership_id=str(membership_id),
                 changed=result["changed"])
     return result
+
+
+
+# ── Content studio invitations (AA-979 P2b) ───────────────────────────────────────────────────────
+
+_EMAIL = r"^[^@\s]{1,64}@[^@\s]{1,189}\.[^@\s]{2,63}$"
+
+
+class MemberInvite(BaseModel):
+    """POST body: the address (relayed once to the CRM, never stored in CIS), the Content studio role CIS decides,
+    and the language of the AA system mail. No CRM role: CIS never grants one (ADR 0010 §7)."""
+    model_config = ConfigDict(extra="forbid")
+    email: str = Field(min_length=6, max_length=254, pattern=_EMAIL)
+    content_studio_role: Literal["owner", "editor", "viewer"]
+    locale: Literal["en", "vi"] = "en"
+
+
+class MemberInviteResend(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    email: str = Field(min_length=6, max_length=254, pattern=_EMAIL)
+    locale: Literal["en", "vi"] = "en"
+
+
+async def _deliver(request: Request, tenant_id: UUID, invitation_id: str, email: str, locale: str) -> dict:
+    """Relay the invitation to the CRM (crm.ops.v1). Never raises: the outcome goes into the answer."""
+    status, body = await crm_console.crm_ops_call(
+        "POST", f"/tenants/{tenant_id}/studio-invitations", relay_authorization(request),
+        json={"email": email, "cis_invitation_id": invitation_id, "locale": locale})
+    ok = 200 <= status < 300
+    logger.info("tenant_member_invitation_relayed", tenant_id=str(tenant_id), invitation_id=invitation_id,
+                crm_status=status, delivered=ok)
+    out = {"status": "sent" if ok else "failed", "crm_status": status}
+    if ok:
+        out["expires_at"] = body.get("expires_at")
+    else:
+        out["detail"] = body.get("detail")
+        out["message"] = body.get("message")
+    return out
+
+
+@router.post("/{tenant_id}/members/invitations", status_code=201,
+             summary="AA-979 — invite a Content studio member (CIS row + CRM-delivered AA system mail)")
+async def invite_tenant_member(
+    tenant_id: UUID, body: MemberInvite, request: Request,
+    x_admin_secret: str = Header(None), x_admin_user_id: str = Header(None),
+):
+    verify_admin_secret(x_admin_secret)
+    actor = _admin_actor(x_admin_user_id)
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        await _require_tenant(conn, tenant_id)
+        try:
+            member = await members_session.invite(conn, str(tenant_id), body.content_studio_role, actor)
+        except members_session.TenantInactive as exc:
+            raise HTTPException(status_code=409, detail="This tenant is suspended or offboarded; "
+                                                        "activate it before inviting members.") from exc
+        except asyncpg.UndefinedTableError as exc:
+            raise _members_unavailable(exc) from exc
+    delivery = await _deliver(request, tenant_id, member["invitation_id"], body.email, body.locale)
+    logger.info("tenant_member_invited", tenant_id=str(tenant_id), membership_id=member["membership_id"],
+                role=body.content_studio_role, delivery=delivery["status"])
+    return {"tenant_id": str(tenant_id), "member": member, "delivery": delivery}
+
+
+@router.post("/{tenant_id}/members/{membership_id}/invitation/send",
+             summary="AA-979 — send a Content studio invitation again (invited members only)")
+async def resend_tenant_member_invitation(
+    tenant_id: UUID, membership_id: UUID, body: MemberInviteResend, request: Request,
+    x_admin_secret: str = Header(None),
+):
+    verify_admin_secret(x_admin_secret)
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        await _require_tenant(conn, tenant_id)
+        try:
+            members = await members_writer.list_members(conn, str(tenant_id))
+        except asyncpg.UndefinedTableError as exc:
+            raise _members_unavailable(exc) from exc
+    member = next((m for m in members if m["membership_id"] == str(membership_id)), None)
+    if member is None:
+        raise HTTPException(status_code=404, detail="Membership not found")
+    if member["status"] != "invited" or not member["invitation_id"]:
+        raise HTTPException(status_code=409, detail="Only an invited membership has an invitation to send.")
+    delivery = await _deliver(request, tenant_id, member["invitation_id"], body.email, body.locale)
+    return {"tenant_id": str(tenant_id), "member": member, "delivery": delivery}

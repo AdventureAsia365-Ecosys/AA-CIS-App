@@ -992,6 +992,22 @@ Tenant read (AA-978 follow-up): `GET /v1/account/members` (`api/routers/v1_accou
 `services/tenant_membership/portal.py`), the portal's Account › Members page: the agency's invited + active rows
 (fingerprint, role, status, dates; no staff actor, no invitation id), tenant id from the tenant JWT only, main pool.
 
+**Partner-pool Content studio sign-in (AA-979 P2b, root ADR 0010a).** The portal (AA-Partner `portal/`) swaps the
+person's partner-pool access token (partner-web client) for a short tenant JWT at `POST /auth/tenant-session`
+(`api/routers/tenant_session.py`; verifier `api/core/partner_identity.py`, its own `MultiIssuerVerifier`, never a staff
+issuer; WORKFORCE / EXTERNAL / M2M tokens 403). It answers from the active `shared.tenant_members` rows of `(iss, sub)`
+on active agencies (`services/tenant_membership/session.py`): none 403 `no_membership`, several 409 `choose_tenant`
+(chooser `GET /auth/tenant-memberships`). The token is the API-key token's shape plus `client=portal`, `amr=partner`,
+`mid`, `csr`; at most 15 min and never past the access token. Throttled per identity in Redis, not per IP. The Content
+studio role is enforced by `api/middleware/tenant_role.py` on every tenant-JWT path (`/v1/*`, `/admin/brand-identity`):
+viewer read only, editor no writes under `/v1/integrations`, `/v1/account`, `/v1/webhooks`; owner and API-key tokens
+unchanged. Invitations: `POST /admin/tenants/{id}/members/invitations` (`tenant.write`) creates the `invited` row and
+relays the e-mail once to the CRM (`crm.ops.v1` `POST /tenants/{id}/studio-invitations`, staff token, through
+`api/services/crm_console.py`); CIS stores no e-mail; `.../members/{membership_id}/invitation/send` sends again. The
+CRM binds the accepted identity with `POST /tenant/membership/v1/invitations/{invitation_id}/activate` (M2M scope
+`cis.tenant/activate`, contract 1.1; idempotent for the same identity, 409 otherwise). API-key sign-in
+(`/auth/tenant-login`) is unchanged for machines; the portal keeps it during the P2b window only.
+
 ## Staff roles and permissions (AA-656)
 
 One staff identity model. Every staff user is a row in `shared.admin_users` (role enum

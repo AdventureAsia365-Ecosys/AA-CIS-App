@@ -76,6 +76,8 @@ from api.routers.catalog_http import (  # AA-976 — catalog.http.v1 for the par
     CatalogProblem, catalog_problem_handler, router as catalog_http_router,
 )
 from api.routers.tenant_membership import router as tenant_membership_router  # AA-978 — tenant.membership.v1
+from api.routers.tenant_session import router as tenant_session_router  # AA-979 P2b — partner-pool studio sign-in
+from api.middleware.tenant_role import tenant_role_middleware  # AA-979 P2b — Content studio roles (csr)
 from api.middleware.rate_limit import rate_limit_middleware
 from api.middleware.sentry_context import sentry_context_middleware
 from api.middleware.staff_bearer import StaffBearerMiddleware  # AA-816 C3
@@ -143,6 +145,9 @@ async def lifespan(app: FastAPI):
     # AA-976 — same for the M2M pool (catalog.http.v1 callers); off under ENVIRONMENT == "test", never raises.
     from api.core.m2m_auth import start_m2m_jwks_prefetch, stop_m2m_jwks_prefetch
     m2m_prefetch_task = start_m2m_jwks_prefetch()
+    # AA-979 P2b — same for the partner pool (POST /auth/tenant-session); off under ENVIRONMENT == "test".
+    from api.core.partner_identity import start_partner_jwks_prefetch, stop_partner_jwks_prefetch
+    partner_prefetch_task = start_partner_jwks_prefetch()
 
     # AA-544 Stage 1 — second pool, aa_app_user (non-BYPASSRLS), lazy (min_size 0, AA-817). None
     # only when the secret or the pool object cannot be made. Used only by routes that opt in via
@@ -176,6 +181,7 @@ async def lifespan(app: FastAPI):
     await stop_ops_metrics_sampler(ops_metrics_task)
     await stop_cis_staff_jwks_prefetch(identity_prefetch_task)
     await stop_m2m_jwks_prefetch(m2m_prefetch_task)
+    await stop_partner_jwks_prefetch(partner_prefetch_task)
     await stop_main_pool_gauge(main_pool_gauge_task)
     await pool.close()
     if app.state.tenant_pool is not None:
@@ -328,8 +334,12 @@ app.include_router(photos_public_router)  # AA-708 — /content/photos/{id} (pub
 app.include_router(v1_progress_router)  # AA-637 — GET /v1/progress/{kind}/{job_id}
 app.include_router(catalog_http_router)  # AA-976 — /catalog/v1 (catalog.http.v1, M2M cis.catalog/read)
 app.include_router(tenant_membership_router)  # AA-978 — /tenant/membership/v1 (M2M cis.tenant/read)
+app.include_router(tenant_session_router)  # AA-979 P2b — /auth/tenant-session, /auth/tenant-memberships (partner pool)
 
 app.middleware("http")(rate_limit_middleware)
+# AA-979 P2b — registered after the rate limiter so it wraps it: a viewer / editor token refused for its Content studio
+# role (csr claim) is answered 403 before it reaches the rate limiter, the meter or the route.
+app.middleware("http")(tenant_role_middleware)
 # AA-816 C3 — registered after the rate limiter so it wraps it (Starlette: last registered = outermost): a
 # Cognito Bearer on a staff path rewrites x-admin-role / x-admin-user-id before the rate limiter's admin
 # tracking and the routes read them. Legacy HS256 Bearer and secret-only requests pass through untouched, except the

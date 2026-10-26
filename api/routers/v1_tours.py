@@ -8,6 +8,7 @@ from api.core.aa544_tenant_pool import (
     T2_VERSION_DETAIL_READS_FLAG, T2_VERSION_READS_FLAG, T2_VERSION_WRITE_FLAG, acquire_scoped_conn,
 )
 from api.routers.auth import verify_tenant_jwt
+from api.middleware import tenant_role as _tenant_role  # AA-979 csr check in the dependency
 from api.schemas.public_api import Quota  # AA-899
 from api.core.secret_compare import secrets_equal
 from api.routers.admin import PLAN_LIMITS
@@ -30,15 +31,19 @@ quota_router = APIRouter(prefix="/v1", tags=["Quota"])
 security = HTTPBearer()
 
 
-def get_tenant(credentials: HTTPAuthorizationCredentials = Depends(security)):
+def get_tenant(credentials: HTTPAuthorizationCredentials = Depends(security), request: Request = None):
     try:
-        return verify_tenant_jwt(credentials.credentials)
+        payload = verify_tenant_jwt(credentials.credentials)
     except HTTPException as exc:
         if exc.status_code == 403:      # a valid staff token is not a tenant (AA-741 pre-audit)
             raise
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
+    # AA-979: the dependency that accepts the token also enforces its Content studio role (csr), so a header shape
+    # the middleware did not foresee cannot skip the check. request is None on a direct call (tests).
+    _tenant_role.enforce(request, payload)
+    return payload
 
 
 def get_pool(request: Request):
