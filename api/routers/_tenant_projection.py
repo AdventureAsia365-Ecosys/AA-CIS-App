@@ -67,11 +67,30 @@ def _without(row: Any, hidden: Iterable[str]) -> dict:
             if k not in hidden and not TENANT_FORBIDDEN_KEY_RE.search(str(k))}
 
 
+def master_newer(master_updated_at: Any, version_created_at: Any) -> bool:
+    """AA-990 — True when Adventure Asia changed the tour's Master text after this version was made.
+
+    ``master_updated_at`` is ``published_tours.updated_at`` (moved only by a Master publish / promote, CIS 273);
+    ``version_created_at`` is ``tenant_tour_versions.created_at``. Strictly later only: equal timestamps, or a
+    missing value on either side, are False (no notice when we cannot tell)."""
+    if master_updated_at is None or version_created_at is None:
+        return False
+    try:
+        return master_updated_at > version_created_at
+    except TypeError:  # naive vs aware datetime, or a type that does not compare: no notice
+        return False
+
+
 def project_version(row: Any) -> dict:
-    """A tenant_tour_versions row (possibly joined) as the tenant may see it."""
+    """A tenant_tour_versions row (possibly joined) as the tenant may see it.
+
+    AA-990: a row joined with ``pt.updated_at AS master_updated_at`` also gets ``master_newer``
+    (see master_newer()). Rows without that column (version history) are unchanged."""
     out = _without(row, TENANT_HIDDEN_VERSION_FIELDS)
     if "status" in out:
         out["status"] = tenant_version_status(out["status"])
+    if "master_updated_at" in out:
+        out["master_newer"] = master_newer(out["master_updated_at"], out.get("created_at"))
     return out
 
 

@@ -581,6 +581,7 @@ _MY_VERSIONS_ROWS_SQL = """
            ttv.edit_source, ttv.rewrite_language, ttv.created_at,
            ttv.rewritten_content,
            pt.id AS published_tour_id, pt.tour_id, pt.aa_name,
+           pt.updated_at AS master_updated_at,  -- AA-990: master_newer is derived from it (project_version)
            rt.country, rt.duration,
            -- AA-652 — the rewrite job's status (queued/running/succeeded/failed/...),
            -- NULL for manual edits and pre-AA-652 rows. No job error text (tenant-safe).
@@ -621,7 +622,11 @@ async def list_my_versions(
     status: Optional[str] = Query(None),
     country: Optional[str] = Query(None),
 ):
-    """List tenant's own rewritten versions."""
+    """List tenant's own rewritten versions.
+
+    AA-990: each row also carries `master_updated_at` (when Adventure Asia last changed the Master text of the
+    tour) and `master_newer` (true when that is later than the version's `created_at`). Read-only, informational:
+    nothing in the tenant's version is changed."""
     tenant_id = tenant["sub"]
     offset = (page - 1) * page_size
 
@@ -881,6 +886,7 @@ _VERSION_SQL = """
     SELECT ttv.*, pt.tour_id, pt.aa_name, pt.aa_subtitle, pt.aa_summary,
            pt.aa_description, pt.aa_highlights, pt.aa_itineraries,
            pt.seo_title AS aa_seo_title, pt.seo_meta AS aa_seo_meta,
+           pt.updated_at AS master_updated_at,  -- AA-990: master_newer is derived from it (project_version)
            rt.country, rt.duration, rt.price_raw,
            rt.inclusions, rt.exclusions,
            {job_col}  -- AA-652
@@ -907,7 +913,9 @@ async def get_version(
     request: Request,
     tenant=Depends(get_tenant),
 ):
-    """Get version detail with AA original for before/after diff."""
+    """Get version detail with AA original for before/after diff.
+
+    AA-990: also `master_updated_at` and `master_newer` (see GET /v1/tours/my-versions)."""
     tenant_id = tenant["sub"]
 
     history = []

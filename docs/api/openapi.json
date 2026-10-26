@@ -35948,7 +35948,7 @@
     },
     "/v1/tours/my-versions": {
       "get": {
-        "description": "List tenant's own rewritten versions.",
+        "description": "List tenant's own rewritten versions.\n\nAA-990: each row also carries `master_updated_at` (when Adventure Asia last changed the Master text of the\ntour) and `master_newer` (true when that is later than the version's `created_at`). Read-only, informational:\nnothing in the tenant's version is changed.",
         "operationId": "list_my_versions_v1_tours_my_versions_get",
         "parameters": [
           {
@@ -36231,7 +36231,7 @@
     },
     "/v1/tours/versions/{version_id}": {
       "get": {
-        "description": "Get version detail with AA original for before/after diff.",
+        "description": "Get version detail with AA original for before/after diff.\n\nAA-990: also `master_updated_at` and `master_newer` (see GET /v1/tours/my-versions).",
         "operationId": "get_version_v1_tours_versions__version_id__get",
         "parameters": [
           {
