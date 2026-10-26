@@ -118,13 +118,14 @@ async def recompute_rankings_and_routes(pool, *, log_reason: str = "",
     original from-scratch pass over every Segment (backfills only).
 
     AA-735 nac 3 — the body now runs through `services.recompute.run_stages(PLATFORM_STAGES, ...)`
-    (landing -> score -> route); same SQL, order and (absent) progress as the old inline chain."""
+    (landing -> score -> route); same SQL, order and (absent) progress as the old inline chain.
+    AA-988 — then `segment_gc` (orphan Segments; report mode unless SEGMENT_GC_MODE=apply), result key `segment_gc`."""
     from services.recompute import PLATFORM_STAGES, RecomputeScope, run_stages
     scope = RecomputeScope(
         segment_ids=set(segment_ids) if segment_ids is not None else None,
         log_reason=log_reason)
     results = await run_stages(PLATFORM_STAGES, scope, pool=pool)
-    out = {"ranking": results["score"], "route": results["route"]}
+    out = {"ranking": results["score"], "route": results["route"], "segment_gc": results.get("segment_gc")}
     logger.info("recompute_rankings_and_routes_done", reason=log_reason, route=out["route"])
     return out
 
@@ -221,8 +222,12 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
             # function, same scope (this tour); the `segment` stage already logs
             # `segment_matching_done`, so this path no longer logs it again. Score + Route still go
             # to the debounced platform `recompute` job below, not inline.
+            # AA-988 — read the tour's Segments BEFORE the segment stage too: it now drops the member rows of the
+            # atoms this atomize replaced, and the Segments those atoms left still need their brand-fit cache cleared
+            # and their score re-landed (recurrence / questions changed).
+            segment_ids_before = await tour_segment_ids(pool, tour_id)
             await run_stages(["segment"], RecomputeScope(tour_id=tour_id), pool=pool)
-            segment_ids = await tour_segment_ids(pool, tour_id)
+            segment_ids = sorted(set(segment_ids_before) | set(await tour_segment_ids(pool, tour_id)))
             # AA-645 step 0 (T13): the T7 Debate brand-fit cache scored these Segments (and the Routes through
             # them) on their atoms' old text; drop those rows when this run changed the tour's atoms, so the
             # next Slate re-judges them on the new text (lazy, cached again on first use).
@@ -247,6 +252,16 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
             # publish itself having failed. It is still an error, and lands in the job result.
             outcome["segment_score_route"] = f"failed: {type(exc).__name__}: {str(exc)[:200]}"
             logger.error("a3_segment_score_route_failed", tour_id=tour_id, exc_info=True)
+        # AA-989 — the $0 place-card relink: a card link is keyed on atom_id, so every atom this run replaced lost
+        # its link. Rule skip + existing card by alias / core name + stored miss only, never a draft
+        # (max_places=0). BEFORE place_extract: the card fields are in its components_hash, a relink after it
+        # would extract the tour twice. Best-effort; a failure is recorded in the result, never fails atomize.
+        try:
+            from services.acp_shared.place_cards import relink_tour_place_cards
+            outcome["place_cards_relink"] = await relink_tour_place_cards(pool, str(tour_id))
+        except Exception as exc:
+            outcome["place_cards_relink"] = f"failed: {type(exc).__name__}: {str(exc)[:200]}"
+            logger.warning("a3_place_cards_relink_failed", tour_id=tour_id, exc_info=True)
         # AA-712 — the tour's places / day skeleton (place_extract job, background kind). Best-effort
         # like the recompute enqueue; a failure is visible in the job result, never fails atomize.
         try:

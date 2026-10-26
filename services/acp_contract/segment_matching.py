@@ -42,7 +42,9 @@ so an id that "gave way" to another has to keep existing as a row for that FK to
 ADR 0002's own framing that the old id "still resolves", not that it disappears). Pre-AA-545 rows
 keep their OLD-formula segment_id string values unchanged forever (an opaque TEXT PK, never
 rehashed — see docs/implementation-notes/AA-545.md Decision 1); only Segments minted from this
-point on use the new formula.
+point on use the new formula. AA-988: this module still never deletes an `atom_segment` row; the recompute
+stage `segment_gc` (`segment_gc.py`) removes zero-reference orphans (no live member, no alias row either side, no
+ranking, Subject, brand-fit cache or route reference), under a lock this module holds shared for each run.
 
 **AA-857 — an id is not a promise about its content.** A Segment id is the mint of the moment that
 first created it; its label and members move on. A run therefore relabels only ids it CLAIMED (its
@@ -65,6 +67,8 @@ from typing import NamedTuple
 # this module — so this is not an import cycle (checked S223; `recompute/stages.py` is the one
 # importer of segment_matching and atom_ranking does not touch it).
 from services.acp_contract.atom_ranking import atoms_say_transit, classify_exclusion
+# AA-988 — the segment-write lock shared with the orphan GC (recompute stage `segment_gc`).
+from services.acp_contract.segment_gc import holds_segment_lock_shared
 
 # ── reference table, ported from Ms. Thư's aa-social-media (reference/action-verbs.toml) ───
 # Deliberately narrow (see that file's own comment) — only add a class when a real export shows
@@ -876,6 +880,23 @@ async def _assert_written_one_country(conn, written_ids: Iterable[str],
             + "; ".join(f"{sid} {sorted(c)}" for sid, c in sorted(worse.items())[:10]))
 
 
+# AA-988 — member rows of THIS tour's dead atoms (soft-deleted by a re-atomize, or an empty-day marker). Not the
+# active-atom view: an atom of a paused / trashed tour is not dead and keeps its membership for a restore.
+_DEAD_MEMBERS_OF_TOUR_SQL = """
+    DELETE FROM acp_contract.atom_segment_member m
+     USING acp_contract.tour_atoms ta
+     WHERE ta.atom_id = m.atom_id AND ta.tour_id = $1::uuid AND (ta.deleted OR ta.is_empty_marker)
+"""
+
+
+def _rows_affected(status) -> int:
+    try:
+        return int(str(status).split()[-1])
+    except (ValueError, IndexError):
+        return 0
+
+
+@holds_segment_lock_shared
 async def run_segment_matching(tour_id: str, pool) -> dict:
     """Incrementally fold ONE tour's atoms into the platform-wide Segment set (AA-545 — replaces
     AA-509's per-tenant, full-recompute wrapper; see this module's own docstring for why and
@@ -895,6 +916,11 @@ async def run_segment_matching(tour_id: str, pool) -> dict:
     Excludes: soft-deleted atoms, empty-day markers (`is_empty_marker`), and any atom whose
     place/action are still NULL (atomized before migration 129 and not yet re-atomized — STEP0
     mục 4/migration 129 comment: no backfill, same precedent as itinerary_day).
+
+    AA-988 — drops the member rows of this tour's dead atoms (a re-atomize replaced them) in the write transaction,
+    so a Segment left with dead members only becomes a zero-reference orphan for the `segment_gc` stage. The whole
+    run holds the segment-write lock SHARED (`holds_segment_lock_shared`): the GC never deletes a Segment between
+    this run's candidate read and its write.
     """
     async with pool.acquire() as conn:
         atom_rows = await conn.fetch("""
@@ -907,7 +933,10 @@ async def run_segment_matching(tour_id: str, pool) -> dict:
               AND ta.place IS NOT NULL AND ta.action IS NOT NULL
         """, tour_id)
         if not atom_rows:
-            return {"segments_written": 0, "atoms": 0, "aliases": 0, "existing_segments": 0}
+            # AA-988 — a tour with no matchable atom left still drops its dead atoms' memberships
+            dead = _rows_affected(await conn.execute(_DEAD_MEMBERS_OF_TOUR_SQL, tour_id))
+            return {"segments_written": 0, "atoms": 0, "aliases": 0, "existing_segments": 0,
+                    "dead_members_removed": dead}
 
         atom_ids = [r["atom_id"] for r in atom_rows]
         assigned_rows = await conn.fetch("""
@@ -1010,6 +1039,9 @@ async def run_segment_matching(tour_id: str, pool) -> dict:
                     DELETE FROM acp_contract.atom_segment_member
                     WHERE atom_id = ANY($1::text[])
                 """, excluded_atom_ids)
+            # AA-988 — the same for this tour's DEAD atoms (replaced by a re-atomize): their Segments are left to the
+            # `segment_gc` stage when nothing else refers to them. Other tours are untouched.
+            dead_members = _rows_affected(await conn.execute(_DEAD_MEMBERS_OF_TOUR_SQL, tour_id))
             if to_write:
                 await conn.executemany("""
                     INSERT INTO acp_contract.atom_segment_member (segment_id, atom_id)
@@ -1046,7 +1078,8 @@ async def run_segment_matching(tour_id: str, pool) -> dict:
     return {
         "segments_written": len(to_write), "atoms": len(new_atoms), "aliases": len(alias_rows),
         "existing_segments": len(existing_rows), "same_place_asked": asked, "kept_apart": len(apart),
-        "excluded_atoms": len(excluded_atom_ids), "reminted": len(remints),
+        "excluded_atoms": len(excluded_atom_ids), "dead_members_removed": dead_members,
+        "reminted": len(remints),
         "remints": {old: r["to"] for old, r in remints.items()},
         "unclaimed_existing": guard.unclaimed_existing,
         "already_mixed": sorted(mixed_before),

@@ -151,6 +151,13 @@ async def extract_tour_places(pool, tour: dict, deps: ExtractDeps, *, force: boo
         comp_dest = {cid: remap.get(d, d) if d else d for cid, d in comp_dest.items()}
         night_dest = {day: remap.get(d, d) if d else d for day, d in night_dest.items()}
     counts["in_tour_duplicates_merged"] = len(remap)
+    # AA-989: TripPlanner pins components by id — a rebuild keeps the previous row's id for the same place (respelt,
+    # retyped or moved a day), so a saved trip does not lose its pins (components.carry_over_ids).
+    async with pool.acquire() as conn:
+        previous = await store.existing_places(conn, source_id)
+    carry, carry_counts = comp_mod.carry_over_ids(comps, comp_dest, previous)
+    comp_dest = comp_mod.apply_carry_over(comps, comp_dest, carry)
+    counts.update(carry_counts)
     counts["places_linked"] = sum(1 for v in comp_dest.values() if v)
     counts["nights_linked"] = sum(1 for v in night_dest.values() if v)
     counts["names_new_pending"] = sum(1 for r in new_rows if r[-1] == "pending")

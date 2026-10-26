@@ -53,7 +53,8 @@ async def test_recompute_rankings_and_routes_runs_every_market_then_routes():
                new=AsyncMock(side_effect=lambda m, *_: calls.append(m) or {})) as rar, \
          patch("services.acp_contract.route_detection.run_route_detection",
                new=AsyncMock(return_value={"routes": 0})) as rrd, \
-         patch("services.seo_intelligence.seed_builder.DFS_LOCATION_MAP", {"US": 1, "UK": 2}):
+         patch("services.seo_intelligence.seed_builder.DFS_LOCATION_MAP", {"US": 1, "UK": 2}), \
+         patch("services.acp_contract.segment_gc.run_segment_gc", new=AsyncMock(return_value={})):
         out = await handler.recompute_rankings_and_routes(object(), log_reason="test")
     assert pql.await_count == 1
     assert set(calls) == {"US", "UK"} and rar.await_count == 2

@@ -28,7 +28,7 @@ TOUR = "11111111-1111-1111-1111-111111111111"
 
 def test_every_stage_declares_reads_writes_and_a_valid_strategy():
     stages = all_stages()
-    assert set(stages) == {"segment", "landing", "score", "route"}
+    assert set(stages) == {"segment", "landing", "score", "route", "segment_gc"}
     for name, stage in stages.items():
         assert stage.name == name
         assert stage.reads and all(isinstance(t, str) for t in stage.reads), name
@@ -76,11 +76,22 @@ def test_declared_write_strategies_match_the_real_sql():
         "acp_contract.route": "versioned_swap",
         "acp_contract.hub": "upsert",
     }
+    # AA-988: segment_gc only deletes (orphan Segments + their member rows on dead atoms)
+    gc = get_stage("segment_gc")
+    assert gc.write_strategy == "delete_insert"
+    assert gc.table_strategies == {
+        "acp_contract.atom_segment": "delete_insert",
+        "acp_contract.atom_segment_member": "delete_insert",
+    }
+    # every reference the GC must respect is a declared read
+    assert {"acp_contract.atom_segment_alias", "acp_shared.subject", "acp_shared.debate_brand_fit_cache",
+            "acp_contract.route", "acp_contract.atom_ranking", "acp_shared.angle_gate_request"} <= set(gc.reads)
 
 
 def test_named_lists_mirror_the_two_old_chains():
     assert TOUR_STAGES == ["segment", "landing", "score", "route"]
-    assert PLATFORM_STAGES == ["landing", "score", "route"]
+    # AA-988: the platform pass ends with the orphan GC, after ranking and routes are current
+    assert PLATFORM_STAGES == ["landing", "score", "route", "segment_gc"]
 
 
 # ── orchestrator ─────────────────────────────────────────────────────────────────────────────
@@ -230,7 +241,8 @@ async def test_platform_stages_pass_the_segment_scope_straight_to_landing():
          patch("services.acp_contract.atom_ranking.run_atom_ranking", AsyncMock(return_value={})), \
          patch("services.acp_contract.route_detection.run_route_detection",
                AsyncMock(return_value={})), \
-         patch("services.seo_intelligence.seed_builder.DFS_LOCATION_MAP", {"US": 1}):
+         patch("services.seo_intelligence.seed_builder.DFS_LOCATION_MAP", {"US": 1}), \
+         patch("services.acp_contract.segment_gc.run_segment_gc", AsyncMock(return_value={})):
         # scoped Segment set
         await run_stages(PLATFORM_STAGES, RecomputeScope(segment_ids={"a", "b"}), pool=object())
         assert landing.await_args.args[1] == {"a", "b"}
@@ -253,6 +265,7 @@ async def test_platform_stages_are_progress_silent_and_emit_no_per_tour_logs():
                AsyncMock(return_value={})), \
          patch("services.seo_intelligence.seed_builder.DFS_LOCATION_MAP",
                {"US": 1, "UK": 2, "AU": 3, "DE": 4, "FR": 5, "NL": 6}), \
+         patch("services.acp_contract.segment_gc.run_segment_gc", AsyncMock(return_value={})), \
          patch("services.recompute.stages.logger") as log:
         # Exactly how recompute_rankings_and_routes calls it: no progress argument.
         await run_stages(PLATFORM_STAGES, RecomputeScope(segment_ids={"a"}), pool=object())
@@ -320,9 +333,11 @@ async def test_recompute_segment_score_route_result_keys_unchanged():
 async def test_recompute_rankings_and_routes_result_keys_unchanged():
     from services.export import handler
     with patch("services.recompute.run_stages",
-               AsyncMock(return_value={"landing": {}, "score": {"US": {}}, "route": {"r": 1}})):
+               AsyncMock(return_value={"landing": {}, "score": {"US": {}}, "route": {"r": 1},
+                                      "segment_gc": {"mode": "report"}})):
         out = await handler.recompute_rankings_and_routes(object(), segment_ids=["s1"])
-    assert set(out) == {"ranking", "route"}
+    assert set(out) == {"ranking", "route", "segment_gc"}
+    assert out["segment_gc"] == {"mode": "report"}
     assert out["ranking"] == {"US": {}} and out["route"] == {"r": 1}
 
 

@@ -132,6 +132,13 @@ async def existing_vectors(conn, source_id: str) -> dict[str, str]:
     return {r["text_hash"]: r["v"] for r in rows}
 
 
+async def existing_places(conn, source_id: str) -> list[dict]:
+    """AA-989: the source's current place rows, for the component-id carry-over of a rebuild."""
+    return [dict(r) for r in await conn.fetch(
+        "SELECT component_id::text AS component_id, day_index, name, name_norm, destination_id::text AS destination_id,"
+        " place_card_id::text AS place_card_id FROM geo.tour_place WHERE source_id = $1", source_id)]
+
+
 # ── name links ───────────────────────────────────────────────────────────────────────────────
 
 def _keys_arrays(keys: Iterable[tuple]) -> tuple[list, list, list]:
