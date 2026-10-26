@@ -34,9 +34,10 @@ from tests.unit.aa976_m2m import CRM, OTHER_CLIENT, install_m2m
 
 CONTRACT = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "tenant.membership.v1.openapi.yaml"
 DOC = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
-# sha256 of AA-Ecosys docs/contracts/tenant.membership.v1.openapi.yaml (info.version 1.1, AA-979 activateInvitation).
+# sha256 of AA-Ecosys docs/contracts/tenant.membership.v1.openapi.yaml (info.version 1.2, AA-979:
+# TenantMembers.is_synthetic for the CRM's A10b check; 1.1 added activateInvitation).
 # Update the root file first, copy it here byte for byte, then set this to `sha256sum` of the root file.
-ROOT_CONTRACT_SHA256 = "d74fdaa2849fe784eb96e885a613f73f037c084a04b320136a85183137da1377"
+ROOT_CONTRACT_SHA256 = "1a2d5fc97bfae930fc92ff6e2fa44ae921a396b18325458aeaef9b9fd9807145"
 
 TENANT = str(uuid.uuid4())
 ISS = "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_zz978partner"
@@ -56,7 +57,8 @@ class FakeConn:
     """Answers the reader / feed SQL from in-memory rows."""
 
     def __init__(self) -> None:
-        self.tenant: Optional[dict] = {"tenant_id": uuid.UUID(TENANT), "is_active": True, "cancelled_at": None}
+        self.tenant: Optional[dict] = {"tenant_id": uuid.UUID(TENANT), "is_active": True, "cancelled_at": None,
+                                        "is_canary": False}
         self.members = [_member(), _member(status="invited", role="editor", invitation=uuid.uuid4())]
         self.events: list[dict] = []
         self.fail: Optional[BaseException] = None
@@ -232,6 +234,7 @@ def test_snapshot_conforms_and_lists_invited_and_active_only(client, issuer, con
     body = r.json()
     _valid("TenantMembers", body)
     assert body["tenant_state"] == "active"
+    assert body["is_synthetic"] is False
     assert sorted(m["status"] for m in body["members"]) == ["active", "invited"]
     invited = next(m for m in body["members"] if m["status"] == "invited")
     assert invited["identity"] is None and invited["invitation_id"]
@@ -250,6 +253,33 @@ def test_snapshot_etag_ignores_as_of_and_answers_304(client, issuer, conn):
     conn.members[0]["content_studio_role"] = "viewer"
     changed = client.get(url, headers={**_auth(issuer), "If-None-Match": etag})
     assert changed.status_code == 200 and changed.headers["ETag"] != etag
+
+
+@pytest.mark.parametrize("is_canary, served", [(True, True), (False, False), (None, False)])
+def test_snapshot_is_synthetic_reads_is_canary_and_is_never_null(client, issuer, conn, is_canary, served):
+    """1.2 (AA-979): is_synthetic is shared.tenants.is_canary, a NULL there served as false (CIS 281 made the
+    column nullable); the CRM's A10b check requires it to be true."""
+    conn.tenant["is_canary"] = is_canary
+    body = client.get(f"/tenant/membership/v1/tenants/{TENANT}/members", headers=_auth(issuer)).json()
+    _valid("TenantMembers", body)
+    assert body["is_synthetic"] is served
+
+
+def test_snapshot_etag_moves_when_is_synthetic_changes(client, issuer, conn):
+    url = f"/tenant/membership/v1/tenants/{TENANT}/members"
+    etag = client.get(url, headers=_auth(issuer)).headers["ETag"]
+    conn.tenant["is_canary"] = True
+    changed = client.get(url, headers={**_auth(issuer), "If-None-Match": etag})
+    assert changed.status_code == 200 and changed.headers["ETag"] != etag and changed.json()["is_synthetic"] is True
+
+
+def test_the_contract_requires_is_synthetic_as_a_boolean():
+    schema = DOC["components"]["schemas"]["TenantMembers"]
+    assert "is_synthetic" in schema["required"] and schema["properties"]["is_synthetic"]["type"] == "boolean"
+    body = {"tenant_id": TENANT, "tenant_state": "active", "members": [], "as_of": "2026-10-26T00:00:00Z"}
+    assert list(_schema("TenantMembers").iter_errors(body))
+    assert list(_schema("TenantMembers").iter_errors({**body, "is_synthetic": None}))
+    assert not list(_schema("TenantMembers").iter_errors({**body, "is_synthetic": True}))
 
 
 @pytest.mark.parametrize("is_active, cancelled, state", [(False, None, "locked"), (False, T0, "deleted"),

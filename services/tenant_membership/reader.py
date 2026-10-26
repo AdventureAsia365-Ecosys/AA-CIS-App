@@ -12,6 +12,9 @@ CRM role (the table has no column for any of them).
   feed; a member missing from the snapshot is not a member.
 - ``tenant_state``: ``deleted`` when the agency is offboarded (``cancelled_at``), ``locked`` when it is not active,
   else ``active`` (the same mapping as the CIS 276 tenant trigger).
+- ``is_synthetic`` (contract 1.2, AA-979): ``shared.tenants.is_canary`` is exactly TRUE (CIS 058: a synthetic canary
+  tenant); NULL and FALSE are served as false, never null. The CRM requires it before it lets the Dev-only E2E CIS
+  admin relay a studio invitation (root ADR 0006a A10b-1: exactly TRUE is synthetic, NULL or FALSE is real).
 - The lookup is keyed by iss AND sub (ADR 0006 decision 9), never sub alone.
 """
 
@@ -32,7 +35,7 @@ MAX_SUB = 128
 _MEMBER_COLS = ("membership_id, tenant_id, cognito_iss, cognito_sub, content_studio_role, status, invitation_id, "
                 "updated_at")
 
-TENANT_SQL = "SELECT tenant_id, is_active, cancelled_at FROM shared.tenants WHERE tenant_id = $1::uuid"
+TENANT_SQL = "SELECT tenant_id, is_active, cancelled_at, is_canary FROM shared.tenants WHERE tenant_id = $1::uuid"
 TENANT_MEMBERS_SQL = f"""
     SELECT {_MEMBER_COLS}
       FROM shared.tenant_members
@@ -127,6 +130,7 @@ async def tenant_members(conn: Any, tenant_id: str) -> Optional[dict]:
     return {
         "tenant_id": str(tenant["tenant_id"]),
         "tenant_state": tenant_state(tenant["is_active"], tenant["cancelled_at"]),
+        "is_synthetic": tenant["is_canary"] is True,
         "members": [membership_body(r) for r in rows],
     }
 
