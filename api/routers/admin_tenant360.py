@@ -34,6 +34,11 @@ AA-979 P2b adds the Content studio invitation (re-enrolment in the partner pool,
 * ``POST /admin/tenants/{id}/members/{membership_id}/invitation/send`` — send the invitation of an ``invited`` row
   again (the CRM is idempotent on ``cis_invitation_id``: it re-issues the same invitation with a new link).
 
+Both invitation routes are on the write allow-list of the Dev-only E2E CIS admin (root ADR 0006a A10b-1, AA-979 phase
+2 automation): :func:`_refuse_e2e_invitation` answers that session 403 ``e2e_read_only`` before any write or relay
+unless the tenant is synthetic (``is_canary``), the address is an E2E mailbox address and the role is viewer / editor
+(the body's role on a new invitation, the stored role on a send-again: :func:`_refuse_e2e_resend_role`).
+
 Cost definition is the AA-798 one (migration 223): ``shared.llm_call_log.cost_usd`` for the
 tenant, current calendar month (``date_trunc('month', now())``), Jev included, shadow rows
 (``quality_signal @> {"shadow": true}``) excluded — so the totals here add up to the
@@ -50,7 +55,8 @@ import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from api.core.staff_authz import staff_policy
+from api.core import e2e_staff
+from api.core.staff_authz import request_staff_identity, staff_policy
 
 from api.routers._billing import usage_row_to_dict
 from api.routers.admin import _admin_actor, verify_admin_secret
@@ -539,6 +545,41 @@ class MemberInviteResend(BaseModel):
     locale: Literal["en", "vi"] = "en"
 
 
+async def _refuse_e2e_invitation(request: Request, conn, tenant_id: UUID, email: str,
+                                 role: Optional[str] = None) -> None:
+    """AA-979 (root ADR 0006a A10b-1, S252): the Dev-only E2E CIS admin may invite (or send again) only on a synthetic
+    tenant (``shared.tenants.is_canary IS TRUE``), only to an address of the E2E mailbox domain and only as ``viewer``
+    or ``editor`` (a new invitation: the body's role, checked here; a send-again: the stored role of the membership,
+    checked by :func:`_refuse_e2e_resend_role` once the row is read). 403 ``e2e_read_only`` otherwise, before any row,
+    audit or relay.
+    Every other staff member is unaffected."""
+    if not getattr(request_staff_identity(request), "e2e_read_only", False):
+        return
+    reason = None
+    if role is not None and role not in e2e_staff.E2E_INVITE_ROLES:
+        reason = "role"
+    elif not e2e_staff.is_e2e_mailbox_address(email):
+        reason = "address"
+    elif not await e2e_staff.is_synthetic_tenant(conn, tenant_id):
+        reason = "tenant_not_synthetic"
+    if reason is not None:
+        logger.warning("tenant_member_invitation_e2e_refused", tenant_id=str(tenant_id), reason=reason)
+        raise HTTPException(status_code=403, detail=e2e_staff.E2E_READ_ONLY)
+
+
+def _refuse_e2e_resend_role(request: Request, tenant_id: UUID, member: dict) -> None:
+    """AA-979 (root ADR 0006a A10b-1): a send-again re-seals the existing invitation to the address in the body, so
+    the Dev-only E2E CIS admin may send again only an invitation whose role is ``viewer`` or ``editor``. Without this
+    check an A10b session could redirect an ``owner`` invitation a real admin created on a synthetic tenant to an
+    E2E mailbox and claim it as owner. 403 ``e2e_read_only`` before any relay. Every other staff member is
+    unaffected."""
+    if not getattr(request_staff_identity(request), "e2e_read_only", False):
+        return
+    if member.get("content_studio_role") not in e2e_staff.E2E_INVITE_ROLES:
+        logger.warning("tenant_member_invitation_e2e_refused", tenant_id=str(tenant_id), reason="role")
+        raise HTTPException(status_code=403, detail=e2e_staff.E2E_READ_ONLY)
+
+
 async def _deliver(request: Request, tenant_id: UUID, invitation_id: str, email: str, locale: str) -> dict:
     """Relay the invitation to the CRM (crm.ops.v1). Never raises: the outcome goes into the answer."""
     status, body = await crm_console.crm_ops_call(
@@ -567,6 +608,7 @@ async def invite_tenant_member(
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         await _require_tenant(conn, tenant_id)
+        await _refuse_e2e_invitation(request, conn, tenant_id, body.email, body.content_studio_role)
         try:
             member = await members_session.invite(conn, str(tenant_id), body.content_studio_role, actor)
         except members_session.TenantInactive as exc:
@@ -590,6 +632,7 @@ async def resend_tenant_member_invitation(
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         await _require_tenant(conn, tenant_id)
+        await _refuse_e2e_invitation(request, conn, tenant_id, body.email)
         try:
             members = await members_writer.list_members(conn, str(tenant_id))
         except asyncpg.UndefinedTableError as exc:
@@ -599,5 +642,6 @@ async def resend_tenant_member_invitation(
         raise HTTPException(status_code=404, detail="Membership not found")
     if member["status"] != "invited" or not member["invitation_id"]:
         raise HTTPException(status_code=409, detail="Only an invited membership has an invitation to send.")
+    _refuse_e2e_resend_role(request, tenant_id, member)
     delivery = await _deliver(request, tenant_id, member["invitation_id"], body.email, body.locale)
     return {"tenant_id": str(tenant_id), "member": member, "delivery": delivery}

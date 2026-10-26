@@ -19,7 +19,8 @@ tracking and every route below see the verified identity, never the client's.
   here with 403 ``{"detail": "e2e_read_only"}`` (logged ``staff_bearer_refused reason=e2e_read_only``) before the route
   runs, except the explicit allow-list ``e2e_staff.E2E_ALLOWED_WRITE_PATHS`` (POST on the two content-quality
   ``…/sentences/apply`` routes, matched in full on the concrete path; the route then accepts only ``cut`` /
-  ``manual``). ``/auth/verify-admin`` is not a staff path, so sign-in still works.
+  ``manual``; since AA-979, ADR 0006a A10b-1, POST on the two Content studio invitation routes, which then refuse
+  any tenant that is not synthetic). ``/auth/verify-admin`` is not a staff path, so sign-in still works.
 - **Any other Bearer** (legacy HS256 staff or tenant JWT without ``iss``, a JWT from another issuer such as a
   future EXTERNAL ``cis-portal`` token or the CIS-minted Booking RS256 token, or not a JWT) and **no Bearer**:
   passed through untouched; the route's own guard decides (``/admin/brand-identity`` and ``/admin/atoms`` take
