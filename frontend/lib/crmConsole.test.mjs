@@ -11,8 +11,11 @@ import { test } from "node:test";
 import {
   crmErrorText,
   dataRequestStatus,
+  formatLag,
   formatUsd,
   isTicket,
+  lockSourceText,
+  membershipFeed,
   parseUsd,
   pct,
   usdPct,
@@ -92,4 +95,51 @@ test("ticket references follow the CRM's pattern", () => {
   assert.equal(isTicket(" AA-941 "), true);
   assert.equal(isTicket("free text"), false);
   assert.equal(isTicket("AA941"), false);
+});
+
+// AA-978 follow-up: crm.ops.v1 1.2 TenantSummary.lock_source + membership_feed_state / membership_feed_lag_s.
+
+test("lockSourceText: null unless locked; names each source; a 1.1 producer reads 'source not reported'", () => {
+  assert.equal(lockSourceText({ state: "active", lock_source: null }), null);
+  assert.equal(lockSourceText({ state: "offboarded" }), null);
+  assert.deepEqual(
+    { code: lockSourceText({ state: "locked", lock_source: "aa_ops" }).code,
+      label: lockSourceText({ state: "locked", lock_source: "aa_ops" }).label },
+    { code: "aa_ops", label: "Locked by AA" });
+  assert.equal(lockSourceText({ state: "locked", lock_source: "cis_tenant" }).label, "Locked by CIS: tenant locked or deleted");
+  const m = lockSourceText({ state: "locked", lock_source: "cis_membership" });
+  assert.equal(m.label, "Locked by CIS: no active owner");
+  assert.match(m.detail, /owner recovery or an AA unlock/);
+  assert.equal(lockSourceText({ state: "locked" }).label, "Locked (source not reported)");
+  assert.equal(lockSourceText({ state: "locked", lock_source: null }).code, null);
+  assert.equal(lockSourceText({ state: "locked", lock_source: "future_src" }).label, "Locked (future_src)");
+});
+
+test("formatLag: seconds, minutes, hours, days; null means no pull yet", () => {
+  assert.equal(formatLag(null), "no successful pull yet");
+  assert.equal(formatLag(undefined), "no successful pull yet");
+  assert.equal(formatLag(0), "0 s");
+  assert.equal(formatLag(45), "45 s");
+  assert.equal(formatLag(720), "12 min");
+  assert.equal(formatLag(3600), "1 h");
+  assert.equal(formatLag(3 * 3600 + 5 * 60 + 9), "3 h 5 min");
+  assert.equal(formatLag(2 * 86400 + 4 * 3600), "2 d 4 h");
+  assert.equal(formatLag(86400), "1 d");
+});
+
+test("membershipFeed: health word + tone + last pull; absent or unknown state reads unknown", () => {
+  assert.deepEqual(
+    (({ state, label, tone, lastPull }) => ({ state, label, tone, lastPull }))(
+      membershipFeed({ membership_feed_state: "ok", membership_feed_lag_s: 42 })),
+    { state: "ok", label: "OK", tone: "success", lastPull: "42 s ago" });
+  assert.equal(membershipFeed({ membership_feed_state: "stale", membership_feed_lag_s: 900 }).tone, "warning");
+  assert.equal(membershipFeed({ membership_feed_state: "failing", membership_feed_lag_s: 900 }).tone, "danger");
+  const pending = membershipFeed({ membership_feed_state: "pending", membership_feed_lag_s: null });
+  assert.equal(pending.label, "Pending");
+  assert.equal(pending.lastPull, "none yet");
+  // A 1.1 producer sends neither field.
+  const old = membershipFeed({});
+  assert.equal(old.state, "unknown");
+  assert.equal(old.lastPull, "none yet");
+  assert.equal(membershipFeed({ membership_feed_state: "toString" }).state, "unknown");
 });

@@ -27,7 +27,19 @@ export interface TenantSummary {
   has_owner: boolean;
   holds_travellers: boolean;
   created_at: string;
+  /** crm.ops.v1 1.2 (AA-978): who locked the agency, set exactly while `state` is "locked" (null otherwise). Absent
+   * from a 1.1 producer. */
+  lock_source?: LockSource | null;
+  /** 1.2: the CIS membership feed the CRM pulls, platform-wide (the same value on every agency). Absent = unknown. */
+  membership_feed_state?: MembershipFeedState;
+  /** 1.2: seconds since the feed's last successful pull; null before the first one. */
+  membership_feed_lag_s?: number | null;
 }
+
+/** aa_ops: the L1 console (and every lock older than the CRM's lock source); cis_tenant: CIS locked or deleted the
+ * tenant; cis_membership: CIS removed the agency's last active owner. */
+export type LockSource = "aa_ops" | "cis_tenant" | "cis_membership";
+export type MembershipFeedState = "ok" | "pending" | "stale" | "failing" | "unknown";
 
 export interface TenantPage {
   items: TenantSummary[];
@@ -216,6 +228,71 @@ export const STATE_LABEL: Record<AgencyState, { label: string; tone: Tone }> = {
 
 export function stateLabel(state: string): { label: string; tone: Tone } {
   return (STATE_LABEL as Record<string, { label: string; tone: Tone }>)[state] ?? { label: state, tone: "neutral" };
+}
+
+// AA-978 follow-up (crm.ops.v1 1.2): who locked a locked agency, and the CIS membership feed's health.
+export const LOCK_SOURCE_LABEL: Record<LockSource, { label: string; detail: string }> = {
+  aa_ops: {
+    label: "Locked by AA",
+    detail: "Locked from this console (or before the CRM recorded who locked). An AA unlock lifts it.",
+  },
+  cis_tenant: {
+    label: "Locked by CIS: tenant locked or deleted",
+    detail: "CIS locked or deleted this tenant, and the membership feed passed it on. A CIS unlock lifts it.",
+  },
+  cis_membership: {
+    label: "Locked by CIS: no active owner",
+    detail: "CIS removed the agency's last active owner. The owner recovery or an AA unlock lifts it.",
+  },
+};
+
+/** Who locked the agency, or null when it is not locked. A locked agency from a 1.1 producer (no lock_source) reads
+ * "source not reported". */
+export function lockSourceText(
+  summary: Pick<TenantSummary, "state" | "lock_source">,
+): { code: string | null; label: string; detail: string } | null {
+  if (summary.state !== "locked") return null;
+  const src = summary.lock_source;
+  if (!src) return { code: null, label: "Locked (source not reported)", detail: "The CRM did not say who locked it." };
+  const known = (LOCK_SOURCE_LABEL as Record<string, { label: string; detail: string }>)[src];
+  return known ? { code: src, ...known } : { code: src, label: `Locked (${src})`, detail: "" };
+}
+
+export const FEED_STATE_LABEL: Record<MembershipFeedState, { label: string; tone: Tone; detail: string }> = {
+  ok: { label: "OK", tone: "success", detail: "The CRM is pulling CIS membership changes." },
+  pending: {
+    label: "Pending",
+    tone: "info",
+    detail: "No successful pull yet (also while the feed is not configured).",
+  },
+  stale: { label: "Stale", tone: "warning", detail: "No successful pull for 10 minutes." },
+  failing: { label: "Failing", tone: "danger", detail: "The last pulls failed." },
+  unknown: { label: "Unknown", tone: "neutral", detail: "The CRM cannot read the feed state." },
+};
+
+/** Seconds as "45 s", "12 min", "3 h 5 min", "2 d 4 h"; null → "no successful pull yet". */
+export function formatLag(seconds: number | null | undefined): string {
+  if (seconds == null || !Number.isFinite(seconds)) return "no successful pull yet";
+  const s = Math.max(0, Math.floor(seconds));
+  if (s < 60) return `${s} s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return m % 60 ? `${h} h ${m % 60} min` : `${h} h`;
+  const d = Math.floor(h / 24);
+  return h % 24 ? `${d} d ${h % 24} h` : `${d} d`;
+}
+
+/** The CIS membership feed's health word, tone and last successful pull ("12 min ago" / "none yet"). An absent or
+ * unrecognised state reads "unknown". */
+export function membershipFeed(
+  summary: Pick<TenantSummary, "membership_feed_state" | "membership_feed_lag_s">,
+): { state: MembershipFeedState; label: string; tone: Tone; detail: string; lastPull: string } {
+  const raw = summary.membership_feed_state;
+  const state: MembershipFeedState = raw && Object.hasOwn(FEED_STATE_LABEL, raw) ? raw : "unknown";
+  const lag = summary.membership_feed_lag_s;
+  const lastPull = lag == null || !Number.isFinite(lag) ? "none yet" : `${formatLag(lag)} ago`;
+  return { state, ...FEED_STATE_LABEL[state], lastPull };
 }
 
 export const DATA_REQUEST_STATUS_LABEL: Record<DataRequestStatus, { label: string; tone: Tone }> = {
