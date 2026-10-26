@@ -155,7 +155,9 @@ async def test_list_audit_tolerates_non_uuid_admin_actors(env):
 async def test_ai_spend_sql_rolled_and_raw_days_never_both(env):
     p = env.pool
     marker = f"aa884-{env.tag}"
-    d1, d2 = date(2026, 9, 10), date(2026, 9, 11)
+    # Days far outside any rollup window: another test runs the llm_call_daily rollup over the last 45 days, and once
+    # that window reached 11/09/2026 (on 26/10/2026) it wrote a daily row for d2 and hid the raw row (time bomb, S252).
+    d1, d2 = date(2024, 1, 10), date(2024, 1, 11)
     try:
         # d1: rolled up (llm_call_daily) AND a stray raw row that must be ignored; d2: raw only.
         await p.execute("""
