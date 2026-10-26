@@ -88,12 +88,25 @@ X1_POST_244_RLS = ("shared.tenant_brand_rules", "shared.tenant_seo_config",
                    "acp_shared.year_plan", "acp_deliver.tenant_tour_pages", "acp_contract.tour_atoms",
                    "shared.notifications",   # 274 part A (AA-986 L3)
                    "shared.writing_signal",  # 277 (AA-916), FORCE: also X1_POST_245_FORCE_RLS
-                   "shared.writing_rule")    # 280 (AA-917), FORCE: also X1_POST_245_FORCE_RLS
-# FORCE RLS tables of migrations applied on Dev AFTER 245 (CIS 277, AA-916; CIS 280, AA-917): their own
-# <table>_cis_owner_all policy (X1 S21 standing check). 245's guards and test_aa860_migration_245 know only its 8 FORCE
-# tables, and its teardown (x1_245_undo: DROP OWNED BY cis_owner) drops every policy TO cis_owner: x1_244_ci_shape
-# takes the policy off with the RLS, x1_244_ci_unshape (always after x1_245_undo) puts it back.
-X1_POST_245_FORCE_RLS = ("shared.writing_signal", "shared.writing_rule")
+                   "shared.writing_rule",    # 280 (AA-917), FORCE: also X1_POST_245_FORCE_RLS
+                   "shared.eval_golden_item",   # 284 (AA-919), FORCE: also X1_POST_245_FORCE_RLS
+                   "shared.eval_item_result")   # 284 (AA-919), FORCE: also X1_POST_245_FORCE_RLS
+# FORCE RLS tables of migrations applied on Dev AFTER 245 (CIS 277, AA-916; CIS 280, AA-917; CIS 284, AA-919): their
+# own <table>_cis_owner_all policy (X1 S21 standing check). 245's guards and test_aa860_migration_245 know only its 8
+# FORCE tables, and its teardown (x1_245_undo: DROP OWNED BY cis_owner) drops every policy TO cis_owner:
+# x1_244_ci_shape takes the policy off with the RLS, x1_244_ci_unshape (always after x1_245_undo) puts it back.
+X1_POST_245_FORCE_RLS = ("shared.writing_signal", "shared.writing_rule", "shared.eval_golden_item",
+                         "shared.eval_item_result")
+
+# AA-919: CIS 284's guard 1 requires 281, 282 and 283 registered (Dev order; readiness compares max(version), so a
+# missing predecessor would be hidden once 284 is in, critic 17). The replay skips 281 (above) and 282 / 283 may fail
+# here, so 284 is replayed with stand-in registry rows for whichever of them is missing, deleted right after (only the
+# rows this helper wrote); test_aa853 applies the real 281 itself and the AA-919 tests add the same stand-ins inside
+# their rolled-back transactions.
+X284_PREDECESSORS = ("281", "282", "283")
+X284_STANDIN_MARK = "zz-ci-standin (AA-919, conftest: 284 needs 281-283 registered)"
+X284_STANDIN_SQL = ("INSERT INTO shared.schema_versions (version, applied_at, description) "
+                    "VALUES (%s, now(), %s) ON CONFLICT (version) DO NOTHING")
 
 
 def _post_244_rls(cur, on):
@@ -491,6 +504,9 @@ def _apply_schema(conn):
                 "USING (tenant_id = current_setting('app.tenant_id', true))",
                 "USING (tenant_id = current_setting('app.tenant_id', true)::uuid)",
             )
+        if mf.startswith("284_"):
+            for version in X284_PREDECESSORS:
+                cur.execute(X284_STANDIN_SQL, (version, X284_STANDIN_MARK))
         # Use fresh connection per migration to avoid aborted transaction state
         try:
             mconn = psycopg2.connect(
@@ -509,6 +525,8 @@ def _apply_schema(conn):
             except: pass
         if mf.startswith("229_"):
             cur.execute("DROP TABLE IF EXISTS gold_aa_internal.tenant_tour_versions")
+        if mf.startswith("284_"):
+            cur.execute("DELETE FROM shared.schema_versions WHERE description = %s", (X284_STANDIN_MARK,))
 
     # Drop FK constraints in test env — cross-table seeding is fragile
     cur.execute("""

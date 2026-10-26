@@ -138,7 +138,8 @@ def _contexts(row: dict, args: dict):
                                  trip_places=tuple(wi.get("trip_places") or ()))
     ignore = hygiene.brand_words(pack.get("brand_name"))
     tell = ai_tells.TellContext(cta=args["cta"], angle_name=args["angle"].get("name"), source=hyg.source_text,
-                                ignore=ignore, keep_words=frozenset(hygiene.fold(w) for w in signature_words(pack)))
+                                ignore=ignore, keep_words=frozenset(hygiene.fold(w) for w in signature_words(pack)),
+                                angle_text=ai_tells.angle_text(args["angle"]))
     return hyg, tell
 
 

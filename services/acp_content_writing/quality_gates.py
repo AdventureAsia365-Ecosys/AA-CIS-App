@@ -50,7 +50,8 @@ from services.acp_content_writing import authenticity
 from services.acp_content_writing.hygiene import (EM_DASH_PATTERN, HygieneContext, brief_phrases, content_words,
                                                   contrast_excess, copies, dangling_opener, find_issues, fold,
                                                   names_place, near_verbatim, phrase_tokens, proper_nouns,
-                                                  sentence_spans, sibling_templates, template_lines)
+                                                  sentence_spans, sibling_templates, template_lines,
+                                                  unsupported_ages, unsupported_reasons)
 from services.acp_content_writing.trip_facts import TripFactContext, find_trip_fact_issues
 from services.acp_shared.channel_spec import (B2B_RE, EDITORIAL, GENERIC_OPENER_RE, HASHTAG_RE, STOCK_PATTERNS,
                                               ChannelSpec, channel_spec, first_sentence, opener_overlap,
@@ -2261,6 +2262,16 @@ def gate_voice(content_text: str, *, spec: Optional[ChannelSpec], stock_blocking
         if sentence in quoted and len(sentence.split()) >= _MIN_QUOTE_WORDS and not any(sentence in v for v in stock):
             stock.append(f"stock line '{line}' — say it plainly or cut it: '{sentence}'")
     stock += _brief_violations(text, brief_texts, exclude_texts, brand_name, spans, keyword)
+    # AA-790 round 3 — an age band or a founding reason the moment's source (seed lines + Facts: run_quality_gates'
+    # exclude_texts) does not give. Same one-repair-then-flag rule, never a hold.
+    source = "\n".join(t for t in exclude_texts or () if t)
+    for sp in spans:
+        for age in unsupported_ages(sp["clean"], source):
+            stock.append(f"{UNSUPPORTED_DETAIL_PREFIX}an age ('{age}') the source does not give — say it without the "
+                         f"age: '{sp['clean']}'")
+        for why in unsupported_reasons(sp["clean"], source):
+            stock.append(f"{UNSUPPORTED_DETAIL_PREFIX}a reason ('{why}') the source does not give — keep the source's "
+                         f"own purpose: '{sp['clean']}'")
     return _voice_result(list(dict.fromkeys(stock)), spec, stock_blocking)
 
 
@@ -2377,8 +2388,10 @@ WARN = "warn"
 F15_STOCK_PREFIXES = ("stock phrase '", "stock line '")
 # The order gate_voice builds F15_voice findings in, by kind (the violation's prefix). The two merged entries hold
 # them apart; expand_ledger puts them back in this order, which is the legacy order.
+# AA-790 round 3: an age band or a founding reason the moment's source does not give (gate_voice, last).
+UNSUPPORTED_DETAIL_PREFIX = "unsupported detail: "
 _F15_KIND_ORDER = ("stock phrase '", "contrast frame '", "repeats a line from an earlier piece", "stock line '",
-                   "pastes the brand brief")
+                   "pastes the brand brief", UNSUPPORTED_DETAIL_PREFIX)
 # Every source of a merged entry, in legacy ledger order.
 _SOURCE_ORDER = tuple(dict.fromkeys(s for srcs in qr.MERGED_GATES.values() for s in srcs))
 

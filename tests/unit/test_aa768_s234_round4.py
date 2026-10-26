@@ -116,6 +116,7 @@ R3_19_SOD = ("After Uran Togoo, the route continues to Sod Camp, where families 
              "The camp sits opposite a mountain range with trekking access nearby, and there is a mineral spring with "
              "reputed healing properties in the area. Sod Camp offers a quieter rhythm, with a mountain range nearby "
              "for optional trekking and a mineral spring in the area.")
+CONE = " Patches of forest surround the dark cone, visible above the green steppe."
 R3_19_REGISTER = ("Descending into a caldera on foot — feeling the scale of volcanic rock, seeing the depth, noticing how "
                   "the surrounding grasslands and forest sit above the crater floor — is something children and adults "
                   "register immediately. The dark volcanic rock, the green steppe grasslands and patches of forest that "
@@ -132,6 +133,23 @@ class TestDuplicates:
     def test_r3_19_paraphrased_duplicates_are_found_and_deleted(self, text, kind, later):
         dups = h.near_duplicates(text)
         assert any(d["kind"] == kind and d["later"]["clean"].startswith(later) for d in dups)
+        # AA-790 round 3 (S252): the fact-preservation invariant. The Sod Camp repeat adds 'optional' (trekking is
+        # optional) and the caldera repeat adds 'travellers'; neither word is anywhere else, so dedupe keeps them and
+        # they stay near-duplicates for F13_repeat (one repair). A repeat whose words are all elsewhere still goes.
+        out, log = h.dedupe(text)
+        if text is R3_19_STEPPE:
+            assert later not in out and log
+        else:
+            assert later in out and not log
+            assert any(d["kind"] == kind and d["later"]["clean"].startswith(later) for d in h.near_duplicates(out))
+
+    @pytest.mark.parametrize("text,later", [
+        (R3_19_SOD + " Trekking here is optional.", "Sod Camp offers a quieter rhythm"),
+        # (round-3 fourth review: a repeat delete takes no word out of the piece, fact class or not, so the piece also
+        # names the cone, the green steppe and the patches of forest the caldera repeat adds)
+        (R3_19_REGISTER + " Younger travellers keep pace." + CONE, "The dark volcanic rock"),
+    ])
+    def test_r3_19_repeat_goes_when_its_words_are_elsewhere(self, text, later):
         out, log = h.dedupe(text)
         assert later not in out and log
 
@@ -211,11 +229,20 @@ class TestFinalPass:
         assert residue
 
     def test_r3_19_shape_is_clean_after_the_pass(self):
-        text = f"## Where\n\n{R3_19_STEPPE}\n\n## Day 3\n\n{R3_19_REGISTER}\n\n{R3_19_SOD}\n\n{TERRA_CTA}.\n"
+        # AA-790 round 3 (S252): the piece also says the trekking is optional and names younger travellers, so the two
+        # repeats lose no fact word and still go (test_r3_19_repeats_that_add_a_fact_word_stay_as_residue: else not)
+        text = (f"## Where\n\n{R3_19_STEPPE} Younger travellers keep pace.{CONE}\n\n## Day 3\n\n{R3_19_REGISTER}\n\n"
+                f"{R3_19_SOD}\n\nTrekking here is optional.\n\n{TERRA_CTA}.\n")
         out, log, residue = ti.final_pass(text, _hyg(cta=TERRA_CTA, brand="Terra Family Expeditions"))
         assert residue == [] and len(log) >= 4
         for gone in ("The steppe is open.", "The dark volcanic rock", "Sod Camp offers a quieter rhythm"):
             assert gone not in out
+
+    def test_r3_19_repeats_that_add_a_fact_word_stay_as_residue(self):
+        text = f"## Where\n\n{R3_19_STEPPE}\n\n## Day 3\n\n{R3_19_REGISTER}\n\n{R3_19_SOD}\n\n{TERRA_CTA}.\n"
+        out, log, residue = ti.final_pass(text, _hyg(cta=TERRA_CTA, brand="Terra Family Expeditions"))
+        assert "The steppe is open." not in out
+        assert "The dark volcanic rock" in out and "Sod Camp offers a quieter rhythm" in out and residue
 
     def test_final_integrity_holds_an_approved_piece_with_a_residue(self):
         ledger = [{"gate": "F13_repeat", "passed": True, "blocking": True, "violations": []}]
@@ -474,13 +501,28 @@ class TestReviewStrictRepeat:
                  "herders of the remote taiga — is among the most distinct journeys the region offers.")
         recap = ("This route through northern Mongolia — from the caldera at Uran Togoo to the taiga camps of the "
                  "Tsaatan — rewards those who travel with curiosity and patience.")
-        text = f"{intro}\n\nThe camps move. The herds graze.\n\n## Plan\n\n{recap} {AH_CTA}."
+        # AA-790 round 3: the piece names the caldera and the Tsaatan before the recap (the fact invariant; round-3
+        # fourth review: every content word of the recap, 'caldera' too)
+        text = (f"{intro}\n\nThe camps move. The Tsaatan herds graze below the Uran Togoo caldera.\n\n## Plan\n\n"
+                f"{recap} {AH_CTA}.")
         out, log = h.dedupe(text, cta=AH_CTA)
         assert recap not in out and log
 
+    def test_a_closing_recap_that_names_new_places_is_kept(self):
+        """AA-790 round 3 (S252): the recap is the only mention of Uran Togoo and the Tsaatan, so the fact invariant
+        keeps it (F13_repeat still sees it)."""
+        intro = ("The route through northern Mongolia — from the volcanic terrain of Bulgan Province to the reindeer "
+                 "herders of the remote taiga — is among the most distinct journeys the region offers.")
+        recap = ("This route through northern Mongolia — from the caldera at Uran Togoo to the taiga camps of the "
+                 "Tsaatan — rewards those who travel with curiosity and patience.")
+        text = f"{intro}\n\nThe camps move. The herds graze.\n\n## Plan\n\n{recap} {AH_CTA}."
+        out, log = h.dedupe(text, cta=AH_CTA)
+        assert recap in out and not log
+
     def test_a_closing_copy_is_still_cut(self):
         a = "Lake Khövsgöl holds about seventy percent of Mongolia's fresh water in a high mountain-rimmed basin."
-        b = "Lake Khövsgöl holds about seventy percent of Mongolia's fresh water in a high mountain basin today."
+        # (AA-790 round 3: without the closing 'today', a time word the fact invariant would keep)
+        b = "Lake Khövsgöl holds about seventy percent of Mongolia's fresh water in a high mountain basin."
         text = f"{a}\n\nThe camps move. The herds graze.\n\n## Plan\n\n{b} {AH_CTA}."
         out, log = h.dedupe(text, cta=AH_CTA)
         assert b not in out and log

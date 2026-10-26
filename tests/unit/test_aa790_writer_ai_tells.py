@@ -32,8 +32,6 @@ def _run(text: str, ctx: TellContext = CTX) -> tuple[str, list[str]]:
 
 @pytest.mark.parametrize("before, after", [
     # "not X. It is Y." (58716823, 631f8533, 18a7bbd3): the denial joins what the thing is
-    ("In Bhutan, heritage is not only preserved. It remains in active use.",
-     "In Bhutan, heritage remains in active use."),
     ("Eating puta in Ura is not a cultural add-on. It is a direct consequence of the valley's altitude.",
      "Eating puta in Ura is a direct consequence of the valley's altitude."),
     ("To visit their settlements is not to encounter a preserved exhibit. It is to meet a living community.",
@@ -42,9 +40,6 @@ def _run(text: str, ctx: TellContext = CTX) -> tuple[str, list[str]]:
      "For a traveller heading north, Kuang Si Falls is a threshold."),
     ("The seasonal movement of the monk body is not a performance of tradition. It is tradition, still practised.",
      "The seasonal movement of the monk body is tradition, still practised."),
-    # one sentence: "X is not A; it is B" (d99c621c)
-    ("The elder may share local history. This is not a performance; it is an offer that depends on the evening.",
-     "The elder may share local history. This is an offer that depends on the evening."),
     # "not because …, but because …" (be02eff4)
     ("This is one of the encounters the journey offers, not because it is remote, but because of what it "
      "represents.", "This is one of the encounters the journey offers because of what it represents."),
@@ -69,9 +64,11 @@ def _run(text: str, ctx: TellContext = CTX) -> tuple[str, list[str]]:
     # the article agrees with the word left after the cut
     ("Families get a genuine encounter with a herding community.",
      "Families get an encounter with a herding community."),
-    # internal label (58716823)
+    # internal label (58716823); the label names the centre again later (round 3: else the name is a fact it keeps)
     ("The route continues to the handloom centre in Khaling, in Trashigang District, referred to throughout as the "
-     "Khaling National Handloom.", "The route continues to the handloom centre in Khaling, in Trashigang District."),
+     "Khaling National Handloom. The Khaling National Handloom trains weavers.",
+     "The route continues to the handloom centre in Khaling, in Trashigang District. The Khaling National Handloom "
+     "trains weavers."),
     # long flat sentence: a semicolon joining two clauses with their own subject (631f8533)
     ("Reindeer in Tsaatan culture are used for riding and for milk; the herds are rarely kept for their meat at all.",
      "Reindeer in Tsaatan culture are used for riding and for milk. The herds are rarely kept for their meat at all."),
@@ -86,7 +83,6 @@ def test_pilot_pattern_is_rewritten(before, after):
 @pytest.mark.parametrize("cut", [
     "That's the opening.",                                   # cfd502a1
     "This is the section worth slowing down for.",           # 6ff4a4a8
-    "That is a good second day.",                            # 6ff4a4a8
     "This is the day the trip opens up properly.",           # cfd502a1
     "These are not backdrop destinations.",                  # be02eff4 (a lone denial)
     "What the institute produces is not decorative.",        # 7114d650
@@ -217,7 +213,8 @@ def test_practical_facts_are_kept(para):
 
 @pytest.mark.parametrize("before, after", [
     # the copula fold still fires on a parallel complement
-    ("The hall is not grey but very green.", "The hall is very green."),
+    # (fourth review of round 3: 'not grey' is a denied word, a fact; test_aa790_fact_invariant keeps it)
+    ("The hall is not a relic but a working temple.", "The hall is a working temple."),
     ("The dzong is not a museum but a working monastery where monks still live.",
      "The dzong is a working monastery where monks still live."),
     # 631f8533: a wh-clause inside Y's noun phrase is not a new clause
@@ -238,8 +235,10 @@ def test_a_denial_the_seed_states_is_kept():
     out, log = _run(_blog(para), ctx)
     assert "The reindeer are not raised primarily for meat. They are used for riding" in out
     assert not any("X is not A" in ln for ln in log)
-    joined, _ = _run(_blog(para))  # without the seed it is a set-up: the denial goes
-    assert "The reindeer are used for riding and as pack animals." in joined
+    # fourth review of round 3: without the seed the denied words (raised, primarily, meat) are facts by default
+    kept, log = _run(_blog(para))
+    assert para in kept  # the refused pair carries the semicolon split with it: the sentence is left whole
+    assert any("skipped X is not A; it is B (drops a fact: raised, primarily, meat)" in ln for ln in log), log
 
 
 def test_a_contrast_the_seed_states_is_kept():
@@ -275,8 +274,34 @@ def test_an_edit_that_breaks_the_text_is_skipped_and_logged():
     assert log and all("skipped" in ln for ln in log)
 
 
+@pytest.mark.parametrize("kept, fact", [
+    # round 3 (S252): the fact-preservation invariant keeps what a round-1 proposer would have dropped. 'not only X'
+    # asserts X (the join lost 'heritage is preserved'), 'second day' is a day number, and a label that names the
+    # centre once is its only name in the piece.
+    ("The falls drop into turquoise pools. That is a good second day. The water is suitable for swimming.", "second"),
+    ("The route continues to the handloom centre in Khaling, in Trashigang District, referred to throughout as the "
+     "Khaling National Handloom.", "national"),
+    # round 3, fifth review (S252): the staging exemption never holds in an inline pair 'X is not A; it is B'
+    # (d99c621c): the denied word is read as a fact there, as in 'The water is not treated; it is drawn …'
+    ("The elder may share local history. This is not a performance; it is an offer that depends on the evening.",
+     "performance"),
+])
+def test_pilot_proposals_the_fact_invariant_refuses(kept, fact):
+    text = _blog(kept)
+    out, log = _run(text)
+    assert out == text
+    assert len(log) == 1 and log[0].startswith("ai_tells: skipped ") and f"drops a fact: {fact}" in log[0]
+
+
+def test_a_not_only_pair_is_never_proposed():
+    """Round 3, fifth review (S252): 'not only / just / simply / merely X' asserts X; ``_pair`` keeps the pair whole
+    (it used to propose the join, which the invariant then refused)."""
+    text = _blog("In Bhutan, heritage is not only preserved. It remains in active use.")
+    assert _run(text) == (text, [])
+
+
 def test_the_pass_is_idempotent_and_clears_the_fixable_tells():
-    text = _blog("In Bhutan, heritage is not only preserved. It remains in active use.",
+    text = _blog("Eating puta in Ura is not a cultural add-on. It is a direct consequence of the valley's altitude.",
                  "Crucially, the institute supplies artisans. That's the opening.",
                  "The NHDC centre is a government enterprise, not a heritage attraction.")
     once, _ = _run(text)

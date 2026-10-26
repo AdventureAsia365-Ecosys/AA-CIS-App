@@ -656,6 +656,329 @@ def content_words(sentence: str, ignore: frozenset = frozenset()) -> list[str]:
     return [w[:-1] if w.endswith("s") and len(w) > 4 else w for w in words]
 
 
+# ---------------------------------------------------------------- fact tokens (AA-790 round 3, S252)
+
+# The fact-preservation invariant: code that deletes words for style (ai_tells.rewrite, the repeat deletes of
+# dedupe / autofix) may remove a sentence or a clause only when every FACT TOKEN of what it removed still appears in
+# the text after the edit. Three review rounds kept finding a new rule chain that deleted a fact (a join the verdict
+# rule then cut, a denial that was itself the access rule, a place choice folded away …); the rules stay as
+# proposers and this check is the arbiter, so a chain cannot lose a fact whatever its rules. A token is a fact when
+# it is a number, a unit, a time / day / month / season / weather word, a limit or rule word, a person / audience
+# noun, a place / amenity / access / vehicle noun, a position word, a superlative (or the word after most / least),
+# a practical word, a proper name (a capitalised word that does not open its sentence or line), or any other
+# content word the seed + Facts use. Purely evaluative words are never facts. Closed lists, singular forms (the
+# plural forms are matched through _forms).
+_FACT_NUMBER_WORDS = frozenset("""zero one two three four five six seven eight nine ten eleven twelve thirteen
+fourteen fifteen sixteen seventeen eighteen nineteen twenty thirty forty fifty sixty seventy eighty ninety
+hundred thousand million dozen half first second third fourth fifth sixth seventh eighth ninth tenth last
+final""".split())
+_FACT_UNITS = frozenset("""km kilometre kilometer metre meter mile ft feet foot cm mm kg kilo gram litre liter hour hr
+minute min day night week month year decade century centurie percent degree celsius fahrenheit usd dollar euro
+nu ngultrum baht dong kip tugrik""".split())
+_FACT_TIME_WORDS = frozenset("""monday tuesday wednesday thursday friday saturday sunday weekend weekday january
+february march april june july august september october november december spring summer autumn winter monsoon
+season seasonal dry wet rainy rain snow snowfall ice icy fog foggy mist misty heat humid humidity cold hot
+warm cool chilly freezing wind windy storm weather temperature dawn dusk sunrise sunset morning afternoon
+evening noon midday midnight today tonight tomorrow daily weekly monthly annual annually yearly early late
+overnight daytime festival holiday""".split())
+_FACT_LIMIT_WORDS = frozenset("""only except until till unless after before without beyond within closed shut open
+passable impassable accessible inaccessible allowed permitted forbidden prohibited banned restricted required
+mandatory compulsory included excluded extra free maximum minimum max limit limited""".split())
+_FACT_PERSON_WORDS = frozenset("""traveller traveler family families kid child children adult teen teenager youngster
+explorer adventurer couple parent guest hiker trekker walker climber rider swimmer nonswimmer passenger
+pedestrian cyclist motorist driver beginner novice infant toddler baby babie senior elderly visitor tourist
+foreigner local pilgrim devotee worshipper monk nun lama priest novice women woman men man girl boy lady ladie
+gentleman gentlemen group solo pregnant member student pupil vegetarian vegan wheelchair user people person
+anyone buddhist hindu muslim christian layman laypeople""".split())
+_FACT_PLACE_WORDS = frozenset("""road track path trail footpath bridge gate entrance exit door ferry ferrie boat pier
+jetty dock harbour harbor port station bus buse train car jeep vehicle taxi bike bicycle horse pony ponie
+cable lift stair step ladder ramp toilet restroom bathroom shower water drinking tap electricity power wifi
+signal phone mobile coverage internet heating heated heater alcohol beer wine food shop market cafe restaurant
+kitchen room dining terrace courtyard chapel shrine hall lodge hotel homestay guesthouse camp campsite camping
+tent parking beach pool river lake sea current swimming swim bathing fishing diving guided guide public
+private licensed staffed ticket permit cash card atm online booking reservation altitude elevation halfway
+middle end start top summit bottom base edge side inner outer upper lower north south east west northern
+southern eastern western above below inside outside upstream downstream uphill downhill""".split())
+SUPERLATIVE_WORDS = frozenset("""best worst highest lowest longest shortest hardest easiest coldest hottest warmest
+coolest wettest driest busiest quietest calmest oldest newest youngest biggest largest smallest steepest
+deepest shallowest fastest quickest slowest nearest closest furthest farthest safest cheapest latest earliest
+toughest windiest sunniest rainiest muddiest narrowest widest emptiest fullest""".split())
+EVALUATIVE_WORDS = frozenset("""important striking telling memorable rewarding interesting remarkable significant
+meaningful beautiful moving powerful revealing compelling evocative satisfying special impressive affecting
+atmospheric extraordinary fascinating intriguing genuine genuinely truly real really rare unique deep deeper
+richer quiet subtle honest simple single whole particular specific concrete different living""".split())
+# What a practical, rule or access sentence turns on (ai_tells _PROTECTED_RE / _PRACTICAL_RE, as words).
+_FACT_PRACTICAL_WORDS = frozenset("""allow allowed permit permitted possible suitable safe unsafe include included
+includes including available require required requires recommended optional guaranteed offered necessary must
+dangerous risk compulsory essential obligatory charge charged charges cost costs costly fee paid payable price
+priced refundable bookable booked reachable easy easier difficult difficulty hard strenuous steep tiring
+demanding physical far long short deep shallow crowded busy noisy cheap cheaper expensive affordable stroller
+pram tipping""".split())
+# Content words that never make a seed fact on their own: the piece talking about itself and generic frame words.
+_FACT_GENERIC = frozenset("""trip journey route section stop moment part opening point kind sort type thing place
+story experience way day referred called known named spelled rendered""".split()) | EVALUATIVE_WORDS
+# The seed's own line labels and boilerplate (atom_seed.compose_seed): never seed words of a piece.
+_SEED_BOILERPLATE = ("(do not place it in any other town, region or country)",
+                     "(do not name any other country or region for it)", "(the itinerary calls it",
+                     "Place background (checked facts about the place itself — you may use these; "
+                     "they say nothing about what this trip does):")
+_SEED_LABEL_RE = re.compile(r"^(?:Source itinerary|Why it matters|Location|Naming|Season|Status):|\[Fact id=[^\]\n]*\]"
+                            r"|\bof the trip\b", re.M)
+# A settlement noun is a topic, like a name: kept when the text still names it ('present the village as a stage').
+_FACT_TOPIC_WORDS = frozenset("village town city hamlet settlement".split())
+_FACT_CLASSES = (_FACT_NUMBER_WORDS | _FACT_TIME_WORDS | _FACT_LIMIT_WORDS | _FACT_PERSON_WORDS | _FACT_PLACE_WORDS
+                 | SUPERLATIVE_WORDS | _FACT_PRACTICAL_WORDS)
+_FACT_TOKEN_RE = re.compile(r"[^\W\d_]+|\d+|[%°]")
+# Round-3 fourth review (S252): the closed lists cannot name every practical fact ('The spring water is not potable',
+# 'The trail is not waymarked', 'This is not an insured activity', 'The rooms are not air-conditioned'). So what a
+# denial denies is a fact by default: every content word in the scope of not / no / never / nor / n't (to the end of
+# its clause: , ; : . ! ? ( ) — or 'but', at most _DENIAL_SCOPE words) is a DENIED fact token, kept only when the
+# edit's own new text still carries it ('This is not a performance of tradition. It is tradition, still practised.'
+# keeps 'tradition'). 'not because …' and 'not just / merely / simply …' deny nothing (the clause after them is a
+# reason or is asserted). The exceptions are the words a staging or framing denial is about, which carry no fact a
+# reader plans by: a staged, dead or packaged thing ('not a museum', 'not a performance', 'not a backdrop'), the
+# tourist gaze ('not a photo stop', 'not a postcard', 'not a single sudden view'), a thing that sells or announces
+# itself ('does not sell itself', 'does not advertise its age'), and the abstract frame of a reframe ('not a gradual
+# fade', 'not incidental', 'not by a calendar', 'no guidebook can substitute'). Stop words, evaluative and generic
+# frame words (``_FACT_GENERIC``) never count; a name, a settlement or a seed word keeps its own reading.
+_DENIAL_WORDS = frozenset("not no never nor cannot neither".split())
+_DENIAL_VOID_NEXT = frozenset("because just merely simply".split())
+_DENIAL_SCOPE = 8
+DENIED = "denied"  # fact_tokens kind of a denied word (closed: True, name / seed word: False)
+_DENIABLE_WORDS = frozenset("""museum exhibit exhibition show showpiece performance performed performing spectacle
+staged scripted display displayed replica relic ruin backdrop postcard picture photo photograph snapshot souvenir
+attraction sight sightseeing scenery spectator view viewing sudden theme park set stage piece curiosity curiositie
+novelty noveltie gimmick costume costumed artefact artifact archive archival object note static frozen dead preserved
+polished packaged curated manufactured artificial decorative ornamental quaint picturesque pretty exotic nostalgic
+romantic cultural heritage add addon landscaped manicured garden memorial glimpse spot landmark destination headline
+checklist box tick list bucket detour
+stopover filler footnote afterthought interlude formality gesture token symbol metaphor abstraction idea concept
+theory cliche slogan label accident accidental incidental coincidence coincidental random arbitrary chance
+significance importance gradual fade fading blur blurred line boundary sequence separate approach building
+calendar guidebook substitute replicate rival encounter itself themselves himself herself announce advertise
+monument commemorating commemorate commemorative version softened watered diluted sanitised sanitized dramatic
+revelation distance historical historic studied regarded treated any trick illusion
+sell shout boast brag flaunt trumpet pretend posture present position charm age something anything nothing
+everything someone anyone thing lot much many few little sense matter question""".split())
+# A word right before a particle is a phrasal verb or noun, not its fact sense: 'warm-up', 'check-in', 'opens up'
+# ('up to 12' is a limit and stays).
+_PARTICLE_AFTER_RE = re.compile(r"-(?:up|in|off|out|over|down)\b|[ \t]up\b(?![ \t]+to\b)")
+_SENTENCE_BREAK_CHARS = frozenset(".!?\n")
+_CLAUSE_BREAK_CHARS = frozenset(".!?\n,;:()—–")
+# Fifth review of round 3 (S252, ship criterion): the _DENIABLE_WORDS exemption holds only where a staging denial
+# lives, the copula frame ('X is not a museum', 'is no accident', 'that no guidebook can substitute', 'does not present
+# itself as a backdrop', 'taught not as a museum object, but as …', 'set not by a calendar') and a copula complement
+# with a ', not X' tail ('a government enterprise, not a heritage attraction'). It never holds in a ', not X' tail
+# after a lexical verb, a modal or a preposition ('You can sketch the murals, not photograph them', 'sells raw wool,
+# not souvenirs', 'is for prayer, not photos'), in a place / time contrast ('not in the garden'), at a sentence start
+# ('No photos inside.') or in an inline pair ('The water is not treated; it is drawn …'): there the denied word is
+# a rule, a sale, a schedule or a safety fact like any other.
+_DENIABLE_COPULA_BEFORE = frozenset("""is are was were be been being s re isn aren wasn weren remains remain stays
+stay becomes become seems seem""".split())
+_DENIABLE_OTHER_BEFORE = frozenset("does do did doesn don didn that which".split())
+_ROLE_PREPOSITIONS = frozenset("as by".split())
+_NOT_ROLE_PREPOSITIONS = frozenset("""in at on from into onto through during inside outside near beside behind
+under below above over before after until till within across along around past via for with about""".split())
+_NEXT_WORD_RE = re.compile(r"[ \t]*([^\W\d_]+)")
+_TO_PLACE_RE = re.compile(r"[ \t]+(?:(?:[Tt]he|[Aa]n?|[Ii]ts|[Tt]heir|[Tt]his|[Tt]hat)\b|[A-Z])")
+_INLINE_AFTER_RE = re.compile(r"[ \t]*(?:it|this|that|they)(?:[ \t]+(?:is|are|was|were)|['’](?:s|re))\b", re.I)
+_BUT_AHEAD_RE = re.compile(r"\bbut\b", re.I)
+_TAIL_COPULA_RE = re.compile(r"\b(?:is|are|was|were|remains?|stays?|becomes?)[ \t]+(?P<comp>[^,;:.!?\n]{1,80})$"
+                             r"|['’](?:s|re)[ \t]+(?P<comp2>[^,;:.!?\n]{1,80})$", re.I)
+_DENIABLE_WINDOW = 200
+
+
+def _deniable_frame(raw: str, start: int, end: int, prev: str, gap: str) -> bool:
+    """The denial word at raw[start:end] (after ``prev``, ``gap`` between them) is in a staging frame where the
+    _DENIABLE_WORDS exemption holds (see the block comment above). Reads at most _DENIABLE_WINDOW characters each
+    way: linear in the text."""
+    nxt = _NEXT_WORD_RE.match(raw, end)
+    nxt_word = fold(nxt.group(1)) if nxt else ""
+    if nxt_word in _NOT_ROLE_PREPOSITIONS or (nxt_word == "to" and _TO_PLACE_RE.match(raw, nxt.end())):
+        # 'not in the garden', 'not at noon', 'not for photos', 'not to the lake': a place, time or purpose choice
+        # ('is not to encounter a preserved exhibit' is an infinitive: the frame stands)
+        return False
+    ahead = raw[end:end + _DENIABLE_WINDOW]
+    stop = next((k for k, c in enumerate(ahead) if c in _CLAUSE_BREAK_CHARS), len(ahead))
+    if stop < len(ahead) and ahead[stop] in ";:," and _INLINE_AFTER_RE.match(ahead, stop + 1):
+        return False  # an inline pair: 'X is not A; it is B'
+    if any(c in _SENTENCE_BREAK_CHARS for c in gap):
+        return False  # a sentence that opens on its denial ('No photos inside the temple.')
+    if ":" in gap:
+        return True  # '…: not a relic, but a working institution'
+    if "," in gap:
+        sentence_end = next((k for k, c in enumerate(ahead) if c in _SENTENCE_BREAK_CHARS), len(ahead))
+        if _BUT_AHEAD_RE.search(ahead, 0, sentence_end):
+            return nxt_word in _ROLE_PREPOSITIONS  # ', not as museum objects, but as living practice'
+        back = raw[max(0, start - _DENIABLE_WINDOW):start].rstrip().rstrip(",")
+        cut = max(back.rfind(c) for c in ".!?\n;:(")
+        tail = _TAIL_COPULA_RE.search(back[cut + 1:])
+        if not tail:
+            return False  # ', not X' after a lexical verb or a modal
+        comp = (tail.group("comp") or tail.group("comp2") or "").split()
+        first = fold(comp[0]) if comp else ""
+        return bool(comp) and len(comp) <= 8 and first not in _NOT_ROLE_PREPOSITIONS and not (
+            len(first) > 4 and first.endswith("ed"))  # 'is served in …, not …' / 'is for prayer, not photos'
+    return prev in _DENIABLE_COPULA_BEFORE or prev in _DENIABLE_OTHER_BEFORE or nxt_word in _ROLE_PREPOSITIONS
+
+
+# Fifth review of round 3 (S252): a 'This / That is …' sentence says what a thing IS ('This is the sky burial site.',
+# 'This is the cremation ground.', 'This is where the porters change shifts.'). The nouns of its complement's first
+# noun phrase (and the N of 'This kind of N') are facts read by presence: a verdict cut stands only when the text
+# still names them. Piece-meta, generic and evaluative words never count ('This is the section worth slowing down
+# for.', 'That's the opening.', 'This is the most rewarding part of the day.').
+_VERDICT_NP_RE = re.compile(
+    r"(?:^|(?<=[.!?\n]))[ \t\"“‘'(]*(?:This|That)(?:[ \t]+(?:kind|sort|type)[ \t]+of[ \t]+(?P<sn>[^\W\d_]+))?"
+    r"(?:['’]s|[ \t]+(?:is|was))[ \t]+(?!(?:not|never|no)\b)(?:(?:where|what|how|why|when)[ \t]+)?"
+    r"(?:(?:the|a|an|its|their|our|your|this|that|these|those)[ \t]+)?(?P<np>[^,;:.!?\n]{1,120})")
+_VERDICT_META = frozenset("""day days trip trips journey journeys route routes section sections stop stops moment
+moments piece post article paragraph good great fine nice proper fair useful welcome fitting whole""".split())
+_VERDICT_NP_BREAK = frozenset("worth".split()) | frozenset(t for t in _STOP if t not in ("most", "least", "more"))
+_VERDICT_NP_WORDS = 3
+
+
+def _verdict_nouns(raw: str) -> set[int]:
+    """The start offsets of the protected nouns of every 'This / That is …' sentence in ``raw``. Linear."""
+    out: set[int] = set()
+    for m in _VERDICT_NP_RE.finditer(raw):
+        cands = []
+        if m.group("sn"):
+            cands.append((m.start("sn"), m.group("sn")))
+        n = 0
+        for w in _FACT_TOKEN_RE.finditer(m.group("np")):
+            t = fold(w.group(0))
+            if t in _VERDICT_NP_BREAK or t.endswith("ly") or n >= _VERDICT_NP_WORDS:
+                break
+            n += 1
+            cands.append((m.start("np") + w.start(), w.group(0)))
+        for pos, word in cands:
+            t = fold(word)
+            if (len(t) > 2 and not t.endswith("ing") and t not in _STOP and t not in _VERDICT_META
+                    and not any(f in _FACT_GENERIC or f in EVALUATIVE_WORDS for f in _forms(t))):
+                out.add(pos)
+    return out
+
+
+def _forms(token: str) -> tuple:
+    """The forms one lower-case token is matched by: itself and its singular candidates ('leeches' → leeches,
+    leeche, leech; 'ferries' → …, ferry). Two tokens match when their forms meet."""
+    t = token
+    out = [t]
+    if len(t) > 3 and t.endswith("s") and not t.endswith("ss"):
+        out.append(t[:-1])
+        if len(t) > 4 and t.endswith("es"):
+            out.append(t[:-2])
+        if len(t) > 4 and t.endswith("ies"):
+            out.append(t[:-3] + "y")
+    return tuple(out)
+
+
+def word_forms(text: Optional[str]) -> frozenset:
+    """Every form of every word of ``text`` (citation tags out): the set a fact token is looked up in. Linear."""
+    return frozenset(f for m in _FACT_TOKEN_RE.finditer(fold(strip_tags(text or ""))) for f in _forms(m.group(0)))
+
+
+def source_forms(source: Optional[str]) -> frozenset:
+    """``word_forms`` of the seed + Facts without its line labels and boilerplate, stop words and generic frame
+    words: the seed-word fact class."""
+    text = source or ""
+    for b in _SEED_BOILERPLATE:
+        text = text.replace(b, " ")
+    text = _SEED_LABEL_RE.sub(" ", text)
+    return frozenset(f for f in word_forms(text) if f not in _STOP and f not in _FACT_GENERIC and len(f) > 2)
+
+
+def fact_tokens(text: Optional[str], seed_forms: frozenset = frozenset(), *,
+                heading: bool = False) -> list[tuple[str, object]]:
+    """The fact tokens of ``text`` in order: (lower-case token, kind) where the kind is True for the closed classes
+    (number, unit, time, limit, person, place / amenity, position, superlative, practical word), False for a name or
+    a seed word and ``DENIED`` for any other content word a denial denies (fourth review). One pass, linear in the
+    text. A ``heading`` is a title-case label over its section: only its seed
+    and settlement words count (an angle label's 'Two Worlds', 'Family Anchor' are brief words, not facts)."""
+    raw = strip_tags(text or "")
+    out: list[tuple[str, bool]] = []
+    prev_end, prev = -1, ""
+    denied, prev_neg = 0, False  # words left in the scope of the last denial word (fourth review)
+    deniable = False  # the last denial is a staging frame (fifth review: _deniable_frame)
+    verdict_nouns = set() if heading else _verdict_nouns(raw)
+    for m in _FACT_TOKEN_RE.finditer(raw):
+        word = m.group(0)
+        t = fold(word)
+        forms = _forms(t)
+        gap = raw[prev_end:m.start()] if prev_end >= 0 else "."
+        if denied and (any(c in _CLAUSE_BREAK_CHARS for c in gap) or t == "but"
+                       or (prev_neg and t in _DENIAL_VOID_NEXT)):
+            denied = 0  # the clause ends; or 'not because …', 'not just …': nothing is denied
+        number_before = prev.isdigit() or prev in _FACT_NUMBER_WORDS
+        if heading or _PARTICLE_AFTER_RE.match(raw, m.end()):  # 'warm-up', 'opens up', 'check-in': phrasal
+            pass
+        elif (word.isdigit() or word in "%°" or any(f in _FACT_CLASSES for f in forms)
+                or (number_before and (t == "m" or any(f in _FACT_UNITS for f in forms)))  # '900 m', 'two hours'
+                or (prev in ("most", "least") and t not in EVALUATIVE_WORDS and t not in _STOP)):
+            out.append((t, True))
+        else:
+            initial = prev_end < 0 or any(c in _SENTENCE_BREAK_CHARS for c in gap)
+            if ((not heading and not initial and word[:1].isupper() and word != "I") or t in _FACT_TOPIC_WORDS
+                    or (len(t) > 2 and t not in _STOP and t not in _FACT_GENERIC
+                        and any(f in seed_forms for f in forms))
+                    or m.start() in verdict_nouns):  # fifth review: 'This is the sky burial site.'
+                out.append((t, False))
+            elif (denied and len(t) > 2 and t not in _STOP and t not in _FACT_GENERIC
+                    and not (deniable and any(f in _DENIABLE_WORDS for f in forms))):
+                out.append((t, DENIED))  # 'not potable', 'not waymarked', 'no lifejackets'
+        prev_neg = t in _DENIAL_WORDS or (t == "t" and raw[m.start() - 1:m.start()] in ("'", "’"))  # n't
+        if prev_neg and not heading:
+            denied = _DENIAL_SCOPE + 1
+            deniable = _deniable_frame(raw, m.start(), m.end(), prev, gap)
+        if denied:
+            denied -= 1
+        prev_end, prev = m.end(), t
+    return out
+
+
+def _form_counts(texts: list[str]) -> dict[str, int]:
+    """How many words of ``texts`` each form stands for (each word counts once per form)."""
+    counts: dict[str, int] = {}
+    for text in texts:
+        for m in _FACT_TOKEN_RE.finditer(fold(strip_tags(text or ""))):
+            for f in _forms(m.group(0)):
+                counts[f] = counts.get(f, 0) + 1
+    return counts
+
+
+def missing_facts(olds: list[str], new: str, after_forms: frozenset, seed_forms: frozenset = frozenset(), *,
+                  heading: bool = False, closed_by_count: bool = True) -> list[str]:
+    """The facts an edit that replaced the ``olds`` texts with ``new`` loses, each once, in order; empty = the edit
+    keeps every fact. A name or a seed word is kept when the text after the edit still has it (``after_forms`` =
+    its ``word_forms``). A closed-class token (a number, a limit, a time, an audience, a place, a superlative …) is
+    kept only when ``new`` carries it as often as the ``olds`` did (``closed_by_count``): the same word elsewhere
+    in the piece is another claim ('The day ends at the camp.' does not keep 'This is not the end of the climb.').
+    A ``DENIED`` word ('not potable') is kept only when ``new`` still has it (the joined 'It is tradition' keeps the
+    'tradition' of 'not a performance of tradition'). A delete of a repeat (hygiene.dedupe) passes
+    ``closed_by_count=False``: its facts are, by design, elsewhere, so every kind is read by presence. Linear in the
+    texts."""
+    old_counts = new_counts = new_forms = None
+    out: dict[str, None] = {}
+    for r in olds:
+        for t, closed in fact_tokens(r, seed_forms, heading=heading):
+            if t in out:
+                continue
+            forms = _forms(t)
+            if closed is DENIED and closed_by_count:
+                if new_forms is None:
+                    new_forms = word_forms(new)
+                if not any(f in new_forms for f in forms):
+                    out[t] = None
+            elif closed and closed_by_count:
+                if old_counts is None:
+                    old_counts, new_counts = _form_counts(olds), _form_counts([new])
+                if max(new_counts.get(f, 0) for f in forms) < max(old_counts.get(f, 0) for f in forms):
+                    out[t] = None
+            elif not any(f in after_forms for f in forms):
+                out[t] = None
+    return list(out)
+
+
 def _grams(words: list[str], n: int) -> set:
     return {tuple(words[i:i + n]) for i in range(len(words) - n + 1)}
 
@@ -939,7 +1262,8 @@ _PERSON_NOUNS = (r"travell?ers?|famil(?:y|ies)|kids?|child(?:ren)?|adults?|teens
 # never an age, whatever the brand's audience line says.
 _UNIT_AFTER_RE = re.compile(
     r"^[\s-]*(?:minutes?|mins?|hours?|hrs?|days?|nights?|weeks?|months?|seconds?|km|kilomet(?:re|er)s?|miles?"
-    r"|metres?|meters?|m\b|feet|foot|ft|percent|per\s+cent|%|°|degrees?|kg|kilos?|litres?|liters?|people|guests"
+    r"|metres?|meters?|m\b|cm\b|centimet(?:re|er)s?|inch(?:es)?|feet|foot|ft|percent|per\s+cent|%|°|degrees?|kg"
+    r"|kilos?|lbs?|pounds?|litres?|liters?|people|guests"
     r"|travell?ers\s+(?:per|in\s+a)|steps?|switchbacks?|stops?|dollars?|usd|euros?)", re.I)
 # ...and it is an age only in an age context: 'aged/ages 7–16', '25–40 years old / year-old', 'the
 # 25–40 range', 'a 25–40 traveller', 'children (aged|between|of) seven and sixteen'.
@@ -973,6 +1297,310 @@ def audience_leaks(sentence: str, audience: Optional[str], own_text: Optional[st
     if not want:
         return []
     return [m.group(0) for m in _audience_hits(sentence, want)]
+
+
+# AA-790 round 3 (S252 re-panel: LinkedIn source fidelity 7.08 vs pilot 8.83) — two claims the judges quoted that
+# the seed never made: an age band for the visit ('For families travelling with children aged seven and up …', the
+# brand's audience '7–16' turned into a minimum age; audience_leaks only knows the brand's exact range) and a reason
+# for a founding ('The institute was established because these skills supply the artisans …', where the seed says
+# it was established to pass the skills on and, separately, that it supplies artisans). Both read the moment's own
+# source text (seed lines + Facts): a seed that states the age or the reason is never flagged.
+_AGE_CLAIM_RE = re.compile(
+    rf"\b(?:aged|ages?)\s+(?P<a>{NUM_TOKEN})(?:\s*(?:\+|and\s+(?:up|over|above|older)|or\s+(?:older|over|above)"
+    rf"|(?:–|-|to)\s*(?P<b>{NUM_TOKEN})))?(?![\w-])"
+    rf"|\b(?:{_PERSON_NOUNS})\s+(?:over|above|under|older\s+than|younger\s+than)\s+(?:the\s+age\s+of\s+)?"
+    rf"(?P<c>{NUM_TOKEN})(?![\w-])(?![:.,]\d)(?![ \t\u00a0\u2009\u202f]\d{{3}}\b)"  # 'above 4,000 m', '3 500 m'
+    # Round-3 review: 'N-year-old' is a person's age only as 'year-olds', or 'year-old' used as a noun: before a
+    # person noun, a verb, a function word or nothing ('a 10-year-old can manage it', 'legible to a twelve-year-old as
+    # to …'); 'the 300-year-old temple' (an adjective before a thing) is a thing's age. A grouped number
+    # ('2,000-year-old') is never read from its last group.
+    rf"|(?<![\w,.-])(?P<d>{NUM_TOKEN})(?:\s*(?:–|-|to)\s*(?P<e>{NUM_TOKEN}))?(?:\s*\+)?"
+    rf"[\s-]+year[\s-]+(?:olds\b|old\b(?=\s*(?:[.,;:!?)]|$)|[\s-]+(?:{_PERSON_NOUNS}|boys?|girls?|sons?|daughters?"
+    r"|grandchild(?:ren)?|toddlers?|riders?|swimmers?|hikers?|can|could|will|would|may|might|must|needs?|should"
+    r"|is|was|who|as|than|and|or|but|with|in|at|to|for|on)\b))",
+    re.I)
+# A number the source writes is a known age only when the source states it AS an age, with an explicit cue (fourth
+# review of round 3, S252: every looser reading let a group size, a duration, an altitude, a price or a rating make an
+# invented child age "known": 'Groups of 10 and over', 'Max participants: 12', 'Travellers above 4,000 m', 'Our guides
+# have 15+ years of experience', 'adults USD 45, children 8'). A false "unknown" costs one cheap F15 repair; a false
+# "known" lets an invented age through. The cues, each a small regex of its own:
+#   'aged / age(s)' + at most three linking words + N ('Minimum age is 12', 'Minimum age: 7', 'under the age of 7',
+#   'aged 10+', 'ages 6–12');
+#   a person noun + N–M ('Children 6–12');
+#   a person noun + (must / should be)? (aged / from / of)? (at least / over / under)? N with an age tail ('+', 'and
+#   over / older / up', or 'N years' after aged / from / of that is not 'years ago / of experience'), or bare after
+#   'must be' ('Riders must be at least 14', 'children 7 and older', 'children from 8 years', 'children of 8 years and
+#   over');
+#   a person noun + under / over / above N (_AGE_CLAIM_RE 'c'), never before 'N years' without 'old';
+#   'under-5s' / 'over-12s'; 'N years and over' closing its clause ('Suitable for 10 years and over.');
+#   'N years old / of age' after a person / age / must / minimum / at least / under / over cue ('Riders must be 12
+#   years old'; not 'The festival, now 12 years old'); 'N-year-old(s)' in a person use (_AGE_CLAIM_RE 'd').
+# A number next to ':' / '.' / ',' digits (12:30, 1,200, 4,000) never counts; nor one followed by a unit, a head count,
+# 'per …' or a plural noun.
+# fifth review: nor one followed by a space-grouped thousand ('3 500 m', '4 000 m', thin and no-break spaces too)
+_AGE_NUM = rf"(?:{NUM_TOKEN})(?=s?\b)(?![:.,]\d)(?![ \t\u00a0\u2009\u202f]\d{{3}}\b)"
+_AGE_PERSON = (rf"(?:{_PERSON_NOUNS}|infants?|toddlers?|bab(?:y|ies)|students?|pupils?|riders?|swimmers?"
+               r"|participants?|boys?|girls?|juniors?|minors?|visitors?)")
+_AGE_RANGE = rf"(?<![\d:.,])(?P<a>{_AGE_NUM})(?:\s*(?:–|-|to)\s*(?P<b>{_AGE_NUM}))?"
+_SRC_AGE_WORD_RE = re.compile(
+    r"\b(?:aged|ages?)(?:\s*[:(]\s*|\s+)(?:(?:of|from|between|is|are|limit|minimum|requirement|must|be|at|least"
+    rf"|under|over|above)\s+){{0,3}}{_AGE_RANGE}", re.I)
+_SRC_PERSON_RANGE_RE = re.compile(
+    rf"\b{_AGE_PERSON}\s+(?:(?P<link>aged|from|of|between)\s+)?(?P<a>{_AGE_NUM})\s*(?:–|-|to)\s*(?P<b>{_AGE_NUM})",
+    re.I)
+_SRC_PERSON_TAIL_RE = re.compile(
+    rf"\b{_AGE_PERSON}\s+(?:(?P<be>(?:must|should|need[ \t]+to|have[ \t]+to)[ \t]+be)\s+)?"
+    r"(?:(?P<link>aged|from|of)\s+)?"
+    rf"(?:(?:at\s+least|over|under|above)\s+)?(?P<a>{_AGE_NUM})"
+    r"(?P<tail>\s*\+|\s+(?:and|or)\s+(?:over|older|up|above)\b|[\s-]+(?:years?|yrs?)\b)?", re.I)
+_SRC_HYPHEN_AGE_RE = re.compile(rf"\b(?:under|over)-(?P<a>{_AGE_NUM})s?\b", re.I)
+_SRC_YEARS_AND_OVER_RE = re.compile(
+    rf"(?<![\d:.,])(?P<a>{_AGE_NUM})\s+years?\s+(?:and|or)\s+(?:over|older|up|above)(?=\s*(?:[.,;:!?)]|$))", re.I)
+_SRC_YEARS_OLD_RE = re.compile(
+    rf"{_AGE_RANGE}[\s-]+years?[\s-]+(?:old|of\s+age)\b", re.I)
+# ...a 'years old' age needs its cue at most four linking words back in the same clause (an 80-character window)
+_YEARS_OLD_CUE_RE = re.compile(
+    rf"\b(?:{_AGE_PERSON}|aged?|ages|must|minimum|min\.?|least|under|over|above)(?:\s*[:(]\s*|[\s-]+)"
+    r"(?:(?:is|are|must|be|of|from|between|aged|age|the|at|least|over|under|above|older|younger|than)\s+){0,4}$",
+    re.I)
+# Round-3 fourth review (S252). A range after 'from' is an age only with an age tail ('Children from 6 to 12 years')
+# or at the clause end; never before a time of day or a visiting rule ('Visitors from 10 to 12 can enter the hall',
+# 'Students from 7 to 9 in the morning', 'Kids from 9 to 5 daily'), and never a descending range.
+_AGE_TAIL_RE = re.compile(r"^(?:[\s-]*(?:years?|yrs?)\b|\s*(?:[.,;:!?)]|$))", re.I)
+_TIME_TAIL_RE = re.compile(
+    r"^\s*(?:am\b|pm\b|a\.m|p\.m|o['’]clock|h\b|hrs\b|daily\b|nightly\b|each\s+(?:day|morning|evening)\b"
+    r"|every\s+(?:day|morning|afternoon|evening|night|week)\b|in\s+the\s+(?:morning|afternoon|evening)\b|at\s+night\b"
+    r"|on\s+(?:weekdays|weekends|[a-z]+days)\b|until\b|till\b|(?:can|may|could)\s+(?:enter|visit|open|come)\b)", re.I)
+# Fifth review (S252): a head-count noun with a number is a group size unless the source says it is an age ('Families of
+# 4 and over get 10% off', 'Travellers 6 and up get a group discount', 'Participants 4-8', 'Couples 2 to 4 share a
+# room'). Only these nouns name an age group by themselves ('children 7 and older', 'Children 6–12'); any other person
+# noun needs 'aged' / 'between', a 'years' tail, 'must be', or an age word before it in the same clause.
+_AGE_ONLY_NOUN_RE = re.compile(
+    r"(?:kids?|child(?:ren)?|teens?|teenagers?|youngsters?|infants?|toddlers?|bab(?:y|ies)|juniors?|minors?"
+    r"|students?|pupils?|boys?|girls?)", re.I)
+_AGE_WORD_BEFORE_RE = re.compile(r"\b(?:ages?|aged|minimum|min\.?|least|must|years?[\s-]+old|year-olds?)\b", re.I)
+_YEARS_TAIL_RE = re.compile(r"^[\s-]*(?:years?|yrs?)\b", re.I)
+
+
+def _age_word_before(text: str, start: int) -> bool:
+    look = text[max(0, start - 80):start]
+    cut = max(look.rfind(c) for c in _CLAUSE_BREAKS)
+    return bool(_AGE_WORD_BEFORE_RE.search(look[cut + 1:]))
+
+
+def _head_count(text: str, m: re.Match) -> bool:
+    """The person noun that opens ``m`` is not an age-only noun and no age word stands before it: a head count."""
+    noun = m.group(0).split()[0] if m.group(0).split() else ""
+    return not _AGE_ONLY_NOUN_RE.fullmatch(noun) and not _age_word_before(text, m.start())
+
+
+# 'Group of travellers 2–12', 'a party of guests 4-8': a head count, never an age band
+_GROUP_BEFORE_RE = re.compile(r"\b(?:groups?|part(?:y|ies)|teams?|size|max(?:imum)?)\s+(?:of\s+)?$", re.I)
+# A thing's age is never a person's: 'a single malt aged 12 years', "Pu'er tea aged 15 years", 'a temple aged 12
+# years', 'Whisky aged 12.' An 'aged N' counts only after a person noun or an age-limit word in the same clause (the
+# look-back reads at most 80 characters, cut at the last sentence or clause break). 'The Middle Ages 12 …', 'the
+# Stone Age 8 …' are eras.
+_AGE_LOOKBACK_CUE_RE = re.compile(
+    rf"\b(?:{_AGE_PERSON}|people|persons?|anyone|everyone|those|ones|learners|climbers|walkers|paddlers|divers"
+    r"|campers|minimum|min\.?|least|must|limits?|restrictions?|requirements?"
+    # fifth review: 'grandkids', 'grandchildren', 'grandparents' (no word boundary before 'kids') and activity nouns
+    r"|grand(?:kids?|child(?:ren)?|parents?|sons?|daughters?)|sons?|daughters?|trekkers?|beginners?|novices?"
+    r"|cyclists?|bikers?|rafters?|kayakers?|pilgrims?|members?|seniors?|elders?|grown-?ups?|all|ages?|year-?olds?)\b",
+    re.I)
+# Fifth review (S252), output side: an 'aged N' in the piece is a person's age by default (the F15 lens: a false
+# "unknown" costs one repair). It is a thing's age only right after a closed list of aged goods or objects, and only
+# when no person noun or age word stands anywhere in the sentence ('a single malt aged 12 years' is a thing;
+# 'Grandkids aged 6 and up', 'Trekkers aged 12 and up', 'open to all aged 8 and over', 'Suitable for aged 7+' are
+# ages).
+_AGED_THING_BEFORE_RE = re.compile(
+    r"\b(?:malts?|whisk(?:e?y|ies)|scotch(?:es)?|rums?|brand(?:y|ies)|bourbons?|cognacs?|wines?|ports?|sherr(?:y|ies)"
+    r"|sakes?|spirits?|liquors?|liqueurs?|teas?|pu['’]?er|cheeses?|hams?|vinegars?|soy|miso|sauces?|casks?|barrels?"
+    r"|beef|meats?|steaks?|temples?|buildings?|trees?|woods?|timbers?|leathers?)\b(?:[ \t]+[\w'’-]+){0,2}[ \t]*$",
+    re.I)
+_ERA_BEFORE_RE = re.compile(r"\b(?:middle|stone|bronze|iron|dark|ice|golden|gilded|space|information|modern)[ \t]*$",
+                            re.I)
+_AGED_BEFORE_RE = re.compile(r"\baged\s*$", re.I)
+_CLAUSE_BREAKS = ".!?;\n"
+
+
+def _age_cue_before(text: str, start: int) -> bool:
+    """A person noun or an age-limit word in the same clause before ``start`` (≤ 80 characters back)."""
+    look = text[max(0, start - 80):start]
+    cut = max(look.rfind(c) for c in _CLAUSE_BREAKS)
+    return bool(_AGE_LOOKBACK_CUE_RE.search(look[cut + 1:]))
+
+
+def _thing_aged(text: str, m: re.Match) -> bool:
+    """'aged N' with no person or age-limit cue before it (a thing's age), or 'Age(s) N' after an era word."""
+    head = text[m.start():m.start() + 4].lower()
+    if head == "aged":
+        return not _age_cue_before(text, m.start())
+    if head.startswith("age"):
+        return bool(_ERA_BEFORE_RE.search(text[max(0, m.start() - 14):m.start()]))
+    return False
+
+
+def _thing_aged_out(text: str, m: re.Match) -> bool:
+    """Output side (fifth review): 'aged N' right after an aged good or object, with no person noun or age word
+    anywhere in the sentence; 'Age(s) N' after an era word."""
+    head = text[m.start():m.start() + 4].lower()
+    if head == "aged":
+        look = text[max(0, m.start() - 80):m.start()]
+        cut = max(look.rfind(c) for c in _CLAUSE_BREAKS + ",")
+        if not _AGED_THING_BEFORE_RE.search(look[cut + 1:]):
+            return False
+        # the sentence around the match, read at most 200 characters each way (linear in the text)
+        before, after = text[max(0, m.start() - 200):m.start()], text[m.end():m.end() + 200]
+        before = before[max(before.rfind(c) for c in ".!?\n") + 1:]
+        ends = [k for k in (after.find(c) for c in ".!?\n") if k >= 0]
+        after = after[:min(ends)] if ends else after
+        return not _AGE_LOOKBACK_CUE_RE.search(_AGED_WORD_RE.sub(" ", before + " " + after))
+    if head.startswith("age"):
+        return bool(_ERA_BEFORE_RE.search(text[max(0, m.start() - 14):m.start()]))
+    return False
+
+
+_AGED_WORD_RE = re.compile(r"\baged\b", re.I)
+
+
+def _thing_aged_before(text: str, start: int) -> bool:
+    """'… aged' right before the number ('Sake aged 10 years and over') with no person or age-limit cue."""
+    look = text[max(0, start - 8):start]
+    return bool(_AGED_BEFORE_RE.search(look)) and not _age_cue_before(text, start)
+
+
+_COUNT_AFTER_RE = re.compile(
+    rf"^(?:\s+(?:{_PERSON_NOUNS}|people|persons?|pax|seats?|rooms?|beds?)\b|\s*(?:am|pm|a\.m|p\.m|o['’]clock|h)\b)",
+    re.I)
+# A plural noun after the number makes it a count ('Students from 8 villages'); never a verb that ends in -s after an
+# age ('Children under 12 stays free').
+_PLURAL_AFTER_RE = re.compile(
+    r"^\s+(?!years?\b|yrs?\b|(?:stays|pays|travels|goes|gets|eats|sleeps|needs|joins|rides|costs|receives|requires"
+    r"|shares|enters|walks|swims|sits|is|was|has|does)\b)[a-z]{2,}s\b", re.I)
+_PER_AFTER_RE = re.compile(r"^\s+per\b", re.I)
+# 'N years' after a person noun + under / over is a duration ('local families over 12 years'), unless 'old' / 'of age'
+_YEARS_AFTER_RE = re.compile(r"^[\s-]*(?:years?|yrs?)\b(?![\s-]+(?:old|of\s+age)\b)", re.I)
+# ...and 'N years ago / of experience / of training' is a duration whatever comes before it
+_DURATION_TAIL_RE = re.compile(r"^\s+(?:ago\b|of\s+(?!age\b)\w)", re.I)
+_FOUNDING_REASON_RE = re.compile(
+    r"\b(?:was|were|is|are|had\s+been|has\s+been)\s+(?:originally\s+|first\s+|largely\s+|partly\s+|mainly\s+)?"
+    r"(?:established|founded|created|set\s+up|built|opened|started)\s+(?:(?:in|around)\s+[\w-]+\s+)?because\b"
+    r"|\bexists?\s+(?:largely\s+|partly\s+|mainly\s+)?because\b", re.I)
+
+
+def _count_after(rest: str) -> bool:
+    """A unit, a head count or 'per …' right after the number: a measurement or a group size, never an age."""
+    return bool(_UNIT_AFTER_RE.match(rest) or _COUNT_AFTER_RE.match(rest) or _PER_AFTER_RE.match(rest))
+
+
+def _ages_of(m: re.Match) -> set:
+    return {small_number(v) for k, v in m.groupdict().items() if k in ("a", "b", "c", "d", "e") and v}
+
+
+def _source_ages(text: str) -> set[int]:
+    """The ages the source states with an explicit age cue (see the block comment above): a day number, a duration,
+    a distance, an altitude, a group size, a price, a rating or a thing's age is never one. Each regex is bounded and
+    each look after a match reads at most 60 characters: linear in the text."""
+    text = text or ""
+    out: set = set()
+
+    def rest(m: re.Match) -> str:
+        return text[m.end():m.end() + 60]
+
+    for m in _AGE_CLAIM_RE.finditer(text):
+        after = rest(m)
+        if m.group("c") and (_count_after(after) or _YEARS_AFTER_RE.match(after) or _PLURAL_AFTER_RE.match(after)):
+            continue
+        if m.group("a") and (_count_after(rest(m)) or _thing_aged(text, m) or _PLURAL_AFTER_RE.match(after)):
+            continue
+        if m.group("d") and _thing_aged_before(text, m.start()):
+            continue
+        out |= _ages_of(m)
+    for rx in (_SRC_AGE_WORD_RE, _SRC_PERSON_RANGE_RE, _SRC_HYPHEN_AGE_RE, _SRC_YEARS_AND_OVER_RE):
+        for m in rx.finditer(text):
+            after = rest(m)
+            if _count_after(after) or (rx is not _SRC_HYPHEN_AGE_RE and _PLURAL_AFTER_RE.match(after)):
+                continue
+            if rx is _SRC_AGE_WORD_RE and _thing_aged(text, m):
+                continue
+            if rx is _SRC_YEARS_AND_OVER_RE and _thing_aged_before(text, m.start()):
+                continue
+            if rx is _SRC_PERSON_RANGE_RE and (
+                    _TIME_TAIL_RE.match(after) or _GROUP_BEFORE_RE.search(text[max(0, m.start() - 30):m.start()])
+                    # fifth review: 'Participants 4-8', 'travellers 2 to 14', 'Couples 2 to 4' are head counts
+                    or ((m.group("link") or "").lower() not in ("aged", "between") and not _YEARS_TAIL_RE.match(after)
+                        and _head_count(text, m))
+                    or (m.group("link") or "").lower() == "from" and not _AGE_TAIL_RE.match(after)
+                    or (small_number(m.group("b")) or 0) < (small_number(m.group("a")) or 0)):
+                continue
+            out |= _ages_of(m)
+    for m in _SRC_PERSON_TAIL_RE.finditer(text):
+        tail = (m.group("tail") or "").strip(" \t-").lower()
+        if not (m.group("be") or tail) or _count_after(rest(m)) or (not tail and _PLURAL_AFTER_RE.match(rest(m))):
+            continue
+        # 'N years' is an age after aged / from / of only ('children from 8 years'), never after over / under / at least
+        # ('local families over 12 years'), and never 'years ago / of experience'
+        if tail[:1] == "y" and (not m.group("link") or _DURATION_TAIL_RE.match(rest(m))):
+            continue
+        # fifth review: 'Families of 4 and over', 'Travellers 6 and up' are group sizes
+        if (tail and tail[:1] != "y" and not m.group("be") and (m.group("link") or "").lower() != "aged"
+                and _head_count(text, m)):
+            continue
+        out |= _ages_of(m)
+    for m in _SRC_YEARS_OLD_RE.finditer(text):
+        if _YEARS_OLD_CUE_RE.search(text[max(0, m.start() - 80):m.start()]) and not _thing_aged_before(text, m.start()):
+            out |= _ages_of(m)
+    return out - {None}
+
+
+def unsupported_ages(sentence: str, source: Optional[str]) -> list[str]:
+    """The person-age claims in ``sentence`` ('aged seven and up', 'ages 8+', 'children over ten', '10-year-olds', 'a
+    10-year-old can …') whose number the source does not state as an age with an explicit cue (``_source_ages``: a
+    day number, a duration, a group size, an altitude, a price or a clock time is not an age). A thing's age ('300
+    years old', 'the 300-year-old temple') is not one: only the person forms of 'year-old(s)'; nor a measurement
+    ('hikers over 30 km')."""
+    known = _source_ages(source or "")
+    out = []
+    text = sentence or ""
+    for m in _AGE_CLAIM_RE.finditer(text):
+        if (m.group("a") or m.group("c")) and _count_after(text[m.end():m.end() + 60]):
+            continue
+        # fourth review: 'a single malt aged 12 years' is a thing's age on the output side too; fifth review: only
+        # after an aged good or object (_thing_aged_out), never by the absence of a person noun
+        if m.group("a") and _thing_aged_out(text, m):
+            continue
+        values = {small_number(v) for v in m.groups() if v} - {None}
+        if values and max(values) <= 120 and not values <= known:  # 'the 300-year-old' is never a person
+            out.append(" ".join(m.group(0).split()))
+    return out
+
+
+_PURPOSE_RE = re.compile(
+    r"\b(?:established|founded|created|set\s+up|built|opened|started)\s+(?:(?:in|around)\s+[\w-]+\s+)?"
+    r"(?:to|in\s+order\s+to|so\s+that|as\s+a\s+way\s+to)\b", re.I)
+_SOURCE_SENTENCE_RE = re.compile(r"[^.\n]+")
+
+
+def unsupported_reasons(sentence: str, source: Optional[str]) -> list[str]:
+    """A founding / existence reason ('The institute was established because …', '… exists because …') for a thing
+    whose purpose the source states in its own words ('The institute was established to ensure …'): the 'because'
+    replaces the seed's purpose with another fact. Only when the subject (its last content words before the verb)
+    is the subject of one of the source's purpose sentences, and the source has no founding 'because' of its own; a
+    reason for something the source gives no purpose for ('The preserve exists because the takin kept returning') is
+    background the SOURCE FIDELITY rule allows, and is not flagged."""
+    if not sentence or _FOUNDING_REASON_RE.search(source or ""):
+        return []
+    purposes = []  # the subject of each source purpose sentence: its last content words before the verb
+    for m in _SOURCE_SENTENCE_RE.finditer(source or ""):
+        p = _PURPOSE_RE.search(m.group(0))
+        if p:
+            purposes.append(set(content_words(m.group(0)[:p.start()])[-4:]))
+    out = []
+    for m in _FOUNDING_REASON_RE.finditer(sentence):
+        subject = set(content_words(sentence[:m.start()])[-3:])
+        if subject and any(subject & p for p in purposes):
+            out.append(" ".join(m.group(0).split()))
+    return out
 
 
 # A pronoun or demonstrative that needs the sentence before it. 'This dzong…' (a determiner and a
@@ -1273,15 +1901,110 @@ def _closing_zone(text: str, cta: Optional[str]) -> Optional[tuple[int, int]]:
     return start, spans[k]["end"]
 
 
-def dedupe(text: str, ignore: frozenset = frozenset(), cta: Optional[str] = None) -> tuple[str, list[str]]:
+# Round-3 fourth review (S252): a repeat delete may not lose a word the piece tells nowhere else, fact class or not
+# ('…, thick with leeches', '…, unroped and unmarked', '… and carries no lifejackets'). The words a paraphrase or a
+# closing recap adds about the experience itself carry no fact and do not block it ('rewards those who travel with
+# patience', 'offers a quieter rhythm'); nor do function words the stop list leaves out.
+# Fifth review (S252): quantity and frequency words are facts ('The ferry crosses … every morning.' after '… in the
+# morning.' says it runs daily): they are never free, and the ones the stop list holds (every, each, only) still count.
+_REPEAT_FREE_WORDS = frozenset("""alike together here there also much many
+reward rewards rewarded offer offers offered give gives gave bring brings brought travel travels travelling traveling
+patience curiosity rhythm pace quieter calmer slower gentler softer feel feels felt sense register registers
+registered immediately notice notices noticed appreciate appreciates enjoy enjoys love loves""".split())
+
+
+_REPEAT_QUANTITY_WORDS = frozenset("""every each all both either neither only still always never ever own even alone
+once twice daily nightly weekly monthly yearly annually""".split())
+# ...except a floating quantifier right after a copula or an auxiliary ('… are all available as optional activities'):
+# it points back at the sentence's own list, it adds no frequency or scope.
+_FLOATING_QUANTIFIERS = frozenset("all both each".split())
+_FLOATING_AFTER = frozenset("is are was were be been have has had can could will would may might must".split())
+
+
+def _repeat_stem(t: str) -> str:
+    """A rough stem for the repeat comparison only: 'holding' / 'holds' / 'held' are not told apart from 'hold' by
+    ``_forms``; '-ing', '-ed', '-es', '-s' come off ('holding' → 'hold', 'offered' → 'offer')."""
+    for suf, keep in (("ing", 4), ("ed", 4), ("es", 4), ("s", 3)):
+        if t.endswith(suf) and len(t) - len(suf) >= keep and not t.endswith("ss"):
+            return t[:-len(suf)]
+    return t
+
+
+def _word_keys(text: Optional[str]) -> dict[str, int]:
+    """How many words of ``text`` each form and each '~stem' key stands for: one pass, linear."""
+    counts: dict[str, int] = {}
+    for m in _FACT_TOKEN_RE.finditer(fold(strip_tags(text or ""))):
+        t = m.group(0)
+        for k in set(_forms(t)) | {"~" + _repeat_stem(t)}:
+            counts[k] = counts.get(k, 0) + 1
+    return counts
+
+
+class _TextWithout:
+    """The forms and stems of a text without one removed span, read from the text's counts (``in`` only): the repeat
+    deletes check each candidate in O(its own words), so a pass that refuses many candidates stays linear in the text
+    per candidate checked (a refused repeat was O(text) per candidate before)."""
+
+    def __init__(self, counts: dict[str, int], removed: str):
+        self.counts, self.minus = counts, _word_keys(removed)
+
+    def __contains__(self, key: str) -> bool:
+        return self.counts.get(key, 0) - self.minus.get(key, 0) > 0
+
+
+def added_words(later: str, other, ignore: frozenset = frozenset()) -> list[str]:
+    """The words ``later`` would take out of the piece if it were deleted: every number and every content word (stop
+    words, evaluative and generic frame words, ``_REPEAT_FREE_WORDS`` and ``ignore`` out) that ``other`` (the text
+    after the delete or the sentence it repeats, as a string or a ``_TextWithout``) does not have in any form or stem.
+    A repeat delete needs this empty. Linear in the two texts."""
+    have = _word_keys(other) if isinstance(other, str) or other is None else other
+    out: dict[str, None] = {}
+    prev = ""
+    for m in _FACT_TOKEN_RE.finditer(fold(strip_tags(later or ""))):
+        t = m.group(0)
+        floating = t in _FLOATING_QUANTIFIERS and prev in _FLOATING_AFTER  # 'are all available': the list's own words
+        prev = t
+        if floating:
+            continue
+        forms = _forms(t)
+        if not t.isdigit() and t not in _REPEAT_QUANTITY_WORDS and (
+                len(t) <= 2 or t in _STOP or t in _REPEAT_FREE_WORDS or t in ignore
+                or any(f in _FACT_GENERIC for f in forms)):
+            continue
+        if not (any(f in have for f in forms) or "~" + _repeat_stem(t) in have):
+            out[t] = None
+    return list(out)
+
+
+def _keeps_facts(after, removed: str, seed: frozenset) -> bool:
+    """AA-790 round 3 (S252) — the fact-preservation invariant for a repeat delete: every fact token of the removed
+    words is still in the text after the delete (a repeat's facts are, by design, in the sentence it repeats; when
+    one is not, the delete would lose it). ``after`` is the text after the delete or a ``_TextWithout``. Linear."""
+    forms = word_forms(after) if isinstance(after, str) else after
+    return not missing_facts([removed], "", forms, seed, closed_by_count=False)
+
+
+def _repeat_delete_ok(counts: dict[str, int], removed: str, clean: str, seed: frozenset, ignore: frozenset) -> bool:
+    """A repeat delete keeps every fact token (``_keeps_facts``) and takes no other word out of the piece
+    (``added_words``, round-3 fourth review). ``counts`` = ``_word_keys`` of the text before the delete and
+    ``removed`` the span the delete takes out: O(the removed words) per candidate."""
+    after = _TextWithout(counts, removed)
+    return not added_words(clean, after, ignore) and _keeps_facts(after, clean, seed)
+
+
+def dedupe(text: str, ignore: frozenset = frozenset(), cta: Optional[str] = None,
+           source: Optional[str] = None) -> tuple[str, list[str]]:
     """Fix the near-duplicates that are safe to fix in place: delete a later sentence that copies an
     earlier one, or a short one (≤ 12 copy words) that repeats a figure with ≥ 60% of its words
     already in the earlier sentence; trim an echoed opening phrase ('On day three, the route…' →
-    'The route…'); delete an orphan line. A delete happens only when no pronoun is orphaned. The rest
-    is left for F13_repeat. Returns (text, log)."""
+    'The route…'); delete an orphan line. A delete happens only when no pronoun is orphaned and every fact
+    token of what it removes is still in the text (``_keeps_facts``; ``source`` = seed + Facts, for the
+    seed-word class). The rest is left for F13_repeat. Returns (text, log)."""
+    seed = source_forms(source) if source else frozenset()
     log: list[str] = []
     for _ in range(10):  # one edit per pass: offsets move after each
         changed = False
+        counts = _word_keys(text)  # text changes only on an applied edit, which ends the pass
         for d in near_duplicates(text, ignore, cta):
             later, earlier = d["later"], d["earlier"]
             lw = copy_words(later["clean"], ignore)
@@ -1290,6 +2013,8 @@ def dedupe(text: str, ignore: frozenset = frozenset(), cta: Optional[str] = None
                 m = _LEAD_PHRASE_RE.match(later["text"])
                 if m and all(w in copy_words(m.group(0), ignore) for w in d["shared"].split()):
                     rest = later["text"][m.end():]
+                    if not _keeps_facts(_TextWithout(counts, m.group(0)), m.group(0), seed):
+                        continue
                     text = text[:later["start"]] + rest[:1].upper() + rest[1:] + text[later["end"]:]
                     log.append(f"trimmed an echoed opening ('{m.group(0).strip(', ')}'): '{later['clean'][:160]}'")
                     changed = True
@@ -1297,8 +2022,9 @@ def dedupe(text: str, ignore: frozenset = frozenset(), cta: Optional[str] = None
                 continue
             contained = sum(w in ew for w in lw) / len(lw) if lw else 0.0
             if d["kind"] in _DELETE_KINDS or (len(lw) <= _DUP_SHORT_WORDS and contained >= _DUP_CONTAINED):
-                if _dup_safe_delete(text, later):
-                    after = later["end"] + 1 if text[later["end"]:later["end"] + 1] == " " else later["end"]
+                after = later["end"] + 1 if text[later["end"]:later["end"] + 1] == " " else later["end"]
+                if (_dup_safe_delete(text, later)
+                        and _repeat_delete_ok(counts, text[later["start"]:after], later["clean"], seed, ignore)):
                     text = tidy_after_cut(text[:later["start"]] + text[after:])
                     log.append(f"deleted a sentence that {d['why']}: '{later['clean'][:160]}'")
                     changed = True
@@ -1306,7 +2032,8 @@ def dedupe(text: str, ignore: frozenset = frozenset(), cta: Optional[str] = None
         if not changed:
             for o in orphan_lines(text, ignore, cta):
                 span = next(s for s in _dup_spans(text, cta) if s["clean"] == o)
-                if _dup_safe_delete(text, span):
+                if _dup_safe_delete(text, span) and _keeps_facts(_TextWithout(counts, text[span["start"]:span["end"]]),
+                                                                 o, seed):
                     text = tidy_after_cut(text[:span["start"]] + text[span["end"]:])
                     log.append(f"deleted a line that adds nothing to the sentences around it: '{o[:160]}'")
                     changed = True
@@ -1336,8 +2063,10 @@ def dedupe(text: str, ignore: frozenset = frozenset(), cta: Optional[str] = None
                                for e in prior)
                 else:
                     real = any(adds_nothing(r, e, ignore) for e in prior)
-                if real and _dup_safe_delete(text, span):
-                    after = span["end"] + 1 if text[span["end"]:span["end"] + 1] == " " else span["end"]
+                after = span["end"] + 1 if text[span["end"]:span["end"] + 1] == " " else span["end"]
+                # round-3 fourth review: and it takes no word out of the piece (added_words)
+                if (real and _dup_safe_delete(text, span)
+                        and _repeat_delete_ok(counts, text[span["start"]:after], r, seed, ignore)):
                     text = tidy_after_cut(text[:span["start"]] + text[after:])
                     log.append(f"deleted a sentence that repeats an earlier one: '{r[:160]}'")
                     changed = True
@@ -1634,6 +2363,15 @@ TEMPLATE_LINE_RES = tuple(re.compile(p, re.I) for p in (
 # they need a rewrite of the sentence, so they ride the stock-line routing above (F15_voice, stored in F2_lexicon:
 # one sentence repair on attempt 1, never a hold). Whole-sentence shapes, never a bare word: 'earns income' and
 # 'rewards points' are facts. The writer is told the same list (ai_tells.PROMPT_RULES).
+# Round-3 review guards for two residue entries, one look-ahead from the sentence start each (linear): a practical
+# booking / limit / footing / weather word, or a day / time / season word, makes the sentence a fact.
+_ATTENTION_FACT_NEG = (r"(?![^\n]*\b(?:book(?:s|ing|ed)?|limited|seats?|footing|wet|rain(?:s|y)?|slippery|muddy|icy"
+                       r"|permits?|tickets?|reserv(?:e|ed|ations?)|queues?|weather|safety|sell\s+out|sells\s+out)\b)")
+_SCHEDULE_NEG = (r"(?![^\n]*\b(?:mondays?|tuesdays?|wednesdays?|thursdays?|fridays?|saturdays?|sundays?|weekends?"
+                 r"|weekdays?|today|tonight|tomorrow|mornings?|afternoons?|evenings?|nights?|daily|days?|weeks?"
+                 r"|months?|seasons?|ramadan|lent|holidays?|festivals?|during|until|till|after|before|when|while"
+                 r"|closed|open|opens|cancell?ed|winter|summer|spring|autumn|monsoon|january|february|march|april|may"
+                 r"|june|july|august|september|october|november|december|\d)\b)")
 AI_TELL_LINE_RES = tuple(re.compile(p, re.I) for p in (
     # 'This is the day the route earns its reputation.', 'the water earns every second you spend in it'.
     # Not a history fact: 'earned its name from the legend', 'earned the title of', 'earned its reputation for
@@ -1725,6 +2463,64 @@ AI_TELL_LINE_RES = tuple(re.compile(p, re.I) for p in (
     # the hyphenated adjective only: 'The museum is easy to navigate with a stroller.' is an access fact
     r"\beasy-to-navigate\b",
     r"\b(?:visible|obvious|clear|apparent)\s+the\s+moment\s+you\b",
+    # AA-790 round 3 (S252 re-panel of round 2, AI-tells 5.33) — the verdicts and aphorisms the judges still quoted
+    # that the pass cannot rewrite in code (each with negative tests: test_aa790_writer_round3.py).
+    # 'After a long ride, that's a detail worth knowing.' (not 'The detail worth knowing is the closing time.')
+    r"\b(?:that|this|it)(?:['’]s|\s+is)\s+(?:a|the|one)\s+(?:detail|point|fact|thing)\s+worth\s+(?:knowing|noting"
+    r"|remembering|holding|keeping\s+in\s+mind|bearing\s+in\s+mind)\b",
+    # 'The word "may" is worth noting: …' (a comment on the text itself)
+    r"^the\s+word\s+[\"“'‘][^\"”'’]{1,30}[\"”'’]\s+is\s+worth\s+(?:noting|stressing|underlining|pausing\s+on)\b",
+    r"\bworth\s+pausing\s+(?:on|over)\b",
+    # 'Those numbers matter less than what they produce: …'
+    r"^(?:those|these|the)\s+(?:numbers|figures|facts|statistics|details)\s+matter\s+less\s+than\b",
+    # 'This is the section of the journey that rewards the greatest attention.', 'This is the section worth the
+    # most of your attention on Day 2' (not 'This is the section that crosses the pass.')
+    # Round-3 review: never a sentence that holds a booking, limit, footing or weather word ('This is the stage of
+    # the route worth booking early, as seats … are limited.', 'The steep path rewards careful attention to footing in
+    # the wet season.'): a look-ahead from the sentence start, once (both alternatives are anchored at '^').
+    rf"^{_ATTENTION_FACT_NEG}(?:this|that|it)\s+is\s+the\s+(?:section|part|stretch|stage|leg)\b"
+    r"(?:\s+of\s+the\s+(?:journey|trip|route))?\s+(?:that\s+(?:rewards|deserves|earns|repays)|worth)\b"
+    rf"|^{_ATTENTION_FACT_NEG}[^\n]*?\b(?P<p>rewards?\s+(?:the\s+)?(?:greatest|most|closest|close|careful|real)"
+    r"\s+attention)\b",
+    # 'Kuang Si Falls is where the route begins to reveal its logic.'
+    r"\b(?:reveals?|begins?\s+to\s+reveal|starts?\s+to\s+reveal)\s+(?:its|their)\s+"
+    r"(?:logic|purpose|true\s+character)\b",
+    # 'earns its place as the anchor of this route', 'the place earns both names', 'makes the swim feel earned'
+    # (not 'earned both names from …')
+    r"\bearns?\s+(?:its|their)\s+place\s+as\b|\bearns?\s+(?:both|all)\s+(?:of\s+)?(?:its\s+|their\s+)?"
+    r"(?:names|titles)\b(?!\s+(?:from|for)\b)|\bfeels?\s+earned\b",
+    # 'The trip begins the way most good journeys should: …'
+    r"\bthe\s+way\s+(?:most|all|every|any)\s+(?:good|great|the\s+best)\s+(?:[\w-]+\s+)?(?:should|do|does)\b",
+    # 'It asks something of a young mind in a way that a photograph does not.', '… in a way a market stall cannot
+    # replicate', '… something that no classroom exercise replicates'
+    r"\bin\s+a\s+way\s+(?:that\s+)?(?:a|an|no)\s+(?:[\w'’-]+\s+){1,3}?(?:does\s+not|doesn['’]t|cannot|can['’]t"
+    r"|could\s+not|couldn['’]t)\b",
+    r"\bthat\s+no\s+(?:[\w'’-]+\s+){1,3}?(?:can\s+)?(?:replicates?|substitutes?\s+for|replaces?|rivals?)\b",
+    # 'the training carries real weight', 'carries weight because …' (not 'carries weight of up to 15 kg', 'carry
+    # weight up the pass')
+    r"\bcarries\s+(?:real\s+|genuine\s+|particular\s+|special\s+)?weight\b(?!\s+(?:of|limits?|up|down|on|in|for)\b)",
+    r"\blong\s+after\s+the\s+(?:day|trip|journey|visit|holiday|trek)\s+(?:is\s+over|ends|has\s+ended)\b",
+    # 'resets a family's sense of scale'
+    r"\bresets?\s+(?:[\w'’-]+\s+){0,2}?sense\s+of\s+(?:scale|time|proportion|place)\b",
+    # 'The geography is the lesson, and every stop builds on it.', 'Each step adds a layer to the same story'
+    r"^the\s+(?:geography|landscape|land|journey|route|trip|terrain|history|place)\s+is\s+the\s+lesson\b"
+    r"|\b(?:every|each)\s+(?:stop|day|stage|step)\s+builds\s+on\s+(?:it|this|that)\b"
+    r"|\badd(?:s|ing)\s+(?:a|another)\s+layer\s+to\s+(?:the\s+same\s+story|what\b)",
+    # 'Their presence here is a product of it.' (the whole sentence)
+    r"^(?:their|its|this|that)\s+[\w-]+(?:\s+here)?\s+is\s+(?:a|the)\s+(?:product|result|consequence)\s+of\s+(?:it|this"
+    r"|that)\s*[.!]?$",
+    r"\bis\s+part\s+of\s+what\s+(?:the|this|that)\s+(?:[\w-]+\s+)?means\b",
+    # not a route that goes back somewhere ('The loop road closes the circle back to Paro on the last day.')
+    r"\bclos(?:es|ing)\s+the\s+circle\b(?!\s+(?:back|to|at|in|on|by|from|via|with|around|round)\b)",
+    # 'For families travelling with children, that context matters.', 'That context changes what a visit means.'
+    r"^(?:for\s+[^,]{1,80},\s+)?(?:that|this)\s+(?:single\s+)?(?:context|fact|detail|distinction|background"
+    r"|connection)\s+(?:matters\s*[.!]?$|changes\s+(?:how|what|the\s+way)\b)",
+    # 'There is no performance in this, no arranged demonstration.' Round-3 review: the aphorism form only ('in this /
+    # here / about it' or ', no …'), never a schedule ('There is no show on Mondays …', '… during Ramadan.'): no day,
+    # time or season word anywhere in the sentence (one look-ahead from the start).
+    rf"^{_SCHEDULE_NEG}there\s+is\s+no\s+(?:performance|staging|show|pretence|pretense|script|artifice)"
+    r"(?:\s+(?:in\s+(?:this|it|that|any\s+of\s+(?:this|it))|here|about\s+(?:it|this|that)))?"
+    r"(?:\s*,\s*(?:and\s+)?no\b|(?<=this|that|here)\s*[.!]|(?<=\sit)\s*[.!])",
 ))
 
 
@@ -1737,7 +2533,9 @@ def template_lines(text: str) -> list[tuple[str, str]]:
         for rx in TEMPLATE_LINE_RES + AI_TELL_LINE_RES:
             m = rx.search(sp["clean"])
             if m:
-                out.append((" ".join(m.group(0).split()), sp["clean"]))
+                # a pattern anchored at the sentence start for a whole-sentence guard names its phrase as group 'p'
+                phrase = (m.group("p") if "p" in rx.groupindex else None) or m.group(0)
+                out.append((" ".join(phrase.split()), sp["clean"]))
                 break
     return out
 
@@ -2460,12 +3258,17 @@ def autofix(content_text: str, ctx: HygieneContext) -> tuple[str, list[str]]:
     def deleted(k: int) -> bool:  # a trimmed sentence is still there and can still repeat
         return k in edits and not edits[k][0]
 
+    seed = source_forms(ctx.source_text)
+    counts = _word_keys(text)
     for a, i in enumerate(prose):
         if deleted(i) or _is_cta(spans[i]["clean"], ctx.cta):
             continue
         for j in prose[max(0, a - _DUP_WINDOW):a]:
             if not deleted(j) and near_verbatim(spans[i]["clean"], spans[j]["clean"], ignore):
-                edits[i] = ("", f"deleted a repeat of a nearby sentence: '{spans[i]['clean'][:160]}'")
+                # AA-790 round 3: every fact of the repeat is still in the text without it (the fact invariant), and
+                # (fourth review) it takes no word out of the piece (added_words)
+                if _repeat_delete_ok(counts, text[spans[i]["start"]:spans[i]["end"]], spans[i]["clean"], seed, ignore):
+                    edits[i] = ("", f"deleted a repeat of a nearby sentence: '{spans[i]['clean'][:160]}'")
                 break
     if edits:
         for i in sorted(edits, reverse=True):
@@ -2481,7 +3284,7 @@ def autofix(content_text: str, ctx: HygieneContext) -> tuple[str, list[str]]:
 
     # S234 round 3 — near-duplicates the window rule above does not see (a figure told twice, an echoed
     # opening, an orphan line) and a moment repeated under another moment's heading
-    text, more = dedupe(text, ignore, ctx.cta)
+    text, more = dedupe(text, ignore, ctx.cta, ctx.source_text)
     log += more
     from services.acp_content_writing.trip_facts import fix_misplaced
     text, more = fix_misplaced(text, ctx.moments, ctx.cta)

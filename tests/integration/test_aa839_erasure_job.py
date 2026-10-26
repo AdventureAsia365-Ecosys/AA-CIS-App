@@ -254,8 +254,30 @@ async def _seed(pools, tid: str, stage: str) -> dict:
             INSERT INTO shared.writing_rule (kind, scope, tenant_id, writer, cluster_key, rule_text)
             VALUES ('writer_instruction', $1, $2::uuid, 't9_blog', $3, 'Cut stock openers.')""",
                             scope, tenant, stage)
+    # AA-919 (284): a golden set with one tenant item (tenant text, deleted) and one platform A1 item (kept), each with
+    # a baseline_import run and one control result (the result of the tenant item is deleted, the platform one kept)
+    sha = "a" * 64
+    set_id = await admin.fetchval("""
+        INSERT INTO shared.eval_golden_set (name, version, source_uri, source_sha256, seed, item_count, imported_by)
+        VALUES ($1, '0.0.1', 'file:zz839.json', $2, 1, 2, $3) RETURNING set_id""",
+                                  f"zz839_{uuid.uuid4().hex[:8]}", sha, stage)
+    for writer, channel, scope, tenant in (("t9_blog", "blog", "tenant", tid), ("a1", None, "platform", None)):
+        item = await admin.fetchval("""
+            INSERT INTO shared.eval_golden_item (set_id, sample_id, writer, channel, scope, tenant_id, split, kind,
+                                                 input, label, label_verdict, label_source, input_sha256)
+            VALUES ($1, $2, $3, $4, $5, $6::uuid, 'tune', 'real', '{}'::jsonb, '{}'::jsonb, 'pass', 'agent_panel', $7)
+            RETURNING item_id""", set_id, f"zz-{writer.replace('_', '-')}", writer, channel, scope, tenant, sha)
+        run = await admin.fetchval("""
+            INSERT INTO shared.prompt_eval_runs (pipeline, prompt_version, tour_count, cost_usd, details, triggered_by,
+                                                 run_kind, writer, golden_set_id)
+            VALUES ('writing_memory', 'zz839', 1, 0, '{}'::jsonb, $1, 'baseline_import', $2, $3) RETURNING id""",
+                                   stage, writer, set_id)
+        await admin.execute("""
+            INSERT INTO shared.eval_item_result (run_id, item_id, writer, scope, tenant_id, arm, mode, phase, verdict)
+            VALUES ($1, $2, $3, $4, $5::uuid, 'control', 'score_only', 'tune', 'pass')""",
+                            run, item, writer, scope, tenant)
     return {"plan_id": plan_id, "version_id": version_id, "job_id": job_id, "v1": str(v1), "v2": str(v2),
-            "master": master, "own_tour": own}
+            "master": master, "own_tour": own, "golden_set_id": set_id}
 
 
 def _rows(result) -> dict:
@@ -314,6 +336,8 @@ async def test_tenant_dry_run_counts_and_writes_nothing(pool):
     assert rows[("shared.pipeline_jobs", "delete")] == 2               # tenant id and slug
     assert rows[("shared.writing_signal", "delete")] == 1              # AA-916: the tenant row, not the platform one
     assert rows[("shared.writing_rule", "delete")] == 1                # AA-917: the tenant rule, not the platform one
+    assert rows[("shared.eval_golden_item", "delete")] == 1           # AA-919: the tenant item, not the A1 one
+    assert rows[("shared.eval_item_result", "delete")] == 1           # AA-919: the tenant item's result only
     assert res["tenant_state"] == "offboarded" and res["unregistered"] == []
     assert res["s3"][1] == {"prefix": f"bronze:brand-identity/{tid}/", "objects": 2}
     assert {s["name"]: s["exists"] for s in res["secrets"]} == {f"acp/cms/{tid}": True, f"acp/social/{tid}": False}
@@ -438,7 +462,18 @@ async def test_tenant_apply_erases_children_first_and_leaves_other_tenants(pool)
     # AA-917: the tenant's writing rules are gone, the platform one of the same seed stays
     assert [r["scope"] for r in await admin.fetch("SELECT scope FROM shared.writing_rule WHERE cluster_key = $1",
                                                   stage)] == ["platform"]
+    # AA-919: the tenant's golden item and its result are gone; the set, the A1 item, its result and both runs stay
+    golden = seeded["golden_set_id"]
+    assert [r["scope"] for r in await admin.fetch("SELECT scope FROM shared.eval_golden_item WHERE set_id = $1",
+                                                  golden)] == ["platform"]
+    assert await admin.fetchval("SELECT count(*) FROM shared.eval_item_result r JOIN shared.prompt_eval_runs p "
+                                "ON p.id = r.run_id WHERE p.golden_set_id = $1", golden) == 1
+    assert await admin.fetchval("SELECT count(*) FROM shared.prompt_eval_runs WHERE golden_set_id = $1", golden) == 2
+    assert await admin.fetchval("SELECT count(*) FROM shared.eval_golden_item WHERE tenant_id = $1::uuid", tid) == 0
+    assert await admin.fetchval("SELECT count(*) FROM shared.eval_item_result WHERE tenant_id = $1::uuid", tid) == 0
     # the other tenant is untouched
+    assert await admin.fetchval("SELECT count(*) FROM shared.eval_golden_item WHERE tenant_id = $1::uuid", other) == 1
+    assert await admin.fetchval("SELECT count(*) FROM shared.eval_item_result WHERE tenant_id = $1::uuid", other) == 1
     assert await admin.fetchval("SELECT count(*) FROM acp_shared.quarter_plan WHERE tenant_id = $1::uuid", other) == 1
     assert await admin.fetchval("SELECT count(*) FROM shared.writing_signal WHERE tenant_id = $1::uuid", other) == 1
     assert await admin.fetchval("SELECT count(*) FROM shared.writing_rule WHERE tenant_id = $1::uuid", other) == 1
