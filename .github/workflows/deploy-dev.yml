@@ -76,6 +76,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ secrets.AWS_REGION }}
+          mask-aws-account-id: true
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v2
       - name: Build, tag, push image
@@ -112,6 +113,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ secrets.AWS_REGION }}
+          mask-aws-account-id: true
       # AA-651 — the worker runs the SAME image as the api on its own ECS service. The real
       # services are `aa-cis-dev-api` (api) and `aa-cis-dev-worker` (worker). ECS_SERVICE is
       # `aa-cis-dev-api`, so the worker name is the api name with its `-api` suffix replaced by
@@ -155,7 +157,7 @@ jobs:
           > /tmp/td_${FAMILY}.json
           NEW_ARN=$(aws ecs register-task-definition --cli-input-json file:///tmp/td_${FAMILY}.json \
             --region "$AWS_REGION" --query 'taskDefinition.taskDefinitionArn' --output text)
-          echo "Registered $FAMILY: $NEW_ARN"
+          echo "Registered $FAMILY: ${NEW_ARN##*/}"  # family:revision only; the ARN carries the account id (public repo)
           aws ecs update-service --cluster "$ECS_CLUSTER" --service "$SERVICE" \
             --task-definition "$NEW_ARN" --region "$AWS_REGION" >/dev/null
           SH
