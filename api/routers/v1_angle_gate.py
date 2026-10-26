@@ -54,6 +54,7 @@ from api.routers.v1_tours import get_tenant
 from services.acp_angle_gate import service
 from services.acp_angle_gate.goals import GOALS
 from api.routers._served import refuse_http
+from services.acp_shared import atom_replaced
 from shared.tour_liveness import TourNotServedError
 
 logger = structlog.get_logger()
@@ -108,7 +109,10 @@ async def _read_request(request: Request, tenant_id: UUID, request_id: UUID, eve
         result = await service.fetch_request_on(conn, tenant_id, request_id)
     # AA-859 MAIN exception: shared.job (t8_angles status) has no tenant column and no tenant-role grant; the
     # request was proven this tenant's inside the block above. Read after release, only for pending_goal + no goal.
-    return await service.with_generation_status(result, request.app.state.pool)
+    result = await service.with_generation_status(result, request.app.state.pool)
+    # AA-990 D2: atom_replaced / atom_replacement (MAIN exception too: v_active_tour_atoms has no tenant-role grant)
+    await atom_replaced.with_atom_state([result], tenant_id, request.app.state.pool)
+    return result
 
 
 @router.get("/requests/{request_id}", summary="Read a request + its angles (if generated)")

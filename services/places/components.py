@@ -194,20 +194,38 @@ def build_components(source_id: str, tour_country: str, atoms: list[dict],
 # old row and exactly one unmatched new component share the key); an ambiguous key falls to the next pass:
 #   same day + itinerary spelling (activity retyped) → same day + destination → same day + place card →
 #   same day + link name → any day + destination → any day + place card → any day + link name.
+# AA-990 D4: a generic name ('Night Market', 'Old Quarter': a different place in every town) is a spelling / link-name
+# key only together with its locality (the same _name_locality as the redirects): the dropped Chiang Mai market is
+# never carried onto the Chiang Rai one, on the same day or any day; with no known locality the name gives no key and
+# only the destination / card passes can keep the id.
 CARRY_PASSES = (
     ("spelling", True), ("destination", True), ("card", True), ("link_name", True),
     ("destination", False), ("card", False), ("link_name", False),
 )
 
 
-def _carry_key(kind: str, *, spelling: str, link_name: str, destination, card) -> Optional[str]:
+def _carry_key(kind: str, *, spelling: str, link_name: str, destination, card,
+               locality: Optional[dict] = None) -> Optional[str]:
+    """locality: {"spelling": …, "link_name": …} as _name_locality ('' distinctive, the town for a generic name,
+    None = generic with no known town → no name key)."""
     v = {"spelling": spelling, "link_name": link_name, "destination": destination, "card": card}[kind]
-    return str(v) if v else None
+    if not v:
+        return None
+    if kind in ("spelling", "link_name"):
+        loc = (locality or {}).get(kind, "")
+        return f"{v}|{loc}" if loc is not None else None
+    return str(v)
+
+
+def _carry_localities(raw_name: Optional[str], link: Optional[str], locality_norm: Optional[str]) -> dict:
+    return {"spelling": _name_locality(raw_name, locality_norm, link=False),
+            "link_name": _name_locality(link, locality_norm, link=True)}
 
 
 def carry_over_ids(comps: list[Component], comp_dest: dict, old_rows: list[dict]) -> tuple[dict[str, str], dict]:
     """({new component id: previous id to keep}, counters). `old_rows`: the source's current geo.tour_place rows
-    (component_id, day_index, name, name_norm, destination_id, place_card_id). Pure; the caller renames."""
+    (component_id, day_index, name, name_norm, locality_norm, destination_id, place_card_id). Pure; the caller
+    renames."""
     old = {str(o["component_id"]): o for o in old_rows}
     new_ids = {c.component_id for c in comps}
     free_old = {i for i in old if i not in new_ids}
@@ -221,13 +239,15 @@ def carry_over_ids(comps: list[Component], comp_dest: dict, old_rows: list[dict]
         for i in sorted(free_old):
             o = old[i]
             k = _carry_key(kind, spelling=name_norm(o.get("name")), link_name=o.get("name_norm") or "",
-                           destination=o.get("destination_id"), card=o.get("place_card_id"))
+                           destination=o.get("destination_id"), card=o.get("place_card_id"),
+                           locality=_carry_localities(o.get("name"), o.get("name_norm"), o.get("locality_norm")))
             if k:
                 olds.setdefault((int(o["day_index"]) if same_day else None, k), []).append(i)
         news: dict[tuple, list[Component]] = {}
         for c in todo:
             k = _carry_key(kind, spelling=name_norm(c.name), link_name=c.name_norm,
-                           destination=comp_dest.get(c.component_id), card=c.place_card_id)
+                           destination=comp_dest.get(c.component_id), card=c.place_card_id,
+                           locality=_carry_localities(c.name, c.link_name, c.locality_norm))
             if k:
                 news.setdefault((c.day_index if same_day else None, k), []).append(c)
         for key, cs in news.items():
@@ -259,12 +279,9 @@ def apply_carry_over(comps: list[Component], comp_dest: dict, mapping: dict[str,
 # component of the same source for the same place, by rule (first rule with a candidate wins):
 #   destination (same linked destination) → place card → itinerary spelling + country → link name + country,
 # any day, the nearest day first, then the same activity, then the smaller id; a generic name ('Night Market') by
-# spelling or link name only in the same locality. The redirects are cumulative per source
-# (an older redirect whose target was dropped now is re-pointed through this build's redirects) and live in
-# geo.tour_build.counts["id_redirects"]: CIS cannot write tripplanner.* (tp-017 grants the map to the role tripplanner
-# only), so AA-CIS-Infra db/scripts/aa990_component_id_backfill.py copies them into tripplanner.component_id_map.
-REDIRECTS_KEY = "id_redirects"
-REDIRECTS_CAP = 1000          # per source; the newest are kept (a tour is rewritten a handful of times at most)
+# spelling or link name only in the same locality. The pipeline writes them to geo.component_redirect (CIS 285, D1)
+# in the transaction of the geo.tour_place rewrite (store.write_redirects); TripPlanner reads
+# catalog.v_component_redirect and follows the chain (a later rebuild that drops the target adds target → newer id).
 REDIRECT_RULES = ("destination", "card", "spelling", "link_name")
 UNRESOLVABLE_LOCALITY = "?"   # geo.tour_place.locality_norm of a generic name with no locality (pipeline writes it)
 
@@ -294,13 +311,14 @@ def _redirect_key(kind: str, *, spelling: str, link_name: str, country: str, des
     return f"{name}|{country}|{locality}" if name and locality is not None else None
 
 
-def redirect_dropped(comps: list[Component], comp_dest: dict, old_rows: list[dict]) -> tuple[dict[str, str], dict]:
-    """({dropped previous id: current component id}, counters). Call after apply_carry_over: `comps` carry their final
-    ids and `comp_dest` is keyed on them. `old_rows` as carry_over_ids, plus `country_norm`, `activity` and
-    `locality_norm` when known (a row without `country_norm` matches a name in any country of the tour). Pure.
-    A generic name ('Night Market', 'Old Quarter') matches by spelling or link name only in the same locality: the
-    Chiang Mai market never redirects to the Chiang Rai one; with no locality on either side it stays unredirected
-    (counted in ids_unredirected_generic), never guessed by day distance."""
+def redirect_dropped(comps: list[Component], comp_dest: dict,
+                     old_rows: list[dict]) -> tuple[dict[str, str], dict, dict[str, str]]:
+    """({dropped previous id: current component id}, counters, {dropped previous id: rule}). Call after
+    apply_carry_over: `comps` carry their final ids and `comp_dest` is keyed on them. `old_rows` as carry_over_ids,
+    plus `country_norm`, `activity` and `locality_norm` when known (a row without `country_norm` matches a name in
+    any country of the tour). Pure. A generic name ('Night Market', 'Old Quarter') matches by spelling or link name
+    only in the same locality: the Chiang Mai market never redirects to the Chiang Rai one; with no locality on
+    either side it stays unredirected (counted in ids_unredirected_generic), never guessed by day distance."""
     final = {c.component_id for c in comps}
     keys: dict[str, dict[str, list[Component]]] = {k: {} for k in REDIRECT_RULES}
     for c in comps:
@@ -314,6 +332,7 @@ def redirect_dropped(comps: list[Component], comp_dest: dict, old_rows: list[dic
                 if k:                       # "*": a previous row with no country matches the name in any country
                     keys[kind].setdefault(k, []).append(c)
     redirects: dict[str, str] = {}
+    rule_of: dict[str, str] = {}
     by_rule: dict[str, int] = {}
     unmatched = generic_unmatched = 0
     for o in sorted((o for o in old_rows if str(o["component_id"]) not in final), key=lambda r: str(r["component_id"])):
@@ -331,33 +350,11 @@ def redirect_dropped(comps: list[Component], comp_dest: dict, old_rows: list[dic
                 best = min(cands, key=lambda c: (abs(c.day_index - day), c.activity != activity, c.day_index,
                                                  c.component_id))
                 redirects[str(o["component_id"])] = best.component_id
+                rule_of[str(o["component_id"])] = kind
                 by_rule[kind] = by_rule.get(kind, 0) + 1
                 break
         else:
             unmatched += 1
             generic_unmatched += 1 if None in loc_of.values() else 0
     return redirects, {"ids_redirected": len(redirects), "ids_redirected_by": by_rule, "ids_unredirected": unmatched,
-                       "ids_unredirected_generic": generic_unmatched}
-
-
-def merge_redirects(previous: Optional[dict], fresh: dict[str, str], final_ids: set[str],
-                    cap: int = REDIRECTS_CAP) -> tuple[dict[str, str], int]:
-    """(the source's redirects after this build, how many older ones were lost). An older redirect keeps its target
-    when the target is still a component, follows this build's redirect when the target was dropped, else is lost.
-    An id that is a component again (the place came back) is no longer redirected. At most `cap`, newest kept."""
-    out: dict[str, str] = {}
-    lost = 0
-    for old, target in (previous or {}).items():
-        if old in final_ids:
-            continue
-        t = target if target in final_ids else fresh.get(target)
-        if t:
-            out[old] = t
-        else:
-            lost += 1
-    for old, t in fresh.items():
-        out.pop(old, None)
-        out[old] = t
-    if len(out) > cap:
-        out = dict(list(out.items())[-cap:])
-    return out, lost
+                       "ids_unredirected_generic": generic_unmatched}, rule_of

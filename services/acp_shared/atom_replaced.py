@@ -77,3 +77,70 @@ async def atom_is_live(conn, atom_id: str | None, tenant_id) -> bool:
     if not atom_id:
         return False
     return bool(await conn.fetchval(_ATOM_LIVE_SQL, atom_id, str(tenant_id)))
+
+
+# ── AA-990 D2 (S252): the computed `atom_replaced` state on the tenant's request reads ────────────────────────────
+# No status, no migration: GET /v1/angle-gate/requests/{id} and GET /v1/content-writing/reviews (+ /requests/{id}/
+# review) add `atom_replaced` (true when a single-atom request's atom is no longer live) and `atom_replacement`
+# ({atom_id, place, itinerary_day} of the unique live atom of the same place — atom_repoint's rule — else null), so
+# the Partner portal shows the state and disables Write before the tenant meets the 409. A Route request is never
+# flagged here (its own 409 covers a Route whose Segments were all rebuilt away).
+#
+# AA-859 MAIN exception (like angle_gate service.generation_status): acp_contract.v_active_tour_atoms has no
+# tenant-role grant, so this reads on the main pool (cis_app). The caller proved the requests are the tenant's on its
+# own tenant connection first, and every statement here still filters on the tenant.
+_STATE_SQL = """
+    SELECT r.request_id::text AS request_id, r.tenant_id::text AS tenant_id, r.atom_id, r.status,
+           (r.route_segment_ids IS NOT NULL) AS is_route,
+           EXISTS (SELECT 1 FROM acp_contract.v_active_tour_atoms a
+                    WHERE a.atom_id = r.atom_id AND a.owner_scope IN ('platform', r.tenant_id::text)
+                      AND NOT a.deleted AND NOT a.is_empty_marker) AS live
+      FROM acp_shared.angle_gate_request r
+     WHERE r.tenant_id = $1::uuid AND r.request_id = ANY($2::uuid[])
+"""
+
+
+def _state(replaced: bool, cand: dict | None = None) -> dict:
+    hint = None
+    if cand is not None:
+        hint = {"atom_id": cand["atom_id"], "place": cand.get("place"), "itinerary_day": cand.get("itinerary_day")}
+    return {"atom_replaced": replaced, "atom_replacement": hint}
+
+
+async def atom_states(pool, tenant_id, request_ids: list[str]) -> dict[str, dict]:
+    """{request_id: {"atom_replaced": bool, "atom_replacement": {...} | None}} for the tenant's requests."""
+    from services.acp_shared import atom_repoint as ar
+
+    ids = sorted({str(i) for i in request_ids if i})
+    if not ids:
+        return {}
+    async with pool.acquire() as conn:
+        rows = [dict(r) for r in await conn.fetch(_STATE_SQL, str(tenant_id), ids)]
+        stale = [r for r in rows if not r["is_route"] and not r["live"] and r.get("atom_id")]
+        old, cands = {}, []
+        if stale:
+            old = {r["atom_id"]: dict(r) for r in await conn.fetch(ar.OLD_ATOMS_SQL,
+                                                                    sorted({s["atom_id"] for s in stale}))}
+            sources = sorted({str(o["source_id"]) for o in old.values()})
+            cands = [dict(r) for r in await conn.fetch(ar.CANDIDATES_SQL, sources)] if sources else []
+    out = {r["request_id"]: _state(False) for r in rows}
+    by_atom = {c["atom_id"]: c for c in cands}
+    for d in ar.plan_repoints(stale, old, cands):
+        if d["outcome"] == "already_live":
+            continue
+        out[d["request_id"]] = _state(True, by_atom.get(d["new_atom_id"]) if d["outcome"] == "repoint" else None)
+    return out
+
+
+async def with_atom_state(items: list[dict], tenant_id, pool) -> list[dict]:
+    """Each item (a dict with `request_id`) gains `atom_replaced` / `atom_replacement` (defaults: false / null).
+    Informational: a failing read logs a warning and leaves the defaults (the write still answers the typed 409)."""
+    try:
+        states = await atom_states(pool, tenant_id, [i.get("request_id") for i in items])
+    except Exception as e:  # noqa: BLE001 — never fail the tenant's read over the hint
+        import structlog
+        structlog.get_logger().warning("aa990_atom_state_failed", tenant_id=str(tenant_id), error=str(e)[:200])
+        states = {}
+    for i in items:
+        i.update(states.get(str(i.get("request_id")), _state(False)))
+    return items

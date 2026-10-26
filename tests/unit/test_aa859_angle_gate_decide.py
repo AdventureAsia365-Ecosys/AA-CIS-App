@@ -110,11 +110,16 @@ def _fetch_request_stub(events=None):
 
 @contextmanager
 def _reread(stub):
-    """Patch the wave-4 re-read: fetch_request_on stubbed, the job-status step a pass-through."""
+    """Patch the wave-4 re-read: fetch_request_on stubbed, the job-status and AA-990 atom-state steps (both MAIN
+    exceptions, tested on their own) pass-throughs."""
     async def _passthrough(result, pool):
         return result
+
+    async def _items(items, tenant_id, pool):
+        return items
     with patch.object(service, "fetch_request_on", new=stub), \
-            patch.object(service, "with_generation_status", new=AsyncMock(side_effect=_passthrough)):
+            patch.object(service, "with_generation_status", new=AsyncMock(side_effect=_passthrough)), \
+            patch.object(ag.atom_replaced, "with_atom_state", new=AsyncMock(side_effect=_items)):
         yield stub
 
 

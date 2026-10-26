@@ -243,6 +243,31 @@ async def replace_source_rows(conn, source_id: str, tour_id: str, days: list[tup
             await conn.executemany(f"INSERT INTO geo.tour_place ({_PLACE_COLS}) VALUES ({_PLACE_VALUES})", places)
 
 
+_REDIRECT_CLEAR = "DELETE FROM geo.component_redirect WHERE old_id = ANY($1::uuid[])"
+_REDIRECT_UPSERT = """
+    INSERT INTO geo.component_redirect (old_id, new_id, source_id, rule)
+    VALUES ($1::uuid, $2::uuid, $3, $4)
+    ON CONFLICT (old_id) DO UPDATE
+       SET new_id = EXCLUDED.new_id, source_id = EXCLUDED.source_id, rule = EXCLUDED.rule, created_at = now()
+"""
+
+
+async def write_redirects(conn, source_id: str, redirects: dict[str, str], rules: dict[str, str],
+                          served_ids: list[str]) -> int:
+    """AA-990 (CIS 285): inside the caller's transaction, right after replace_source_rows. An id this build serves is
+    no longer redirected (the place came back, or it was carried over); every id it dropped gets its redirect
+    (components.redirect_dropped). Older rows stay: a row whose target this build dropped is followed by the reader
+    through the new row of that target (chain). Returns how many rows were cleared."""
+    cleared = 0
+    if served_ids:
+        status = await conn.execute(_REDIRECT_CLEAR, sorted(served_ids))
+        cleared = int(str(status).rsplit(" ", 1)[-1]) if str(status).startswith("DELETE") else 0
+    if redirects:
+        await conn.executemany(_REDIRECT_UPSERT, [(old, new, source_id, rules[old])
+                                                  for old, new in sorted(redirects.items())])
+    return cleared
+
+
 async def write_build(conn, source_id: str, *, tour_id: str, country: Optional[str], days_hash: Optional[str],
                       components_hash: Optional[str], rule_version: int, status: str, counts: dict,
                       cost_usd: float, job_id: Optional[str]) -> None:
