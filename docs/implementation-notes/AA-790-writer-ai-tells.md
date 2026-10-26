@@ -1170,6 +1170,43 @@ Each fix has a test (`test_family_rule_bounds_who_does_what_by_the_seed`,
 '-friendly' triggers, `test_cta_pairs_do_not_contradict_the_worked_in_cta_rule`). The $0 baseline below does not
 change: it measures the round-3 texts.
 
+### Second review fixes (26/10/2026)
+
+An independent review of the two round-4 commits raised two more points. Both are fixed in a third commit.
+
+- **The family trigger still had false positives.** `{'brand_type': 'Adults-only luxury brand, not suitable for
+  children'}` and `'Run by the same family for three generations'` returned the FAMILY BRAND line. The negation
+  window is now four words before the family / children word (not / never / no / nor / without / adults-only,
+  and 'adults only'). It is read clause by clause, so it never reaches past a comma ('Calm, never preachy,
+  family-focused' still triggers). Ownership now also covers 'by' up to three words before a family word ('run by
+  the same family', 'owned by a local family'), 'same family', and 'family for <n> generations / decades / years'.
+  'by' counts only before 'family', so 'Designed by parents, for parents' still triggers.
+- **A copied prompt slot could ship.** The DON'T / WRITE INSTEAD pairs contain `<...>` slots. A writer that copies
+  one leaves `<place>` in the piece. `hygiene.PLACEHOLDER_SLOT_PATTERN` is now the last `AI_TELL_LINE_RES` entry. It
+  is residue: it rides the F15_voice stock-line repair (one sentence repair on attempt 1, then a warning). It is
+  never a silent delete, and the deterministic pass does not touch it.
+  - It matches slot-like content only: a letter, then letters, spaces, underscores, hyphens or apostrophes, up to
+    60 characters in total. It also matches the bare `<...>` / `<…>`. The brief said 40 characters, but the
+    prompt's own longest slot ('<the length of time the content seed gives>') is 41.
+  - T9 blog bodies are markdown (the prompt asks for `## ` headings), not HTML. Even so, a bare HTML tag (`<p>`,
+    `<em>`, `<strong>`, `<br>` …) is excluded by name. `<h2>`, `</p>`, `<br/>` and `<a href="…">` never match the
+    character class.
+  - It is bounded, so it runs in linear time. It is also covered by the round-2 / round-3 linear-time tests, which
+    run every `AI_TELL_LINE_RES` entry after their start marker.
+
+Neither change touches `SYSTEM_PROMPT` (the regex is code, and the family line is user-prompt only), so
+`writer_prompt_version` stays `2b510e08`. `AI_TELLS_VERSION` stays v3 because the pass makes no new edit.
+
+Tests in `tests/unit/test_aa790_writer_round4.py` (67 after this fix, 38 before):
+- 6 new non-triggers and 2 new triggers for the family rule.
+- Every prompt slot is caught.
+- 6 slot sentences are residue and an F15_voice violation, and the pass keeps them.
+- 7 HTML / plain-text negatives.
+- 7 growth-ratio linear-time cases on 8000 characters of near-misses (4x the input must cost < 8x the time).
+
+Limit: `template_lines` reads prose, bullets and FAQ answers only. A slot in a heading or a FAQ question is not
+flagged. F15 also quotes only sentences of 4+ words (`_MIN_QUOTE_WORDS`), so a bare '<Place>.' line is not routed.
+
 ### Changed (vs the round-4 brief)
 
 - The brief asked for 6–10 pairs. There are 10, because the panel quotes fall into ten distinct shapes. The test
@@ -1228,5 +1265,7 @@ and brand words only.
     energy line and before the blog format, PACE / RESTRAINT unchanged.
   - After the review fixes, the 102 unit files that import `acp_content_writing` (round 4 included): 4402 passed
     in about 54 s, run on the final prompt text (`2b510e08`).
+  - After the second review fixes, the same 102 files: 4433 passed in about 49 s (prompt version still
+    `2b510e08`). The round-4, round-3, fact-invariant and S234 voice-contract files on their own: 1079 passed.
 - `tests/unit/test_aa771_s234_voice_contract.py:140` has an E501 (123 characters). It is already on main, and this
   branch does not touch that line.

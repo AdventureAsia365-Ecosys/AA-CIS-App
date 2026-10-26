@@ -212,18 +212,49 @@ out, never guessed.
   line."""
 
 
+# AA-790 round 4 review: a negation up to four words back, in the same clause ('Adults-only luxury brand, not
+# suitable for children'); 'by … family' / 'same family' / 'family for three generations' is ownership too ('Run by
+# the same family for three generations').
+_FAMILY_NEGATIONS = _VOICE_NEGATIONS | {"without", "adults-only", "adult-only"}
+_FAMILY_SPAN_WORDS = frozenset({"generation", "generations", "decade", "decades", "years"})
+_PACK_CLAUSE_RE = re.compile(r"[,;:.!?()]")
+
+
+def _family_word_counts(words: list[str], k: int) -> bool:
+    """words[k] names families or children as the brand's travellers: not negated (not / never / no / nor /
+    without / adults-only up to four words back) and not ownership (a following 'run' / 'owned' / …; for a
+    'family' word also 'by' up to three words back, 'same family', 'family for <n> generations / years')."""
+    w = words[k]
+    if not _FAMILY_WORD_RE.match(w):
+        return False
+    before = words[max(0, k - 4):k]
+    if _FAMILY_NEGATIONS & set(before) or any(a in ("adult", "adults") and b == "only"
+                                              for a, b in zip(before, before[1:])):
+        return False
+    after = words[k + 1:k + 4]
+    if after and after[0] in _FAMILY_OWNERSHIP:
+        return False
+    if w.startswith("famil"):
+        if "by" in words[max(0, k - 3):k] or (k and words[k - 1] == "same"):
+            return False
+        if after[:1] == ["for"] and _FAMILY_SPAN_WORDS & set(after[1:]):
+            return False
+    return True
+
+
 def family_presence_rule(brand_audience: Optional[dict]) -> str:
     """The FAMILY BRAND line for a pack whose voice or brand type names families or children ('Family-aware',
     'Premium family adventure travel brand'); '' otherwise. The audience line alone never triggers it (a general
-    brand can list 'couples and families'), a negated word ('not a family brand') does not count, and neither does
-    ownership ('Family-run', 'family owned since 1990'): that is who runs the business, not who travels."""
+    brand can list 'couples and families'), a negated word ('not a family brand', 'Adults-only …, not suitable for
+    children') does not count, and neither does ownership ('Family-run', 'family owned since 1990', 'Run by the
+    same family for three generations'): that is who runs the business, not who travels. Read clause by clause, so
+    a negation never reaches past a comma."""
     pack = brand_audience or {}
     for entry in [str(v) for v in pack.get("voice") or [] if v] + [str(pack.get("brand_type") or "")]:
-        words = _VOICE_WORD_RE.findall(entry.lower())
-        if any(_FAMILY_WORD_RE.match(w) and not _VOICE_NEGATIONS & set(words[max(0, k - 2):k])
-               and (k + 1 == len(words) or words[k + 1] not in _FAMILY_OWNERSHIP)
-               for k, w in enumerate(words)):
-            return FAMILY_RULE
+        for clause in _PACK_CLAUSE_RE.split(entry.lower()):
+            words = _VOICE_WORD_RE.findall(clause)
+            if any(_family_word_counts(words, k) for k in range(len(words))):
+                return FAMILY_RULE
     return ""
 
 # ---------------------------------------------------------------- context

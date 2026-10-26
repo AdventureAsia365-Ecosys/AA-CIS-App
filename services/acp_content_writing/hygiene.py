@@ -2372,6 +2372,16 @@ _SCHEDULE_NEG = (r"(?![^\n]*\b(?:mondays?|tuesdays?|wednesdays?|thursdays?|frida
                  r"|months?|seasons?|ramadan|lent|holidays?|festivals?|during|until|till|after|before|when|while"
                  r"|closed|open|opens|cancell?ed|winter|summer|spring|autumn|monsoon|january|february|march|april|may"
                  r"|june|july|august|september|october|november|december|\d)\b)")
+# AA-790 round 4 review: the DON'T / WRITE INSTEAD pairs in the T9 prompt (ai_tells.PROMPT_RULES) have <slot>s
+# ('<place>', '<Day or place>', '<what the content seed says happens>'); a writer that copies one leaves a literal
+# slot in the piece. Residue, so it rides the F15_voice stock-line repair (never a silent delete). Slot-like content
+# only: letters, spaces, underscores, hyphens and apostrophes, up to 60 characters (the prompt's longest slot is 41;
+# bounded, so linear time), or the bare '<...>' / '<…>'. T9 blog bodies are markdown, but a bare HTML tag ('<p>',
+# '<em>', '<br>') is never a slot, and '<h2>', '</p>', '<br/>' and '<a href="…">' never match the character class.
+_HTML_TAG_NAMES = ("a|abbr|article|aside|b|blockquote|body|br|center|cite|code|dd|del|div|dl|dt|em|figcaption"
+                   "|figure|font|footer|head|header|hr|html|i|img|ins|kbd|li|main|mark|nav|ol|p|pre|q|s|section"
+                   "|small|span|strike|strong|sub|sup|table|tbody|td|tfoot|th|thead|tr|tt|u|ul|var|wbr")
+PLACEHOLDER_SLOT_PATTERN = rf"<(?:(?!(?:{_HTML_TAG_NAMES})>)[a-z][a-z _'’-]{{0,59}}|\.\.\.|…)>"
 AI_TELL_LINE_RES = tuple(re.compile(p, re.I) for p in (
     # 'This is the day the route earns its reputation.', 'the water earns every second you spend in it'.
     # Not a history fact: 'earned its name from the legend', 'earned the title of', 'earned its reputation for
@@ -2521,6 +2531,8 @@ AI_TELL_LINE_RES = tuple(re.compile(p, re.I) for p in (
     rf"^{_SCHEDULE_NEG}there\s+is\s+no\s+(?:performance|staging|show|pretence|pretense|script|artifice)"
     r"(?:\s+(?:in\s+(?:this|it|that|any\s+of\s+(?:this|it))|here|about\s+(?:it|this|that)))?"
     r"(?:\s*,\s*(?:and\s+)?no\b|(?<=this|that|here)\s*[.!]|(?<=\sit)\s*[.!])",
+    # 'After the ride, lunch is at <place>.' (a prompt slot the writer copied; see PLACEHOLDER_SLOT_PATTERN)
+    PLACEHOLDER_SLOT_PATTERN,
 ))
 
 
