@@ -68,7 +68,8 @@ concurrency:
 jobs:
   smoke:
     name: UI smoke (Playwright)
-    runs-on: ubuntu-latest
+    # Pinned (S252, 26/10/2026): ubuntu-latest moved to 26.04 and Playwright does not support Chromium there yet.
+    runs-on: ubuntu-24.04
     # Both triggers carry inputs.base_url (the caller only calls after a successful preview deploy).
     if: inputs.base_url != ''
     env:
@@ -162,7 +163,8 @@ jobs:
   # ── AA-816 S2 path: authenticated smoke as the Cognito E2E user (callback hosts only, main only) ──
   smoke-staff:
     name: UI smoke, signed in (Cognito E2E user)
-    runs-on: ubuntu-latest
+    # Pinned (S252, 26/10/2026): ubuntu-latest moved to 26.04 and Playwright does not support Chromium there yet.
+    runs-on: ubuntu-24.04
     # The mailbox role trusts refs/heads/main + environment e2e only. Inside a called workflow github.ref is the
     # caller's ref (a push to main, or a dispatch from main).
     if: inputs.base_url != '' && inputs.staff_session && github.ref == 'refs/heads/main'

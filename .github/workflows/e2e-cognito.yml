@@ -48,7 +48,8 @@ concurrency:
 jobs:
   cognito:
     name: Cognito email-code sign-in (Playwright)
-    runs-on: ubuntu-latest
+    # Pinned (S252, 26/10/2026): ubuntu-latest moved to 26.04 and Playwright does not support Chromium there yet.
+    runs-on: ubuntu-24.04
     # The mailbox role trusts refs/heads/main only; a branch dispatch would fail at AssumeRole.
     if: github.ref == 'refs/heads/main'
     environment: e2e
