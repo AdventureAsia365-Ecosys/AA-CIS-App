@@ -52,6 +52,7 @@ export interface PageRule {
 export const PAGE_RULES: PageRule[] = [
   // Admin only — whole-system views, money, tenants, jobs, decisions, photos.
   { prefix: "/admin/overview", roles: ["admin"] },          // AA-664
+  { prefix: "/admin/data-coverage", roles: ["admin"] },     // AA-992 — counts from raw upload to CRM (incl. CRM)
   { prefix: "/admin/tenants", roles: ["admin"] },
   { prefix: "/admin/llm-usage", roles: ["admin"] },         // AA-505
   { prefix: "/admin/jobs", roles: ["admin"] },              // AA-650
@@ -147,6 +148,9 @@ export const API_READ_RULES: { prefix: string; roles: StaffRole[] }[] = [
   // AA-894 — backend /admin/data-model (the live ERD of every schema, PII tags included): admin only, re-checked by
   // the backend (staff_policy, capability ops.read).
   { prefix: "data-model", roles: ["admin"] },
+  // AA-992 — backend /admin/data-coverage (counts of every stage, CRM included): admin only, re-checked by the backend
+  // (staff_policy, capability ops.read).
+  { prefix: "data-coverage", roles: ["admin"] },
   // AA-839 — backend /admin/job-runner/erasure (inventory + apply settings) and /erasure/run: admin only, re-checked
   // by the backend (staff_policy, tenant.read / tenant.write).
   { prefix: "job-runner/erasure", roles: ["admin"] },

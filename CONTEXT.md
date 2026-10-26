@@ -916,7 +916,10 @@ CIS as a consumer (AA-858): the `/admin/overview` business view reads `booking.v
 `booking.v_ops_case_status` (Booking bk-017) and `tripplanner.v_ops_traffic_daily` (TripPlanner tp-015) — aggregate
 views the producers own and grant to `cis_app` in their own migrations (contract `ops.overview.v1`, AA-Ecosys
 `docs/contracts/ops.overview.v1.md`; AA-CIS-Infra `db/owners.yaml` consumer_grants). CIS never reads `booking.*` /
-`tripplanner.*` tables.
+`tripplanner.*` tables. The `/admin/data-coverage` page (AA-992) reads the family `ops.data_coverage.v1` the same way:
+`tripplanner.v_ops_data_totals`, `v_ops_pin_components`, `v_ops_component_id_map` (tp-020) and
+`booking.v_ops_data_totals`, `v_ops_trip_plan_keys` (bk-025), plus the CRM's counts over HTTP (`crm.ops.v1` 1.4
+`GET /crm/ops/v1/data-coverage`, staff token relayed; no AA role reads schema `crm`).
 
 CIS as a consumer of Booking supply facts (AA-835, root ADR 0004a; contracts `supply.hotel.v1` / `supply.service.v1`,
 Booking bk-023 grants the four `booking.v_supply_*` views to `cis_app`). `services/supply_content/`:
@@ -1309,6 +1312,22 @@ to `{status: "unavailable", reason, message}` instead of failing the call:
   for a business reader; no CE code of its own.
 Cost: ≈ $0.0002 per health refresh, worst case ≈ $0.60/month; CE as AA-884. No new env var (names derive from
 `ENVIRONMENT`).
+**Data coverage (AA-992).** `GET /admin/data-coverage` (`ops.read`, admin only, not a machine route) feeds
+`/admin/data-coverage` (Platform › Overview): ≈ 140 rows in 9 stages (inputs, raw, S1 / Master, A-series, places,
+T-series, TripPlanner, Booking, CRM), counts only. Package `api/services/data_coverage/`: `defs.py` (the live-tour,
+active / place atom and served-destination fragments of the S252 audit), `queries.py` (one statement per source),
+`registry.py` (sources + rows: kind must / backlog / info, polarity coverage / defect / threshold / equal, expected
+gap, drill link), `sources.py` (each CIS statement in its own READ ONLY transaction, `statement_timeout` 4 s,
+`lock_timeout` 1 s, `wait_for` 5 s, 3 at a time; the `catalog.*` views as `aa_app_user` through
+`catalog_http.reader.catalog_connection`, one statement per connection, the four catalog sources one after another
+(`Ctx.catalog_lock`); S3 `ListObjectsV2` of `raw-inbox/<AA>/` and
+`brand-identity/`, ≤ 10 pages; the CRM over `crm_console`), `build.py` (tiers on `ops_overview.cache.cached_section`
+under `admin:data-coverage:*`: fast 60 s, slow 600 s, CRM 600 s on its own key and only with a Cognito token; last
+good 24 h; `?refresh=1` recomputes the fast tier only when older than 15 s). A failing source turns only its rows
+`na` with the reason (a tier past its 12 s deadline keeps the sources that finished; only the pending ones are
+`timeout: time_budget`); only a final answer is `unavailable` (`contract_view_missing` for an owner view not applied
+yet, `cognito_session_required`, no tenant pool), a busy catalog gate or any CRM non-200 is `error` (cached 60 s,
+never the last good copy). $0: no model call, no DFS.
 Every number on `/admin/overview` (business view and the CIS sections) names its source in a `SourceHint` (kit
 `InfoTip`); the texts, in plain business words with no table or metric names, live only in
 `frontend/app/admin/overview/_components/sources.ts` (guard `tests/unit/test_aa858_overview_sources.py`; e2e smoke

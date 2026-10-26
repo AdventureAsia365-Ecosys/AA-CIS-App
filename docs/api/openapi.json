@@ -1794,6 +1794,284 @@
         "title": "CountryUpdateRequest",
         "type": "object"
       },
+      "CoverageGroup": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/CoverageRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "note",
+          "rows"
+        ],
+        "title": "CoverageGroup",
+        "type": "object"
+      },
+      "CoverageRow": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "As Of"
+          },
+          "denominator": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Denominator"
+          },
+          "denominator_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Denominator Label"
+          },
+          "drill": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drill"
+          },
+          "expected_gap": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Gap"
+          },
+          "expected_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Note"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "issue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issue"
+          },
+          "kind": {
+            "enum": [
+              "must",
+              "backlog",
+              "info"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit"
+          },
+          "missing": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Missing"
+          },
+          "pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pct"
+          },
+          "polarity": {
+            "enum": [
+              "coverage",
+              "defect",
+              "threshold",
+              "equal"
+            ],
+            "title": "Polarity",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "gap",
+              "info",
+              "na"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "timing_ms": {
+            "title": "Timing Ms",
+            "type": "integer"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "unit",
+          "kind",
+          "polarity",
+          "value",
+          "denominator",
+          "denominator_label",
+          "pct",
+          "missing",
+          "expected_gap",
+          "expected_note",
+          "limit",
+          "status",
+          "reason",
+          "issue",
+          "drill",
+          "source",
+          "timing_ms",
+          "as_of"
+        ],
+        "title": "CoverageRow",
+        "type": "object"
+      },
+      "CoverageSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "backlog": {
+            "title": "Backlog",
+            "type": "integer"
+          },
+          "gaps": {
+            "title": "Gaps",
+            "type": "integer"
+          },
+          "na": {
+            "title": "Na",
+            "type": "integer"
+          },
+          "rows": {
+            "title": "Rows",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rows",
+          "gaps",
+          "backlog",
+          "na"
+        ],
+        "title": "CoverageSummary",
+        "type": "object"
+      },
       "CreateBody": {
         "additionalProperties": false,
         "properties": {
@@ -1996,6 +2274,67 @@
           }
         },
         "title": "CtaCheckBody",
+        "type": "object"
+      },
+      "DataCoverageResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "title": "As Of",
+            "type": "string"
+          },
+          "cached": {
+            "title": "Cached",
+            "type": "boolean"
+          },
+          "generated_ms": {
+            "title": "Generated Ms",
+            "type": "integer"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/CoverageGroup"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "live_tours": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Live Tours"
+          },
+          "sources": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/SourceStatus"
+            },
+            "title": "Sources",
+            "type": "object"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/CoverageSummary"
+          }
+        },
+        "required": [
+          "as_of",
+          "generated_ms",
+          "cached",
+          "stale",
+          "live_tours",
+          "summary",
+          "groups",
+          "sources"
+        ],
+        "title": "DataCoverageResponse",
         "type": "object"
       },
       "DecideRequest": {
@@ -4192,6 +4531,58 @@
           }
         },
         "title": "ShapeBackfillRequest",
+        "type": "object"
+      },
+      "SourceStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "reads": {
+            "title": "Reads",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "error",
+              "timeout",
+              "unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tier": {
+            "enum": [
+              "fast",
+              "slow",
+              "crm"
+            ],
+            "title": "Tier",
+            "type": "string"
+          },
+          "timing_ms": {
+            "title": "Timing Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status",
+          "reason",
+          "timing_ms",
+          "tier",
+          "reads"
+        ],
+        "title": "SourceStatus",
         "type": "object"
       },
       "SupplyContentVersionIn": {
@@ -11769,6 +12160,81 @@
         "summary": "Dashboard Summary",
         "tags": [
           "admin-dashboard"
+        ]
+      }
+    },
+    "/admin/data-coverage": {
+      "get": {
+        "operationId": "get_data_coverage_admin_data_coverage_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "refresh",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Refresh",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataCoverageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "AA-992 — data coverage: live counts from raw upload to TripPlanner, Booking and CRM",
+        "tags": [
+          "admin-data-coverage"
         ]
       }
     },

@@ -52,6 +52,7 @@ from api.routers.admin_atoms import router as admin_atoms_router
 from api.routers.admin_a4 import router as admin_a4_router
 from api.routers.admin_dashboard import router as admin_dashboard_router
 from api.routers.admin_overview import router as admin_overview_router  # AA-664
+from api.routers.admin_data_coverage import router as admin_data_coverage_router  # AA-992
 from api.routers.admin_seo import router as admin_seo_router  # AA-705
 from api.routers.admin_llm_ops import router as admin_llm_ops_router  # AA-518/AA-505
 from api.routers.admin_segment_research import router as admin_segment_research_router  # AA-646
@@ -311,6 +312,7 @@ app.include_router(admin_atoms_router)
 app.include_router(admin_a4_router)
 app.include_router(admin_dashboard_router)  # AA-527 (bổ sung) — Segment/Score/Route-Hub/Slate audit panels
 app.include_router(admin_overview_router)  # AA-664 — /admin/overview (whole-system snapshot, cached 60s)
+app.include_router(admin_data_coverage_router)  # AA-992 — /admin/data-coverage (counts, raw upload to CRM)
 app.include_router(admin_seo_router)  # AA-705 — /admin/seo-intelligence (demand, keywords, PAA, gaps, spend)
 app.include_router(admin_llm_ops_router)  # AA-518/AA-505 — /admin/llm-config, /admin/llm-usage/*
 app.include_router(admin_segment_research_router)  # AA-646 — /admin/segment-research/{preview,run,status}

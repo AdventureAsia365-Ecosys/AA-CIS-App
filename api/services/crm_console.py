@@ -22,8 +22,8 @@ Rules
   (shared/sentry_init.py: max_request_body_size "never", before_send pops request.data); frame locals, which hold the
   token and the parsed body on an unhandled error, are dropped by fix/sentry-frame-locals (S249, merged with this);
   the staff audit middleware stores no body (api/middleware/staff_audit.py).
-- Timeouts: 2 s for reads, 5 s for the agency list (one CRM transaction per agency listed), 10 s for writes (the owner
-  invite sends its SES mail inside the CRM transaction).
+- Timeouts: 2 s for reads, 5 s for the agency list and the data coverage counts (one CRM transaction per agency),
+  10 s for writes (the owner invite sends its SES mail inside the CRM transaction).
 """
 from __future__ import annotations
 
@@ -51,6 +51,7 @@ _T = rf"/tenants/{_ID}"
 ALLOWED: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
     (m, re.compile(p)) for m, p in (
         ("GET", r"/console"),
+        ("GET", r"/data-coverage"),   # AA-992: crm.ops.v1 1.4 counts for /admin/data-coverage
         ("GET", r"/tenants"),
         ("POST", r"/tenants"),
         ("GET", _T),
@@ -83,7 +84,8 @@ def _pattern(method: str, path: str) -> str:
 def _timeout(method: str, path: str) -> float:
     if method != "GET":
         return WRITE_TIMEOUT_S
-    return LIST_TIMEOUT_S if path == "/tenants" else READ_TIMEOUT_S
+    # /tenants and /data-coverage open one CRM transaction per agency.
+    return LIST_TIMEOUT_S if path in ("/tenants", "/data-coverage") else READ_TIMEOUT_S
 
 
 def _problem(detail: str, message: str) -> dict[str, Any]:
