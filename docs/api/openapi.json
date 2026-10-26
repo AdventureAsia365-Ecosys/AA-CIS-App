@@ -3351,6 +3351,10 @@
             "title": "As Of",
             "type": "string"
           },
+          "is_synthetic": {
+            "title": "Is Synthetic",
+            "type": "boolean"
+          },
           "members": {
             "items": {
               "$ref": "#/components/schemas/MembershipItem"
@@ -3375,6 +3379,7 @@
         "required": [
           "tenant_id",
           "tenant_state",
+          "is_synthetic",
           "members",
           "as_of"
         ],

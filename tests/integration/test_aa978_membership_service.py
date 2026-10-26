@@ -65,6 +65,9 @@ async def test_snapshot_and_identity_reads(world):
     conn, tid, owner, invited = world
     data = await reader.tenant_members(conn, tid)
     assert data["tenant_state"] == "active"
+    assert data["is_synthetic"] is False  # 1.2: shared.tenants.is_canary, false by default
+    await conn.execute("UPDATE shared.tenants SET is_canary = true WHERE tenant_id = $1::uuid", tid)
+    assert (await reader.tenant_members(conn, tid))["is_synthetic"] is True
     assert {m["membership_id"]: m["status"] for m in data["members"]} == {owner: "active", invited: "invited"}
     found = await reader.identity_memberships(conn, ISS, "sub-owner")
     assert [m["membership_id"] for m in found["memberships"]] == [owner]
