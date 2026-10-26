@@ -97,8 +97,10 @@ def test_new_prompt_text_keeps_the_prompt_contracts():
     assert "{" not in SELF_CHECK_RULE and "{" not in FAMILY_RULE  # appended raw, never .format()ed
 
 
-def test_writer_prompt_version_is_round_four():
-    assert service.WRITER_PROMPT_VERSION == "2b510e08"  # round 3: 24363541; round 4 before review: 0463a554
+def test_writer_prompt_version_moves_off_round_three():
+    # round 3: 24363541; round 4 before review: 0463a554; round 4 shipped 2b510e08, round 5 pins its own:
+    # test_aa790_writer_round5.test_writer_prompt_version_is_round_five
+    assert service.WRITER_PROMPT_VERSION not in ("24363541", "0463a554")
 
 
 # ---------------------------------------------------------------- FAMILY BRAND
@@ -156,13 +158,11 @@ def test_family_rule_keeps_source_fidelity_first():
 
 
 def test_family_rule_bounds_who_does_what_by_the_seed():
-    """Review fix: the writer never assigns an activity to the children or the parents unless the seed does, and
-    the family appears at most once per section (no per-fact attribution)."""
+    """Review fix: the writer never gives the children or the parents an activity the seed does not give the group
+    (no per-fact attribution). Round 5 lets them do what the seed says the group does and drops the one-sentence
+    cap (test_aa790_writer_round5)."""
     rule = _flat(FAMILY_RULE)
-    assert ("When the CONTENT SEED or FACTS say who an activity is for or who does it, say so. Otherwise speak to "
-            'the family as a whole ("your family") and never assign an activity to the children or to the parents.'
-            in rule)
-    assert "At most one family sentence per section" in rule
+    assert "Never give them a moment, a view or an activity the seed does not give the group." in rule
     assert "With each fact" not in rule
 
 

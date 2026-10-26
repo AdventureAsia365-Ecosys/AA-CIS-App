@@ -316,7 +316,8 @@ def build_user_prompt(
     nothing. Every non-blog channel also gets the AUDIENCE IN THE POST rule (ai_tells.SOCIAL_AUDIENCE_RULE).
     AA-790 round 2: every channel, blog included, gets the brand-energy line (ai_tells.brand_voice_rule: PACE for an
     energetic brand voice, RESTRAINT for a calm one, nothing otherwise). AA-790 round 4: a family brand (its voice or
-    brand type names families or children) also gets the FAMILY BRAND line (ai_tells.family_presence_rule)."""
+    brand type names families or children) also gets the FAMILY BRAND line (ai_tells.family_presence_rule); round 5:
+    a plain-text post also gets its one-concrete-family-moment line (ai_tells.FAMILY_SHORT_POST_RULE)."""
     # AA-771 (S233) — the full brand pack (render_brand_block) replaces the AUDIENCE / MINDSET /
     # BRAND NAME lines; the invented "discerning travellers" fallback audience is gone.
 
@@ -430,8 +431,9 @@ def build_user_prompt(
         prompt += SOCIAL_AUDIENCE_RULE  # AA-790 (S251) — Terra LinkedIn read like an encyclopedia entry
     # AA-790 round 2 — every channel: the PACE (energetic brand) / RESTRAINT (calm brand) line from the brand's voice
     prompt += brand_voice_rule(brand_audience)
-    # AA-790 round 4 — a family brand (voice / brand type): the family in every section, from seed facts only
-    prompt += family_presence_rule(brand_audience)
+    # AA-790 round 4 — a family brand (voice / brand type): the family in every section, from seed facts only.
+    # Round 5: the children / parents in the seed's own moments, warmth from its pace cues; one moment in a short post.
+    prompt += family_presence_rule(brand_audience, channel_style["channel"])
     if channel_style["channel"] in PLAIN_TEXT_CHANNELS:
         prompt += _PLAIN_TEXT_INSTRUCTIONS
     if channel_style["channel"] == "blog":

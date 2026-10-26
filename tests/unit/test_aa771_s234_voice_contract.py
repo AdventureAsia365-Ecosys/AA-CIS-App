@@ -467,7 +467,11 @@ class TestT9Prompt:
         into the piece and the self-check quotes the full 'more than' set-up (seed quantities stay):
         writer_prompt_version 24363541 → 2b510e08. The FAMILY
         BRAND line (ai_tells.family_presence_rule) is user-prompt only and the fixture pack is not a family brand,
-        so `single` and `route` do not change."""
+        so `single` and `route` do not change.
+        Updated AA-790 round 5 (S252 5-arm panel of round 4, Terra Family brand voice 7.0 → 5.5, 26/10/2026): the
+        FAMILY BRAND line is rewritten (user prompt, family packs only) and VISIT DETAIL (SYSTEM_PROMPT) says that
+        naming the children or the parents as the ones who do a seed moment is not a new fact, under a FAMILY BRAND
+        brief only: writer_prompt_version 2b510e08 → 79cd046a. `single` and `route` do not change."""
         pack = {"brand_name": "Trail Pulse", "brand_type": "Young active adventure travel brand",
                 "core_idea": "Active trips for people who like to move.", "customer_segment": "25-40 years old",
                 "voice": ["Energetic", "Fresh", "Direct", "Friendly", "Modern", "Confident", "Lightly playful"],
@@ -488,7 +492,7 @@ class TestT9Prompt:
         def sha(s):
             return hashlib.sha256(s.encode()).hexdigest()
         assert GOAL["key"] == GOALS[0]["key"]
-        assert sha(SYSTEM_PROMPT) == "2b510e08961722cf7d9b7ef0fe13d7ca3362d4fa12cb02f0df7735afc827b4ed"
+        assert sha(SYSTEM_PROMPT) == "79cd046aaa1f5585e78cd1804f27a0388dacf754908bf50e910610d1e9122905"
         assert sha(single) == "30305b79dd6ff24837d28da9639d06e32a6cefbaf78eca0aff7fe8478883458a"
         assert sha(route) == "c212a3a201ac00f5d8c3f20d9889b1a58e893375c5d93d1e45fa2669720be78a"
 

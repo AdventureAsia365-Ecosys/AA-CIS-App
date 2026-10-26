@@ -43,6 +43,13 @@ only: ``PROMPT_RULES`` names the frames the writer itself still produced ('not a
 pairs whose positive half is a <slot> filled from the seed; ``SELF_CHECK_RULE`` is a silent reread before output;
 ``family_presence_rule`` puts the family in every section for a family brand, from seed facts only. The pass is
 unchanged (no new deletion), so ``AI_TELLS_VERSION`` stays v3.
+
+Round 5 (S252 blind 5-arm panel of round 4: AI-tells 5.50, but Terra Family brand voice 7.0 → 5.5, "children never
+appear concretely (only 'your family')") is prompt-side only and keeps every round-4 AI-tell change: ``FAMILY_RULE``
+lets the children and the parents do what the seed says the group does, takes warmth from the seed's pace / effort /
+rest cues, drops the one-sentence-per-section cap and gives three DON'T / WRITE INSTEAD pairs;
+``FAMILY_SHORT_POST_RULE`` (plain-text posts) asks for one concrete family moment; ``VISIT_DETAIL_RULE`` says naming
+who in the group does a seed moment is not a new fact (a FAMILY BRAND brief only). ``AI_TELLS_VERSION`` stays v3.
 """
 from __future__ import annotations
 
@@ -133,7 +140,9 @@ VISIT_DETAIL_RULE = """- VISIT DETAIL: never say what a visit shows, includes or
   what is visible there, how the reader will react to it, or how a stop fits into a day (its pace, ease or
   logistics: "a chance to watch ...", "puts you right in the middle of ...", "slots easily into a day", "an easy
   part of the afternoon"), unless the content seed states it. Say who the stop is for and why its facts matter
-  to them."""
+  to them. When the brief has a FAMILY BRAND line, naming the children or the parents as the ones who see or do
+  what the content seed says the group sees or does is not a new fact; the moment itself still comes only from
+  the content seed."""
 
 # Blog only (both format variants): the chosen angle is a brief, never a heading.
 BLOG_HEADING_RULE = """- Every "## " heading names the place or what happens there. Never use the SELECTED ANGLE's name
@@ -192,24 +201,58 @@ def brand_voice_rule(brand_audience: Optional[dict]) -> str:
 # stays generic", "long stretches read like a gazetteer with no family lens") — a family brand gets the family in
 # every section, from the seed's own facts only. Separate from brand_voice_rule (PACE / RESTRAINT): a family brand
 # may be neither energetic nor calm, and those two lines stay as they are.
+# AA-790 round 5 (S252 5-arm panel of round 4: Terra Family brand voice 7.0 → 5.5, LinkedIn 6.92 → 5.08; "children
+# never appear concretely (only 'your family')", "families appear only as an abstraction", "dry and institutional
+# rather than warm", "no pace or comfort cues") — round 4 told the writer to speak to "your family" only and never
+# give an activity to the children, one family sentence per section at most. Round 5: the children and the parents
+# are part of the group, so they may do what the seed says the group does (not a new fact); warmth comes from the
+# seed's own pace / effort / rest cues; no hard per-section cap. Still forbidden: child-specific services, prices,
+# facilities, ages or activities the seed lacks, and what a child will feel or learn.
 # 'family-run' / 'family owned since 1990' describe who owns the business, not who travels: never a trigger.
 _FAMILY_OWNERSHIP = frozenset({"run", "owned", "operated", "led", "business", "businesses", "founded"})
 _FAMILY_WORD_RE = re.compile(r"^(?:famil(?:y|ies)(?:-(?!(?:run|owned|operated|led|business|founded)$)[a-z]+)?"
                              r"|kids?|child(?:ren)?|parents?|(?:kid|child)-friendly)$")
 FAMILY_RULE = """
-FAMILY BRAND: this brand writes for families, so the family is present in every section, concretely, and only
-through the CONTENT SEED and FACTS. SOURCE FIDELITY comes first: a family detail the seed does not give is left
-out, never guessed.
-- When the CONTENT SEED or FACTS say who an activity is for or who does it, say so. Otherwise speak to the
-  family as a whole ("your family") and never assign an activity to the children or to the parents.
-- At most one family sentence per section, built on a seed fact a parent can plan from: timing, effort, what is
-  optional, where the night is, a meal or rest stop.
+FAMILY BRAND: this brand writes for families, so the piece reads warm and concrete: the children and the parents
+are there, in the moments the CONTENT SEED and FACTS describe. SOURCE FIDELITY comes first: a family detail the
+seed does not give is left out, never guessed.
+- The children and the parents are part of the travelling group. When the CONTENT SEED or FACTS say the group
+  sees, does, tastes, walks, rides or sleeps somewhere, name the children or the parents as the ones who do it
+  ("the children taste ...", "you and the children walk ..."): that is the seed's own moment, not a new fact.
+  Never give them a moment, a view or an activity the seed does not give the group. When the seed marks a moment
+  optional, demanding or limited to some of the group, keep the seed's own words about who it is for and speak to
+  the family as a whole there.
+- Warmth comes from the pace, effort and rest cues the CONTENT SEED gives: the timing, the walking or driving
+  time, a meal or rest stop, what is optional, a free or easy afternoon, where the night is. Use them when the seed
+  gives them; never invent reassurance or comfort ("no rush", "easy for little legs", "nothing to worry about",
+  "at their own pace").
 - An age, an age band or "suitable for children" appears ONLY when the CONTENT SEED or FACTS state it. The
   AUDIENCE line's ages describe the brand's customers, never this trip.
-- Never invent what children feel, notice, learn, understand or remember; never say a stop "works for every
-  age" or is "easy to explain to younger travellers"; no school-trip framing ("a lesson", "a classroom").
+- No child-specific service, price, facility or activity the seed does not give (a children's menu, a child rate,
+  a family room, a kids' club). Never invent what children feel, notice, learn, understand or remember; never say
+  a stop "works for every age" or is "easy to explain to younger travellers"; no school-trip framing ("a lesson",
+  "a classroom").
+- Bring the family into most sections, never as a formula: vary the words and where they sit in the sentence. Do
+  not open section after section with "For children, ..." or "For families, ...", never write "tends to land
+  differently", and do not let "your family" be the only sign of a family. The AI TELLS rules apply here too.
 - A section whose seed facts give a family nothing to use states those facts plainly, without a made-up family
-  line."""
+  line.
+- DON'T / WRITE INSTEAD (<...> is a fact from the content seed, never an invented one):
+  - DON'T "For families, this is a stop with a clear frame."
+    WRITE the seed's moment with the children in it:
+    "At <place>, the children <do what the content seed says the group does>."
+  - DON'T "Children can watch a craft in progress." (the seed never says the group watches anyone work)
+    WRITE only the moment the seed gives:
+    "You and the children <do what the content seed says happens there>."
+  - DON'T "This is a structured, organised stop on day six."
+    WRITE the seed's own pace cue:
+    "Day six <moves at the pace the content seed gives>, with <the meal or rest stop it names>.\""""
+# AA-790 round 5 — non-blog plain-text channels (LinkedIn, Facebook, Instagram, TikTok, ads): a short post has no
+# sections, so one concrete family moment carries it (S252 5-arm panel: Terra LinkedIn voice 6.92 → 5.08 on round 4).
+FAMILY_SHORT_POST_CHANNELS = frozenset({"linkedin", "facebook", "instagram", "tiktok", "ads"})
+FAMILY_SHORT_POST_RULE = """
+- In this short post one concrete family moment from the CONTENT SEED is enough: the children or the parents in a
+  moment the seed gives. Keep the post short."""
 
 
 # AA-790 round 4 review: a negation up to four words back, in the same clause ('Adults-only luxury brand, not
@@ -242,9 +285,12 @@ def _family_word_counts(words: list[str], k: int) -> bool:
     return True
 
 
-def family_presence_rule(brand_audience: Optional[dict]) -> str:
+def family_presence_rule(brand_audience: Optional[dict], channel: Optional[str] = None) -> str:
     """The FAMILY BRAND line for a pack whose voice or brand type names families or children ('Family-aware',
-    'Premium family adventure travel brand'); '' otherwise. The audience line alone never triggers it (a general
+    'Premium family adventure travel brand'); '' otherwise. Round 5: a short plain-text post (``channel`` in
+    ``FAMILY_SHORT_POST_CHANNELS``: LinkedIn, Facebook, Instagram, TikTok, ads) also gets
+    ``FAMILY_SHORT_POST_RULE`` (one concrete family moment is enough); blog, email, landing page and no channel get
+    ``FAMILY_RULE`` alone. The audience line alone never triggers it (a general
     brand can list 'couples and families'), a negated word ('not a family brand', 'Adults-only …, not suitable for
     children') does not count, and neither does ownership ('Family-run', 'family owned since 1990', 'Run by the
     same family for three generations'): that is who runs the business, not who travels. Read clause by clause, so
@@ -254,7 +300,7 @@ def family_presence_rule(brand_audience: Optional[dict]) -> str:
         for clause in _PACK_CLAUSE_RE.split(entry.lower()):
             words = _VOICE_WORD_RE.findall(clause)
             if any(_family_word_counts(words, k) for k in range(len(words))):
-                return FAMILY_RULE
+                return FAMILY_RULE + (FAMILY_SHORT_POST_RULE if channel in FAMILY_SHORT_POST_CHANNELS else "")
     return ""
 
 # ---------------------------------------------------------------- context

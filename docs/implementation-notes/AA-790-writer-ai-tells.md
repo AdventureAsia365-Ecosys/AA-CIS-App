@@ -1269,3 +1269,117 @@ and brand words only.
     `2b510e08`). The round-4, round-3, fact-invariant and S234 voice-contract files on their own: 1079 passed.
 - `tests/unit/test_aa771_s234_voice_contract.py:140` has an E501 (123 characters). It is already on main, and this
   branch does not touch that line.
+
+## Round 5 (S252, 26/10/2026): family voice
+
+Input: a blind 5-arm panel (pilot / round 1 / round 2 / round 3 / round 4, 20 T9 pieces per arm, same judges) on
+round 4 as live (`writer_prompt_version` `2b510e08`). Round 3 → round 4:
+
+- AI-tells 5.05 → 5.50 (bar 5.5).
+- Source fidelity 7.53 → 7.65. Reader value 7.22 → 7.15.
+- **Brand voice 7.30 → 6.50.** Round 4 loses 14 of 20 pieces against round 3. Terra Family 7.0 → 5.5, LinkedIn
+  6.92 → 5.08.
+
+The judges' reasons on the round-4 Terra pieces: "children never appear concretely (only 'your family')",
+"families appear only as an abstraction ('For families, this is a stop with a clear frame')", "dry and
+institutional rather than warm", "no pace or comfort cues", "reads like a schedule entry". The round-3 Terra pieces
+had the children in them, but the fidelity lens docked the invented visit formats ("Children can see a craft
+discipline in progress", "Children can understand what they are looking at", "can follow them at their own pace").
+
+Root cause: round 4's `FAMILY_RULE` told the writer to speak to "your family" as a whole, never give an activity to
+the children or the parents, and write at most one family sentence per section. The writer obeyed, so the family
+became a label. Round 5 is prompt-side only and keeps every round-4 AI-tell change.
+
+### Decisions
+
+- **R5-D1: the children and the parents are part of the group.** When the seed or FACTS say the group sees, does,
+  tastes, walks, rides or sleeps somewhere, the writer may name the children or the parents as the ones who do it.
+  That is the seed's own moment, not a new fact.
+  - Bound: never a moment, view or activity the seed does not give the group. This is the r3 fidelity failure
+    ("Children can see a craft in progress" when the seed never says the group watches anyone work), and it is the
+    second DON'T pair.
+  - Bound kept from the round-4 review: when the seed marks a moment optional, demanding or limited to some of the
+    group, the writer keeps the seed's own words about who it is for and speaks to the family as a whole there.
+    So 'the children ride …' on a steep or age-limited ride is still out.
+- **R5-D2: warmth from the seed's own pace, effort and rest cues** (timing, walking or driving time, a meal or rest
+  stop, what is optional, a free or easy afternoon, where the night is). Invented reassurance is named as forbidden
+  ("no rush", "easy for little legs", "nothing to worry about", "at their own pace"). The last one is the r3
+  fidelity quote.
+- **R5-D3: no hard cap.** "At most one family sentence per section" is gone. Instead: "Bring the family into most
+  sections, never as a formula", vary the words, no "For children, …" / "For families, …" opener section after
+  section, never "tends to land differently", and "your family" must not be the only sign of a family. The rule
+  says "The AI TELLS rules apply here too".
+- **R5-D4: still forbidden.** Child-specific services, prices, facilities and activities the seed does not give
+  (examples: a children's menu, a child rate, a family room, a kids' club). Ages and "suitable for children" only
+  from the seed or FACTS. Never what a child will feel, notice, learn, understand or remember. No "works for every
+  age" or school-trip framing. A section with nothing family-usable states its facts without a made-up family line.
+- **R5-D5: three DON'T / WRITE INSTEAD pairs**, built from the panel quotes. Each WRITE half is a `<slot>` filled
+  from the seed, never a fact of its own (same principle as R4-D1).
+  - DON'T "For families, this is a stop with a clear frame." → WRITE "At <place>, the children <do what the
+    content seed says the group does>."
+  - DON'T "Children can watch a craft in progress." (the seed never says the group watches anyone work) → WRITE
+    "You and the children <do what the content seed says happens there>."
+  - DON'T "This is a structured, organised stop on day six." → WRITE "Day six <moves at the pace the content seed
+    gives>, with <the meal or rest stop it names>."
+  - The brief's own example ("…, something children can watch up close.") was not used as-is. "Watch up close" is
+    a visit-format claim (proximity), which is exactly what VISIT DETAIL forbids and what the fidelity lens docked
+    in round 3.
+  - Every slot is a single line, at most 46 characters, and is caught by `hygiene.PLACEHOLDER_SLOT_PATTERN` if
+    copied (residue → F15_voice repair, never a silent ship).
+- **R5-D6: a short-post line** (`ai_tells.FAMILY_SHORT_POST_RULE`): "In this short post one concrete family moment
+  from the CONTENT SEED is enough … Keep the post short." It is appended after `FAMILY_RULE` for a family brand on
+  the plain-text channels (`FAMILY_SHORT_POST_CHANNELS` = `prompts.PLAIN_TEXT_CHANNELS`: LinkedIn, Facebook,
+  Instagram, TikTok, ads). `family_presence_rule(pack, channel=None)` gets an optional channel. Blog, email,
+  landing page and no channel get `FAMILY_RULE` alone, so the round-4 call shape `family_presence_rule(pack)` is
+  unchanged.
+- **R5-D7: the version bump goes through `SYSTEM_PROMPT`.** `writer_prompt_version` is the `SYSTEM_PROMPT` hash
+  (AA-916 WM-08, pinned by `test_aa916_capture_edits`), and the family line is user-prompt only, so a family-line
+  change alone would not move it. `VISIT_DETAIL_RULE` (in `SYSTEM_PROMPT`) gets one bridge sentence: "When the
+  brief has a FAMILY BRAND line, naming the children or the parents as the ones who see or do what the content seed
+  says the group sees or does is not a new fact; the moment itself still comes only from the content seed."
+  - It has a real job: VISIT DETAIL forbids saying what a visit "lets the reader watch, see or do" unless the seed
+    says so, and without the bridge the writer could read that as forbidding the round-5 family moments.
+  - It is conditional on a FAMILY BRAND line, so for a non-family brand it says nothing new.
+  - `writer_prompt_version` moves **`2b510e08` → `79cd046a`**. The S234 voice contract pins the new
+    `SYSTEM_PROMPT` sha with a dated note. `single` and `route` do not change (Trail Pulse fixture).
+  - `AI_TELLS_VERSION` stays `ai_tells.v3` (the pass is unchanged).
+
+### Changed (vs the round-5 brief)
+
+- The first pair's WRITE half drops "something children can watch up close" (see R5-D5).
+- The brief said "LinkedIn: one concrete family moment". The line covers every plain-text post channel, because
+  Facebook, Instagram, TikTok and ads posts are as short as LinkedIn and have no sections either.
+- The brief did not ask for a `SYSTEM_PROMPT` change. It is the only way to bump `writer_prompt_version` without
+  changing the AA-916 formula (R5-D7).
+
+### Tradeoffs
+
+- **Fidelity risk vs voice.** Letting the children do what the group does brings back the r3 shape that the
+  fidelity lens docked when the seed did not give the moment. The rule and the second pair aim at exactly that
+  failure. The paid re-panel must check that source fidelity stays near 7.65 while brand voice recovers.
+- **More family text, more chances for a formula.** Dropping the cap may bring back 'For children, …' in every
+  section. The rule names those openers and "tends to land differently". The AI-tells lens will show it.
+- **The `SYSTEM_PROMPT` change reaches every brand's bytes** (so every new piece carries `79cd046a`), but its
+  meaning is conditional on a FAMILY BRAND brief. Non-family user prompts are byte-identical to round 4 (tested).
+- The family user prompt gains about 170 words over round 4 (on LinkedIn, plus about 30 for the short-post line).
+
+### Should know
+
+- Tests: new `tests/unit/test_aa790_writer_round5.py` (162 tests):
+  - versions (`79cd046a`, AI_TELLS v3) and `PROMPT_RULES` + `SELF_CHECK_RULE` byte-identical to round 4;
+  - the VISIT DETAIL bridge;
+  - rule text: group membership, seed bound, optional / limited moments, pace cues, forbidden inventions, no cap,
+    no formula openers;
+  - 3 pairs: panel quotes, every WRITE half a slot, DON'T ≤ 16 words, every slot caught by the slot residue
+    regex and routed to F15_voice;
+  - trigger: 6 family packs; 13 non-family / ownership / negated packs × 9 channel values return '';
+  - channels: the short-post line on the 5 plain-text channels (before the plain-text format block), not on blog,
+    email or landing page;
+  - 20 non-family user prompts (Trail, Atlas, WildKind, a family-run lodge × blog, LinkedIn, Facebook, email,
+    landing page) pinned to their round-4 hashes from `origin/main` `d7f485cd`.
+- `test_aa790_writer_round4.py`: the exact version pin becomes "not round 3 / round 4 pre-review"; the "your
+  family" / one-sentence-cap pin becomes the round-5 seed bound.
+- Runs: the 100 unit files that import `acp_content_writing`: **4567 passed** in about 53 s. flake8 clean on the
+  touched files.
+- **Re-panel after deploy** (orchestrator, paid): same 20 pieces, same judges. Watch Terra brand voice (round 3 7.0,
+  round 4 5.5), Terra source fidelity, LinkedIn voice, and AI-tells holding ≥ 5.5.
