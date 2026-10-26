@@ -410,23 +410,52 @@ WITH t AS (SELECT source_id FROM catalog.v_tour),
 c AS (SELECT source_id, count(*) AS n, count(*) FILTER (WHERE is_stale) AS stale
         FROM catalog.v_tour_component GROUP BY source_id),
 d AS (SELECT source_id, count(*) AS n FROM catalog.v_tour_day GROUP BY source_id),
-p AS (SELECT source_id, count(*) FILTER (WHERE lat IS NOT NULL) AS located
-        FROM catalog.v_tour_place GROUP BY source_id),
 s AS (SELECT source_id, count(*) AS n FROM catalog.v_tour_stop GROUP BY source_id),
 lg AS (SELECT source_id, count(*) AS n FROM catalog.v_tour_leg GROUP BY source_id)
 SELECT count(*)::int AS served_tours,
        count(*) FILTER (WHERE c.n > 0)::int AS with_components,
        count(*) FILTER (WHERE c.stale > 0)::int AS with_stale_components,
        count(*) FILTER (WHERE d.n > 0)::int AS with_day_list,
-       count(*) FILTER (WHERE p.located > 0)::int AS with_located_places,
        count(*) FILTER (WHERE s.n > 0)::int AS with_route_stops,
        count(*) FILTER (WHERE lg.n > 0)::int AS with_route_legs
   FROM t
   LEFT JOIN c ON c.source_id = t.source_id
   LEFT JOIN d ON d.source_id = t.source_id
-  LEFT JOIN p ON p.source_id = t.source_id
   LEFT JOIN s ON s.source_id = t.source_id
   LEFT JOIN lg ON lg.source_id = t.source_id"""
+
+# Its own source (tp_places, S252 live fix): catalog.v_tour_place resolves the places of every live tour when read
+# whole (window functions partitioned by tour_id, three LATERAL lookups per tour-day place; services/catalog_http/
+# reader.py), 6.1 s on Dev against 0.5 s for the five other views together, so inside TENANT_TP_LAYERS it timed out
+# the whole statement (7 s) and turned eight rows n/a. served_tours is read again here (v_tour, ~20 ms) so the
+# tp.located row depends on this one source only.
+#
+# Two equivalent forms, same numbers (tests/integration/test_aa992_data_coverage_sql.py compares them):
+# - _WHOLE: one pass over the whole view, the shape the page has used since the first version (timed 6.1 s live);
+# - _PER_TOUR: per served tour, the first located place of THAT tour (a tour_id filter Postgres pushes down through
+#   the window functions to the raw_tours / tour_atoms scans, as the CRM reader's detail reads do; LIMIT 1 keeps the
+#   subquery from being flattened into a semi-join over the whole view and can stop at the first located place).
+# Both count a v_tour row when its tour has at least one place with coordinates: v_tour and v_tour_place take
+# (source_id, tour_id) from the same catalog._live_tour rows in the same statement snapshot.
+TENANT_TP_PLACES_WHOLE = """
+WITH t AS (SELECT source_id FROM catalog.v_tour),
+p AS (SELECT DISTINCT source_id FROM catalog.v_tour_place WHERE lat IS NOT NULL)
+SELECT count(*)::int AS served_tours,
+       count(p.source_id)::int AS with_located_places
+  FROM t
+  LEFT JOIN p ON p.source_id = t.source_id"""
+
+TENANT_TP_PLACES_PER_TOUR = """
+SELECT count(*)::int AS served_tours,
+       count(l.located)::int AS with_located_places
+  FROM catalog.v_tour t
+  LEFT JOIN LATERAL (SELECT true AS located
+                       FROM catalog.v_tour_place p
+                      WHERE p.tour_id = t.tour_id AND p.lat IS NOT NULL
+                      LIMIT 1) l ON true"""
+
+# S252 live through the tenant pool: 1.55 s per tour vs 6.0-6.5 s for the whole form, same counts (892 / 737).
+TENANT_TP_PLACES = TENANT_TP_PLACES_PER_TOUR
 
 TENANT_TP_COMPONENTS = """
 SELECT count(*)::int AS served_components,

@@ -41,7 +41,8 @@ Rules
    ``ENVIRONMENT`` is not exactly ``dev`` the token is refused, 403 ``e2e_not_allowed_here`` (logged
    ``staff_identity_refused``); else the identity carries ``e2e_read_only = True`` (``staff_identity_e2e_read_only``
    logged once per cache load). The bearer middleware then refuses every non-GET/HEAD/OPTIONS on the staff paths with
-   403 ``e2e_read_only`` except the content-quality sentence-apply allow-list, and ``staff_authz`` refuses the same
+   403 ``e2e_read_only`` except the allow-list (content-quality sentence apply; since AA-979 A10b-1 the two Content
+   studio invitation routes, which then require a synthetic tenant), and ``staff_authz`` refuses the same
    writes again by route template. ``/auth/verify-admin`` still returns role ``admin`` (it only reads, plus
    ``last_login_at``), so the BFF opens the admin pages.
 6. Rows are cached for :data:`STAFF_STATE_TTL_S` keyed by ``(iss, sub)`` (misses too), like the legacy

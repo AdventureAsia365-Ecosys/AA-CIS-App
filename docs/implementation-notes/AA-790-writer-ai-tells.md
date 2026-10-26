@@ -1383,3 +1383,175 @@ became a label. Round 5 is prompt-side only and keeps every round-4 AI-tell chan
   touched files.
 - **Re-panel after deploy** (orchestrator, paid): same 20 pieces, same judges. Watch Terra brand voice (round 3 7.0,
   round 4 5.5), Terra source fidelity, LinkedIn voice, and AI-tells holding ≥ 5.5.
+
+## Round 6 (S252, 26/10/2026): brand texture
+
+Input: a blind 6-arm panel (pilot / round 1 … round 5, same judges, all arms in one run;
+`.tmp-session/s252/aa790/r5panel/panel-scores.json`) on round 5 as live (`writer_prompt_version` `79cd046a`).
+Round 3 (before round 4) → round 5:
+
+- AI-tells 4.88 → 5.58 (keep). Source fidelity 7.35 → 7.60 (keep). Reader value 7.00 → 7.22.
+- **Brand voice 7.15 → 6.83** (5 wins / 4 ties / 11 losses). Terra Family is fine again (6.65 → 6.75), so
+  `FAMILY_RULE` is not touched.
+- Non-family brands lost voice: Trail Pulse 6.83 → 6.00, Atlas & Hearth 8.20 → 7.40, WildKind 7.50 → 7.00.
+
+What the judges said, per brand (brand_voice and ai_tells lenses, r3 vs r5, read in full):
+
+- **Trail Pulse.** r5: "long middle stretches read like an encyclopedia" ("Kuang Si Falls is a multi-tiered
+  limestone waterfall system"), "the FAQ is formal brochure copy", "long geology passages kill the momentum".
+  r3's voice wins came partly from lines the ai_tells lens docked: "Four days in." (staccato), "After a
+  30-kilometre morning on a mountain road, that matters." (verdict). The r3 lines liked for voice and not docked:
+  "This route starts there and keeps going", "you look up more than you look ahead", "active second-person verbs".
+- **Atlas & Hearth.** r5: "mostly reference prose with little atmosphere", "very long fact-dense passages read
+  more like a reference work", "flat fact-listing ('Paro River, or Paro Chhu, flows through the valley…')",
+  closing praise "one of the most layered destinations in Central Asia". r3's 8.2 came mostly from aphorisms the
+  ai_tells lens scored 3.8: "Mongolia asks something of a traveller before it gives anything back", "the land is
+  still deciding what it wants to be", "The objects ask to be read, not just admired". The clean atmosphere the
+  judges liked: "the light to settle over the two rivers", calm, slow, polished sentences.
+- **WildKind.** r5: "reads like an encyclopedia more than observant, respectful nature writing; the brand voice
+  shows up in one bolted-on line", "dramatic karst geology" off-voice. r3's voice lines were partly tells
+  ("That word 'may' is worth holding to", "this is a village, not a programme"); the clean ones: "leave the terms
+  of any exchange to the community itself", "with a light footprint". r5 tells: "The geology here drives
+  everything visible above it.", "This stop gives the route its northernmost cultural depth.".
+
+So round 4/5 removed the tell lines that carried the voice and nothing replaced them: the writer fell back to
+reference prose. Round 6 tells the writer where the voice comes from for each brand type, without bringing a
+verdict, denial or aphorism back.
+
+### Decisions
+
+- **R6-D1: one BRAND TEXTURE block, per brand type, read from the pack** (`ai_tells.brand_textures` /
+  `brand_texture_rule`, user prompt, right after the PACE / RESTRAINT line and before the channel format block).
+  Three textures, rendered in a fixed order when several fire:
+  - MOMENTUM (energetic): short, concrete action sentences built on what the seed says the reader does (riding,
+    walking, swimming, climbing, paddling), written to "you", verb early. A short sentence carries an action or a
+    fact, never a comment ("Four days in.", "That's the pace this route sets.", "This is the day the route
+    announces itself." are named as what not to write).
+  - ATMOSPHERE (luxury / cultural): concrete sensory or material detail the seed or FACTS give (light, stone,
+    wood, a river, silence, a meal, the time of day) in unhurried sentences within the AI TELLS length limits,
+    with the reader present. It restates that SOURCE FIDELITY forbids invented scene detail, and names aphorism
+    ("The architecture is the devotion made structural.", "the land is still deciding …"), praise ("one of the most
+    layered destinations in …") and what-a-place-asks lines as the wrong way to get atmosphere. With no sensory
+    detail in the seed, the calm comes from the sentence itself.
+  - OBSERVATION (nature / respectful): name what the seed says is there (habitat, plants and animals, the village
+    and its people) in plain, exact words and what the reader does among them. No drama words ("dramatic",
+    "spectacular", "stunning"; the WildKind r5 "dramatic karst geology"), no verdict about what a place means or
+    drives, never a sighting or encounter the seed does not give.
+  - Common lines (once per block): every factual paragraph comes back to the traveller within two sentences (no
+    reference-work stretch; with no seed moment, two sentences of facts and move on); texture never adds content
+    and never needs a tell (SOURCE FIDELITY, VISIT DETAIL and AI TELLS apply; no verdict, aphorism, praise,
+    denial set-up or list of three); `<...>` in the pairs is a seed fact.
+  - Blog only: "The FAQ answers are written in this voice too, never as formal brochure copy" plus one FAQ
+    sentence per texture ("you", short sentences, the fact first / the same calm, full sentences, no brochure
+    phrasing such as "is renowned for", "boasts" / plain and exact, the same observant words). Other channels have
+    no FAQ, so they do not get these lines.
+- **R6-D2: detection reuses `brand_voice_rule`'s.** MOMENTUM is exactly the PACE line's test
+  (`_energetic_entries`, now shared by both; `brand_voice_rule` output is byte-identical and tested). ATMOSPHERE and
+  OBSERVATION read the pack's voice words and its `brand_type` with the same tokeniser (`_VOICE_WORD_RE`) and the
+  same clause split as the family check (`_PACK_CLAUSE_RE`); inside a clause, words after a not / never / no / nor
+  do not count ("Not a luxury brand", "Small group tours, never luxury", "City breaks, no wildlife" give nothing).
+  - ATMOSPHERE words: voice elegant, atmospheric, refined, sophisticated, cultured, luxurious, polished; brand type
+    luxury, luxurious, upscale, high-end, cultural, culture, heritage. The same grouping as
+    `channel_spec.brand_register`'s EDITORIAL (luxury / cultural) and `voice_rubric`'s luxury check.
+  - OBSERVATION words: voice nature-led, observant, respectful, ethical, responsible, sustainable; brand type
+    nature, nature-led, wildlife, conservation, responsible, eco, eco-friendly, ecological, sustainable. Same idea
+    as `voice_rubric._NATURE`.
+  - Left out on purpose: "calm" alone (that is the RESTRAINT line, not a texture), "boutique" (not a luxury
+    signal; the family-run lodge fixture stays byte-identical) and "premium" (Terra's brand type; a family brand
+    gets nothing anyway).
+  - No tenant name anywhere: renaming the Atlas pack "Trail Pulse" gives the Atlas texture (tested).
+- **R6-D3: a family brand gets no texture.** `brand_textures` returns {} whenever `family_presence_rule` fires,
+  even when the family pack also has an energetic or luxury word. FAMILY_RULE carries a family brand's voice and
+  round 5 fixed Terra (6.75 > r3 6.65); the brief says do not touch it. Terra user prompts are byte-identical to
+  round 5 (tested on 5 channels).
+- **R6-D4: a pack with no texture signal keeps its round-5 user prompt byte for byte** (`brand_texture_rule`
+  returns ''): tested for the family-run lodge (Calm), a plain "Clear, Friendly" pack and the empty pack, on 5
+  channels each.
+- **R6-D5: six DON'T / WRITE INSTEAD pairs, two per texture, from the panel reasons**, each WRITE half a
+  `<slot>` sentence, each DON'T half slot-free:
+  - MOMENTUM: DON'T "The falls are a multi-tiered limestone system known for their turquoise pools." (the Trail
+    r5 encyclopedia opener) → WRITE "You ride <the distance or road the content seed gives> to <place>, then <do
+    what the content seed says you do there>." DON'T "After a long morning on the road, that matters." (the r3
+    voice beat the ai_tells lens docked) → WRITE "After <the morning's ride the content seed gives>, you <do what
+    the content seed says comes next>."
+  - ATMOSPHERE: DON'T "The valley is one of the most layered destinations in the region." (Atlas r5 praise) →
+    WRITE "You reach <place> <at the time of day the content seed gives>, when <the light or stone the content
+    seed names>." DON'T "The river, also known by its local name, flows through the valley and joins a larger
+    river downstream." (Atlas r5 "flat fact-listing") → WRITE "You <stay or eat where the content seed says>,
+    beside <the river the content seed names>."
+  - OBSERVATION: DON'T "The geology here drives everything visible above it." → WRITE "On the way to <place>, you
+    pass <the habitat the content seed names>." DON'T "This stop gives the route its northernmost cultural depth."
+    → WRITE "In <village>, <the people the content seed names> <do what the content seed says>, and you <join the
+    moment the content seed gives>." (both WildKind r5 verdicts)
+  - None of them is an AI-tell template: each WRITE half, filled from a made-up seed, passes `rewrite` unchanged,
+    has no residue and no template line, and has no 'not', 'rather than', 'more than', 'earns', 'matters',
+    'worth', 'the kind of', 'asks' or three-item list (tested). The r3 lines the judges liked for voice but the
+    ai_tells lens docked ("Four days in.", "that matters", "the land is still deciding …", "this is a village, not
+    a programme") are only ever DON'T examples.
+  - Every slot is one line, at most 62 characters, has no comma, and is caught by the placeholder residue regex
+    if copied (F15_voice repair, never a silent ship). A first draft had "<the light, stone or water …>": the
+    comma made the placeholder regex miss it, so the slots lost their commas.
+- **R6-D6: the version bump goes through `SYSTEM_PROMPT`** (same reason as R5-D7: `writer_prompt_version` is the
+  `SYSTEM_PROMPT` hash, the texture block is user-prompt only). The style-guide rule ("SOURCE FIDELITY and VISIT
+  DETAIL override the brand's style guide …") gains one sentence: "A BRAND TEXTURE block, when the brief has one,
+  belongs to the style guide: it sets sentence shape and where the reader stands, never content." It has a job:
+  it puts the texture under SOURCE FIDELITY, so "atmosphere" or "momentum" never licenses invented scene detail.
+  `writer_prompt_version` moves **`79cd046a` → `b5978839`**. `AI_TELLS_VERSION` stays `ai_tells.v3`.
+
+### Changed (vs the round-6 brief)
+
+- The brief said "1-2 DON'T/WRITE pairs per brand type"; each type has 2.
+- The brief named energy / luxury / nature / culture signals "already used by brand_voice_rule". Only energy (and
+  calm) were there. MOMENTUM reuses that test as is; luxury / culture and nature / respectful are new word sets
+  read with `brand_voice_rule`'s tokeniser and negation rule, plus the pack's `brand_type` (the Atlas and WildKind
+  brand types carry the clearest signal). Culture is grouped with luxury under ATMOSPHERE, as
+  `channel_spec.brand_register` groups luxury / premium / cultural as EDITORIAL.
+- The "every factual paragraph returns to the traveller within two sentences" and FAQ lines go only to brands with
+  a texture signal, not to every brand: family brands are covered by FAMILY_RULE and no-signal packs stay
+  byte-identical (the brief's "if that is how you design it").
+- `SYSTEM_PROMPT` change: not asked, needed for the version bump (R6-D6).
+
+### Tradeoffs
+
+- **Momentum and atmosphere push toward scene detail.** Both blocks restate that the detail comes only from the
+  seed and the bridge puts the block under SOURCE FIDELITY, but a writer asked for atmosphere may still invent
+  light or silence. The re-panel must check source fidelity holds near 7.60 for Atlas and Trail.
+- **"You" in every WRITE half.** Second person is the momentum brand's voice; for Atlas (discreet, private) and
+  WildKind it is only the way the reader is placed in the moment. If judges find "you" too chatty for Atlas, the
+  ATMOSPHERE pairs can drop it without touching the rest.
+- **Prompt length.** The block adds about 330-450 words to a Trail / Atlas / WildKind user prompt (blog more than
+  LinkedIn because of the FAQ lines). The PACE line's "background one sentence at most" and the new "back to the
+  traveller within two sentences" overlap for an energetic brand; the stricter PACE line wins in practice.
+- **Detection by word lists.** Lesson AA-985 says word lists drift; here they read the brand pack's own
+  adjectives (a handful of words per tenant), not the generated copy, which is the same trade `brand_voice_rule`
+  and `voice_rubric` already make.
+
+### Should know
+
+- Code: `services/acp_content_writing/ai_tells.py` (`BRAND_TEXTURE_*` texts, `brand_textures`,
+  `brand_texture_rule`, shared `_energetic_entries` / `_pack_voice`), `services/acp_content_writing/prompts.py`
+  (one call after `brand_voice_rule`, the SYSTEM_PROMPT bridge sentence).
+- Tests: new `tests/unit/test_aa790_writer_round6.py` (226 tests):
+  - versions (`b5978839`, AI_TELLS v3); `SYSTEM_PROMPT` minus the bridge is the round-5 sha `79cd046a…`;
+    `PROMPT_RULES` + `SELF_CHECK_RULE`, `FAMILY_RULE`, `FAMILY_SHORT_POST_RULE`, `VISIT_DETAIL_RULE`,
+    `BLOG_HEADING_RULE`, `SOCIAL_AUDIENCE_RULE` pinned to their round-5 hashes; PACE / RESTRAINT unchanged;
+  - detection: the three panel brands; MOMENTUM == the PACE test on 9 voices; 11 voice / brand-type signals; 11
+    no-signal or negated packs × 9 channel values; 4 family packs (with energetic / luxury / nature words) × 9
+    channel values give nothing; no tenant name in the detection code;
+  - rule text per brand type (common, MOMENTUM, ATMOSPHERE, OBSERVATION, FAQ lines), exact composition per type
+    for blog vs LinkedIn, several textures in a fixed order with one common part;
+  - pairs: 1-2 per type, WRITE halves are slot sentences, DON'T halves are the panel shapes, every slot caught if
+    copied and routed to F15_voice, the filled WRITE halves are not AI tells;
+  - contracts: no em-dash, no braces, no genuinely / precisely / premium / luxury, no tenant or place name;
+  - user prompt: block once, right after the energy line, before the channel format, FAQ lines on blog only, on
+    8 channels × 3 brands; Terra, family-run lodge, plain and empty packs × 5 channels pinned to their round-5
+    hashes (origin/main `33c09fc0`).
+- `test_aa790_writer_round5.py`: the exact version pin becomes "not round 3 / round 4"; the 20 non-family round-4
+  hashes still hold once the texture block is removed (and the family-run lodge has none).
+- `test_aa771_s234_voice_contract.py`: `SYSTEM_PROMPT`, `single` and `route` shas updated with a dated note (the
+  Trail Pulse fixture is energetic; without the block both are the round-5 bytes).
+- Runs: the 101 unit files that import `acp_content_writing`: **4793 passed** in about 54 s. flake8 clean on the
+  touched code (the one E501 in `test_aa771_s234_voice_contract.py` line 140 is already on main).
+- **Re-panel after deploy** (orchestrator, paid): same pieces, same judges. Watch Trail / Atlas / WildKind brand
+  voice (r3 6.83 / 8.2 / 7.5, r5 6.0 / 7.4 / 7.0), AI-tells holding ≥ 5.5 (r5 5.58), fidelity near 7.60, Terra
+  unchanged.

@@ -1036,7 +1036,11 @@ rules: the directory creates, re-enables or syncs it only where `ENVIRONMENT` is
 `staff_identity_e2e_read_only`, owner flag forced false); the bearer middleware answers every non-GET/HEAD/OPTIONS on a
 staff path with 403 `e2e_read_only` before the route runs, except POST
 `/admin/content-quality/{pieces,tour-versions}/{id}/sentences/apply` (Cut / manual Edit with a reason chip; the
-routes accept only `cut` / `manual` from it, `…/suggest` stays refused); `staff_authz.denial_reason` refuses the same
+routes accept only `cut` / `manual` from it, `…/suggest` stays refused) and, since AA-979 (root ADR 0006a A10b-1,
+S252), POST `/admin/tenants/{id}/members/invitations` and `/admin/tenants/{id}/members/{membership_id}/invitation/send`
+(the phase 2 re-enrolment E2E); those two routes then refuse it (403 `e2e_read_only`, before any row, audit or relay)
+unless the tenant is synthetic (`shared.tenants.is_canary IS TRUE`), the address is on the E2E mailbox domain
+(`e2e-mail.lumiguides.it.com`) and the invited role is `viewer` / `editor`; `staff_authz.denial_reason` refuses the same
 writes again by route template. `/auth/verify-admin` returns `admin`, so the BFF opens the admin pages. Its sign-in
 codes land in the mailbox prefix `inbound-admin/`, readable only by the MFA admin role, so only the orchestrator signs
 in with it, locally (Playwright project `admin-evidence`, `E2EADMIN=1`, never CI). Removed with A10 / A10a at the end
