@@ -426,3 +426,21 @@ async def test_release0_apply_from_a_replay_report(conn):
     # re-running reuses release 0 and writes only new r0 runs
     again = await release0.apply(conn, report, results, actor=AGENT, report_key="s3:post.json")
     assert {again[w]["release_id"] for w in rel.WRITERS} == {out[w]["release_id"] for w in rel.WRITERS}
+
+
+# ── the Dev replay script's read-only queries run on the real schema ───────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_replay_script_input_queries_run_read_only(conn):
+    from scripts.writing_memory import wm20_release0_replay as replay
+
+    async with conn.transaction(readonly=True):
+        assert await conn.fetch(replay._A1_SQL, 5, None) is not None
+        assert await conn.fetch(replay._A1_SQL, 5, ["x"]) == []
+        assert await conn.fetch(replay._T2_SQL, 5, None) is not None
+        assert await conn.fetch(replay._T9_SQL, 5, None, True) is not None
+        assert await conn.fetch(replay._T9_SQL, 5, ["00000000-0000-0000-0000-000000000000"], False) == []
+        assert await conn.fetchrow(replay._PT_SQL, str(uuid.uuid4())) is None
+        assert isinstance(await replay._a1_brand_rules(conn), dict)
+        assert await conn.fetchrow("SELECT release_id::text FROM shared.writing_memory_release WHERE writer = $1 "
+                                   "AND scope = 'platform' AND release_no = 0", "a1") is None

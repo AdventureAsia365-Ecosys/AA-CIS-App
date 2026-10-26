@@ -297,7 +297,7 @@ _T9_SQL = """
       FROM acp_shared.content_piece cp
       JOIN acp_shared.angle_gate_request r ON r.request_id = cp.angle_gate_request_id AND r.tenant_id = cp.tenant_id
      WHERE cp.writer_input IS NOT NULL AND cp.writer_input ? 'brand_pack'
-       AND (CASE WHEN $3 THEN cp.channel = 'blog' ELSE cp.channel <> 'blog' END)
+       AND (CASE WHEN $3 THEN cp.writer_input->>'channel' = 'blog' ELSE cp.writer_input->>'channel' <> 'blog' END)
        AND ($2::text[] IS NULL OR cp.piece_id::text = ANY($2::text[]))
      ORDER BY cp.created_at DESC
      LIMIT $1
@@ -493,16 +493,28 @@ def _load_pre(ref: str) -> dict:
 
 
 def _write_out(report: dict, key: Optional[str]) -> None:
+    """The full report to the bronze key (ids and digests only); when the task role may not write there, the full
+    report goes to stdout between markers instead (the operator saves it and uploads it with their own login)."""
     body = json.dumps(report, indent=1, sort_keys=True, default=str)
+    stored = None
     if key:
-        import boto3
+        try:
+            import boto3
 
-        from shared.aws_client.bronze import bronze_bucket
-        boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-west-1")).put_object(
-            Bucket=bronze_bucket(), Key=key.lstrip("/"), Body=body.encode("utf-8"), ContentType="application/json")
-    print(json.dumps({"schema": SCHEMA, "phase": report["phase"], "out_key": key, "git_sha": report["git_sha"],
+            from shared.aws_client.bronze import bronze_bucket
+            boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-west-1")).put_object(
+                Bucket=bronze_bucket(), Key=key.lstrip("/"), Body=body.encode("utf-8"),
+                ContentType="application/json")
+            stored = key
+        except Exception as e:  # noqa: BLE001
+            print(f"out_key not written ({type(e).__name__}): full report below")
+    print(json.dumps({"schema": SCHEMA, "phase": report["phase"], "out_key": stored, "git_sha": report["git_sha"],
                       "a1_v2_enabled_here": report["a1_v2_enabled_here"], "summary": report["summary"]},
                      indent=1, default=str))
+    if not stored:
+        print("=====WM20-REPORT-BEGIN=====")
+        print(json.dumps(report, sort_keys=True, default=str))
+        print("=====WM20-REPORT-END=====")
 
 
 def _quiet_logs() -> None:
