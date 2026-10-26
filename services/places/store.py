@@ -135,7 +135,7 @@ async def existing_vectors(conn, source_id: str) -> dict[str, str]:
 async def existing_places(conn, source_id: str) -> list[dict]:
     """AA-989: the source's current place rows, for the component-id carry-over (and AA-990 redirects) of a rebuild."""
     return [dict(r) for r in await conn.fetch(
-        "SELECT component_id::text AS component_id, day_index, name, name_norm, country_norm, activity,"
+        "SELECT component_id::text AS component_id, day_index, name, name_norm, country_norm, locality_norm, activity,"
         " destination_id::text AS destination_id, place_card_id::text AS place_card_id"
         " FROM geo.tour_place WHERE source_id = $1", source_id)]
 

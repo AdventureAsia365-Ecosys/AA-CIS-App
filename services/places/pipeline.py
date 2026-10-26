@@ -22,7 +22,7 @@ from services.places.names import country_norm, locality_key, name_norm
 
 logger = structlog.get_logger()
 
-UNRESOLVABLE_LOCALITY = "?"   # locality_norm of a generic name with no locality: never matches a key
+UNRESOLVABLE_LOCALITY = comp_mod.UNRESOLVABLE_LOCALITY   # "?": a generic name with no locality, never matches a key
 
 
 class _NotLive(Exception):

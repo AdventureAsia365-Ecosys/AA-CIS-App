@@ -9,17 +9,20 @@ from services.places import names
 from tests.unit.test_aa988_989_follow import _Conn, _pool
 
 
-def _comp(day, place, activity="cultural_heritage", card=None, link=None, country="Vietnam"):
+def _comp(day, place, activity="cultural_heritage", card=None, link=None, country="Vietnam", locality=""):
     return cm.Component(component_id=names.component_id("src", day, place, country, activity), day_index=day,
                         name=place, link_name=link or place, name_norm=names.name_norm(link or place),
-                        country=country, country_norm=names.country_norm(country), locality_norm="", locality=None,
+                        country=country, country_norm=names.country_norm(country), locality_norm=locality,
+                        locality=None,
                         activity=activity, intensity_level="leisurely", duration_hint="full_day", season_months=[1],
                         text_extract=place, place_card_id=card)
 
 
-def _old(cid, day, name, link=None, dest=None, card=None, country="vietnam", activity="cultural_heritage"):
+def _old(cid, day, name, link=None, dest=None, card=None, country="vietnam", activity="cultural_heritage",
+         locality=""):
     return {"component_id": cid, "day_index": day, "name": name, "name_norm": names.name_norm(link or name),
-            "country_norm": country, "activity": activity, "destination_id": dest, "place_card_id": card}
+            "country_norm": country, "locality_norm": locality, "activity": activity, "destination_id": dest,
+            "place_card_id": card}
 
 
 # ── redirect_dropped ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -32,7 +35,8 @@ def test_ambiguous_place_the_carry_over_refused_gets_a_redirect_to_the_nearest_d
     assert mapping == {}                                         # AA-989 never guesses a served id
     redirects, counts = cm.redirect_dropped(comps, dest, old)
     assert redirects == {"old-x": b.component_id}                 # day 5 is nearer than day 2
-    assert counts == {"ids_redirected": 1, "ids_redirected_by": {"spelling": 1}, "ids_unredirected": 0}
+    assert counts == {"ids_redirected": 1, "ids_redirected_by": {"spelling": 1}, "ids_unredirected": 0,
+                      "ids_unredirected_generic": 0}
 
 
 def test_many_old_rows_redirect_to_one_component():
@@ -75,7 +79,7 @@ def test_a_kept_or_carried_id_is_never_redirected():
     same = _comp(1, "Halong Bay")
     old = [_old(same.component_id, 1, "Halong Bay")]
     assert cm.redirect_dropped([same], {}, old) == ({}, {"ids_redirected": 0, "ids_redirected_by": {},
-                                                         "ids_unredirected": 0})
+                                                         "ids_unredirected": 0, "ids_unredirected_generic": 0})
 
 
 def test_tie_on_day_prefers_the_same_activity_then_the_smaller_id():
@@ -85,6 +89,46 @@ def test_tie_on_day_prefers_the_same_activity_then_the_smaller_id():
     assert cm.redirect_dropped([a, b], {}, old)[0] == {"o": b.component_id}
     old = [_old("o", 3, "Sapa", activity="culinary")]
     assert cm.redirect_dropped([a, b], {}, old)[0] == {"o": min(a.component_id, b.component_id)}
+
+
+# ── generic names ('Night Market'): same locality only ─────────────────────────────────────────────────────────────
+
+def test_generic_name_never_redirects_to_the_same_name_in_another_city():
+    # the Chiang Mai stop was rewritten away; only the Chiang Rai market is left in the tour
+    chiang_rai = _comp(4, "Night Market", country="Thailand", locality="chiang rai")
+    old = [_old("o-cm", 2, "Night Market", country="thailand", locality="chiang mai")]
+    redirects, counts = cm.redirect_dropped([chiang_rai], {}, old)
+    assert redirects == {}
+    assert counts["ids_unredirected"] == 1 and counts["ids_unredirected_generic"] == 0
+
+
+def test_generic_name_redirects_within_the_same_city_any_day():
+    cm_market = _comp(3, "Night Market", country="Thailand", locality="chiang mai")
+    cr_market = _comp(2, "Night Market", country="Thailand", locality="chiang rai")
+    old = [_old("o-cm", 2, "Night Market", country="thailand", locality="chiang mai")]
+    redirects, _ = cm.redirect_dropped([cm_market, cr_market], {}, old)
+    assert redirects == {"o-cm": cm_market.component_id}         # same city wins over the nearer day
+
+
+def test_generic_name_without_a_locality_is_counted_never_guessed():
+    chiang_rai = _comp(2, "Night Market", country="Thailand", locality="chiang rai")
+    old = [_old("o-?", 2, "Night Market", country="thailand", locality=cm.UNRESOLVABLE_LOCALITY),
+           _old("o-none", 2, "Night Market", country=None, locality=None)]
+    redirects, counts = cm.redirect_dropped([chiang_rai], {}, old)
+    assert redirects == {}
+    assert counts["ids_unredirected"] == 2 and counts["ids_unredirected_generic"] == 2
+    unknown = _comp(2, "Night Market", country="Thailand", locality=None)      # the new side has no locality either
+    old = [_old("o-cm", 2, "Night Market", country="thailand", locality="chiang mai")]
+    assert cm.redirect_dropped([unknown], {}, old)[0] == {}
+
+
+def test_generic_spelling_of_a_card_linked_place_needs_the_card_or_destination():
+    # spelt "Night Market", linked to a distinctive card name → locality_norm '' on both sides: no spelling match
+    cr = _comp(4, "Night Market", link="Chiang Rai Night Bazaar", country="Thailand", card="card-cr")
+    old = [_old("o-cm", 2, "Night Market", link="Chiang Mai Night Bazaar", country="thailand", card="card-cm")]
+    assert cm.redirect_dropped([cr], {}, old)[0] == {}
+    old = [_old("o-cr", 2, "Night Market", link="Chiang Rai Night Bazaar", country="thailand", card="card-cr")]
+    assert cm.redirect_dropped([cr], {}, old)[0] == {"o-cr": cr.component_id}
 
 
 # ── merge_redirects (cumulative per source) ──────────────────────────────────────────────────────────────────────

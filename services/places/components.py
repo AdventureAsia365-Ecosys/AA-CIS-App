@@ -258,47 +258,74 @@ def apply_carry_over(comps: list[Component], comp_dest: dict, mapping: dict[str,
 # served id, so it may be many-to-one and it may pick between candidates: for every dropped previous row, the current
 # component of the same source for the same place, by rule (first rule with a candidate wins):
 #   destination (same linked destination) → place card → itinerary spelling + country → link name + country,
-# any day, the nearest day first, then the same activity, then the smaller id. The redirects are cumulative per source
+# any day, the nearest day first, then the same activity, then the smaller id; a generic name ('Night Market') by
+# spelling or link name only in the same locality. The redirects are cumulative per source
 # (an older redirect whose target was dropped now is re-pointed through this build's redirects) and live in
 # geo.tour_build.counts["id_redirects"]: CIS cannot write tripplanner.* (tp-017 grants the map to the role tripplanner
 # only), so AA-CIS-Infra db/scripts/aa990_component_id_backfill.py copies them into tripplanner.component_id_map.
 REDIRECTS_KEY = "id_redirects"
 REDIRECTS_CAP = 1000          # per source; the newest are kept (a tour is rewritten a handful of times at most)
 REDIRECT_RULES = ("destination", "card", "spelling", "link_name")
+UNRESOLVABLE_LOCALITY = "?"   # geo.tour_place.locality_norm of a generic name with no locality (pipeline writes it)
 
 
-def _redirect_key(kind: str, *, spelling: str, link_name: str, country: str, destination, card) -> Optional[str]:
+def _name_locality(raw: Optional[str], locality_norm: Optional[str], *, link: bool) -> Optional[str]:
+    """The locality a name key needs: '' for a distinctive name, the locality for a generic one, None when the name
+    is generic and its locality is unknown (no key: a generic name is never matched across towns, design §4).
+    The row's locality_norm is the locality of its LINK name (set iff the link name was generic when built), so a
+    link name is generic when locality_norm is set or the name is kind-only; an itinerary spelling only when the
+    spelling itself is kind-only ('Night Market' spelt for a card-linked place has locality_norm '' → None)."""
+    loc = locality_norm or ""
+    loc = "" if loc == UNRESOLVABLE_LOCALITY else loc
+    generic = is_generic(raw) or (link and bool(locality_norm))
+    if not generic:
+        return ""
+    return loc or None
+
+
+def _redirect_key(kind: str, *, spelling: str, link_name: str, country: str, destination, card,
+                  locality: Optional[str] = "") -> Optional[str]:
+    """`locality` as _name_locality (None → no name key)."""
     if kind == "destination":
         return str(destination) if destination else None
     if kind == "card":
         return str(card) if card else None
     name = spelling if kind == "spelling" else link_name
-    return f"{name}|{country}" if name else None
+    return f"{name}|{country}|{locality}" if name and locality is not None else None
 
 
 def redirect_dropped(comps: list[Component], comp_dest: dict, old_rows: list[dict]) -> tuple[dict[str, str], dict]:
     """({dropped previous id: current component id}, counters). Call after apply_carry_over: `comps` carry their final
-    ids and `comp_dest` is keyed on them. `old_rows` as carry_over_ids, plus `country_norm` and `activity` when known
-    (a row without `country_norm` matches a name in any country of the tour). Pure."""
+    ids and `comp_dest` is keyed on them. `old_rows` as carry_over_ids, plus `country_norm`, `activity` and
+    `locality_norm` when known (a row without `country_norm` matches a name in any country of the tour). Pure.
+    A generic name ('Night Market', 'Old Quarter') matches by spelling or link name only in the same locality: the
+    Chiang Mai market never redirects to the Chiang Rai one; with no locality on either side it stays unredirected
+    (counted in ids_unredirected_generic), never guessed by day distance."""
     final = {c.component_id for c in comps}
     keys: dict[str, dict[str, list[Component]]] = {k: {} for k in REDIRECT_RULES}
     for c in comps:
+        loc_of = {"spelling": _name_locality(c.name, c.locality_norm, link=False),
+                  "link_name": _name_locality(c.link_name, c.locality_norm, link=True)}
         for kind in REDIRECT_RULES:
-            k = _redirect_key(kind, spelling=name_norm(c.name), link_name=c.name_norm, country=c.country_norm,
-                              destination=comp_dest.get(c.component_id), card=c.place_card_id)
-            if k:
-                keys[kind].setdefault(k, []).append(c)
-                if kind in ("spelling", "link_name"):         # a previous row with no country: name only
-                    keys[kind].setdefault(k.split("|", 1)[0] + "|*", []).append(c)
+            for country in ((c.country_norm, "*") if kind in loc_of else (c.country_norm,)):
+                k = _redirect_key(kind, spelling=name_norm(c.name), link_name=c.name_norm, country=country,
+                                  destination=comp_dest.get(c.component_id), card=c.place_card_id,
+                                  locality=loc_of.get(kind, ""))
+                if k:                       # "*": a previous row with no country matches the name in any country
+                    keys[kind].setdefault(k, []).append(c)
     redirects: dict[str, str] = {}
     by_rule: dict[str, int] = {}
-    unmatched = 0
+    unmatched = generic_unmatched = 0
     for o in sorted((o for o in old_rows if str(o["component_id"]) not in final), key=lambda r: str(r["component_id"])):
         day, activity = int(o["day_index"]), o.get("activity")
         country = o.get("country_norm") or "*"
+        spelling, link = name_norm(o.get("name")), o.get("name_norm") or ""
+        loc_of = {"spelling": _name_locality(o.get("name"), o.get("locality_norm"), link=False),
+                  "link_name": _name_locality(link, o.get("locality_norm"), link=True)}
         for kind in REDIRECT_RULES:
-            k = _redirect_key(kind, spelling=name_norm(o.get("name")), link_name=o.get("name_norm") or "",
-                              country=country, destination=o.get("destination_id"), card=o.get("place_card_id"))
+            k = _redirect_key(kind, spelling=spelling, link_name=link, country=country,
+                              destination=o.get("destination_id"), card=o.get("place_card_id"),
+                              locality=loc_of.get(kind, ""))
             cands = keys[kind].get(k) if k else None
             if cands:
                 best = min(cands, key=lambda c: (abs(c.day_index - day), c.activity != activity, c.day_index,
@@ -308,7 +335,9 @@ def redirect_dropped(comps: list[Component], comp_dest: dict, old_rows: list[dic
                 break
         else:
             unmatched += 1
-    return redirects, {"ids_redirected": len(redirects), "ids_redirected_by": by_rule, "ids_unredirected": unmatched}
+            generic_unmatched += 1 if None in loc_of.values() else 0
+    return redirects, {"ids_redirected": len(redirects), "ids_redirected_by": by_rule, "ids_unredirected": unmatched,
+                       "ids_unredirected_generic": generic_unmatched}
 
 
 def merge_redirects(previous: Optional[dict], fresh: dict[str, str], final_ids: set[str],
