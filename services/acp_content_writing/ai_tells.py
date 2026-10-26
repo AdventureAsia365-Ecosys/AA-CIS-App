@@ -156,7 +156,9 @@ _PRACTICAL_RE = re.compile(
     r"prices?|priced|refundable|bookable|booked|reservations?|reachable|cash|cards?|easy|easier|difficult|difficulty|"
     r"difficulties|hard|"
     r"strenuous|steep|tiring|demanding|physical|far|long|short|deep|shallow|cold|hot|crowded|busy|quiet|noisy|"
-    r"cheap|cheaper|expensive|affordable|wheelchair|strollers?|prams?|toilets?|tipping)\b", re.I)
+    r"cheap|cheaper|expensive|affordable|wheelchair|strollers?|prams?|toilets?|tipping"
+    # S252 ship criterion: an amenity a room has or lacks ('something better than air conditioning: …')
+    r"|air[ \t-]+condition(?:ing|ed|er|ers)?|wi-?fi)\b", re.I)
 _DIGIT_RE = re.compile(r"\d")
 _TAG_RE = re.compile(TAG)  # the shared citation-tag definition (AA-912)
 _WORD_RE = re.compile(r"[A-Za-zÀ-ÖØ-öø-ÿ][\w'’-]*")
@@ -573,13 +575,17 @@ _STAGING = (r"staged|scripted|choreographed|stage-managed|museum[ \t]+pieces?|ba
 _STAGING_MODIFIERS = r"mere|purely|carefully|artfully|deliberately|elaborately|neatly|painted|pretty"
 _SPECTATOR = (r"views?|glimpses?|snapshots?|photos?|photographs?|postcards?|backdrops?"
               r"|pass(?:ing)?[ \t]+through(?:[ \t]+(?:it|them))?")
+# S252 ship criterion: the tail names nothing. Before the spectator word only a closed modifier ('a quick glimpse'),
+# never a free word ('not just a rim view' names the rim); after it only 'of it / of them' ('not just glimpses of
+# the leopards', 'not merely a backdrop of the hearth' name the thing seen, a fact the cut would lose).
+_SPECTATOR_MODIFIERS = r"quick|brief|passing|fleeting|distant|pretty|nice|good|mere|few|single"
 # Starts at the keyword after a blank (a lookbehind, never a leading blank run: CodeQL py/polynomial-redos).
 _STAGING_TAIL_RE = re.compile(
     r"(?<=[ \t])(?:(?:rather[ \t]+than|instead[ \t]+of|not)[ \t]+(?:(?:by|as)[ \t]+)?(?:(?:a|an|any|the|some)[ \t]+)?"
     rf"(?!(?:just|merely|only|simply)\b)(?:(?:{_STAGING_MODIFIERS})[ \t]+)?(?:{_STAGING})\b"
-    r"|not[ \t]+(?:just|merely|only|simply)[ \t]+(?:(?:a|an|the|any)[ \t]+)?(?:[\w'’-]+[ \t]+)?"
-    rf"(?:{_SPECTATOR}))"
-    r"(?:[ \t]+of[ \t]+(?:it|them|(?:the|a|an|this|that)[ \t]+[\w'’-]+))?"
+    r"|not[ \t]+(?:just|merely|only|simply)[ \t]+(?:(?:a|an|the|any)[ \t]+)?"
+    rf"(?:(?:{_SPECTATOR_MODIFIERS})[ \t]+)?(?:{_SPECTATOR}))"
+    r"(?:[ \t]+of[ \t]+(?:it|them))?"
     r"(?P<end>[ \t]*[.!?]+[\"'”’)]*)$", re.I)
 
 
@@ -603,11 +609,16 @@ def _staging_tail(s: str, src: frozenset) -> tuple[str, list[str]]:
 # "… the Tsaatan settlements offer something rarer than scenery: a way of life …" / "… offers something specific:
 # the chance to …" / "… offers something that no guided commentary can substitute: a person's own account …" — a
 # build-up before a colon. The verb keeps what follows the colon as its object: "offer a way of life …".
+# S252 ship criterion: the 'than X' comparand goes with the lead, so it may only be a word that names no fact:
+# 'something better than air conditioning', 'richer than trekking', 'more relaxed than the trek', 'different than
+# the main highway' name an amenity, an activity, an effort level or a road the reader plans by, and stay.
+_SOMETHING_COMPARANDS = (r"scenery|sightseeing|views?|glimpses?|photos?|photographs?|postcards?|snapshots?"
+                         r"|pretty[ \t]+(?:views?|pictures?)")
 _SOMETHING_RE = re.compile(
     r"(?<=[ \t])(?:offers?|offered|gives?|provides?|holds?|brings?|adds?|carries|reveals?|shows?)[ \t]+"
     r"(?P<lead>something[ \t]+(?:(?:rarer|richer|deeper|better|more[ \t]+[\w-]+|other|specific|concrete|particular"
-    r"|different|rare|special|unusual|valuable)(?:[ \t]+than[ \t]+(?:(?:a|an|the|just|mere|any)[ \t]+)?[\w'’-]+"
-    r"(?:[ \t]+[\w'’-]+)?)?"
+    r"|different|rare|special|unusual|valuable)(?:[ \t]+than[ \t]+(?:(?:a|an|the|just|mere|any)[ \t]+)?"
+    rf"(?:{_SOMETHING_COMPARANDS}))?"
     r"|that[ \t]+no[ \t]+(?:[\w'’-]+[ \t]+){1,4}?(?:can|could|will)(?:[ \t]+not|not)?[ \t]+"
     r"(?:substitute|replicate|replace|match|rival)(?:[ \t]+for)?)"
     r"[ \t]*:[ \t]+)(?=(?:a|an|the|its|their|his|her|our|your)\b)", re.I)

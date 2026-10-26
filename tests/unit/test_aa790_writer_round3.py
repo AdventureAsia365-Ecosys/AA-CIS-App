@@ -933,3 +933,46 @@ def test_a_count_or_duration_never_makes_an_age_known(source, number):
 ])
 def test_every_age_wording_stays_known(source, number):
     assert number in hygiene._source_ages(source)
+
+
+# ---------------------------------------------------------------- ship criterion (S252): no fact lost vs main
+
+_SHIP_SEEDS = ["", "Day 5: Punakha to Gangtey. Cash only in the valley; no ATM."]
+
+
+@pytest.mark.parametrize("sentence", [
+    # '_staging_tail' spectator branch: the thing seen ('of the X') or a free modifier ('a rim view') is a fact
+    "On the night walk you track wildlife on foot, not just glimpses of the leopards.",
+    "The jeep climbs onto the plateau, not just a view of the volcano.",
+    "The trail drops to the foot of the falls, not just a glimpse of the waterfall.",
+    "The boat noses into the sea cave itself, not just a view of the cliffs.",
+    "Snorkellers swim over the coral, not simply photos of the reef.",
+    "The walk enters the tomb chamber, not merely a view of the pyramid.",
+    "The tour crosses the border into the old town, not just a view of the fortress.",
+    "The hot spring pools are fed by the river, not just snapshots of the gorge.",
+    "Guests ride the cable car up to the summit station, not just a view of the peak.",
+    "The homestay dinner is cooked over an open fire, not merely a backdrop of the hearth.",
+    "You hike down into the crater, not just a rim view.",
+    # '_something_lead': the 'than X' comparand is an amenity, an activity, a road or an effort level
+    "The lodge offers something better than air conditioning: a cool breeze off the lake at night.",
+    "The valley offers something richer than trekking: a week living with reindeer herders.",
+    "The route offers something different than the main highway: a single-lane mountain road.",
+    "Day 3 offers something more relaxed than the trek: a free afternoon in Paro.",
+])
+@pytest.mark.parametrize("seed", _SHIP_SEEDS)
+@pytest.mark.parametrize("where", ["paragraph start", "mid paragraph"])
+def test_a_tail_or_comparand_that_names_a_thing_stays(sentence, seed, where):
+    text = _blog(sentence) if where == "paragraph start" else _blog("The monks gather at dawn. " + sentence)
+    assert rewrite(text, _seed_ctx(seed))[0] == text
+
+
+@pytest.mark.parametrize("before, after", [
+    # what the rules still cut: a tail and a comparand that name nothing
+    ("The village walk gives children real access to the towns, not just a quick glimpse of them.",
+     "The village walk gives children real access to the towns."),
+    ("The camps offer something rarer than sightseeing: a way of life built around the herds.",
+     "The camps offer a way of life built around the herds."),
+])
+def test_a_tail_or_comparand_that_names_nothing_is_still_cut(before, after):
+    text, _ = rewrite(_blog("The monks gather at dawn. " + before), CTX)
+    assert text == _blog("The monks gather at dawn. " + after)
