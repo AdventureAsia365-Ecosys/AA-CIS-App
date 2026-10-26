@@ -40,9 +40,6 @@ def _run(text: str, ctx: TellContext = CTX) -> tuple[str, list[str]]:
      "For a traveller heading north, Kuang Si Falls is a threshold."),
     ("The seasonal movement of the monk body is not a performance of tradition. It is tradition, still practised.",
      "The seasonal movement of the monk body is tradition, still practised."),
-    # one sentence: "X is not A; it is B" (d99c621c)
-    ("The elder may share local history. This is not a performance; it is an offer that depends on the evening.",
-     "The elder may share local history. This is an offer that depends on the evening."),
     # "not because …, but because …" (be02eff4)
     ("This is one of the encounters the journey offers, not because it is remote, but because of what it "
      "represents.", "This is one of the encounters the journey offers because of what it represents."),
@@ -281,16 +278,26 @@ def test_an_edit_that_breaks_the_text_is_skipped_and_logged():
     # round 3 (S252): the fact-preservation invariant keeps what a round-1 proposer would have dropped. 'not only X'
     # asserts X (the join lost 'heritage is preserved'), 'second day' is a day number, and a label that names the
     # centre once is its only name in the piece.
-    ("In Bhutan, heritage is not only preserved. It remains in active use.", "only"),
     ("The falls drop into turquoise pools. That is a good second day. The water is suitable for swimming.", "second"),
     ("The route continues to the handloom centre in Khaling, in Trashigang District, referred to throughout as the "
      "Khaling National Handloom.", "national"),
+    # round 3, fifth review (S252): the staging exemption never holds in an inline pair 'X is not A; it is B'
+    # (d99c621c): the denied word is read as a fact there, as in 'The water is not treated; it is drawn …'
+    ("The elder may share local history. This is not a performance; it is an offer that depends on the evening.",
+     "performance"),
 ])
 def test_pilot_proposals_the_fact_invariant_refuses(kept, fact):
     text = _blog(kept)
     out, log = _run(text)
     assert out == text
     assert len(log) == 1 and log[0].startswith("ai_tells: skipped ") and f"drops a fact: {fact}" in log[0]
+
+
+def test_a_not_only_pair_is_never_proposed():
+    """Round 3, fifth review (S252): 'not only / just / simply / merely X' asserts X; ``_pair`` keeps the pair whole
+    (it used to propose the join, which the invariant then refused)."""
+    text = _blog("In Bhutan, heritage is not only preserved. It remains in active use.")
+    assert _run(text) == (text, [])
 
 
 def test_the_pass_is_idempotent_and_clears_the_fixable_tells():

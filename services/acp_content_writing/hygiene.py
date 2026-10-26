@@ -765,6 +765,98 @@ everything someone anyone thing lot much many few little sense matter question""
 _PARTICLE_AFTER_RE = re.compile(r"-(?:up|in|off|out|over|down)\b|[ \t]up\b(?![ \t]+to\b)")
 _SENTENCE_BREAK_CHARS = frozenset(".!?\n")
 _CLAUSE_BREAK_CHARS = frozenset(".!?\n,;:()—–")
+# Fifth review of round 3 (S252, ship criterion): the _DENIABLE_WORDS exemption holds only where a staging denial
+# lives, the copula frame ('X is not a museum', 'is no accident', 'that no guidebook can substitute', 'does not present
+# itself as a backdrop', 'taught not as a museum object, but as …', 'set not by a calendar') and a copula complement
+# with a ', not X' tail ('a government enterprise, not a heritage attraction'). It never holds in a ', not X' tail
+# after a lexical verb, a modal or a preposition ('You can sketch the murals, not photograph them', 'sells raw wool,
+# not souvenirs', 'is for prayer, not photos'), in a place / time contrast ('not in the garden'), at a sentence start
+# ('No photos inside.') or in an inline pair ('The water is not treated; it is drawn …'): there the denied word is
+# a rule, a sale, a schedule or a safety fact like any other.
+_DENIABLE_COPULA_BEFORE = frozenset("""is are was were be been being s re isn aren wasn weren remains remain stays
+stay becomes become seems seem""".split())
+_DENIABLE_OTHER_BEFORE = frozenset("does do did doesn don didn that which".split())
+_ROLE_PREPOSITIONS = frozenset("as by".split())
+_NOT_ROLE_PREPOSITIONS = frozenset("""in at on from into onto through during inside outside near beside behind
+under below above over before after until till within across along around past via for with about""".split())
+_NEXT_WORD_RE = re.compile(r"[ \t]*([^\W\d_]+)")
+_TO_PLACE_RE = re.compile(r"[ \t]+(?:(?:[Tt]he|[Aa]n?|[Ii]ts|[Tt]heir|[Tt]his|[Tt]hat)\b|[A-Z])")
+_INLINE_AFTER_RE = re.compile(r"[ \t]*(?:it|this|that|they)(?:[ \t]+(?:is|are|was|were)|['’](?:s|re))\b", re.I)
+_BUT_AHEAD_RE = re.compile(r"\bbut\b", re.I)
+_TAIL_COPULA_RE = re.compile(r"\b(?:is|are|was|were|remains?|stays?|becomes?)[ \t]+(?P<comp>[^,;:.!?\n]{1,80})$"
+                             r"|['’](?:s|re)[ \t]+(?P<comp2>[^,;:.!?\n]{1,80})$", re.I)
+_DENIABLE_WINDOW = 200
+
+
+def _deniable_frame(raw: str, start: int, end: int, prev: str, gap: str) -> bool:
+    """The denial word at raw[start:end] (after ``prev``, ``gap`` between them) is in a staging frame where the
+    _DENIABLE_WORDS exemption holds (see the block comment above). Reads at most _DENIABLE_WINDOW characters each
+    way: linear in the text."""
+    nxt = _NEXT_WORD_RE.match(raw, end)
+    nxt_word = fold(nxt.group(1)) if nxt else ""
+    if nxt_word in _NOT_ROLE_PREPOSITIONS or (nxt_word == "to" and _TO_PLACE_RE.match(raw, nxt.end())):
+        # 'not in the garden', 'not at noon', 'not for photos', 'not to the lake': a place, time or purpose choice
+        # ('is not to encounter a preserved exhibit' is an infinitive: the frame stands)
+        return False
+    ahead = raw[end:end + _DENIABLE_WINDOW]
+    stop = next((k for k, c in enumerate(ahead) if c in _CLAUSE_BREAK_CHARS), len(ahead))
+    if stop < len(ahead) and ahead[stop] in ";:," and _INLINE_AFTER_RE.match(ahead, stop + 1):
+        return False  # an inline pair: 'X is not A; it is B'
+    if any(c in _SENTENCE_BREAK_CHARS for c in gap):
+        return False  # a sentence that opens on its denial ('No photos inside the temple.')
+    if ":" in gap:
+        return True  # '…: not a relic, but a working institution'
+    if "," in gap:
+        sentence_end = next((k for k, c in enumerate(ahead) if c in _SENTENCE_BREAK_CHARS), len(ahead))
+        if _BUT_AHEAD_RE.search(ahead, 0, sentence_end):
+            return nxt_word in _ROLE_PREPOSITIONS  # ', not as museum objects, but as living practice'
+        back = raw[max(0, start - _DENIABLE_WINDOW):start].rstrip().rstrip(",")
+        cut = max(back.rfind(c) for c in ".!?\n;:(")
+        tail = _TAIL_COPULA_RE.search(back[cut + 1:])
+        if not tail:
+            return False  # ', not X' after a lexical verb or a modal
+        comp = (tail.group("comp") or tail.group("comp2") or "").split()
+        first = fold(comp[0]) if comp else ""
+        return bool(comp) and len(comp) <= 8 and first not in _NOT_ROLE_PREPOSITIONS and not (
+            len(first) > 4 and first.endswith("ed"))  # 'is served in …, not …' / 'is for prayer, not photos'
+    return prev in _DENIABLE_COPULA_BEFORE or prev in _DENIABLE_OTHER_BEFORE or nxt_word in _ROLE_PREPOSITIONS
+
+
+# Fifth review of round 3 (S252): a 'This / That is …' sentence says what a thing IS ('This is the sky burial site.',
+# 'This is the cremation ground.', 'This is where the porters change shifts.'). The nouns of its complement's first
+# noun phrase (and the N of 'This kind of N') are facts read by presence: a verdict cut stands only when the text
+# still names them. Piece-meta, generic and evaluative words never count ('This is the section worth slowing down
+# for.', 'That's the opening.', 'This is the most rewarding part of the day.').
+_VERDICT_NP_RE = re.compile(
+    r"(?:^|(?<=[.!?\n]))[ \t\"“‘'(]*(?:This|That)(?:[ \t]+(?:kind|sort|type)[ \t]+of[ \t]+(?P<sn>[^\W\d_]+))?"
+    r"(?:['’]s|[ \t]+(?:is|was))[ \t]+(?!(?:not|never|no)\b)(?:(?:where|what|how|why|when)[ \t]+)?"
+    r"(?:(?:the|a|an|its|their|our|your|this|that|these|those)[ \t]+)?(?P<np>[^,;:.!?\n]{1,120})")
+_VERDICT_META = frozenset("""day days trip trips journey journeys route routes section sections stop stops moment
+moments piece post article paragraph good great fine nice proper fair useful welcome fitting whole""".split())
+_VERDICT_NP_BREAK = frozenset("worth".split()) | frozenset(t for t in _STOP if t not in ("most", "least", "more"))
+_VERDICT_NP_WORDS = 3
+
+
+def _verdict_nouns(raw: str) -> set[int]:
+    """The start offsets of the protected nouns of every 'This / That is …' sentence in ``raw``. Linear."""
+    out: set[int] = set()
+    for m in _VERDICT_NP_RE.finditer(raw):
+        cands = []
+        if m.group("sn"):
+            cands.append((m.start("sn"), m.group("sn")))
+        n = 0
+        for w in _FACT_TOKEN_RE.finditer(m.group("np")):
+            t = fold(w.group(0))
+            if t in _VERDICT_NP_BREAK or t.endswith("ly") or n >= _VERDICT_NP_WORDS:
+                break
+            n += 1
+            cands.append((m.start("np") + w.start(), w.group(0)))
+        for pos, word in cands:
+            t = fold(word)
+            if (len(t) > 2 and not t.endswith("ing") and t not in _STOP and t not in _VERDICT_META
+                    and not any(f in _FACT_GENERIC or f in EVALUATIVE_WORDS for f in _forms(t))):
+                out.add(pos)
+    return out
 
 
 def _forms(token: str) -> tuple:
@@ -807,6 +899,8 @@ def fact_tokens(text: Optional[str], seed_forms: frozenset = frozenset(), *,
     out: list[tuple[str, bool]] = []
     prev_end, prev = -1, ""
     denied, prev_neg = 0, False  # words left in the scope of the last denial word (fourth review)
+    deniable = False  # the last denial is a staging frame (fifth review: _deniable_frame)
+    verdict_nouns = set() if heading else _verdict_nouns(raw)
     for m in _FACT_TOKEN_RE.finditer(raw):
         word = m.group(0)
         t = fold(word)
@@ -826,14 +920,16 @@ def fact_tokens(text: Optional[str], seed_forms: frozenset = frozenset(), *,
             initial = prev_end < 0 or any(c in _SENTENCE_BREAK_CHARS for c in gap)
             if ((not heading and not initial and word[:1].isupper() and word != "I") or t in _FACT_TOPIC_WORDS
                     or (len(t) > 2 and t not in _STOP and t not in _FACT_GENERIC
-                        and any(f in seed_forms for f in forms))):
+                        and any(f in seed_forms for f in forms))
+                    or m.start() in verdict_nouns):  # fifth review: 'This is the sky burial site.'
                 out.append((t, False))
             elif (denied and len(t) > 2 and t not in _STOP and t not in _FACT_GENERIC
-                    and not any(f in _DENIABLE_WORDS for f in forms)):
+                    and not (deniable and any(f in _DENIABLE_WORDS for f in forms))):
                 out.append((t, DENIED))  # 'not potable', 'not waymarked', 'no lifejackets'
         prev_neg = t in _DENIAL_WORDS or (t == "t" and raw[m.start() - 1:m.start()] in ("'", "’"))  # n't
         if prev_neg and not heading:
             denied = _DENIAL_SCOPE + 1
+            deniable = _deniable_frame(raw, m.start(), m.end(), prev, gap)
         if denied:
             denied -= 1
         prev_end, prev = m.end(), t
@@ -1213,7 +1309,7 @@ _AGE_CLAIM_RE = re.compile(
     rf"\b(?:aged|ages?)\s+(?P<a>{NUM_TOKEN})(?:\s*(?:\+|and\s+(?:up|over|above|older)|or\s+(?:older|over|above)"
     rf"|(?:–|-|to)\s*(?P<b>{NUM_TOKEN})))?(?![\w-])"
     rf"|\b(?:{_PERSON_NOUNS})\s+(?:over|above|under|older\s+than|younger\s+than)\s+(?:the\s+age\s+of\s+)?"
-    rf"(?P<c>{NUM_TOKEN})(?![\w-])(?![:.,]\d)"  # fourth review: 'Travellers above 4,000 m' is no age
+    rf"(?P<c>{NUM_TOKEN})(?![\w-])(?![:.,]\d)(?![ \t\u00a0\u2009\u202f]\d{{3}}\b)"  # 'above 4,000 m', '3 500 m'
     # Round-3 review: 'N-year-old' is a person's age only as 'year-olds', or 'year-old' used as a noun: before a
     # person noun, a verb, a function word or nothing ('a 10-year-old can manage it', 'legible to a twelve-year-old as
     # to …'); 'the 300-year-old temple' (an adjective before a thing) is a thing's age. A grouped number
@@ -1241,7 +1337,8 @@ _AGE_CLAIM_RE = re.compile(
 #   years old'; not 'The festival, now 12 years old'); 'N-year-old(s)' in a person use (_AGE_CLAIM_RE 'd').
 # A number next to ':' / '.' / ',' digits (12:30, 1,200, 4,000) never counts; nor one followed by a unit, a head count,
 # 'per …' or a plural noun.
-_AGE_NUM = rf"(?:{NUM_TOKEN})(?=s?\b)(?![:.,]\d)"
+# fifth review: nor one followed by a space-grouped thousand ('3 500 m', '4 000 m', thin and no-break spaces too)
+_AGE_NUM = rf"(?:{NUM_TOKEN})(?=s?\b)(?![:.,]\d)(?![ \t\u00a0\u2009\u202f]\d{{3}}\b)"
 _AGE_PERSON = (rf"(?:{_PERSON_NOUNS}|infants?|toddlers?|bab(?:y|ies)|students?|pupils?|riders?|swimmers?"
                r"|participants?|boys?|girls?|juniors?|minors?|visitors?)")
 _AGE_RANGE = rf"(?<![\d:.,])(?P<a>{_AGE_NUM})(?:\s*(?:–|-|to)\s*(?P<b>{_AGE_NUM}))?"
@@ -1274,6 +1371,29 @@ _TIME_TAIL_RE = re.compile(
     r"^\s*(?:am\b|pm\b|a\.m|p\.m|o['’]clock|h\b|hrs\b|daily\b|nightly\b|each\s+(?:day|morning|evening)\b"
     r"|every\s+(?:day|morning|afternoon|evening|night|week)\b|in\s+the\s+(?:morning|afternoon|evening)\b|at\s+night\b"
     r"|on\s+(?:weekdays|weekends|[a-z]+days)\b|until\b|till\b|(?:can|may|could)\s+(?:enter|visit|open|come)\b)", re.I)
+# Fifth review (S252): a head-count noun with a number is a group size unless the source says it is an age ('Families of
+# 4 and over get 10% off', 'Travellers 6 and up get a group discount', 'Participants 4-8', 'Couples 2 to 4 share a
+# room'). Only these nouns name an age group by themselves ('children 7 and older', 'Children 6–12'); any other person
+# noun needs 'aged' / 'between', a 'years' tail, 'must be', or an age word before it in the same clause.
+_AGE_ONLY_NOUN_RE = re.compile(
+    r"(?:kids?|child(?:ren)?|teens?|teenagers?|youngsters?|infants?|toddlers?|bab(?:y|ies)|juniors?|minors?"
+    r"|students?|pupils?|boys?|girls?)", re.I)
+_AGE_WORD_BEFORE_RE = re.compile(r"\b(?:ages?|aged|minimum|min\.?|least|must|years?[\s-]+old|year-olds?)\b", re.I)
+_YEARS_TAIL_RE = re.compile(r"^[\s-]*(?:years?|yrs?)\b", re.I)
+
+
+def _age_word_before(text: str, start: int) -> bool:
+    look = text[max(0, start - 80):start]
+    cut = max(look.rfind(c) for c in _CLAUSE_BREAKS)
+    return bool(_AGE_WORD_BEFORE_RE.search(look[cut + 1:]))
+
+
+def _head_count(text: str, m: re.Match) -> bool:
+    """The person noun that opens ``m`` is not an age-only noun and no age word stands before it: a head count."""
+    noun = m.group(0).split()[0] if m.group(0).split() else ""
+    return not _AGE_ONLY_NOUN_RE.fullmatch(noun) and not _age_word_before(text, m.start())
+
+
 # 'Group of travellers 2–12', 'a party of guests 4-8': a head count, never an age band
 _GROUP_BEFORE_RE = re.compile(r"\b(?:groups?|part(?:y|ies)|teams?|size|max(?:imum)?)\s+(?:of\s+)?$", re.I)
 # A thing's age is never a person's: 'a single malt aged 12 years', "Pu'er tea aged 15 years", 'a temple aged 12
@@ -1282,7 +1402,21 @@ _GROUP_BEFORE_RE = re.compile(r"\b(?:groups?|part(?:y|ies)|teams?|size|max(?:imu
 # Stone Age 8 …' are eras.
 _AGE_LOOKBACK_CUE_RE = re.compile(
     rf"\b(?:{_AGE_PERSON}|people|persons?|anyone|everyone|those|ones|learners|climbers|walkers|paddlers|divers"
-    r"|campers|minimum|min\.?|least|must|limits?|restrictions?|requirements?)\b", re.I)
+    r"|campers|minimum|min\.?|least|must|limits?|restrictions?|requirements?"
+    # fifth review: 'grandkids', 'grandchildren', 'grandparents' (no word boundary before 'kids') and activity nouns
+    r"|grand(?:kids?|child(?:ren)?|parents?|sons?|daughters?)|sons?|daughters?|trekkers?|beginners?|novices?"
+    r"|cyclists?|bikers?|rafters?|kayakers?|pilgrims?|members?|seniors?|elders?|grown-?ups?|all|ages?|year-?olds?)\b",
+    re.I)
+# Fifth review (S252), output side: an 'aged N' in the piece is a person's age by default (the F15 lens: a false
+# "unknown" costs one repair). It is a thing's age only right after a closed list of aged goods or objects, and only
+# when no person noun or age word stands anywhere in the sentence ('a single malt aged 12 years' is a thing;
+# 'Grandkids aged 6 and up', 'Trekkers aged 12 and up', 'open to all aged 8 and over', 'Suitable for aged 7+' are
+# ages).
+_AGED_THING_BEFORE_RE = re.compile(
+    r"\b(?:malts?|whisk(?:e?y|ies)|scotch(?:es)?|rums?|brand(?:y|ies)|bourbons?|cognacs?|wines?|ports?|sherr(?:y|ies)"
+    r"|sakes?|spirits?|liquors?|liqueurs?|teas?|pu['’]?er|cheeses?|hams?|vinegars?|soy|miso|sauces?|casks?|barrels?"
+    r"|beef|meats?|steaks?|temples?|buildings?|trees?|woods?|timbers?|leathers?)\b(?:[ \t]+[\w'’-]+){0,2}[ \t]*$",
+    re.I)
 _ERA_BEFORE_RE = re.compile(r"\b(?:middle|stone|bronze|iron|dark|ice|golden|gilded|space|information|modern)[ \t]*$",
                             re.I)
 _AGED_BEFORE_RE = re.compile(r"\baged\s*$", re.I)
@@ -1304,6 +1438,29 @@ def _thing_aged(text: str, m: re.Match) -> bool:
     if head.startswith("age"):
         return bool(_ERA_BEFORE_RE.search(text[max(0, m.start() - 14):m.start()]))
     return False
+
+
+def _thing_aged_out(text: str, m: re.Match) -> bool:
+    """Output side (fifth review): 'aged N' right after an aged good or object, with no person noun or age word
+    anywhere in the sentence; 'Age(s) N' after an era word."""
+    head = text[m.start():m.start() + 4].lower()
+    if head == "aged":
+        look = text[max(0, m.start() - 80):m.start()]
+        cut = max(look.rfind(c) for c in _CLAUSE_BREAKS + ",")
+        if not _AGED_THING_BEFORE_RE.search(look[cut + 1:]):
+            return False
+        # the sentence around the match, read at most 200 characters each way (linear in the text)
+        before, after = text[max(0, m.start() - 200):m.start()], text[m.end():m.end() + 200]
+        before = before[max(before.rfind(c) for c in ".!?\n") + 1:]
+        ends = [k for k in (after.find(c) for c in ".!?\n") if k >= 0]
+        after = after[:min(ends)] if ends else after
+        return not _AGE_LOOKBACK_CUE_RE.search(_AGED_WORD_RE.sub(" ", before + " " + after))
+    if head.startswith("age"):
+        return bool(_ERA_BEFORE_RE.search(text[max(0, m.start() - 14):m.start()]))
+    return False
+
+
+_AGED_WORD_RE = re.compile(r"\baged\b", re.I)
 
 
 def _thing_aged_before(text: str, start: int) -> bool:
@@ -1370,6 +1527,9 @@ def _source_ages(text: str) -> set[int]:
                 continue
             if rx is _SRC_PERSON_RANGE_RE and (
                     _TIME_TAIL_RE.match(after) or _GROUP_BEFORE_RE.search(text[max(0, m.start() - 30):m.start()])
+                    # fifth review: 'Participants 4-8', 'travellers 2 to 14', 'Couples 2 to 4' are head counts
+                    or ((m.group("link") or "").lower() not in ("aged", "between") and not _YEARS_TAIL_RE.match(after)
+                        and _head_count(text, m))
                     or (m.group("link") or "").lower() == "from" and not _AGE_TAIL_RE.match(after)
                     or (small_number(m.group("b")) or 0) < (small_number(m.group("a")) or 0)):
                 continue
@@ -1381,6 +1541,10 @@ def _source_ages(text: str) -> set[int]:
         # 'N years' is an age after aged / from / of only ('children from 8 years'), never after over / under / at least
         # ('local families over 12 years'), and never 'years ago / of experience'
         if tail[:1] == "y" and (not m.group("link") or _DURATION_TAIL_RE.match(rest(m))):
+            continue
+        # fifth review: 'Families of 4 and over', 'Travellers 6 and up' are group sizes
+        if (tail and tail[:1] != "y" and not m.group("be") and (m.group("link") or "").lower() != "aged"
+                and _head_count(text, m)):
             continue
         out |= _ages_of(m)
     for m in _SRC_YEARS_OLD_RE.finditer(text):
@@ -1401,8 +1565,9 @@ def unsupported_ages(sentence: str, source: Optional[str]) -> list[str]:
     for m in _AGE_CLAIM_RE.finditer(text):
         if (m.group("a") or m.group("c")) and _count_after(text[m.end():m.end() + 60]):
             continue
-        # fourth review: 'a single malt aged 12 years' is a thing's age on the output side too
-        if m.group("a") and _thing_aged(text, m):
+        # fourth review: 'a single malt aged 12 years' is a thing's age on the output side too; fifth review: only
+        # after an aged good or object (_thing_aged_out), never by the absence of a person noun
+        if m.group("a") and _thing_aged_out(text, m):
             continue
         values = {small_number(v) for v in m.groups() if v} - {None}
         if values and max(values) <= 120 and not values <= known:  # 'the 300-year-old' is never a person
@@ -1740,10 +1905,20 @@ def _closing_zone(text: str, cta: Optional[str]) -> Optional[tuple[int, int]]:
 # ('…, thick with leeches', '…, unroped and unmarked', '… and carries no lifejackets'). The words a paraphrase or a
 # closing recap adds about the experience itself carry no fact and do not block it ('rewards those who travel with
 # patience', 'offers a quieter rhythm'); nor do function words the stop list leaves out.
-_REPEAT_FREE_WORDS = frozenset("""all both own alike together still here there also even ever every much many
+# Fifth review (S252): quantity and frequency words are facts ('The ferry crosses … every morning.' after '… in the
+# morning.' says it runs daily): they are never free, and the ones the stop list holds (every, each, only) still count.
+_REPEAT_FREE_WORDS = frozenset("""alike together here there also much many
 reward rewards rewarded offer offers offered give gives gave bring brings brought travel travels travelling traveling
 patience curiosity rhythm pace quieter calmer slower gentler softer feel feels felt sense register registers
 registered immediately notice notices noticed appreciate appreciates enjoy enjoys love loves""".split())
+
+
+_REPEAT_QUANTITY_WORDS = frozenset("""every each all both either neither only still always never ever own even alone
+once twice daily nightly weekly monthly yearly annually""".split())
+# ...except a floating quantifier right after a copula or an auxiliary ('… are all available as optional activities'):
+# it points back at the sentence's own list, it adds no frequency or scope.
+_FLOATING_QUANTIFIERS = frozenset("all both each".split())
+_FLOATING_AFTER = frozenset("is are was were be been have has had can could will would may might must".split())
 
 
 def _repeat_stem(t: str) -> str:
@@ -1784,11 +1959,17 @@ def added_words(later: str, other, ignore: frozenset = frozenset()) -> list[str]
     A repeat delete needs this empty. Linear in the two texts."""
     have = _word_keys(other) if isinstance(other, str) or other is None else other
     out: dict[str, None] = {}
+    prev = ""
     for m in _FACT_TOKEN_RE.finditer(fold(strip_tags(later or ""))):
         t = m.group(0)
+        floating = t in _FLOATING_QUANTIFIERS and prev in _FLOATING_AFTER  # 'are all available': the list's own words
+        prev = t
+        if floating:
+            continue
         forms = _forms(t)
-        if not t.isdigit() and (len(t) <= 2 or t in _STOP or t in _REPEAT_FREE_WORDS or t in ignore
-                                or any(f in _FACT_GENERIC for f in forms)):
+        if not t.isdigit() and t not in _REPEAT_QUANTITY_WORDS and (
+                len(t) <= 2 or t in _STOP or t in _REPEAT_FREE_WORDS or t in ignore
+                or any(f in _FACT_GENERIC for f in forms)):
             continue
         if not (any(f in have for f in forms) or "~" + _repeat_stem(t) in have):
             out[t] = None

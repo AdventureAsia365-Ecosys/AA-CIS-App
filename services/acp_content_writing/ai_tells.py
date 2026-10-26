@@ -487,7 +487,8 @@ _INLINE_PAIR_RE = re.compile(
 
 def _inline_pair(s: str, src: frozenset) -> tuple[str, list[str]]:
     m = _INLINE_PAIR_RE.match(s)
-    if (not m or _protected(m.group("subj") + " " + m.group("x")) or _DIGIT_RE.search(m.group("x"))
+    if (not m or _NOT_ONLY_RE.search(m.group(0)[:m.start("x")])  # fifth review: 'is not just A; it is B' asserts A
+            or _protected(m.group("subj") + " " + m.group("x")) or _DIGIT_RE.search(m.group("x"))
             or _practical(m.group("x")) or _audience(m.group("x")) or _LIMIT_RE.search(m.group("x"))
             or _seed_fact(m.group("x"), src)):
         return s, []
@@ -685,10 +686,12 @@ def _pair(s1: str, s2: str, src: frozenset) -> Optional[str]:
     if (_protected(s1) or _practical(d.group("x")) or _audience(d.group("x")) or _LIMIT_RE.search(d.group("x"))
             or _DIGIT_RE.search(d.group("x")) or _seed_fact(d.group("x"), src)):
         return None
+    if _NOT_ONLY_RE.search(d.group(0)):
+        # 'This is not just a glacier. It is the valley's only source of water.' asserts the glacier: never cut on its
+        # own (the next 'It' then pointed at the sentence before) and never folded into a join (fifth review)
+        return KEEP_PAIR
     subj = d.group("subj").strip()
     if _subject_is_pronoun(subj):
-        if _NOT_ONLY_RE.search(d.group(0)):
-            return ""  # 'This is not simply a lake.' asserts the lake: never folded into a join (round 1 cuts it)
         joined = _demonstrative_join(subj, a.group("pro"), a.group("verb"), " " + a.group("y"), copula=True)
         # second review: a join that would be a short verdict-shaped line ('This is the tail of the monsoon.', 'This is
         # the halfway point.') is a correction of which thing it is, not a reframe: both sentences stay (KEEP_PAIR).
@@ -739,8 +742,8 @@ def _is_participle(word: str) -> bool:
 
 def _lone_denial(s: str, src: frozenset) -> bool:
     d = _DENIAL_RE.match(_expand(s))
-    if not d or "more than" in d.group(0).lower() or len(_words(s)) > 9:
-        return False
+    if not d or "more than" in d.group(0).lower() or len(_words(s)) > 9 or _NOT_ONLY_RE.search(d.group(0)):
+        return False  # fifth review: 'This is not just a glacier.' asserts the glacier
     x_words = d.group("x").split()
     if x_words and _is_participle(x_words[0]):
         return False
@@ -875,6 +878,7 @@ def _verb_in_seed(verb: str, src: frozenset) -> bool:
 _NOT_ONLY_RE = re.compile(r"\bnot[ \t]+(?:only|just|simply|merely)\b", re.I)
 CUT_BOTH = "\x00cut both"  # _pair2: both sentences go (an aphorism pair: 'X is not a ruin. It works.')
 KEEP_PAIR = "\x00keep pair"  # _pair: a pair, but both sentences stay (no join, no lone-denial cut)
+_CUT_BOTH_KIND = "aphorism pair (denial + bare verb)"
 
 
 def _pair2(s1: str, s2: str, src: frozenset) -> Optional[str]:
@@ -1276,7 +1280,7 @@ def _structure_edits(text: str, ctx: TellContext, written: frozenset = frozenset
                     nxt = spans[j + 1] if j + 1 < len(spans) else None
                     s, _ = _deletion_end(text, sp, spans[j])
                     _, e = _deletion_end(text, spans[j], nxt)
-                    out.append(Edit(s, e, "", "aphorism pair (denial + bare verb)",
+                    out.append(Edit(s, e, "", _CUT_BOTH_KIND,
                                     f"{sp['clean']} {spans[j]['clean']}", (sp["clean"], spans[j]["clean"])))
                     used.update({i, j})
                 continue
@@ -1381,8 +1385,28 @@ def _new_problems(before: str, after: str, edits: list[Edit], ctx: TellContext, 
     return out
 
 
+def _cut_both_subject(e: Edit) -> Optional[str]:
+    """The head noun of the denial's subject of an aphorism-pair cut ('The old forge is not a relic. It works.' →
+    'forge'), or None (a pronoun, a stop word or a generic word)."""
+    if e.kind != _CUT_BOTH_KIND or not e.olds:
+        return None
+    ex = _expand(e.olds[0])
+    d = _DO_DENIAL_RE.match(ex) or _DENIAL_RE.match(ex)
+    words = _words(d.group("subj")) if d else []
+    head = hygiene.fold(words[-1]).strip("'’") if words else ""
+    if len(head) <= 2 or head in hygiene._STOP or head in _PRONOUN_SUBJECTS or head in hygiene._FACT_GENERIC:
+        return None
+    return head
+
+
 def _edit_facts_lost(e: Edit, after_forms, seed: frozenset) -> list[str]:
-    return hygiene.missing_facts(list(e.olds or (e.before,)), e.new, after_forms, seed, heading=e.heading)
+    lost = hygiene.missing_facts(list(e.olds or (e.before,)), e.new, after_forms, seed, heading=e.heading)
+    # fifth review: an aphorism-pair cut takes the denial's subject out with both sentences ('The old forge is not a
+    # relic. It works.'); it stands only while the text still names that subject elsewhere
+    head = _cut_both_subject(e)
+    if head and head not in lost and not any(f in after_forms for f in hygiene._forms(head)):
+        lost = lost + [head]
+    return lost
 
 
 def _fact_losers(edits: list[Edit], after: str, seed: frozenset) -> dict[int, list[str]]:

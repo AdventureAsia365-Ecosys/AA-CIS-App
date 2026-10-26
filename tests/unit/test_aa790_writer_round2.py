@@ -63,7 +63,9 @@ _COURTYARD = "Visitors walk the courtyard."
 
 
 @pytest.mark.parametrize("cut, rest", [
-    ("The temple is not a ruin. It works.", _COURTYARD),                 # aphorism pair, bare verb: both go
+    # aphorism pair, bare verb: both go while the piece still names the temple (fifth review of round 3: the
+    # subject is a fact by presence, fact_invariant tests keep 'The mill is not a ruin. It grinds.' when it is not)
+    ("The temple is not a ruin. It works.", "Visitors walk the temple courtyard."),
     # lone 'do' denial (round 3, S252: the village is named again, so the fact invariant lets the cut go)
     ("This kind of visit does not present the village as a stage.", "Visitors walk the village courtyard."),
     ("The order of the stops is not incidental.", _COURTYARD),           # 'not incidental' verdict

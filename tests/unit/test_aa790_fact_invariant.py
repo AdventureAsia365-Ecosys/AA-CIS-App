@@ -573,6 +573,196 @@ def test_a_measurement_in_the_output_is_not_an_age_claim():
     assert hygiene.unsupported_ages("Travellers above 4,000 m feel the altitude.", "") == []
 
 
+# ---------------------------------------------------------------- fifth review (round 3 ship criterion, S252)
+
+GUESTHOUSE = "We leave the guesthouse after breakfast. "
+TANGO_SEED = "Source itinerary: Day 2: Tango monastery. Photography is not permitted inside the temples."
+CAMP_SEED = "Source itinerary: Camp water is untreated stream water; bring purification tablets."
+
+
+def _after_guesthouse(sentences: str, where: str) -> str:
+    return _blog(sentences) if where == "paragraph start" else _blog(GUESTHOUSE + sentences)
+
+
+# Finding 1: the staging exemption holds only in the copula frame; a ', not X' tail after a lexical verb, a modal or
+# a preposition, a place / time contrast and an inline pair keep their denied word as a fact.
+@pytest.mark.parametrize("sentences, sources", [
+    ("You can sketch the murals, not photograph them.", ["", TANGO_SEED]),
+    ("The water is not treated; it is drawn straight from the stream.", ["", CAMP_SEED]),
+    ("The inner chapel is for prayer, not photos.", ["", UNRELATED_SEED]),
+    ("The co-op sells raw wool, not souvenirs.", ["", UNRELATED_SEED]),
+    ("On the second morning you watch the rehearsal, not the performance.", ["", UNRELATED_SEED]),
+    ("Breakfast is served in the kitchen, not in the garden.", ["", UNRELATED_SEED]),
+    ("Children see the dance from the courtyard, not the stage.", ["", UNRELATED_SEED]),
+    ("The dancers wear their own robes, not costumes.", ["", UNRELATED_SEED]),
+])
+@_BOTH_PLACES
+def test_fifth_review_denied_words_outside_the_copula_frame_are_kept(sentences, sources, where):
+    for source in sources:
+        _unchanged(_after_guesthouse(sentences, where), source)
+
+
+@pytest.mark.parametrize("text, kind", [
+    ("You can sketch the murals, not photograph them.", hygiene.DENIED),
+    ("The co-op sells raw wool, not souvenirs.", hygiene.DENIED),
+    ("The inner chapel is for prayer, not photos.", hygiene.DENIED),
+    ("Breakfast is served in the kitchen, not in the garden.", hygiene.DENIED),
+    ("The water is not treated; it is drawn straight from the stream.", hygiene.DENIED),
+    ("No photos inside the temple.", hygiene.DENIED),
+])
+def test_fifth_review_fact_tokens_read_the_frame(text, kind):
+    assert kind in {k for _, k in hygiene.fact_tokens(text)}
+
+
+@pytest.mark.parametrize("text", [
+    "The NHDC centre is a government enterprise, not a heritage attraction.",
+    "The dzong is not a museum or a backdrop.",
+    "The craft is taught not as a museum object, but as living practice.",
+    "The hour is set not by a calendar but by the forest.",
+    "To visit their settlements is not to encounter a preserved exhibit.",
+    "Such timing is no coincidence.",
+    "This kind of visit does not present the village as a stage.",
+])
+def test_fifth_review_the_copula_frame_keeps_its_exemption(text):
+    assert hygiene.DENIED not in {k for _, k in hygiene.fact_tokens(text)}
+
+
+# Finding 2: 'not just / merely / simply X' asserts X; the denial is never cut alone or joined away.
+@pytest.mark.parametrize("sentences", [
+    "This is not just a glacier. It is the valley's only source of water in spring.",
+    "It is not just a monastery. It is also the district court and the land registry.",
+    "This is not simply a pond. It is the sacred lake where the oracle bathes.",
+    "The temple is not merely a monastery. It is also the district court.",
+])
+@pytest.mark.parametrize("source", ["", UNRELATED_SEED])
+@_BOTH_PLACES
+def test_fifth_review_not_just_is_never_cut(sentences, source, where):
+    _unchanged(_after_guesthouse(sentences, where), source)
+
+
+# Finding 3: a 'This / That is …' sentence that names a concrete thing is an identification, kept unless the piece
+# names it elsewhere.
+@pytest.mark.parametrize("sentences", [
+    "We pass a flat rock above the monastery. This is the sky burial site.",
+    "A white post marks the turn. This is the cremation ground.",
+    "We stop at a wide meadow. This is the herders' pasture.",
+    "This is where the porters change shifts.",
+])
+@pytest.mark.parametrize("source", ["", UNRELATED_SEED])
+@_BOTH_PLACES
+def test_fifth_review_identifications_are_kept(sentences, source, where):
+    _unchanged(_after_guesthouse(sentences, where), source)
+
+
+def test_fifth_review_a_verdict_noun_named_elsewhere_may_go():
+    out, log = rewrite(_blog("The pasture belongs to the herders. We stop at a wide meadow. This is the herders' "
+                             "pasture. The grass is short."), _ctx())
+    assert out == _blog("The pasture belongs to the herders. We stop at a wide meadow. The grass is short.")
+    assert log == ["ai_tells: verdict line: 'This is the herders' pasture.'"]
+
+
+# Finding 4: an aphorism-pair cut never takes out a subject the piece names nowhere else.
+@pytest.mark.parametrize("pair", ["The old forge is not a relic. It works.", "The mill is not a ruin. It grinds."])
+@pytest.mark.parametrize("source", ["", UNRELATED_SEED])
+@_BOTH_PLACES
+def test_fifth_review_cut_both_keeps_a_lone_subject(pair, source, where):
+    _unchanged(_after_guesthouse(pair + " Lunch is packed for the trail.", where), source)
+
+
+def test_fifth_review_cut_both_goes_when_the_subject_is_named_elsewhere():
+    text = _blog("The forge smoke rises at dawn. The old forge is not a relic. It works. "
+                 "Lunch is packed for the trail.")
+    out, log = rewrite(text, _ctx())
+    assert out == _blog("The forge smoke rises at dawn. Lunch is packed for the trail.")
+    assert log == ["ai_tells: aphorism pair (denial + bare verb): 'The old forge is not a relic. It works.'"]
+
+
+# Finding 5: a repeat that differs only by a quantity or frequency word stays.
+FERRY = ("The ferry crosses to the island in the morning. Lunch is at a fish shack on the pier. The ferry crosses to "
+         "the island every morning.")
+
+
+@pytest.mark.parametrize("seed", ["", UNRELATED_SEED])
+def test_fifth_review_a_frequency_word_keeps_the_repeat(seed):
+    hyg = hygiene.HygieneContext(seed=seed)
+    assert hygiene.autofix(FERRY, hyg)[0] == FERRY
+    assert text_integrity.final_pass(FERRY, hyg)[0] == FERRY
+    assert text_integrity.settle(FERRY, hyg) == FERRY
+
+
+@pytest.mark.parametrize("later, other, expected", [
+    ("The ferry crosses to the island every morning.", "The ferry crosses to the island in the morning.", ["every"]),
+    ("Both boats still run daily.", "The boats run.", ["both", "still", "daily"]),
+    ("The visits are all available as options.", "The visits are available as options.", []),  # floating 'all'
+])
+def test_fifth_review_quantity_words_count_in_added_words(later, other, expected):
+    assert hygiene.added_words(later, other) == expected
+
+
+# Finding 6: an 'aged N' in the piece is a person's age unless it follows an aged good or object.
+PUNAKHA_SEED = "Punakha — Chimi Lhakhang\nSource itinerary: walk through rice fields to the temple. Day 3 of the trip."
+
+
+@pytest.mark.parametrize("claim, found", [
+    ("Grandkids aged 6 and up love the farmhouse lunch.", "aged 6 and up"),
+    ("Grandchildren aged 8 and over can manage the climb.", "aged 8 and over"),
+    ("Grandparents and grandchildren aged 6 and up share the walk.", "aged 6 and up"),
+    ("Trekkers aged 12 and up will enjoy the terraces.", "aged 12 and up"),
+    ("Beginners aged 10 and over are welcome.", "aged 10 and over"),
+    ("Cyclists aged 14 and over can ride the valley road.", "aged 14 and over"),
+    ("Rafters aged 12+ can run the river.", "aged 12+"),
+    ("Novices aged 10 to 14 are welcome.", "aged 10 to 14"),
+    ("Sons and daughters aged 9 and up can join.", "aged 9 and up"),
+    ("Pilgrims aged 70 and over walk it each spring.", "aged 70 and over"),
+    ("Best enjoyed by members aged 8 and over.", "aged 8 and over"),
+    ("The walk is open to all aged 8 and over.", "aged 8 and over"),
+    ("Suitable for aged 7+.", "aged 7+"),
+    ("Kids love the cheese aged 8 and up.", "aged 8 and up"),  # an aged good, but a person word in the sentence
+])
+@pytest.mark.parametrize("source", ["", PUNAKHA_SEED])
+def test_fifth_review_an_output_aged_n_is_an_age_by_default(claim, found, source):
+    assert hygiene.unsupported_ages(claim, source) == [found]
+
+
+@pytest.mark.parametrize("claim", ["Taste a single malt aged 12 years at the distillery.",
+                                   "Sample Pu'er tea aged 15 years in the cellar.", "The barrels aged 10 years."])
+def test_fifth_review_an_aged_good_is_still_a_things_age(claim):
+    assert hygiene.unsupported_ages(claim, "") == []
+
+
+def test_fifth_review_grand_forms_cue_a_seed_age():
+    assert hygiene.unsupported_ages("Grandkids aged 8 and up love it.", "Grandchildren aged 8 and over join.") == []
+
+
+# Finding 7: group sizes and space-grouped altitudes are never known ages.
+@pytest.mark.parametrize("source, claim, found", [
+    ("Families of 4 and over get 10% off the farmstay.", "Kids aged 4 and up love the farmstay.", "aged 4 and up"),
+    ("Travellers 6 and up get a group discount.", "Children aged 6 and up can ride.", "aged 6 and up"),
+    ("Participants 4-8.", "Ideal for 8-year-olds.", "8-year-olds"),
+    ("Group discounts: travellers 2 to 14.", "Kids aged 2 to 14 welcome.", "aged 2 to 14"),
+    ("Couples 2 to 4 share a room.", "Kids aged 2 to 4 welcome.", "aged 2 to 4"),
+    ("Explorers 4 to 6 to a jeep.", "Kids aged 4 to 6 welcome.", "aged 4 to 6"),
+    ("Hikers above 3 500 m need a rest day.", "Children aged 3 and up can join.", "aged 3 and up"),
+    ("Travellers over 4 000 m feel the altitude.", "Children aged 4 and up can join.", "aged 4 and up"),
+    ("Travellers over 4\u202f000 m feel the altitude.", "Children aged 4 and up can join.", "aged 4 and up"),
+])
+def test_fifth_review_group_sizes_and_altitudes_are_not_ages(source, claim, found):
+    assert not hygiene._source_ages(source)
+    assert hygiene.unsupported_ages(claim, source) == [found]
+    assert hygiene.unsupported_ages(claim, "") == [found]
+
+
+@pytest.mark.parametrize("source, claim", [
+    ("Children 6–12 join the class.", "Kids aged 6 to 12 join the class."),
+    ("Open to children 7 and older.", "Kids aged 7 and up are welcome."),
+    ("Travellers aged 6 to 12 join the class.", "Kids aged 6 to 12 join the class."),
+    ("Participants aged 8 to 14.", "Kids aged 8 and up join in."),
+    ("Minimum age: travellers 10 and over.", "Kids aged 10 and over are welcome."),
+])
+def test_fifth_review_age_cues_on_a_head_count_noun_still_count(source, claim):
+    assert hygiene.unsupported_ages(claim, source) == []
+
+
 # ---------------------------------------------------------------- linear time
 
 _N = 8000
@@ -595,6 +785,12 @@ _INPUTS = {
     "from-to": "Visitors from 10 to 12 " * (_N // 23),
     "aged-years": "a malt aged 12 years " * (_N // 21),
     "ages-n": "Middle Ages 12 " * (_N // 15),
+    # fifth review: the frame look-arounds, the verdict noun phrases and the output-side aged-thing read
+    "tails": "We sell wool, not souvenirs " * (_N // 28),
+    "verdicts": "This is the sky burial site. " * (_N // 29),
+    "aged-person": "Grandkids aged 6 and up " * (_N // 24),
+    "aged-thing": "the malt aged 12 years " * (_N // 23),
+    "head-count": "Families of 4 and over " * (_N // 23),
 }
 
 
