@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# AA-993 H1: git pre-push hook -> scripts/pre-push.sh (fast mode; AA_PREPUSH=full for the full CI unit run).
+# Installed by scripts/install-hooks.sh (core.hooksPath=.githooks). Bypass once: git push --no-verify
+set -uo pipefail
+root=$(git rev-parse --show-toplevel) || exit 1
+zero=0000000000000000000000000000000000000000
+head=""
+# stdin: <local ref> <local sha> <remote ref> <remote sha>, one line per pushed ref.
+while read -r _lref lsha _rref _rsha; do
+  [[ -z ${lsha:-} || $lsha == "$zero" ]] && continue # a branch deletion: nothing to check
+  [[ -z $head ]] && head=$lsha
+done
+[[ -z $head ]] && exit 0
+if [[ ! -x $root/scripts/pre-push.sh ]]; then
+  echo "pre-push hook: scripts/pre-push.sh is missing on this branch; not checking." >&2
+  exit 0
+fi
+exec "$root/scripts/pre-push.sh" --head "$head" </dev/null
