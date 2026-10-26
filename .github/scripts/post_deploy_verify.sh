@@ -86,12 +86,13 @@ check_inputs() {  # sets BLOCKED=1 when the ECS/HTTP checks cannot run at all
     BLOCKED=1
   fi
   if [ -n "${REQUIRED_SCHEMA:-}" ] && ! [[ "$REQUIRED_SCHEMA" =~ ^[0-9]+$ ]]; then
-    record required-schema FAIL "REQUIRED_SCHEMA must be a number, got '${REQUIRED_SCHEMA}'"
+    record required-schema FAIL "REQUIRED_SCHEMA must be a number (value not printed)"
     BLOCKED=1
   fi
-  if [ -n "${EXPECTED_IMAGE:-}" ] && [ -n "${EXPECTED_SHA:-}" ] \
+  # Only a validated SHA is ever interpolated (an invalid value is never echoed; AA-993 V2 review).
+  if [ -n "${EXPECTED_IMAGE:-}" ] && [[ "${EXPECTED_SHA:-}" =~ ^[0-9a-f]{40}$ ]] \
      && [ "$(tag_of "$EXPECTED_IMAGE")" != "dev-${EXPECTED_SHA}" ]; then
-    record expected-image FAIL "EXPECTED_IMAGE tag $(tag_of "$EXPECTED_IMAGE") is not dev-${EXPECTED_SHA}"
+    record expected-image FAIL "EXPECTED_IMAGE tag is not dev-<expected sha> (tag not printed)"
     BLOCKED=1
   fi
 }
@@ -224,8 +225,13 @@ write_summary() {
   {
     echo "### CIS post-deploy verify: ${verdict}"
     echo
-    echo "Expected commit \`${EXPECTED_SHA:-unset}\`, version \`${EXPECTED_VERSION:-unset}\`," \
-         "required schema \`${REQUIRED_SCHEMA:-unset}\`, image tag \`$(tag_of "${EXPECTED_IMAGE:-unset}")\`."
+    local shown_sha="unset" shown_tag
+    [ -n "${EXPECTED_SHA:-}" ] && shown_sha="invalid"
+    [[ "${EXPECTED_SHA:-}" =~ ^[0-9a-f]{40}$ ]] && shown_sha="$EXPECTED_SHA"
+    shown_tag=$(tag_of "${EXPECTED_IMAGE:-unset}")
+    [[ "$shown_tag" =~ ^(dev-[0-9a-f]{40}|unset)$ ]] || shown_tag="invalid"
+    echo "Expected commit \`${shown_sha}\`, version \`${EXPECTED_VERSION:-unset}\`," \
+         "required schema \`${REQUIRED_SCHEMA:-unset}\`, image tag \`${shown_tag}\`."
     echo
     echo "| Check | Result | Detail |"
     echo "|---|---|---|"
