@@ -35,6 +35,7 @@ from shared.llm_client import stream_sink
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 from shared.llm_client.call_log import record_call_sync
+from services.writing_memory.insertion import t9_platform_block, t9_tenant_lines  # AA-919 (WM-18 / WM-20)
 
 # AA-768 (S233) — output ceiling per channel. A single 2048 cap cut 20/92 t9_write calls in the
 # S232 runs (stop_reason=max_tokens), all of them blogs: the blog JSON envelope + a 4,700-13,000
@@ -170,6 +171,7 @@ def write_content(
     sibling_openers: list[str] | None = None,  # S234 (AA-771) — non-blog channels only
     search_questions: list[str] | None = None,  # AA-779 — blog only, People Also Ask in scope
     lead_focus: str | None = None,  # AA-790 (S251) — non-blog only, the seed fact a repeated write opens on
+    memory: dict | None = None,  # AA-919 — the writing-memory view (insertion.resolve); None = memory off
 ) -> tuple[str, float, dict, str | None]:
     """Attempt 1 — SKILL_v2.md workflow step 9, fresh write. Returns (content_text, cost_usd,
     seo_meta, summary) — `seo_meta` is `{"seo_title": None, "meta_description": None, "slug":
@@ -200,9 +202,10 @@ def write_content(
         destination=destination, trip_name=trip_name, atom_id=atom_id,
         route_segments=route_segments, keyword=keyword, facts_text=facts_text, scope=scope,
         sibling_openers=sibling_openers, search_questions=search_questions, lead_focus=lead_focus,
+        memory_lines=t9_tenant_lines(memory),
     )
     channel = channel_style["channel"]
-    request = LLMRequest(system_prompt=SYSTEM_PROMPT, user_prompt=user_prompt,
+    request = LLMRequest(system_prompt=SYSTEM_PROMPT + t9_platform_block(memory), user_prompt=user_prompt,
                           stage="t9_write", max_tokens=max_tokens_for(channel))
     resp, cost = _generate_full(request, channel, attempt=1,
                                 tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id)
@@ -246,6 +249,7 @@ def rewrite_with_feedback(
     sibling_openers: list[str] | None = None,  # S234 (AA-771) — non-blog channels only
     search_questions: list[str] | None = None,  # AA-779 — blog only, People Also Ask in scope
     lead_focus: str | None = None,  # AA-790 (S251) — non-blog only, the seed fact a repeated write opens on
+    memory: dict | None = None,  # AA-919 — the writing-memory view (insertion.resolve); None = memory off
 ) -> tuple[str, float, dict, str | None]:
     """Attempt 2 (the only retry — Phase 1's confirmed cap of 2 total attempts) — the SAME
     write call, with `revision_feedback` (the specific gate/violation strings T10 failed on,
@@ -264,9 +268,10 @@ def rewrite_with_feedback(
         destination=destination, trip_name=trip_name, revision_feedback=revision_feedback,
         atom_id=atom_id, route_segments=route_segments, keyword=keyword, facts_text=facts_text, scope=scope,
         sibling_openers=sibling_openers, search_questions=search_questions, lead_focus=lead_focus,
+        memory_lines=t9_tenant_lines(memory),
     )
     channel = channel_style["channel"]
-    request = LLMRequest(system_prompt=SYSTEM_PROMPT, user_prompt=user_prompt,
+    request = LLMRequest(system_prompt=SYSTEM_PROMPT + t9_platform_block(memory), user_prompt=user_prompt,
                           stage="t9_write", max_tokens=max_tokens_for(channel))
     resp, cost = _generate_full(request, channel, attempt=2,
                                 tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id)

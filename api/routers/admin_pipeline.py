@@ -373,6 +373,10 @@ def _build_generated_metadata(result, *, brand_rule_id, brand_name, seo_mode,
     # metadata.judge.brand_fit is report-only (it did not gate the version) — the per-wave report reads both.
     if result.get("writer_version"):
         metadata["writer_version"] = result["writer_version"]
+    # AA-919 (WM-18 / WM-20): the writing-memory release the v2 writer wrote this version with (ids and numbers);
+    # absent when memory is off for A1 or the v1 writer wrote it (no hook there).
+    if result.get("writing_release"):
+        metadata["writing_release"] = result["writing_release"]
     _day_ratios = result.get("itinerary_day_ratios") or []
     if _day_ratios:
         from services.content_generation.graph import ITINERARY_CLAMP_MIN, ITINERARY_CLAMP_MAX
@@ -683,6 +687,10 @@ async def _execute_run_tour(
 
         # AA-645 step 0: the agency fields only the S1 writer v2's fact sheet reads (A1, flag S1_WRITER_V2).
         tour_agency = {"group_size": row.get("group_size"), "best_time_to_go": row.get("best_time_to_go")}
+        # AA-919 (WM-18 / WM-20): the A1 writing-memory release (platform only; None = memory off, fails open). Only
+        # the v2 writer consumes it and stamps the version (metadata.writing_release); release 0 changes no byte.
+        from services.writing_memory.insertion import resolve as _wm_resolve
+        writing_memory = await _wm_resolve(conn, "a1")
         result = await _rewrite_tour(
             tour, idx=0, total=1,
             brand_rules=brand_rules,
@@ -692,6 +700,7 @@ async def _execute_run_tour(
             seo_mode=effective_seo_mode,
             on_stage=on_stage,
             tour_agency=tour_agency,
+            writing_memory=writing_memory,       # AA-919
             batch_text=batch_text,               # AA-606
             batch_model_used=batch_model_used,   # AA-606
             batch_account=batch_account,         # AA-606
@@ -727,6 +736,7 @@ async def _execute_run_tour(
                 seo_mode=effective_seo_mode,
                 on_stage=on_stage,
                 tour_agency=tour_agency,
+                writing_memory=writing_memory,   # AA-919
             )
             # Keep sonnet when it is strictly better: for a hard-code trigger that means fewer
             # surviving hard codes (clearing the blocker is the goal, not a higher score); for the

@@ -61,11 +61,14 @@ def test_constants():
     assert e2e_staff.E2E_SENTENCE_MODES == {"cut", "manual"}
 
 
-def test_the_write_allow_list_is_exactly_the_two_sentence_apply_routes():
-    # Guard: a new entry must be a reviewed change of this test (S252 orchestrator decision).
+def test_the_write_allow_list_is_exactly_the_reviewed_routes():
+    # Guard: a new entry must be a reviewed change of this test (S252 orchestrator decision; AA-979 adds the two
+    # Content studio invitation routes, root ADR 0006a A10b-1, synthetic tenants only: test_aa979_a10b_studio_invites).
     assert e2e_staff.E2E_ALLOWED_WRITES == {
         ("POST", "/admin/content-quality/pieces/{piece_id}/sentences/apply"),
         ("POST", "/admin/content-quality/tour-versions/{version_id}/sentences/apply"),
+        ("POST", "/admin/tenants/{tenant_id}/members/invitations"),
+        ("POST", "/admin/tenants/{tenant_id}/members/{membership_id}/invitation/send"),
     }
     # Both are real routes of the app, with a POLICY entry, admin-only by capability. Read from the app's OpenAPI
     # document, not by walking app.routes: FastAPI >= 0.14x keeps included routers as opaque entries there.
@@ -411,6 +414,10 @@ def test_middleware_lets_reads_through_as_admin(issuer, directory, monkeypatch, 
     ("POST", f"/admin/content-quality/pieces/{PIECE}/sentences/apply/"),
     ("PATCH", f"/admin/content-quality/pieces/{PIECE}/sentences/apply"),
     ("POST", "/admin/waves/check"),
+    ("POST", f"/admin/tenants/{PIECE}/members/{VERSION}/remove"),
+    ("PATCH", f"/admin/tenants/{PIECE}/members/{VERSION}"),
+    ("POST", f"/admin/tenants/{PIECE}/generate-key"),
+    ("POST", f"/admin/tenants/{PIECE}/members/invitations/"),
 ])
 def test_middleware_refuses_every_other_write_before_the_route(issuer, directory, monkeypatch, method, path):
     _set_env(monkeypatch, "dev")
@@ -426,8 +433,10 @@ def test_middleware_refuses_every_other_write_before_the_route(issuer, directory
 
 
 @pytest.mark.parametrize("path", [f"/admin/content-quality/pieces/{PIECE}/sentences/apply",
-                                  f"/admin/content-quality/tour-versions/{VERSION}/sentences/apply"])
-def test_middleware_lets_the_sentence_apply_routes_through(issuer, directory, monkeypatch, path):
+                                  f"/admin/content-quality/tour-versions/{VERSION}/sentences/apply",
+                                  f"/admin/tenants/{PIECE}/members/invitations",
+                                  f"/admin/tenants/{PIECE}/members/{VERSION}/invitation/send"])
+def test_middleware_lets_the_allow_listed_routes_through(issuer, directory, monkeypatch, path):
     _set_env(monkeypatch, "dev")
     _admin_e2e_row(directory)
     app, reached = _echo_app(directory)
@@ -480,7 +489,7 @@ def test_policy_refuses_every_other_write_route(method, route):
 
 
 @pytest.mark.parametrize("method,route", sorted(e2e_staff.E2E_ALLOWED_WRITES))
-def test_policy_allows_the_sentence_apply_routes(method, route):
+def test_policy_allows_the_allow_listed_routes(method, route):
     principal = staff_authz.principal_from_role("admin", _Identity(True))
     assert staff_authz.denial_reason(principal, method, route) is None
 

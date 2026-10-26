@@ -1036,7 +1036,11 @@ rules: the directory creates, re-enables or syncs it only where `ENVIRONMENT` is
 `staff_identity_e2e_read_only`, owner flag forced false); the bearer middleware answers every non-GET/HEAD/OPTIONS on a
 staff path with 403 `e2e_read_only` before the route runs, except POST
 `/admin/content-quality/{pieces,tour-versions}/{id}/sentences/apply` (Cut / manual Edit with a reason chip; the
-routes accept only `cut` / `manual` from it, `…/suggest` stays refused); `staff_authz.denial_reason` refuses the same
+routes accept only `cut` / `manual` from it, `…/suggest` stays refused) and, since AA-979 (root ADR 0006a A10b-1,
+S252), POST `/admin/tenants/{id}/members/invitations` and `/admin/tenants/{id}/members/{membership_id}/invitation/send`
+(the phase 2 re-enrolment E2E); those two routes then refuse it (403 `e2e_read_only`, before any row, audit or relay)
+unless the tenant is synthetic (`shared.tenants.is_canary IS TRUE`), the address is on the E2E mailbox domain
+(`e2e-mail.lumiguides.it.com`) and the invited role is `viewer` / `editor`; `staff_authz.denial_reason` refuses the same
 writes again by route template. `/auth/verify-admin` returns `admin`, so the BFF opens the admin pages. Its sign-in
 codes land in the mailbox prefix `inbound-admin/`, readable only by the MFA admin role, so only the orchestrator signs
 in with it, locally (Playwright project `admin-evidence`, `E2EADMIN=1`, never CI). Removed with A10 / A10a at the end
@@ -2163,7 +2167,8 @@ _Avoid_: block (alone), delete, filter.
 What the writers (A1/S1, T2, T9 blog, T9 social) learn from, under release control. Model weights
 never change. See ADR 0010. The signal store `shared.writing_signal` exists since CIS 277 (AA-916, WM-03) and the
 rule store `shared.writing_rule` since CIS 280 (AA-917, WM-09), the golden set and the eval run ledger since CIS 284
-(AA-919, WM-17); the exemplar and release tables are planned for later WM tasks.
+(AA-919, WM-17), the releases, the shadow outputs and the per-writer memory switch since CIS 287 (AA-919, WM-18 /
+WM-20); the exemplar tables are planned for later WM tasks.
 
 **Writing Signal**:
 One recorded piece of evidence about a writer's output: an admin sentence edit (before / after,
@@ -2239,13 +2244,25 @@ retrieval.
 _Avoid_: few-shot (implies retrieval or unpinned examples), sample, golden item (an AA-729 eval item).
 
 **Release**:
-A versioned bundle of Writing Rules and Pinned Exemplars for one writer and Scope. It passes the
-gates R0 ($0 replay of stored text), R1 (re-score old outputs), R2 (golden-set run) and shadow, then
-becomes `active` only by one human click, never automatically. Planned statuses (WM issues):
-`draft` → `evaluated` → `approved` → `active` → `retired`, plus `reverify` when the golden set, a
-model route or the gate taxonomy changes. Release 0 (empty memory) must give a byte-identical
-prompt. Rollback moves the active pointer back; no deploy. Outputs carry the Release's version
-stamp.
+A versioned bundle of Writing Rules and Pinned Exemplars for one writer and Scope (`shared.writing_memory_release`,
+CIS 287, AA-919 WM-18; ids only, the rule text stays in `writing_rule`). It passes the gates R0 ($0 replay of stored
+text), R1 (re-score old outputs), R2 (golden-set run) and shadow, then becomes `active` only by one human click,
+never automatically. Statuses `draft` → `evaluated` → `approved` → `active` → `retired` (+ `rejected`); a `reverify`
+flag when the golden set, a model route or the gate taxonomy changed since its evidence (it keeps serving; a re-run
+needs approval). Activation needs its evidence twice: the API (`services/writing_memory/releases.py`
+`evidence_problem`, 409 with a code) and the DB (CHECK `writing_memory_release_evidence_check` + trigger
+`writing_memory_release_guard`): an `empty` release needs R0 (0 byte diffs over ≥ 20 inputs) + the AA-729 baseline
+eval; `lexicon_only` R0 only; `repair_hint_only` / `rules` an R2 pass + a shadow pass. One active release per writer
+and owner (the pointer); rollback = the active release → `retired` (`rollback: …`, never re-activated) and the one it
+superseded → `active`; no deploy. One regular release per writer and owner per month (the train; `train_closed_month`
+on `shared.writing_memory_writer` closes it); lexicon, emergency (an open hard stop) and rollbacks never wait for it.
+**Release 0** (`release_no` 0, class `empty`) renders nothing: the writers' prompts stay byte-identical (WM-20,
+proved by `scripts/writing_memory/wm20_release0_replay.py` on Dev and `tests/unit/test_aa919_release0_replay.py` in
+CI). Until WM-23 / 24 / 25 wire the slots, the API activates `empty` releases only (`content_not_wired`).
+The writers resolve their view once per write (`services/writing_memory/insertion.resolve`: the platform pointer +
+the tenant's, explicit `tenant_id` filter, fail open, nothing when `memory_enabled` is off) and record a stamp: A1
+`generated_content.metadata.writing_release` (S1 writer v2 only), T2 `shared.job.result.writing_release`, T9
+`content_piece.writer_input.writing_release`. Routes `/admin/writing-memory/releases*` and `/writers*` (admin only).
 _Avoid_: fine-tune, model update, deploy (a Release is data, not code).
 
 **Golden Set**:
@@ -2695,7 +2712,7 @@ this is the table that resolves Open Question 1 below.
 | 7 | Slate (Subject) | **Tenant** | Per tenant | **No.** `acp_shared.subject.tenant_id UUID NOT NULL` (migration 133:19). The similarly-named but unrelated `acp_contract.route_pick` (the Route-pick snapshot, renamed from `acp_contract.subject` at migration 132 — "a different, unrelated concept," migration 133:8) is also `tenant_id UUID NOT NULL` (migration 131:74, pre-rename) — both fully isolated. |
 | 8 | Goal / Angle / Write / Gate / Review / Publish | **Tenant** | Per tenant, per request/Piece | **Mostly no, one deliberate exception.** `acp_shared.angle_gate_request.tenant_id` (migration 113:36), `content_piece.tenant_id` (migration 115:36), `publish_log.tenant_id` (migration 116:27) all `NOT NULL`. Exception: the T10 cannibalization Gate (F10) deliberately reads EVERY other tenant's approved Pieces — `find_similar_pieces(cross_tenant=True, ...)`, `_CROSS_TENANT_QUERY` has no `tenant_id` filter at all (`services/acp_shared/piece_similarity.py:46-56, 67-95`), consumed by `gate_cannibalization()` at the 0.92 cosine-similarity threshold. This is a cross-tenant **read/compare**, not a cache — the embedding itself is never shared: `compute_embedding()` (`services/acp_shared/content_embedding.py`) makes one fresh Bedrock call per Piece, every time, for every tenant, with no caching layer at all. |
 | 9 | Facts Entry | **Both** (one table, two scopes) | Platform scope: once, by admin. Tenant scope: per tenant | **Yes for `scope='platform'` rows, by design.** `acp_shared.facts` (migration 145:33-46), `scope` column (`'platform'`\|`'tenant'`), `tenant_id IS NULL iff scope='platform'` (CHECK, migration 145:44-46). RLS (migration 229, AA-817, for the tenant pool role `aa_app_user`; the owner/main pool is exempt): `facts_platform_read` FOR SELECT `USING (scope = 'platform')` — platform rows are readable by every tenant — and `tenant_isolation` FOR ALL `USING`/`WITH CHECK (scope = 'tenant' AND tenant_id = NULLIF(app.tenant_id, '')::uuid)` — a tenant reads and writes only its own rows and can never write, delete or re-scope a platform fact (145's FOR ALL policy allowed that). |
-| 10 | Writing memory (Writing Rules, Pinned Exemplars, Releases; ADR 0010) | **Both** (one model, two scopes) | Platform scope: per monthly Release, approved by Nghiệp. Tenant scope: per tenant Release, one human click | **Tenant scope: no** — every `cis_app` read filters `tenant_id = $1` explicitly and the tables carry the `tenant_isolation` RLS policy (FORCE RLS), following the `acp_shared.facts` pattern; a CI test proves tenant A's rules never resolve for tenant B. **Platform scope: yes, by design** — a platform rule may be drawn from ≥ 3 distinct tenants' evidence (D9) and then applies to every tenant's writer, but platform rows never hold tenant text. Tables are CIS-owned in `shared`: `writing_signal` exists (CIS 277, AA-916; isolation tests `tests/integration/test_aa916_migration_277.py`, `test_aa817_rls_tenant_isolation.py`) and `writing_rule` (CIS 280, AA-917; `tests/integration/test_aa917_migration_280.py`: no tenant-pool privilege, a `tenant_id = $1` read never resolves another tenant's rule), and the golden set's tenant items and results `eval_golden_item` / `eval_item_result` (CIS 284, AA-919; `tests/integration/test_aa919_migration_284.py`); the exemplar / release tables come with later WM tasks. |
+| 10 | Writing memory (Writing Rules, Pinned Exemplars, Releases; ADR 0010) | **Both** (one model, two scopes) | Platform scope: per monthly Release, approved by Nghiệp. Tenant scope: per tenant Release, one human click | **Tenant scope: no** — every `cis_app` read filters `tenant_id = $1` explicitly and the tables carry the `tenant_isolation` RLS policy (FORCE RLS), following the `acp_shared.facts` pattern; a CI test proves tenant A's rules never resolve for tenant B. **Platform scope: yes, by design** — a platform rule may be drawn from ≥ 3 distinct tenants' evidence (D9) and then applies to every tenant's writer, but platform rows never hold tenant text. Tables are CIS-owned in `shared`: `writing_signal` exists (CIS 277, AA-916; isolation tests `tests/integration/test_aa916_migration_277.py`, `test_aa817_rls_tenant_isolation.py`) and `writing_rule` (CIS 280, AA-917; `tests/integration/test_aa917_migration_280.py`: no tenant-pool privilege, a `tenant_id = $1` read never resolves another tenant's rule), and the golden set's tenant items and results `eval_golden_item` / `eval_item_result` (CIS 284, AA-919; `tests/integration/test_aa919_migration_284.py`), the releases and shadow outputs `writing_memory_release` / `writing_memory_shadow` (CIS 287, AA-919 WM-18; `tests/integration/test_aa919_migration_287.py`: tenant A's release never resolves for tenant B); the exemplar tables come with later WM tasks. |
 
 **Frozen predecessor (AA-915).** The AA-132 lessons loop (`shared.pipeline_lessons`) is frozen
 behind `PIPELINE_LESSONS_ENABLED` (env, default off, no per-tenant override): with the flag off

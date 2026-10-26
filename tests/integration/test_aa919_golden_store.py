@@ -63,6 +63,11 @@ def _gs(version="1.0.0", sha="e" * 64, name=None):
 
 
 async def _cis_app(conn):
+    # AA-919 WM-18: a supersede runs the release reverify scan (CIS 287); Dev's grant, which an X1 teardown of another
+    # module may have revoked in this database
+    await conn.execute("DO $$ BEGIN IF to_regclass('shared.writing_memory_release') IS NOT NULL THEN "
+                       "GRANT SELECT, INSERT, UPDATE, DELETE ON shared.writing_memory_release TO cis_app; END IF; "
+                       "END $$")
     await conn.execute("SET LOCAL ROLE cis_app")
 
 

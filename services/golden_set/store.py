@@ -153,6 +153,11 @@ async def apply(conn, gs: GoldenSet, baseline: dict[str, dict], *, allow_downgra
                 i["label_verdict"], i["label_source"], _j(i["injection_spec"]), _j(i["refs"]), i["input_sha256"],
                 i["pick_reason"])
     out["set_id"] = str(set_id)
+    if out["superseded"] and await conn.fetchval("SELECT to_regclass('shared.writing_memory_release') IS NOT NULL"):
+        # AA-919 (WM-18 scope 5): the active releases whose evidence names the old golden set go to reverify (they
+        # keep serving; a re-run needs approval). Same transaction as the supersede.
+        from services.writing_memory.releases import reverify_scan
+        out["reverify"] = await reverify_scan(conn, actor=f"golden_import:{gs.set_row['imported_by']}"[:128])
     items = {i["sample_id"]: i for i in gs.items}
     for writer, b in baseline.items():
         found = await conn.fetchval(BASELINE_RUN_SQL, set_id, writer)

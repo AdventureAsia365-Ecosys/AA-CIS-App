@@ -304,6 +304,7 @@ class MembershipTenantMembers(_CatalogModel):
     """GET /tenant/membership/v1/tenants/{tenant_id}/members — invited and active members (ETag, 304)."""
     tenant_id: str
     tenant_state: Literal["active", "locked", "deleted"]
+    is_synthetic: bool  # 1.2 (AA-979): shared.tenants.is_canary, NULL served as false
     members: List[MembershipItem]
     as_of: str
 

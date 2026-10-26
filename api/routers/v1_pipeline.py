@@ -126,6 +126,88 @@ def clean_itinerary(text: str) -> str:
     return text.strip()
 
 
+def initial_state_for(
+    tour: dict, *,
+    brand_rules: Optional[dict] = None,
+    seo: Optional[dict] = None,
+    model_tier: Optional[str] = None,
+    is_tenant_rewrite: bool = False,
+    tenant_id: Optional[str] = None,
+    generate_stage: str = "s1_generate",
+    subtitle_focus: str = "standard",
+    seo_mode: str = "dataforseo",
+    feedback: str = "",
+    previous_draft: Optional[dict] = None,
+    tour_agency: Optional[dict] = None,
+    batch_text: Optional[str] = None,
+    batch_model_used: Optional[str] = None,
+    batch_account: Optional[str] = None,
+    writing_memory: Optional[dict] = None,
+) -> dict:
+    """The graph state of one rewrite (moved out of `_rewrite_tour`, AA-919): the live rewrite and the WM-20
+    release-0 replay (scripts/writing_memory/wm20_release0_replay.py) build it with this one function, so the replay
+    prompts are the live prompts. `writing_memory` (AA-919): the release view the writers' insertion path reads
+    (services/writing_memory/insertion.resolve); None leaves the state exactly as before."""
+    # P3-S3: Merge brand_rules into initial_state
+    _br = brand_rules or {}
+    initial_state = {
+        "tour": tour,
+        "seo": seo or {},
+        "model_tier": model_tier,
+        "is_tenant_rewrite": is_tenant_rewrite,
+        "tenant_id": tenant_id,           # AA-620: real tenant for T2 (None for A1) -> record_call
+        "generate_stage": generate_stage,  # AA-620: t2_generate (T2) vs s1_generate (A1)
+        "few_shots": [],
+        "generated": {},
+        "quality_score": 0.0,
+        "retry_count": 0,
+        "feedback": feedback,
+        "error": "",
+        "cost_usd": 0.0,
+        "model_used": "",
+        "brand_system_prompt":  _br.get("system_prompt", ""),
+        "brand_style_guide":    _br.get("style_guide", ""),
+        "brand_forbidden_words": _br.get("forbidden_words", []),
+        "rewrite_language":     _br.get("rewrite_language", "en-US"),
+        # AA-202: brand differentiation fields
+        "brand_core_idea":        _br.get("core_idea", ""),
+        "brand_customer_segment": _br.get("customer_segment", ""),
+        "brand_customer_mindset": _br.get("customer_mindset", ""),
+        "brand_voice_examples":   _br.get("voice_examples", []),
+        "brand_good_examples":    _br.get("good_examples", ""),
+        # AA-792: brand pack identity for the T2 CLIENT BRAND block (empty for A1).
+        "brand_name":             _br.get("brand_name", ""),
+        "brand_type":             _br.get("brand_type", ""),
+        "brand_default_cta":      _br.get("default_cta", ""),
+        # AA-800: the tenant's explicit signature words (custom_validators); T2 only.
+        "brand_signature_words":  _br.get("signature_words", []),
+        "subtitle_focus":       subtitle_focus,
+        "seo_mode":             seo_mode,
+        # brand audit defaults
+        "brand_audit_status": "",
+        "brand_audit_codes":  [],
+        "brand_audit_issues": [],
+        "brand_audit_fields": [],
+        "lessons_extracted":  [],
+        "fix_pass_applied":   False,
+        "fix_pass_fields":    [],
+        "quality_shadow":     [],   # AA-925
+        "degraded":           [],   # AA-925
+    }
+    if previous_draft and is_tenant_rewrite:
+        initial_state["previous_draft"] = previous_draft   # AA-793
+    if tour_agency and not is_tenant_rewrite:
+        initial_state["tour_agency"] = tour_agency         # AA-645 step 0 (S1 writer v2 fact sheet)
+    # AA-606: seed Bedrock Batch attempt-1 output for build_graph_from_generated's seed node.
+    if batch_text is not None:
+        initial_state["batch_text"] = batch_text
+        initial_state["model_used"] = batch_model_used or "satellite-haiku-4-5"
+        initial_state["satellite_account"] = batch_account
+    if writing_memory is not None:
+        initial_state["writing_memory"] = writing_memory   # AA-919 (WM-18 / WM-20)
+    return initial_state
+
+
 async def _rewrite_tour(
     tour: dict, idx: int, total: int,
     brand_rules: dict = None,
@@ -143,6 +225,7 @@ async def _rewrite_tour(
     feedback: str = "",  # AA-639: seeds generate_node's PREVIOUS ATTEMPT FEEDBACK (T3 repair rounds)
     previous_draft: Optional[dict] = None,  # AA-793: a T3 repair round revises this draft (T2 only)
     tour_agency: Optional[dict] = None,  # AA-645: raw_tours group_size / best_time_to_go for the S1 writer v2 (A1)
+    writing_memory: Optional[dict] = None,  # AA-919: the writing-memory release view (None = memory off)
 ) -> dict:
     """Rewrite single tour using LangGraph.
 
@@ -164,61 +247,12 @@ async def _rewrite_tour(
             graph = build_graph(t2_drafts=True)
         else:
             graph = build_graph()
-        # P3-S3: Merge brand_rules into initial_state
-        _br = brand_rules or {}
-        initial_state = {
-            "tour": tour,
-            "seo": seo or {},
-            "model_tier": model_tier,
-            "is_tenant_rewrite": is_tenant_rewrite,
-            "tenant_id": tenant_id,           # AA-620: real tenant for T2 (None for A1) -> record_call
-            "generate_stage": generate_stage,  # AA-620: t2_generate (T2) vs s1_generate (A1)
-            "few_shots": [],
-            "generated": {},
-            "quality_score": 0.0,
-            "retry_count": 0,
-            "feedback": feedback,
-            "error": "",
-            "cost_usd": 0.0,
-            "model_used": "",
-            "brand_system_prompt":  _br.get("system_prompt", ""),
-            "brand_style_guide":    _br.get("style_guide", ""),
-            "brand_forbidden_words": _br.get("forbidden_words", []),
-            "rewrite_language":     _br.get("rewrite_language", "en-US"),
-            # AA-202: brand differentiation fields
-            "brand_core_idea":        _br.get("core_idea", ""),
-            "brand_customer_segment": _br.get("customer_segment", ""),
-            "brand_customer_mindset": _br.get("customer_mindset", ""),
-            "brand_voice_examples":   _br.get("voice_examples", []),
-            "brand_good_examples":    _br.get("good_examples", ""),
-            # AA-792: brand pack identity for the T2 CLIENT BRAND block (empty for A1).
-            "brand_name":             _br.get("brand_name", ""),
-            "brand_type":             _br.get("brand_type", ""),
-            "brand_default_cta":      _br.get("default_cta", ""),
-            # AA-800: the tenant's explicit signature words (custom_validators); T2 only.
-            "brand_signature_words":  _br.get("signature_words", []),
-            "subtitle_focus":       subtitle_focus,
-            "seo_mode":             seo_mode,
-            # brand audit defaults
-            "brand_audit_status": "",
-            "brand_audit_codes":  [],
-            "brand_audit_issues": [],
-            "brand_audit_fields": [],
-            "lessons_extracted":  [],
-            "fix_pass_applied":   False,
-            "fix_pass_fields":    [],
-            "quality_shadow":     [],   # AA-925
-            "degraded":           [],   # AA-925
-        }
-        if previous_draft and is_tenant_rewrite:
-            initial_state["previous_draft"] = previous_draft   # AA-793
-        if tour_agency and not is_tenant_rewrite:
-            initial_state["tour_agency"] = tour_agency         # AA-645 step 0 (S1 writer v2 fact sheet)
-        # AA-606: seed Bedrock Batch attempt-1 output for build_graph_from_generated's seed node.
-        if batch_text is not None:
-            initial_state["batch_text"] = batch_text
-            initial_state["model_used"] = batch_model_used or "satellite-haiku-4-5"
-            initial_state["satellite_account"] = batch_account
+        initial_state = initial_state_for(
+            tour, brand_rules=brand_rules, seo=seo, model_tier=model_tier, is_tenant_rewrite=is_tenant_rewrite,
+            tenant_id=tenant_id, generate_stage=generate_stage, subtitle_focus=subtitle_focus, seo_mode=seo_mode,
+            feedback=feedback, previous_draft=previous_draft, tour_agency=tour_agency, batch_text=batch_text,
+            batch_model_used=batch_model_used, batch_account=batch_account, writing_memory=writing_memory,
+        )
 
         # AA-250 B2: stream node-by-node (instead of graph.invoke()) so on_stage can report
         # live progress to shared.pipeline_jobs.current_stage. stream_mode="updates" emits
@@ -307,6 +341,8 @@ async def _rewrite_tour(
             "degraded":            result.get("degraded", []),
             # AA-645 step 0: same strip class — "v2" when the S1 writer v2 wrote the kept draft.
             "writer_version":      result.get("writer_version"),
+            # AA-919: same strip class — the writing-memory release the kept draft was written with (A1 v2 stamp).
+            "writing_release":     result.get("writing_release"),
             "status": "success" if result.get("generated") and len(result.get("generated", {})) > 0 else "failed",
         }
 

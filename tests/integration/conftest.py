@@ -90,13 +90,15 @@ X1_POST_244_RLS = ("shared.tenant_brand_rules", "shared.tenant_seo_config",
                    "shared.writing_signal",  # 277 (AA-916), FORCE: also X1_POST_245_FORCE_RLS
                    "shared.writing_rule",    # 280 (AA-917), FORCE: also X1_POST_245_FORCE_RLS
                    "shared.eval_golden_item",   # 284 (AA-919), FORCE: also X1_POST_245_FORCE_RLS
-                   "shared.eval_item_result")   # 284 (AA-919), FORCE: also X1_POST_245_FORCE_RLS
+                   "shared.eval_item_result",   # 284 (AA-919), FORCE: also X1_POST_245_FORCE_RLS
+                   "shared.writing_memory_release",  # 287 (AA-919 WM-18), FORCE: also X1_POST_245_FORCE_RLS
+                   "shared.writing_memory_shadow")   # 287 (AA-919 WM-18), FORCE: also X1_POST_245_FORCE_RLS
 # FORCE RLS tables of migrations applied on Dev AFTER 245 (CIS 277, AA-916; CIS 280, AA-917; CIS 284, AA-919): their
 # own <table>_cis_owner_all policy (X1 S21 standing check). 245's guards and test_aa860_migration_245 know only its 8
 # FORCE tables, and its teardown (x1_245_undo: DROP OWNED BY cis_owner) drops every policy TO cis_owner:
 # x1_244_ci_shape takes the policy off with the RLS, x1_244_ci_unshape (always after x1_245_undo) puts it back.
 X1_POST_245_FORCE_RLS = ("shared.writing_signal", "shared.writing_rule", "shared.eval_golden_item",
-                         "shared.eval_item_result")
+                         "shared.eval_item_result", "shared.writing_memory_release", "shared.writing_memory_shadow")
 
 # AA-919: CIS 284's guard 1 requires 281, 282 and 283 registered (Dev order; readiness compares max(version), so a
 # missing predecessor would be hidden once 284 is in, critic 17). The replay skips 281 (above) and 282 / 283 may fail
@@ -107,6 +109,10 @@ X284_PREDECESSORS = ("281", "282", "283")
 X284_STANDIN_MARK = "zz-ci-standin (AA-919, conftest: 284 needs 281-283 registered)"
 X284_STANDIN_SQL = ("INSERT INTO shared.schema_versions (version, applied_at, description) "
                     "VALUES (%s, now(), %s) ON CONFLICT (version) DO NOTHING")
+# AA-919 WM-18: CIS 287's guard 1 requires 284, 285 and 286 registered (same reason). 285 / 286 may fail on the CI DB
+# (their own predecessors), so 287 is replayed with stand-in rows for whichever is missing, deleted right after.
+X287_PREDECESSORS = ("284", "285", "286")
+X287_STANDIN_MARK = "zz-ci-standin (AA-919, conftest: 287 needs 284-286 registered)"
 
 
 def _post_244_rls(cur, on):
@@ -507,6 +513,9 @@ def _apply_schema(conn):
         if mf.startswith("284_"):
             for version in X284_PREDECESSORS:
                 cur.execute(X284_STANDIN_SQL, (version, X284_STANDIN_MARK))
+        if mf.startswith("287_"):
+            for version in X287_PREDECESSORS:
+                cur.execute(X284_STANDIN_SQL, (version, X287_STANDIN_MARK))
         # Use fresh connection per migration to avoid aborted transaction state
         try:
             mconn = psycopg2.connect(
@@ -527,6 +536,8 @@ def _apply_schema(conn):
             cur.execute("DROP TABLE IF EXISTS gold_aa_internal.tenant_tour_versions")
         if mf.startswith("284_"):
             cur.execute("DELETE FROM shared.schema_versions WHERE description = %s", (X284_STANDIN_MARK,))
+        if mf.startswith("287_"):
+            cur.execute("DELETE FROM shared.schema_versions WHERE description = %s", (X287_STANDIN_MARK,))
 
     # Drop FK constraints in test env — cross-table seeding is fragile
     cur.execute("""

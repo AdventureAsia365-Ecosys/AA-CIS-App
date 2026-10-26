@@ -362,6 +362,11 @@ class ContentState(TypedDict):
     # best_time_to_go, which only the v2 fact sheet reads. Declared so LangGraph keeps them (AA-209 gotcha).
     writer_version:         Optional[str]
     tour_agency:            Optional[dict]
+    # AA-919 (WM-18 / WM-20): the writing-memory view the run resolved (services/writing_memory/insertion.resolve;
+    # None / absent = memory off) and the stamp of the writer that consumed it (the A1 v2 writer). Declared so
+    # LangGraph keeps them (AA-209 gotcha).
+    writing_memory:         Optional[dict]
+    writing_release:        Optional[dict]
 
 # code → (dimension, deduction)
 _FAILURE_MAP: dict[str, tuple[str, float]] = {
@@ -635,6 +640,7 @@ def _generate_node_v2(state: ContentState, client: LLMClient) -> ContentState:
         "fallback_used": bool(out.get("fallback_used")),
         "satellite_account": out.get("satellite_account"),
         "prompt_version": out["prompt_version"],
+        "writing_release": out.get("writing_release"),   # AA-919: the release the v2 draft was written with
         "cache_read_tokens": state.get("cache_read_tokens", 0) + out["cache_read_tokens"],
         "cache_write_tokens": state.get("cache_write_tokens", 0) + out["cache_write_tokens"],
         "itinerary_day_ratios": [],

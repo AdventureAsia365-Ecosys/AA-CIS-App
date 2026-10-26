@@ -111,13 +111,18 @@ def write(state: dict, client: Optional[LLMClient] = None) -> dict:
     facts = build_fact_table(tour)
     plan = v2.day_plan(tour, facts)
     forbidden = all_forbidden(state.get("brand_forbidden_words"))
-    system = v2.w_system_prompt(forbidden)
+    # AA-919 (WM-18 / WM-20): the writing-memory release this graph run resolved (None = memory off); release 0
+    # renders "" (byte-identical prompt). The stamp says which release the draft was written with.
+    from services.writing_memory import insertion
+    view = state.get("writing_memory")
+    system = v2.w_system_prompt(forbidden, house_rules=insertion.a1_house_rules(view))
     user = v2.w_user_prompt(tour, facts, plan)
     if state.get("feedback"):
         user += f"\n\nPREVIOUS ATTEMPT FEEDBACK:\n{state['feedback']}\nFix these issues; every rule above still holds."
     result = {"generated": {}, "cost_usd": 0.0, "error": "", "prompt_version": prompt_version_of(system),
               "plan_mode": plan["mode"], "plan_days": len(plan["days"]), "calls": 0, "meta_problems": [],
-              "cache_read_tokens": 0, "cache_write_tokens": 0}
+              "cache_read_tokens": 0, "cache_write_tokens": 0,
+              "writing_release": insertion.stamp(view, writer_version=WRITER_VERSION)}
 
     def _add(rec: dict) -> None:
         result["calls"] += 1

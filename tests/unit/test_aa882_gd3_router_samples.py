@@ -65,6 +65,8 @@ SAMPLES = [
     ("admin_writing_memory", "GET", "/admin/writing-memory/signals", None),      # AA-917
     ("admin_writing_memory", "POST", "/admin/writing-memory/candidates/{rule_id}/reject", {"reason": "not useful"}),
     ("admin_writing_memory", "POST", "/admin/writing-memory/candidates/{rule_id}/activate", None),      # AA-918
+    ("admin_writing_memory", "POST", "/admin/writing-memory/releases/{release_id}/activate", None),      # AA-919
+    ("admin_writing_memory", "GET", "/admin/writing-memory/releases/active", None),
     ("v1_trip_page", "POST", "/admin/trip-pages/{tour_id}/publish", None),
     ("v1_pipeline", "POST", "/v1/pipeline/review-queue/{review_id}/approve", {}),
     ("v1_rules", "PATCH", "/v1/rules/{rule_id}", {"is_active": False}),

@@ -32,6 +32,28 @@
                                                       queue a job (mine = a manual run: the paid one, under its caps;
                                                       r0_baseline = the R0 sanity check alone, $0)
 
+AA-919 (WM-18) — releases (services/writing_memory/releases.py; CIS 287). Ids, statuses and numbers only:
+  GET   /admin/writing-memory/releases?writer=&status=&scope=&tenant_id=&limit=&offset=   the releases
+  GET   /admin/writing-memory/releases/active          the active release per writer and owner (the pointers the
+                                                      writers resolve) and the memory switch per writer
+  GET   /admin/writing-memory/releases/{release_id}   one release, its evidence runs and `activation` (null, or the
+                                                      code and reason the API would refuse to activate it now)
+  POST  /admin/writing-memory/releases                {writer, scope, tenant_id?, rule_ids?, train_kind?,
+                                                      emergency_reason?, emergency_ref?, notes?}: a draft
+  POST  /admin/writing-memory/releases/reverify-scan  flag the active releases whose golden set, model route or gate
+                                                      taxonomy changed (they keep serving)
+  POST  /admin/writing-memory/releases/{release_id}/evidence  {r0_run_id?, eval_run_id?, shadow_run_id?}
+  POST  /admin/writing-memory/releases/{release_id}/approve   {approval_ref?}: the one human click (needs an admin id)
+  POST  /admin/writing-memory/releases/{release_id}/activate  the pointer moves to it (the API checks the evidence,
+                                                      the DB checks it again: 409 with a code, `db_refused` when only
+                                                      the DB layer refused)
+  POST  /admin/writing-memory/releases/{release_id}/rollback  {reason}: back to the previous release, no deploy
+  POST  /admin/writing-memory/releases/{release_id}/reject    {reason}
+  GET   /admin/writing-memory/writers                 the memory switch and the train close per writer
+  PATCH /admin/writing-memory/writers/{writer}        {memory_enabled?, train_closed_month?} (on needs an active
+                                                      platform release)
+Every release write leaves an acp_shared.audit_log row (writing_memory.release_*), ids only.
+
 Who may call (api/core/staff_authz.py POLICY): every read needs tenant.read and every write ai.admin (admin only).
 Approval of a non-lexicon rule is not here: it reaches a writer only through a release (AA-919), one human click. A
 lexicon rule may take the L0 path (ADR 0010 decision 6, D11): R0 + the activate click, no release.
@@ -43,7 +65,7 @@ The router is included without an include prefix (staff_policy reads the route t
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Literal, Optional
 from uuid import UUID
 
@@ -97,7 +119,7 @@ def _cut(text: Optional[str], n: int = PREVIEW_CHARS) -> Optional[str]:
 def _unavailable(e: Exception):
     logger.warning("aa917_writing_memory_unavailable", error=f"{type(e).__name__}: {str(e)[:200]}")
     return HTTPException(status_code=503, detail={"detail": "The writing-memory tables are not applied yet "
-                                                            "(CIS 277 / 280)", "code": "unavailable"})
+                                                            "(CIS 277 / 280 / 287)", "code": "unavailable"})
 
 
 # ── summary ─────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -520,3 +542,267 @@ async def run(body: RunBody, request: Request, x_admin_user_id: Optional[str] = 
     job_id, created = await enqueue(pool, kind, payload, idempotency_key=f"{kind}:admin:{now}",
                                     created_by=f"admin:{actor}")
     return {"job_id": job_id, "kind": kind, "created": created}
+
+
+# ── releases (AA-919 WM-18) ─────────────────────────────────────────────────────────────────────────────────────────
+
+def _release_error(e) -> HTTPException:
+    return HTTPException(status_code=e.status, detail={"detail": e.detail, "code": e.code})
+
+
+def _need_actor(raw: Optional[str]) -> str:
+    actor = wm.admin_actor_id(raw)
+    if actor == "unknown":
+        raise HTTPException(status_code=403, detail={"detail": "This action needs a signed-in admin (no admin id "
+                                                               "on the request)", "code": "no_actor"})
+    return actor
+
+
+@router.get("/releases")
+async def list_releases(request: Request, writer: Optional[str] = None, status: Optional[str] = None,
+                        scope: Optional[str] = None, tenant_id: Optional[str] = None,
+                        limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0)):
+    from services.writing_memory import releases as rel
+    if status and status not in rel.STATUSES:
+        raise HTTPException(status_code=422, detail=f"status must be one of {list(rel.STATUSES)}")
+    if tenant_id:
+        tenant_id = _uuid(tenant_id, "tenant")
+    try:
+        async with _pool(request).acquire() as conn:
+            items, total = await rel.list_releases(conn, writer=writer, status=status, scope=scope,
+                                                   tenant_id=tenant_id, limit=limit, offset=offset)
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    return {"items": [rel.serialise(r) for r in items], "total": total, "limit": limit, "offset": offset}
+
+
+@router.get("/releases/active")
+async def active_releases(request: Request):
+    from services.writing_memory import releases as rel
+    try:
+        async with _pool(request).acquire() as conn:
+            items = await rel.active_releases(conn)
+            switches = await rel.writers(conn)
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    return {"items": [rel.serialise(r) for r in items], "writers": [rel.serialise(w) for w in switches]}
+
+
+@router.get("/releases/{release_id}")
+async def get_release(release_id: str, request: Request):
+    from services.writing_memory import releases as rel
+    rid = _uuid(release_id, "release")
+    try:
+        async with _pool(request).acquire() as conn:
+            row = await rel.get_release(conn, rid)
+            if row is None:
+                raise HTTPException(status_code=404, detail="Unknown release")
+            runs = await rel.runs_of(conn, row)
+            problem = None
+            if row["status"] == "approved":
+                problem = rel.wiring_problem(row) or await rel.check(conn, row, first_activation=True)
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    return {**rel.serialise(row),
+            "runs": {k: (rel.serialise({kk: vv for kk, vv in v.items() if kk != "details"}) if v else None)
+                     for k, v in runs.items()},
+            "activation": None if problem is None else {"code": problem[0], "detail": problem[1]}}
+
+
+class ReleaseCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    writer: Literal["a1", "t2", "t9_blog", "t9_social"]
+    scope: Literal["platform", "tenant"] = "platform"
+    tenant_id: Optional[UUID] = None
+    rule_ids: list[UUID] = Field(default_factory=list, max_length=40)
+    train_kind: Optional[Literal["regular", "emergency"]] = None
+    emergency_reason: Optional[Literal["hard_stop_1", "hard_stop_2", "hard_stop_3"]] = None
+    emergency_ref: Optional[UUID] = None
+    notes: Optional[str] = Field(None, max_length=1000)
+
+
+@router.post("/releases")
+async def create_release(body: ReleaseCreate, request: Request, x_admin_user_id: Optional[str] = Header(None)):
+    from services.writing_memory import releases as rel
+    actor = _need_actor(x_admin_user_id)
+    try:
+        async with _pool(request).acquire() as conn:
+            async with conn.transaction():
+                row = await rel.create_draft(
+                    conn, writer=body.writer, scope=body.scope,
+                    tenant_id=str(body.tenant_id) if body.tenant_id else None,
+                    rule_ids=[str(r) for r in body.rule_ids], train_kind=body.train_kind,
+                    emergency_reason=body.emergency_reason,
+                    emergency_ref=str(body.emergency_ref) if body.emergency_ref else None,
+                    notes=body.notes, created_by=f"admin:{actor}")
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    except rel.ReleaseError as e:
+        raise _release_error(e)
+    return rel.serialise(row)
+
+
+@router.post("/releases/reverify-scan")
+async def reverify_scan(request: Request, x_admin_user_id: Optional[str] = Header(None)):
+    from services.writing_memory import releases as rel
+    actor = _need_actor(x_admin_user_id)
+    try:
+        async with _pool(request).acquire() as conn:
+            async with conn.transaction():
+                flagged = await rel.reverify_scan(conn, actor=f"admin:{actor}")
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    return {"flagged": flagged}
+
+
+class EvidenceBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    r0_run_id: Optional[UUID] = None
+    eval_run_id: Optional[UUID] = None
+    shadow_run_id: Optional[UUID] = None
+
+
+@router.post("/releases/{release_id}/evidence")
+async def release_evidence(release_id: str, body: EvidenceBody, request: Request,
+                           x_admin_user_id: Optional[str] = Header(None)):
+    from services.writing_memory import releases as rel
+    rid = _uuid(release_id, "release")
+    actor = _need_actor(x_admin_user_id)
+    try:
+        async with _pool(request).acquire() as conn:
+            async with conn.transaction():
+                row = await rel.attach_evidence(
+                    conn, rid, actor=f"admin:{actor}",
+                    **{k: str(v) for k, v in body.model_dump().items() if v is not None})
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    except rel.ReleaseError as e:
+        raise _release_error(e)
+    return rel.serialise(row)
+
+
+class ApproveBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    approval_ref: Optional[str] = Field(None, max_length=300)
+
+
+@router.post("/releases/{release_id}/approve")
+async def approve_release(release_id: str, request: Request, body: Optional[ApproveBody] = None,
+                          x_admin_user_id: Optional[str] = Header(None)):
+    """The one human click of ADR 0010 decision 1: the approver is the signed-in admin (403 no_actor otherwise)."""
+    from services.writing_memory import releases as rel
+    rid = _uuid(release_id, "release")
+    actor = _need_actor(x_admin_user_id)
+    try:
+        async with _pool(request).acquire() as conn:
+            async with conn.transaction():
+                row = await rel.approve(conn, rid, approved_by=actor,
+                                        approval_ref=body.approval_ref if body else None)
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    except rel.ReleaseError as e:
+        raise _release_error(e)
+    return rel.serialise(row)
+
+
+@router.post("/releases/{release_id}/activate")
+async def activate_release(release_id: str, request: Request, x_admin_user_id: Optional[str] = Header(None)):
+    """Move the writer's active pointer to this approved release. The API checks the evidence on the locked row
+    (409 with a code: not_approved, content_not_wired, r0_missing, r0_not_byte_identical, eval_not_passed,
+    shadow_missing, rule_isolation, train_closed, ...); the DB checks it again (409 db_refused)."""
+    from services.writing_memory import releases as rel
+    rid = _uuid(release_id, "release")
+    actor = _need_actor(x_admin_user_id)
+    try:
+        async with _pool(request).acquire() as conn:
+            async with conn.transaction():
+                row = await rel.activate(conn, rid, actor=f"admin:{actor}")
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    except rel.ReleaseError as e:
+        raise _release_error(e)
+    return rel.serialise(row)
+
+
+class ReleaseReasonBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(..., min_length=3, max_length=400)
+
+
+@router.post("/releases/{release_id}/rollback")
+async def rollback_release(release_id: str, body: ReleaseReasonBody, request: Request,
+                           x_admin_user_id: Optional[str] = Header(None)):
+    """Roll the active release back to the one it superseded (no deploy). Returns the release now active."""
+    from services.writing_memory import releases as rel
+    rid = _uuid(release_id, "release")
+    actor = _need_actor(x_admin_user_id)
+    try:
+        async with _pool(request).acquire() as conn:
+            async with conn.transaction():
+                row = await rel.rollback(conn, rid, actor=f"admin:{actor}", reason=body.reason.strip())
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    except rel.ReleaseError as e:
+        raise _release_error(e)
+    return rel.serialise(row)
+
+
+@router.post("/releases/{release_id}/reject")
+async def reject_release(release_id: str, body: ReleaseReasonBody, request: Request,
+                         x_admin_user_id: Optional[str] = Header(None)):
+    from services.writing_memory import releases as rel
+    rid = _uuid(release_id, "release")
+    actor = _need_actor(x_admin_user_id)
+    try:
+        async with _pool(request).acquire() as conn:
+            async with conn.transaction():
+                row = await rel.reject(conn, rid, actor=f"admin:{actor}", reason=body.reason.strip())
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    except rel.ReleaseError as e:
+        raise _release_error(e)
+    return rel.serialise(row)
+
+
+@router.get("/writers")
+async def writer_switches(request: Request):
+    from services.writing_memory import releases as rel
+    try:
+        async with _pool(request).acquire() as conn:
+            rows = await rel.writers(conn)
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    return {"items": [rel.serialise(r) for r in rows]}
+
+
+class WriterPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    memory_enabled: Optional[bool] = None
+    train_closed_month: Optional[date] = None
+
+
+@router.patch("/writers/{writer}")
+async def patch_writer(writer: str, body: WriterPatch, request: Request,
+                       x_admin_user_id: Optional[str] = Header(None)):
+    """The per-writer memory switch (kill switch) and the monthly train close."""
+    from services.writing_memory import releases as rel
+    if writer not in rel.WRITERS:
+        raise HTTPException(status_code=404, detail="Unknown writer")
+    if body.memory_enabled is None and body.train_closed_month is None:
+        raise HTTPException(status_code=422, detail="give memory_enabled and / or train_closed_month")
+    actor = f"admin:{_need_actor(x_admin_user_id)}"
+    try:
+        async with _pool(request).acquire() as conn:
+            async with conn.transaction():
+                row = None
+                if body.train_closed_month is not None:
+                    row = await rel.close_month(conn, writer, body.train_closed_month, actor=actor)
+                if body.memory_enabled is not None:
+                    row = await rel.set_memory_enabled(conn, writer, body.memory_enabled, actor=actor)
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    except rel.ReleaseError as e:
+        raise _release_error(e)
+    logger.info("aa919_writer_switch", writer=writer, memory_enabled=body.memory_enabled,
+                train_closed_month=str(body.train_closed_month) if body.train_closed_month else None)
+    return rel.serialise(row)

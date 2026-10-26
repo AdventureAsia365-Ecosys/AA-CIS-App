@@ -40,8 +40,8 @@ from __future__ import annotations
 
 from services.acp_angle_gate.brand_audience import BrandAudience
 from services.acp_content_writing.ai_tells import (BLOG_HEADING_RULE, PROMPT_RULES, SELF_CHECK_RULE,
-                                                   SOCIAL_AUDIENCE_RULE, VISIT_DETAIL_RULE, brand_voice_rule,
-                                                   family_presence_rule)
+                                                   SOCIAL_AUDIENCE_RULE, VISIT_DETAIL_RULE, brand_texture_rule,
+                                                   brand_voice_rule, family_presence_rule)
 from services.acp_shared.brand_pack import render_brand_block
 from services.acp_shared.signature_vocabulary import t9_words_line
 from services.acp_angle_gate.channel_style import ChannelStyle
@@ -206,7 +206,8 @@ Rules:
   style guide and the channel or angle disagree, the brand's style guide wins.
 - SOURCE FIDELITY and VISIT DETAIL override the brand's style guide and its examples: what the
   traveller does, feels or discovers comes only from the content seed. The style guide sets tone
-  and sentence shape, not content.
+  and sentence shape, not content. A BRAND TEXTURE block, when the brief has one, belongs to the
+  style guide: it sets sentence shape and where the reader stands, never content.
 - Use concrete, verifiable details from the content seed given. Never invent a fact, number,
   measurement, or claim that is not in the content seed.
 - SOURCE FIDELITY (same policy as the tour writer):
@@ -277,6 +278,7 @@ def build_user_prompt(
     sibling_openers: list[str] | None = None,
     search_questions: list[str] | None = None,
     lead_focus: str | None = None,
+    memory_lines: list[str] | None = None,
 ) -> str:
     """`angle` is the chosen `angle_gate_option` row (name/why_it_works/formula_fit/
     best_final_style). `revision_feedback` (AA-450 Phase 1's confirmed retry shape — specific,
@@ -317,7 +319,12 @@ def build_user_prompt(
     AA-790 round 2: every channel, blog included, gets the brand-energy line (ai_tells.brand_voice_rule: PACE for an
     energetic brand voice, RESTRAINT for a calm one, nothing otherwise). AA-790 round 4: a family brand (its voice or
     brand type names families or children) also gets the FAMILY BRAND line (ai_tells.family_presence_rule); round 5:
-    a plain-text post also gets its one-concrete-family-moment line (ai_tells.FAMILY_SHORT_POST_RULE)."""
+    a plain-text post also gets its one-concrete-family-moment line (ai_tells.FAMILY_SHORT_POST_RULE). AA-790 round 6:
+    a non-family pack with an energetic, luxury / cultural or nature / respectful signal gets the BRAND TEXTURE block
+    right after the PACE / RESTRAINT line (ai_tells.brand_texture_rule; the FAQ lines on a blog only).
+
+    `memory_lines` (AA-919): the writing-memory lines of the tenant slot (services/writing_memory/insertion
+    t9_tenant_lines), placed right after the brand's words line; None / [] adds nothing."""
     # AA-771 (S233) — the full brand pack (render_brand_block) replaces the AUDIENCE / MINDSET /
     # BRAND NAME lines; the invented "discerning travellers" fallback audience is gone.
 
@@ -379,6 +386,9 @@ def build_user_prompt(
         # AA-800 — the word layers for THIS brand: platform truth never, one stock superlative at most,
         # its declared signature words allowed, service-level claims only from the seed.
         t9_words_line(brand_audience),
+        # AA-919 (WM-18 / WM-20) — the writing-memory slot `t9_tenant` of the resolved release, right after the
+        # brand's words line; [] for release 0 and without memory (byte-identical prompt).
+        *(memory_lines or []),
         "",
         f"SELECTED ANGLE: {angle['name']}",
         f"WHY THIS ANGLE WORKS: {angle['why_it_works']}",
@@ -431,6 +441,9 @@ def build_user_prompt(
         prompt += SOCIAL_AUDIENCE_RULE  # AA-790 (S251) — Terra LinkedIn read like an encyclopedia entry
     # AA-790 round 2 — every channel: the PACE (energetic brand) / RESTRAINT (calm brand) line from the brand's voice
     prompt += brand_voice_rule(brand_audience)
+    # AA-790 round 6 — the BRAND TEXTURE block (momentum / atmosphere / observation) for a non-family pack with a
+    # texture signal; '' otherwise, so a pack without one keeps its round-5 prompt byte for byte.
+    prompt += brand_texture_rule(brand_audience, channel_style["channel"])
     # AA-790 round 4 — a family brand (voice / brand type): the family in every section, from seed facts only.
     # Round 5: the children / parents in the seed's own moments, warmth from its pace cues; one moment in a short post.
     prompt += family_presence_rule(brand_audience, channel_style["channel"])
