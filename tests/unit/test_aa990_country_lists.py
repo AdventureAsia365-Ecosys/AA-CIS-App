@@ -103,6 +103,8 @@ def test_pakistan_and_philippines_points_pass_the_guard(lat, lng, country):
 def test_pakistan_and_philippines_reject_the_wrong_side():
     # BBOX is a rectangle: New Delhi (28.61, 77.21) is inside Pakistan's box; the polygon (shape) tells them apart
     assert guards.point_ok(27.70, 85.32, "Pakistan") == "outside_country_bbox"       # Kathmandu
+    assert guards.point_ok(34.16, 77.58, "Pakistan") == "outside_country_bbox"       # Leh, Ladakh (India)
+    assert guards.point_ok(34.55, 77.55, "Pakistan") == "outside_country_bbox"       # Diskit, Nubra (India)
     assert not shape.in_country(28.61, 77.21, "pk") and shape.in_country(28.61, 77.21, "in")
     assert guards.point_ok(22.32, 114.17, "Philippines") == "outside_country_bbox"   # Hong Kong
     assert guards.canonical_country("Republic of the Philippines") == "Philippines"
@@ -121,3 +123,13 @@ def test_model_answers_for_pakistan_and_philippines_parse():
 def test_polygons_hold_the_capitals():
     assert shape.in_country(33.69, 73.06, "pk") and shape.in_country(14.60, 120.98, "ph")
     assert not shape.in_country(14.60, 120.98, "pk")
+
+
+def test_dedupe_drops_every_guard_country_word():
+    """'Badshahi Mosque Pakistan' and 'Badshahi Mosque' must share a core, like the other AA countries already do."""
+    from services.places import dedupe
+    assert dedupe.parse(dedupe.clean_name("Badshahi Mosque Pakistan")).core == \
+        dedupe.parse(dedupe.clean_name("Badshahi Mosque")).core
+    for country in guards.ISO2_COUNTRY.values():
+        for word in country.lower().split():
+            assert word in dedupe.COUNTRY_WORDS or word in {"south"}, word   # "south" stays a qualifier
