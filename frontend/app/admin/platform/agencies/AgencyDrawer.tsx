@@ -46,6 +46,8 @@ import {
   formatBytes,
   formatUsd,
   kindLabel,
+  lockSourceText,
+  membershipFeed,
   pct,
   recoveryDue,
   shortId,
@@ -235,15 +237,36 @@ function AccessSection({ agency, canWrite, base, onDone }: { agency: TenantSumma
   const [open, setOpen] = useState<"lock" | "unlock" | null>(null);
   const [reason, setReason] = useState<string>(LOCK_REASONS[0].code);
   const locked = agency.state === "locked";
+  const lockedBy = lockSourceText(agency);
+  const feed = membershipFeed(agency);
   const path = base.slice(CRM_API.length);
   return (
     <Section title="Access" testId="crm-access">
       <div style={noteStyle}>
         {agency.state === "active" && "The agency is active."}
-        {locked && "The agency is locked by AA."}
         {(agency.state === "offboarding" || agency.state === "offboarded") &&
           "The agency is being or has been offboarded; it cannot be locked or unlocked."}
       </div>
+      {lockedBy && (
+        <div data-testid="crm-lock-source" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <Badge tone="warning">{lockedBy.label}</Badge>
+            {lockedBy.code && <span style={{ ...noteStyle, fontFamily: mono }}>{lockedBy.code}</span>}
+          </span>
+          {lockedBy.detail && <div style={noteStyle}>{lockedBy.detail}</div>}
+        </div>
+      )}
+      {locked && (
+        <div data-testid="crm-membership-feed" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 12.5, color: K.ink }}>
+            CIS membership feed (all agencies) <Badge tone={feed.tone}>{feed.label}</Badge>
+            <span style={noteStyle}>last successful pull: {feed.lastPull}</span>
+          </span>
+          <div style={noteStyle}>
+            {feed.detail} A CIS lock, unlock or owner removal reaches the CRM within this lag at most.
+          </div>
+        </div>
+      )}
       {canWrite && (
         <div>
           {locked ? (

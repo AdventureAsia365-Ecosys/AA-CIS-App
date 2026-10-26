@@ -36,6 +36,7 @@ import {
   crmErrorText,
   crmWrite,
   isTicket,
+  lockSourceText,
   stateLabel,
   type CrmConsole,
   type TenantPage,
@@ -90,7 +91,9 @@ export default function AgenciesConsole() {
       accessorKey: "state", header: "State",
       cell: (c) => {
         const s = stateLabel(c.row.original.state);
-        return <Badge tone={s.tone}>{s.label}</Badge>;
+        // AA-978 follow-up: a locked row names who locked it (the drawer shows the details and the feed health).
+        const by = lockSourceText(c.row.original);
+        return <span title={by?.label}><Badge tone={s.tone}>{s.label}</Badge></span>;
       },
     },
     {
