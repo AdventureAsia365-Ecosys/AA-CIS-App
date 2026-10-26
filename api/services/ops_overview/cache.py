@@ -10,11 +10,13 @@ others. Rules (cost safety first):
   without Redis the section is computed directly.
 - A result whose ``status`` is not ``ok`` is cached only ``ERROR_TTL_S`` (60 s), so a fixed IAM grant or an applied
   migration shows up within a minute, without a call per page view meanwhile.
+- AA-992 (data coverage): ``key_prefix`` puts another page's sections under its own keys, and ``single_flight=True``
+  gives a DB-only section the lock + last-good behaviour of ``needs_cache`` while still computing without Redis.
 """
 from __future__ import annotations
 
 import json
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Optional
 
 import structlog
 
@@ -27,8 +29,8 @@ LAST_GOOD_TTL_S = 24 * 3600
 ERROR_TTL_S = 60
 
 
-def section_key(name: str) -> str:
-    return f"{KEY_PREFIX}:{name}:{KEY_VERSION}"
+def section_key(name: str, key_prefix: str = KEY_PREFIX) -> str:
+    return f"{key_prefix}:{name}:{KEY_VERSION}"
 
 
 def unavailable(reason: str, message: str, **extra: Any) -> dict:
@@ -50,9 +52,11 @@ async def _set(redis: Any, key: str, value: dict, ttl_s: int) -> None:
 
 
 async def cached_section(redis: Any, name: str, ttl_s: int, compute: Callable[[], Awaitable[dict]], *,
-                         needs_cache: bool) -> dict:
+                         needs_cache: bool, key_prefix: str = KEY_PREFIX, single_flight: Optional[bool] = None,
+                         lock_ttl_s: int = LOCK_TTL_S) -> dict:
     """Get-or-compute one section. Never raises: a failing ``compute`` becomes ``unavailable: error``."""
-    key = section_key(name)
+    key = section_key(name, key_prefix)
+    flight = needs_cache if single_flight is None else single_flight
 
     async def run() -> dict:
         try:
@@ -82,11 +86,13 @@ async def cached_section(redis: Any, name: str, ttl_s: int, compute: Callable[[]
             logger.warning("ops_overview_cache_corrupt", key=key)
 
     lock_key = f"{key}:lock"
-    if needs_cache:
+    if flight:
         try:
-            got = await redis.set(lock_key, "1", nx=True, ex=LOCK_TTL_S)
+            got = await redis.set(lock_key, "1", nx=True, ex=lock_ttl_s)
         except Exception as e:
             logger.warning("ops_overview_lock_failed", key=key, error=repr(e)[:200])
+            if not needs_cache:   # a DB-only single-flight section still answers without its lock
+                return {**await run(), "_cached": False}
             return {**unavailable("cache_offline", "Live numbers are paused while the server cache is offline."),
                     "_cached": False}
         if not got:
@@ -106,10 +112,10 @@ async def cached_section(redis: Any, name: str, ttl_s: int, compute: Callable[[]
         data = await run()
         ok = data.get("status") == "ok"
         await _set(redis, key, data, ttl_s if ok else ERROR_TTL_S)
-        if ok and needs_cache:
+        if ok and flight:
             await _set(redis, f"{key}:last", data, LAST_GOOD_TTL_S)
     finally:
-        if needs_cache:
+        if flight:
             try:
                 await redis.delete(lock_key)
             except Exception:
