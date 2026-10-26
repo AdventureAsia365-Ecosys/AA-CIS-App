@@ -51,7 +51,7 @@ _T = rf"/tenants/{_ID}"
 ALLOWED: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
     (m, re.compile(p)) for m, p in (
         ("GET", r"/console"),
-        ("GET", r"/data-coverage"),   # AA-992: crm.ops.v1 1.3 counts for /admin/data-coverage
+        ("GET", r"/data-coverage"),   # AA-992: crm.ops.v1 1.4 counts for /admin/data-coverage
         ("GET", r"/tenants"),
         ("POST", r"/tenants"),
         ("GET", _T),

@@ -6,15 +6,27 @@ Budget (design §4.3):
   ``SET LOCAL statement_timeout = '4s'`` and ``lock_timeout = '1s'``, inside ``asyncio.wait_for(…, 5 s)``; at most
   :data:`CIS_CONCURRENCY` at once (the pool has 10 connections per task);
 - a TripPlanner catalog source: one :func:`services.catalog_http.reader.catalog_connection` per statement (the tenant
-  pool has 2 connections per task, shared with the Content studio and the CRM catalog sync, and its gate lets one
-  catalog read in at a time; critic B9), ``wait_for`` 8 s, slow tier only;
+  pool has 2 connections per task, shared with the Content studio and the CRM catalog sync, and its process-wide gate
+  lets one catalog read in at a time and refuses a waiter after 5 s; critic B9). The four catalog sources of one build
+  therefore run one after another: :attr:`Ctx.catalog_lock` (FIFO, registry order) admits one of them at a time and
+  each releases the reader's gate before the next asks for it, so they never queue on the gate itself. ``wait_for``
+  8 s from the moment the lock let the read in, ``SET LOCAL statement_timeout = '7s'``; slow tier only;
 - S3: ``ListObjectsV2`` in a thread, 5 s, at most :data:`S3_MAX_PAGES` pages (then the count is marked capped);
-- CRM: ``crm.ops.v1`` 1.3 ``GET /data-coverage`` with the signed-in staff member's own token (``crm_console``).
+- CRM: ``crm.ops.v1`` 1.4 ``GET /data-coverage`` with the signed-in staff member's own token (``crm_console``).
 
-Errors: a missing owner view or grant (``UndefinedTable`` / ``InsufficientPrivilege`` / ``InvalidSchemaName`` /
-``UndefinedColumn``) is ``unavailable: contract_view_missing`` (tp-020 / bk-025 not applied yet); a timeout is
-``timeout``; anything else ``error: <class>``. One ``data_coverage_source_failed`` log line per failure (key, class,
-ms), never SQL text or values.
+Errors (fix round 2: only a final answer may be ``unavailable``, since a tier whose sources are all ok / unavailable
+is cached for its full TTL and kept 24 h as the last good copy):
+- ``unavailable`` — final until a deploy or a migration: a missing owner view or grant (``UndefinedTable`` /
+  ``InsufficientPrivilege`` / ``InvalidSchemaName`` / ``UndefinedColumn``) is ``contract_view_missing`` (tp-020 /
+  bk-025 not applied yet); ``cognito_session_required`` (a password session); ``catalog_unavailable: tenant pool not
+  configured``;
+- ``timeout`` — ``asyncio.TimeoutError``, ``QueryCanceled`` (statement_timeout), the catalog reader's own
+  statement_timeout, a CRM 504;
+- ``error`` — anything else, including the temporary :class:`Transient` answers: the catalog gate busy, a pool
+  acquire error or a dropped tenant connection, and every other CRM non-200 (503 ``crm_unavailable`` on a network
+  error or timeout, 502 ``crm_bad_response``, 401 / 403 / 404 / 429: the crm tier key is shared by every admin, so
+  one caller's expired token or missing group must not blank the rows for the others for 10 minutes).
+One ``data_coverage_source_failed`` log line per failure (key, class, ms), never SQL text or values.
 """
 from __future__ import annotations
 
@@ -37,6 +49,8 @@ CIS_STATEMENT_TIMEOUT = "4s"
 CIS_LOCK_TIMEOUT = "1s"
 CIS_WAIT_S = 5.0
 TENANT_WAIT_S = 8.0
+TENANT_STATEMENT_TIMEOUT = "7s"
+FINAL_CATALOG_REASONS = ("tenant pool not configured",)
 S3_WAIT_S = 5.0
 S3_MAX_PAGES = 10
 CRM_PASS_LIMIT_MIN = 120
@@ -46,7 +60,13 @@ CONTRACT_ERRORS = (asyncpg.exceptions.UndefinedTableError, asyncpg.exceptions.In
 
 
 class Unavailable(Exception):  # noqa: N818 — reads as an outcome
-    """A source that cannot be read in this context (reason code in ``args[0]``)."""
+    """A FINAL answer: the source cannot be read in this context until a deploy or a migration (reason code in
+    ``args[0]``). Its tier may be cached for the full TTL and kept as the last good copy."""
+
+
+class Transient(Exception):  # noqa: N818 — reads as an outcome
+    """A temporary failure (catalog gate busy, dropped connection, CRM 5xx / 4xx): ``error`` with the reason code in
+    ``args[0]``, so its tier is cached 60 s and never kept as the last good copy."""
 
 
 class Ctx:
@@ -60,6 +80,7 @@ class Ctx:
         self.s3 = s3
         self.bucket = bucket
         self.gate = asyncio.Semaphore(CIS_CONCURRENCY)
+        self.catalog_lock = asyncio.Lock()   # the tenant-pool sources run one after another (FIFO)
 
 
 def _jsonable(v: Any) -> Any:
@@ -96,12 +117,19 @@ async def _catalog(ctx: Ctx, sql: str, *, many: bool = False) -> Any:
 
     async def run() -> Any:
         async with catalog_connection(ctx.tenant_pool) as conn:
+            await conn.execute(f"SET LOCAL statement_timeout = '{TENANT_STATEMENT_TIMEOUT}'")
             return list(await conn.fetch(sql)) if many else await conn.fetchrow(sql)
 
-    try:
-        return await asyncio.wait_for(run(), timeout=TENANT_WAIT_S)
-    except CatalogUnavailable as e:
-        raise Unavailable(f"catalog_unavailable: {e}") from e
+    async with ctx.catalog_lock:   # one catalog source at a time; the reader's gate is free again on release
+        try:
+            return await asyncio.wait_for(run(), timeout=TENANT_WAIT_S)
+        except CatalogUnavailable as e:
+            reason = str(e)
+            if reason in FINAL_CATALOG_REASONS:
+                raise Unavailable(f"catalog_unavailable: {reason}") from e
+            if reason == "QueryCanceledError":   # the statement_timeout above (or the pool's)
+                raise asyncio.TimeoutError() from e
+            raise Transient(f"catalog_unavailable: {reason}"[:80]) from e
 
 
 def _metric_rows(rows: list) -> dict:
@@ -233,7 +261,7 @@ async def s3_brand(ctx: Ctx) -> dict:
     return {"objects": len(files), "tenant_prefixes": len(tenants), "capped": capped}
 
 
-# ── CRM (crm.ops.v1 1.3) ─────────────────────────────────────────────────────────────────────────────────────────────
+# ── CRM (crm.ops.v1 1.4) ─────────────────────────────────────────────────────────────────────────────────────────────
 async def crm(ctx: Ctx) -> dict:
     from api.services import crm_console
     from api.services.platform_apps import _cognito_bearer
@@ -241,8 +269,10 @@ async def crm(ctx: Ctx) -> dict:
     if _cognito_bearer(ctx.authorization) is None:
         raise Unavailable("cognito_session_required")
     status, body = await crm_console.crm_ops_call("GET", "/data-coverage", ctx.authorization)
-    if status != 200:
-        raise Unavailable(f"crm_{body.get('detail') or status}")
+    if status == 504:
+        raise asyncio.TimeoutError()
+    if status != 200:   # temporary or caller-specific (see the module docstring): never a final answer
+        raise Transient(f"crm_{body.get('detail') or status}"[:80])
     ag, mem, cache = body.get("agencies") or {}, body.get("members") or {}, body.get("catalog_cache") or {}
     last_pass = cache.get("last_full_pass_at")
     pass_at = datetime.fromisoformat(last_pass) if last_pass else None
@@ -311,6 +341,8 @@ async def run_source(key: str, ctx: Ctx, tier: str) -> dict:
         values = await FUNCTIONS[key](ctx)
     except Unavailable as e:
         status, reason = "unavailable", str(e)[:80]
+    except Transient as e:
+        status, reason = "error", str(e)[:80]
     except CONTRACT_ERRORS:
         status, reason = "unavailable", "contract_view_missing"
     except (asyncio.TimeoutError, asyncpg.exceptions.QueryCanceledError):

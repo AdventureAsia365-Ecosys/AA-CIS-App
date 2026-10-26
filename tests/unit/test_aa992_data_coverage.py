@@ -179,7 +179,8 @@ def test_real_rows_on_known_numbers():
     (asyncpg.exceptions.InsufficientPrivilegeError("x"), "unavailable", "contract_view_missing"),
     (asyncio.TimeoutError(), "timeout", "timeout"),
     (asyncpg.exceptions.QueryCanceledError("x"), "timeout", "timeout"),
-    (src.Unavailable("catalog_unavailable: busy"), "unavailable", "catalog_unavailable: busy"),
+    (src.Unavailable("cognito_session_required"), "unavailable", "cognito_session_required"),
+    (src.Transient("catalog_unavailable: catalog reads busy"), "error", "catalog_unavailable: catalog reads busy"),
     (RuntimeError("boom secret text"), "error", "RuntimeError"),
 ])
 async def test_run_source_maps_errors(monkeypatch, exc, status, reason):
@@ -242,9 +243,114 @@ async def test_crm_source_needs_a_cognito_token_and_compares_as_of_the_last_pass
     assert out["cache_age_min"] in (29, 30, 31) and out["published_after_pass"] == 2
     row = {r.id: r for r in reg.ROWS}["crm.cache_served"]
     assert b.evaluate(row, {"crm": _ok(**out)}, {})["status"] == "ok"   # 892 vs 890, 2 published since the pass
+    # fix round 2: no CRM non-200 is final (the crm tier key is shared by every admin)
     call.return_value = (403, {"detail": "missing_group"})
-    with pytest.raises(src.Unavailable, match="crm_missing_group"):
+    with pytest.raises(src.Transient, match="crm_missing_group"):
         await src.crm(src.Ctx(None, authorization="Bearer x"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,body,want", [
+    (503, {"detail": "crm_unavailable"}, ("error", "crm_crm_unavailable")),
+    (502, {"detail": "crm_bad_response"}, ("error", "crm_crm_bad_response")),
+    (500, {}, ("error", "crm_500")),
+    (401, {"detail": "invalid_token"}, ("error", "crm_invalid_token")),
+    (404, {"detail": "Not Found"}, ("error", "crm_Not Found")),
+    (504, {"detail": "gateway_timeout"}, ("timeout", "timeout")),
+])
+async def test_crm_non_200_is_never_final(monkeypatch, status, body, want):
+    from api.services import crm_console, platform_apps
+    monkeypatch.setattr(platform_apps, "_cognito_bearer", lambda a: "tok" if a else None)
+    monkeypatch.setattr(crm_console, "crm_ops_call", AsyncMock(return_value=(status, body)))
+    out = await src.run_source("crm", src.Ctx(None, authorization="Bearer x"), "crm")
+    assert (out["status"], out["reason"]) == want
+
+
+def _fake_catalog(monkeypatch, *, fail=None, log=None, delay=0.0):
+    """catalog_connection stand-in: records enter / exit per statement, or raises CatalogUnavailable(fail)."""
+    from contextlib import asynccontextmanager
+
+    from services.catalog_http import reader
+
+    log = log if log is not None else []
+    state = {"open": 0, "max": 0}
+
+    class Conn:
+        async def execute(self, sql):
+            return None
+
+        async def fetchrow(self, sql):
+            await asyncio.sleep(delay)
+            return {"n": 1}
+
+        async def fetch(self, sql):
+            await asyncio.sleep(delay)
+            return [{"idempotency_key": "k1"}]
+
+    @asynccontextmanager
+    async def fake(pool):
+        if fail:
+            raise reader.CatalogUnavailable(fail)
+        state["open"] += 1
+        state["max"] = max(state["max"], state["open"])
+        log.append("enter")
+        try:
+            yield Conn()
+        finally:
+            state["open"] -= 1
+            log.append("exit")
+
+    monkeypatch.setattr(reader, "catalog_connection", fake)
+    return state
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reason,want", [
+    ("catalog reads busy", ("error", "catalog_unavailable: catalog reads busy")),
+    ("ConnectionDoesNotExistError", ("error", "catalog_unavailable: ConnectionDoesNotExistError")),
+    ("QueryCanceledError", ("timeout", "timeout")),
+    ("tenant pool not configured", ("unavailable", "catalog_unavailable: tenant pool not configured")),
+])
+async def test_catalog_failures_are_final_only_without_a_tenant_pool(monkeypatch, reason, want):
+    _fake_catalog(monkeypatch, fail=reason)
+    out = await src.run_source("tp_layers", src.Ctx(None, tenant_pool=object()), "slow")
+    assert (out["status"], out["reason"]) == want
+
+
+@pytest.mark.asyncio
+async def test_the_tenant_pool_sources_run_one_after_another_in_registry_order(monkeypatch):
+    _fake_functions(monkeypatch)
+    tenant = ["tp_layers", "tp_components", "tp_retired", "tp_purge"]
+    for key in tenant:
+        monkeypatch.setitem(src.FUNCTIONS, key, getattr(src, key))
+    order = []
+    for key in tenant:   # wrap each to record when its catalog read starts
+        real = src.FUNCTIONS[key]
+
+        async def wrapped(ctx, _real=real, _key=key):
+            out = await _real(ctx)
+            order.append(_key)
+            return out
+        monkeypatch.setitem(src.FUNCTIONS, key, wrapped)
+    monkeypatch.setattr(src, "_cis_row", AsyncMock(return_value={"events": 1, "events_without_job": 0}))
+    state = _fake_catalog(monkeypatch, delay=0.02)
+    out = await b._compute_tier(src.Ctx(MagicMock(), tenant_pool=object()), "slow")
+    assert state["max"] == 1                                   # never two catalog reads at once
+    assert order == tenant                                     # registry order
+    assert all(out["sources"][k]["status"] == "ok" for k in tenant)
+    assert [s.key for s in reg.SOURCES if s.tier == "slow" and s.pool == "tenant"] == tenant
+
+
+@pytest.mark.asyncio
+async def test_a_busy_catalog_gate_is_cached_one_minute_and_not_kept_as_last_good(monkeypatch):
+    _fake_functions(monkeypatch)
+    monkeypatch.setitem(src.FUNCTIONS, "tp_layers", src.tp_layers)
+    _fake_catalog(monkeypatch, fail="catalog reads busy")
+    redis = FakeRedis()
+    out = await b.build(MagicMock(), object(), redis)
+    assert out["sources"]["tp_layers"]["status"] == "error"
+    assert redis.ttl["admin:data-coverage:slow:v1"] == 60
+    assert "admin:data-coverage:slow:v1:last" not in redis.store
 
 
 def test_crm_relay_allows_the_route():
@@ -362,17 +468,29 @@ async def test_crm_tier_is_its_own_key_and_never_filled_without_a_token(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_a_tier_over_its_deadline_is_time_budget(monkeypatch):
+async def test_one_hung_source_over_the_tier_deadline_turns_only_its_rows_na(monkeypatch):
     _fake_functions(monkeypatch)
+    cancelled = []
 
-    async def slow(ctx):
-        await asyncio.sleep(1)
+    async def hung(ctx):
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            cancelled.append(True)
+            raise
         return {}
-    monkeypatch.setitem(src.FUNCTIONS, "seg_classify", slow)
-    monkeypatch.setattr(b, "TIER_DEADLINE_S", 0.05)
+    monkeypatch.setitem(src.FUNCTIONS, "seg_classify", hung)
+    monkeypatch.setattr(b, "TIER_DEADLINE_S", 0.2)
     out = await b.build(MagicMock(), None, None)
-    assert out["sources"]["seg_classify"]["reason"] == "time_budget"
+    assert (out["sources"]["seg_classify"]["status"], out["sources"]["seg_classify"]["reason"]) == \
+        ("timeout", "time_budget")
+    assert cancelled == [True]                                 # the hung task is cancelled, not left running
+    slow_others = [s.key for s in reg.SOURCES if s.tier == "slow" and s.key != "seg_classify"]
+    assert slow_others and all(out["sources"][k]["status"] == "ok" for k in slow_others)   # finished: kept
     assert out["sources"]["raw"]["status"] == "ok"
+    rows = {r["id"]: r for g in out["groups"] for r in g["rows"]}
+    na = {i for i, r in rows.items() if r["status"] == "na" and "time_budget" in (r["reason"] or "")}
+    assert na and na <= {r.id for r in reg.ROWS if "seg_classify" in r.sources}   # only the hung source's rows
 
 
 # ── route policy ─────────────────────────────────────────────────────────────────────────────────────────────────────

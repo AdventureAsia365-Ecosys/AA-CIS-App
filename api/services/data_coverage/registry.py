@@ -125,7 +125,7 @@ SOURCES: tuple[Source, ...] = (
     Source("supply", "fast", "cis", "booking.v_supply_hotels / v_supply_services (bk-023) x shared.supply_entity"),
     Source("bk_cases", "fast", "cis", "booking.v_ops_case_status (bk-017)"),
     Source("bk_funnel", "fast", "cis", "booking.v_ops_funnel_daily (bk-017, last 400 days)"),
-    Source("crm", "crm", "crm", "GET /crm/ops/v1/data-coverage (crm.ops.v1 1.3, staff token)"),
+    Source("crm", "crm", "crm", "GET /crm/ops/v1/data-coverage (crm.ops.v1 1.4, staff token)"),
 )
 SOURCE_BY_KEY = {s.key: s for s in SOURCES}
 
@@ -478,6 +478,12 @@ ROWS: tuple[Row, ...] = (
         f("tp_pins", "not_served"), "info", "defect", unit="pins", denominator=f("tp_pins", "pins"),
         denominator_label="pins", expected_note="kept by design: listed as an unavailable stop (AA-986 L6)",
         drill="/admin/places", sources=("tp_pins",)),
+    # tp-020 fix round 2: an add_component whose component_id is not a UUID (the assembly Lambda stores the request's
+    # value unchecked) is left out of the pin view and only counted here.
+    Row("tp.pins_invalid_id", "tripplanner", "Pin events whose component id is not a catalog id",
+        f("tp_totals", "pin_events_invalid_id"), "info", "defect", unit="events",
+        denominator=f("tp_totals", "pin_events"), denominator_label="pin events",
+        expected_note="never listed: the id may be traveller text", sources=("tp_totals",)),
     Row("tp.id_map", "tripplanner", "Component id map rows", f("tp_totals", "component_id_map_rows"), "info",
         unit="rows", sources=("tp_totals",)),
     Row("tp.sessions", "tripplanner", "Planner sessions", f("tp_totals", "sessions"), "info", unit="sessions",

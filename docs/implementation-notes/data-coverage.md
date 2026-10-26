@@ -14,8 +14,9 @@
   `na: expected gap unavailable (…)` with value and missing still shown (critic B11, `seg.tours`).
 - **Three cache tiers on `ops_overview.cache.cached_section`** (extended, not copied): new `key_prefix` and
   `single_flight` parameters give the DB tiers the lock + last-good behaviour of `needs_cache` while still computing
-  without Redis. A tier is "ok" (full TTL, kept as last good) when every source answered or is a deterministic
-  `unavailable` (e.g. `contract_view_missing`); an error / timeout caches it 60 s only.
+  without Redis. A tier is "ok" (full TTL, kept as last good) when every source answered or is a final
+  `unavailable` (`contract_view_missing`, `cognito_session_required`, no tenant pool; narrowed in fix round 2, below);
+  an error / timeout caches it 60 s only.
 - **Refresh throttle server-side too**: `?refresh=1` drops the fast tier only when its `computed_at` is ≥ 15 s old;
   the slow and CRM tiers keep their TTL. The UI disables Refresh for 15 s after a click.
 - **CRM tier**: own key `admin:data-coverage:crm:v1`, computed only when the caller relays a Cognito token (a password
@@ -23,7 +24,8 @@
   served count with the CIS live count **as of the CRM's last full pass**: tours published after it are the expected
   gap while the pass is ≤ 120 min old (critic B12-3).
 - **Catalog reads one statement per `catalog_connection`** (critic B9): the tenant pool has 2 connections per task
-  and its gate lets one catalog read in at a time; the group lives in the slow tier only.
+  and its gate lets one catalog read in at a time; the group lives in the slow tier only. Fix round 2: the four catalog sources also run
+  one after another (`Ctx.catalog_lock`), see below.
 - **Pins resolved like TripPlanner** (AA-990): the pins and the id-map edges come from tp-020's views
   (`v_ops_pin_components`, `v_ops_component_id_map`; the design's one-hop `mapped_id` could not reproduce the
   map → redirect → map chains of the AA-990 backfill), walked in SQL with `geo.component_redirect`, map first,
@@ -66,11 +68,31 @@
   and adds live-shape stand-ins for what CI lacks (258 `source_key`, 274 views, 285 redirect, pgvector columns): it
   checks SQL shape, not the Dev grant set (the isolation probe does that).
 
+## Fix round 2 (S252 review)
+
+- **crm.ops.v1 minor 1.4, not 1.3**: AA-979 P2b shipped 1.3 (studio invitations) first; comments, the `crm` source's
+  `reads` text and CONTEXT.md renamed.
+- **Only final answers are `unavailable`** (`contract_view_missing`, `cognito_session_required`, `catalog_unavailable:
+  tenant pool not configured`). `CatalogUnavailable` for a busy gate, a pool acquire error or a dropped connection is
+  `error` (new `sources.Transient`), its statement_timeout (`QueryCanceledError`) and a CRM 504 are `timeout`, every
+  other CRM non-200 (503 `crm_unavailable`, 502 `crm_bad_response`, 401 / 403 / 404 / 429) is `error`: the crm tier
+  key is shared by every admin, so one caller's expired token or missing group must not blank the rows for 10
+  minutes for the others. A tier with any of these is cached 60 s and never stored as the last good copy.
+- **The four tenant-pool sources run one after another**: `Ctx.catalog_lock` (FIFO; tasks start in registry order:
+  tp_layers, tp_components, tp_retired, tp_purge) admits one `catalog_connection` at a time, releasing the reader's
+  gate in between, so none of them fails on the reader's 5 s gate wait because a sibling is slow. Each catalog
+  statement also gets `SET LOCAL statement_timeout = '7s'` under the 8 s `wait_for`.
+- **Tier deadline keeps finished sources**: `asyncio.wait(tasks, timeout=TIER_DEADLINE_S)`; only the pending tasks are
+  cancelled and marked `timeout: time_budget` (design D7). No separate budget for the multi-step sources (`tp_pins`
+  up to 3 × 5 s, `tp_purge` 8 s + 5 s): the 12 s tier deadline cuts them alone now.
+- **New row `tp.pins_invalid_id`** (info, defect polarity): tp-020 now lists only UUID-shaped pinned ids and counts
+  the rest as `pin_events_invalid_id`.
+
 ## Should know
 
 - Ships before tp-020 / bk-025 are applied: those rows read `n/a: unavailable: contract_view_missing` until DB Migrate.
-- The CRM rows need AA-Partner's `crm.ops.v1` 1.3 deployed; before that the CRM answers 404 and the rows read
-  `na: unavailable: crm_Not Found`.
+- The CRM rows need AA-Partner's `crm.ops.v1` 1.4 deployed; before that the CRM answers 404 and the rows read
+  `na: error: crm_Not Found` (re-asked every minute, never cached as final).
 - Local runs: unit tests with AWS disabled (no credentials, `AWS_CONFIG_FILE=/dev/null`); the first local run of
   `scripts/export_openapi.py` without that env tried the Sentry DSN secret and stopped at the MFA prompt (no call
   made). Integration on a throwaway PG 16 cluster: 80 passed, 1 skipped (`catalog.v_tour_component.embedding` needs

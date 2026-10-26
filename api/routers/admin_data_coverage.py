@@ -3,7 +3,7 @@
   GET /admin/data-coverage[?refresh=1]   every row of every stage in one call (cached: fast 60 s, slow 600 s,  ops.read
                                           CRM 600 s; refresh recomputes the fast tier when older than 15 s)
 
-Admin only (OPS_READ, as /admin/overview; design D10). The CRM rows are read from crm.ops.v1 1.3 with the signed-in
+Admin only (OPS_READ, as /admin/overview; design D10). The CRM rows are read from crm.ops.v1 1.4 with the signed-in
 staff member's own Cognito token (relayed like the CRM console); a password session gets those rows as
 ``na: cognito_session_required``. Sources and status rules: api/services/data_coverage/.
 """

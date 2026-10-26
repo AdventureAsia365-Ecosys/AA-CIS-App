@@ -482,7 +482,7 @@ SELECT coalesce(sum(n) FILTER (WHERE metric = 'inquiry_received'), 0)::int AS re
        coalesce(sum(n) FILTER (WHERE metric IN ('inquiry_parked', 'inquiry_failed')), 0)::int AS stuck
   FROM booking.v_ops_funnel_daily"""
 
-# ── 1.9 CRM: over HTTP (crm.ops.v1 1.3), see sources.crm_coverage. ─────────────────────────────────────────────────
+# ── 1.9 CRM: over HTTP (crm.ops.v1 1.4), see sources.crm. ─────────────────────────────────────────────────
 # The CIS live count the CRM cache is compared with, as of the CRM's last full pass (critic B12-3).
 LIVE_COUNT = f"WITH {LIVE} SELECT count(*)::int AS live FROM live"
 LIVE_SINCE = f"""
