@@ -5,8 +5,9 @@ by ``tests/unit/test_aa978_tenant_membership_contract.py``). Root ADR 0006b deci
 the directory of agencies and their members; the CRM uses it as a revocation and lifecycle source (removals and
 locked / unlocked / deleted agencies), never to grant a CRM role.
 
-  GET /tenant/membership/v1/tenants/{tenant_id}/members    snapshot of one agency (invited + active members and
-                                                           tenant_state), ETag + If-None-Match -> 304
+  GET /tenant/membership/v1/tenants/{tenant_id}/members    snapshot of one agency (invited + active members,
+                                                           tenant_state and, contract 1.2, is_synthetic), ETag +
+                                                           If-None-Match -> 304
   GET /tenant/membership/v1/memberships?iss=&sub=          the memberships of one identity, keyed by iss AND sub
   GET /tenant/membership/v1/events?after=&limit=           cursor feed of tenant.* and membership.* events, oldest
                                                            first, never skipping a late commit (services/

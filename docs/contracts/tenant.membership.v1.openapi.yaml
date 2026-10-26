@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: tenant.membership.v1 (AA-CIS-App → AA-Partner CRM, agency membership feed)
-  version: "1.1"
+  version: "1.2"
   description: >-
     CIS is the directory of agencies (tenants) and of who belongs to them. This contract tells the partner CRM only
     "identity (iss, sub) belongs to agency X" plus the person's Content studio role (owner / editor / viewer) and the
@@ -26,6 +26,10 @@ info:
     the CRM delivers it (AA system mail, claim, accept in the partner pool); once the person accepted, the CRM binds
     the person's partner-pool identity to that invitation here. CIS still decides the Content studio role; the call
     carries only the verified identity, never a role and never an e-mail. Idempotent for the same identity.
+    1.2 (AA-979 hardening of root ADR 0006a A10b-1, additive): TenantMembers.is_synthetic, true when CIS marks the
+    agency synthetic (shared.tenants.is_canary; a NULL there is false, never null here). The CRM's re-check of the
+    Dev-only E2E CIS admin's studio-invitation relay requires it to be true, in the getTenantMembers call it already
+    makes, and refuses when the field is missing (a 1.1 server). Every other consumer may ignore it.
   x-aa-contract: tenant.membership.v1
   x-aa-producer: AA-CIS-App
   x-aa-consumers: [AA-Partner]
@@ -204,10 +208,16 @@ components:
     TenantMembers:
       type: object
       additionalProperties: false
-      required: [tenant_id, tenant_state, members, as_of]
+      required: [tenant_id, tenant_state, is_synthetic, members, as_of]
       properties:
         tenant_id: {type: string, format: uuid}
         tenant_state: {$ref: "#/components/schemas/TenantState"}
+        is_synthetic:
+          type: boolean
+          description: >-
+            1.2. True when CIS marks the agency synthetic (test / E2E data, shared.tenants.is_canary); false otherwise,
+            including when that column is NULL. Never null. The CRM's Dev-only E2E CIS admin check (root ADR 0006a
+            A10b-1) requires it to be true; no other consumer decision rests on it.
         members:
           type: array
           items: {$ref: "#/components/schemas/Membership"}
