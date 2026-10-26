@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -34,6 +35,7 @@ from _ttv_live_standin import TTV_LIVE_STANDIN_DDL  # noqa: E402
 
 from api.services.data_coverage import queries as q  # noqa: E402
 from api.services.data_coverage.defs import MASTER_TENANT  # noqa: E402
+from services.acp_shared.real_questions import TOPUP_MARKET  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 NOW = datetime(2026, 10, 26, 3, 0, tzinfo=timezone.utc)
@@ -62,7 +64,7 @@ CIS_STATEMENTS = [
     ("SEG", q.SEG, (MASTER_TENANT,)),
     ("SEG_NO_MEMBER_ATOMS", q.SEG_NO_MEMBER_ATOMS, (MASTER_TENANT,)),
     ("GC", q.GC, ()),
-    ("RANK", q.RANK, (MASTER_TENANT,)),
+    ("RANK", q.RANK, (MASTER_TENANT, TOPUP_MARKET)),
     ("ROUTE", q.ROUTE, (MASTER_TENANT,)),
     ("PAA", q.PAA, ()),
     ("EMB", q.EMB, ()),
@@ -243,6 +245,39 @@ async def test_no_statement_reads_the_big_log_tables(conn, name, sql, args):
             pytest.skip("pgvector-only relation absent")
         raise
     assert "llm_call_log" not in plan and "decision_log" not in plan
+
+
+@pytest.mark.asyncio
+async def test_rank_markets_count_only_ranking_markets_not_the_paa_top_up(conn):
+    """r3 review: ``search_demand`` also holds the admin SERP top-up market (TOPUP_MARKET, 'US-PAA2'), never ranked.
+    With US + UK ranked and US / UK / US-PAA2 researched, ``rank.markets`` reads 2 of 2 and is ok (was 2 of 3, a
+    'Gap' from the first load)."""
+    import api.services.data_coverage.build as b
+    from api.services.data_coverage import registry as reg
+
+    await conn.execute("DELETE FROM acp_contract.atom_ranking")
+    await conn.execute("DELETE FROM acp_contract.search_demand")
+    await conn.executemany(
+        "INSERT INTO acp_contract.search_demand (keyword, market, search_volume, people_also_ask, retrieved_on) "
+        "VALUES ($1, $2, $3, '[]'::jsonb, now())",
+        [("hoi an tour", "US", 90), ("hoi an tour", "UK", 40), ("hoi an tour", TOPUP_MARKET, None)])
+    tour_id = uuid.uuid4()
+    await conn.execute("SELECT set_config('app.tenant_id', $1, true)", MASTER_TENANT)   # raw_tours is under RLS
+    await conn.execute("INSERT INTO silver_aa_internal.raw_tours (tour_id, tenant_id, batch_id, src_name, country) "
+                       "VALUES ($1, $2::uuid, $3, 'Hoi An walk zz992', 'Vietnam')",
+                       tour_id, MASTER_TENANT, uuid.uuid4())
+    await conn.execute("INSERT INTO acp_contract.atom_segment (segment_id, canonical_place, canonical_action) "
+                       "VALUES ('zz992_seg', 'Hoi An zz992', 'visit')")
+    await conn.executemany(
+        "INSERT INTO acp_contract.atom_ranking (tour_id, segment_id, recurrence, questions, said, computed_at, "
+        "market, version) VALUES ($1, 'zz992_seg', 1, 1, 1, now(), $2, 1)", [(tour_id, "US"), (tour_id, "UK")])
+    rows = await _run_as(conn, "cis_app", q.RANK, (MASTER_TENANT, TOPUP_MARKET))
+    values = dict(rows[0])
+    assert (values["markets"], values["markets_researched"]) == (2, 2)
+    row = next(r for r in reg.ROWS if r.id == "rank.markets")
+    ok = {"status": "ok", "reason": None, "timing_ms": 1, "tier": "fast", "values": values}
+    out = b.evaluate(row, {"rank": ok}, {"fast": NOW.isoformat()})
+    assert (out["value"], out["missing"], out["status"]) == (2, 0, "ok"), out
 
 
 class _OneConnPool:

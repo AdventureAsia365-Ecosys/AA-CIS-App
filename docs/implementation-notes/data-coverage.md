@@ -36,7 +36,7 @@
   exists the row shows `na: expected gap unavailable (no_data_yet)`.
 - **Critic small items fixed**: `master.active` expected gap = review queue only (can go red); `tp.pins_served` is
   info, `tp.pins_dangling` the must row (+ `tp.pins_not_served` info: kept by design, AA-986 L6); `rank.markets`
-  denominator = markets with search demand (no hard-coded 6); T0 rows exclude `is_canary` tenants (`ten.canary` info
+  denominator = ranking markets with search demand (no hard-coded 6; the PAA top-up market is left out, fix round 3); T0 rows exclude `is_canary` tenants (`ten.canary` info
   row shows them); `IN_DROPS` filters `raw-inbox/` like `IN_BATCHES`; pins labelled "pins ever added". Not taken:
   `tp.purge_no_job` keeps expected 0 (if the 4 events of 23/10 predate the AA-987 job, the fix is a sweep, not a gap).
 - **Admin only** (`OPS_READ`, rbac `["admin"]`, BFF `API_READ_RULES` "data-coverage"), as the design's D10.
@@ -88,6 +88,18 @@
 - **New row `tp.pins_invalid_id`** (info, defect polarity): tp-020 now lists only UUID-shaped pinned ids and counts
   the rest as `pin_events_invalid_id`.
 
+## Fix round 3 (S252 review r3, blocking)
+
+- **`rank.markets` counts ranking markets only**: `acp_contract.search_demand` also holds the admin SERP top-up
+  market (`services.acp_shared.real_questions.TOPUP_MARKET` = `US-PAA2`, AA-779), which is never ranked, so the row
+  read 6 of 7 with a red Gap from the first load. `queries.RANK` now leaves it out of both market counts
+  (`market <> $2`); `sources.rank` binds `TOPUP_MARKET` as `$2` (imported, not hard-coded in the SQL), so the
+  denominator follows the constant if the top-up market is ever renamed. The numerator gets the same filter so it can
+  never exceed the denominator.
+- Tests: unit `test_rank_source_binds_the_paa_top_up_market_and_a_full_market_set_is_ok` (the bound argument, no
+  literal in the SQL, 6 of 6 = ok); integration `test_rank_markets_count_only_ranking_markets_not_the_paa_top_up`
+  (US + UK ranked, US / UK / US-PAA2 researched: 2 of 2, `ok`; the old denominator was 3).
+
 ## Should know
 
 - Ships before tp-020 / bk-025 are applied: those rows read `n/a: unavailable: contract_view_missing` until DB Migrate.
@@ -95,7 +107,7 @@
   `na: error: crm_Not Found` (re-asked every minute, never cached as final).
 - Local runs: unit tests with AWS disabled (no credentials, `AWS_CONFIG_FILE=/dev/null`); the first local run of
   `scripts/export_openapi.py` without that env tried the Sentry DSN secret and stopped at the MFA prompt (no call
-  made). Integration on a throwaway PG 16 cluster: 80 passed, 1 skipped (`catalog.v_tour_component.embedding` needs
+  made). Integration on a throwaway PG 16 cluster: 80 passed (81 after fix round 3), 1 skipped (`catalog.v_tour_component.embedding` needs
   pgvector, as in CI).
 - `frontend/node_modules` is not in the worktree; `tsc --noEmit` and eslint ran against the main checkout's
   node_modules through a temporary symlink (removed): 0 errors, 3 className warnings shared with every admin page.

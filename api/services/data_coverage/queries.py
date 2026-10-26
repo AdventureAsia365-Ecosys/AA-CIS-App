@@ -188,6 +188,8 @@ SELECT (result->'segment_gc'->>'orphans')::int AS orphans,
    AND jsonb_typeof(result->'segment_gc') = 'object'
  ORDER BY finished_at DESC NULLS LAST LIMIT 1"""
 
+# Markets: the ranking markets only. ``search_demand`` also stores the admin SERP top-up under its own market
+# (``services.acp_shared.real_questions.TOPUP_MARKET``, bound as $2), which is never ranked (r3 review).
 RANK = f"""
 WITH {LIVE},
 rk AS (SELECT DISTINCT tour_id FROM acp_contract.atom_ranking WHERE superseded_at IS NULL),
@@ -195,8 +197,9 @@ seg AS (SELECT DISTINCT a.tour_id FROM acp_contract.v_active_tour_atoms a
           JOIN acp_contract.atom_segment_member m ON m.atom_id = a.atom_id WHERE NOT a.deleted)
 SELECT count(seg.tour_id)::int AS with_segment,
        count(*) FILTER (WHERE seg.tour_id IS NOT NULL AND rk.tour_id IS NOT NULL)::int AS with_ranking,
-       (SELECT count(DISTINCT market) FROM acp_contract.atom_ranking WHERE superseded_at IS NULL)::int AS markets,
-       (SELECT count(DISTINCT market) FROM acp_contract.search_demand)::int AS markets_researched
+       (SELECT count(DISTINCT market) FROM acp_contract.atom_ranking
+         WHERE superseded_at IS NULL AND market <> $2)::int AS markets,
+       (SELECT count(DISTINCT market) FROM acp_contract.search_demand WHERE market <> $2)::int AS markets_researched
   FROM live l LEFT JOIN rk ON rk.tour_id = l.tour_id LEFT JOIN seg ON seg.tour_id = l.tour_id"""
 
 ROUTE = f"""

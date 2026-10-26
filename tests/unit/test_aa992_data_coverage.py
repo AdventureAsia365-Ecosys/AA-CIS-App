@@ -172,6 +172,24 @@ def test_real_rows_on_known_numbers():
     assert b.evaluate(by_id["master.active"], sources, {})["status"] == "gap"   # critic item 1
 
 
+def test_rank_source_binds_the_paa_top_up_market_and_a_full_market_set_is_ok(monkeypatch):
+    """r3 review: the ranking market counts leave out TOPUP_MARKET (bound as $2, never hard-coded in the SQL)."""
+    from services.acp_shared.real_questions import TOPUP_MARKET
+
+    seen = {}
+
+    async def row(ctx, sql, *args):
+        seen["sql"], seen["args"] = sql, args
+        return {"with_segment": 883, "with_ranking": 883, "markets": 6, "markets_researched": 6}
+
+    monkeypatch.setattr(src, "_cis_row", row)
+    values = asyncio.run(src.FUNCTIONS["rank"](src.Ctx(None)))
+    assert seen["sql"] is src.q.RANK and seen["args"][1] == TOPUP_MARKET
+    assert TOPUP_MARKET not in src.q.RANK and "market <> $2" in src.q.RANK
+    out = b.evaluate({r.id: r for r in reg.ROWS}["rank.markets"], {"rank": _ok(**values)}, {})
+    assert (out["value"], out["missing"], out["status"]) == (6, 0, "ok")
+
+
 # ── sources ──────────────────────────────────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @pytest.mark.parametrize("exc,status,reason", [

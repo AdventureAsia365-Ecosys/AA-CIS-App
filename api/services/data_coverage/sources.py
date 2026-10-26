@@ -39,6 +39,8 @@ from typing import Any, Awaitable, Callable, Optional
 import asyncpg
 import structlog
 
+from services.acp_shared.real_questions import TOPUP_MARKET
+
 from . import queries as q
 from .defs import MASTER_TENANT
 
@@ -141,6 +143,11 @@ def _simple(sql: str, with_master: bool = True) -> Callable[[Ctx], Awaitable[dic
     async def fn(ctx: Ctx) -> dict:
         return await (_cis_row(ctx, sql, MASTER_TENANT) if with_master else _cis_row(ctx, sql))
     return fn
+
+
+async def rank(ctx: Ctx) -> dict:
+    """Ranking coverage; the market counts leave out the PAA top-up market (never a ranking market)."""
+    return await _cis_row(ctx, q.RANK, MASTER_TENANT, TOPUP_MARKET)
 
 
 async def in_drops(ctx: Ctx) -> dict:
@@ -306,7 +313,7 @@ FUNCTIONS: dict[str, Callable[[Ctx], Awaitable[dict]]] = {
     "seg": _simple(q.SEG),
     "seg_classify": seg_classify,
     "gc": _simple(q.GC, with_master=False),
-    "rank": _simple(q.RANK),
+    "rank": rank,
     "route": _simple(q.ROUTE),
     "paa": _simple(q.PAA, with_master=False),
     "emb": _simple(q.EMB, with_master=False),

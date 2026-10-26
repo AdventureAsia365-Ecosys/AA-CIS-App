@@ -293,7 +293,7 @@ ROWS: tuple[Row, ...] = (
         denominator=f("rank", "with_segment"), denominator_label="live tours with a segment",
         drill="/admin/atom-curation?section=score", sources=("rank",)),
     Row("rank.markets", "aseries", "Markets with current ranking rows", f("rank", "markets"), "must", unit="markets",
-        denominator=f("rank", "markets_researched"), denominator_label="markets with search demand",
+        denominator=f("rank", "markets_researched"), denominator_label="ranking markets with search demand",
         drill="/admin/atom-curation?section=score", sources=("rank",)),
     Row("route.tours", "aseries", "Live tours with a route", f("route", "with_route"), "info",
         denominator=f("route", "live"), denominator_label=LIVE_LABEL,
