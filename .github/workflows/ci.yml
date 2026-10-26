@@ -5,6 +5,10 @@ on:
     branches: [main]
   push:
     branches: [main, "feature/**"]
+  # AA-889 (merge queue): the queue tests each group on a temporary gh-readonly-queue/main/* commit and waits for
+  # every required check there. All jobs run on it, with no path filter, so no required check is left unreported.
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   id-token: write
@@ -51,6 +55,7 @@ jobs:
           GOLDEN_GUARD_KEY: ${{ secrets.GOLDEN_GUARD_KEY }}
           GOLDEN_GUARD_REQUIRE_KEY: >-
             ${{ github.actor != 'dependabot[bot]' && (github.event_name == 'push'
+            || github.event_name == 'merge_group'
             || github.event.pull_request.head.repo.full_name == github.repository) }}
         run: python3 -m services.golden_set.text_guard scan
 
@@ -85,7 +90,7 @@ jobs:
 
       - name: Quality-path diff hash
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           BEFORE_SHA: ${{ github.event.before }}
         run: python3 .github/scripts/quality_paths.py
 
@@ -153,8 +158,8 @@ jobs:
 
       # AA-879: coverage ratchet (replaces --cov-fail-under=30; the real total was ~86%). Fails below the
       # floor in .github/coverage-ratchet.json, or when a PR lowers that floor against the base tip (HEAD^1
-      # of the pull_request merge ref; on a push the base is the previous commit). Below the monthly goal
-      # only warns.
+      # of the pull_request merge ref; on a push or a merge_group run the base is the previous commit: the
+      # base tip or the squash of the PR queued before it). Below the monthly goal only warns.
       - name: Coverage ratchet
         run: |
           BASE_ARGS=()
