@@ -20,6 +20,13 @@ A10b-1 (Nghiệp, S252, option (a)). Purpose: the AA-979 phase 2 re-enrolment E2
 - **Two extra narrowings for the A10b session only** (least privilege, they cost the phase 2 run nothing): the
   address must be on the E2E mailbox domain (`e2e-mail.lumiguides.it.com`, exact, ASCII only, no sub-domain) and a
   new invitation may only be `viewer` or `editor` (never `owner`). Both answer the same 403 `e2e_read_only`.
+- **The send-again checks the stored role too** (review round 2). The resend body carries a client-supplied address
+  and the CRM re-issue re-seals the existing invitation to it, so without a role check an A10b session could take an
+  `owner` invitation a real admin created on a synthetic tenant, send it to an E2E mailbox and claim it as owner.
+  `_refuse_e2e_resend_role` refuses the A10b session (403 `e2e_read_only`, `reason=role`) when the membership's
+  `content_studio_role` is not `viewer` / `editor`, after the row is read and before the relay. It runs after the
+  404/409 checks, but only once `_refuse_e2e_invitation` already passed (synthetic tenant + E2E address), so a real
+  tenant still answers 403 before any membership lookup.
 - **Same 403 detail** (`e2e_read_only`) for every refusal, so the BFF and the Partner spec need no new string. The
   reason is in the log line `tenant_member_invitation_e2e_refused reason=role|address|tenant_not_synthetic` (no
   address logged).
@@ -28,7 +35,8 @@ A10b-1 (Nghiệp, S252, option (a)). Purpose: the AA-979 phase 2 re-enrolment E2
 
 - `api/core/e2e_staff.py`: the two routes, `SYNTHETIC_TENANT_SQL`, `E2E_MAIL_DOMAIN`, `E2E_INVITE_ROLES`,
   `is_e2e_mailbox_address`, `is_synthetic_tenant`.
-- `api/routers/admin_tenant360.py`: `_refuse_e2e_invitation` and its two calls.
+- `api/routers/admin_tenant360.py`: `_refuse_e2e_invitation` and its two calls; `_refuse_e2e_resend_role` on the
+  send-again (stored role).
 - Docstrings: `staff_identity.py`, `staff_bearer.py`; `CONTEXT.md` A10b paragraph.
 - Tests: `tests/unit/test_aa979_a10b_studio_invites.py` (new); `test_aa816_e2e_cis_admin.py` guard updated to the
   four reviewed routes, plus middleware cases for the invitation paths and nearby tenant writes.

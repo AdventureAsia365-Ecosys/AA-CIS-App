@@ -5,8 +5,9 @@ Covers api/core/e2e_staff.py (the two routes on the allow-list, the synthetic-te
 check) and the real app end to end through the bearer middleware, staff_policy and the routes of
 api/routers/admin_tenant360.py: allowed on a synthetic tenant (row + audit + one relay, unchanged), refused 403
 ``e2e_read_only`` on a real tenant (is_canary FALSE or NULL), for an address outside the E2E mailbox domain and for the
-``owner`` role, before any row, audit or relay; every other tenant write stays refused even on a synthetic tenant; a
-normal admin is unaffected. No network, no AWS, no DB.
+``owner`` role (the body's role on a new invitation, the stored role on a send-again), before any row, audit or
+relay; every other tenant write stays refused even on a synthetic tenant; a normal admin is unaffected. No network,
+no AWS, no DB.
 """
 from __future__ import annotations
 
@@ -184,7 +185,8 @@ def real(monkeypatch, issuer):  # noqa: F811
 
     async def fake_list(conn, tenant_id):
         return [{"membership_id": str(directory.invited["membership_id"]), "status": "invited",
-                 "invitation_id": str(directory.invited["invitation_id"])}]
+                 "invitation_id": str(directory.invited["invitation_id"]),
+                 "content_studio_role": directory.invited["content_studio_role"]}]
 
     monkeypatch.setattr(writer, "list_members", fake_list)
     return TestClient(real_app), directory, relays, admin_id
@@ -274,6 +276,41 @@ def test_send_again_on_a_real_tenant_is_refused(real, issuer, tenant):  # noqa: 
     res = _resend(client, issuer, tenant, directory)
     assert (res.status_code, res.json()) == (403, {"detail": "e2e_read_only"})
     assert relays == []
+
+
+@pytest.mark.parametrize("role", ["viewer", "editor"])
+def test_send_again_of_a_viewer_or_editor_invitation_is_allowed(real, issuer, role):  # noqa: F811
+    client, directory, relays, _ = real
+    directory.invited["content_studio_role"] = role
+    res = _resend(client, issuer, SYNTHETIC, directory)
+    assert res.status_code == 200, res.text
+    assert len(relays) == 1
+
+
+def test_send_again_of_an_owner_invitation_is_refused_on_synthetic(real, issuer):  # noqa: F811
+    # The resend re-seals the existing invitation to the body's address: an A10b session must not redirect an owner
+    # invitation a real admin created to an E2E mailbox and claim it as owner.
+    client, directory, relays, _ = real
+    directory.invited["content_studio_role"] = "owner"
+    with structlog.testing.capture_logs() as logs:
+        res = _resend(client, issuer, SYNTHETIC, directory)
+    assert (res.status_code, res.json()) == (403, {"detail": "e2e_read_only"})
+    assert relays == [] and directory.writes == []
+    assert any(e.get("event") == "tenant_member_invitation_e2e_refused" and e.get("reason") == "role" for e in logs)
+    (row,), = [directory.request_audit]
+    assert 403 in row
+
+
+def test_a_normal_admin_sends_an_owner_invitation_again_as_before(real, issuer):  # noqa: F811
+    client, directory, relays, _ = real
+    directory.invited["content_studio_role"] = "owner"
+    directory.add(role="admin", email="staff@adventure.asia", iss=ISS, sub="another-sub")
+    token = issuer.token(sub="another-sub", email="staff@adventure.asia", **{"cognito:groups": ["cis-admin"]})
+    res = client.post(f"/admin/tenants/{SYNTHETIC}/members/{directory.invited['membership_id']}/invitation/send",
+                      json={"email": "new.owner@agency.example", "locale": "en"},
+                      headers={"Authorization": f"Bearer {token}"})
+    assert res.status_code == 200, res.text
+    assert len(relays) == 1
 
 
 def test_send_again_to_another_address_is_refused(real, issuer):  # noqa: F811

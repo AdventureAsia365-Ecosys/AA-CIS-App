@@ -24,7 +24,7 @@ TEMPORARY, removed at the end of project code with A10 / A10a (AA-816):
   (403 ``e2e_read_only``, before any write or relay) unless the tenant is synthetic (``shared.tenants.is_canary IS
   TRUE``, :data:`SYNTHETIC_TENANT_SQL`), the invitee is an address of the E2E mailbox domain
   (:data:`E2E_MAIL_DOMAIN`, :func:`is_e2e_mailbox_address`) and the Content studio role is ``viewer`` or ``editor``
-  (:data:`E2E_INVITE_ROLES`).
+  (:data:`E2E_INVITE_ROLES`: the body's role on a new invitation, the membership's stored role on a send-again).
 """
 from __future__ import annotations
 
