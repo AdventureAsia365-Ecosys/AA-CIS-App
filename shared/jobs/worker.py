@@ -395,6 +395,10 @@ async def _main() -> None:
         redis = aioredis.from_url(redis_url, encoding="utf-8", decode_responses=True, **redis_kwargs)
     worker = Worker(pool, max_parallel=max_parallel, resources={"redis": redis})
     logger.info("job_worker_config", max_parallel=max_parallel, executor_threads=2 * max_parallel)
+    # AA-919 (WM-18 scope 5): a deploy can change the gate taxonomy (services/quality/registry.TAXONOMY_VERSION): flag
+    # the active writing-memory releases whose fingerprint no longer matches (they keep serving). Never fails the start.
+    from services.writing_memory.releases import reverify_scan_safe
+    await reverify_scan_safe(pool, actor="system:worker_start")
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, worker._stopping.set)

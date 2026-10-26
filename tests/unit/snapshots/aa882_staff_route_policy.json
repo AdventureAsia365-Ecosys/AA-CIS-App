@@ -595,6 +595,18 @@
     "capability": "tenant.read",
     "module": "api.routers.admin_writing_memory"
   },
+  "GET /admin/writing-memory/releases": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "GET /admin/writing-memory/releases/active": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "GET /admin/writing-memory/releases/{release_id}": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_writing_memory"
+  },
   "GET /admin/writing-memory/signals": {
     "capability": "tenant.read",
     "module": "api.routers.admin_writing_memory"
@@ -608,6 +620,10 @@
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/summary": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "GET /admin/writing-memory/writers": {
     "capability": "tenant.read",
     "module": "api.routers.admin_writing_memory"
   },
@@ -732,6 +748,10 @@
     "module": "api.routers.admin_writing_memory"
   },
   "PATCH /admin/writing-memory/signals/{signal_id}/fact": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "PATCH /admin/writing-memory/writers/{writer}": {
     "capability": "ai.admin",
     "module": "api.routers.admin_writing_memory"
   },
@@ -1132,6 +1152,34 @@
     "module": "api.routers.admin_writing_memory"
   },
   "POST /admin/writing-memory/candidates/{rule_id}/rollback": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "POST /admin/writing-memory/releases": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "POST /admin/writing-memory/releases/reverify-scan": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "POST /admin/writing-memory/releases/{release_id}/activate": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "POST /admin/writing-memory/releases/{release_id}/approve": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "POST /admin/writing-memory/releases/{release_id}/evidence": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "POST /admin/writing-memory/releases/{release_id}/reject": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "POST /admin/writing-memory/releases/{release_id}/rollback": {
     "capability": "ai.admin",
     "module": "api.routers.admin_writing_memory"
   },

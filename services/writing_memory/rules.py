@@ -269,10 +269,23 @@ async def rollback(conn, rule_id: str, *, actor: str, reason: str) -> Optional[d
     return dict(row) if row else None
 
 
+_EXPIRE_SQL = ("UPDATE shared.writing_rule SET status = 'expired', updated_at = now() "
+               "WHERE status IN ('candidate', 'approved') AND expires_at < now()")
+# AA-919 (WM-18): a rule a release holds on its way to activation (draft / evaluated / approved) is not expired under
+# it: the release's first activation needs its rules approved or active (trigger writing_memory_release_guard).
+_HELD_BY_RELEASE = (" AND NOT EXISTS (SELECT 1 FROM shared.writing_memory_release r "
+                    "WHERE writing_rule.rule_id = ANY (r.rule_ids) AND r.status IN ('draft', 'evaluated', 'approved'))")
+
+
 async def expire_stale(conn) -> int:
-    """Candidates and approved rules past expires_at -> expired. Never an active rule (a release change)."""
-    res = await conn.execute("UPDATE shared.writing_rule SET status = 'expired', updated_at = now() "
-                             "WHERE status IN ('candidate', 'approved') AND expires_at < now()")
+    """Candidates and approved rules past expires_at -> expired. Never an active rule (a release change), never a
+    rule a release in draft / evaluated / approved holds (AA-919; before CIS 287 there is no release table)."""
+    import asyncpg
+    try:
+        async with conn.transaction():       # a savepoint inside the caller's transaction
+            res = await conn.execute(_EXPIRE_SQL + _HELD_BY_RELEASE)
+    except asyncpg.UndefinedTableError:      # code deployed before CIS 287
+        res = await conn.execute(_EXPIRE_SQL)
     return int(str(res).split()[-1] or 0)
 
 
