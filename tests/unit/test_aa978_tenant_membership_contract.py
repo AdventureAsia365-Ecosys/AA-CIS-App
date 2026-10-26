@@ -34,9 +34,9 @@ from tests.unit.aa976_m2m import CRM, OTHER_CLIENT, install_m2m
 
 CONTRACT = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "tenant.membership.v1.openapi.yaml"
 DOC = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
-# sha256 of AA-Ecosys docs/contracts/tenant.membership.v1.openapi.yaml (info.version 1.0, S250 description fix).
+# sha256 of AA-Ecosys docs/contracts/tenant.membership.v1.openapi.yaml (info.version 1.1, AA-979 activateInvitation).
 # Update the root file first, copy it here byte for byte, then set this to `sha256sum` of the root file.
-ROOT_CONTRACT_SHA256 = "6f327a77b66bde7142116644dc03e388ca2f354f48b03baebce35a30b82fcfa7"
+ROOT_CONTRACT_SHA256 = "44ee8453dad1ee9fd1993f11f8792ce52857976d2a2585365d1e26e41bc39609"
 
 TENANT = str(uuid.uuid4())
 ISS = "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_zz978partner"
@@ -176,7 +176,8 @@ def test_the_router_serves_exactly_the_contract_paths():
     assert served == set(DOC["paths"])
     assert DOC["servers"] == [{"url": "/tenant/membership/v1"}]
     assert DOC["components"]["securitySchemes"]["m2m"]["flows"]["clientCredentials"]["scopes"] == {
-        m2m_auth.SCOPE_TENANT_READ: "Read tenants and memberships"}
+        m2m_auth.SCOPE_TENANT_READ: "Read tenants and memberships",
+        m2m_auth.SCOPE_TENANT_ACTIVATE: "Bind an accepted invitation's partner-pool identity (1.1)"}
 
 
 # ── auth ────────────────────────────────────────────────────────────────────

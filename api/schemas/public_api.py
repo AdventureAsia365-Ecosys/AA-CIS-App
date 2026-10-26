@@ -61,6 +61,30 @@ class TenantSession(BaseModel):
     plan_tier: Optional[str]
 
 
+class PartnerTenantSession(BaseModel):
+    """POST /auth/tenant-session (AA-979) — a Content studio session opened with a partner-pool sign-in."""
+    token: str
+    tenant_id: str
+    tenant_name: Optional[str]
+    plan_tier: Optional[str]
+    content_studio_role: Literal["owner", "editor", "viewer"]
+    membership_id: str
+    expires_at: str
+    expires_in: int
+
+
+class PartnerTenantChoice(BaseModel):
+    tenant_id: str
+    tenant_name: Optional[str]
+    content_studio_role: Literal["owner", "editor", "viewer"]
+    membership_id: str
+
+
+class PartnerTenantMemberships(BaseModel):
+    """GET /auth/tenant-memberships (AA-979) — the agencies the person may open in the Content studio."""
+    memberships: List[PartnerTenantChoice]
+
+
 class Quota(BaseModel):
     """GET /v1/quota — this month's rewrite quota of the calling tenant (read-only)."""
     plan_tier: Optional[str]
@@ -298,6 +322,13 @@ class MembershipEvent(_CatalogModel):
     occurred_at: str
     tenant_id: str
     membership: Optional[MembershipItem] = None
+
+
+class MembershipActivated(_CatalogModel):
+    """POST /tenant/membership/v1/invitations/{invitation_id}/activate (contract 1.1, AA-979) — the bound membership;
+    ``changed`` false when it was already active with the same identity (a retry)."""
+    membership: MembershipItem
+    changed: bool
 
 
 class MembershipEventPage(_CatalogModel):

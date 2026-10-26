@@ -88,6 +88,50 @@ def _create_jwt(tenant_id: str, name: str, plan_tier: str, client: Optional[str]
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
 
 
+PARTNER_SESSION_MAX_S = 15 * 60
+PARTNER_AMR = "partner"
+STUDIO_ROLES = ("owner", "editor", "viewer")
+
+
+def _create_partner_session_jwt(tenant_id: str, name: str, plan_tier: str, *, membership_id: str,
+                                content_studio_role: str, not_after: Optional[datetime] = None) -> tuple[str, datetime]:
+    """AA-979 P2b — the tenant JWT of a partner-pool sign-in (``POST /auth/tenant-session``).
+
+    Same shape and secret as the API-key token (``role=tenant``, ``sub`` = tenant id), so every ``/v1/*`` route and
+    ``/auth/verify-tenant`` accept it unchanged, plus: ``client=portal`` (an unmetered portal session, AA-760),
+    ``amr=partner`` (how the session was opened), ``mid`` (the membership) and ``csr`` (the Content studio role the
+    tenant role middleware enforces). Lives at most :data:`PARTNER_SESSION_MAX_S` and never past ``not_after`` (the
+    partner access token's own expiry), so a removed member or a disabled account loses the studio within 15 min."""
+    if content_studio_role not in STUDIO_ROLES:
+        raise ValueError("unknown Content studio role")
+    now = datetime.now(timezone.utc)
+    exp = now + timedelta(seconds=PARTNER_SESSION_MAX_S)
+    if not_after is not None and not_after < exp:
+        exp = not_after
+    payload = {
+        "sub":       tenant_id,
+        "name":      name,
+        "plan_tier": plan_tier,
+        "role":      "tenant",
+        "client":    PORTAL_CLIENT,
+        "amr":       PARTNER_AMR,
+        "mid":       membership_id,
+        "csr":       content_studio_role,
+        "iat":       now,
+        "exp":       exp,
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG), exp
+
+
+def studio_role_of(payload: dict) -> Optional[str]:
+    """AA-979 — the Content studio role a verified tenant JWT carries (``csr``), or None for an API-key token (owner
+    behaviour, unchanged). An unknown value is treated as the most restrictive role (viewer)."""
+    if "csr" not in payload:
+        return None
+    role = payload.get("csr")
+    return role if role in STUDIO_ROLES else "viewer"
+
+
 def is_portal_session(payload: dict) -> bool:
     """AA-760 — True for a verified tenant JWT minted by the portal's sign-in (claim client="portal")."""
     return payload.get("client") == PORTAL_CLIENT

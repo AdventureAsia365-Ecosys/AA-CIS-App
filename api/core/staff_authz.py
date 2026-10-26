@@ -205,6 +205,9 @@ POLICY: dict[tuple[str, str], str] = {
     ("GET", "/admin/tenants/{tenant_id}/members"): TENANT_READ,
     ("PATCH", "/admin/tenants/{tenant_id}/members/{membership_id}"): TENANT_WRITE,
     ("POST", "/admin/tenants/{tenant_id}/members/{membership_id}/remove"): TENANT_WRITE,
+    # AA-979 P2b — Content studio invitations (CIS row + the CRM delivers the AA system mail)
+    ("POST", "/admin/tenants/{tenant_id}/members/invitations"): TENANT_WRITE,
+    ("POST", "/admin/tenants/{tenant_id}/members/{membership_id}/invitation/send"): TENANT_WRITE,
 
     # ── admin_pipeline — Upload (S0), every staff role
     ("POST", "/admin/upload-url"): CONTENT_WRITE,

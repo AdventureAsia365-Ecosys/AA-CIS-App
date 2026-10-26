@@ -106,6 +106,11 @@ class AdminTenantAuditAction:
     # tenant.membership.v1 feed event the partner CRM applies). details: before/after role or status; no identity.
     MEMBER_ROLE_CHANGED = "tenant.member_role_changed"
     MEMBER_REMOVED = "tenant.member_removed"
+    # AA-979 P2b — staff invited a Content studio member (row created invited; the CRM delivers the mail) and the
+    # CRM's M2M activation bound the partner-pool identity (details: status + identity fingerprint, never the
+    # identity or an e-mail).
+    MEMBER_INVITED = "tenant.member_invited"
+    MEMBER_ACTIVATED = "tenant.member_activated"
 
 
 async def write_audit_log(

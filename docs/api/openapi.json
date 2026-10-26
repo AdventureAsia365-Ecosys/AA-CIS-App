@@ -2718,6 +2718,69 @@
         "title": "ManualShapeRequest",
         "type": "object"
       },
+      "MemberInvite": {
+        "additionalProperties": false,
+        "description": "POST body: the address (relayed once to the CRM, never stored in CIS), the Content studio role CIS decides,\nand the language of the AA system mail. No CRM role: CIS never grants one (ADR 0010 §7).",
+        "properties": {
+          "content_studio_role": {
+            "enum": [
+              "owner",
+              "editor",
+              "viewer"
+            ],
+            "title": "Content Studio Role",
+            "type": "string"
+          },
+          "email": {
+            "maxLength": 254,
+            "minLength": 6,
+            "pattern": "^[^@\\s]{1,64}@[^@\\s]{1,189}\\.[^@\\s]{2,63}$",
+            "title": "Email",
+            "type": "string"
+          },
+          "locale": {
+            "default": "en",
+            "enum": [
+              "en",
+              "vi"
+            ],
+            "title": "Locale",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "content_studio_role"
+        ],
+        "title": "MemberInvite",
+        "type": "object"
+      },
+      "MemberInviteResend": {
+        "additionalProperties": false,
+        "properties": {
+          "email": {
+            "maxLength": 254,
+            "minLength": 6,
+            "pattern": "^[^@\\s]{1,64}@[^@\\s]{1,189}\\.[^@\\s]{2,63}$",
+            "title": "Email",
+            "type": "string"
+          },
+          "locale": {
+            "default": "en",
+            "enum": [
+              "en",
+              "vi"
+            ],
+            "title": "Locale",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "MemberInviteResend",
+        "type": "object"
+      },
       "MemberRoleChange": {
         "additionalProperties": false,
         "description": "PATCH body: the Content studio role only. A CRM role has no field here (CIS can never grant one).",
@@ -2736,6 +2799,25 @@
           "content_studio_role"
         ],
         "title": "MemberRoleChange",
+        "type": "object"
+      },
+      "MembershipActivated": {
+        "additionalProperties": false,
+        "description": "POST /tenant/membership/v1/invitations/{invitation_id}/activate (contract 1.1, AA-979) — the bound membership;\n``changed`` false when it was already active with the same identity (a retry).",
+        "properties": {
+          "changed": {
+            "title": "Changed",
+            "type": "boolean"
+          },
+          "membership": {
+            "$ref": "#/components/schemas/MembershipItem"
+          }
+        },
+        "required": [
+          "membership",
+          "changed"
+        ],
+        "title": "MembershipActivated",
         "type": "object"
       },
       "MembershipEvent": {
@@ -3007,6 +3089,131 @@
           "file_base64"
         ],
         "title": "ParseDocxRequest",
+        "type": "object"
+      },
+      "PartnerTenantChoice": {
+        "properties": {
+          "content_studio_role": {
+            "enum": [
+              "owner",
+              "editor",
+              "viewer"
+            ],
+            "title": "Content Studio Role",
+            "type": "string"
+          },
+          "membership_id": {
+            "title": "Membership Id",
+            "type": "string"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "tenant_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tenant Name"
+          }
+        },
+        "required": [
+          "tenant_id",
+          "tenant_name",
+          "content_studio_role",
+          "membership_id"
+        ],
+        "title": "PartnerTenantChoice",
+        "type": "object"
+      },
+      "PartnerTenantMemberships": {
+        "description": "GET /auth/tenant-memberships (AA-979) — the agencies the person may open in the Content studio.",
+        "properties": {
+          "memberships": {
+            "items": {
+              "$ref": "#/components/schemas/PartnerTenantChoice"
+            },
+            "title": "Memberships",
+            "type": "array"
+          }
+        },
+        "required": [
+          "memberships"
+        ],
+        "title": "PartnerTenantMemberships",
+        "type": "object"
+      },
+      "PartnerTenantSession": {
+        "description": "POST /auth/tenant-session (AA-979) — a Content studio session opened with a partner-pool sign-in.",
+        "properties": {
+          "content_studio_role": {
+            "enum": [
+              "owner",
+              "editor",
+              "viewer"
+            ],
+            "title": "Content Studio Role",
+            "type": "string"
+          },
+          "expires_at": {
+            "title": "Expires At",
+            "type": "string"
+          },
+          "expires_in": {
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "membership_id": {
+            "title": "Membership Id",
+            "type": "string"
+          },
+          "plan_tier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Tier"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "tenant_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tenant Name"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "tenant_id",
+          "tenant_name",
+          "plan_tier",
+          "content_studio_role",
+          "membership_id",
+          "expires_at",
+          "expires_in"
+        ],
+        "title": "PartnerTenantSession",
         "type": "object"
       },
       "PatchRuleRequest": {
@@ -25774,6 +25981,98 @@
         ]
       }
     },
+    "/admin/tenants/{tenant_id}/members/invitations": {
+      "post": {
+        "operationId": "invite_tenant_member_admin_tenants__tenant_id__members_invitations_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "title": "X-Admin-User-Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemberInvite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "AA-979 — invite a Content studio member (CIS row + CRM-delivered AA system mail)",
+        "tags": [
+          "admin-tenant360"
+        ]
+      }
+    },
     "/admin/tenants/{tenant_id}/members/{membership_id}": {
       "patch": {
         "operationId": "patch_tenant_member_admin_tenants__tenant_id__members__membership_id__patch",
@@ -25871,6 +26170,99 @@
           }
         },
         "summary": "AA-978 — change a member's Content studio role (owner / editor / viewer)",
+        "tags": [
+          "admin-tenant360"
+        ]
+      }
+    },
+    "/admin/tenants/{tenant_id}/members/{membership_id}/invitation/send": {
+      "post": {
+        "operationId": "resend_tenant_member_invitation_admin_tenants__tenant_id__members__membership_id__invitation_send_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "membership_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Membership Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemberInviteResend"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "AA-979 — send a Content studio invitation again (invited members only)",
         "tags": [
           "admin-tenant360"
         ]
@@ -30235,6 +30627,48 @@
         ]
       }
     },
+    "/auth/tenant-memberships": {
+      "get": {
+        "operationId": "tenant_memberships_auth_tenant_memberships_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PartnerTenantMemberships"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "AA-979 — the agencies a partner-pool person may open in the studio",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/tenant-session": {
+      "post": {
+        "operationId": "tenant_session_auth_tenant_session_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PartnerTenantSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "AA-979 — partner-pool access token -> short Content studio tenant JWT",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/auth/verify-admin": {
       "post": {
         "description": "Verify a staff session token (server-side, called by the Next.js middleware and BFF) — mirrors\n/auth/verify-tenant. The path is chosen by the unverified `iss` (AA-816 C3):\n\n- Cognito access token (`iss` = the WORKFORCE issuer): WORKFORCE x {cis-admin, breakglass} verifier (C2), then\n  api/core/staff_identity.py: a `cis-*` group is required (403 otherwise), the row is found by\n  (cognito_iss, cognito_sub) or bound once by email on the first sign-in, 401 when unknown or inactive,\n  role = highest `cis-*` group (a difference with the DB role is logged as drift), last_login_at set\n  (best effort).\n- Any other `iss` (EXTERNAL portal, Booking RS256): 401, never a staff session.\n- Legacy HS256 token (no `iss`): gated by LEGACY_ADMIN_LOGIN_ENABLED (default OFF since AA-816 S2). Re-reads\n  shared.admin_users (cached 60 s): 401 when the account is gone or inactive, and the role returned is the\n  DB role, not the JWT claim, so the BFF forwards the current role (x-admin-role) and staff_policy\n  enforces it within the cache TTLs, not at the 24 h token expiry.",
@@ -30723,6 +31157,49 @@
           }
         },
         "summary": "List Membership Events",
+        "tags": [
+          "tenant-membership"
+        ]
+      }
+    },
+    "/tenant/membership/v1/invitations/{invitation_id}/activate": {
+      "post": {
+        "description": "AA-979 P2b (contract 1.1): bind the accepted person's partner-pool identity to the invited membership.\n\nThe identity must be of the partner pool (``api.core.partner_identity.partner_issuer``): a Content studio member\nsigns in there and nowhere else. 200 with the Membership (``changed`` false for the same identity again: the CRM's\nretry), 404 unknown invitation, 409 ``conflict`` with ``reason`` identity_mismatch / membership_removed /\nalready_member, 400 a body the contract does not accept.",
+        "operationId": "activate_invitation_tenant_membership_v1_invitations__invitation_id__activate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "invitation_id",
+            "required": true,
+            "schema": {
+              "title": "Invitation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembershipActivated"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Activate Invitation",
         "tags": [
           "tenant-membership"
         ]
