@@ -459,7 +459,13 @@ class TestT9Prompt:
         an AGES rule (no age, age band or minimum age the seed does not state; the AUDIENCE line's ages are the
         brand's customers), a CAUSE AND SCOPE rule (no 'established because …' the seed does not link, no widened
         fact) and 'feels like (cold water, a quiet hall)' in the scene-detail line; NUMBERS no longer lists 'age':
-        writer_prompt_version afc08095 → 24363541. `single` and `route` do not change."""
+        writer_prompt_version afc08095 → 24363541. `single` and `route` do not change.
+        Updated AA-790 round 4 (S252 4-arm panel of round 3, AI-tells 5.22, 26/10/2026): PROMPT_RULES adds 'not as A
+        but as B' / 'A rather than B', more verdict lines, template closers, lists of three, CTA label lines and ten
+        DON'T / WRITE INSTEAD pairs from the panel quotes; SYSTEM_PROMPT gets the silent self-check
+        (ai_tells.SELF_CHECK_RULE) before the output line: writer_prompt_version 24363541 → 0463a554. The FAMILY
+        BRAND line (ai_tells.family_presence_rule) is user-prompt only and the fixture pack is not a family brand,
+        so `single` and `route` do not change."""
         pack = {"brand_name": "Trail Pulse", "brand_type": "Young active adventure travel brand",
                 "core_idea": "Active trips for people who like to move.", "customer_segment": "25-40 years old",
                 "voice": ["Energetic", "Fresh", "Direct", "Friendly", "Modern", "Confident", "Lightly playful"],
@@ -480,7 +486,7 @@ class TestT9Prompt:
         def sha(s):
             return hashlib.sha256(s.encode()).hexdigest()
         assert GOAL["key"] == GOALS[0]["key"]
-        assert sha(SYSTEM_PROMPT) == "24363541add37e3176a6dd461aa3f9dcc5240e7846b426735f07da793c42a725"
+        assert sha(SYSTEM_PROMPT) == "0463a5546d3f86d681fdcfc45053f5da14a09d6de8646b84753b4fa9b7c81f95"
         assert sha(single) == "30305b79dd6ff24837d28da9639d06e32a6cefbaf78eca0aff7fe8478883458a"
         assert sha(route) == "c212a3a201ac00f5d8c3f20d9889b1a58e893375c5d93d1e45fa2669720be78a"
 

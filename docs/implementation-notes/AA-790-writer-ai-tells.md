@@ -1076,3 +1076,129 @@ not have.
 - A separate run of the 15 sentences (both seeds, both positions, rewrite + `final_pass`) gives 0 changed on main and
   0 changed on the branch.
 - The $0 census was not rerun. The regexes changed only toward cutting less, and linear-time budgets are unchanged.
+
+## Round 4 (S252, 26/10/2026)
+
+Input: a blind 4-arm panel (pilot / round 1 / round 2 / round 3, 20 pieces each, same four lenses) on round 3 as
+live (`writer_prompt_version` `24363541`). AI-tells scored 5.22 against a bar of 5.5. Terra Family brand voice
+scored 6.85. The judges' reasons quote the writer's own shapes: staccato denials ('X is not A. It is B',
+'not as … but as …', '… rather than a souvenir'), verdict and aphorism lines ('earns its place', 'that fact
+matters', 'is the point', 'asks something of a traveller before it gives anything back', 'travels home with you'),
+template closers, lists of three used for rhythm, and label lines before the CTA. On Terra, children appear once
+or only in general terms. The round-3 pass already preserves facts, so this round is **prompt-side only**. The
+post-pass gets no new deletion.
+
+### Decisions
+
+- **R4-D1: the AI-TELLS brief now gives concrete DON'T / WRITE INSTEAD pairs** (`ai_tells.PROMPT_RULES`).
+  - The existing bullets keep their wording, and every pinned phrase is still there. The bullets now also name
+    these frames:
+    - 'not as A but as B' and 'A rather than B'
+    - four more verdict lines
+    - template closers
+    - lists of three
+    - label lines before the CTA
+  - A denial stays only when the denial is itself a practical fact from the seed ('Lunch is not included.'). This
+    matches what the pass protects (`_PROTECTED_RE` / `_PRACTICAL_RE`).
+  - There are ten pairs. Each negative example paraphrases a panel quote, keeping a short phrase at most. Places are
+    swapped for generic ones (fortress, steppe, valley, weaving), and no example is longer than 16 words.
+  - The positive half never carries a fact of its own. It is one of three things:
+    - a `<…>` slot filled from the content seed ('The fortress <does what the content seed says it does>.');
+    - 'nothing' (the line goes);
+    - the call to action alone.
+  - Reason: a concrete rewrite such as 'still houses the district's monks' would be a fact the writer could copy
+    into an unrelated piece. Source fidelity outranks a vivid example.
+- **R4-D2: a silent self-check is the last rule before the output line** (`ai_tells.SELF_CHECK_RULE`). It goes
+  into `SYSTEM_PROMPT` after VISIT DETAIL and directly before "Return ONLY the final content itself", so it is the
+  last thing the writer reads. It names the frames as "make sure no sentence has the form …" and tells the writer
+  to rewrite such a sentence as the plain fact or delete it. It also says "never mention it in the piece", so the
+  check does not leak into the output as meta-commentary.
+- **R4-D3: there is a FAMILY BRAND line, and it is separate from `brand_voice_rule`**
+  (`ai_tells.family_presence_rule`, `FAMILY_RULE`).
+  - When it is added: when the pack's **voice** or **brand type** names families or children ('Family-aware',
+    'Premium family adventure travel brand', 'parents', 'kids'). A negated word ('not a family brand') does not
+    count.
+  - When it is not added: the audience line alone never adds it, because a general brand can list 'couples and
+    families'. It is not keyed on `core_idea` either.
+  - What it says:
+    - SOURCE FIDELITY comes first.
+    - The family appears in every section, but only through seed or FACTS facts: who in the family each fact is
+      for, and what a parent can plan from it (timing, effort, what is optional, where the night is) when the seed
+      states it.
+    - An age, an age band or 'suitable for children' appears only when the seed or FACTS state one. The AUDIENCE
+      line's ages are the brand's customers, never this trip (the same rule as round 3's AGES).
+    - The writer never invents what children feel, learn or remember, never writes 'works for every age', and uses
+      no school-trip framing (the panel flagged 'something a classroom cannot' and 'easy to explain to younger
+      travellers').
+    - One plain family sentence per section is enough. When a section's seed facts give a family nothing to use,
+      the section states those facts and adds no made-up family line.
+  - Why it is separate from `brand_voice_rule`: the round-2 contract test pins `brand_voice_rule(FAMILY) == ""`,
+    and the PACE and RESTRAINT lines must not move (round-3 test). The line is appended in `build_user_prompt`
+    right after `brand_voice_rule`, on every channel.
+- **R4-D4: the versions.**
+  - `writer_prompt_version` moves from `24363541` to **`0463a554`**. This is the `SYSTEM_PROMPT` hash, and the
+    guard docstring carries a dated note.
+  - `single` and `route` (the user-prompt hashes) do not change: the fixture pack is Trail Pulse, not a family
+    brand.
+  - `AI_TELLS_VERSION` stays `ai_tells.v3`, because `rewrite` and `census` behave the same.
+
+### Changed (vs the round-4 brief)
+
+- The brief asked for 6–10 pairs. There are 10, because the panel quotes fall into ten distinct shapes. The test
+  allows 6–10.
+- The brief said to paraphrase panel quotes. A first draft kept the quotes nearly verbatim (dzong / Mongolia /
+  'template still being built'). They were rewritten to generic places and wording, keeping short phrases only.
+
+### Tradeoffs
+
+- **The prompt is longer.** `SYSTEM_PROMPT` goes from 1471 to about 2060 words (+~800 input tokens per write),
+  and a family-brand user prompt gains about 190 words. At T9 write volume the cost is negligible next to the
+  output. The risk is that more rules dilute attention. The self-check at the end is the counterweight.
+- **'A rather than B' is now discouraged everywhere.** Some uses are factual ('by boat rather than by road' when
+  the seed says so). The prompt keeps the practical-fact exception, and the pass is unchanged. A legitimate one
+  therefore survives if the writer writes it.
+- **The family line can push toward a formula** ('For families, …' in every section). It asks for one plain
+  sentence at most and allows none when the seed gives nothing. The panel's brand-voice lens judges whether it
+  reads naturally.
+- **The family line is user-prompt only, so `writer_prompt_version` does not cover it.** This is the same as PACE
+  and RESTRAINT already. A future change to the family line alone would not move the version. The
+  `writer_input_snapshot` brand pack and the code SHA still identify it.
+
+### $0 baseline (the 20 round-3 texts, `.tmp-session/s252/aa790/aa790-repanel-r3.json`)
+
+The scratch script runs `ai_tells.census` and `residue` with this branch's code (the pass did not change), plus a
+regex count of the round-4 target shapes. The seed is not stored in that file, so the census context has the CTA
+and brand words only.
+
+- Writer-side census (stored, before the pass): 19 fixable edits. By kind: stock word 11, semicolon split 5, not X
+  but Y 1, denial before its affirmation 1, verdict line 1.
+- Residue: 6 lines. 666 sentences, mean 20.9 words, 41 over 35 words.
+- Final text (after the pass): 0 fixable edits, residue 6, 40 sentences over 35 words.
+- Round-4 target shapes in the final texts: **65** in total.
+  - 'rather than': 15
+  - 'is not … . It is': 10
+  - 'matters' / 'is the point': 9
+  - 'not as / only … but': 6
+  - aphorisms (asks / gives / travels home / stays with): 6
+  - 'the shape / kind of': 5
+  - lists of three: 5
+  - 'worth holding' and similar: 4
+  - 'earns its': 3
+  - 'the word "…"': 1
+  - 'more than a': 1
+  - CTA label lines: 0
+- The deterministic pass sees almost none of these (it already preserves facts). That is why this round works on
+  the writer. **This is a baseline only. The real check is the paid re-panel the orchestrator runs after deploy.**
+  Rerun the same script on the round-4 texts and compare the shape total and residue with 65 / 6.
+
+### Should know
+
+- Tests:
+  - New file `tests/unit/test_aa790_writer_round4.py` (27 tests): brief frames, 6–10 pairs, each positive is a
+    slot / delete / CTA, each negative ≤ 16 words, self-check position, no em-dash / 'premium' / AA, the version,
+    family-rule triggers (5) and non-triggers (9), its source-fidelity wording, every channel, order after the
+    energy line and before the blog format, PACE / RESTRAINT unchanged.
+  - The 30 unit files that touch the writer prompt or `ai_tells`: 2071 passed. The 99 files that import
+    `acp_content_writing` (round 4 included): 4360 passed in about 52 s, run on the final prompt text.
+- `tests/unit/test_aa771_s234_voice_contract.py:140` has an E501 (123 characters). It is already on main, and this
+  branch does not touch that line.
