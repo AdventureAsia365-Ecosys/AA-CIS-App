@@ -90,8 +90,13 @@ tenant. It reaches a writer only through a versioned **release**. Dated invarian
       also filters explicitly with `tenant_id = $1`, and a CI test proves that tenant A's rules,
       examples and summaries never resolve for tenant B.
 11. **Tenant text lives only in deletable tables.** These are `writing_signal`, the tenant-scoped
-    `writing_rule` and `writing_exemplar` rows, and `writing_memory_shadow` (shadow outputs).
-    - An offboarding delete removes them through the DRY-RUN procedure.
+    `writing_rule` and `writing_exemplar` rows, `writing_memory_shadow` (shadow outputs), and the
+    tenant-scoped golden-set rows `eval_golden_item` (frozen inputs with the tenant brand pack
+    inlined, outputs, labels) and `eval_item_result` (regenerated outputs) (CIS 284, AA-919; amended
+    S252, critic 37). `eval_golden_set` is a platform row and holds platform inputs only (CHECK).
+    - An offboarding delete removes them through the DRY-RUN procedure. The golden-set fixture and
+      score files in S3 bronze are an operator checklist step (cut a new fixture version without the
+      tenant, import it, delete the old objects); the importer refuses an offboarded tenant.
     - `acp_shared.audit_log` (append-only, hash-chained) keeps only ids, hashes and reason chips.
     - Admin sentence-edit text that is already in `audit_log` cannot be deleted. It is a retention
       exception (D16), to be listed in the AI Use Register (AA-804).
