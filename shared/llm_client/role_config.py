@@ -114,11 +114,12 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
     # UI/report grouping by stage treats both as the same stage (label "A3 atomize").
     "a3_atomize":         StageConfig("a3_atomize", "validate", "openai", "gpt-6-luna", "acc3",
                                       fallback_model_ids=("haiku",)),
-    # AA-772 place cards. S234 (migration 222, A/B n=30): draft on GPT-5.6 Luna (27/27 identity,
-    # 92% facts kept by a cross-vendor check, ~12x cheaper than Sonnet), fact check on Claude Haiku
-    # — both `validate` stages (ADR 0008), draft and check still on different vendors.
-    "a3_place_card":      StageConfig("a3_place_card", "validate", "openai", "gpt-5.6-luna", "acc3",
-                                      fallback_model_ids=("sonnet",)),
+    # AA-772 place cards. S234 (migration 222, A/B n=30): draft on GPT-5.6 Luna, fact check on Claude Haiku
+    # — both `validate` stages (ADR 0008), draft and check on different vendors. AA-784 (S252, migration 286,
+    # web-sourced blind eval): draft on GPT-6 Luna (0/97 wrong kept facts vs 4.0% live), fallback GPT-5.6 Luna —
+    # an OpenAI-vendor fallback, so a fallback draft is still checked by another vendor (222's Sonnet was not).
+    "a3_place_card":      StageConfig("a3_place_card", "validate", "openai", "gpt-6-luna", "acc3",
+                                      fallback_model_ids=("gpt-5.6-luna",)),
     "a3_place_card_check": StageConfig("a3_place_card_check", "validate", "claude", "haiku", "acc3",
                                        fallback_model_ids=("sonnet",)),
     # S234 (migration 221): t9_repair — one cheap Claude stage for T9 sentence repair, SEO fit and
