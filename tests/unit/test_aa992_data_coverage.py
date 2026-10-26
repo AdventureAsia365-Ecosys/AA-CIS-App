@@ -291,10 +291,11 @@ def _fake_catalog(monkeypatch, *, fail=None, log=None, delay=0.0):
     from services.catalog_http import reader
 
     log = log if log is not None else []
-    state = {"open": 0, "max": 0}
+    state = {"open": 0, "max": 0, "executed": []}
 
     class Conn:
         async def execute(self, sql):
+            state["executed"].append(sql)
             return None
 
         async def fetchrow(self, sql):
@@ -338,7 +339,7 @@ async def test_catalog_failures_are_final_only_without_a_tenant_pool(monkeypatch
 @pytest.mark.asyncio
 async def test_the_tenant_pool_sources_run_one_after_another_in_registry_order(monkeypatch):
     _fake_functions(monkeypatch)
-    tenant = ["tp_layers", "tp_components", "tp_retired", "tp_purge"]
+    tenant = ["tp_layers", "tp_components", "tp_retired", "tp_purge", "tp_places"]
     for key in tenant:
         monkeypatch.setitem(src.FUNCTIONS, key, getattr(src, key))
     order = []
@@ -357,6 +358,57 @@ async def test_the_tenant_pool_sources_run_one_after_another_in_registry_order(m
     assert order == tenant                                     # registry order
     assert all(out["sources"][k]["status"] == "ok" for k in tenant)
     assert [s.key for s in reg.SOURCES if s.tier == "slow" and s.pool == "tenant"] == tenant
+
+
+@pytest.mark.asyncio
+async def test_tp_places_has_its_own_longer_statement_timeout(monkeypatch):
+    state = _fake_catalog(monkeypatch)
+    ctx = src.Ctx(None, tenant_pool=object())
+    assert await src.tp_layers(ctx) == {"n": 1}
+    assert await src.tp_places(ctx) == {"n": 1}
+    assert state["executed"] == [f"SET LOCAL statement_timeout = '{src.TENANT_STATEMENT_TIMEOUT}'",
+                                 f"SET LOCAL statement_timeout = '{src.TP_PLACES_STATEMENT_TIMEOUT}'"]
+    assert src.TP_PLACES_WAIT_S > int(src.TP_PLACES_STATEMENT_TIMEOUT.rstrip("s")) > \
+        int(src.TENANT_STATEMENT_TIMEOUT.rstrip("s"))
+
+
+def test_v_tour_place_is_read_only_by_tp_places_and_only_tp_located_reads_it():
+    """S252 live: v_tour_place read whole took 6.1 s and timed out the whole tp_layers statement (8 rows n/a)."""
+    from api.services.data_coverage import queries as q
+
+    assert "v_tour_place" not in q.TENANT_TP_LAYERS
+    assert q.TENANT_TP_PLACES in (q.TENANT_TP_PLACES_WHOLE, q.TENANT_TP_PLACES_PER_TOUR)
+    assert "with_located_places" not in q.TENANT_TP_LAYERS
+    assert [r.id for r in reg.ROWS if "tp_places" in r.sources] == ["tp.located"]
+    assert reg.SOURCE_BY_KEY["tp_places"].pool == "tenant" and reg.SOURCE_BY_KEY["tp_places"].tier == "slow"
+    tenant = [s.key for s in reg.SOURCES if s.pool == "tenant"]
+    assert tenant[-1] == "tp_places"                           # the slow read waits for the quick ones
+
+
+def test_slow_tier_deadline_leaves_room_for_tp_places_and_stays_under_the_gateway():
+    slow = b.TIER_DEADLINE_S["slow"]
+    assert slow >= src.TP_PLACES_WAIT_S + 3                    # after the quick catalog sources (~0.6 s on Dev)
+    assert slow < b.LOCK_TTL_S and slow < 29                   # single-flight lock; API Gateway integration timeout
+    assert b.TIER_DEADLINE_S["fast"] == b.TIER_DEADLINE_S["crm"] == 12.0
+
+
+@pytest.mark.asyncio
+async def test_a_slow_tp_places_turns_only_the_located_row_na(monkeypatch):
+    _fake_functions(monkeypatch)
+
+    async def slow(ctx):
+        raise asyncio.TimeoutError()
+
+    async def layers(ctx):
+        return {"served_tours": 890, "with_components": 880, "with_stale_components": 0, "with_day_list": 890,
+                "with_route_stops": 870, "with_route_legs": 800}
+    monkeypatch.setitem(src.FUNCTIONS, "tp_places", slow)
+    monkeypatch.setitem(src.FUNCTIONS, "tp_layers", layers)
+    out = await b.build(MagicMock(), None, None)
+    rows = {r["id"]: r for g in out["groups"] for r in g["rows"]}
+    assert (rows["tp.located"]["status"], rows["tp.located"]["reason"]) == ("na", "timeout: timeout")
+    layer_rows = [r.id for r in reg.ROWS if r.sources and r.sources[0] == "tp_layers"]
+    assert layer_rows and all(rows[i]["status"] != "na" for i in layer_rows)
 
 
 @pytest.mark.asyncio
@@ -498,7 +550,7 @@ async def test_one_hung_source_over_the_tier_deadline_turns_only_its_rows_na(mon
             raise
         return {}
     monkeypatch.setitem(src.FUNCTIONS, "seg_classify", hung)
-    monkeypatch.setattr(b, "TIER_DEADLINE_S", 0.2)
+    monkeypatch.setitem(b.TIER_DEADLINE_S, "slow", 0.2)
     out = await b.build(MagicMock(), None, None)
     assert (out["sources"]["seg_classify"]["status"], out["sources"]["seg_classify"]["reason"]) == \
         ("timeout", "time_budget")
