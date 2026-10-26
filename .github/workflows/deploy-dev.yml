@@ -189,150 +189,40 @@ jobs:
             --region ${{ env.AWS_REGION }}
           echo "ECS deployment stable ($SERVICES)"
 
-      # AA-725 part 5 — post-deploy revision check. The DoD is "api and worker run the same image
-      # SHA". The two services roll from the same pinned tag above, but assert it on the running
-      # task definitions so a drift (e.g. the worker roll was skipped, or Terraform re-pinned a
-      # family out of band) turns the workflow red instead of silently shipping a split fleet.
-      # If the worker service does not exist yet (first rollout, AA-CIS-Infra not applied), the
-      # api must still match the image we just deployed.
-      - name: Verify api/worker same image SHA
-        run: |
-          set -euo pipefail
-          running_image() {  # $1 = service name -> image of its running task definition
-            local svc="$1" td
-            td=$(aws ecs describe-services --cluster "${{ env.ECS_CLUSTER }}" --services "$svc" \
-                   --region "${{ env.AWS_REGION }}" \
-                   --query 'services[0].taskDefinition' --output text)
-            aws ecs describe-task-definition --task-definition "$td" \
-                   --region "${{ env.AWS_REGION }}" \
-                   --query 'taskDefinition.containerDefinitions[0].image' --output text
-          }
+  # AA-993 V1 (ADR 0016 D3) — the post-deploy checks (api/worker same image SHA, the live smoke rows, the worker
+  # rows) moved to post-deploy-verify.yml, which is also dispatchable on its own. It runs only when `deploy`
+  # succeeded; `result` below turns a skipped or failed verify red.
+  verify:
+    name: Post-deploy verify
+    needs: deploy
+    uses: ./.github/workflows/post-deploy-verify.yml
+    with:
+      expected_sha: ${{ github.sha }}
+      from_deploy: true
+    secrets: inherit
 
-          API_IMAGE=$(running_image "${{ env.ECS_SERVICE }}")
-          echo "api   image: $API_IMAGE"
-          echo "built image: $DEPLOY_IMAGE"
-          if [ "$API_IMAGE" != "$DEPLOY_IMAGE" ]; then
-            echo "::error::api is running $API_IMAGE but this deploy built $DEPLOY_IMAGE"
-            exit 1
-          fi
-
-          if aws ecs describe-services --cluster "${{ env.ECS_CLUSTER }}" \
-               --services "${{ env.ECS_WORKER_SERVICE }}" --region "${{ env.AWS_REGION }}" \
-               --query 'services[?status==`ACTIVE`].serviceName' --output text | grep -q .; then
-            WORKER_IMAGE=$(running_image "${{ env.ECS_WORKER_SERVICE }}")
-            echo "worker image: $WORKER_IMAGE"
-            if [ "$WORKER_IMAGE" != "$API_IMAGE" ]; then
-              echo "::error::api ($API_IMAGE) and worker ($WORKER_IMAGE) are on different images"
-              exit 1
-            fi
-            echo "api and worker share one image SHA: $API_IMAGE"
-          else
-            echo "::warning::worker service not found yet (AA-CIS-Infra not applied) — api SHA verified only."
-          fi
-      # AA-725 part 2 — post-deploy live smoke. The old step curled only /health (a static 200
-      # that stays green even when a router is broken — S212's SEO 500 shipped unnoticed). Now it
-      # also hits a maintained list of read-only endpoints on the real domain and asserts 200 +
-      # the expected JSON shape, so a broken endpoint turns this workflow red. Admin endpoints are
-      # skipped when ADMIN_SECRET is not configured (health still runs).
-      - name: Smoke test
+  # AA-993 V1 — the run's verdict. GitHub shows a skipped job grey, not red, so without this a failed or skipped
+  # preflight/build/deploy (verify then skips) could look like "nothing to verify". Every job here must succeed;
+  # skipped, failed or cancelled is red on every event (no job in this workflow is conditional).
+  result:
+    name: Deploy Dev result
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [preflight, build-and-push, deploy, verify]
+    steps:
+      - name: Every job succeeded
         env:
-          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
-          BASE: https://api-cis.lumiguides.it.com
+          NEEDS: ${{ toJSON(needs) }}
+          EVENT: ${{ github.event_name }}
         run: |
           set -uo pipefail
-          sleep 10
-          fail=0
-          # AA-891: the release version of this commit (the image carries api/version.py, kept equal to the manifest).
-          APP_VERSION=$(jq -r '."."' .release-please-manifest.json)
-
-          # name|path|jq-shape-assertion (empty assertion = only check HTTP 200)
-          # AA-884: /health carries the image's git SHA (must be this run's commit) and /health/ready the DB +
-          # newest numeric CIS migration (503 when the code needs a migration that is not applied yet).
-          # AA-891: /health also carries the release version, which must be this commit's manifest version.
-          public_checks=(
-            "health|/health|.status == \"ok\" and .git_sha == \"${GITHUB_SHA}\" and .version == \"${APP_VERSION}\""
-            "health-ready|/health/ready|.status == \"ok\" and .db == \"ok\""
-          )
-          admin_checks=(
-            "job-runner summary|/admin/job-runner/summary|(.kinds | length) > 0"
-            "deploy-gate|/admin/job-runner/deploy-gate|has(\"safe_to_deploy\")"
-            "overview|/admin/overview|type == \"object\""
-          )
-
-          check() {
-            local name="$1" path="$2" shape="$3"; shift 3
-            local hdr=("$@")
-            local body code
-            body=$(curl -s --max-time 25 -o /tmp/body.json -w "%{http_code}" "${hdr[@]}" "${BASE}${path}")
-            code="$body"
-            if [ "$code" != "200" ]; then
-              echo "::error::smoke [$name] ${path} -> HTTP $code"
-              fail=1; return
-            fi
-            if [ -n "$shape" ]; then
-              if ! jq -e "$shape" /tmp/body.json >/dev/null 2>&1; then
-                echo "::error::smoke [$name] ${path} -> 200 but shape failed: $shape"
-                fail=1; return
-              fi
-            fi
-            echo "smoke [$name] ${path} -> 200 OK"
-          }
-
-          for row in "${public_checks[@]}"; do
-            IFS='|' read -r name path shape <<< "$row"
-            check "$name" "$path" "$shape"
-          done
-
-          if [ -n "${ADMIN_SECRET:-}" ]; then
-            for row in "${admin_checks[@]}"; do
-              IFS='|' read -r name path shape <<< "$row"
-              check "$name" "$path" "$shape" -H "x-admin-secret: ${ADMIN_SECRET}"
-            done
-
-            # AA-725 part 5 — "job_worker_started logged for every kind". The worker logs
-            # job_worker_started with kinds=sorted(caps()) at boot, and republishes those caps to
-            # shared.job_worker (read by /workers). CI has no RDS/log access, so assert via the
-            # live API that a worker is alive AND advertises every registered kind — i.e. it ran
-            # load_kinds() and started on all of them. A worker that booted with a stale image
-            # (missing a new kind) fails this.
-            REG=$(curl -s --max-time 25 -H "x-admin-secret: ${ADMIN_SECRET}" \
-                    "${BASE}/admin/job-runner/summary" | jq -r '[.kinds[].kind] | sort | @json')
-            # S241: /workers needs the admin secret now (it was public by mistake until S241).
-            WK=$(curl -s --max-time 25 -H "x-admin-secret: ${ADMIN_SECRET}" "${BASE}/admin/job-runner/workers")
-            ALIVE=$(echo "$WK" | jq '[.workers[] | select(.alive)] | length')
-            if [ "${ALIVE:-0}" -lt 1 ]; then
-              echo "::error::smoke [worker-kinds] no alive worker after deploy"
-              fail=1
-            else
-              WK_CAPS=$(echo "$WK" | jq -r \
-                '[.workers[] | select(.alive) | (.caps | keys[])] | unique | sort | @json')
-              echo "registered kinds: $REG"
-              echo "alive worker caps: $WK_CAPS"
-              if [ "$WK_CAPS" != "$REG" ]; then
-                echo "::error::smoke [worker-kinds] alive worker caps != registered kinds (stale worker image?)"
-                fail=1
-              else
-                echo "smoke [worker-kinds] worker alive on every registered kind -> OK"
-              fi
-              # AA-884: a live worker must run this commit (shared.job_worker.git_sha, CIS 248). Workers that
-              # registered before the git_sha code shipped report null: only a warning while NO live worker
-              # reports a SHA at all (the first deploy of that code); any live SHA that is not this one fails.
-              ON_SHA=$(echo "$WK" | jq --arg sha "$GITHUB_SHA" '[.workers[] | select(.alive and .git_sha == $sha)] | length')
-              WITH_SHA=$(echo "$WK" | jq '[.workers[] | select(.alive and .git_sha != null)] | length')
-              if [ "${ON_SHA:-0}" -ge 1 ]; then
-                echo "smoke [worker-sha] a live worker runs ${GITHUB_SHA} -> OK"
-              elif [ "${WITH_SHA:-0}" -eq 0 ]; then
-                echo "::warning::smoke [worker-sha] no live worker reports a git_sha yet (first deploy of AA-884?)"
-              else
-                echo "::error::smoke [worker-sha] no live worker runs ${GITHUB_SHA}: $(echo "$WK" | jq -c '[.workers[] | select(.alive) | .git_sha]')"
-                fail=1
-              fi
-            fi
-          else
-            echo "::warning::ADMIN_SECRET not set — admin smoke checks skipped (AA-725)."
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          BAD=$(echo "$NEEDS" | jq -r '[to_entries[] | select(.value.result != "success") | "\(.key)=\(.value.result)"] | join(", ")')
+          if [ -n "$BAD" ] || [ "$(echo "$NEEDS" | jq 'length')" -lt 4 ]; then
+            echo "::error::Deploy Dev ($EVENT) is not verified: ${BAD:-a job result is missing}"
+            exit 1
           fi
-
-          [ "$fail" = "0" ] && echo "All smoke checks passed" || (echo "Smoke checks failed" && exit 1)
+          echo "Deploy Dev ($EVENT): deployed and verified."
 
   # S240: the "Deploy Frontend to Vercel" job (deploy hook on every Deploy Dev run) was removed — it added a
   # second production deployment per merge and used up the Hobby cap (~100 deployments / 24 h, team-wide;

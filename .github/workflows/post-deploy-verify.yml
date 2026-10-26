@@ -1,0 +1,94 @@
+name: Post-deploy verify
+# AA-993 V1 (ADR 0016 D3) — checks that Dev runs the commit that was just deployed: ECS api + worker rollout
+# COMPLETED on the built image, /health and /health/ready on that commit and its schema, the admin rows of
+# .github/verify/cis.rows and a live worker on that commit serving every registered kind. Red/green only; the
+# table goes to the job summary. Script: .github/scripts/post_deploy_verify.sh.
+#
+# Called by deploy-dev.yml after `deploy`. Also dispatchable (verify what Dev runs now, or prove that a stale
+# expected_sha goes red). A dispatch never touches the Deploy Dev concurrency group `deploy-dev-cis`.
+on:
+  workflow_call:
+    inputs:
+      expected_sha:
+        description: "The commit that was deployed (full 40-character SHA)."
+        required: true
+        type: string
+      from_deploy:
+        description: "Set by deploy-dev.yml: use a concurrency group of this run only (see the job)."
+        required: false
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: "The commit Dev should be running (full 40-character SHA)."
+        required: true
+        type: string
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  verify:
+    name: Post-deploy verify
+    runs-on: ubuntu-latest
+    environment: dev
+    timeout-minutes: 15
+    permissions:
+      id-token: write
+      contents: read
+    # Dispatched runs share `post-deploy-verify-cis` and queue there (one running, one pending: a newer dispatch cancels the older pending one). The call from
+    # Deploy Dev gets a group of its own run: GitHub cancels the older PENDING job of a group when another one
+    # queues, so a shared group would let a dispatch cancel a Deploy Dev verify (and turn that run red). Deploy Dev
+    # runs are already one at a time (group deploy-dev-cis), so their verify jobs need nothing more.
+    concurrency:
+      group: ${{ inputs.from_deploy && format('post-deploy-verify-cis-deploy-{0}-{1}', github.run_id, github.run_attempt) || 'post-deploy-verify-cis' }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+      # The expected version and required schema come from the expected commit itself, not from the checked-out
+      # tree: a dispatch on main for an older SHA compares against what that SHA shipped.
+      - name: Read what the expected commit ships
+        id: expect
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::expected_sha must be a full 40-character commit SHA (value not printed)"
+            exit 1
+          fi
+          git cat-file -e "${EXPECTED_SHA}^{commit}" 2>/dev/null \
+            || git fetch --no-tags --depth 1 origin "$EXPECTED_SHA"
+          VERSION=$(git show "${EXPECTED_SHA}:.release-please-manifest.json" | jq -r '."."')
+          REQUIRED=$(git show "${EXPECTED_SHA}:api/core/readiness.py" \
+                       | sed -n 's/^REQUIRED_CIS_SCHEMA = \([0-9][0-9]*\).*/\1/p' | head -n 1)
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "required=${REQUIRED}" >> "$GITHUB_OUTPUT"
+          echo "Expected ${EXPECTED_SHA}: version ${VERSION}, required CIS schema ${REQUIRED}"
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+      - name: Verify Dev
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          EXPECTED_VERSION: ${{ steps.expect.outputs.version }}
+          REQUIRED_SCHEMA: ${{ steps.expect.outputs.required }}
+          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+          ECS_CLUSTER: ${{ secrets.ECS_CLUSTER }}
+          ECS_SERVICE: ${{ secrets.ECS_SERVICE }}
+          BASE: https://api-cis.lumiguides.it.com
+        run: |
+          # Same image and worker name as the deploy job: <registry>/<repo>:dev-<sha>, and the api service name
+          # with its -api suffix replaced by -worker (AA-651, AA-725 part 5).
+          export EXPECTED_IMAGE=""
+          if [ -n "$ECR_REGISTRY" ] && [ -n "$ECR_REPOSITORY" ]; then
+            EXPECTED_IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:dev-${EXPECTED_SHA}"
+          fi
+          export ECS_WORKER_SERVICE=""
+          [ -z "$ECS_SERVICE" ] || ECS_WORKER_SERVICE="${ECS_SERVICE%-api}-worker"
+          bash .github/scripts/post_deploy_verify.sh

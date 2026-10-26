@@ -14,6 +14,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 DEPLOY_WF = (REPO / ".github" / "workflows" / "deploy-dev.yml").read_text(encoding="utf-8")
+VERIFY_SH = (REPO / ".github" / "scripts" / "post_deploy_verify.sh").read_text(encoding="utf-8")
 
 
 def test_build_output_is_the_per_commit_tag_not_full_image():
@@ -52,6 +53,9 @@ def test_deploy_helper_uses_deploy_image_not_latest():
 
 
 def test_post_deploy_sha_verification_step_exists():
-    assert "Verify api/worker same image SHA" in DEPLOY_WF, (
-        "A post-deploy step must assert api and worker run the same image SHA (AA-725 part 5 DoD)."
-    )
+    # AA-993: the check moved from deploy-dev.yml into post-deploy-verify.yml / post_deploy_verify.sh.
+    assert "uses: ./.github/workflows/post-deploy-verify.yml" in DEPLOY_WF
+    for row in ("retry api-image check_image", "retry worker-image check_image", "retry same-image check_same_image"):
+        assert row in VERIFY_SH, (
+            f"The post-deploy verify must assert api and worker run the built image SHA ({row!r}, AA-725 part 5 DoD)."
+        )
