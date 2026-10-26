@@ -7,10 +7,12 @@ Budget (design §4.3):
   :data:`CIS_CONCURRENCY` at once (the pool has 10 connections per task);
 - a TripPlanner catalog source: one :func:`services.catalog_http.reader.catalog_connection` per statement (the tenant
   pool has 2 connections per task, shared with the Content studio and the CRM catalog sync, and its process-wide gate
-  lets one catalog read in at a time and refuses a waiter after 5 s; critic B9). The four catalog sources of one build
+  lets one catalog read in at a time and refuses a waiter after 5 s; critic B9). The five catalog sources of one build
   therefore run one after another: :attr:`Ctx.catalog_lock` (FIFO, registry order) admits one of them at a time and
   each releases the reader's gate before the next asks for it, so they never queue on the gate itself. ``wait_for``
-  8 s from the moment the lock let the read in, ``SET LOCAL statement_timeout = '7s'``; slow tier only;
+  8 s from the moment the lock let the read in, ``SET LOCAL statement_timeout = '7s'``; slow tier only. ``tp_places``
+  (``catalog.v_tour_place`` read whole: 6.1 s on Dev, S252) has its own :data:`TP_PLACES_STATEMENT_TIMEOUT` /
+  :data:`TP_PLACES_WAIT_S` and runs last, so a slow place read turns only the ``tp.located`` row n/a;
 - S3: ``ListObjectsV2`` in a thread, 5 s, at most :data:`S3_MAX_PAGES` pages (then the count is marked capped);
 - CRM: ``crm.ops.v1`` 1.4 ``GET /data-coverage`` with the signed-in staff member's own token (``crm_console``).
 
@@ -52,6 +54,11 @@ CIS_LOCK_TIMEOUT = "1s"
 CIS_WAIT_S = 5.0
 TENANT_WAIT_S = 8.0
 TENANT_STATEMENT_TIMEOUT = "7s"
+# tp_places only: 2.5 x the 6.1 s measured on Dev (S252). It holds the reader's process-wide gate that long (the
+# Content studio / CRM sync reads wait up to 5 s, then get 503), at most once per slow-tier computation (600 s cache,
+# single flight). build.TIER_DEADLINE_S["slow"] leaves it room after the quick catalog sources.
+TP_PLACES_STATEMENT_TIMEOUT = "15s"
+TP_PLACES_WAIT_S = 16.0
 FINAL_CATALOG_REASONS = ("tenant pool not configured",)
 S3_WAIT_S = 5.0
 S3_MAX_PAGES = 10
@@ -114,17 +121,18 @@ async def _cis_rows(ctx: Ctx, sql: str, *args: Any) -> list[asyncpg.Record]:
     return await _cis_fetch(ctx, sql, args)
 
 
-async def _catalog(ctx: Ctx, sql: str, *, many: bool = False) -> Any:
+async def _catalog(ctx: Ctx, sql: str, *, many: bool = False, statement_timeout: str = TENANT_STATEMENT_TIMEOUT,
+                   wait_s: float = TENANT_WAIT_S) -> Any:
     from services.catalog_http.reader import CatalogUnavailable, catalog_connection
 
     async def run() -> Any:
         async with catalog_connection(ctx.tenant_pool) as conn:
-            await conn.execute(f"SET LOCAL statement_timeout = '{TENANT_STATEMENT_TIMEOUT}'")
+            await conn.execute(f"SET LOCAL statement_timeout = '{statement_timeout}'")
             return list(await conn.fetch(sql)) if many else await conn.fetchrow(sql)
 
     async with ctx.catalog_lock:   # one catalog source at a time; the reader's gate is free again on release
         try:
-            return await asyncio.wait_for(run(), timeout=TENANT_WAIT_S)
+            return await asyncio.wait_for(run(), timeout=wait_s)
         except CatalogUnavailable as e:
             reason = str(e)
             if reason in FINAL_CATALOG_REASONS:
@@ -204,6 +212,11 @@ async def tp_pins(ctx: Ctx) -> dict:
 
 async def tp_layers(ctx: Ctx) -> dict:
     return dict(await _catalog(ctx, q.TENANT_TP_LAYERS) or {})
+
+
+async def tp_places(ctx: Ctx) -> dict:
+    return dict(await _catalog(ctx, q.TENANT_TP_PLACES, statement_timeout=TP_PLACES_STATEMENT_TIMEOUT,
+                               wait_s=TP_PLACES_WAIT_S) or {})
 
 
 async def tp_components(ctx: Ctx) -> dict:
@@ -331,6 +344,7 @@ FUNCTIONS: dict[str, Callable[[Ctx], Awaitable[dict]]] = {
     "tp_components": tp_components,
     "tp_retired": tp_retired,
     "tp_purge": tp_purge,
+    "tp_places": tp_places,
     "bk_totals": bk_totals,
     "bk_keys": _simple(q.BK_PLAN_KEYS),
     "supply": _simple(q.SUPPLY, with_master=False),

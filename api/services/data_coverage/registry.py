@@ -114,12 +114,15 @@ SOURCES: tuple[Source, ...] = (
     Source("tp_totals", "fast", "cis", "tripplanner.v_ops_data_totals (tp-020)"),
     Source("tp_pins", "slow", "cis", "tripplanner.v_ops_pin_components + v_ops_component_id_map (tp-020), "
                                      "geo.component_redirect, geo.tour_place"),
-    Source("tp_layers", "slow", "tenant", "catalog.v_tour, v_tour_component, v_tour_day, v_tour_place, v_tour_stop, "
-                                          "v_tour_leg (as aa_app_user)"),
+    Source("tp_layers", "slow", "tenant", "catalog.v_tour, v_tour_component, v_tour_day, v_tour_stop, v_tour_leg "
+                                          "(as aa_app_user)"),
     Source("tp_components", "slow", "tenant", "catalog.v_tour_component (as aa_app_user)"),
     Source("tp_retired", "slow", "tenant", "catalog.v_tour_retired x v_tour / v_tour_component / v_tour_stop / "
                                            "v_tour_day (as aa_app_user)"),
     Source("tp_purge", "slow", "tenant", "catalog.v_tour_lifecycle_outbox keys x shared.job tripplanner_purge"),
+    # Last of the tenant-pool sources (they run in registry order under Ctx.catalog_lock): the slowest read waits for
+    # the quick ones, never the other way round, and has its own longer statement timeout (sources.TP_PLACES_*).
+    Source("tp_places", "slow", "tenant", "catalog.v_tour x v_tour_place with coordinates (as aa_app_user)"),
     Source("bk_totals", "fast", "cis", "booking.v_ops_data_totals (bk-025)"),
     Source("bk_keys", "fast", "cis", "booking.v_ops_trip_plan_keys (bk-025) x CIS live tours"),
     Source("supply", "fast", "cis", "booking.v_supply_hotels / v_supply_services (bk-023) x shared.supply_entity"),
@@ -436,9 +439,9 @@ ROWS: tuple[Row, ...] = (
         denominator=f("tp_layers", "served_tours"), denominator_label="served tours", drill="/admin/master-content",
         sources=("tp_layers",)),
     Row("tp.located", "tripplanner", "Served tours with a located place on the tour page",
-        f("tp_layers", "with_located_places"), "backlog", denominator=f("tp_layers", "served_tours"),
+        f("tp_places", "with_located_places"), "backlog", denominator=f("tp_places", "served_tours"),
         denominator_label="served tours", expected_note="follows places and place cards", issue="AA-905",
-        drill="/admin/places", sources=("tp_layers",)),
+        drill="/admin/places", sources=("tp_places",)),
     Row("tp.components", "tripplanner", "Served tours with planner stops (components)",
         f("tp_layers", "with_components"), "backlog", denominator=f("tp_layers", "served_tours"),
         denominator_label="served tours", expected_note="follows the place builds", issue="AA-905",
