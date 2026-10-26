@@ -100,6 +100,50 @@
   literal in the SQL, 6 of 6 = ok); integration `test_rank_markets_count_only_ranking_markets_not_the_paa_top_up`
   (US + UK ranked, US / UK / US-PAA2 researched: 2 of 2, `ok`; the old denominator was 3).
 
+## Fix round 4 (S252 live: `tp_places`)
+
+Live on Dev after the first deploy: the cold call took 7.4 s and `tp_layers` timed out, so eight TripPlanner rows
+read n/a. Timed through the tenant pool, `catalog.v_tour_place` aggregated whole took 6.1 s; the other five views
+together about 0.5 s (v_tour 20 ms, v_tour_component 27 ms, v_tour_day 428 ms, v_tour_stop 16 ms, v_tour_leg 54 ms).
+Read whole, the view parses the itinerary and resolves the places of every live tour (window functions per
+`tour_id`, three LATERAL lookups per tour-day place); inside one statement with a 7 s timeout it took the whole
+`tp_layers` row set down with it.
+
+- **Decision: `v_tour_place` gets its own source, `tp_places`** (slow tier, tenant pool). `TENANT_TP_LAYERS` no
+  longer reads it; `tp_places` returns `served_tours` (v_tour again, ~20 ms) and `with_located_places`, so
+  `tp.located` reads only `tp_places` and a slow place read turns only that one row n/a.
+- **Own timeout, runs last**: `SET LOCAL statement_timeout = '15s'` under a 16 s `wait_for`
+  (`sources.TP_PLACES_STATEMENT_TIMEOUT` / `TP_PLACES_WAIT_S`; 2.5 x the 6.1 s measured). It is the last tenant
+  source in the registry, so under `Ctx.catalog_lock` (FIFO, registry order) it waits for the quick ones and never
+  delays them. The catalog sources stay sequential.
+- **Per-tier deadline**: `build.TIER_DEADLINE_S` is now `{"fast": 12, "slow": 20, "crm": 12}`. The slow tier needs
+  room for `tp_places` after the quick catalog sources; 20 s stays under the API Gateway's 29 s integration timeout
+  and the 30 s single-flight lock. The "finished sources keep their answers" rule is unchanged, and every other source
+  still stops at its own `wait_for` (5 s / 8 s), so nothing else behaves differently.
+- **Two equivalent SQL forms** in `queries.py`: `TENANT_TP_PLACES_WHOLE` (one pass, the shape used so far, 6.1 s live;
+  shipped as `TENANT_TP_PLACES`) and `TENANT_TP_PLACES_PER_TOUR` (per served tour, `LEFT JOIN LATERAL (… WHERE
+  p.tour_id = t.tour_id AND p.lat IS NOT NULL LIMIT 1)`). Why the second should be faster: the `tour_id` filter is
+  pushed through the view's window functions down to the `published_tours` / `raw_tours` / `tour_atoms` scans (the
+  lesson S238 path the CRM reader's detail reads use), the planner drops the view's unused `row_number()` so the
+  nested loop streams, and `LIMIT 1` stops at the tour's first located place: the LATERAL place lookups run for one
+  or two places per tour instead of every place of every tour. Not timed live yet; the orchestrator times both and
+  switches `TENANT_TP_PLACES` if the per-tour form wins.
+- **Evidence spec**: the first API call may be cold (slow tier ~8 s) and is only logged; a second call must be cached
+  or built under 5 s.
+
+Tests: unit `test_tp_places_has_its_own_longer_statement_timeout`,
+`test_v_tour_place_is_read_only_by_tp_places_and_only_tp_located_reads_it`,
+`test_slow_tier_deadline_leaves_room_for_tp_places_and_stays_under_the_gateway`,
+`test_a_slow_tp_places_turns_only_the_located_row_na`; the sequential-order test now includes `tp_places` (last);
+the hung-source test sets the slow deadline only. Integration `test_aa992_tp_places_sql.py` (on the 274 RDS-like
+seed plus one located place): both forms agree (located and not located), and the per-tour plan keys every live-tour
+scan under its LIMIT on the outer `tour_id`. Both forms also run as `aa_app_user` in `TENANT_STATEMENTS`.
+
+Should know: `tp_places` holds the catalog reader's process-wide gate (one read at a time) for its whole run, about
+6 s today and at most 15 s; a Content studio or CRM catalog read that waits more than 5 s on the gate gets a 503
+meanwhile. It happens at most once per slow-tier computation (600 s cache, single flight), as `tp_layers` did with
+the same view before. The per-tour form would shorten that window too.
+
 ## Should know
 
 - Ships before tp-020 / bk-025 are applied: those rows read `n/a: unavailable: contract_view_missing` until DB Migrate.

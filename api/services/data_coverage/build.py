@@ -8,10 +8,13 @@ Cache (design D8, ``ops_overview.cache.cached_section`` under ``admin:data-cover
 - ``crm`` (``crm.ops.v1`` over HTTP with the caller's own Cognito token): 600 s, its own key, filled only by a call
   that carries a Cognito token (a password session gets ``na: cognito_session_required`` and fills nothing; critic B12).
 A tier whose sources all answered (ok, or a final ``unavailable``: see ``sources``) is cached for its TTL and kept 24 h
-as the last good copy; one with an error or a timeout only 60 s. A tier has :data:`TIER_DEADLINE_S`: the sources that
-finished by then keep their answers, only the ones still running are cancelled and marked ``timeout: time_budget``
-(design D7: a slow source turns only its own rows into n/a). One computation per tier at a time (``SET NX`` lock, 30 s);
-a second caller meanwhile gets the last good copy (``stale``) or ``na: refreshing``.
+as the last good copy; one with an error or a timeout only 60 s. A tier has its :data:`TIER_DEADLINE_S`: the sources
+that finished by then keep their answers, only the ones still running are cancelled and marked ``timeout: time_budget``
+(design D7: a slow source turns only its own rows into n/a). The slow tier's deadline is longer (S252): its last
+catalog source, ``tp_places``, may run :data:`sources.TP_PLACES_WAIT_S` after the quick ones; it stays under the API
+Gateway's 29 s and :data:`LOCK_TTL_S`, and each other source still stops at its own ``wait_for``. One computation per
+tier at a time (``SET NX`` lock, 30 s); a second caller meanwhile gets the last good copy (``stale``) or
+``na: refreshing``.
 
 No ids, names or samples leave this module: every value is a count, a percentage, a day / minute age or a timestamp.
 """
@@ -36,7 +39,7 @@ KEY_PREFIX = "admin:data-coverage"
 TIER_TTL_S = {"fast": 60, "slow": 600, "crm": 600}
 LOCK_TTL_S = 30
 REFRESH_MIN_AGE_S = 15
-TIER_DEADLINE_S = 12.0
+TIER_DEADLINE_S = {"fast": 12.0, "slow": 20.0, "crm": 12.0}
 
 
 class _Missing(Exception):
@@ -57,9 +60,10 @@ async def _compute_tier(ctx: Ctx, tier: str) -> dict:
     keys = [s.key for s in reg.SOURCES if s.tier == tier]
     # Tasks start in registry order, so the catalog sources take Ctx.catalog_lock in that order.
     tasks = {k: asyncio.ensure_future(run_source(k, ctx, tier)) for k in keys}
+    deadline = TIER_DEADLINE_S[tier]
     done: set = set()
     if tasks:
-        done, pending = await asyncio.wait(tasks.values(), timeout=TIER_DEADLINE_S)
+        done, pending = await asyncio.wait(tasks.values(), timeout=deadline)
         for t in pending:
             t.cancel()
         if pending:
@@ -70,8 +74,8 @@ async def _compute_tier(ctx: Ctx, tier: str) -> dict:
             sources[k] = t.result()    # run_source never raises
         else:
             logger.warning("data_coverage_source_failed", source=k, status="timeout", reason="time_budget",
-                           ms=int(TIER_DEADLINE_S * 1000))
-            sources[k] = {"status": "timeout", "reason": "time_budget", "timing_ms": int(TIER_DEADLINE_S * 1000),
+                           ms=int(deadline * 1000))
+            sources[k] = {"status": "timeout", "reason": "time_budget", "timing_ms": int(deadline * 1000),
                           "tier": tier, "values": {}}
     return {"status": "ok" if all(_settled(r) for r in sources.values()) else "partial",
             "computed_at": _now().isoformat(), "sources": sources}
