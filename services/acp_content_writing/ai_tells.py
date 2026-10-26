@@ -36,6 +36,13 @@ joined or cut ("This is not a landscaped garden. It is a place …" → "This is
 in A. It begins in B, …"; "…: not a relic, but a working institution"; staging tails "rather than staged", "not
 just a view of them"; "offers something rarer than scenery: …"; "That single fact changes how you think …"), a
 heading built from the angle brief's words loses that part, and more verdicts go to the residue list.
+
+Round 4 (S252 blind 4-arm panel of round 3: AI-tells 5.22, bar 5.5; Terra Family brand voice 6.85) is prompt-side
+only: ``PROMPT_RULES`` names the frames the writer itself still produced ('not as A but as B', 'A rather than B',
+'earns its place', lists of three, template closers, label lines before the CTA) with ten DON'T / WRITE INSTEAD
+pairs whose positive half is a <slot> filled from the seed; ``SELF_CHECK_RULE`` is a silent reread before output;
+``family_presence_rule`` puts the family in every section for a family brand, from seed facts only. The pass is
+unchanged (no new deletion), so ``AI_TELLS_VERSION`` stays v3.
 """
 from __future__ import annotations
 
@@ -53,16 +60,22 @@ AI_TELLS_VERSION = "ai_tells.v3"  # v2: AA-790 round 2 (S251 re-panel); v3: roun
 
 PROMPT_RULES = """- AI TELLS (an editor must not be able to tell a model wrote this piece):
   * Never set a claim up by denying another. No "X is not A. It is B.", "X does not A. It B.", "not A but B",
-    "not because A, but because B", "X is more than A. It is B.", "These are not A.", "X is not incidental."
-    Say what the thing is, once, directly.
+    "not as A but as B", "A rather than B", "not because A, but because B", "X is more than A. It is B.",
+    "These are not A.", "X is not incidental." Say what the thing is, once, directly. A denial stays only when
+    the denial itself is a practical fact from the content seed ("Lunch is not included.").
   * No verdict lines: a short sentence that comments on the piece or the moment instead of telling the reader
     something ("That's the opening.", "This is the section worth slowing down for.", "The geology is the thing
     itself.", "X is where the trip gets going.", "This one fact is the key to understanding ...", "These
-    numbers are worth holding.", "The circle is complete:", "A meal here is rarely just a meal."). Every
+    numbers are worth holding.", "The circle is complete:", "A meal here is rarely just a meal.", "That is the
+    shape of ...", "X earns its place.", "That fact matters.", "... is the point."). Every
     sentence carries a fact from the content seed, a place, or what the content seed says the reader does
     there.
-  * No template openers: "There is a particular quality to ...", "X has a way of ...", "If there is one place
-    ..., it is ...".
+  * No template openers or closers: "There is a particular quality to ...", "X has a way of ...", "If there is
+    one place ..., it is ...", "X asks something of you before it gives anything back", "... is one that travels
+    home with you", "the kind of ... that stays with them".
+  * No lists of three for rhythm ("slow, unscripted, and rooted in ...", "calm, varied, and purposeful", "Two
+    rivers, one road, a window onto ..."). List three things only when the content seed names three things;
+    otherwise state the one fact that matters.
   * Never stack short sentences that open the same way ("The forts are still ... The shrines are still ...
     The mills are still ..."); say it once.
   * Never write genuinely, genuine, truly, precisely, crucially, importantly, notably, "earns its ...", "rewards
@@ -76,7 +89,42 @@ PROMPT_RULES = """- AI TELLS (an editor must not be able to tell a model wrote t
     own text: no remark about a word, a sentence or the piece ("The hedge in that last sentence matters",
     "The word 'might' is doing honest work", "This is the argument that ...").
   * Say the call to action once. No heading and no lead-in sentence that repeats its words, and add nothing to
-    it (no place name, no "today")."""
+    it (no place name, no "today"). No label line before it ("This is one moment of the ...", "If a ... sounds
+    like the right kind of journey, ...").
+  * DON'T / WRITE INSTEAD (shapes an editor flagged in earlier pieces; <...> is a fact from the content seed,
+    never an invented one):
+    - DON'T "The fortress is not a relic. It is still a working seat of power."
+      WRITE "The fortress <does what the content seed says it does>." (the second half alone, as a plain fact)
+    - DON'T "Visitors see weaving as a lifelong discipline rather than a souvenir."
+      WRITE "Weavers train for <the length of time the content seed gives>."
+    - DON'T "This is the leg that earns its place." / "After a long ride, that fact matters."
+      WRITE nothing: delete the line and put its fact in the sentence before ("After the ride, lunch is at
+      <place>.").
+    - DON'T "The steppe asks something of you before it gives anything back."
+      WRITE an opening on the first fact: "<Day or place> starts with <what the content seed says happens>."
+    - DON'T "slow, unscripted, and rooted in the valley" / "Two rivers, one road, a window onto village life".
+      WRITE one fact: "The night is spent <where the content seed says>."
+    - DON'T "The word 'usually' is worth holding on to." WRITE the hedge inside the fact: "The abbot usually <does
+      what the content seed says>."
+    - DON'T "the valley is still making up its mind" / "volcanic candour". WRITE what it is: "<Place> is <what the
+      content seed says it is>."
+    - DON'T "It is the kind of memory that stays with them long after the trip." WRITE nothing: delete the line,
+      so the piece closes on its last fact with the call to action worked into it.
+    - DON'T "that link is concrete and real" / "a grounded, accessible stop". WRITE the link itself: "<Who> <does
+      what> at <place>."
+    - DON'T "This is one moment of the <trip>. If a journey like this sounds right, message us." WRITE the call
+      to action as the piece's own sentence, worked into the last fact, with no label line before it."""
+
+# AA-790 round 4 (S252 4-arm panel: AI-tells 5.22, bar 5.5; the writer itself still produced the shapes above) — the
+# last rule before the output line, so it is the last thing the writer reads.
+SELF_CHECK_RULE = """- BEFORE YOU RETURN THE PIECE, reread it once, sentence by sentence. Make sure no sentence has
+  the form "X is not A. It is B.", "not A but B", "not as A but as B", "A rather than B", "X is more than A. It
+  is B." or "more than just A" (unless the denial is a practical fact from the content seed; a quantity from the
+  seed, such as "more than 300 monks", stays word for word); no line judges instead of telling ("earns its place",
+  "that matters", "is the point", "worth holding", "the shape of", "the kind of ... that"); no list of three that
+  the content seed does not give; no opening or closing line about what a place asks, gives or leaves with the
+  reader; no label line before the call to action. Rewrite any such sentence as the plain fact, or delete it.
+  This check is silent: never mention it in the piece."""
 
 # AA-790 round 2 (S251 re-panel: LinkedIn source fidelity 8.92 → 7.08) — every channel, blog included: the round-1
 # AUDIENCE rule ("say what they see or do") pushed the writer to invent what a visit shows. Rendered into
@@ -138,6 +186,76 @@ def brand_voice_rule(brand_audience: Optional[dict]) -> str:
     calm = [v for v in voice if _voice_words(v) & _CALM_VOICE]
     return ((_ENERGETIC_RULE.format(words=", ".join(energetic)) if energetic else "")
             + (_CALM_RULE.format(words=", ".join(calm)) if calm else ""))
+
+
+# AA-790 round 4 (S252 4-arm panel: Terra Family brand voice 6.85; "children show up once", "the child perspective
+# stays generic", "long stretches read like a gazetteer with no family lens") — a family brand gets the family in
+# every section, from the seed's own facts only. Separate from brand_voice_rule (PACE / RESTRAINT): a family brand
+# may be neither energetic nor calm, and those two lines stay as they are.
+# 'family-run' / 'family owned since 1990' describe who owns the business, not who travels: never a trigger.
+_FAMILY_OWNERSHIP = frozenset({"run", "owned", "operated", "led", "business", "businesses", "founded"})
+_FAMILY_WORD_RE = re.compile(r"^(?:famil(?:y|ies)(?:-(?!(?:run|owned|operated|led|business|founded)$)[a-z]+)?"
+                             r"|kids?|child(?:ren)?|parents?|(?:kid|child)-friendly)$")
+FAMILY_RULE = """
+FAMILY BRAND: this brand writes for families, so the family is present in every section, concretely, and only
+through the CONTENT SEED and FACTS. SOURCE FIDELITY comes first: a family detail the seed does not give is left
+out, never guessed.
+- When the CONTENT SEED or FACTS say who an activity is for or who does it, say so. Otherwise speak to the
+  family as a whole ("your family") and never assign an activity to the children or to the parents.
+- At most one family sentence per section, built on a seed fact a parent can plan from: timing, effort, what is
+  optional, where the night is, a meal or rest stop.
+- An age, an age band or "suitable for children" appears ONLY when the CONTENT SEED or FACTS state it. The
+  AUDIENCE line's ages describe the brand's customers, never this trip.
+- Never invent what children feel, notice, learn, understand or remember; never say a stop "works for every
+  age" or is "easy to explain to younger travellers"; no school-trip framing ("a lesson", "a classroom").
+- A section whose seed facts give a family nothing to use states those facts plainly, without a made-up family
+  line."""
+
+
+# AA-790 round 4 review: a negation up to four words back, in the same clause ('Adults-only luxury brand, not
+# suitable for children'); 'by … family' / 'same family' / 'family for three generations' is ownership too ('Run by
+# the same family for three generations').
+_FAMILY_NEGATIONS = _VOICE_NEGATIONS | {"without", "adults-only", "adult-only"}
+_FAMILY_SPAN_WORDS = frozenset({"generation", "generations", "decade", "decades", "years"})
+_PACK_CLAUSE_RE = re.compile(r"[,;:.!?()]")
+
+
+def _family_word_counts(words: list[str], k: int) -> bool:
+    """words[k] names families or children as the brand's travellers: not negated (not / never / no / nor /
+    without / adults-only up to four words back) and not ownership (a following 'run' / 'owned' / …; for a
+    'family' word also 'by' up to three words back, 'same family', 'family for <n> generations / years')."""
+    w = words[k]
+    if not _FAMILY_WORD_RE.match(w):
+        return False
+    before = words[max(0, k - 4):k]
+    if _FAMILY_NEGATIONS & set(before) or any(a in ("adult", "adults") and b == "only"
+                                              for a, b in zip(before, before[1:])):
+        return False
+    after = words[k + 1:k + 4]
+    if after and after[0] in _FAMILY_OWNERSHIP:
+        return False
+    if w.startswith("famil"):
+        if "by" in words[max(0, k - 3):k] or (k and words[k - 1] == "same"):
+            return False
+        if after[:1] == ["for"] and _FAMILY_SPAN_WORDS & set(after[1:]):
+            return False
+    return True
+
+
+def family_presence_rule(brand_audience: Optional[dict]) -> str:
+    """The FAMILY BRAND line for a pack whose voice or brand type names families or children ('Family-aware',
+    'Premium family adventure travel brand'); '' otherwise. The audience line alone never triggers it (a general
+    brand can list 'couples and families'), a negated word ('not a family brand', 'Adults-only …, not suitable for
+    children') does not count, and neither does ownership ('Family-run', 'family owned since 1990', 'Run by the
+    same family for three generations'): that is who runs the business, not who travels. Read clause by clause, so
+    a negation never reaches past a comma."""
+    pack = brand_audience or {}
+    for entry in [str(v) for v in pack.get("voice") or [] if v] + [str(pack.get("brand_type") or "")]:
+        for clause in _PACK_CLAUSE_RE.split(entry.lower()):
+            words = _VOICE_WORD_RE.findall(clause)
+            if any(_family_word_counts(words, k) for k in range(len(words))):
+                return FAMILY_RULE
+    return ""
 
 # ---------------------------------------------------------------- context
 

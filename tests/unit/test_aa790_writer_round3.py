@@ -383,7 +383,9 @@ def test_brand_energy_lines_are_unchanged():
 
 
 def test_writer_prompt_version_moves_off_round_two():
-    assert service.WRITER_PROMPT_VERSION == "24363541"  # round 2 + review: afc08095
+    # round 2 + review: afc08095; round 3: 24363541; round 4 (S252, 26/10/2026) moved it on, see
+    # test_aa790_writer_round4.test_writer_prompt_version_is_round_four
+    assert service.WRITER_PROMPT_VERSION not in ("afc08095", "24363541")
 
 
 # ---------------------------------------------------------------- linear time (CodeQL py/polynomial-redos)
