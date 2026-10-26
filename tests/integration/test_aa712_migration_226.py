@@ -22,6 +22,18 @@ from conftest import BATCH_ID, DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # no
 
 RUNNER = "zz712_rds_runner"
 MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations", "226_geo_place_pipeline.sql")
+# AA-990: place_extract writes geo.component_redirect (CIS 285) in the place-row transaction. conftest skips 285 (its
+# catalog view needs 245's owners) and this module rebuilds geo from 226 alone, so the fixture creates 285's table part
+# (CREATE TABLE + CHECKs + indexes, read from the file, not copied) as the runner. write_redirects stays fail-closed.
+MIGRATION_285 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
+                             "285_geo_component_redirect.sql")
+
+
+def _component_redirect_ddl():
+    sql = open(MIGRATION_285, encoding="utf-8").read()
+    start = sql.index("CREATE TABLE IF NOT EXISTS geo.component_redirect")
+    end = sql.index("COMMENT ON TABLE geo.component_redirect")
+    return sql[start:end]
 RUNNER_TABLES = ("shared.destinations", "shared.llm_role_config", "shared.spend_budget", "shared.schema_versions",
                  "acp_shared.place_card")
 READ_TABLES = ("gold_aa_internal.published_tours", "silver_aa_internal.raw_tours", "acp_contract.tour_atoms",
@@ -123,6 +135,7 @@ def rds_like_226():
         runner.cursor().execute(sql)          # raises on any error
         runner.cursor().execute(sql)          # idempotent re-run
         notices = list(runner.notices)
+        runner.cursor().execute(_component_redirect_ddl())     # 285's table, owned by the runner (owns geo)
     finally:
         runner.close()
     try:
@@ -131,6 +144,7 @@ def rds_like_226():
         a.execute("DELETE FROM shared.destinations WHERE name LIKE %s AND duplicate_of IS NOT NULL", (f"{SEED_TAG}%",))
         a.execute("DELETE FROM geo.graph_build; DELETE FROM geo.tour_day; DELETE FROM geo.tour_place; "
                   "DELETE FROM geo.place_name; DELETE FROM geo.place_outlier; DELETE FROM geo.tour_build;")
+        a.execute("DROP TABLE IF EXISTS geo.component_redirect")      # back to the replay state (no 285)
         a.execute("DELETE FROM shared.destinations WHERE name LIKE %s", (f"{SEED_TAG}%",))
         a.execute("DROP SCHEMA IF EXISTS tripplanner CASCADE")
         a.execute(f"REASSIGN OWNED BY {RUNNER} TO CURRENT_USER; DROP OWNED BY {RUNNER}; DROP ROLE {RUNNER}")
@@ -372,6 +386,10 @@ async def test_extract_geocode_relink_graph_end_to_end(pool, cur):
     assert llm.calls == ["days"]                               # day 2 had no overnight from the rules
     assert res["components"] == 3 and res["skipped"] == {"logistics_place": 2}
     assert res["names_new_pending"] >= 3
+    # AA-990: the first build of a source drops no id — the persist step cleared and wrote no redirect
+    assert res["ids_redirects_cleared"] == 0 and res["ids_redirected"] == 0
+    cur.execute("SELECT count(*) FROM geo.component_redirect WHERE source_id = %s", (group,))
+    assert cur.fetchone()[0] == 0
 
     cur.execute("SELECT day_index, overnight_place, anchor_place, overnight_destination_id FROM geo.tour_day "
                 "WHERE source_id = %s ORDER BY 1", (group,))

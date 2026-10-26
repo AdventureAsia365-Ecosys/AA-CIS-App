@@ -37,6 +37,7 @@ from services.acp_content_writing.export import (
     render_content_text_to_document,
     render_content_text_to_fragment,
 )
+from services.acp_shared import atom_replaced
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from services.acp_shared.cta_review_notice import WHERE_WRITE_OVERRIDE, check_saved_cta, cta_warning
 
@@ -257,6 +258,7 @@ async def list_reviews(request: Request, tenant=Depends(get_tenant)):
     pool = request.app.state.pool
     # AA-859 wave 4: request= runs it on the tenant pool behind REVIEWS_FLAG (fail closed, 503)
     data = await service.fetch_review_list(tenant_id, pool, request=request)   # AA-986 L3: + served fields
+    await atom_replaced.with_atom_state(data, tenant_id, pool)                 # AA-990 D2 (MAIN exception)
     return {"data": data, "total": len(data)}
 
 
@@ -270,7 +272,9 @@ async def get_review(request_id: UUID, request: Request, tenant=Depends(get_tena
     pool = request.app.state.pool
     try:
         # AA-859 wave 4: request= runs it on the tenant pool behind REVIEWS_FLAG (fail closed, 503)
-        return await service.fetch_review(tenant_id, request_id, pool, request=request)   # AA-986 L3: + served
+        review = await service.fetch_review(tenant_id, request_id, pool, request=request)   # AA-986 L3: + served
+        await atom_replaced.with_atom_state([review], tenant_id, pool)                  # AA-990 D2 (MAIN exception)
+        return review
     except RequestNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except service.ContentWritingError as exc:
