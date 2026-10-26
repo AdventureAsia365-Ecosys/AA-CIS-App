@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.11.0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/compare/v0.10.0...v0.11.0) (2026-10-26)
+
+
+### Features
+
+* admin Data coverage page, one live numbers table from raw uploads to TripPlanner, Booking and CRM ([#1032](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1032)) ([f983327](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/f9833274a7faaab5a85ddac81d47825b4d6e8b38))
+* CIS admin page for Booking supply content (list and /admin/supply-content/&lt;id&gt;) ([#1006](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1006)) ([7e3cdfa](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/7e3cdfa61b340947247ce73d2213ded5aa16573e))
+* Dev-only E2E CIS admin session, read-only except the content-quality sentence-apply routes ([#1019](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1019)) ([f9654a5](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/f9654a50057d1a00f62ea43bc700f334717325e5))
+* golden set tables, importer and the no-tenant-text guard (WM-17) ([#1021](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1021)) ([2fb51e6](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/2fb51e669210bc14b533ae464cd7989224980bb7))
+* migration 283 allows the Dev-only E2E CIS admin address in admin_users_email_chk ([#1018](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1018)) ([2bb404f](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/2bb404f4ec357124ff405f0230af521cf14c28f5))
+* My Content list carries each request's live post (published_at, published_url, published_piece_id) ([#1007](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1007)) ([2825323](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/2825323f79437efcf500f76fc72b2aa08a2d78eb))
+* one-click reason chips and example toggles (writing memory WM-07) ([#1005](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1005)) ([2989bfd](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/2989bfd4b126617e64dc27ec8a462f53c9090f8a))
+* partner-pool Content studio sign-in, studio invitations and role checks ([#1029](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1029)) ([95cd283](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/95cd283b6c89b444694ea3f0e21d82301e880627))
+* per-violation severity badges in the Content Quality drawers ([#1004](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1004)) ([5d385a0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/5d385a0e805122d4c2f316bc5a602366cd686ac4))
+* place-card draft on GPT-6 Luna (migration 286), 4000-token draft limit ([#1030](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1030)) ([59d006e](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/59d006e30862744430bdfc3738b82dafb213fa85))
+* saved pins and angle requests survive place rebuilds (component redirects, mig 285) ([#1025](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1025)) ([7e02ff5](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/7e02ff501f5a34d3546c27c787db1ed7c5a8d4d9))
+* segments, card links and places follow a Master publish ([#1020](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1020)) ([303ae6e](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/303ae6e9920d3627b6cf23255df7893077a92a35))
+* T9 writer round 2 — no invented visit details, more AI-tell forms, no internal labels ([#1017](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1017)) ([a7d4bcb](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/a7d4bcb653008d55932da979fe972eebe396fbcd))
+* T9 writer round 3 — fact-preservation invariant, panel-quoted tells, LinkedIn fidelity ([#1024](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1024)) ([fd7e946](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/fd7e946e03aa46e34155e2ad008b33e110db5e81))
+* T9 writer round 4 — prompt-side AI-tell pairs, self-check, family presence from the seed ([#1027](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1027)) ([b0f191a](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/b0f191af3aa20db92dea6dbbb06b61a9993c2198))
+* T9 writer round 5, family brands read warm and concrete again (children in the seed's moments) ([#1033](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1033)) ([33c09fc](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/33c09fc0fc442f684458e43d65c61158fe6b6003))
+* T9 writer round 6, brand texture for energetic, luxury and nature brands ([#1035](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1035)) ([9c0fe93](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/9c0fe930a930e23c1b31b089e32be238741e19a9))
+* T9 writer-side AI-tell pass, writer brief rules and LinkedIn lead-fact rotation ([#1015](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1015)) ([e5c82e9](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/e5c82e9da44eb6814af09726755e2c7770a7ee02))
+* tenant account endpoints for the portal (activity trail, CSV export, API key facts) ([#1002](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1002)) ([f580057](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/f5800578b9c6cf2dbfc71941dfe28927ed8f12fc))
+* tenant Members read over the CIS membership directory (GET /v1/account/members) ([#1008](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1008)) ([038a1ca](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/038a1cab1bcfbdccc4b05eb499667db27cf728d7))
+* tenant.membership.v1 1.2, getTenantMembers serves is_synthetic ([#1037](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1037)) ([13429ef](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/13429efdf51123126c21c5fda9b99e6c0cf4a131))
+* the E2E CIS admin may send Content studio invitations on synthetic tenants only ([#1036](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1036)) ([b7da3d1](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/b7da3d1a16d6459bd3d37afc557d084b0b7415de))
+* writing-memory releases with activate-requires-eval and release 0 replay (WM-18, WM-20) ([#1039](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1039)) ([dddb7cf](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/dddb7cffe92432613564b198e7d8ae24a067d026))
+
+
+### Bug Fixes
+
+* admin smoke covers Supply content and Review Queue reason modals; fix full-page shots, sidebar label, /login theme ([#1014](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1014)) ([414e323](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/414e3236c4e92cb975f566e52d61f01b7e7cdf64))
+* admin-evidence spec waits for the page heading ([#1022](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1022)) ([df811ef](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/df811ef6ec6df6f4232ec64b5767cd1f010a13a2))
+* AI spend test uses days outside every rollup window ([#1023](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1023)) ([f700df4](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/f700df4b9b6b91b1cf904f3a9cdb29e8d4f8488c))
+* data coverage reads v_tour_place in its own tp_places source (per-tour form) ([#1034](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1034)) ([00c6ced](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/00c6cedbdc0ec9155da99af9908022f40f61b4cf))
+* kit DataTable sets aria-sort on sorted headers and gains a compact density ([#1012](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1012)) ([888a32c](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/888a32c23dc6cc048a032d9a01087bd89615747a))
+* linear-time sentence end scan in hygiene.sentence_spans ([#1001](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1001)) ([f31ccbb](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/f31ccbbeea4ad4ecc6dede022784bc8263b5dcf5))
+* migration 281 codifies the CIS schema state Dev has but no migration makes ([#1003](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1003)) ([ce833c9](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/ce833c952d80af410e5c185907e9f757d1e2f9b5))
+* page header actions wrap inside the screen on phones ([#1040](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1040)) ([c53ab11](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/c53ab1197df7ccd34b86f2dedeceb48de819aaac))
+* retired gates labelled in Content Quality; lock source and feed health in the CRM console ([#1026](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1026)) ([900f246](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/900f2463b42edcf63072408f9e2f5499cfa80756))
+* structured output on legacy LLM keys and the supply writer route ([#1016](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1016)) ([55e2402](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/55e240267b053834290d6c208361a20134f07edd))
+* typed 409 atom_replaced when a T9 write or angle regenerate hits a replaced atom ([#1013](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1013)) ([3d03b42](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/3d03b425a8b6df5e87c7064d7bc68918abf79fb9))
+* write gitleaks sample Google API keys without a literal key ([#1010](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1010)) ([520199c](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/520199cd2c07c5598d0959f11df0edaf84635420))
+
 ## [0.10.0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/compare/v0.9.0...v0.10.0) (2026-10-25)
 
 
