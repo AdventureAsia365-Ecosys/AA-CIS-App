@@ -1,0 +1,6 @@
+# CI-only test dependencies, installed on top of requirements.txt by the Unit Tests job.
+# requirements.txt feeds the production image (Dockerfile), so CI-only pins live here.
+
+# AA-993 (CIS-1): pytest-cov 5.0.0 pulls coverage unpinned. Unit Tests runs with COVERAGE_CORE=sysmon,
+# verified on this version (same covered-line set as the C tracer).
+coverage==7.17.0

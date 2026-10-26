@@ -10,6 +10,12 @@ on:
   merge_group:
     types: [checks_requested]
 
+# AA-993 (CIS-4): a new push to a PR cancels that PR's older run. Every other event (push, merge_group) gets its own
+# group keyed on run_id, so main pushes are never serialised or cancelled.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   id-token: write
   contents: read
@@ -127,14 +133,23 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: "pip"
+
+      # AA-993 (CIS-3): uv installs the same requirements faster than pip; its cache replaces setup-python's pip cache.
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
 
       - name: Install dependencies
+        # requirements-dev.txt pins the coverage version (CI only; requirements.txt feeds the production image).
         run: |
-          pip install -r requirements.txt
+          uv pip install --system -r requirements.txt -r requirements-dev.txt
 
       - name: Run unit tests
         env:
+          # AA-993 (CIS-1): Python 3.12 sys.monitoring tracer, about 2x faster than the C tracer with the same
+          # covered lines. Needs the coverage pin in requirements-dev.txt.
+          COVERAGE_CORE: sysmon
           ENVIRONMENT: test
           AWS_REGION: us-west-1
           AWS_DEFAULT_REGION: us-west-1
@@ -217,12 +232,17 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: "pip"
+
+      # AA-993 (CIS-3): same uv install as Unit Tests, two installs in the same order as before.
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
 
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
-          pip install -r tests/integration/requirements-integration.txt
+          uv pip install --system -r requirements.txt
+          uv pip install --system -r tests/integration/requirements-integration.txt
 
       - name: Setup test DB user
         run: |
