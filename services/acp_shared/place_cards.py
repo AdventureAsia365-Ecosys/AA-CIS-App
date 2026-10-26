@@ -16,7 +16,7 @@ How a card is made (once per PLACE, in a job — never in an HTTP request, and n
    before its `retry_after`. A GENERIC name ("City Palace", "Night Market" — only kind words) is
    one group per atom, never matched by alias/core name, only by a card whose locality its
    itinerary sentence names.
-1. `a3_place_card` (validate route; GPT-5.6 Luna since S234 migration 222) gets the place, its
+1. `a3_place_card` (validate route; GPT-6 Luna since S252 migration 286, was GPT-5.6 Luna) gets the place, its
    itinerary sentence(s), the tour name and the country the tour is sold as, and returns the
    place's identity (display name, locality, region, country, naming note, aliases) plus 4-6
    short background facts. AA-774: only what the place is, its history, setting and naming — never
@@ -61,7 +61,12 @@ logger = structlog.get_logger()
 
 MAX_FACTS = 6
 MAX_ALIASES = 6
-DRAFT_MAX_TOKENS = 1500  # Luna spends part of it on reasoning
+# GPT-6 Luna (migration 286) reasons inside max_tokens: at 1500 it returned an empty reply (S246), so an unusable
+# draft became a paid no_name miss. S252 eval at 4000: max 1,384 output tokens, all end_turn; llm_call_log history
+# p90 1,956. Billing is per token used, so the headroom costs nothing. The check stays at 1024 (Haiku 4.5 in the
+# same eval: max 490, all end_turn).
+DRAFT_MAX_TOKENS = 4000
+CHECK_MAX_TOKENS = 1024
 _CONCURRENCY = 4
 # 'visiting' / 'practical' stay valid so cards drafted before AA-774 still validate and the admin view
 # lists them; the drafter no longer asks for them and the writer seed never shows them
@@ -411,7 +416,7 @@ def check_card(card: dict, atom: dict) -> tuple[bool, list[str], float, object]:
             f"region: {card.get('region') or '-'}, country: {card.get('country')}\n"
             f"FACTS:\n{numbered}")
     resp = LLMClient().generate(LLMRequest(system_prompt=_CHECK_SYSTEM, user_prompt=user,
-                                           stage="a3_place_card_check", max_tokens=1024))
+                                           stage="a3_place_card_check", max_tokens=CHECK_MAX_TOKENS))
     data = _parse_json(resp.content)
     verdicts = data.get("verdicts") if isinstance(data.get("verdicts"), list) else []
     verdicts = [str(v).strip().lower() for v in verdicts]
