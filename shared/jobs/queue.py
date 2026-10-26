@@ -609,7 +609,8 @@ async def domain_links(pool, job_id: str, payload: Optional[dict]) -> dict:
         "FROM acp_shared.content_piece WHERE job_id = $1::uuid LIMIT 20")
     # AA-712: the place-pipeline build rows (geo, migration 226) the job wrote.
     place_builds = await _rows(
-        "SELECT source_id, tour_id::text AS tour_id, country, status, counts FROM geo.tour_build "
+        "SELECT source_id, tour_id::text AS tour_id, country, status, counts - 'id_redirects' AS counts "
+        "FROM geo.tour_build "
         "WHERE job_id = $1::uuid LIMIT 20")
     graph_builds = await _rows(
         "SELECT build_id::text AS build_id, is_current, stats->'tours' AS tours, stats->'nodes' AS nodes "

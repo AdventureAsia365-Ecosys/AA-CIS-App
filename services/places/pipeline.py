@@ -158,6 +158,13 @@ async def extract_tour_places(pool, tour: dict, deps: ExtractDeps, *, force: boo
     carry, carry_counts = comp_mod.carry_over_ids(comps, comp_dest, previous)
     comp_dest = comp_mod.apply_carry_over(comps, comp_dest, carry)
     counts.update(carry_counts)
+    # AA-990: every previous id the carry-over could not keep → a redirect to the component that took its place
+    # (cumulative per source, in the build counts; Infra aa990_component_id_backfill.py copies it to TripPlanner).
+    fresh, redirect_counts = comp_mod.redirect_dropped(comps, comp_dest, previous)
+    redirects, lost = comp_mod.merge_redirects(prev.get(comp_mod.REDIRECTS_KEY), fresh,
+                                               {c.component_id for c in comps})
+    counts.update(redirect_counts, ids_redirects_lost=lost, ids_redirects_total=len(redirects))
+    counts[comp_mod.REDIRECTS_KEY] = redirects
     counts["places_linked"] = sum(1 for v in comp_dest.values() if v)
     counts["nights_linked"] = sum(1 for v in night_dest.values() if v)
     counts["names_new_pending"] = sum(1 for r in new_rows if r[-1] == "pending")
@@ -219,8 +226,9 @@ async def extract_tour_places(pool, tour: dict, deps: ExtractDeps, *, force: boo
         except _NotLive:
             return {**base, "status": "skipped_not_live"}
         pending_due = await store.pending_names_due(conn)
+    # the redirect map stays in geo.tour_build.counts; the job result keeps its counters only
     return {**base, "status": status, "days": len(records), "cost_usd": cost, "pending_names_due": pending_due,
-            **counts}
+            **{k: v for k, v in counts.items() if k != comp_mod.REDIRECTS_KEY}}
 
 
 async def _validity_counts(conn) -> dict:

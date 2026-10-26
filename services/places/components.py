@@ -250,3 +250,85 @@ def apply_carry_over(comps: list[Component], comp_dest: dict, mapping: dict[str,
     for c in comps:
         c.component_id = mapping.get(c.component_id, c.component_id)
     return {mapping.get(k, k): v for k, v in comp_dest.items()}
+
+
+# ── AA-990: an id the rebuild could not keep → a redirect to the component that took its place ─────────────────────
+# carry_over_ids keeps an id in place only on an unambiguous one-to-one pair. Every other previous row is dropped, and a
+# TripPlanner pin on it dangled (S252: 322 of 371 pins after the S1 v2 place re-sync). A redirect is a lookup, not a
+# served id, so it may be many-to-one and it may pick between candidates: for every dropped previous row, the current
+# component of the same source for the same place, by rule (first rule with a candidate wins):
+#   destination (same linked destination) → place card → itinerary spelling + country → link name + country,
+# any day, the nearest day first, then the same activity, then the smaller id. The redirects are cumulative per source
+# (an older redirect whose target was dropped now is re-pointed through this build's redirects) and live in
+# geo.tour_build.counts["id_redirects"]: CIS cannot write tripplanner.* (tp-017 grants the map to the role tripplanner
+# only), so AA-CIS-Infra db/scripts/aa990_component_id_backfill.py copies them into tripplanner.component_id_map.
+REDIRECTS_KEY = "id_redirects"
+REDIRECTS_CAP = 1000          # per source; the newest are kept (a tour is rewritten a handful of times at most)
+REDIRECT_RULES = ("destination", "card", "spelling", "link_name")
+
+
+def _redirect_key(kind: str, *, spelling: str, link_name: str, country: str, destination, card) -> Optional[str]:
+    if kind == "destination":
+        return str(destination) if destination else None
+    if kind == "card":
+        return str(card) if card else None
+    name = spelling if kind == "spelling" else link_name
+    return f"{name}|{country}" if name else None
+
+
+def redirect_dropped(comps: list[Component], comp_dest: dict, old_rows: list[dict]) -> tuple[dict[str, str], dict]:
+    """({dropped previous id: current component id}, counters). Call after apply_carry_over: `comps` carry their final
+    ids and `comp_dest` is keyed on them. `old_rows` as carry_over_ids, plus `country_norm` and `activity` when known
+    (a row without `country_norm` matches a name in any country of the tour). Pure."""
+    final = {c.component_id for c in comps}
+    keys: dict[str, dict[str, list[Component]]] = {k: {} for k in REDIRECT_RULES}
+    for c in comps:
+        for kind in REDIRECT_RULES:
+            k = _redirect_key(kind, spelling=name_norm(c.name), link_name=c.name_norm, country=c.country_norm,
+                              destination=comp_dest.get(c.component_id), card=c.place_card_id)
+            if k:
+                keys[kind].setdefault(k, []).append(c)
+                if kind in ("spelling", "link_name"):         # a previous row with no country: name only
+                    keys[kind].setdefault(k.split("|", 1)[0] + "|*", []).append(c)
+    redirects: dict[str, str] = {}
+    by_rule: dict[str, int] = {}
+    unmatched = 0
+    for o in sorted((o for o in old_rows if str(o["component_id"]) not in final), key=lambda r: str(r["component_id"])):
+        day, activity = int(o["day_index"]), o.get("activity")
+        country = o.get("country_norm") or "*"
+        for kind in REDIRECT_RULES:
+            k = _redirect_key(kind, spelling=name_norm(o.get("name")), link_name=o.get("name_norm") or "",
+                              country=country, destination=o.get("destination_id"), card=o.get("place_card_id"))
+            cands = keys[kind].get(k) if k else None
+            if cands:
+                best = min(cands, key=lambda c: (abs(c.day_index - day), c.activity != activity, c.day_index,
+                                                 c.component_id))
+                redirects[str(o["component_id"])] = best.component_id
+                by_rule[kind] = by_rule.get(kind, 0) + 1
+                break
+        else:
+            unmatched += 1
+    return redirects, {"ids_redirected": len(redirects), "ids_redirected_by": by_rule, "ids_unredirected": unmatched}
+
+
+def merge_redirects(previous: Optional[dict], fresh: dict[str, str], final_ids: set[str],
+                    cap: int = REDIRECTS_CAP) -> tuple[dict[str, str], int]:
+    """(the source's redirects after this build, how many older ones were lost). An older redirect keeps its target
+    when the target is still a component, follows this build's redirect when the target was dropped, else is lost.
+    An id that is a component again (the place came back) is no longer redirected. At most `cap`, newest kept."""
+    out: dict[str, str] = {}
+    lost = 0
+    for old, target in (previous or {}).items():
+        if old in final_ids:
+            continue
+        t = target if target in final_ids else fresh.get(target)
+        if t:
+            out[old] = t
+        else:
+            lost += 1
+    for old, t in fresh.items():
+        out.pop(old, None)
+        out[old] = t
+    if len(out) > cap:
+        out = dict(list(out.items())[-cap:])
+    return out, lost
