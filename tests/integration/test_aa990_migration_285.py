@@ -137,7 +137,8 @@ async def test_write_redirects_clears_served_upserts_dropped_and_chains_through_
             assert [tuple(r) for r in rows] == [(b, d, "destination")]
             await store.write_redirects(conn, src, {c: d}, {c: "link_name"}, [d])
             await conn.execute("SET LOCAL ROLE tripplanner")
-            got = await conn.fetch("SELECT component_id::text, new_component_id::text FROM catalog.v_component_redirect "
+            got = await conn.fetch("SELECT component_id::text, new_component_id::text "
+                                   "FROM catalog.v_component_redirect "
                                    "WHERE component_id = ANY($1::uuid[]) ORDER BY component_id", [a, b, c])
             assert sorted(tuple(r) for r in got) == sorted([(b, d), (c, d)])
         finally:
