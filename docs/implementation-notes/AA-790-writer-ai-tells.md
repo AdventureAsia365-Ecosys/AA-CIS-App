@@ -1365,7 +1365,7 @@ became a label. Round 5 is prompt-side only and keeps every round-4 AI-tell chan
 
 ### Should know
 
-- Tests: new `tests/unit/test_aa790_writer_round5.py` (162 tests):
+- Tests: new `tests/unit/test_aa790_writer_round5.py` (165 tests):
   - versions (`79cd046a`, AI_TELLS v3) and `PROMPT_RULES` + `SELF_CHECK_RULE` byte-identical to round 4;
   - the VISIT DETAIL bridge;
   - rule text: group membership, seed bound, optional / limited moments, pace cues, forbidden inventions, no cap,
