@@ -117,7 +117,7 @@ async def _memberships(request: Request, principal: Principal) -> tuple[Optional
         async with pool.acquire(timeout=ACQUIRE_TIMEOUT_S) as conn:
             rows = await studio.identity_memberships(conn, principal.iss, principal.sub)
     except (asyncpg.UndefinedTableError, asyncpg.PostgresConnectionError, asyncpg.InterfaceError,
-            asyncpg.TooManyConnectionsError, OSError, TimeoutError) as exc:
+            asyncpg.TooManyConnectionsError, OSError) as exc:
         logger.error("tenant_session_db_unavailable", error=type(exc).__name__)
         return None, _problem(503, "unavailable", "Memberships are unavailable; retry later.", {"Retry-After": "5"})
     return rows, None

@@ -208,7 +208,7 @@ async def activate_invitation(invitation_id: str, request: Request,
         raise M2MProblem(409, "conflict", "This invitation cannot be activated for this identity.",
                          reason=exc.code) from exc
     except (asyncpg.UndefinedTableError, asyncpg.PostgresConnectionError, asyncpg.InterfaceError,
-            asyncpg.TooManyConnectionsError, OSError, TimeoutError) as exc:
+            asyncpg.TooManyConnectionsError, OSError) as exc:
         raise _unavailable(exc) from exc
     logger.info("tenant_membership_activated", client_id=caller.client_id, tenant_id=str(row["tenant_id"]),
                 membership_id=str(row["membership_id"]), changed=changed)
