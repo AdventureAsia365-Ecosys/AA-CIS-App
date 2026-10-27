@@ -32,6 +32,7 @@ import {
   jobTenant, subjectLabel, totalsSentence,
   type ErasureJob, type ErasureSettings, type JobsPage, type TenantOption,
 } from "@/lib/dataErasure";
+import { TENANTS_API, TENANTS_QUERY_KEY } from "@/lib/tenants";
 import ApplyPanel, { type SendResult } from "./ApplyPanel";
 import ErasurePlan from "./ErasurePlan";
 import SubjectForm from "./SubjectForm";
@@ -123,8 +124,8 @@ export default function DataErasure() {
     staleTime: 60_000,
   });
   const tenants = useQuery({
-    queryKey: ["admin-tenants", "include-inactive"],
-    queryFn: () => apiGet<{ tenants: TenantOption[] }>("/api/admin/tenants?include_inactive=true"),
+    queryKey: TENANTS_QUERY_KEY,  // the shared tenant list (lib/tenants.ts), one cache with every tenant picker
+    queryFn: () => apiGet<{ tenants: TenantOption[] }>(TENANTS_API),
     staleTime: 60_000,
   });
   const history = useQuery({

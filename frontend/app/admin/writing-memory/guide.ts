@@ -111,7 +111,8 @@ export const WRITING_MEMORY_GUIDE: GuideContent = {
         ] },
         { kind: "callout", tone: "note",
           text: "Scope shows 'Platform' (the AA master tenant) or 'Tenant' plus the first 8 characters of its id. "
-            + "The page never shows tenant names." },
+            + "The Signals, Candidates and Rules lists never show tenant names. Only the Releases tab names the "
+            + "tenant that owns a release." },
 
         { kind: "subheading", text: "Candidates tab" },
         { kind: "paragraph", text: "The rules the miner drafted. The status filter starts at candidate. Switch it to "
@@ -160,15 +161,18 @@ export const WRITING_MEMORY_GUIDE: GuideContent = {
           + "number of its active platform release, how many tenant releases are active, and the month its release "
           + "train is closed through. Below: every release, newest number first, with filters on writer and status. "
           + "Columns: Writer, Owner, No., Status, Content (class and rule count), Evidence, Drafted / approved by, "
-          + "Created, Activated, Prompt (the start of the prompt hash its R0 replay measured). Click a row to open "
-          + "its drawer." },
+          + "Created, Activated, Prompt (the start of the prompt hash its R0 replay measured). Owner is 'Platform' "
+          + "or the tenant's name (its slug when it has no name, or 'Tenant' plus the first 8 characters of its id "
+          + "when the tenant list does not know it; hover for the full id). Click a row to open its drawer: it also "
+          + "shows the tenant's full id, for support." },
         { kind: "list", items: [
           "Turn memory off / Turn memory on (Writers): the kill switch, one click and a confirm. Off: the next write "
             + "of that writer ignores every release. Turning it on needs an active platform release. It does not "
             + "affect L0 rules.",
           "Close month (Writers): pick a month. No regular release of that month or earlier can be activated after "
             + "it. Lexicon releases, emergencies and rollbacks are never blocked. It cannot be reopened here.",
-          "New draft: pick the writer and the owner (Platform, or one tenant by its id), optionally rule ids. No rule "
+          "New draft: pick the writer and the owner (Platform, or One tenant: then pick the tenant by name in the "
+            + "Tenant list, searchable when there are many), optionally rule ids. No rule "
             + "ids makes an empty release. The drawer of the new draft opens.",
           "Reverify scan: flags every active release whose golden set, model route or gates changed since its "
             + "evidence. A flagged release keeps serving.",

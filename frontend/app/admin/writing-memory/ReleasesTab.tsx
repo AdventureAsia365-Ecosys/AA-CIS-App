@@ -5,7 +5,8 @@
 //   Writers    per writer: the memory switch (the kill switch), the active platform release, how many tenant
 //              releases are active, and the month the release train is closed through. Turn memory on / off and
 //              Close month are the two writer actions.
-//   Releases   every release (server filters: writer, status): number, owner, status, content class and rule count,
+//   Releases   every release (server filters: writer, status): number, owner (Platform or the tenant's name, resolved
+//              client-side from the shared tenant list: useTenants), status, content class and rule count,
 //              train, the evidence verdicts (R0, Eval, Shadow), the reverify flag, who drafted / approved it, when it
 //              was created / activated, and its prompt (the prompt register: the sha256 its R0 replay measured).
 //   Drawer     one release: its evidence runs with their summary (counts and hashes only), the fingerprint, and
@@ -16,12 +17,13 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, ShieldCheck } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   Badge, Button, ConfirmModal, DataTable, Drawer, ErrorState, K, Modal, TableSkeleton, apiGet,
   formatDateTime, mono, useAdminIdentity, useToast, type ColumnDef,
 } from "../../_kit";
 import { can } from "@/lib/rbac";
+import { TenantSelect, useTenants } from "../_components/TenantSelect";
 import {
   EVIDENCE_NEEDED, RELEASE_STATUSES, WM_API, WRITERS, actorLabel, evidenceOk, evidenceWord, isUuid, monthStart,
   owner, releaseActions, releaseTone, wmSend,
@@ -196,9 +198,8 @@ function NewDraftModal({ open, onClose, onCreated }: { open: boolean; onClose: (
             <option value="platform">Platform (every tenant)</option>
             <option value="tenant">One tenant</option>
           </select></label>
-        {f.scope === "tenant" && <label>Tenant id
-          <input value={f.tenant} onChange={(e) => setF({ ...f, tenant: e.target.value })} style={inputStyle}
-            placeholder="The tenant's UUID" /></label>}
+        {f.scope === "tenant" && <TenantSelect value={f.tenant} required
+          onChange={(tenant) => setF({ ...f, tenant })} />}
         <label>Rule ids (optional, one per line)
           <textarea value={f.rules} onChange={(e) => setF({ ...f, rules: e.target.value })} rows={3}
             style={{ ...inputStyle, fontFamily: mono, fontSize: 12 }} /></label>
@@ -248,8 +249,8 @@ function RunCard({ label, run, id }: { label: string; run: ReleaseRun | null; id
   );
 }
 
-function ReleaseDrawer({ releaseId, onClose, canAdmin, active }: { releaseId: string | null; onClose: () => void;
-  canAdmin: boolean; active: ActiveReleases | undefined }) {
+function ReleaseDrawer({ releaseId, onClose, canAdmin, active, ownerOf }: { releaseId: string | null;
+  onClose: () => void; canAdmin: boolean; active: ActiveReleases | undefined; ownerOf: (r: Release) => string }) {
   const toast = useToast();
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["wm", "release", releaseId], enabled: !!releaseId,
@@ -294,7 +295,7 @@ function ReleaseDrawer({ releaseId, onClose, canAdmin, active }: { releaseId: st
 
   return (
     <Drawer open={!!releaseId} onClose={close} width={640}
-      title={r ? `Release #${r.release_no} · ${r.writer} · ${owner(r.scope, r.tenant_id)}` : "Release"}>
+      title={r ? `Release #${r.release_no} · ${r.writer} · ${ownerOf(r)}` : "Release"}>
       {q.isLoading || !r ? (q.error ? <ErrorState message={(q.error as Error).message} onRetry={() => q.refetch()} />
         : <TableSkeleton rows={5} cols={2} />) : (
         <div style={{ display: "grid", gap: 14, fontSize: 13 }}>
@@ -308,8 +309,9 @@ function ReleaseDrawer({ releaseId, onClose, canAdmin, active }: { releaseId: st
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 240px), 1fr))",
             gap: 6, color: K.muted, fontSize: 12.5 }}>
             <div>Drafted {formatDateTime(r.created_at)} by {actorLabel(r.created_by)}</div>
-            {r.tenant_id && <div style={{ overflowWrap: "anywhere" }}>Tenant id <span style={{ fontFamily: mono }}>
-              {r.tenant_id}</span></div>}
+            {r.tenant_id && <div style={{ overflowWrap: "anywhere" }}>Owner <span style={{ color: K.ink }}>
+              {ownerOf(r)}</span>
+              <div style={{ fontFamily: mono, fontSize: 11.5 }}>{r.tenant_id}</div></div>}
             <div>Approved {r.approved_at ? `${formatDateTime(r.approved_at)} by ${actorLabel(r.approved_by)}` : "—"}</div>
             <div>Activated {r.activated_at ? formatDateTime(r.activated_at) : "—"}</div>
             <div>Retired {r.retired_at ? `${formatDateTime(r.retired_at)} (${r.retired_reason ?? ""})` : "—"}</div>
@@ -427,6 +429,11 @@ export default function ReleasesTab() {
   const toast = useToast();
   const qc = useQueryClient();
   const canAdmin = can(useAdminIdentity().role, "ai.admin");
+  const tenants = useTenants();
+  // Owner: "Platform", the tenant's name (else its slug), or "Tenant" + the short id when the list does not know it.
+  const { byId, label } = tenants;
+  const ownerOf = useCallback((r: Release) => owner(r.scope, r.tenant_id,
+    r.tenant_id && byId.has(r.tenant_id) ? label(r.tenant_id) : undefined), [byId, label]);
   const [writer, setWriter] = useState("");
   const [status, setStatus] = useState("");
   const [open, setOpen] = useState<string | null>(null);
@@ -452,9 +459,11 @@ export default function ReleasesTab() {
   const cols = useMemo<ColumnDef<Release, unknown>[]>(() => [
     { accessorKey: "writer", header: "Writer",
       cell: (c) => <span style={{ fontFamily: mono }}>{c.row.original.writer}</span> },
-    { id: "owner", accessorFn: (r) => owner(r.scope, r.tenant_id), header: "Owner",
-      cell: (c) => <Badge tone={c.row.original.scope === "platform" ? "purple" : "info"}>
-        {owner(c.row.original.scope, c.row.original.tenant_id)}</Badge> },
+    { id: "owner", accessorFn: (r) => ownerOf(r), header: "Owner",
+      cell: (c) => { const r = c.row.original;
+        return <span title={r.tenant_id ?? undefined} style={{ display: "inline-block", maxWidth: "100%" }}>
+          <Badge tone={r.scope === "platform" ? "purple" : "info"}>
+            {ownerOf(r)}</Badge></span>; } },
     { accessorKey: "release_no", header: "No.", cell: (c) => `#${c.row.original.release_no}` },
     { accessorKey: "status", header: "Status",
       cell: (c) => { const r = c.row.original;
@@ -475,7 +484,7 @@ export default function ReleasesTab() {
     { id: "prompt", header: "Prompt", enableSorting: false,
       cell: (c) => <span style={{ fontFamily: mono, fontSize: 12, color: K.muted }}>
         {c.row.original.fingerprint?.prompt_sha256 ? c.row.original.fingerprint.prompt_sha256.slice(0, 12) : "—"}</span> },
-  ], []);
+  ], [ownerOf]);
 
   const total = list.data?.total ?? 0;
   const shown = list.data?.items.length ?? 0;
@@ -520,7 +529,8 @@ export default function ReleasesTab() {
             </div>} />
         )}
       </section>
-      <ReleaseDrawer releaseId={open} onClose={() => setOpen(null)} canAdmin={canAdmin} active={active.data} />
+      <ReleaseDrawer releaseId={open} onClose={() => setOpen(null)} canAdmin={canAdmin} active={active.data}
+        ownerOf={ownerOf} />
       <NewDraftModal open={creating} onClose={() => setCreating(false)}
         onCreated={(id) => { setCreating(false); setOpen(id); }} />
     </div>
