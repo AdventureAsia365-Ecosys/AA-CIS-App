@@ -3,8 +3,8 @@
 // AA-752 — the single admin shell. The admin layout (app/admin/layout.tsx) renders it once around
 // every admin page; no page renders a sidebar itself any more.
 //
-// Layout: a flex row of [Sidebar | (Topbar over the page content)]. The page supplies its own
-// <main className="aa-admin-main"> (kept from before the shell), which is the scroll region. On
+// Layout: a flex row of [Sidebar | (Topbar over the page content)]. Every page renders the kit AdminMain
+// (S252; the standard padding, phone rule and its own scroll), which is the scroll region. On
 // phones (< 768px, globals.css media query) the sidebar becomes an off-canvas drawer opened by the
 // topbar ☰ or the BottomNav "More", and the fixed BottomNav appears.
 //
@@ -61,7 +61,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
           onOpenSearch={() => setPaletteOpen(true)}
           onOpenMenu={() => setDrawerOpen(true)}
         />
-        {/* The page renders its own <main className="aa-admin-main"> as the scroll region. */}
+        {/* The page renders the kit AdminMain as its frame and scroll region (never a hand-written <main>). */}
         {children}
       </div>
 

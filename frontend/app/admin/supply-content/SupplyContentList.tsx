@@ -25,7 +25,7 @@ import {
   PageHeader,
   adminHeaders,
   formatDateTime,
-  type ColumnDef,
+  type ColumnDef, AdminMain,
 } from "../../_kit";
 import {
   CONTENT_STATUSES,
@@ -130,7 +130,7 @@ export default function SupplyContentList() {
   );
 
   return (
-    <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "28px 36px 56px" }}>
+    <AdminMain>
       <PageHeader
         title="Supply content"
         breadcrumbs={[{ label: "CIS Content" }, { label: "Assets" }, { label: "Supply content" }]}
@@ -165,7 +165,7 @@ export default function SupplyContentList() {
         onRowClick={(r) => router.push(detailHref(r.id))}
         tableMinWidth={640}
       />
-    </main>
+    </AdminMain>
   );
 }
 

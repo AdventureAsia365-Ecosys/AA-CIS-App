@@ -18,7 +18,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { RefreshCw, MapPin, AlertTriangle, CheckCircle2, Route } from "lucide-react";
 import { A, mono, Card, SLabel, Badge, Btn, LoadingScreen, StatCard, TabBar } from "../_components/adminUi";
-import { DataTable, PageHeader, formatDateTime } from "../../_kit";
+import { AdminMain, DataTable, PageHeader, formatDateTime } from "../../_kit";
 import LinesTab from "./LinesTab";
 import MergesTab from "./MergesTab";
 
@@ -179,7 +179,7 @@ export default function PlacesPage() {
   const reasons = check && validity ? validity.reasons[check] ?? [] : Object.values(validity?.reasons ?? {}).flat();
 
   return (
-    <main className="aa-admin-main" style={{ flex: 1, padding: "32px 36px", minWidth: 0, minHeight: 0, overflowY: "auto" }}>
+    <AdminMain>
       <PageHeader
         title="Places"
         description="Where the live tours go on the map — the place pipeline's coverage per country and the content-validity report the TripPlanner map switch waits on (no model call)."
@@ -315,6 +315,6 @@ export default function PlacesPage() {
       {tab === "merges" && <MergesTab onError={setError} />}
 
       <AttributionFooter a={validity?.attribution ?? DEFAULT_ATTRIBUTION} />
-    </main>
+    </AdminMain>
   );
 }

@@ -40,7 +40,7 @@ import {
   mono,
   sans,
   type ColumnDef,
-  type Tone,
+  type Tone, AdminMain,
 } from "../../../_kit";
 import {
   AI_ESTIMATE_LABEL,
@@ -106,7 +106,7 @@ export default function CostByApp() {
   };
 
   return (
-    <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "28px 36px 56px" }}>
+    <AdminMain>
       <SkeletonStyle />
       <PageHeader
         title="Cost per app"
@@ -162,7 +162,7 @@ export default function CostByApp() {
           <DataSources sources={data.sources} />
         </div>
       )}
-    </main>
+    </AdminMain>
   );
 }
 

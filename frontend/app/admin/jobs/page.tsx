@@ -39,7 +39,7 @@ import {
   ToastProvider,
   apiGet,
   apiSend,
-  useToast,
+  useToast, AdminMain,
 } from "../../_kit";
 import JobDrawer from "./JobDrawer";
 import JobsTable from "./JobsTable";
@@ -291,7 +291,7 @@ function JobsPageInner() {
   if (isLoading && !data) return <LoadingScreen msg="Loading jobs..." />;
 
   return (
-    <main className="aa-admin-main" style={{ flex: 1, padding: "32px 36px 56px", minWidth: 0, minHeight: 0, overflowY: "auto" }}>
+    <AdminMain>
       <PageHeader
         title="Jobs"
         description={`Background work that survives deploys — queued, running, finished. ${
@@ -409,7 +409,7 @@ function JobsPageInner() {
           busy={busyId === open}
         />
       )}
-    </main>
+    </AdminMain>
   );
 }
 

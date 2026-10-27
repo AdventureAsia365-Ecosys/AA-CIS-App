@@ -13,7 +13,7 @@ import {
   A, alpha, serif, sans, mono,
   Card, SLabel, TabBar, Badge, Btn, Spinner, LoadingScreen,
 } from "../_components/adminUi";
-import { PageHeader, formatDateTime, apiGet, useAdminIdentity } from "../../_kit";
+import { AdminMain, PageHeader, formatDateTime, apiGet, useAdminIdentity } from "../../_kit";
 import { can, staffErrorMessage, type Capability } from "@/lib/rbac";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -305,7 +305,7 @@ function TenantInfoTab({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <Card>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))", gap: 20 }}>
           <div>
             <SLabel>Tenant Name</SLabel>
             <div style={{ fontSize: 16, fontWeight: 600, color: A.ink, fontFamily: serif }}>
@@ -339,7 +339,7 @@ function TenantInfoTab({
 
       <Card>
         <SLabel>Plan Quota</SLabel>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))", gap: 16 }}>
           <div>
             <div style={{ fontSize: 11, color: A.muted, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.1em" }}>
               Monthly Tours
@@ -415,7 +415,7 @@ function SettingsPageInner() {
   });
 
   return (
-      <main className="aa-admin-main" style={{ flex: 1, padding: "32px 36px", minWidth: 0, minHeight: 0, overflowY: "auto" }}>
+      <AdminMain>
         {/* Header */}
         <PageHeader
           title="Settings"
@@ -454,6 +454,6 @@ function SettingsPageInner() {
             {tab === "ui-kit" && <SettingsKitTab />}
           </>
         )}
-      </main>
+      </AdminMain>
   );
 }

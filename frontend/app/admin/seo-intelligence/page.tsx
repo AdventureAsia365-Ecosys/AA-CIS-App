@@ -19,7 +19,7 @@ import {
   mono,
   PageHeader,
   SkeletonStyle,
-  Tabs,
+  Tabs, AdminMain, ScrollX,
 } from "../../_kit";
 
 interface DemandRow {
@@ -132,6 +132,7 @@ function OverviewTab({ d }: { d: SeoData["overview"] }) {
       </div>
       <div style={{ background: K.card, border: `1px solid ${K.line}`, borderRadius: 12, padding: "16px 18px" }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: K.ink, marginBottom: 12 }}>Demand by market</div>
+        <ScrollX>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
@@ -163,6 +164,7 @@ function OverviewTab({ d }: { d: SeoData["overview"] }) {
             )}
           </tbody>
         </table>
+        </ScrollX>
       </div>
     </div>
   );
@@ -198,6 +200,7 @@ function GapsTab({ gaps }: { gaps: GapRow[] }) {
           <div style={{ fontSize: 13, fontWeight: 600, color: K.ink, marginBottom: 8 }}>
             {country} <span style={{ color: K.muted2, fontWeight: 400 }}>· {rows.length}</span>
           </div>
+          <ScrollX>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead><tr><th style={TH}>Tour</th><th style={{ ...TH, textAlign: "right" }}>Research state</th></tr></thead>
             <tbody>
@@ -217,6 +220,7 @@ function GapsTab({ gaps }: { gaps: GapRow[] }) {
               ))}
             </tbody>
           </table>
+          </ScrollX>
         </div>
       ))}
     </div>
@@ -235,6 +239,7 @@ function SpendTab({ spend }: { spend: SeoData["spend"] }) {
       </div>
       <div style={{ background: K.card, border: `1px solid ${K.line}`, borderRadius: 12, padding: "16px 18px" }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: K.ink, marginBottom: 10 }}>DataForSEO spend by endpoint</div>
+        <ScrollX>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
@@ -261,6 +266,7 @@ function SpendTab({ spend }: { spend: SeoData["spend"] }) {
             )}
           </tbody>
         </table>
+        </ScrollX>
       </div>
     </div>
   );
@@ -281,7 +287,7 @@ export default function SeoIntelligencePage() {
   return (
     <>
       <SkeletonStyle />
-      <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "28px 36px 56px" }}>
+      <AdminMain>
           <PageHeader
             title="SEO Intelligence"
             description="Search demand, keywords, PAA questions, coverage gaps and research spend — merged from Segment research, S1 SEO context and DataForSEO."
@@ -331,7 +337,7 @@ export default function SeoIntelligencePage() {
               {tab === "spend" && <SpendTab spend={data.spend} />}
             </>
           )}
-        </main>
+        </AdminMain>
     </>
   );
 }

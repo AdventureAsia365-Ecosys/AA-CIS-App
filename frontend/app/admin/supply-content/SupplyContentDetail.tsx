@@ -36,7 +36,7 @@ import {
   formatDateTime,
   mono,
   useAdminIdentity,
-  useToast,
+  useToast, AdminMain,
 } from "../../_kit";
 import { can } from "@/lib/rbac";
 import { BOOKING_ADMIN_URL } from "@/lib/apps";
@@ -251,9 +251,9 @@ export default function SupplyContentDetail({ entityId }: { entityId: string }) 
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "28px 36px 56px" }}>
+    <AdminMain>
       {children}
-    </main>
+    </AdminMain>
   );
 }
 
