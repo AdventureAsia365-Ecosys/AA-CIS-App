@@ -167,8 +167,11 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
       `Sec-Fetch-Site`) is not this origin. `it.com` is a public suffix, so every `*.lumiguides.it.com` host,
       including the fixed Preview hosts that serve unmerged PR code, is the same site and its requests carry the
       Lax session cookies. `tests/unit/test_aa911_bff_cross_site.py` keeps every write route on the guard.
-    - Not moved yet: the public white-label page `/trip/[tourId]` stays on the admin app (stored `trip_url`s
-      point at the admin host); no Sentry on the portal yet.
+    - AA-979 P2b §4.3: the public white-label page `/trip/[tourId]` moved to the AA-Partner CRM web on the client
+      host (Dev `go-dev.`). The admin host answers `/trip/:path*` with a **307** there (`next.config.ts`,
+      `lib/apps.ts` `TRIP_PAGE_BASE_URL`; 301 only at the P2b clean-up, critic S5); `app/trip/[tourId]` stays here
+      as the rollback target until then. The CRM page still reads `GET /v1/trip/{id}` here, which keeps `url_alive`
+      fresh. Published `trip_url`s are built on env `TRIP_PAGE_BASE_URL` (default the admin host, which forwards).
   - Shared brand tokens (adventure.asia: Fahkwang/Poppins, gold `#DB9628`, pill buttons, logo)
     live in `frontend/app/_kit/core/brand.ts` (was `app/_brand/tokens.ts` until AA-994 S1a) and are used by admin,
     portal and login pages (AA-605; the portal has a guarded byte copy). New pages should reuse them.

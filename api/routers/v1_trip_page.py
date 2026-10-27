@@ -44,6 +44,7 @@ flagged rather than blocking indefinitely):
 """
 import datetime as _dt
 import json
+import os
 import uuid
 
 import structlog
@@ -62,6 +63,30 @@ admin_router = APIRouter(prefix="/admin/trip-pages", tags=["Trip Page (admin)"],
                          dependencies=[Depends(staff_policy)])
 
 _AA_INTERNAL_TENANT_ID = "00000000-0000-0000-0000-000000000001"
+
+# AA-979 P2b (runbook §4.3): the trip page moved to the CRM client host (AA-Partner web /trip/[tourId], Dev
+# https://go-dev.lumiguides.it.com); the admin host answers 307 to it (frontend/next.config.ts). TRIP_PAGE_BASE_URL is
+# the origin a published page URL is built on. The default stays the admin host, so this code ships before any
+# Terraform env change (the admin host URL keeps working through the 307); set the env to the client host to write
+# the final URL directly.
+DEFAULT_TRIP_PAGE_BASE_URL = "https://aa-cis.lumiguides.it.com"
+
+
+def trip_page_base_url() -> str:
+    """The https origin trip page URLs are built on: env TRIP_PAGE_BASE_URL, else the admin host. A value that is not
+    a bare https origin (path, query, http, spaces) is ignored with a warning rather than written into page URLs."""
+    raw = (os.environ.get("TRIP_PAGE_BASE_URL") or "").strip().rstrip("/")
+    if not raw:
+        return DEFAULT_TRIP_PAGE_BASE_URL
+    scheme, sep, host = raw.partition("://")
+    if scheme != "https" or not sep or not host or any(c in host for c in "/?#@ \t"):
+        logger.warning("trip_page_base_url_invalid", value=raw[:200])
+        return DEFAULT_TRIP_PAGE_BASE_URL
+    return raw
+
+
+def trip_page_url(tour_id: str) -> str:
+    return f"{trip_page_base_url()}/trip/{tour_id}"
 
 
 def _jsonb(val):
@@ -208,7 +233,7 @@ async def publish_trip_page(
                 detail="Tour is not eligible for a trip page (not found, not active, or "
                        "deleted) -- cannot publish a page for content that doesn't qualify.",
             )
-        real_url = f"https://aa-cis.lumiguides.it.com/trip/{tour_id}"
+        real_url = trip_page_url(tour_id)
         now = _dt.datetime.now(_dt.timezone.utc)
         await conn.execute("""
             INSERT INTO acp_deliver.tenant_tour_pages

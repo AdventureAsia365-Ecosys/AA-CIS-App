@@ -27,6 +27,12 @@ export const TRIPPLANNER_URL = trimSlash(process.env.NEXT_PUBLIC_TRIPPLANNER_URL
  * the staff /login page does not link to the portal (separate app, separate host). */
 export const PORTAL_BASE_URL = "https://portal.lumiguides.it.com";
 
+/** AA-979 P2b (runbook §4.3) — the public trip page /trip/<tourId> moved to the AA-Partner CRM web on the client host
+ * (Dev go-dev.). Code constant, no env var (same as PORTAL_BASE_URL). Used only by next.config.ts: the admin host
+ * answers 307 /trip/:path* -> here (301 only at the P2b clean-up: a cached 301 cannot be rolled back, critic S5). The
+ * API builds published page URLs from its own TRIP_PAGE_BASE_URL (api/routers/v1_trip_page.py). */
+export const TRIP_PAGE_BASE_URL = "https://go-dev.lumiguides.it.com";
+
 // No "Tenant portal" entry: the portal needs a tenant session (cis_tenant_token, host-only on the
 // portal host since AA-885), so a staff member cannot open it. It comes back with a real support view
 // (tenant picker / impersonation); until then tenant support is Tenant 360 (/admin/tenants).

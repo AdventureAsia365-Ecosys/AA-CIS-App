@@ -1,5 +1,8 @@
 // app/trip/[tourId]/page.tsx — AA-482, ADR-2026-030 D5 ("AA hosts the white-label tour page").
 //
+// AA-979 P2b: no longer served — next.config.ts answers /trip/:path* with a 307 to the AA-Partner CRM web on the
+// client host, which renders the same data. Kept as the rollback target (revert the redirect) until the P2b clean-up.
+//
 // Public, no-auth. Real per-tour landing page — the trip_url gate F6 (services/acp_produce/
 // gates.py) checks acp_deliver.tenant_tour_pages.url_alive for. Server component: fetches
 // directly from the backend's new public GET /v1/trip/{tourId} (api/routers/v1_trip_page.py),

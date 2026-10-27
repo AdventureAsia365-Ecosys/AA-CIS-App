@@ -90,6 +90,7 @@ class TestAA482TripPage:
 
     async def test_publish_trip_page_computes_real_url_not_placeholder(self, monkeypatch):
         monkeypatch.setattr(v1_trip_page, "verify_admin_secret", lambda *a, **k: None)
+        monkeypatch.delenv("TRIP_PAGE_BASE_URL", raising=False)
         request, conn = _make_pool(fetch_page_row=_TOUR_ROW)
 
         result = await v1_trip_page.publish_trip_page(
@@ -127,3 +128,34 @@ class TestAA482TripPage:
 
         assert result["checked"] == 2
         assert result["flipped_dead"] == 1
+
+
+@pytest.mark.asyncio
+class TestAA979TripPageBaseUrl:
+    """AA-979 P2b (runbook §4.3): the published page URL is built on env TRIP_PAGE_BASE_URL (the CRM client host),
+    defaulting to the admin host so the code ships before any Terraform env change."""
+
+    async def test_publish_uses_trip_page_base_url(self, monkeypatch):
+        monkeypatch.setattr(v1_trip_page, "verify_admin_secret", lambda *a, **k: None)
+        monkeypatch.setenv("TRIP_PAGE_BASE_URL", "https://go.example.test/")
+        request, conn = _make_pool(fetch_page_row=_TOUR_ROW)
+
+        result = await v1_trip_page.publish_trip_page(_TOUR_ROW["tour_id"], request, x_admin_secret="x")
+
+        url = f"https://go.example.test/trip/{_TOUR_ROW['tour_id']}"
+        assert result["url"] == url
+        insert = conn.execute.await_args
+        assert url in insert.args  # the row stores the same URL
+
+    @pytest.mark.parametrize("raw", [
+        "", "   ", "http://go.example.test", "https://go.example.test/path", "https://go.example.test?x=1",
+        "https://user@go.example.test", "go.example.test", "https://", "https://go example.test",
+    ])
+    async def test_base_url_falls_back_to_the_admin_host(self, monkeypatch, raw):
+        monkeypatch.setenv("TRIP_PAGE_BASE_URL", raw)
+        assert v1_trip_page.trip_page_base_url() == v1_trip_page.DEFAULT_TRIP_PAGE_BASE_URL
+        assert v1_trip_page.DEFAULT_TRIP_PAGE_BASE_URL == "https://aa-cis.lumiguides.it.com"
+
+    async def test_unset_env_keeps_the_admin_host(self, monkeypatch):
+        monkeypatch.delenv("TRIP_PAGE_BASE_URL", raising=False)
+        assert v1_trip_page.trip_page_url("t1") == "https://aa-cis.lumiguides.it.com/trip/t1"
