@@ -148,8 +148,9 @@ function SignalsTab() {
     ];
   }, [qc, toast]);
 
+  // minmax(0, 1fr), like ReleasesTab: an `auto` track would grow to the tables' min-content width and clip them.
   return (
-    <div style={{ display: "grid", gap: 20 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 20 }}>
       <section>
         <h2 style={{ fontSize: 15, margin: "0 0 4px" }}>Clusters over threshold</h2>
         <div style={{ fontSize: 12.5, color: K.muted, marginBottom: 8 }}>
