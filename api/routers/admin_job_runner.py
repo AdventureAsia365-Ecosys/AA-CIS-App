@@ -162,16 +162,15 @@ async def summary(request: Request):
     }
 
 
-@router.get("/deploy-gate", summary="AA-725 — queued+running count for the pre-deploy CI guard")
+@router.get("/deploy-gate", summary="AA-993 G5 — open waves and running deploy-blocking jobs, for the CI guard")
 async def deploy_gate(request: Request, x_admin_secret: str = Header(None)):
-    """Pre-deploy guard (AA-725 part 1). CI has no RDS access (private subnet), so it asks the live
-    API instead of querying shared.job directly. Returns the number of jobs that a deploy would
-    interrupt; CI blocks the roll when `safe_to_deploy` is false. Gated by the admin secret so it
-    is not a public queue-size probe.
-
-    AA-832: kinds registered with `deploy_gate_exempt` are not counted, and are listed in
-    `exempt_kinds` so the CI log says why a queued row of theirs did not block. No kind uses the flag
-    since AA-751 moved the 5-minute RDS sample into the api process (api/core/ops_metrics_sampler.py)."""
+    """Pre-deploy guard (AA-725 part 1; meaning changed by AA-993 G5, design D1.4). CI has no RDS access (private
+    subnet), so it asks the live API instead of querying the database. CI blocks the roll when `safe_to_deploy` is
+    false, which is only while a rerun wave is open (`open_waves`) or a job of a `deploy_blocking` kind is running
+    (`blocking_running`); `blocked_by` says why in words. Queued/running jobs of other kinds no longer block (the
+    worker drains and releases them, G1-G4); they are still reported in `active` / `by_status` /
+    `scheduled_later` (kinds registered with `deploy_gate_exempt` left out, listed in `exempt_kinds`). Gated by the
+    admin secret so it is not a public queue-size probe."""
     verify_admin_secret(x_admin_secret)
     from shared.jobs.worker import deploy_gate_status
     return await deploy_gate_status(request.app.state.pool)

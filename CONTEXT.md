@@ -538,8 +538,14 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
       `.github/verify/cis.rows`) returns `released`, `counted`, `jobs`, `by_kind`.
     - Registry fields: `release_delay_seconds` (a released job is due that much later; for kinds whose thread
       outlives the cancelled handler, set to the stopTimeout; `a3_atomize` = 120 since G3) and
-      `deploy_blocking` (a kind a deploy must not interrupt; recorded only, the deploy guard reads it from G5 on; it
-      cannot be combined with `deploy_gate_exempt`). `GET /summary` lists both per kind.
+      `deploy_blocking` (a kind a deploy must not interrupt: the deploy gate is unsafe while one of its rows RUNS,
+      G5; today `data_erasure` and `s1_batch_ingest`; it cannot be combined with `deploy_gate_exempt`). `GET
+      /summary` lists both per kind.
+    - **Deploy gate (AA-993 G5, design D1.4).** `GET /admin/job-runner/deploy-gate` (`worker.deploy_gate_status`,
+      also the Platform Apps card) answers `safe_to_deploy = false` only while a rerun wave is open (`open_waves`,
+      `shared.rerun_wave.status = 'open'`) or a `deploy_blocking` kind runs (`blocking_running` per kind);
+      `blocked_by` names the reasons. Queued/running jobs of other kinds no longer block: the worker drains them
+      and the new revision re-claims a released job. `active` / `by_status` / `scheduled_later` stay as info.
     - `noop_sleep` (`services/jobs/noop_sleep_job.py`): a test-only kind, registered only when `JOB_TEST_KINDS=1`
       (set it on api **and** worker, or the post-deploy verify's worker-kinds row goes red); sleeps
       `payload.seconds` (1..3600), resumes from `progress.slept_seconds`, `max_attempts=1`, `deploy_gate_exempt`.
@@ -685,7 +691,7 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   21:00 UTC = 04:00 ICT) calls `POST /admin/photos/sync/schedule`: one incremental `photo_sync` job
   per CON country, idempotent per UTC day, skipped while another `photo_sync` job is queued or
   running (not skipped during a rerun wave: no LLM work); `/admin/photos/summary` reports it as
-  `last_scheduled`. Those serial jobs hold the deploy gate for a while around 04:00 ICT. With
+  `last_scheduled`. (Before AA-993 G5 those serial jobs held the deploy gate around 04:00 ICT; they no longer do.) With
   `match_destinations` it fills empty `shared.destinations.cover_image_url` (read by the TripPlanner)
   — off until the destinations are re-extracted from the rerun tours (the schedule never sets it).
 - **Place pipeline (AA-712, ADR 0007, migration 226)**: CIS — not TripPlanner — computes each live

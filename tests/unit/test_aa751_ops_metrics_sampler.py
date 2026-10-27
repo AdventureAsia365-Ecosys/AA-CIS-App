@@ -726,6 +726,7 @@ async def test_deploy_gate_still_excludes_an_exempt_kind(monkeypatch, exempt_tes
     request.app.state.pool = pool
     out = await admin_job_runner.deploy_gate(request, x_admin_secret=_TEST_SECRET)
     assert out["safe_to_deploy"] is True and out["exempt_kinds"] == [exempt_test_kind]
-    sql, exempt, *rest = pool.fetch.call_args[0]  # AA-990: + the scheduled-later horizon
+    # AA-990: + the scheduled-later horizon. AA-993 G5: the first fetch is active_count, the second deploy_blockers.
+    sql, exempt, *rest = pool.fetch.call_args_list[0][0]
     assert "NOT (kind = ANY($1::text[]))" in sql and exempt == [exempt_test_kind]
     assert rest == [queue.DEPLOY_GATE_HORIZON_S]

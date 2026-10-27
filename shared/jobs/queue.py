@@ -521,6 +521,23 @@ async def active_count(pool, exempt_kinds: Sequence[str] = ()) -> dict:
     return {"active": sum(counts.values()), "by_status": counts, "scheduled_later": later}
 
 
+async def deploy_blockers(pool, blocking_kinds: Sequence[str] = ()) -> dict:
+    """AA-993 G5 (design D1.4) — what blocks a deploy: open rerun waves (`shared.rerun_wave`, migration 217) and
+    RUNNING rows of `blocking_kinds` (kinds registered with `deploy_blocking`), per kind. A queued row of such a kind
+    does not block (no work has started; the live image claims it). One round trip; raises on a read error so the
+    deploy gate fails closed."""
+    rows = await pool.fetch(
+        "SELECT 'wave' AS what, NULL::text AS kind, count(*)::int AS n FROM shared.rerun_wave WHERE status = 'open' "
+        "UNION ALL "
+        "SELECT 'running', kind, count(*)::int FROM shared.job "
+        "WHERE status = 'running' AND kind = ANY($1::text[]) GROUP BY kind",
+        list(blocking_kinds),
+    )
+    open_waves = sum(r["n"] for r in rows if r["what"] == "wave")
+    running = {r["kind"]: r["n"] for r in rows if r["what"] == "running" and r["n"]}
+    return {"open_waves": open_waves, "blocking_running": dict(sorted(running.items()))}
+
+
 # ── worker liveness (AA-687, migration 178) ─────────────────────────────────────────────────────
 # Read by the Jobs page only; the queue functions above never depend on it.
 

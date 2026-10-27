@@ -118,7 +118,8 @@ def _good():
         "/health/ready": {"status": 200, "body": {"status": "ok", "db": "ok", "schema_version": "290",
                                                   "required_schema": REQUIRED, "git_sha": SHA}},
         "/admin/job-runner/summary": {"admin": True, "status": 200, "body": {"kinds": [{"kind": k} for k in KINDS]}},
-        "/admin/job-runner/deploy-gate": {"admin": True, "status": 200, "body": {"safe_to_deploy": True}},
+        "/admin/job-runner/deploy-gate": {"admin": True, "status": 200,
+                                          "body": {"safe_to_deploy": True, "open_waves": 0, "blocked_by": []}},
         "/admin/overview": {"admin": True, "status": 200, "body": {"tours": 1}},
         # AA-993 G1: jobs released on shutdown (1 by the deploy, not counted toward MAX_RELEASES)
         "/admin/job-runner/released": {"admin": True, "status": 200, "body": {

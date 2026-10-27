@@ -453,7 +453,8 @@ STAFF_PATH_PREFIXES: tuple[str, ...] = ("/admin", "/v1/pipeline", "/v1/rules", "
 # /admin/overview has a POLICY entry (ops.read); the job-runner ones are open to any secret holder and
 # are listed so the allowlist stays complete if they ever get one.
 MACHINE_ROUTES: dict[tuple[str, str], str] = {
-    ("GET", "/admin/job-runner/deploy-gate"): "CI deploy-dev.yml: pre-deploy gate + post-deploy smoke",
+    ("GET", "/admin/job-runner/deploy-gate"): ("CI deploy-dev.yml: pre-deploy gate (open wave / running "
+                                               "deploy-blocking kind, AA-993 G5) + post-deploy smoke"),
     ("GET", "/admin/job-runner/summary"): "CI deploy-dev.yml: post-deploy smoke",
     ("GET", "/admin/job-runner/workers"): "CI deploy-dev.yml: post-deploy smoke (worker parity)",
     ("GET", "/admin/job-runner/released"): "CI post-deploy-verify.yml: jobs released on shutdown (AA-993 G1)",

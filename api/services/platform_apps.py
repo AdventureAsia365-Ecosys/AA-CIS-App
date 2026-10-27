@@ -106,6 +106,8 @@ async def _cis_card(pool: Any) -> dict:
         card["workers"], card["parity"] = None, None
         problems.append(f"workers unreadable ({type(e).__name__})")
     try:
+        # AA-993 G5: unsafe only while a rerun wave is open or a deploy-blocking kind runs (`blocked_by` says which);
+        # `active` / `by_status` are the jobs a deploy releases and the new revision re-claims (shown as info).
         card["deploy_gate"] = await deploy_gate_status(pool)
     except Exception as e:
         logger.warning("platform_apps_deploy_gate_failed", error=repr(e)[:200])

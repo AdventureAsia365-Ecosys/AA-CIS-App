@@ -525,8 +525,11 @@ def retry_refusal(job_row: dict) -> Optional[str]:
     return None
 
 
+# AA-993 G5: deploy_blocking. An apply claims its DRY RUN before it starts (single use), so a release on shutdown
+# followed by a re-claim refuses the reused approval: a deploy mid-apply would cost a new DRY RUN and approval. A
+# running row of this kind (DRY RUN included, seconds) holds Deploy Dev back.
 @job_kind(KIND, concurrency=1, max_attempts=1, expected_seconds=900, background=True, on_terminal=on_terminal,
-          retry_refusal=retry_refusal)
+          retry_refusal=retry_refusal, deploy_blocking=True)
 async def run(ctx: JobContext) -> dict:
     result = await run_erasure(ctx)
     ctx.set_result(result)

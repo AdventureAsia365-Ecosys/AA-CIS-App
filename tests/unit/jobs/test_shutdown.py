@@ -252,7 +252,9 @@ async def test_noop_sleep_is_exempt_from_the_deploy_gate(monkeypatch):
     noop_sleep_job.register()
     with patch.object(worker_mod, "load_kinds", lambda: None), \
             patch.object(queue, "active_count", AsyncMock(return_value={"active": 0, "by_status": {},
-                                                                         "scheduled_later": 0})) as active:
+                                                                         "scheduled_later": 0})) as active, \
+            patch.object(queue, "deploy_blockers", AsyncMock(return_value={"open_waves": 0,
+                                                                            "blocking_running": {}})):
         out = await worker_mod.deploy_gate_status(MagicMock())
     assert out["exempt_kinds"] == ["noop_sleep"] and out["safe_to_deploy"] is True
     assert active.await_args.kwargs["exempt_kinds"] == ["noop_sleep"]

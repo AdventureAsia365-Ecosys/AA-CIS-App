@@ -23,7 +23,9 @@ KIND = "s1_batch_ingest"
 
 # A Bedrock Batch job can take a long time; the worker lease is heartbeated, so a high expected is
 # just the "running longer than usual" flag on the Jobs page, not a timeout.
-@job_kind(KIND, concurrency=1, max_attempts=1, expected_seconds=7200)
+# AA-993 G5: deploy_blocking. The ingest keeps no checkpoint (unlike s1_rewrite, G2): a run released mid-ingest and
+# re-claimed would ingest every tour again (a second version and score each). A running row holds Deploy Dev back.
+@job_kind(KIND, concurrency=1, max_attempts=1, expected_seconds=7200, deploy_blocking=True)
 async def run(ctx: JobContext) -> dict:
     from services.content_generation.s1_batch import ingest_s1_batch
 

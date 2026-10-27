@@ -433,13 +433,32 @@ def load_kinds() -> None:
 
 
 async def deploy_gate_status(pool) -> dict:
-    """AA-725 / AA-832 — the jobs a deploy would interrupt: queued + running rows, not counting kinds registered with
-    `deploy_gate_exempt` (listed in `exempt_kinds`). Shared by GET /admin/job-runner/deploy-gate (the CI pre-deploy
-    guard) and the Platform Apps page (AA-884), so both answer the same question the same way."""
-    load_kinds()  # the exemption is a registry flag: make sure every kind is registered here
+    """AA-993 G5 (design D1.4) — may a deploy roll the api + worker now? Shared by GET /admin/job-runner/deploy-gate
+    (the CI pre-deploy guard) and the Platform Apps page (AA-884), so both answer the same question the same way.
+
+    `safe_to_deploy` is false only while
+      - a rerun wave is open (`shared.rerun_wave.status = 'open'`, count in `open_waves`): a wave's expected set must
+        not be split across two images (C6.3a), or
+      - a job of a `deploy_blocking` kind is RUNNING (`blocking_running`, per kind): such a job is not safe to re-run
+        after a release.
+    Queued and running rows of every other kind no longer block: the worker drains on SIGTERM and releases a job still
+    running after its grace window (G1-G4), and a queued row is claimed by whichever image is live. They stay in the
+    answer as information (`active`, `by_status`, `scheduled_later`; `deploy_gate_exempt` kinds not counted there).
+    `blocked_by` lists the reasons in words (empty when safe). A failed read raises (the endpoint answers 5xx), so the
+    CI guard fails closed."""
+    load_kinds()  # both flags live in the registry: make sure every kind is registered here
     exempt = sorted(k.name for k in kinds().values() if k.deploy_gate_exempt)
+    blocking = sorted(k.name for k in kinds().values() if k.deploy_blocking)
     counts = await queue.active_count(pool, exempt_kinds=exempt)
-    return {**counts, "safe_to_deploy": counts["active"] == 0, "exempt_kinds": exempt}
+    blockers = await queue.deploy_blockers(pool, blocking_kinds=blocking)
+    open_waves, running = blockers["open_waves"], blockers["blocking_running"]
+    blocked_by = []
+    if open_waves:
+        blocked_by.append(f"{open_waves} rerun wave(s) open")
+    for kind, n in running.items():
+        blocked_by.append(f"{n} {kind} job(s) running (deploy-blocking kind)")
+    return {**counts, "exempt_kinds": exempt, "open_waves": open_waves, "blocking_kinds": blocking,
+            "blocking_running": running, "blocked_by": blocked_by, "safe_to_deploy": not blocked_by}
 
 
 async def _main() -> None:

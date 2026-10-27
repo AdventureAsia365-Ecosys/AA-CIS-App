@@ -77,11 +77,18 @@ export interface CisWorker {
   last_seen_at: string | null;
 }
 
+/** GET /admin/job-runner/deploy-gate (AA-993 G5): unsafe only while a rerun wave is open or a deploy-blocking
+ * kind runs. `active` / `by_status` are the queued + running jobs a deploy releases and the new revision re-claims. */
 export interface DeployGate {
   active: number;
   by_status: Record<string, number>;
   safe_to_deploy: boolean;
   exempt_kinds: string[];
+  /** Absent on an API older than AA-993 G5. */
+  open_waves?: number;
+  blocking_kinds?: string[];
+  blocking_running?: Record<string, number>;
+  blocked_by?: string[];
 }
 
 export interface CisCard extends CardHealth {
