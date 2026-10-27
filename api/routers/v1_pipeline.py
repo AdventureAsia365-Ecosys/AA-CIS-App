@@ -208,6 +208,28 @@ def initial_state_for(
     return initial_state
 
 
+def _release_in(exc: Exception) -> Optional[asyncio.CancelledError]:
+    """AA-993 G2: the CancelledError a graph node raised, when LangGraph wrapped it as ``NodeCancelledError``.
+
+    LangGraph (>= 1.2) turns a ``CancelledError`` raised from a node's own body (``Task.cancelling() == 0``, which is
+    always the case for a sync node: it runs in an executor thread) into ``NodeCancelledError(Exception)`` with the
+    original as ``__cause__``, so it would reach ``_rewrite_tour``'s ``except Exception`` as an ordinary rewrite
+    failure. A worker release (SIGTERM / G1 drain) must stay a ``CancelledError``: the job is released and re-claimed,
+    and a failed s1_rewrite job clears its resume state. Only the explicit ``__cause__`` of that wrapper counts: a
+    ``CancelledError`` that is merely the ``__context__`` of another error (``asyncio.timeout`` raises
+    ``TimeoutError`` while handling one) is a real failure, not a release."""
+    try:
+        from langgraph.errors import NodeCancelledError
+    except ImportError:  # pragma: no cover — older LangGraph propagates the CancelledError itself
+        return None
+    if not isinstance(exc, NodeCancelledError):
+        return None
+    cause = exc.__cause__
+    if isinstance(cause, asyncio.CancelledError):
+        return cause
+    return asyncio.CancelledError(str(exc))
+
+
 async def _rewrite_tour(
     tour: dict, idx: int, total: int,
     brand_rules: dict = None,
@@ -371,6 +393,10 @@ async def _rewrite_tour(
         }
 
     except Exception as e:
+        released = _release_in(e)
+        if released is not None:   # AA-993 G2: a release inside a node is not a rewrite failure
+            logger.info("rewrite_released", idx=idx, node=getattr(e, "node", None))
+            raise released   # its __context__ is the wrapper, for the traceback
         logger.error("rewrite_failed", idx=idx, error=str(e))
         return {
             "idx": idx,

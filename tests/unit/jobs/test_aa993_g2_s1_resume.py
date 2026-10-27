@@ -419,11 +419,19 @@ def test_unknown_stage_is_ignored():
 @pytest.fixture
 def fake_nodes(monkeypatch):
     """Replace the graph's node functions (looked up when the graph is built) with LLM-free fakes. `generate` counts
-    writer calls; `validate` can raise CancelledError once, i.e. the job is released right after the writer."""
+    writer calls; `validate` can raise CancelledError once, i.e. the job is released right after the writer.
+    `raise_in` = {node function name: exception} raises that exception once from that node's body (a release when it
+    is a CancelledError: the worker cancels the job while the node runs)."""
     from services.content_generation import graph as g
-    calls = {"generate": 0, "validate": 0, "release_in_validate": False}
+    calls = {"generate": 0, "validate": 0, "release_in_validate": False, "raise_in": {}}
+
+    def _maybe_raise(name):
+        exc = calls["raise_in"].pop(name, None)
+        if exc is not None:
+            raise exc
 
     def generate(state):
+        _maybe_raise("generate_node")
         calls["generate"] += 1
         return {**state, "generated": {"name": "Draft", "summary": "s", "itineraries": "Day 1 — x"},
                 "model_used": "sonnet", "cost_usd": state.get("cost_usd", 0.0) + 0.25, "writer_version": "v2"}
@@ -433,15 +441,19 @@ def fake_nodes(monkeypatch):
         if calls["release_in_validate"]:
             calls["release_in_validate"] = False
             raise asyncio.CancelledError()
+        _maybe_raise("validate_node")
         return {**state, "quality_score": 8.0, "failure_codes": []}
 
-    def passthrough(state):
-        return {**state}
+    def passthrough(name):
+        def node(state):
+            _maybe_raise(name)
+            return {**state}
+        return node
 
     monkeypatch.setattr(g, "generate_node", generate)
     monkeypatch.setattr(g, "validate_node", validate)
     for name in ("judge_node", "brand_audit_node", "grounding_node", "flag_fix_node", "revalidate_node"):
-        monkeypatch.setattr(g, name, passthrough)
+        monkeypatch.setattr(g, name, passthrough(name))
     return calls
 
 
@@ -498,3 +510,57 @@ async def test_a_value_the_writer_mutates_in_place_is_still_saved(fake_nodes, mo
 
     await _rewrite_tour({"name": "T", "itineraries": "Day 1 — x"}, idx=0, total=1, on_writer_state=on_writer_state)
     assert saved[0]["degraded"] == [{"path": "writer_fallback"}]
+
+
+# ── a release inside any graph node stays a release (not a rewrite failure) ────────────────────
+
+_AFTER_WRITER_NODES = ["validate_node", "judge_node", "brand_audit_node", "grounding_node", "flag_fix_node",
+                       "revalidate_node"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("node", ["generate_node", *_AFTER_WRITER_NODES])
+async def test_a_cancelled_error_in_any_node_propagates_from_rewrite_tour(fake_nodes, node):
+    """LangGraph wraps a CancelledError raised from a node body as NodeCancelledError (an Exception); `_rewrite_tour`
+    must hand the CancelledError on instead of returning a failed rewrite, for every node of the A1 graph."""
+    from api.routers.v1_pipeline import _rewrite_tour
+    fake_nodes["raise_in"][node] = asyncio.CancelledError()
+    with pytest.raises(asyncio.CancelledError):
+        await _rewrite_tour({"name": "T", "itineraries": "Day 1 — x"}, idx=0, total=1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("node", ["generate_node", *_AFTER_WRITER_NODES])
+async def test_a_real_node_failure_is_still_a_failed_rewrite(fake_nodes, node):
+    """Only a cancellation is a release: an ordinary error, and a timeout raised while handling a CancelledError
+    (asyncio.timeout does that), still go down the rewrite-failed path."""
+    from api.routers.v1_pipeline import _rewrite_tour
+    timeout = TimeoutError("judge timed out")
+    timeout.__context__ = asyncio.CancelledError()
+    for exc in (RuntimeError("boom"), timeout):
+        fake_nodes["raise_in"][node] = exc
+        out = await _rewrite_tour({"name": "T", "itineraries": "Day 1 — x"}, idx=0, total=1)
+        assert out["status"] == "failed" and str(exc) in out["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("node", _AFTER_WRITER_NODES)
+async def test_a_release_in_a_node_after_the_writer_keeps_the_checkpoint(fake_nodes, node):
+    """End to end through the job with the real `_rewrite_tour` and graph: a release inside a node after the writer
+    propagates out of the job as a CancelledError, the saved writer state stays on the row (no failure clear), and
+    the re-claimed job resumes after the writer without a second writer call."""
+    from api.routers.v1_pipeline import _rewrite_tour
+    db, row_progress = FakeDB(), {}
+    fake_nodes["raise_in"][node] = asyncio.CancelledError()
+    with _patches(db, _rewrite_tour):
+        with pytest.raises(asyncio.CancelledError):
+            await sj.run(_ctx(row_progress))
+        assert fake_nodes["generate"] == 1
+        assert row_progress["persist_stage"] == "writer_done"
+        assert row_progress["s1_writer_state"]["writer_version"] == "v2"
+        assert row_progress.get("phase") != "done" and db.versions == []
+
+        out = await sj.run(_ctx(row_progress))     # the re-claimed job, new worker
+    assert fake_nodes["generate"] == 1, "the resumed job paid the writer again"
+    assert len(db.versions) == 1 and out["version_id"] == db.versions[0]["id"]
+    assert row_progress["phase"] == "done"
