@@ -17,6 +17,7 @@ import {
   lockSourceText,
   membershipFeed,
   parseUsd,
+  platformMembershipFeed,
   pct,
   usdPct,
 } from "./crmConsole.ts";
@@ -142,4 +143,34 @@ test("membershipFeed: health word + tone + last pull; absent or unknown state re
   assert.equal(old.state, "unknown");
   assert.equal(old.lastPull, "none yet");
   assert.equal(membershipFeed({ membership_feed_state: "toString" }).state, "unknown");
+});
+
+// AA-978 follow-up (S253): the agency list shows the lock source next to the State badge, and the feed health once.
+
+test("lockSourceText.short: the list's few words; null = not locked; an unknown source is shown raw", () => {
+  assert.equal(lockSourceText({ state: "active", lock_source: null }), null);
+  assert.equal(lockSourceText({ state: "offboarding", lock_source: null }), null);
+  // The contract sets lock_source only while locked; a stray value on another state is not shown.
+  assert.equal(lockSourceText({ state: "active", lock_source: "aa_ops" }), null);
+  assert.equal(lockSourceText({ state: "locked", lock_source: "aa_ops" }).short, "by AA staff");
+  assert.equal(lockSourceText({ state: "locked", lock_source: "cis_tenant" }).short, "by CIS tenant lifecycle");
+  assert.equal(lockSourceText({ state: "locked", lock_source: "cis_membership" }).short, "by CIS: no active owner");
+  assert.equal(lockSourceText({ state: "locked", lock_source: null }).short, "source not reported");
+  assert.equal(lockSourceText({ state: "locked" }).short, "source not reported");
+  const future = lockSourceText({ state: "locked", lock_source: "cis_offboarding" });
+  assert.deepEqual([future.code, future.label, future.short], ["cis_offboarding", "Locked (cis_offboarding)", "by cis_offboarding"]);
+  // An inherited object key is a source this page does not know, not a label.
+  const proto = lockSourceText({ state: "locked", lock_source: "toString" });
+  assert.deepEqual([proto.code, proto.label, proto.short], ["toString", "Locked (toString)", "by toString"]);
+});
+
+test("platformMembershipFeed: the first agency's platform-wide value; null with no agency loaded", () => {
+  assert.equal(platformMembershipFeed([]), null);
+  const f = platformMembershipFeed([
+    { membership_feed_state: "stale", membership_feed_lag_s: 900 },
+    { membership_feed_state: "ok", membership_feed_lag_s: 5 },
+  ]);
+  assert.deepEqual([f.state, f.label, f.tone, f.lastPull], ["stale", "Stale", "warning", "15 min ago"]);
+  // A 1.1 producer (no field) reads unknown.
+  assert.equal(platformMembershipFeed([{}]).state, "unknown");
 });
