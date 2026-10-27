@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from typing import Callable
 
 import structlog
 
@@ -122,6 +123,12 @@ class AtomizeIncomplete(RuntimeError):
         self.result = result
 
 
+class AtomizeStopped(Exception):
+    """AA-993 G3: the `a3_atomize` job was cancelled (a deploy released it) while its thread was still running; the
+    thread stops at the next day boundary (or between the later steps) instead of running on next to the attempt that
+    re-claims the job. Atoms and fingerprints of the days already read stay committed; the next run skips them."""
+
+
 async def _ask_atoms(prompt: str, role: str, *, event: str, log_fields: dict, signal_extra: dict | None = None):
     """Up to `_READ_ATTEMPTS` gateway calls for one atomize read. Returns (atoms, llm_result, attempt, error):
     atoms is None when every attempt failed. Every billed reply that did not parse gets its own billed_unusable
@@ -163,6 +170,7 @@ async def _ask_atoms(prompt: str, role: str, *, event: str, log_fields: dict, si
 async def run_a3_atomize(
     tour_id: str, rewritten: dict, pool, country: str = "",
     version_id: str | None = None, force: bool = False,
+    should_stop: Callable[[], bool] | None = None,
 ) -> dict:
     """A3 atomize — decompose atoms from a published Master Content tour, owner_scope="platform".
     Reuses AA-299's proven prompt/parse pipeline (services/acp_shared/atom_extraction.py:
@@ -192,6 +200,10 @@ async def run_a3_atomize(
     soft-deletes atoms on a day the itinerary no longer has (C6) and legacy rows with no day; the legacy path
     soft-deletes the tour's earlier atoms after a successful read (L1: its ids are random, so nothing was ever
     replaced).
+
+    AA-993 G3 — `should_stop()` (the job's cancel event) is asked before each day's read; True raises AtomizeStopped.
+    A day already being read finishes (its atoms and fingerprint row commit together), so a stop never leaves a half
+    day. The legacy whole-tour path is one read, asked once before it.
     """
     row = {
         "id": tour_id,
@@ -209,12 +221,20 @@ async def run_a3_atomize(
     forbidden_words = await _atom_forbidden_words(pool, OWNER_SCOPE)   # S218 audit
     days = parse_canonical_itinerary_days(row["itinerary_source"])
     if not days or not version_id:
+        stop_if_asked(should_stop, tour_id, "legacy_read")
         return await _atomize_whole_tour_legacy(tour_id, row, source_hash, pool, country,
                                                 forbidden_words=forbidden_words, force=force)
     return await _atomize_per_day(
         tour_id, version_id, row, days, source_hash, pool, country,
-        forbidden_words=forbidden_words, force=force,
+        forbidden_words=forbidden_words, force=force, should_stop=should_stop,
     )
+
+
+def stop_if_asked(should_stop: Callable[[], bool] | None, tour_id: str, before: str) -> None:
+    """AA-993 G3: raise AtomizeStopped when the job asked this run to stop (its cancel event is set)."""
+    if should_stop is not None and should_stop():
+        logger.info("a3_atomize_stopped", tour_id=tour_id, before=before)
+        raise AtomizeStopped(f"a3 atomize of {tour_id} stopped before {before} (job cancelled)")
 
 
 # AA-645 step 0 (C6) — atoms on a day the current itinerary no longer has (v2 rewrote 4 days into 1: days 2–4 kept
@@ -385,7 +405,7 @@ async def ground_day_atoms(atoms: list[dict], day: dict, owner_scope: str, tour_
 async def _atomize_per_day(
     tour_id: str, version_id: str, row: dict, days: dict,
     source_hash: str, pool, country: str, forbidden_words: list[str] | None = None,
-    force: bool = False,
+    force: bool = False, should_stop: Callable[[], bool] | None = None,
 ) -> dict:
     """AA-508 — one day at a time: fingerprint-gated skip (blocks the LLM call, not just logged
     after one), content-hash atom_id, real UPSERT. See atom_extraction.py::content_hash_atom_id()/
@@ -444,6 +464,7 @@ async def _atomize_per_day(
     days_failed = []
     day_errors: dict[str, str] = {}
     for day_num, day, fp in to_ask:
+        stop_if_asked(should_stop, tour_id, f"day {day_num}")   # AA-993 G3: day boundary
         prompt = _build_day_user_prompt(row, day_num, day["title"], day["body"])
         atoms, llm_result, attempt, error = await _ask_atoms(
             prompt, _a3_cfg.role, event="a3_atomize_day",

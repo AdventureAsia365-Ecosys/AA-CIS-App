@@ -516,13 +516,24 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
       `GET /admin/job-runner/released?since=` (default 24 h; machine GET in `MACHINE_ROUTES`, a row in
       `.github/verify/cis.rows`) returns `released`, `counted`, `jobs`, `by_kind`.
     - Registry fields: `release_delay_seconds` (a released job is due that much later; for kinds whose thread
-      outlives the cancelled handler, set to the stopTimeout; none yet, G3 sets it on `a3_atomize`) and
+      outlives the cancelled handler, set to the stopTimeout; `a3_atomize` = 120 since G3) and
       `deploy_blocking` (a kind a deploy must not interrupt; recorded only, the deploy guard reads it from G5 on; it
       cannot be combined with `deploy_gate_exempt`). `GET /summary` lists both per kind.
     - `noop_sleep` (`services/jobs/noop_sleep_job.py`): a test-only kind, registered only when `JOB_TEST_KINDS=1`
       (set it on api **and** worker, or the post-deploy verify's worker-kinds row goes red); sleeps
       `payload.seconds` (1..3600), resumes from `progress.slept_seconds`, `max_attempts=1`, `deploy_gate_exempt`.
       It is the live drain proof: enqueue it, deploy, read the logs and `/released`.
+    - Re-run safe kinds (AA-993 G2/G3). `s1_rewrite` records `progress.persist_stage` after each step
+      (`services/content_generation/s1_checkpoint.py`: `writer_done` → `rewritten` → `content_inserted` → `scored` →
+      `fix_pass_saved` → `routed` → `accounted`) and a re-claimed job resumes there: after the writer it re-enters the
+      graph at validate (`build_graph_resumed`, the saved writer-state delta, v2 stamp kept — not the Bedrock Batch
+      seed, which is v1-only); after the rewrite it pays nothing again; one version (found again by
+      `generated_content.metadata.s1_job_id`), one `quality_scores` row (NOT EXISTS guard), one review entry. The early
+      return is only `phase = "done"`. `a3_atomize`: a `threading.Event` set when the handler is cancelled stops the
+      thread at the next day boundary / between later steps (`AtomizeStopped`, late progress writes dropped), the
+      chain runs under a session advisory lock on the tour (`handler.a3_tour_lock`, own connection, two int4 keys
+      `hashtext('a3_atomize'), hashtext(tour_id)`; a waiting run polls, honours its own stop, gives up after 1800 s),
+      and `release_delay_seconds = 120`.
   - After a deploy the old task drains for ~5 min; its worker stops claiming as soon as a worker of a
     newer ECS task-definition revision is live (AA-711, `job_worker.task_revision`, migration 199).
   - Job cost (AA-652 follow-up, migration 177): the worker binds the job id around each handler

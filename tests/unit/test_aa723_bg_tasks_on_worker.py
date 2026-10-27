@@ -44,9 +44,10 @@ async def test_s1_missing_tour_id_is_not_retryable():
 
 @pytest.mark.asyncio
 async def test_s1_read_before_write_skips_a_job_that_already_wrote_its_version():
-    """A reap/retry of a job whose progress already carries a version_id must NOT rewrite."""
+    """A reap/retry of a job whose progress says phase=done must NOT rewrite (AA-993 G2: only phase=done; a bare
+    version_id is resumed instead, see tests/unit/jobs/test_aa993_g2_s1_resume.py)."""
     ctx = _ctx("s1_rewrite", {"tour_id": TOUR_ID, "batch_id": "b", "tenant_id": "x"},
-               progress={"version_id": VERSION_ID})
+               progress={"phase": "done", "version_id": VERSION_ID})
     with patch("api.routers.admin_pipeline._run_tour_safe", AsyncMock()) as safe:
         out = await sj.run(ctx)
     assert out == {"version_id": VERSION_ID, "resumed": True}
@@ -72,7 +73,7 @@ async def test_s1_happy_path_returns_version_and_records_it_in_progress():
         out = await sj.run(ctx)
     assert out["version_id"] == VERSION_ID and out["status"] == "success"
     # version id persisted to progress for idempotent resume
-    ctx.progress.assert_any_await(phase="done", version_id=VERSION_ID)
+    ctx.progress.assert_any_await(phase="done", version_id=VERSION_ID, s1_writer_state=None, s1_rewrite_result=None)
 
 
 # ── revalidate ──────────────────────────────────────────────────────────────────────────────────

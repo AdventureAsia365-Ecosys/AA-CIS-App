@@ -226,8 +226,14 @@ async def _rewrite_tour(
     previous_draft: Optional[dict] = None,  # AA-793: a T3 repair round revises this draft (T2 only)
     tour_agency: Optional[dict] = None,  # AA-645: raw_tours group_size / best_time_to_go for the S1 writer v2 (A1)
     writing_memory: Optional[dict] = None,  # AA-919: the writing-memory release view (None = memory off)
+    resume_state: Optional[dict] = None,  # AA-993 G2: saved writer state of a released s1_rewrite job (A1 only)
+    on_writer_state=None,  # AA-993 G2: optional async callback(delta: dict) after each writer node (A1 only)
 ) -> dict:
     """Rewrite single tour using LangGraph.
+
+    AA-993 G2: `resume_state` (an A1 rewrite, not a batch seed) enters build_graph_resumed() after the writer with that
+    state, so a re-claimed s1_rewrite job does not pay the writer again; `on_writer_state` receives the state a writer
+    node produced (s1_checkpoint.writer_state_delta), which is what the job saves for that resume.
 
     AA-606: when batch_text is set, entry is build_graph_from_generated() — it seeds the pre-written
     Bedrock Batch attempt-1 output instead of calling the writer live. A gate failure still falls
@@ -241,8 +247,12 @@ async def _rewrite_tour(
         # AA-793: a tenant rewrite runs the draft-tracking variant (best draft wins, retries revise
         # the best draft) unless both T2_BEST_DRAFT and T2_TARGETED_REPAIR are off. A1 is unchanged.
         from services.content_generation.t2_repair import t2_drafts_graph_enabled
+        a1_resumable = batch_text is None and not is_tenant_rewrite
         if batch_text is not None:
             graph = build_graph_from_generated()
+        elif resume_state and a1_resumable:
+            from services.content_generation.graph import build_graph_resumed
+            graph = build_graph_resumed()
         elif is_tenant_rewrite and t2_drafts_graph_enabled():
             graph = build_graph(t2_drafts=True)
         else:
@@ -253,6 +263,15 @@ async def _rewrite_tour(
             feedback=feedback, previous_draft=previous_draft, tour_agency=tour_agency, batch_text=batch_text,
             batch_model_used=batch_model_used, batch_account=batch_account, writing_memory=writing_memory,
         )
+        if resume_state and a1_resumable:
+            initial_state["resume_state"] = resume_state
+        report_writer = on_writer_state is not None and a1_resumable
+        # AA-993 G2: the delta is taken against a deep copy, so a node that mutates a nested value of the state in
+        # place (a list it appends to) still shows that value as changed.
+        writer_baseline = None
+        if report_writer:
+            from services.content_generation.s1_checkpoint import state_baseline
+            writer_baseline = state_baseline(initial_state)
 
         # AA-250 B2: stream node-by-node (instead of graph.invoke()) so on_stage can report
         # live progress to shared.pipeline_jobs.current_stage. stream_mode="updates" emits
@@ -270,6 +289,11 @@ async def _rewrite_tour(
         async for event in graph.astream(initial_state, stream_mode="updates"):
             for node_name, node_output in event.items():
                 result = node_output
+                if report_writer and node_name == "generate":
+                    from services.content_generation.s1_checkpoint import writer_state_delta
+                    delta = writer_state_delta(writer_baseline, node_output)
+                    if delta is not None:
+                        await on_writer_state(delta)
                 if on_stage is not None:
                     await on_stage(node_name)
 

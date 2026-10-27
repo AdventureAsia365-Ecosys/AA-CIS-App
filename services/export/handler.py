@@ -3,6 +3,9 @@ import asyncpg
 import json
 import os
 import structlog
+import time
+from contextlib import asynccontextmanager
+from typing import Callable, Optional
 from shared.secrets import get_database_url
 from shared.tour_liveness import SOURCE_NOT_LIVE, SourceNotLiveError, SourceState, source_state
 
@@ -152,9 +155,91 @@ async def recompute_segment_score_route(tour_id: str, pool, *, log_tour_id: str 
     return {"segment": results["segment"], "ranking": results["score"], "route": results["route"]}
 
 
+# AA-993 G3 (ADR 0016 D1): one A3 run per tour at a time, across processes. A deploy releases a running `a3_atomize`
+# job, but its thread (a3_atomize_job: own thread + loop) cannot be cancelled and keeps running on the draining task;
+# the attempt that re-claims the job must not atomize, segment-match and clear caches for the same tour beside it.
+# A transaction lock is not enough: the run spans many transactions on a pool (critic 10). The run holds a SESSION
+# advisory lock on one dedicated connection, released in `finally` (and by Postgres when that connection ends with
+# the old process). Two int4 keys (class, tour), so the lock never collides with the one-bigint advisory keys.
+A3_TOUR_LOCK_CLASS = "a3_atomize"
+A3_TOUR_LOCK_SQL = "SELECT pg_try_advisory_lock(hashtext($1::text), hashtext($2::text))"
+A3_TOUR_UNLOCK_SQL = "SELECT pg_advisory_unlock(hashtext($1::text), hashtext($2::text))"
+A3_TOUR_LOCK_POLL_SECONDS = 2.0
+A3_TOUR_LOCK_MAX_WAIT_SECONDS = 1800   # the kind's expected_seconds: an older run longer than that is stuck
+
+
+class TourLockTimeout(RuntimeError):
+    """Another A3 run held the tour's lock for longer than A3_TOUR_LOCK_MAX_WAIT_SECONDS. Retryable."""
+
+
+async def _connect_tour_lock():
+    return await asyncpg.connect(get_database_url(), ssl="require",
+                                 server_settings={"application_name": "cis-job-a3-lock"})
+
+
+@asynccontextmanager
+async def a3_tour_lock(tour_id: str, should_stop: Optional[Callable[[], bool]] = None, *,
+                       poll_seconds: Optional[float] = None, max_wait_seconds: Optional[float] = None):
+    """Hold the tour's A3 session lock for the body. Polls `pg_try_advisory_lock` (not a blocking
+    `pg_advisory_lock`, which nothing could interrupt) so a waiting run still honours `should_stop` (it was cancelled
+    itself) and gives up after `max_wait_seconds` (TourLockTimeout)."""
+    from services.acp_contract.a3_atomize import stop_if_asked
+    poll_seconds = A3_TOUR_LOCK_POLL_SECONDS if poll_seconds is None else poll_seconds
+    max_wait_seconds = A3_TOUR_LOCK_MAX_WAIT_SECONDS if max_wait_seconds is None else max_wait_seconds
+    conn = await _connect_tour_lock()
+    try:
+        started = time.monotonic()
+        waiting_logged = False
+        while not await conn.fetchval(A3_TOUR_LOCK_SQL, A3_TOUR_LOCK_CLASS, str(tour_id)):
+            stop_if_asked(should_stop, tour_id, "tour_lock")
+            waited = time.monotonic() - started
+            if waited >= max_wait_seconds:
+                raise TourLockTimeout(f"tour {tour_id}: another a3 run held the lock for {int(waited)} s")
+            if not waiting_logged:
+                logger.info("a3_atomize_waiting_for_tour_lock", tour_id=tour_id)
+                waiting_logged = True
+            await asyncio.sleep(poll_seconds)
+        if waiting_logged:
+            logger.info("a3_atomize_tour_lock_acquired", tour_id=tour_id,
+                        waited_seconds=round(time.monotonic() - started, 1))
+        try:
+            yield
+        finally:
+            try:
+                await conn.fetchval(A3_TOUR_UNLOCK_SQL, A3_TOUR_LOCK_CLASS, str(tour_id))
+            except Exception as e:  # noqa: BLE001 — closing the connection below drops the lock anyway
+                logger.warning("a3_tour_lock_release_failed", tour_id=tour_id, error=str(e)[:200])
+    finally:
+        await conn.close()
+
+
 async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str, version_id: str,
                                       reraise: bool = False, progress=None, force: bool = False,
-                                      retry_failed_days: bool = False) -> dict:
+                                      retry_failed_days: bool = False,
+                                      should_stop: Optional[Callable[[], bool]] = None,
+                                      tour_lock: bool = False) -> dict:
+    """AA-993 G3 — `tour_lock=True` (the `a3_atomize` job) runs the whole chain below under the tour's session lock
+    (a3_tour_lock); `should_stop` (the job's cancel event) is asked at every day boundary and between the later steps
+    and raises AtomizeStopped. Both default off, so any other caller is unchanged. A lock that could not be taken
+    (TourLockTimeout) is raised with `reraise`, else logged and returned in the outcome like any other failure."""
+    kw = dict(reraise=reraise, progress=progress, force=force, retry_failed_days=retry_failed_days,
+              should_stop=should_stop)
+    if not tour_lock:
+        return await _a3_atomize_chain(tour_id, rewritten, country, version_id, **kw)
+    try:
+        async with a3_tour_lock(tour_id, should_stop):
+            return await _a3_atomize_chain(tour_id, rewritten, country, version_id, **kw)
+    except TourLockTimeout as exc:
+        logger.error("a3_atomize_failed", tour_id=tour_id, error=str(exc))
+        if reraise:
+            raise
+        return {"segment_score_route": "not_run", "tour_lock": f"failed: {exc}"}
+
+
+async def _a3_atomize_chain(tour_id: str, rewritten: dict, country: str, version_id: str,
+                            reraise: bool = False, progress=None, force: bool = False,
+                            retry_failed_days: bool = False,
+                            should_stop: Optional[Callable[[], bool]] = None) -> dict:
     """AA-526 — the actual A3 atomize call, launched fire-and-forget from process_export() so a
     slow multi-day LLM atomize run (services.acp_contract.a3_atomize.run_a3_atomize(), up to
     one LLM call per itinerary day) never adds latency to — or risks an API Gateway
@@ -180,6 +265,11 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
 
     Returns {"segment_score_route": "ok" | "failed: <error>"} so the job result shows a failed
     Segment/Score/Route step (S218: it failed silently for every tour from 05/10)."""
+    from services.acp_contract.a3_atomize import AtomizeStopped, stop_if_asked
+
+    def _stop_if_asked(before: str) -> None:
+        stop_if_asked(should_stop, tour_id, before)
+
     outcome = {"segment_score_route": "not_run"}
     pool = await open_job_pool()
     try:
@@ -187,6 +277,7 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
         result = await run_a3_atomize(
             tour_id, rewritten, pool,
             country=country, version_id=version_id, force=force,
+            **({"should_stop": should_stop} if should_stop is not None else {}),
         )
         logger.info("a3_atomize_done", tour_id=tour_id, result=result)
         outcome["atomize"] = {k: result.get(k) for k in ("status", "atom_count", "days_total", "days_read",
@@ -197,6 +288,7 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
             from services.acp_contract.a3_atomize import AtomizeIncomplete
             raise AtomizeIncomplete(result)
 
+        _stop_if_asked("segment_score_route")   # AA-993 G3
         # AA-545 — Segment/Score/Route now DO run here, platform-wide, right after atomize.
         # AA-526's own note (kept below, historical) explains why this was blocked at the time:
         # `atom_segment.tenant_id NOT NULL` (migration 129) would have failed the FK/UUID cast
@@ -252,6 +344,7 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
             # publish itself having failed. It is still an error, and lands in the job result.
             outcome["segment_score_route"] = f"failed: {type(exc).__name__}: {str(exc)[:200]}"
             logger.error("a3_segment_score_route_failed", tour_id=tour_id, exc_info=True)
+        _stop_if_asked("place_cards_relink")   # AA-993 G3
         # AA-989 — the $0 place-card relink: a card link is keyed on atom_id, so every atom this run replaced lost
         # its link. Rule skip + existing card by alias / core name + stored miss only, never a draft
         # (max_places=0). BEFORE place_extract: the card fields are in its components_hash, a relink after it
@@ -262,6 +355,7 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
         except Exception as exc:
             outcome["place_cards_relink"] = f"failed: {type(exc).__name__}: {str(exc)[:200]}"
             logger.warning("a3_place_cards_relink_failed", tour_id=tour_id, exc_info=True)
+        _stop_if_asked("place_extract")   # AA-993 G3
         # AA-712 — the tour's places / day skeleton (place_extract job, background kind). Best-effort
         # like the recompute enqueue; a failure is visible in the job result, never fails atomize.
         try:
@@ -272,6 +366,8 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
         except Exception as exc:
             outcome["place_extract"] = f"enqueue failed: {type(exc).__name__}: {str(exc)[:200]}"
             logger.warning("a3_place_extract_enqueue_failed", tour_id=tour_id, exc_info=True)
+    except AtomizeStopped:
+        raise   # AA-993 G3: a cancelled run, not a failure (the job that owns the tour now re-runs it)
     except Exception as exc:
         # Best-effort, same precedent as this file's own ACP-S1 manifest fanout (process_export()
         # below) — atomize failing must never be mistaken for the publish itself having failed;
