@@ -54,6 +54,11 @@ export function listFiles(dir) {
   return out.sort();
 }
 
+/** A manifest entry's hash: `{ "sha256": "…" }`, or a bare string (the format kit-sync.sh also reads). */
+function fileHash(entry) {
+  return entry && typeof entry === "object" ? entry.sha256 : entry;
+}
+
 /** The manifest of a core folder: header, canonical source, profiles and the sha256 of every file but itself. */
 export function buildManifest(dir) {
   const files = listFiles(dir).filter((f) => f !== MANIFEST);
@@ -64,7 +69,8 @@ export function buildManifest(dir) {
     canonical: CANONICAL,
     generator: "frontend/scripts/kit-manifest.mjs",
     profiles: { tokens: TOKENS_PROFILE.filter((f) => present.has(f)) },
-    files: Object.fromEntries(files.map((f) => [f, sha256(readFileSync(join(dir, f)))])),
+    // { sha256 } objects, not bare strings: a bare hex next to "tokens.ts" reads as an API key to gitleaks.
+    files: Object.fromEntries(files.map((f) => [f, { sha256: sha256(readFileSync(join(dir, f))) }])),
   };
 }
 
@@ -256,7 +262,7 @@ export function copyProblems(dir, { profile, lockPath } = {}) {
     const p = join(dir, f);
     if (!(f in files)) out.push(`${f}: in the ${prof} profile but not in ${MANIFEST}`);
     else if (!existsSync(p)) out.push(`${f}: missing; ${FIX_COPY}`);
-    else if (sha256(readFileSync(p)) !== files[f]) out.push(`${f}: differs from ${MANIFEST}; ${FIX_COPY}`);
+    else if (sha256(readFileSync(p)) !== fileHash(files[f])) out.push(`${f}: differs from ${MANIFEST}; ${FIX_COPY}`);
   }
   for (const f of listFiles(dir)) if (!expected.has(f)) out.push(`${f}: extra file in the kit core copy; ${FIX_COPY}`);
   return out;
