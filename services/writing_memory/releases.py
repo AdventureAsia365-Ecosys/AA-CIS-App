@@ -289,6 +289,56 @@ async def runs_of(conn, release: dict) -> dict[str, Optional[dict]]:
     return out
 
 
+# The run `details` keys the Releases tab may show (AA-919 WM-22): counts, hashes and our own reason strings, never
+# per-input rows or tenant text. `results` (baseline_import) is a {mode:verdict: count} map; `reasons` (r0_replay)
+# are the verdict reasons release0 writes ("3 byte differences").
+SUMMARY_NUMBERS = ("inputs", "errors", "byte_diffs", "byte_diffs_none_vs_r0", "byte_diffs_vs_pre", "compared_with_pre",
+                   "stored_hashes", "stored_hash_match", "distinct_system_prompts", "skipped_post_edit",
+                   "source_cost_usd", "cost_usd")
+SUMMARY_STRINGS = ("prompt_sha256", "git_sha", "source")
+
+
+def run_summary(details: Any) -> dict[str, Any]:
+    """The part of a run's `details` the admin page shows: whitelisted numbers / short strings, the `results` count map
+    and the `reasons` list (both shape-checked). Everything else (per-input rows, keys, sources) stays out."""
+    d = _details({"details": details})
+    out: dict[str, Any] = {}
+    for k in SUMMARY_NUMBERS:
+        if _num(d.get(k)) is not None:
+            out[k] = d[k]
+    for k in SUMMARY_STRINGS:
+        if isinstance(d.get(k), str) and len(d[k]) <= 80:
+            out[k] = d[k]
+    res = d.get("results")
+    if isinstance(res, dict):
+        out["results"] = {str(k)[:40]: v for k, v in res.items() if _num(v) is not None}
+    reasons = d.get("reasons")
+    if isinstance(reasons, list):
+        out["reasons"] = [str(r)[:200] for r in reasons if isinstance(r, str)][:10]
+    return out
+
+
+async def run_verdicts(conn, run_ids: list[str]) -> dict[str, dict]:
+    """{run id: {run_kind, verdict, finished}} for the evidence runs a page of releases names (one query)."""
+    ids = sorted({str(r) for r in run_ids if r})
+    if not ids:
+        return {}
+    rows = await conn.fetch("SELECT id::text AS id, run_kind, verdict, finished_at IS NOT NULL AS finished "
+                            "FROM shared.prompt_eval_runs WHERE id = ANY($1::uuid[])", ids)
+    return {r["id"]: {"run_kind": r["run_kind"], "verdict": r["verdict"], "finished": r["finished"]} for r in rows}
+
+
+def evidence_of(release: dict, verdicts: dict[str, dict]) -> dict[str, Optional[dict]]:
+    """Per evidence slot (r0 / eval / shadow): None when the release names no run, else the run's kind and verdict
+    (`missing: true` when the named run is not found)."""
+    out: dict[str, Optional[dict]] = {}
+    for what in ("r0", "eval", "shadow"):
+        rid = release.get(f"{what}_run_id")
+        out[what] = None if not rid else (verdicts.get(str(rid)) or {"run_kind": None, "verdict": None,
+                                                                     "finished": False, "missing": True})
+    return out
+
+
 async def _rules(conn, rule_ids: list[str]) -> list[dict]:
     if not rule_ids:
         return []

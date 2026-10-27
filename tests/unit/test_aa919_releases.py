@@ -395,3 +395,72 @@ def test_policy_entries():
                  "/releases/{release_id}/rollback", "/releases/{release_id}/reject"):
         assert POLICY[("POST", base + path)] == AI_ADMIN
     assert POLICY[("PATCH", base + "/writers/{writer}")] == AI_ADMIN
+
+
+# ── WM-22 Releases tab: the list's evidence verdicts and the drawer's run summary ─────────────────────────────────
+
+def test_run_summary_keeps_counts_and_hashes_only():
+    details = {"inputs": 25, "byte_diffs": 0, "byte_diffs_vs_pre": 0, "compared_with_pre": 25, "stored_hashes": 25,
+               "stored_hash_match": 25, "prompt_sha256": "a" * 64, "git_sha": "dddb7cff", "reasons": ["2 byte diffs"],
+               "results": {"pipeline:pass": 41, "pipeline:fail": 9, "bad": "x"}, "report_key": "scripts/r.json",
+               "flags": ["x"], "sources": {"job": 25}, "pre_key": "k", "rows": [{"text": "tenant words"}],
+               "source": "fixture.pipeline_verdict", "skipped_post_edit": True}
+    s = rel.run_summary(details)
+    assert s == {"inputs": 25, "byte_diffs": 0, "byte_diffs_vs_pre": 0, "compared_with_pre": 25,
+                 "stored_hashes": 25, "stored_hash_match": 25, "prompt_sha256": "a" * 64, "git_sha": "dddb7cff",
+                 "source": "fixture.pipeline_verdict", "reasons": ["2 byte diffs"],
+                 "results": {"pipeline:pass": 41, "pipeline:fail": 9}}
+    assert rel.run_summary('{"inputs": 3}') == {"inputs": 3}       # a JSON string column
+    assert rel.run_summary(None) == {} and rel.run_summary("not json") == {}
+
+
+def test_evidence_of_marks_missing_and_unnamed_runs():
+    r = _release(r0_run_id="a", eval_run_id="b", shadow_run_id=None)
+    v = {"a": {"run_kind": "r0_replay", "verdict": "pass", "finished": True}}
+    ev = rel.evidence_of(r, v)
+    assert ev["r0"] == v["a"] and ev["shadow"] is None
+    assert ev["eval"]["missing"] is True and ev["eval"]["verdict"] is None
+
+
+def test_run_verdicts_one_query_and_none_for_no_ids():
+    conn = MagicMock()
+    conn.fetch = AsyncMock(return_value=[{"id": "a", "run_kind": "r0_replay", "verdict": "pass", "finished": True}])
+    out = asyncio.run(rel.run_verdicts(conn, ["a", None, "a"]))
+    assert out == {"a": {"run_kind": "r0_replay", "verdict": "pass", "finished": True}}
+    assert conn.fetch.await_count == 1 and conn.fetch.await_args.args[1] == ["a"]
+    assert asyncio.run(rel.run_verdicts(conn, [None])) == {} and conn.fetch.await_count == 1
+
+
+def test_list_route_adds_evidence_and_detail_route_adds_run_summary(client, monkeypatch):
+    row = {"release_id": RID, "writer": "a1", "scope": "platform", "tenant_id": None, "release_no": 0,
+           "status": "active", "content_class": "empty", "rule_ids": [], "r0_run_id": "r0id", "eval_run_id": "evid",
+           "shadow_run_id": None, "created_at": NOW, "fingerprint": {"prompt_sha256": "f" * 64}}
+
+    async def listing(conn, **kw):
+        return [row], 1
+
+    async def verdicts(conn, ids):
+        assert sorted(i for i in ids if i) == ["evid", "r0id"]
+        return {"r0id": {"run_kind": "r0_replay", "verdict": "pass", "finished": True}}
+
+    monkeypatch.setattr(rel, "list_releases", listing)
+    monkeypatch.setattr(rel, "run_verdicts", verdicts)
+    body = client.get("/admin/writing-memory/releases", headers=_h()).json()
+    assert body["total"] == 1 and body["items"][0]["created_at"] == NOW.isoformat()
+    ev = body["items"][0]["evidence"]
+    assert ev["r0"]["verdict"] == "pass" and ev["eval"]["missing"] is True and ev["shadow"] is None
+
+    async def get(conn, rid, **kw):
+        return dict(row)
+
+    async def runs(conn, release):
+        return {"r0": {"id": "r0id", "run_kind": "r0_replay", "verdict": "pass", "finished_at": NOW,
+                       "details": {"inputs": 25, "byte_diffs": 0, "rows": [{"text": "tenant words"}]}},
+                "eval": None, "shadow": None}
+
+    monkeypatch.setattr(rel, "get_release", get)
+    monkeypatch.setattr(rel, "runs_of", runs)
+    d = client.get(f"/admin/writing-memory/releases/{RID}", headers=_h()).json()
+    assert d["runs"]["r0"]["summary"] == {"inputs": 25, "byte_diffs": 0}
+    assert "details" not in d["runs"]["r0"] and d["runs"]["eval"] is None and d["activation"] is None
+    assert client.get("/admin/writing-memory/releases", headers=_h(role="viewer")).status_code == 403

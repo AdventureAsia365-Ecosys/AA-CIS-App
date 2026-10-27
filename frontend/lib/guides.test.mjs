@@ -23,7 +23,8 @@ const read = (p) => readFileSync(join(FRONTEND, p), "utf8");
 /** Every guide: its module and export, the page that renders it, and the files that print its labels. */
 const GUIDES = [
   { name: "Writing memory", module: "app/admin/writing-memory/guide.ts", exportName: "WRITING_MEMORY_GUIDE",
-    page: "app/admin/writing-memory/WritingMemory.tsx", sources: ["lib/writingMemory.ts"] },
+    page: "app/admin/writing-memory/WritingMemory.tsx",
+    sources: ["lib/writingMemory.ts", "app/admin/writing-memory/ReleasesTab.tsx"] },
 ];
 
 // ── the shape check itself ──────────────────────────────────────────────────────────────────────────────────────
