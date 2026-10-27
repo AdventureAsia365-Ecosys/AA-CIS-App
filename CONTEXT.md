@@ -2707,7 +2707,10 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   as "City Palace" keeps its locality in the key and is never reused across tours by name; AA-784 S253: region is
   a first-level administrative division or empty and locality the settlement the place is IN or empty —
   `place_cards.clean_identity` clears geographic / trekking areas and the nearest town of a remote point before the
-  check, and the check's `locality_ok` / `region_ok` clear a field instead of rejecting the card; present-tense
+  check (round 3: remote = protected areas, summits / peaks / mountains / passes, camps / huts, glaciers, lakes
+  outside a first-level city; a locality equal to the region is kept; a first-level city (`FIRST_LEVEL_CITIES`) is a
+  right region, also of itself; a border-spanning place keeps a field only as both sides "A / B"; a person's life
+  dates in parentheses are dropped from facts, at seed time too), and the check's `locality_ok` / `region_ok` clear a field instead of rejecting the card; present-tense
   status / administrative-role and authorship facts are never kept (`unverifiable_claim`, also applied to older
   cards' facts at seed time unless verified; the identity rules likewise to older cards' `Location:` line); a
   rejected card stored under a compound country (pre-AA-990) blocks a draft naming it (a hold only an admin
