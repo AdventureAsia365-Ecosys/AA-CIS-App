@@ -108,7 +108,8 @@ def test_guards_country_spellings_is_the_public_alias_source():
     assert guards.country_spellings("cn") == ["china", "tibet"]
     assert guards.country_spellings("LK") == ["sri lanka", "sri-landka"]
     assert "kyrgyz republic" in guards.country_spellings("kg")
-    assert guards.country_spellings("") == [] and guards.country_spellings("ph") == []
+    assert guards.country_spellings("") == [] and guards.country_spellings("sg") == []
+    assert guards.country_spellings("ph") == ["philippines", "republic of the philippines"]      # AA-990
 
 
 def test_spellings_cover_aliases():

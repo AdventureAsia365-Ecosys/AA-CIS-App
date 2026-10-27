@@ -80,7 +80,8 @@ QUALIFIERS = frozenset({"old", "new", "upper", "lower", "north", "south", "east"
                         "little", "small", "big", "great", "grand", "inner", "outer"})
 WEAK = frozenset({"royal", "national", "central", "imperial", "golden", "sacred", "holy", "main"})
 COUNTRY_WORDS = frozenset({"laos", "vietnam", "cambodia", "thailand", "myanmar", "nepal", "bhutan", "china", "tibet",
-                           "mongolia", "india", "japan", "korea", "taiwan", "indonesia", "sri", "lanka"})
+                           "mongolia", "india", "japan", "korea", "taiwan", "indonesia", "sri", "lanka", "malaysia",
+                           "kyrgyzstan", "uzbekistan", "pakistan", "philippines"})
 # kinds whose bare name usually IS the feature ("Hoan Kiem" = the lake)
 NATURAL_BARE = frozenset({"waterfall", "cave", "mountain", "lake", "river", "island", "village", "valley", "pass",
                           "beach", "bay", "park", "town"})

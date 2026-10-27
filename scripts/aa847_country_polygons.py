@@ -16,9 +16,11 @@ from __future__ import annotations
 import json
 import sys
 
+# Equal to services/places/guards.ISO3_ISO2 (tests/unit/test_aa990_country_lists.py); kept literal so the script
+# runs with `python3 -I` from anywhere. Pakistan and the Philippines added with migration 197's list (AA-990).
 ISO3_ISO2 = {"BTN": "bt", "KHM": "kh", "CHN": "cn", "IND": "in", "IDN": "id", "JPN": "jp", "KGZ": "kg", "LAO": "la",
-             "MYS": "my", "MNG": "mn", "MMR": "mm", "NPL": "np", "KOR": "kr", "LKA": "lk", "TWN": "tw", "THA": "th",
-             "UZB": "uz", "VNM": "vn"}
+             "MYS": "my", "MNG": "mn", "MMR": "mm", "NPL": "np", "PAK": "pk", "PHL": "ph", "KOR": "kr", "LKA": "lk",
+             "TWN": "tw", "THA": "th", "UZB": "uz", "VNM": "vn"}
 DEFAULT_TOL_DEG = 0.01
 MIN_RING_VERTICES = 4          # a ring simplified below this (a rock) is dropped
 SOURCE = "Natural Earth 1:10m admin-0 countries v5.1.2 (public domain)"

@@ -43,8 +43,8 @@ export const STATUS_FILTER_LABEL: Record<AaState, string> = {
 // tests/unit/test_aa977_editor_mirror.py keeps this list equal to validate.AA_COUNTRY_CODES.
 export const AA_COUNTRIES: Record<string, string> = {
   BT: "Bhutan", KH: "Cambodia", CN: "China", IN: "India", ID: "Indonesia", JP: "Japan", KG: "Kyrgyzstan",
-  LA: "Laos", MY: "Malaysia", MN: "Mongolia", MM: "Myanmar", NP: "Nepal", KR: "South Korea", LK: "Sri Lanka",
-  TW: "Taiwan", TH: "Thailand", UZ: "Uzbekistan", VN: "Vietnam",
+  LA: "Laos", MY: "Malaysia", MN: "Mongolia", MM: "Myanmar", NP: "Nepal", PK: "Pakistan", PH: "Philippines",
+  KR: "South Korea", LK: "Sri Lanka", TW: "Taiwan", TH: "Thailand", UZ: "Uzbekistan", VN: "Vietnam",
 };
 
 /** Country codes sorted by country name, for the pickers. */
