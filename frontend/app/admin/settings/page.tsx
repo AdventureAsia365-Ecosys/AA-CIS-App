@@ -305,7 +305,7 @@ function TenantInfoTab({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <Card>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))", gap: 20 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", gap: 20 }}>
           <div>
             <SLabel>Tenant Name</SLabel>
             <div style={{ fontSize: 16, fontWeight: 600, color: A.ink, fontFamily: serif }}>

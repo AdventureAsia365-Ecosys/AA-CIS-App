@@ -172,7 +172,7 @@ export default function PlacesPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- runFix only reads state setters and the loaders
   ], [busy]);
 
-  if (!coverage) return <LoadingScreen msg="Loading places..." />;
+  if (!coverage) return <AdminMain><LoadingScreen msg="Loading places..." /></AdminMain>;
   const t = coverage.totals;
   const countries = coverage.countries.map(c => c.country);
   const cat = validity?.summary.catalog;

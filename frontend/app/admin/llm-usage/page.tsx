@@ -954,7 +954,7 @@ export default function ExternalSpendPage() {
 
                 <Card style={{ marginTop: 20 }}>
                   <SLabel>Current model config (Settings → LLM Models)</SLabel>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 240px), 1fr))", gap: "6px 24px" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", gap: "6px 24px" }}>
                     {(configs ?? []).map(c => (
                       <div key={c.stage} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, padding: "5px 0", borderBottom: `1px solid ${A.line2}` }}>
                         <span style={{ fontFamily: mono, color: A.ink2, minWidth: 150 }}>{c.stage}</span>

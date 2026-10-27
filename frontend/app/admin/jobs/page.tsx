@@ -288,7 +288,7 @@ function JobsPageInner() {
   const openJob = jobs.find(j => j.id === open);
 
   // First load only: show the full-page spinner. Later refetches keep the UI visible.
-  if (isLoading && !data) return <LoadingScreen msg="Loading jobs..." />;
+  if (isLoading && !data) return <AdminMain><LoadingScreen msg="Loading jobs..." /></AdminMain>;
 
   return (
     <AdminMain>

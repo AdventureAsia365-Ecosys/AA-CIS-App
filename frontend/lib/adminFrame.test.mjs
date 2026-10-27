@@ -92,5 +92,10 @@ for (const page of PAGES) {
     const tree = pageTree(page).map(code).join("\n");
     assert.match(tree, /<AdminMain[\s>]/, `${rel(page)}: no <AdminMain> in the page or the app/admin modules it imports`);
     assert.match(tree, /<PageHeader[\s>]/, `${rel(page)}: no kit <PageHeader> in the page or the modules it imports`);
+    const framed = pageTree(page).filter((p) => /<AdminMain[\s>]/.test(code(p)));
+    assert.ok(
+      framed.length <= 1,
+      `${rel(page)}: more than one module in this page renders <AdminMain>; render the frame once (${framed.map(rel).join(", ")})`,
+    );
   });
 }

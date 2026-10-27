@@ -197,7 +197,7 @@ export default function PhotosPage() {
     } finally { setBusy(null); }
   }
 
-  if (!countries || !totals) return <LoadingScreen msg="Loading photos..." />;
+  if (!countries || !totals) return <AdminMain><LoadingScreen msg="Loading photos..." /></AdminMain>;
   const jobRunning = lastJob && ["queued", "running"].includes(lastJob.status);
   const shownFolders = folders.filter(f => folderFilter === "all" || (folderFilter === "unmatched" ? !f.tour_id : !!f.tour_id));
 
