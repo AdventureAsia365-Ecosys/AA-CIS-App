@@ -177,7 +177,12 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     vocabulary; `StatusBadge` is driven by job-runner status strings), `EmptyState`, `ErrorState`,
     `Skeleton`, `ToastProvider`/`useToast`, `ScrollX` (S243), `InfoTip` (S243: (i) button + tooltip, hover / focus /
     tap to open, Escape or a tap elsewhere to close, text tied by `aria-describedby`, hoverable bubble, 24 px hit
-    area), and `apiGet`/`apiSend` fetch
+    area), `GuidePanel` + `GuideContent` (AA-919: the one Guide-tab pattern — every admin page with a Guide tab
+    keeps its content as data in `app/admin/<page>/guide.ts`, renders it with `GuidePanel` (numbered sections, an
+    "On this page" contents list for long guides, note / warning callouts, label chips, step diagrams, control cards),
+    adds the "Guide" tab after its daily-use tabs and a "New here? Read the Guide" link in its description, and is
+    registered in `frontend/lib/guides.test.mjs`, which checks the shape and that every documented label is still on
+    the page), and `apiGet`/`apiSend` fetch
     helpers. New pages import
     from `app/_kit`. The legacy primitives (`admin/_components/adminUi.tsx`,
     `auditPanels.tsx`, `FilterBar.tsx`, `Pagination.tsx`, portal `_components/ui.tsx`,
@@ -2233,7 +2238,8 @@ api ops sampler while signals are pending): an edit that adds a number, time, pr
 the source lack fails (quarantined), an added name is grey (admin confirms), a style edit passes. The backfill
 (`writing_signal_backfill`, `backfill.py`) copies the pre-AA-916 admin sentence audit rows, T2 tenant-edit versions,
 T9 failed attempts (system signals, evidence for R0) and A1 brand-audit lessons, idempotently. Admin page
-`/admin/writing-memory` (Signals and Candidates tabs; `api/routers/admin_writing_memory.py`, admin only). A rule
+`/admin/writing-memory` (Signals and Candidates tabs, plus a Guide tab: `frontend/app/admin/writing-memory/guide.ts`
+on the kit GuidePanel; `api/routers/admin_writing_memory.py`, admin only). A rule
 reaches a writer through a release (AA-919), except an L0 lexicon rule (below).
 **R0** (AA-918, `services/writing_memory/replay.py`, job `writing_memory_r0`, $0, no model call): the replay of one
 rule over stored T9 texts (final text, discarded attempts, the writer's text before a human edit), gate ledgers,
