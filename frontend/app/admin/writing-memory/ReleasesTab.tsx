@@ -480,8 +480,12 @@ export default function ReleasesTab() {
   const total = list.data?.total ?? 0;
   const shown = list.data?.items.length ?? 0;
 
+  // minmax(0, 1fr): a grid's implicit column is `auto`, so it grows to the widest item's min-content width. The
+  // release table's min-content (tableMinWidth plus its nowrap cells) is wider than the page column at 1440, which
+  // widened the column for both sections and pushed the Writers actions and the toolbar's Columns button off the
+  // right edge. Capping the track at the column width keeps each table inside its card, scrolling there.
   return (
-    <div style={{ display: "grid", gap: 20 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 20 }}>
       {active.error ? <ErrorState message={(active.error as Error).message} onRetry={() => active.refetch()} />
         : active.isLoading ? <TableSkeleton rows={4} cols={5} /> : <WritersPanel active={active.data} canAdmin={canAdmin} />}
       <section>
