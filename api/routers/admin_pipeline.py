@@ -1620,8 +1620,10 @@ async def ingest_s3(
                 src_name = r.get("src_name") or "(no name)"
                 jev = jev_by_row.get(idx)
                 if jev is not None and jev.country and not r.get("country"):
-                    r["country"] = jev.country
-                    jev.notes.append(f"Country filled by Jev: {jev.country}")
+                    # AA-990 (AA-490 parity): Commit never writes Jev's guess (services/ingestion/handler.py), so the
+                    # preview does not either; the row reports its missing country as Commit would store it.
+                    jev.notes.append(f"Jev suggests {jev.country}; not written: the source row and file name state "
+                                     "no country")
                 missing = [f for f in ["src_name", "country", "duration", "price_raw"] if not r.get(f)]
                 nname, nprov = _normalize_group_key(src_name, r.get("provider"))
                 if (nname, nprov) in seen_keys:
@@ -1652,6 +1654,7 @@ async def ingest_s3(
                         "src_name": src_name, "country": r.get("country"),
                         "reason": "missing_fields", "missing_fields": missing,
                         "message": f"Missing fields: {', '.join(missing)}",
+                        "jev_notes": list(jev.notes) if jev is not None else [],
                     })
                 elif not (r.get("src_itineraries") or "").strip():
                     # AA-604: a row with no itinerary body cannot be rewritten by S1

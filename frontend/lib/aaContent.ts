@@ -48,11 +48,24 @@ export const AA_COUNTRIES: Record<string, string> = {
   KR: "South Korea", LK: "Sri Lanka", TW: "Taiwan", TH: "Thailand", UZ: "Uzbekistan", VN: "Vietnam",
 };
 
-/** Country codes sorted by country name, for the pickers. */
-export function countryOptions(): { code: string; name: string }[] {
-  return Object.entries(AA_COUNTRIES)
-    .map(([code, name]) => ({ code, name }))
-    .sort((a, b) => a.name.localeCompare(b.name));
+/** A country code's display name: the quick-pick name, else the browser's English region name, else the code. */
+export function countryLabel(code: string): string {
+  if (AA_COUNTRIES[code]) return AA_COUNTRIES[code];
+  try {
+    return new Intl.DisplayNames(["en"], { type: "region" }).of(code) ?? code;
+  } catch {
+    return code;
+  }
+}
+
+/** Country codes sorted by country name, for the pickers: the quick picks plus any other ISO code the item already
+ *  holds (the API accepts every ISO 3166-1 code, AA-990), so staff can see and remove it. */
+export function countryOptions(selected: readonly string[] = []): { code: string; name: string }[] {
+  const extra = selected.filter((code, i) => !AA_COUNTRIES[code] && selected.indexOf(code) === i);
+  return [
+    ...Object.entries(AA_COUNTRIES).map(([code, name]) => ({ code, name })),
+    ...extra.map((code) => ({ code, name: countryLabel(code) })),
+  ].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export const TITLE_MAX = 300;

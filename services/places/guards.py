@@ -2,9 +2,10 @@
 
 Hard (a point failing these is never stored):
   - the country is an ISO 3166-1 country (AA-990: shared.countries through the in-code mirror shared/countries, any
-    country — no hand-made "AA country" list), and the point lies inside THAT country's bounding box. The country
-    checked is the PLACE's own country (the model's answer, confirmed by the geocoder), never the tour's: a tour sold
-    as India may climb Kilimanjaro in Tanzania, a Thailand tour may sleep in Siem Reap (cross-border, normal);
+    country — no hand-made "AA country" list), and the point lies inside THAT country's bounding box and its polygon
+    (10 km border buffer, services/places/shape.py). The country checked is the PLACE's own country (the model's
+    answer, confirmed by the geocoder), never the tour's: a tour sold as India may climb Kilimanjaro in Tanzania, a
+    Thailand tour may sleep in Siem Reap (cross-border, normal);
   - when a geocoder confirms, its country must equal the model's country.
 Soft (per destination, across tours): the transit-aware 600 km outlier rule — an outlier is
 recorded per (destination, tour, day) when the stop is > OUTLIER_KM from every other stop
@@ -31,6 +32,8 @@ ISO3_ISO2 = {v: k for k, v in ISO2_ISO3.items()}
 BBOX = {c.iso2.lower(): c.bbox for c in _countries.all_countries() if c.bbox}
 
 OUTLIER_KM = 600.0
+# point_ok's polygon check: a point this close to the country's border still counts (border rivers, coarse polygons).
+POLYGON_BUFFER_KM = 10.0
 # Geocoders whose accepted result replaces the model's point (services/places/geocoder.CONFIRMED_BY).
 CONFIRMED_BY = frozenset({"geoapify"})
 
@@ -80,6 +83,12 @@ def point_ok(lat: Optional[float], lng: Optional[float], country: Optional[str])
         return "unknown_country"
     if not in_country(lat, lng, country):
         return "outside_country_bbox"
+    # AA-990: the box alone accepts wrong-country answers next to the border (Kilimanjaro as Kenya, Siem Reap as
+    # Thailand, Skardu as India): the point must also lie in the country's polygon (10 km border buffer). Lazy import:
+    # shape imports only geomatch, so there is no cycle.
+    from services.places import shape
+    if not shape.in_country(lat, lng, iso2(country), buffer_km=POLYGON_BUFFER_KM):
+        return "outside_country_polygon"
     return None
 
 

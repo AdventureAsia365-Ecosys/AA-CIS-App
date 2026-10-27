@@ -15,7 +15,7 @@ Madhya Pradesh. The model knows these places. So:
      precision 'line' either way — drawn from geo.place_shape (job place_shape), never a pin;
   3. hard guards (guards.point_ok): any ISO 3166-1 country (AA-990: the PLACE's own country, which may differ from
      the tour's — a tour sold as India that climbs Kilimanjaro has Tanzanian places), inside that country's bounding
-     box; a confirming result in another country than the model's is ignored.
+     box and polygon (10 km border buffer); a confirming result in another country than the model's is ignored.
 
 A failed model batch or a geocoder error leaves the names pending (retried later), never a guess.
 The geocoder's daily credit guard, and a setup / auth failure (no key, secret unreadable, HTTP 401/403),

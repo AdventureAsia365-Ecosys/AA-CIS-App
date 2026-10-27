@@ -153,3 +153,22 @@ def test_guard_refuses_a_country_that_is_not_a_name(conn):
     _tour(c, "INDIA", "IN")
     with pytest.raises(psycopg2.errors.RaiseException, match="not a shared.countries name"):
         _apply(c)
+
+
+def test_new_aliases_backfill_place_codes(conn):
+    """279's invariant after the 8 new aliases: a place whose country text is one of them ('thai', 'bali') gets its
+    country_iso2; its country text is not touched (only country_iso2 is SET, the UPDATE OF country trigger does not
+    fire)."""
+    c = conn.cursor()
+    c.execute("DELETE FROM shared.schema_versions WHERE version = '288'")
+    ids = []
+    for name, country in (("zz288 Wat Pho", "thai"), ("zz288 Ubud", "bali")):
+        c.execute("""INSERT INTO shared.destinations (name, country, lat, lng, located_by, geo_status, locality_norm)
+                     VALUES (%s, %s, 1.0, 1.0, 'llm', 'ok', '') RETURNING id::text, country_iso2""", (name, country))
+        dest_id, iso2 = c.fetchone()
+        assert iso2 is None                                  # not a spelling before 288
+        ids.append(dest_id)
+    _apply(c)
+    c.execute("SELECT country, country_iso2::text FROM shared.destinations WHERE id = ANY(%s::uuid[]) ORDER BY 1",
+              (ids,))
+    assert c.fetchall() == [("bali", "ID"), ("thai", "TH")]

@@ -68,6 +68,20 @@ def test_guard_checks_the_place_country_not_the_tour_country():
     assert shape.in_country(*KILIMANJARO, "tz") and not shape.in_country(*KILIMANJARO, "in")
 
 
+@pytest.mark.parametrize("lat, lng, country, reason", [
+    (-3.07, 37.35, "Kenya", "outside_country_polygon"),        # Kilimanjaro: inside Kenya's box, not in Kenya
+    (-3.07, 37.35, "Tanzania", None),
+    (13.36, 103.86, "Thailand", "outside_country_polygon"),    # Siem Reap
+    (13.36, 103.86, "Cambodia", None),
+    (35.3, 75.63, "India", "outside_country_polygon"),         # Skardu
+    (34.16, 77.58, "Pakistan", "outside_country_bbox"),        # Leh
+    (34.16, 77.58, "India", None),
+    (36.32, 74.66, "Pakistan", None),                          # Hunza
+])
+def test_guard_needs_the_country_polygon_not_only_the_box(lat, lng, country, reason):
+    assert guards.point_ok(lat, lng, country) == reason
+
+
 def test_model_answer_in_another_country_than_the_tour_is_kept():
     raw = ('{"Mount Kilimanjaro": [-3.07, 37.35, "Tanzania"], "Moshi": [-3.35, 37.34, "United Republic of Tanzania"],'
            ' "Hunza Valley": [36.32, 74.66, "Pakistan"], "Atlantis": [0.1, 0.1, "Atlantis"]}')
@@ -158,7 +172,10 @@ def test_normalise_card_country(raw, tour, expected):
     ("Tibet", "CHINA.xlsx", "China"),                       # ISO has no Tibet: China, as shared.countries maps it
     ("India & Nepal", "NEPAL.xlsx", "Nepal"),               # a compound: the file's country when it is a part
     ("India & Nepal", "tours.xlsx", None),                  # else unresolved (country_raw_unresolved)
-    ("Atlantis", "INDIA.xlsx", None),                       # never the file name over a different column value
+    ("India & Nepal", "THAILAND.xlsx", None),               # names countries, not the file's: never the file name
+    ("Atlantis", "INDIA.xlsx", "India"),                    # names no country at all: the file it came from
+    ("Himalayas", "NEPAL.xlsx", "Nepal"),
+    ("Atlantis", "unknown_file.xlsx", None),
     (None, "south_korea_2026.xlsx", "South Korea"),
     (None, "Laos and Vietnam.xlsx", None),                  # two countries: no single one ('and' is not Andorra)
     (None, "Tours in Asia.xlsx", None),                     # 'in' is not India
@@ -186,6 +203,11 @@ def test_288_swaps_the_list_for_the_iso_table():
     assert "DROP CONSTRAINT IF EXISTS chk_raw_tours_country" in sql
     # it changes no tour's country: no UPDATE of raw_tours at all
     assert not re.search(r"UPDATE\s+silver_aa_internal\.raw_tours", sql, re.I)
+    # 279's invariant for the new aliases: places get their code (country_iso2 only), and the guard after checks it
+    assert re.search(r"UPDATE shared\.destinations SET country_iso2 = shared\.country_iso2\(country\)\s+WHERE "
+                     r"country_iso2 IS NULL AND country IS NOT NULL", sql)
+    assert "shared/countries/countries.json" in sql and "countries/data/" not in sql
+    assert "Either order is safe" in sql
 
 
 def test_no_later_migration_brings_a_country_list_back():
@@ -207,10 +229,40 @@ KILI_TOUR = {"name": "Kilimanjaro Machame Route Trek", "country": "India", "dura
 
 def test_facts_box_destination_follows_the_source_text():
     from services.content_generation import s1_writer_v2 as v2
-    assert v2.destination(KILI_TOUR, "India") == "Tanzania"
+    # the text names Tanzania, never India: no guessed country, the Destination line is left out
+    assert v2.destination(KILI_TOUR, "India") is None
+    assert not [x for x in v2.at_a_glance(KILI_TOUR, {}) if x.startswith("Destination:")]
     laos_vn = {"name": "Laos to Vietnam by Bicycle", "itineraries": "Luang Prabang, Laos to Hanoi, Vietnam."}
     assert v2.destination(laos_vn, "Laos") == "Laos"                      # the source country is named: kept
     assert v2.destination({"name": "Paro Valley Walk"}, "Bhutan") == "Bhutan"
+
+
+@pytest.mark.parametrize("tour, country", [
+    ({"name": "Isan Temples", "itineraries": "Visit the Khmer ruins of Phanom Rung."}, "Thailand"),
+    ({"name": "Hoi An Walk", "itineraries": "Cross the Japanese Covered Bridge at dusk."}, "Vietnam"),
+    ({"name": "Luang Prabang Retreat", "itineraries": "Afternoon Thai massage by the Mekong."}, "Laos"),
+    ({"name": "Fine Dining in Kyoto", "itineraries": "Dinner served on fine china; red chile salsa."}, "Japan"),
+])
+def test_facts_box_destination_never_reads_demonyms_or_common_words(tour, country):
+    from services.content_generation import s1_writer_v2 as v2
+    assert v2.destination(tour, country) == country
+    assert f"Destination: {country}" in v2.at_a_glance({**tour, "country": country}, {})
+
+
+@pytest.mark.parametrize("tour, country, other", [
+    ({"name": "Ladakh Lakes", "itineraries": "Drive to Pangong Lake, much of which lies in China."}, "India", "China"),
+    ({"name": "Sikkim Trek", "itineraries": "Walk the ridge on the Nepal border."}, "India", "Nepal"),
+])
+def test_facts_box_destination_never_writes_a_guessed_country(tour, country, other):
+    from services.content_generation import s1_writer_v2 as v2
+    assert v2.destination(tour, country) is None
+    lines = v2.at_a_glance({**tour, "country": country}, {})
+    assert not [x for x in lines if x.startswith("Destination:")] and not [x for x in lines if other in x]
+
+
+def test_proper_name_matching_is_case_sensitive():
+    assert countries.countries_named_as_proper_names("Moshi, Tanzania and Viet Nam") == {"Tanzania", "Vietnam"}
+    assert countries.countries_named_as_proper_names("fine china, bermuda shorts, Japanese garden, Bali") == set()
 
 
 def test_seo_meta_names_tanzania_so_no_india_tail():
@@ -229,6 +281,42 @@ def test_the_tours_own_title_places_are_never_foreign():
     kept = rank_keyword_ideas(ideas, ["kilimanjaro", "machame"], country="India",
                               foreign_places=frozenset({"mount kilimanjaro", "paro"}))
     assert [i["keyword"] for i in kept] == ["mount kilimanjaro machame route", "kilimanjaro trek cost"]
+
+
+def test_one_shared_title_word_does_not_make_a_foreign_place_own():
+    """'golden rock' (Myanmar) shares only 'golden' with the Thailand tour 'Golden Triangle and Chiang Rai': still
+    foreign, so the keyword is filtered as on main."""
+    from services.seo_intelligence.seed_builder import rank_keyword_ideas, title_place_terms
+    terms = title_place_terms("Golden Triangle and Chiang Rai", "Thailand")
+    ideas = [{"keyword": "golden rock pagoda", "search_volume": 5000},
+             {"keyword": "golden triangle chiang rai", "search_volume": 800}]
+    kept = rank_keyword_ideas(ideas, terms, country="Thailand", foreign_places=frozenset({"golden rock"}))
+    assert [i["keyword"] for i in kept] == ["golden triangle chiang rai"]
+
+
+@pytest.mark.parametrize("payload, expected", [
+    ({"country": "India"}, ("India", None)),
+    ({"country": "INDIA"}, ("India", None)),                       # a pre-288 staged spelling: canonicalised
+    ({"country": "Viet Nam"}, ("Vietnam", None)),
+    ({"country": "Himalayas"}, (None, "Himalayas")),               # names no country: never written, kept raw
+    ({"country": "India & Nepal", "country_raw_unresolved": "India & Nepal"}, (None, "India & Nepal")),
+    ({"country": None}, (None, None)), ({}, (None, None)),
+])
+def test_staged_upload_country_is_canonical_before_insert(payload, expected):
+    from services.tour_lifecycle.service import _staged_country
+    assert _staged_country(payload) == expected
+
+
+@pytest.mark.asyncio
+async def test_insert_version_writes_the_canonical_country():
+    from services.tour_lifecycle import service
+    conn = MagicMock()
+    conn.fetchval = AsyncMock(return_value="t1")
+    await service._insert_version(conn, tenant_id="x", batch_id="b", payload={"country": "Ladakh"}, group_id="g",
+                                  version=2, status="active")
+    args = conn.fetchval.call_args[0]
+    assert "country_raw_unresolved" in args[0] and "$27" in args[0]
+    assert args[13] is None and args[27] == "Ladakh"
 
 
 def test_admin_country_edit_takes_any_iso_country_in_its_canonical_spelling():

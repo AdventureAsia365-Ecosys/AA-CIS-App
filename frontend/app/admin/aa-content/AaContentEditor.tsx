@@ -38,7 +38,6 @@ import {
 } from "../../_kit";
 import { can } from "@/lib/rbac";
 import {
-  AA_COUNTRIES,
   AA_CONTENT_API,
   BODY_MAX,
   KIND_LABEL,
@@ -47,6 +46,7 @@ import {
   aaCall,
   appliesFromForm,
   baselineVersion,
+  countryLabel,
   countryOptions,
   formFromVersion,
   formProblems,
@@ -324,7 +324,7 @@ function LocalePanel({ item, canWrite, canAdmin, onChanged, onReload, onDirty }:
       <Field label="Countries" htmlFor={fid("countries")} error={fieldError("applies_to.country_codes")}
         hint={form.country_codes.length ? null : "None picked: the item applies to every country."}>
         <div id={fid("countries")} role="group" aria-label="Countries" style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {countryOptions().map((c) => {
+          {countryOptions(form.country_codes).map((c) => {
             const on = form.country_codes.includes(c.code);
             return (
               <button key={c.code} type="button" aria-pressed={on} disabled={!editable}
@@ -447,7 +447,7 @@ function History({ versions }: { versions: AaVersion[] }) {
                   {v.body_markdown}
                 </div>
                 <div style={{ ...noteStyle, fontFamily: mono, overflowWrap: "anywhere" }}>
-                  {(v.applies_to.country_codes ?? []).map((c) => AA_COUNTRIES[c] ?? c).join(", ") || "All countries"}
+                  {(v.applies_to.country_codes ?? []).map(countryLabel).join(", ") || "All countries"}
                   {" · "}{v.content_hash}
                 </div>
               </div>

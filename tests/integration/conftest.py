@@ -379,7 +379,9 @@ def _apply_schema(conn):
         and not f.startswith('285')
         # AA-990: 288 makes raw_tours.country a foreign key to shared.countries (name); the replay's tests drop and
         # recreate shared.countries (test_aa851_migration_279), which the FK would pin. test_aa990_migration_288
-        # applies it the DB Migrate way on the RDS-like state and rolls back.
+        # applies it the DB Migrate way on the RDS-like state and rolls back. Consequence: this replay DB keeps the
+        # 20-name chk_raw_tours_country, so no other integration test may insert a raw_tours row whose country is
+        # outside those 20 names (it would fail here and pass on Dev).
         and not f.startswith('288')
     ])
 

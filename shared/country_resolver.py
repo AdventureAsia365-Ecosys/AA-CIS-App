@@ -11,9 +11,12 @@ Order:
      'SRI-LANDKA', 'Okinawa', 'Tibet' -> China as shared.countries maps it) -> that country;
   2. the column is EMPTY -> the one country the file name names ('INDIA.xlsx' -> India; longest spelling first;
      a file name naming two countries names none);
-  3. the column is present but names no single country: a compound ('India & Nepal') whose parts include the file
-     name's country -> that country; otherwise None (the caller keeps the raw value in country_raw_unresolved,
-     AA-571). The file name never overrides an explicit, different column value.
+  3. the column is filled but names NO country at all ('Himalayas', 'Ladakh', 'Asia') -> the file name's country
+     ('Himalayas' in NEPAL.xlsx -> Nepal): the file the row came from is then the source's statement;
+  4. the column names one or more countries but not a single one: a compound ('India & Nepal') whose parts include
+     the file name's country -> that country; otherwise None (the caller keeps the raw value in
+     country_raw_unresolved, AA-571). The file name never overrides an explicit, different column value
+     ('TANZANIA' in INDIA.xlsx stays Tanzania; 'India & Nepal' in THAILAND.xlsx is None).
 The verbatim Excel row stays in raw_tours.raw_data.
 """
 from __future__ import annotations
@@ -94,8 +97,8 @@ def country_from_filename(filename: Optional[str]) -> Optional[str]:
 
 
 def resolve_country(raw_value: Optional[str], filename: Optional[str] = None) -> Optional[str]:
-    """The tour's country as its source states it (module docstring): the column first, the file name only when the
-    column is empty; None when the column names no single country (compound aside)."""
+    """The tour's country as its source states it (module docstring): the column first, the file name when the column
+    is empty or names no country; None when the column names countries that do not include the file's country."""
     raw = raw_value.strip() if isinstance(raw_value, str) else ""
     if not raw:
         return country_from_filename(filename)
@@ -103,6 +106,8 @@ def resolve_country(raw_value: Optional[str], filename: Optional[str] = None) ->
     if whole:
         return whole.name
     parts = [c.name for c in _countries.resolve_parts(raw)]
+    if not parts:                                        # 'Himalayas', 'Ladakh', 'Asia': the column names no country,
+        return country_from_filename(filename)           # so the file the row came from is the source's statement
     file_country = country_from_filename(filename)
     if file_country and file_country in parts:
         return file_country

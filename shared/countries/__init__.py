@@ -146,3 +146,27 @@ def countries_named(text: Optional[str]) -> set[str]:
     pattern, words = _prose_pattern()
     low = " ".join(text.lower().replace("-", " ").split())
     return {words[m.group(0)].name for m in pattern.finditer(low)}
+
+
+@lru_cache(maxsize=1)
+def _proper_name_pattern() -> tuple[re.Pattern, dict[str, Country]]:
+    words: dict[str, Country] = {}
+    for c in all_countries():
+        for w in (c.name, c.iso_name):
+            w = " ".join(w.split())
+            if len(w) >= 4 and w.lower() not in PROSE_AMBIGUOUS and w[:1].isupper():
+                words.setdefault(w, c)
+    alts = "|".join(re.escape(w) for w in sorted(words, key=len, reverse=True))
+    return re.compile(rf"(?<![A-Za-z0-9])(?:{alts})(?![A-Za-z0-9])"), words
+
+
+def countries_named_as_proper_names(text: Optional[str]) -> set[str]:
+    """Canonical names of the countries a prose text names BY NAME: the canonical or ISO name only, case-sensitive as
+    written ('Tanzania', 'Viet Nam'). Stricter than countries_named(): never a demonym or region alias ('Japanese
+    Covered Bridge', 'Thai massage', 'Khmer ruins', 'Bali', 'Okinawa', 'PRC'), never a lower-case common word ('fine
+    china', 'red chile', 'bermuda shorts') and never the PROSE_AMBIGUOUS words. For text that must not guess."""
+    if not text:
+        return set()
+    pattern, words = _proper_name_pattern()
+    flat = " ".join(text.split())
+    return {words[m.group(0)].name for m in pattern.finditer(flat)}
