@@ -970,6 +970,10 @@ async def _execute_run_tour(
             "quality_score":      result.get("quality_score"),
             "generated":          result.get("generated"),
             "failure_codes":      result.get("failure_codes", []),   # AA-204: surface validate codes
+            # AA-990 N3: why a run did not publish, as the gate read it (hard_block_codes needs writer_version,
+            # which this dict does not carry, so it is computed here on the graph result).
+            "hard_block_codes":   sorted(_surviving_hard_codes(result)),
+            "publishable":        _is_publishable(result),
             "seo_meta_stored":    _m_final,                           # AA-204: actual value written to DB
             "cost_usd":           result.get("cost_usd"),       # AA-237: reflects upgraded run if any
             "model_used":         result.get("model_used"),     # AA-237: reflects upgraded run if any

@@ -238,6 +238,69 @@ HARD_CODE_REPAIR = {
 V2_HARD_BLOCK_CODES = frozenset({"ITINERARY_DAY_COUNT_MISMATCH"})
 
 
+DAY_COUNT_CODE = "ITINERARY_DAY_COUNT_MISMATCH"
+
+
+def itinerary_day_gap(tour: dict, itinerary) -> Optional[dict]:
+    """AA-329a, the one source-vs-output day check (validate_node and final_day_guard): the source itinerary's
+    "Day N" blocks (``parse_source_day_word_counts``, the splitter the writer v2 day plan and the day oracle read)
+    against the written itinerary's canonical "Day N — Title" blocks. None when the source has no reliable day
+    markers (the splitter fell back to an even split): nothing trustworthy to compare. Otherwise
+    {"source_day_words", "generated_day_words", "missing": sorted source days absent from the output}."""
+    src_raw = (tour or {}).get('itineraries') or (tour or {}).get('itinerary') or ""
+    parsed = parse_source_day_word_counts(src_raw, (tour or {}).get('duration'))
+    if parsed["used_fallback"]:
+        return None
+    source_day_words = parsed["day_word_counts"]
+    generated_day_words = generated_day_word_counts(itinerary if isinstance(itinerary, str) else str(itinerary or ""))
+    missing = sorted(set(source_day_words) - set(generated_day_words))
+    return {"source_day_words": source_day_words, "generated_day_words": generated_day_words, "missing": missing}
+
+
+def day_gap_issue(gap: dict) -> str:
+    missing = gap["missing"]
+    return (f"Itinerary missing {len(missing)} day(s) vs source "
+            f"({len(gap['source_day_words'])} source days -> {len(gap['generated_day_words'])} output days): "
+            f"day {'/'.join(str(d) for d in missing)}")
+
+
+def final_day_guard(state: dict) -> dict:
+    """AA-990 N3 (S252) — the day-structure check on the FINAL text of an A1 run, after every edit.
+
+    validate_node checks the days once per draft; the grounding repair, flag_fix and the post-revalidate sentence
+    re-repair edit ``generated`` after it (each under the repair contract's ``days_kept``, but a revalidate
+    passthrough re-runs no validate at all). This re-runs the same check (``itinerary_day_gap``) on the text that
+    is persisted, as the last step of the graph. A missing source day puts ITINERARY_DAY_COUNT_MISMATCH on
+    failure_codes (the code validate fires, so the publish gate, the review queue reason and HARD_CODE_REPAIR stay
+    the existing ones); when the code is hard for this run (``hard_block_codes``: an A1 writer-v2 draft), the run
+    reports ``revalidate_passed = False`` — a blocked page never says its re-validation passed. A tenant rewrite
+    is left to T3 (lesson AA-800). A detector error leaves the state as it is (logged): validate's own run of the
+    same function already scored the draft."""
+    if state.get("is_tenant_rewrite"):
+        return state
+    generated = state.get("generated") or {}
+    if not isinstance(generated, dict) or not generated:
+        return state
+    try:
+        gap = itinerary_day_gap(state.get("tour") or {}, generated.get("itineraries") or "")
+    except Exception as exc:  # never break the rewrite on a detector bug
+        logger.warning("final_day_guard_failed", tour_id=state.get("tour_id"), error=str(exc)[:200])
+        return state
+    codes = list(state.get("failure_codes") or [])
+    out = state
+    if gap is not None and gap["missing"]:
+        out = {**state, "day_guard_missing": gap["missing"]}
+        if DAY_COUNT_CODE not in codes:
+            codes.append(DAY_COUNT_CODE)
+            out["failure_codes"] = codes
+            out["feedback"] = "; ".join(x for x in (state.get("feedback") or "", day_gap_issue(gap)) if x)
+            logger.warning("final_day_guard_mismatch", tour_id=state.get("tour_id"), missing=gap["missing"],
+                           source_days=len(gap["source_day_words"]), output_days=len(gap["generated_day_words"]))
+    if DAY_COUNT_CODE in codes and DAY_COUNT_CODE in hard_block_codes(state) and out.get("revalidate_ran"):
+        out = {**out, "revalidate_passed": False}
+    return out
+
+
 def hard_block_codes(state: Optional[dict] = None) -> frozenset:
     """The hard-block codes for this run: ``_HARD_BLOCK_CODES``, plus ``V2_HARD_BLOCK_CODES`` when the draft was
     written by the S1 writer v2 on A1 (``s1_writer_v2_live.is_v2``: never a tenant rewrite)."""
@@ -998,21 +1061,18 @@ def validate_node(state: ContentState) -> ContentState:
     # implementation notes). Skipped entirely when the source has no reliable day markers
     # (parse_source_day_word_counts fell back to an even split) — nothing trustworthy to compare.
     _src_raw = tour.get('itineraries') or tour.get('itinerary') or ""
-    _src_parsed = parse_source_day_word_counts(_src_raw, tour.get('duration'))
-    if not _src_parsed["used_fallback"]:
-        _source_day_words = _src_parsed["day_word_counts"]
+    # AA-990 N3: one function for this check and the final day guard (final_day_guard), which re-runs it on the
+    # text that is persisted after every later edit.
+    _gap = itinerary_day_gap(tour, itinerary)
+    if _gap is not None:
+        _source_day_words = _gap["source_day_words"]
         _source_days = set(_source_day_words)
-        _generated_day_words = generated_day_word_counts(itinerary)
+        _generated_day_words = _gap["generated_day_words"]
         _generated_days = set(_generated_day_words)
 
         # AA-329a: whole days present in the source but absent from the output.
-        _missing_days = sorted(_source_days - _generated_days)
-        if _missing_days:
-            issues.append(
-                f"Itinerary missing {len(_missing_days)} day(s) vs source "
-                f"({len(_source_days)} source days -> {len(_generated_days)} output days): "
-                f"day {'/'.join(str(d) for d in _missing_days)}"
-            )
+        if _gap["missing"]:
+            issues.append(day_gap_issue(_gap))
             fired.append("ITINERARY_DAY_COUNT_MISMATCH")
             score -= 1.0
 
@@ -1154,8 +1214,11 @@ def _apply_grounding_recheck(state: ContentState) -> ContentState:
     unsupported claim, never delete.
 
     AA-925: the last step of the A1 graph, so it is where the one degraded hold is applied
-    (degraded.apply_a1_hold: a hard fail-open detector → DEGRADED_DETECTOR + manual_check)."""
-    return degraded.apply_a1_hold(_grounding_recheck(state))
+    (degraded.apply_a1_hold: a hard fail-open detector → DEGRADED_DETECTOR + manual_check).
+
+    AA-990 N3: and where the day structure of the final text is checked (final_day_guard), after the sentence
+    re-repair below — the last edit of the graph."""
+    return degraded.apply_a1_hold(final_day_guard(_grounding_recheck(state)))
 
 
 def _grounding_recheck(state: ContentState) -> ContentState:

@@ -92,4 +92,9 @@ async def run(ctx: JobContext) -> dict:
         "quality_score": result.get("quality_score"),
         "model_used":   result.get("model_used"),
         "brand_audit_status": result.get("brand_audit_status"),
+        # AA-990 N3: the job row says why a version was held (e.g. ITINERARY_DAY_COUNT_MISMATCH on a v2 draft)
+        # instead of a bare success + score.
+        "publishable":   result.get("publishable"),
+        "hard_block_codes": result.get("hard_block_codes", []),
+        "failure_codes": result.get("failure_codes", []),
     }

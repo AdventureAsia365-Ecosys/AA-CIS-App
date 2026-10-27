@@ -23,12 +23,17 @@ from typing import Optional
 
 # AA-353 / S207 (moved from prompts.py, which re-exports them): line-anchored "Day N" markers, a leading
 # bullet allowed, spelled-out numbers, ranges ("Days 1–3:"). Group 1 = the (first) day, group 2 = a range end.
+# AA-990 N3 (S252): a leading quote is allowed too. Spreadsheet sources carry the cell's opening quote on the line
+# ('"Day 5 / -Stage 4- ...'): Japan "TRANS-TOHOKU Bike Tour" (12 days) read as Days 1-4, Day 4's block swallowed
+# Days 5-12, so the writer v2 day plan asked for 4 days, validate compared 4 with 4 and the day oracle filed
+# "12 DAYS vs 4 markers" as a source contradiction; the 4-day page was published. Quotes only: an opening bracket
+# would turn a source note ("(Day 14 optional extension available)") into a phantom day the v2 plan then asks for.
 _NUM_WORDS = {w: i for i, w in enumerate(
     "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
     "sixteen seventeen eighteen nineteen twenty twenty-one twenty-two twenty-three twenty-four "
     "twenty-five twenty-six twenty-seven twenty-eight twenty-nine thirty".split())}
 _DAY_MARKER_RE = re.compile(
-    r"^[\s►▶•*#>\-–—·|]*days?\s*#?\s*(\d{1,3}|" + "|".join(sorted(_NUM_WORDS, key=len, reverse=True))
+    r"^[\s►▶•*#>\-–—·|\"'“”‘’„«»]*days?\s*#?\s*(\d{1,3}|" + "|".join(sorted(_NUM_WORDS, key=len, reverse=True))
     + r")\b(?:\s*[-–—]\s*(\d{1,3})\b)?[*\s]*[:\-–—|.]?\s*",
     re.IGNORECASE)
 # "Day 1 - 3 hours drive to Paro" is day 1 with a 3-hour drive, not days 1–3.
