@@ -38,6 +38,8 @@ data/
 scripts/
 # AA-868: CI scripts run by the workflows are tracked
 !/.github/scripts/
+# AA-994: the UI kit core manifest generator (frontend/scripts/kit-manifest.mjs) is tracked
+!/frontend/scripts/
 .vercel
 .env*.local
 SESSION_START_*.md

@@ -1,4 +1,5 @@
-// app/_kit/csv.ts
+// UI kit core (root ADR 0016). Canonical: AA-CIS-App frontend/app/_kit/core. Edit only there; copies are checked byte for byte (kit.lock.json).
+// app/_kit/core/csv.ts
 // AA-662 — minimal, dependency-free CSV export for DataTable.
 
 function escapeCell(value: unknown): string {

@@ -10,7 +10,7 @@
 // from its value (the server snapshot differs from the client's, so an attribute would not hydrate cleanly).
 import { useState } from "react";
 import { useThemeChoice } from "../_kit/useTheme";
-import { BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_SANS, LOGO_SRC } from "../_brand/tokens";
+import { BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_SANS, LOGO_SRC } from "../_kit/core/brand";
 import { User, Lock, Mail } from "lucide-react";
 
 interface LoginFormProps {

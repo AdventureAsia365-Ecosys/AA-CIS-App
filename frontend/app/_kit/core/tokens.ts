@@ -1,10 +1,12 @@
-// app/_kit/tokens.ts
+// UI kit core (root ADR 0016). Canonical: AA-CIS-App frontend/app/_kit/core. Edit only there; copies are checked byte for byte (kit.lock.json).
+// app/_kit/core/tokens.ts
 // AA-662 — UI kit shared design tokens.
 //
 // The kit is brand-neutral: every component reads from `K`. AA-601 part B: `K` now returns the
-// `var(--aa-…)` CSS variables defined in app/globals.css (light values = the previous hex, dark
-// values = the dark palette) instead of the raw hex, so a single <html data-theme> switch
-// recolours every kit component. `BRAND` (_brand/tokens.ts) still holds hex and is read directly
+// `var(--aa-…)` CSS variables defined in the app's globals.css (light values = the previous hex, dark
+// values = the dark palette; they move into core/tokens.css in AA-994 S1b) instead of the raw hex, so a
+// single <html data-theme> switch
+// recolours every kit component. `BRAND` (brand.ts) still holds hex and is read directly
 // by the login pages and the portal `T` object, which stay light.
 //
 // Styling convention (whole app, AA-605): inline `style={{...}}` objects reading these tokens.
@@ -16,7 +18,7 @@ import {
   FONT_DISPLAY,
   FONT_MONO,
   FONT_SANS,
-} from "../_brand/tokens";
+} from "./brand";
 
 export const K = {
   // Accent — brand gold

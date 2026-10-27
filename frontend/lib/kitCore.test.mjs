@@ -1,0 +1,223 @@
+// frontend/lib/kitCore.test.mjs
+// AA-994 S1a (root ADR 0016 decisions 1, 3, 4, 5): the UI kit core in app/_kit/core is import-closed, carries the
+// header line, has a current MANIFEST.json, and its copy check (core/check-kit-copy.mjs) catches an edited, missing or
+// extra file in a consumer copy. Also pins the theme store factory and its restore script to the S252 behaviour.
+// Run: npm run test:unit (CI: Frontend Build runs this file and `check-kit-copy.mjs --self`).
+
+import assert from "node:assert/strict";
+import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+
+import {
+  HEADER, MANIFEST, buildManifest, closureProblems, copyProblems, headerProblems, importProblem, importSpecifiers,
+  main, manifestText, selfProblems, sha256,
+} from "../app/_kit/core/check-kit-copy.mjs";
+import { createThemeStore, themeRestoreScript } from "../app/_kit/core/theme.ts";
+
+const FRONTEND = fileURLToPath(new URL("..", import.meta.url));
+const CORE = join(FRONTEND, "app", "_kit", "core");
+
+function scratch(t) {
+  const d = mkdtempSync(join(tmpdir(), "kit-core-"));
+  t.after(() => rmSync(d, { recursive: true, force: true }));
+  return d;
+}
+
+/** A consumer checkout: <root>/app/_kit/core (a copy of CIS core) + <root>/kit.lock.json. */
+function consumer(t, { profile = "full", files } = {}) {
+  const root = scratch(t);
+  const dest = join(root, "app", "_kit", "core");
+  const manifest = buildManifest(CORE);
+  const keep = profile === "tokens" ? manifest.profiles.tokens : null;
+  const wanted = (src) => !keep || src === CORE || keep.some((f) => src === join(CORE, f));
+  cpSync(CORE, dest, { recursive: true, filter: wanted });
+  for (const [f, text] of Object.entries(files || {})) writeFileSync(join(dest, f), text);
+  const lock = { ref: "test", profile, manifest_sha256: sha256(readFileSync(join(dest, MANIFEST))) };
+  writeFileSync(join(root, "kit.lock.json"), JSON.stringify(lock));
+  return { root, dest, lockPath: join(root, "kit.lock.json") };
+}
+
+// ── canonical copy ─────────────────────────────────────────────────────────────────────────────────────────────
+
+test("the CIS core passes its self-check (manifest current, header lines, import closure)", () => {
+  assert.deepEqual(selfProblems(CORE), []);
+});
+
+test("MANIFEST.json is current and lists every core file but itself", () => {
+  assert.equal(readFileSync(join(CORE, MANIFEST), "utf8"), manifestText(CORE));
+  const listed = Object.keys(JSON.parse(readFileSync(join(CORE, MANIFEST), "utf8")).files).sort();
+  assert.deepEqual(listed, readdirSync(CORE).filter((f) => f !== MANIFEST).sort());
+});
+
+test("core imports nothing outside itself (no ../, no @/ alias, only allowed packages)", () => {
+  assert.deepEqual(closureProblems(CORE), []);
+});
+
+test("ADR 0016 decision 1: the portable files are in core, the CIS-specific ones stay outside", () => {
+  const core = new Set(readdirSync(CORE));
+  for (const f of ["tokens.ts", "brand.ts", "primitives.tsx", "DataTable.tsx", "csv.ts", "savedViews.ts", "Drawer.tsx",
+    "Modal.tsx", "Toast.tsx", "Providers.tsx", "theme.ts", "useTheme.ts", "useHydrated.ts", "useMediaQuery.ts",
+    "sidebarStore.ts", "useSidebar.ts", "PageFrame.tsx", "GuidePanel.tsx", "check-kit-copy.mjs", MANIFEST]) {
+    assert.ok(core.has(f), `${f} is in core`);
+  }
+  for (const f of ["api.ts", "guideContent.ts", "SessionKeepAlive.tsx", "adminNav.tsx", "useNavSections.ts",
+    "useAdminIdentity.ts", "useReviewPendingCount.ts", "AdminShell.tsx", "Sidebar.tsx", "Topbar.tsx", "BottomNav.tsx",
+    "CommandPalette.tsx"]) {
+    assert.ok(!core.has(f), `${f} stays CIS-local`);
+  }
+});
+
+const MOVED = new RegExp("(^|/)_brand/tokens$|_kit/(tokens|primitives|DataTable|Modal|Drawer|Toast|Providers|AdminMain|"
+  + "GuidePanel|csv|savedViews|useHydrated|useMediaQuery|sidebarStore|useSidebar)$");
+
+test("every page and component still imports the barrel or a CIS-local file, never a moved path", () => {
+  const offenders = [];
+  const walk = (dir) => {
+    for (const name of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, name.name);
+      if (name.isDirectory()) { if (name.name !== "node_modules" && name.name !== "core") walk(p); continue; }
+      if (!/\.(ts|tsx|mjs)$/.test(name.name)) continue;
+      for (const spec of importSpecifiers(readFileSync(p, "utf8"))) {
+        if (MOVED.test(spec)) {
+          offenders.push(`${p.slice(FRONTEND.length)}: ${spec}`);
+        }
+      }
+    }
+  };
+  walk(join(FRONTEND, "app"));
+  walk(join(FRONTEND, "lib"));
+  assert.deepEqual(offenders, []);
+});
+
+test("the closure rule: what a core file may and may not import", () => {
+  const ok = ["react", "react-dom", "next/link", "next/navigation", "lucide-react", "@tanstack/react-table",
+    "@tanstack/react-query", "./tokens", "./brand"];
+  for (const s of ok) assert.equal(importProblem(s, "x.tsx", CORE), null, s);
+  assert.equal(importProblem("node:fs", "x.mjs", CORE), null);
+  for (const s of ["../api", "../../lib/rbac", "@/lib/rbac", "~/x", "axios", "next", "recharts", "node:fs", "./nope",
+    "./sub/../../x"]) {
+    assert.notEqual(importProblem(s, "x.tsx", CORE), null, s);
+  }
+});
+
+test("import specifiers: static, type, side-effect, dynamic, require; comments ignored", () => {
+  const src = [
+    `// import x from "commented";`,
+    `/* import y from "block"; */`,
+    `import a, { b,`,
+    `  c } from "pkg-a";`,
+    `import type { T } from './t';`,
+    `export { d } from "./d";`,
+    `export * from "./e";`,
+    `import "./side.css";`,
+    `const m = await import("./lazy");`,
+    `const r = require("cjs");`,
+    `const s = "import z from 'in-a-string'";`,
+  ].join("\n");
+  assert.deepEqual(importSpecifiers(src).sort(),
+    ["./d", "./e", "./lazy", "./side.css", "./t", "cjs", "pkg-a"].sort());
+});
+
+test("header line: a core file without it is reported", (t) => {
+  const d = scratch(t);
+  writeFileSync(join(d, "good.ts"), `// ${HEADER}\nexport const a = 1;\n`);
+  writeFileSync(join(d, "bad.ts"), `export const a = 1;\n`);
+  writeFileSync(join(d, "MANIFEST.json"), JSON.stringify({ _header: HEADER }));
+  assert.deepEqual(headerProblems(d), ["bad.ts: line 1 is not the kit core header line"]);
+});
+
+test("self-check fails on a stale manifest and on an import that leaves core", (t) => {
+  const d = scratch(t);
+  cpSync(CORE, d, { recursive: true });
+  writeFileSync(join(d, "extra.ts"), `// ${HEADER}\nimport { apiGet } from "../api";\nexport const x = apiGet;\n`);
+  const problems = selfProblems(d);
+  assert.ok(problems.some((p) => p.startsWith(`${MANIFEST} is stale`)), problems.join("\n"));
+  assert.ok(problems.some((p) => p.startsWith("extra.ts: ") && p.includes("../api")), problems.join("\n"));
+});
+
+// ── consumer copy ──────────────────────────────────────────────────────────────────────────────────────────────
+
+test("an exact full copy passes, with its lock found above the core folder", (t) => {
+  const c = consumer(t);
+  assert.deepEqual(copyProblems(c.dest, { lockPath: c.lockPath }), []);
+  assert.equal(main(["--dir", c.dest]), 0);
+});
+
+test("an edited, missing or extra file in a copy fails", (t) => {
+  const edited = consumer(t, { files: { "Modal.tsx": "// edited in the copy\n" } });
+  assert.match(copyProblems(edited.dest, { lockPath: edited.lockPath }).join("\n"), /Modal\.tsx: differs/);
+
+  const missing = consumer(t);
+  rmSync(join(missing.dest, "Toast.tsx"));
+  assert.match(copyProblems(missing.dest, { lockPath: missing.lockPath }).join("\n"), /Toast\.tsx: missing/);
+
+  const extra = consumer(t, { files: { "Local.tsx": "export {};\n" } });
+  assert.match(copyProblems(extra.dest, { lockPath: extra.lockPath }).join("\n"), /Local\.tsx: extra file/);
+  assert.equal(main(["--dir", extra.dest]), 1);
+});
+
+test("a regenerated manifest in a copy does not match the lock", (t) => {
+  const c = consumer(t, { files: { "Modal.tsx": "// edited in the copy\n" } });
+  writeFileSync(join(c.dest, MANIFEST), manifestText(c.dest)); // the copy's files now match its own manifest...
+  assert.match(copyProblems(c.dest, { lockPath: c.lockPath }).join("\n"), /manifest_sha256/); // ...but not the lock
+});
+
+test("the tokens profile copy holds only the token files and passes", (t) => {
+  const c = consumer(t, { profile: "tokens" });
+  assert.deepEqual(readdirSync(c.dest).sort(), [...buildManifest(CORE).profiles.tokens].sort());
+  assert.deepEqual(copyProblems(c.dest, { lockPath: c.lockPath }), []);
+  // ...and the same folder checked as a full copy misses the rest.
+  assert.match(copyProblems(c.dest, { profile: "full", lockPath: c.lockPath }).join("\n"), /DataTable\.tsx: missing/);
+});
+
+test("usage errors exit 2", () => {
+  assert.equal(main(["--nope"]), 2);
+  assert.equal(main(["--dir"]), 2);
+});
+
+// ── theme store (ADR 0016 decision 4) ────────────────────────────────────────────────────────────────────────
+
+/** Run a restore script against a fake browser; returns the data-theme it set. */
+function runRestore(script, { stored, prefersDark = false, throws = false }) {
+  const attrs = {};
+  const localStorage = { getItem: (k) => { if (throws) throw new Error("blocked"); return stored?.[k] ?? null; } };
+  const window = { matchMedia: (q) => ({ matches: prefersDark && q === "(prefers-color-scheme: dark)" }) };
+  const document = { documentElement: { setAttribute: (k, v) => { attrs[k] = v; } } };
+  new Function("localStorage", "window", "document", script)(localStorage, window, document);
+  return attrs["data-theme"];
+}
+
+test("the restore script reads only its own key and resolves like the S252 inline script", () => {
+  const s = themeRestoreScript("cis_theme");
+  assert.equal(runRestore(s, { stored: { cis_theme: "dark" } }), "dark");
+  assert.equal(runRestore(s, { stored: { cis_theme: "light" }, prefersDark: true }), "light");
+  assert.equal(runRestore(s, { stored: {}, prefersDark: true }), "dark");
+  assert.equal(runRestore(s, { stored: { cis_theme: "system" } }), "light");
+  assert.equal(runRestore(s, { stored: { bk_theme: "dark" } }), "light");
+  assert.equal(runRestore(s, { throws: true }), "light");
+  const bk = themeRestoreScript("bk_theme");
+  assert.equal(runRestore(bk, { stored: { bk_theme: "dark", cis_theme: "light" } }), "dark");
+});
+
+test("createThemeStore keeps the key, refuses an unsafe key, and is SSR-safe", () => {
+  const store = createThemeStore({ storageKey: "cis_theme" });
+  assert.equal(store.storageKey, "cis_theme");
+  assert.equal(store.restoreScript, themeRestoreScript("cis_theme"));
+  assert.equal(store.readChoice(), "system"); // no window in node
+  assert.equal(store.getServerSnapshot(), "system");
+  assert.equal(store.resolveTheme("dark"), "dark");
+  assert.equal(store.resolveTheme("system"), "light");
+  store.setChoice("dark"); // no-op without window
+  assert.throws(() => createThemeStore({ storageKey: "x'); alert(1); ('" }), /storage key/);
+  assert.throws(() => createThemeStore({ storageKey: "" }), /storage key/);
+});
+
+test("the CIS binding uses the cis_theme key", () => {
+  const src = readFileSync(join(FRONTEND, "app", "_kit", "theme.ts"), "utf8");
+  assert.match(src, /THEME_KEY = "cis_theme"/);
+  assert.match(src, /createThemeStore\(\{ storageKey: THEME_KEY \}\)/);
+  assert.match(readFileSync(join(FRONTEND, "app", "layout.tsx"), "utf8"), /__html: themeStore\.restoreScript/);
+});

@@ -8,7 +8,7 @@
 
 import { useRouter, usePathname } from "next/navigation";
 import { Gauge, ClipboardList, Library, ListChecks, Menu } from "lucide-react";
-import { K } from "./tokens";
+import { K } from "./core/tokens";
 import { navActive } from "./adminNav";
 import { useReviewPendingCount } from "./useReviewPendingCount";
 import { useAdminIdentity } from "./useAdminIdentity";

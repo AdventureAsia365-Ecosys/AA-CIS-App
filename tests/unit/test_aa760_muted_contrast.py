@@ -89,8 +89,8 @@ def test_muted2_stays_the_quieter_tone(app, theme):
 
 @pytest.mark.parametrize("app", APPS)
 def test_brand_ts_matches_the_light_tokens(app):
-    """_brand/tokens.ts BRAND.muted/muted2 are used as raw hex on light-only pages (legal pages); keep them in step."""
-    src = (ROOT / app / "app/_brand/tokens.ts").read_text()
+    """_kit/core/brand.ts BRAND.muted/muted2 are used as raw hex on light-only pages (legal pages); keep them in step."""
+    src = (ROOT / app / "app/_kit/core/brand.ts").read_text()
     light = _block(app, "light")
     for name in ("muted", "muted2"):
         m = re.search(rf'^\s*{name}:\s*"(#[0-9A-Fa-f]{{6}})"', src, re.M)

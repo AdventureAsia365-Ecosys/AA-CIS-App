@@ -4,12 +4,12 @@
    AA-601 part B — admin dark theme.
 
    Single source of the admin/kit colour palette. The admin token object `A`
-   (admin/_components/adminUi.tsx) and the kit token object `K` (_kit/tokens.ts)
+   (admin/_components/adminUi.tsx) and the kit token object `K` (_kit/core/tokens.ts)
    read these `--aa-*` variables via `var()` instead of hard-coding hex, so one
    theme switch recolours every admin page and every kit component used on the
    admin surface.
 
-   `BRAND` (_brand/tokens.ts) stays hex — the login pages and the tenant portal
+   `BRAND` (_kit/core/brand.ts) stays hex — the login pages and the tenant portal
    `T` object read it unchanged, so they are unaffected by the admin theme.
 
    Resolution order (handled by layout.tsx's restore script + AdminSidebar

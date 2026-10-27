@@ -33,7 +33,7 @@ const KIT_RESTRICTED_SYNTAX = [
   {
     selector: "JSXAttribute[name.name='className']",
     message:
-      "No className on JSX in UI-v2 pages — use inline style + brand tokens (app/_kit/tokens). (AA-732 kit rule)",
+      "No className on JSX in UI-v2 pages — use inline style + brand tokens (app/_kit/core/tokens). (AA-732 kit rule)",
   },
 ];
 
