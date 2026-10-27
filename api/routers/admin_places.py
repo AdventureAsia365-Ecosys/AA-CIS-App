@@ -442,6 +442,30 @@ def _json(v):
     return json.loads(v) if isinstance(v, str) else v
 
 
+_COUNTRY_FIELDS = ("status", "listed", "usable", "merges", "llm_needed", "diff_size", "diff_hash", "outside",
+                   "breaker_limit", "applied", "band_pairs", "band_asked", "band_cached", "band_unasked",
+                   "embedding_promoted")
+# The job stores these three as full lists (the plan); the admin view shows a count plus a capped detail list.
+_COUNTED_FIELDS = ("possible", "conflicts", "defects")
+_DETAIL_CAP = 50
+
+
+def _country_view(v: dict) -> dict:
+    """One country of the last place_dedupe result, as the Merges tab reads it: scalars only, plus capped lists.
+
+    possible / conflicts / defects are lists in the job result but counts in this view (the tab rendered the raw
+    list, and a non-empty list of objects crashed it: S252, China's first conflict)."""
+    out = {k: v.get(k) for k in _COUNTRY_FIELDS}
+    for k in _COUNTED_FIELDS:
+        x = v.get(k)
+        out[k] = len(x) if isinstance(x, list) else (x if isinstance(x, int) else 0)
+        if isinstance(x, list):
+            out[f"{k}_detail"] = x[:_DETAIL_CAP]
+    out["merges_planned"] = (v.get("merges_planned") or [])[:_DETAIL_CAP]
+    out["undos"] = (v.get("undos") or [])[:_DETAIL_CAP]
+    return out
+
+
 @router.get("/merges", summary="AA-847 — the duplicate-place merge log (job and admin merges, with undo state)")
 async def list_merges(request: Request, country: Optional[str] = None, active: Optional[bool] = None,
                       page: int = 1, page_size: int = 50, x_admin_secret: str = Header(None)):
@@ -506,14 +530,7 @@ async def dedupe_status(request: Request, x_admin_secret: str = Header(None)):
     run = None
     if last is not None:
         res = _json(last["result"]) or {}
-        countries = {}
-        for c, v in (res.get("countries") or {}).items():
-            countries[c] = {k: v.get(k) for k in ("status", "listed", "usable", "merges", "llm_needed", "possible",
-                                                  "conflicts", "defects", "diff_size", "diff_hash", "outside",
-                                                  "breaker_limit", "applied", "band_pairs", "band_asked",
-                                                  "band_cached", "band_unasked", "embedding_promoted")}
-            countries[c]["merges_planned"] = (v.get("merges_planned") or [])[:50]
-            countries[c]["undos"] = (v.get("undos") or [])[:50]
+        countries = {c: _country_view(v) for c, v in (res.get("countries") or {}).items()}
         run = {"job_id": last["id"], "finished_at": last["finished_at"].isoformat() if last["finished_at"] else None,
                "mode": res.get("mode"), "rule_version": res.get("rule_version"),
                "model_calls": res.get("model_calls"), "model_cost_usd": res.get("model_cost_usd"),

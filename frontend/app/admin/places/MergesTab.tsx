@@ -20,8 +20,14 @@ type CountryRun = {
   conflicts: number; defects: number; diff_size: number; diff_hash: string; outside?: number; breaker_limit?: number;
   applied?: number; band_pairs?: number; band_asked?: number; band_cached?: number; band_unasked?: number;
   embedding_promoted?: number;
+  // S252: counts; the API adds capped detail lists (the job stores full lists).
+  conflicts_detail?: { keeper_id: string; destination_id: string; clash: { a: string; b: string; reason: string } | null }[];
+  defects_detail?: { a: string; b: string; reason: string }[];
   merges_planned: { merged_id: string; keeper_id: string; decided_by: string; score: number; reason: string }[];
 };
+// A count field may arrive as a list from an older API build; never render a raw list (React crashes on objects).
+const count = (x: unknown): number => (Array.isArray(x) ? x.length : typeof x === "number" ? x : 0);
+
 type AllowRow = {
   country: string; mode: string; approved_diff_hash: string | null; approved_diff_size: number; rule_version: string;
   updated_by: string; updated_at: string | null;
@@ -166,7 +172,7 @@ export default function MergesTab({ onError }: { onError: (msg: string) => void 
                 {r?.status && <Badge color={STATUS_COLOR[r.status] ?? "gray"}>{r.status}</Badge>}
                 {r && <span style={{ fontFamily: mono, fontSize: 12 }}>
                   {r.merges} merges · {r.band_pairs ?? 0} model-band pairs ({r.band_asked ?? 0} asked, {r.band_cached ?? 0} cached,
-                  {" "}{r.band_unasked ?? 0} not asked) · {r.possible} possible · {r.conflicts} conflicts
+                  {" "}{r.band_unasked ?? 0} not asked) · {count(r.possible)} possible · {count(r.conflicts)} conflicts · {count(r.defects)} geocode defects
                   {r.outside != null && ` · ${r.outside} outside the approval (limit ${r.breaker_limit})`}
                 </span>}
                 <span style={{ flex: 1 }} />
@@ -180,9 +186,20 @@ export default function MergesTab({ onError }: { onError: (msg: string) => void 
                 {al && <Btn size="sm" disabled={!!busy} onClick={() => setMode(c, al.mode === "apply" ? "dry_run" : "off")}>
                   {al.mode === "apply" ? "Back to dry run" : "Remove"}</Btn>}
               </div>
-              {r && r.merges_planned.length > 0 && (
+              {r && (r.conflicts_detail?.length ?? 0) > 0 && (
                 <details style={{ marginTop: 6 }}>
-                  <summary style={{ cursor: "pointer", fontSize: 12, color: A.muted }}>planned merges (first {r.merges_planned.length}) · diff {r.diff_hash.slice(0, 10)}</summary>
+                  <summary style={{ cursor: "pointer", fontSize: 12, color: A.muted }}>conflicts ({r.conflicts_detail!.length}): members cut from a cluster</summary>
+                  {r.conflicts_detail!.map(k => (
+                    <div key={`${k.keeper_id}-${k.destination_id}`} style={{ fontSize: 12, fontFamily: mono }}>
+                      {k.destination_id.slice(0, 8)} kept apart from {k.keeper_id.slice(0, 8)}
+                      {k.clash && ` · ${k.clash.a.slice(0, 8)} vs ${k.clash.b.slice(0, 8)}: ${k.clash.reason}`}
+                    </div>
+                  ))}
+                </details>
+              )}
+              {r && (r.merges_planned?.length ?? 0) > 0 && (
+                <details style={{ marginTop: 6 }}>
+                  <summary style={{ cursor: "pointer", fontSize: 12, color: A.muted }}>planned merges (first {r.merges_planned.length}) · diff {(r.diff_hash ?? "").slice(0, 10)}</summary>
                   {r.merges_planned.map(m => (
                     <div key={m.merged_id} style={{ fontSize: 12, fontFamily: mono }}>
                       {m.merged_id.slice(0, 8)} → {m.keeper_id.slice(0, 8)} · {m.decided_by} · {m.reason}
