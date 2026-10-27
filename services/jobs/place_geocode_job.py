@@ -14,8 +14,10 @@ with GEOCODER_PROVIDER = geoapify (default since S236), one to three Geoapify re
 ("X to Y" endpoints, a native-script retry for Taiwan / South Korea; generic phrases send none). Free
 plan: $0, so the guard that matters is the daily CREDIT guard (GEOAPIFY_DAILY_CREDIT_LIMIT, default
 2,500 of the 3,000/day quota, counted per UTC day from geo.geocode_call): when it trips, the remaining
-names stay pending without a try counted and the job ends `stopped_credit_limit` without re-enqueueing
-itself (the next place_extract / backfill picks them up). A setup / auth failure (no key, secret
+names stay pending without a try counted and the job ends `stopped_credit_limit`; AA-990: with names still due it
+queues the next run for just after the credit reset (enqueue.enqueue_after_credit_reset: next 00:00 UTC + 10 min +
+jitter, one row per reset day; result keys `next_job`, `next_run_after`), so the backlog drains without a person —
+before, nothing ran until the next place_extract. A setup / auth failure (no key, secret
 unreadable, HTTP 401/403) ends the job the same way with `stopped_geocoder_unavailable` (names are never
 marked `unknown` for it). The $ rows (geocoder/global $25/day,
 geocoder/job:place_geocode $50/run) apply on a paid plan via GEOCODER_COST_PER_REQUEST_USD.
@@ -27,7 +29,8 @@ from typing import Optional
 import structlog
 
 from services.places import llm, locate, store
-from services.places.enqueue import GEOCODE_KIND, GRAPH_KIND, SHAPE_KIND, enqueue_debounced, enqueue_dedupe
+from services.places.enqueue import (GEOCODE_KIND, GRAPH_KIND, SHAPE_KIND, enqueue_after_credit_reset,
+                                     enqueue_debounced, enqueue_dedupe)
 from services.places.geolock import geoapify_lock
 from services.places.geocoder import get_geocoder
 from services.places.pipeline import geocode_pending
@@ -137,8 +140,11 @@ async def _run_locked(ctx: JobContext) -> Optional[dict]:
                          deferred=result.get("deferred"), pending=remaining)
         elif result.get("stopped_credit_limit"):
             result["status"] = "stopped_credit_limit"
+            if remaining:   # AA-990: resume after the daily credit reset, no person needed
+                job, at, _ = await enqueue_after_credit_reset(ctx.pool, reason=f"{KIND}:credit_reset")
+                result["next_job"], result["next_run_after"] = job, at.isoformat()
             logger.warning("place_geocode_credit_limit", provider=inner.name, deferred=result.get("deferred"),
-                           pending=remaining)
+                           pending=remaining, next_run_after=result.get("next_run_after"))
         elif remaining and result.get("names"):
             result["next_job"], _ = await enqueue_debounced(ctx.pool, KIND, reason=f"{KIND}:continue",
                                                             created_by=KIND, debounce_s=CONTINUE_DEBOUNCE_S)
