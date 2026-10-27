@@ -11,11 +11,14 @@ Lifecycle of one job:
                                                          raises                -> retry w/ backoff or failed
   admin cancel  -> the heartbeat sees cancel_requested -> handler task cancelled -> cancelled
   shutdown      -> running handlers get `grace_seconds`, then are released back to the queue
+                   (AA-993 G1: `JOB_WORKER_GRACE_SECONDS`; a release during a deploy does not count toward
+                   queue.MAX_RELEASES; the kind's `release_delay_seconds` delays the re-claim)
   worker dies   -> lease expires -> reaper (any worker) re-queues or fails the job
 """
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import signal
 import socket
@@ -257,8 +260,13 @@ class Worker:
                 handler_task.cancel()
                 await asyncio.gather(handler_task, return_exceptions=True)
             if not cancelled_by_admin:
-                status = await queue.release(self.pool, job.id, self.worker_id, ctx.cost_usd)
-                log.warning("job_released_on_shutdown", next_status=status)
+                # AA-993 G1: a deploy (a newer task revision is live) does not burn one of the job's releases.
+                newer = await self._newer_worker_alive_safe()
+                delay = kind.release_delay_seconds
+                status = await queue.release(self.pool, job.id, self.worker_id, ctx.cost_usd,
+                                             count_release=not newer, delay_seconds=delay)
+                log.warning("job_released_on_shutdown", next_status=status, counted=not newer,
+                            release_delay_seconds=delay, task_revision=self.task_revision)
                 if status in ("failed", "cancelled"):
                     await run_terminal_hook(self.pool, job.id)
             raise
@@ -277,6 +285,15 @@ class Worker:
             if status == "failed":
                 await run_terminal_hook(self.pool, job.id)
 
+    async def _newer_worker_alive_safe(self) -> bool:
+        """AA-993 G1 — is a worker of a newer task revision alive (this task is being replaced by a deploy)?
+        False when unknown (no revision, or the read failed): the release then counts, as before G1."""
+        try:
+            return await queue.newer_worker_alive(self.pool, self.task_revision)
+        except Exception as e:
+            logger.warning("job_worker_newer_check_failed", error=str(e)[:200])
+            return False
+
     async def _llm_cost(self, job_id: str) -> Optional[float]:
         try:
             v = await self.pool.fetchval(
@@ -294,12 +311,16 @@ class Worker:
         if not tasks:
             await self._liveness(queue.worker_stopped, self.pool, self.worker_id)
             return
-        logger.info("job_worker_draining", running=len(tasks), grace_seconds=self.grace_seconds)
+        logger.info("job_worker_draining", worker_id=self.worker_id, running=len(tasks),
+                    kinds=sorted(set(self._running_kinds.values())), grace_seconds=self.grace_seconds,
+                    task_revision=self.task_revision)
         _, pending = await asyncio.wait(tasks, timeout=self.grace_seconds)
         for t in pending:
             t.cancel()
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
+        logger.info("job_worker_drained", worker_id=self.worker_id, finished=len(tasks) - len(pending),
+                    released=len(pending))
         await self._liveness(queue.worker_stopped, self.pool, self.worker_id)
 
 
@@ -341,6 +362,39 @@ def claim_caps_for(max_parallel: int, caps: dict[str, int], free_slots: int, run
     return dict(caps)
 
 
+# AA-993 G1 (ADR 0016 D1, design Q1): the service worker's drain window. `JOB_WORKER_GRACE_SECONDS` (Infra sets 100 on
+# aa-cis-dev-worker); absent = the pre-G1 20 s. It must leave RELEASE_MARGIN_SECONDS of the container's ECS stopTimeout
+# (`JOB_WORKER_STOP_TIMEOUT_SECONDS`, default 120 = the worker container in AA-CIS-Infra modules/ecs) for the cancel,
+# the release UPDATE and the pool close; after stopTimeout ECS sends SIGKILL and the job waits for the 90 s lease.
+WORKER_GRACE_SECONDS_DEFAULT = 20.0
+WORKER_STOP_TIMEOUT_SECONDS_DEFAULT = 120.0
+RELEASE_MARGIN_SECONDS = 15.0
+
+
+def _env_seconds(name: str, default: float) -> float:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ValueError(f"{name}={raw!r} is not a number of seconds") from None
+    if not math.isfinite(value) or value < 0:
+        raise ValueError(f"{name}={raw!r} must be a finite number >= 0")
+    return value
+
+
+def worker_grace_seconds() -> float:
+    """`JOB_WORKER_GRACE_SECONDS` (env) or the default, checked against the stopTimeout. Raises ValueError (the
+    worker does not start, the deploy's verify goes red) rather than run with a window ECS would cut short."""
+    grace = _env_seconds("JOB_WORKER_GRACE_SECONDS", WORKER_GRACE_SECONDS_DEFAULT)
+    stop = _env_seconds("JOB_WORKER_STOP_TIMEOUT_SECONDS", WORKER_STOP_TIMEOUT_SECONDS_DEFAULT)
+    if grace + RELEASE_MARGIN_SECONDS > stop:
+        raise ValueError(f"JOB_WORKER_GRACE_SECONDS={grace:g} leaves less than {RELEASE_MARGIN_SECONDS:g} s of the "
+                         f"{stop:g} s stopTimeout (JOB_WORKER_STOP_TIMEOUT_SECONDS) for the release")
+    return grace
+
+
 def worker_max_parallel() -> int:
     """`JOB_WORKER_MAX_PARALLEL` (env) or the default; never below 1."""
     try:
@@ -379,6 +433,7 @@ async def _main() -> None:
 
     load_kinds()
     max_parallel = worker_max_parallel()
+    grace_seconds = worker_grace_seconds()  # AA-993 G1: fails before the pool opens on a bad value
     # AA-737: LangGraph runs sync nodes (every LLM call) on the loop's default executor, which is
     # sized from the CPU count (6 threads on the 0.5 vCPU task) — fewer than the slots. Size it to
     # the slots (2 per job: a node + a blocking side call such as atomize's Cohere pacing) so
@@ -393,20 +448,31 @@ async def _main() -> None:
         from shared.cache.redis_conn import redis_conn_args  # AA-874: TLS + AUTH from env
         redis_url, redis_kwargs = redis_conn_args()
         redis = aioredis.from_url(redis_url, encoding="utf-8", decode_responses=True, **redis_kwargs)
-    worker = Worker(pool, max_parallel=max_parallel, resources={"redis": redis})
-    logger.info("job_worker_config", max_parallel=max_parallel, executor_threads=2 * max_parallel)
+    worker = Worker(pool, max_parallel=max_parallel, grace_seconds=grace_seconds, resources={"redis": redis})
+    logger.info("job_worker_config", max_parallel=max_parallel, executor_threads=2 * max_parallel,
+                grace_seconds=grace_seconds)
     # AA-919 (WM-18 scope 5): a deploy can change the gate taxonomy (services/quality/registry.TAXONOMY_VERSION): flag
     # the active writing-memory releases whose fingerprint no longer matches (they keep serving). Never fails the start.
     from services.writing_memory.releases import reverify_scan_safe
     await reverify_scan_safe(pool, actor="system:worker_start")
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, worker._stopping.set)
-    runner = asyncio.create_task(worker.run())
-    await worker._stopping.wait()
-    await worker.shutdown()
-    await runner
+    await serve(worker)
     await pool.close()
+
+
+async def serve(worker: Worker, signals: tuple = (signal.SIGTERM, signal.SIGINT)) -> None:
+    """Run the worker until SIGTERM / SIGINT (ECS stop), then drain: stop claiming, give running jobs
+    `grace_seconds`, release the rest (AA-993 G1). The handlers are removed on return."""
+    loop = asyncio.get_running_loop()
+    for sig in signals:
+        loop.add_signal_handler(sig, worker._stopping.set)
+    try:
+        runner = asyncio.create_task(worker.run())
+        await worker._stopping.wait()
+        await worker.shutdown()
+        await runner
+    finally:
+        for sig in signals:
+            loop.remove_signal_handler(sig)
 
 
 if __name__ == "__main__":

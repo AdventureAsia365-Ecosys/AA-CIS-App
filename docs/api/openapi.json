@@ -15156,6 +15156,88 @@
         ]
       }
     },
+    "/admin/job-runner/released": {
+      "get": {
+        "description": "AA-993 G1 (ADR 0016 D1.6) — how many running jobs the workers released on shutdown (SIGTERM, drain window\nover) at or after `since`, from each job's `progress.release_log`. `counted` = releases that counted toward\nqueue.MAX_RELEASES (no worker of a newer task revision was alive); a deploy's releases are not counted. Read by\nthe post-deploy verify (CI cannot reach RDS); machine GET, see api/core/staff_authz.py MACHINE_ROUTES.",
+        "operationId": "released_admin_job_runner_released_get",
+        "parameters": [
+          {
+            "description": "ISO-8601 datetime; default: 24 h ago",
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "ISO-8601 datetime; default: 24 h ago",
+              "title": "Since"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "AA-993 — jobs released on worker shutdown since a time",
+        "tags": [
+          "admin-job-runner"
+        ]
+      }
+    },
     "/admin/job-runner/retention": {
       "get": {
         "operationId": "retention_status_admin_job_runner_retention_get",
