@@ -12,7 +12,7 @@ import {
   Card, SLabel, Badge, Btn, LoadingScreen,
   TH, TD,
 } from "../_components/adminUi";
-import { PageHeader, formatDate } from "../../_kit";
+import { AdminMain, AdminPaneBody, AdminPaneHeader, PageHeader, formatDate } from "../../_kit";
 import { TourDetailPanelV2 } from "../_components/TourDetailPanelV2";
 import { CompareModal } from "../_components/CompareModal";
 import { Pagination } from "../_components/Pagination";
@@ -587,24 +587,24 @@ export default function S1RewritePage() {
 
   if (loading) {
     return (
-        <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, padding: "32px 36px", overflowY: "auto" }}>
+        <AdminMain>
           <LoadingScreen msg="Loading tours…" />
-        </main>
+        </AdminMain>
     );
   }
 
   return (
     <>
-      <div className="aa-admin-main" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0, minHeight: 0 }}>
+      <AdminMain variant="split" style={{ overflow: "hidden" }}>
 
         {/* ── Sticky Config Panel ─────────────────────────────────────────── */}
-        <div style={{
-          position: "sticky", top: 0, zIndex: 20,
-          background: A.card, borderBottom: `1px solid ${A.line}`,
+        <AdminPaneHeader style={{
+          position: "sticky", top: 0, zIndex: 20, background: A.card,
           padding: "12px 36px",
         }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 12, alignItems: "flex-end" }}>
-            <div>
+          {/* S252 — flex-wrap, not a fixed 4-column grid: at phone width the three selects and the buttons stack. */}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
+            <div style={{ flex: "1 1 200px", minWidth: 0 }}>
               <label style={{ fontSize: 11, color: A.muted, display: "block", marginBottom: 4 }}>Brand Identity</label>
               <select
                 value={brandId ?? ""}
@@ -625,7 +625,7 @@ export default function S1RewritePage() {
                 ))}
               </select>
             </div>
-            <div>
+            <div style={{ flex: "1 1 200px", minWidth: 0 }}>
               <label style={{ fontSize: 11, color: A.muted, display: "block", marginBottom: 4 }}>SEO Mode</label>
               <select
                 value={seoMode}
@@ -638,7 +638,7 @@ export default function S1RewritePage() {
                 <option value="minimal">Minimal — brand-only, no SEO enrichment</option>
               </select>
             </div>
-            <div>
+            <div style={{ flex: "1 1 200px", minWidth: 0 }}>
               <label style={{ fontSize: 11, color: A.muted, display: "block", marginBottom: 4 }}>Model</label>
               <select
                 value={modelTier}
@@ -652,7 +652,7 @@ export default function S1RewritePage() {
                 ))}
               </select>
             </div>
-            <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
               {selectedIds.size >= 2 && selectedIds.size <= 4 && (
                 <Btn
                   variant="secondary"
@@ -682,10 +682,10 @@ export default function S1RewritePage() {
               </Btn>
             </div>
           </div>
-        </div>
+        </AdminPaneHeader>
 
         {/* ── Scrollable Content ──────────────────────────────────────────── */}
-        <main style={{ flex: 1, minWidth: 0, minHeight: 0, padding: "24px 36px 56px", overflowY: "auto" }}>
+        <AdminPaneBody scroll style={{ paddingTop: 24 }}>
 
           {/* Header */}
           <PageHeader
@@ -975,8 +975,8 @@ export default function S1RewritePage() {
               </div>
             </Card>
           )}
-        </main>
-      </div>
+        </AdminPaneBody>
+      </AdminMain>
 
       {/* Detail panel v2 (handles its own backdrop) */}
       {detailTour && (

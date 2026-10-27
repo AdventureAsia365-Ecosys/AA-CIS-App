@@ -24,7 +24,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Play, RefreshCw } from "lucide-react";
 import { useMemo, useState } from "react";
-import {
+import { AdminMain,
   Badge, Button, ConfirmModal, DataTable, Drawer, ErrorState, GuidePanel, K, PageHeader, StatusBadge, TableSkeleton,
   Tabs, apiGet, formatDateTime, mono, useToast, type ColumnDef,
 } from "../../_kit";
@@ -443,7 +443,7 @@ export default function WritingMemory() {
   }
 
   return (
-    <div style={{ padding: "8px 0" }}>
+    <AdminMain>
       <PageHeader title="Writing memory"
         breadcrumbs={[{ label: "Tenant output" }, { label: "Writing memory" }]}
         description={<>What the writers could learn from edits and repeated gate failures. Rules are drafted here and
@@ -487,6 +487,6 @@ export default function WritingMemory() {
       <div style={{ marginBottom: 14 }}><Tabs tabs={TABS} active={tab} onChange={setTab} /></div>
       {tab === "signals" ? <SignalsTab /> : tab === "candidates" ? <CandidatesTab />
         : <GuidePanel content={WRITING_MEMORY_GUIDE} testId="wm-guide" />}
-    </div>
+    </AdminMain>
   );
 }

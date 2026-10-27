@@ -26,6 +26,7 @@ import { A, mono, Btn } from "../_components/adminUi";
 import {
   Badge, ConfirmModal, DataTable, PageHeader, StatusBadge, Tabs, ToastProvider, apiGet, apiSend, useToast,
   type ColumnDef,
+  AdminMain,
 } from "../../_kit";
 import PieceDrawer from "./PieceDrawer";
 import { LabelBadge } from "./PieceLabel";
@@ -455,7 +456,7 @@ function Page() {
   });
   const tenants = stats.data?.tenants ?? [];
   return (
-    <div style={{ padding: "20px clamp(16px, 3vw, 24px)", maxWidth: "100%", boxSizing: "border-box" }}>
+    <AdminMain>
       <PageHeader title="Content Quality"
         description="Every tenant's written content with the quality signals tenants never see: gate results, flagged sentences, what the writer was given, cost. Tenants always receive their content (AA-770)." />
       <div className="a527-dash-body" style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
@@ -472,7 +473,7 @@ function Page() {
       </div>
       {view.piece && <PieceDrawer pieceId={view.piece} onClose={() => update({ piece: null })} />}
       {view.version && <TourVersionDrawer id={view.version} onClose={() => update({ version: null })} />}
-    </div>
+    </AdminMain>
   );
 }
 

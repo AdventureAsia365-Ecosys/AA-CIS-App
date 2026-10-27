@@ -400,6 +400,24 @@ body {
   .aa-admin-main {
     padding: 16px 16px 84px !important;
   }
+  /* S252 — the kit AdminMain "split" frame (sticky header band + body) has no padding of its own; only the
+     BottomNav gap. Its AdminPaneHeader / AdminPaneBody (and any `.aa-admin-pane-x` band) take the 16px phone
+     inset, so a split page never stacks 16 + 32px on each side. */
+  .aa-admin-split {
+    padding: 0 0 84px !important;
+  }
+  .aa-admin-pane,
+  .aa-admin-pane-x {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+  .aa-admin-pane-head {
+    padding-top: 16px !important;
+  }
+  .aa-admin-pane-body {
+    padding-top: 16px !important;
+    padding-bottom: 24px !important;
+  }
 
   /* AA-752 — the drawer is always the full expanded width on phones, even when the desktop rail is
      collapsed (the collapsed 68px inline width would make a useless drawer). */
@@ -498,3 +516,14 @@ body {
   .aa-page-header--stack > .aa-page-header-actions { justify-content: flex-start; flex-basis: 100%; min-width: 0; }
 }
 
+
+/* Kit GuidePanel (S252): the guide fills the page width like every other panel. Wide screens: a sticky "On this
+   page" column on the left and the text on the right; narrow screens: the contents list on top, in a wrapping grid. */
+.aa-guide-layout { display: block; }
+.aa-guide-toc-list { grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr)); }
+@media (min-width: 1100px) {
+  .aa-guide-layout--toc { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 28px; align-items: start; }
+  .aa-guide-layout--toc > .aa-guide-toc { position: sticky; top: 16px; }
+  .aa-guide-layout--toc .aa-guide-toc-list { grid-template-columns: 1fr; }
+  .aa-guide-layout--toc > .aa-guide-body > section:first-child { margin-top: 16px; }
+}

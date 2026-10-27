@@ -10,6 +10,7 @@ import { useState } from "react";
 import { Server } from "lucide-react";
 import { A, mono, Card, SLabel, Badge } from "../_components/adminUi";
 import { ago, fmtSeconds, fmtTime, type Kind, type Worker, type WorkerHealthResp } from "./jobsShared";
+import { ScrollX } from "../../_kit";
 
 function WorkerRow({ w, now }: { w: Worker; now: number }) {
   const reaped = [...(w.last_reaped?.requeued ?? []), ...(w.last_reaped?.failed ?? [])];
@@ -117,6 +118,7 @@ export default function WorkerHealth({ health, kinds, now }: { health: WorkerHea
 
         <div style={{ flex: "1 1 340px", minWidth: 0 }}>
           <SLabel>Queue by kind</SLabel>
+          <ScrollX>
           <table style={{ borderCollapse: "collapse", fontSize: 12, width: "100%" }}>
             <thead>
               <tr style={{ color: A.muted2, textAlign: "left" }}>
@@ -142,6 +144,7 @@ export default function WorkerHealth({ health, kinds, now }: { health: WorkerHea
               })}
             </tbody>
           </table>
+          </ScrollX>
         </div>
       </div>
     </Card>

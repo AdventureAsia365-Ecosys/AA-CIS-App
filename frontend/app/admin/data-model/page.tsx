@@ -34,6 +34,7 @@ import {
   mono,
   sans,
   useIsPhone,
+  AdminMain,
   type Tone,
 } from "../../_kit";
 import {
@@ -579,16 +580,7 @@ export default function DataModelPage() {
   );
 
   return (
-    <main
-      style={{
-        flex: 1,
-        minWidth: 0,
-        minHeight: 0,
-        overflowY: "auto",
-        padding: isPhone ? "16px 16px 84px" : "32px 36px 56px",
-        fontFamily: sans,
-      }}
-    >
+    <AdminMain style={{ fontFamily: sans }}>
       <SkeletonStyle />
       <PageHeader
         title="Data model"
@@ -787,6 +779,6 @@ export default function DataModelPage() {
           )}
         </>
       )}
-    </main>
+    </AdminMain>
   );
 }
