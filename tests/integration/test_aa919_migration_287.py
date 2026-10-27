@@ -238,10 +238,10 @@ async def test_a_rules_release_is_not_wired_yet_and_needs_shadow(conn):
         "'approved', 'x', now()) RETURNING rule_id::text")
     d = await rel.create_draft(conn, writer="t9_blog", rule_ids=[rule], created_by=f"admin:{ADMIN}")
     assert (d["content_class"], d["train_kind"], d["release_no"]) == ("rules", "regular", 1)
-    r2 = await _run(conn, "t9_blog", "r2")
+    r2 = await _run(conn, "t9_blog", "r2", release=d["release_id"], details={"candidate": "release"})
     await rel.attach_evidence(conn, d["release_id"], eval_run_id=r2, actor=f"admin:{ADMIN}")
     assert (await rel.get_release(conn, d["release_id"]))["status"] == "draft"        # no shadow yet
-    sh = await _run(conn, "t9_blog", "shadow")
+    sh = await _run(conn, "t9_blog", "shadow", release=d["release_id"])
     await rel.attach_evidence(conn, d["release_id"], shadow_run_id=sh, actor=f"admin:{ADMIN}")
     await rel.approve(conn, d["release_id"], approved_by=ADMIN)
     with pytest.raises(rel.ReleaseError) as e:
@@ -250,6 +250,63 @@ async def test_a_rules_release_is_not_wired_yet_and_needs_shadow(conn):
     # the evidence itself is complete: without the wiring policy it activates and takes the month's train slot
     out = await rel.activate(conn, d["release_id"], actor=f"admin:{ADMIN}", enforce_wiring=False)
     assert out["status"] == "active" and out["train_month"] is not None
+
+
+@pytest.mark.asyncio
+async def test_attach_refuses_an_eval_or_shadow_run_of_another_release_or_none(conn):
+    await _release0(conn, "t9_blog")
+    rule = await conn.fetchval(
+        "INSERT INTO shared.writing_rule (kind, scope, writer, cluster_key, rule_text, status, approved_by, "
+        "approved_at) VALUES ('writer_instruction', 'platform', 't9_blog', 'zz919-l', 'Open on the place.', "
+        "'approved', 'x', now()) RETURNING rule_id::text")
+    d = await rel.create_draft(conn, writer="t9_blog", rule_ids=[rule], created_by=f"admin:{ADMIN}")
+    other = await rel.create_draft(conn, writer="t9_blog", created_by=f"admin:{ADMIN}")
+    code_train = await _run(conn, "t9_blog", "r2", details={"candidate": "current"})          # release_id NULL
+    seeded = await _run(conn, "t9_blog", "r2", release=d["release_id"], details={"seeded_fault": "qa_trace"})
+    theirs = await _run(conn, "t9_blog", "r2", release=other["release_id"])
+    shadow_none = await _run(conn, "t9_blog", "shadow")
+    for kw, code in (({"eval_run_id": code_train}, "eval_wrong_release"),
+                     ({"eval_run_id": seeded}, "eval_seeded_fault"),
+                     ({"eval_run_id": theirs}, "eval_wrong_release"),
+                     ({"shadow_run_id": shadow_none}, "shadow_wrong_release")):
+        with pytest.raises(rel.ReleaseError) as e:
+            await rel.attach_evidence(conn, d["release_id"], actor=f"admin:{ADMIN}", **kw)
+        assert e.value.status == 409 and e.value.code == code
+
+
+@pytest.mark.asyncio
+async def test_292_db_refuses_an_activation_on_runs_of_no_release(conn):
+    """CIS 292, the DB half: with the API bypassed (evidence written directly), a rules release whose r2 / shadow run
+    names no release does not activate; its own runs do."""
+    await conn.execute("GRANT USAGE ON SCHEMA shared TO cis_app")
+    await conn.execute(migration_body(287))                 # the fixture DB may hold another module's grants
+    await conn.execute(migration_body(292))
+    assert await conn.fetchval("SELECT count(*) FROM shared.schema_versions WHERE version = '292'") == 1
+    await conn.execute("UPDATE shared.writing_memory_writer SET train_closed_month = NULL WHERE writer = 't9_blog'")
+    tenant = str(uuid.uuid4())
+    rule = await conn.fetchval(
+        "INSERT INTO shared.writing_rule (kind, scope, tenant_id, writer, cluster_key, rule_text, status, approved_by, "
+        "approved_at, support_tenants) VALUES ('writer_instruction', 'tenant', $1::uuid, 't9_blog', 'zz919-m', "
+        "'Open on the place.', 'approved', 'x', now(), 1) RETURNING rule_id::text", tenant)
+    r2 = await _run(conn, "t9_blog", "r2", details={"candidate": "current"})
+    sh = await _run(conn, "t9_blog", "shadow")
+    rid = await conn.fetchval(
+        "INSERT INTO shared.writing_memory_release (writer, scope, tenant_id, release_no, train_kind, content_class, "
+        "rule_ids, items_sha256, created_by, eval_run_id, shadow_run_id) VALUES ('t9_blog', 'tenant', $1::uuid, 1, "
+        "'regular', 'rules', ARRAY[$2::uuid], $3, 'pytest', $4::uuid, $5::uuid) RETURNING release_id::text",
+        tenant, rule, SHA, r2, sh)
+    await conn.execute("UPDATE shared.writing_memory_release SET status = 'evaluated' WHERE release_id = $1::uuid", rid)
+    await conn.execute("UPDATE shared.writing_memory_release SET status = 'approved', approved_by = 'pytest', "
+                       "approved_at = now() WHERE release_id = $1::uuid", rid)
+    activate = "UPDATE shared.writing_memory_release SET status = 'active' WHERE release_id = $1::uuid"
+    await _refused(conn, asyncpg.CheckViolationError, activate, rid, match="not an r2 run of this release")
+    await conn.execute("UPDATE shared.prompt_eval_runs SET release_id = $1::uuid, details = '{\"candidate\": "
+                       "\"release\"}' WHERE id = $2::uuid", rid, r2)
+    await _refused(conn, asyncpg.CheckViolationError, activate, rid, match="not a shadow run of this release")
+    await conn.execute("UPDATE shared.prompt_eval_runs SET release_id = $1::uuid WHERE id = $2::uuid", rid, sh)
+    await conn.execute(activate, rid)
+    assert await conn.fetchval("SELECT status FROM shared.writing_memory_release WHERE release_id = $1::uuid",
+                               rid) == "active"
 
 
 # ── activate, supersede, rollback and the drill ─────────────────────────────────────────────────────────────────────

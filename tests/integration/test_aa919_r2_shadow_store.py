@@ -198,7 +198,7 @@ async def test_shadow_run_writes_rows_owned_by_the_input_tenant(conn):
                                            "brand_pack": {"brand_name": f"Zzbrand {tenant[:4]}"}},
                           "tenant_id": tenant}}
 
-    async def select(pool, release, *, n, channel, gates):
+    async def select(pool, release, *, n, channel, gates, quota=None):
         return [inp(0, TENANT_A), inp(1, TENANT_A), inp(2, TENANT_B, probe=True)]
 
     async def writer(w, i, *, view, shared_inputs):
@@ -208,7 +208,7 @@ async def test_shadow_run_writes_rows_owned_by_the_input_tenant(conn):
     out = await shadow.run_shadow(pool, shadow.ShadowConfig(release_id=d["release_id"], force_size=2, cap_usd=1.0),
                                   writer_fn=writer, flush=_flush, select=select,
                                   packs_fn=lambda p, t: shadow.tenant_packs(p, set()))
-    assert out["verdict"] == "pass", out
+    assert out["verdict"] == "informative", out              # a forced size is an operator check, never a pass
     rows = await conn.fetch("SELECT scope, tenant_id::text AS tenant_id, probe, verdict, channel, "
                             "release_id::text AS rid "
                             "FROM shared.writing_memory_shadow WHERE run_id = $1::uuid ORDER BY probe", out["run_id"])
@@ -216,7 +216,7 @@ async def test_shadow_run_writes_rows_owned_by_the_input_tenant(conn):
     assert all(r["scope"] == "tenant" and r["channel"] == "linkedin" and r["rid"] == d["release_id"] for r in rows)
     run = await conn.fetchrow("SELECT run_kind, writer, verdict, stop_reason, release_id::text AS rid "
                               "FROM shared.prompt_eval_runs WHERE id = $1::uuid", out["run_id"])
-    assert (run["run_kind"], run["writer"], run["verdict"], run["rid"]) == ("shadow", "t9_social", "pass",
+    assert (run["run_kind"], run["writer"], run["verdict"], run["rid"]) == ("shadow", "t9_social", "informative",
                                                                              d["release_id"])
 
 
@@ -235,3 +235,30 @@ async def test_shadow_input_queries_and_the_r2_estimate_run_read_only(conn, writ
         est = await r2.estimate(pool, r2.R2Config(writer=writer, limit=4, cap_usd=2.0))
     assert isinstance(got, list)
     assert est["writer"] == writer and est["cap_usd"] == 2.0 and est["estimated_usd_max"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_shadow_a1_never_selects_a_newer_version_of_a_golden_tour(conn):
+    """WM-21 scope 1: golden items are never shadow inputs, also through a NEWER generated_content row of the golden
+    tour (the golden refs name the tour; the shadow takes each tour's newest writer-v2 row)."""
+    await _golden(conn)
+    golden_tour = str(uuid.UUID(int=1))            # the fake fixture's first A1 item: refs.tour_id = UUID(int=1)
+    other_tour = str(uuid.uuid4())
+    master, batch = "00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"
+    for tid in (golden_tour, other_tour):
+        await conn.execute(
+            "INSERT INTO silver_aa_internal.raw_tours (tour_id, tenant_id, batch_id, src_name, country, duration) "
+            "VALUES ($1::uuid, $2::uuid, $3::uuid, 'aa919 invented loop', 'Testland', '3 days') "
+            "ON CONFLICT (tour_id) DO NOTHING", tid, master, batch)
+        await conn.execute(
+            "INSERT INTO silver_aa_internal.generated_content (id, tour_id, tenant_id, version_num, metadata) "
+            "VALUES (gen_random_uuid(), $1::uuid, $2::uuid, 777, '{\"writer_version\": \"v2\"}'::jsonb)",
+            tid, master)
+    got = await shadow.select_inputs(OneConnPool(conn), {"writer": "a1", "scope": "platform", "tenant_id": None},
+                                     n=50, channel=None, gates=[])
+    ids = await conn.fetch("SELECT id::text AS id, tour_id::text AS tour_id FROM silver_aa_internal.generated_content "
+                           "WHERE version_num = 777")
+    by_tour = {r["tour_id"]: r["id"] for r in ids}
+    picked = {g["input_id"] for g in got}
+    assert by_tour[other_tour] in picked
+    assert by_tour[golden_tour] not in picked

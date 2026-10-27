@@ -16,6 +16,7 @@ from shared.llm_client import call_log
 
 SET_ID = "5e700000-0000-4000-8000-000000000001"
 BASELINE_RUN = "ba5e0000-0000-4000-8000-000000000001"
+R1_RUN = "a1a10000-0000-4000-8000-000000000001"           # the r2 run of an active release 1
 TENANT_A = "0a919a00-0000-4000-8000-00000000000a"
 TENANT_B = "0a919b00-0000-4000-8000-00000000000b"
 
@@ -71,6 +72,14 @@ class FakeStore:
         return BASELINE_RUN
 
     async def control_sources(self, run_id, item_ids):
+        if run_id == R1_RUN:            # release 1's eval run: its candidate (regenerate) outputs, unlabelled
+            return {i["item_id"]: {"result_id": f"r1-{i['item_id']}", "mode": "regenerate", "arm": "candidate",
+                                   "output": {"name": "Release one text", "summary": "A calm invented rewrite."}}
+                    for i in self._items if i["item_id"] in item_ids and not i["trap"]}
+        assert run_id == BASELINE_RUN
+        return await self.calibration_sources(run_id, item_ids)
+
+    async def calibration_sources(self, run_id, item_ids):
         assert run_id == BASELINE_RUN
         return {i["item_id"]: {"result_id": f"src-{i['item_id']}", "mode": "score_only", "arm": "control",
                                "output": None}
@@ -194,7 +203,10 @@ def test_reverify_regenerates_controls_with_the_active_view():
     store = FakeStore(golden())
     out, writer, _ = run(store, r2.R2Config(writer="a1", run_kind="reverify"))
     regen = _rows(store, arm="control", mode="regenerate")
-    assert regen and not _rows(store, arm="control", mode="rejudge")
+    # the only rejudge rows of a reverify run are the calibration of the frozen items (never a stored control)
+    rejudged = _rows(store, arm="control", mode="rejudge")
+    assert regen and rejudged and all(r["details"]["calibration"] == "only" for r in rejudged)
+    assert out.judge_counts
     assert len(writer.calls) == len(regen) + len(_rows(store, arm="candidate"))
 
 
@@ -317,6 +329,97 @@ def test_limit_makes_the_run_informative_even_when_clean():
     store = FakeStore(golden())
     out, _, _ = run(store, r2.R2Config(writer="a1", limit=4))
     assert out.verdict == "informative" and store.runs[out.run_id]["details"]["truncated"]
+    # calibration re-judges every labelled frozen item, not only the 4 planned: a cheap run is still calibrated
+    assert out.judge_counts and store.runs[out.run_id]["details"]["kappa_pairs"] == 14
+    only = [r for r in _rows(store, arm="control") if r["details"]["calibration"] == "only"]
+    assert len(only) == 14 - 4 and all(r["scored_result_id"].startswith("src-") for r in only)
+
+
+def test_cheap_seeded_run_is_calibrated_and_stops_at_tune():
+    store = FakeStore(golden())
+    out, _, _ = run(store, r2.R2Config(writer="a1", limit=3, seed_fault="unsourced_claim"))
+    assert out.judge_counts and (out.stop_reason, out.stopped_phase) == ("hard_stop", "tune")
+
+
+# ── calibration is not the control arm (review finding: no r2 run could pass after release 1) ─────────────────────
+
+def _release1_active():
+    return {"platform": {"release_id": "rel-1", "release_no": 1, "content_class": "rules", "rule_ids": [],
+                         "eval_run_id": R1_RUN, "scope": "platform"}, "tenant": None}
+
+
+def test_run_after_release_1_controls_on_its_outputs_and_still_calibrates_on_the_frozen_items():
+    store = FakeStore(golden(), active=_release1_active())
+    out, _, _ = run(store, r2.R2Config(writer="a1"))
+    assert out.judge_counts and out.judge_kappa == 1.0
+    assert (out.verdict, out.stop_reason, out.stopped_phase) == ("pass", "completed", "holdout")
+    controls = _rows(store, arm="control")
+    assert len(controls) == 14 and all(r["mode"] == "rejudge" for r in controls)
+    # the row scores release 1's output; the frozen calibration verdict rides in details
+    assert all(r["scored_result_id"].startswith("r1-") and r["details"]["frozen"] is False
+               and r["details"]["calibration"]["scored_result_id"].startswith("src-") for r in controls)
+    assert store.runs[out.run_id]["details"]["calibration_run_id"] == BASELINE_RUN
+
+
+def test_no_baseline_import_means_no_calibration_and_informative():
+    store = FakeStore(golden(), active=_release1_active())
+
+    async def no_baseline(set_id, writer):
+        return None
+    store.baseline_run = no_baseline
+    out, _, _ = run(store, r2.R2Config(writer="a1"))
+    assert out.judge_kappa is None and not out.judge_counts and out.verdict == "informative"
+
+
+def test_a_seeded_run_the_judge_misses_is_never_a_pass():
+    store = FakeStore(golden())
+
+    def blind():
+        inner = make_judge()
+
+        async def j(pool, **kw):
+            if kw["arm"] == "candidate":
+                kw = {**kw, "output_text": kw["output_text"].replace("helicopter", "bus")}
+            return await inner(pool, **kw)
+        return j
+    out, _, _ = run(store, r2.R2Config(writer="a1", seed_fault="unsourced_claim"), judge=blind())
+    assert out.judge_counts and out.stop_reason == "completed" and out.verdict == "informative"
+
+
+def test_non_inferior_goal_is_refused_for_a_rules_or_repair_hint_release():
+    for cls in ("rules", "repair_hint_only"):
+        with pytest.raises(r2.R2Refused, match="must improve"):
+            run(FakeStore(golden(), release=_release(content_class=cls)),
+                r2.R2Config(writer="a1", release_id="rel-1", goal="non_inferior"))
+    # an empty release may use it
+    out, _, _ = run(FakeStore(golden(), release=_release(content_class="empty")),
+                    r2.R2Config(writer="a1", release_id="rel-1", goal="non_inferior"))
+    assert out.verdict == "pass"
+
+
+def test_platform_run_writes_tenant_items_with_their_tenants_active_release():
+    items = [_item(500 + i, "tune", writer="t9_social", tenant=TENANT_A) for i in range(2)]
+    items += [_item(600 + i, "tune", writer="t9_social") for i in range(2)]
+    store = FakeStore(items, release=_release(writer="t9_social", content_class="empty"))
+    asked = []
+
+    async def active_parts(writer, tenant_id):
+        asked.append(tenant_id)
+        tenant = {"release_id": "ten-a", "release_no": 3, "content_class": "empty", "rule_ids": [],
+                  "eval_run_id": None, "scope": "tenant"} if tenant_id == TENANT_A else None
+        return {"platform": {"release_id": "r0", "release_no": 0, "content_class": "empty", "rule_ids": [],
+                             "eval_run_id": BASELINE_RUN, "scope": "platform"}, "tenant": tenant}
+    store.active_parts = active_parts
+    seen = {}
+
+    class W(FakeWriter):
+        async def __call__(self, writer, inp, *, view, shared_inputs):
+            seen[inp["tenant_id"]] = view
+            return await super().__call__(writer, inp, view=view, shared_inputs=shared_inputs)
+    run(store, r2.R2Config(writer="t9_social", release_id="rel-1"), writer=W(store))
+    assert seen[TENANT_A]["tenant"]["release_id"] == "ten-a" and seen[TENANT_A]["platform"]["release_id"] == "rel-1"
+    assert seen[None]["tenant"] is None and seen[None]["platform"]["release_id"] == "rel-1"
+    assert asked.count(TENANT_A) == 1                                  # cached per tenant
 
 
 def test_post_edit_frozen_output_is_never_a_control():

@@ -4,17 +4,21 @@ Shadow is the pre-activation check for hard stops 2 (tenant leak) and 3 (QA trac
 approved cut E2 as corrected by cost-cuts K2 / K4:
 
   size (eval_checks.shadow_size)  A1, T9 blog, LinkedIn and the other social channels 20; T2 and Facebook 50 (the
-                                  golden set cannot gate them: holdout T2 = 3 items, no Facebook tier); a
-                                  repair_hint-only release <= 10; lexicon_only none (the L0 path); an empty release
-                                  none (CIS 287: nothing to shadow). `size` may lower it, never raise it;
-                                  `force_size` (an operator check on Dev, recorded) runs an empty release anyway.
+                                  golden set cannot gate them: holdout T2 = 3 items, no Facebook tier); a t9_social
+                                  rules release with no --channel 50 Facebook + 20 other channels (shadow_quota: one
+                                  shadow run is the release's evidence for every channel); a repair_hint-only release
+                                  <= 10; lexicon_only none (the L0 path); an empty release none (CIS 287: nothing to
+                                  shadow). `size` may lower it, never raise it; `force_size` (an operator check on Dev,
+                                  recorded) runs an empty release anyway. A lowered or forced size is informative.
   inputs                          the most recent real inputs of the writer (last 90 days) where the release's
                                   target gates fired (its rules' quality classes -> the gates of those classes; T9
                                   reads the final gate ledger), else the most recent; golden items excluded (every id
-                                  in their refs). A1 generated_content (writer v2 rows), T2 the newest succeeded
-                                  t2_rewrite job per tour and tenant (input id = its tenant_tour_version), T9 the
-                                  pieces with a writer_input snapshot. Gate targeting is T9 only (A1 / T2 keep no
-                                  per-gate ledger on the row the shadow reads; they take the most recent).
+                                  in their refs, matched on the row id AND on its tour / published tour, so a newer
+                                  version of a golden tour is excluded too). A1 generated_content (writer v2 rows),
+                                  T2 the newest succeeded t2_rewrite job per tour and tenant (input id = its
+                                  tenant_tour_version), T9 the pieces with a writer_input snapshot. Gate targeting
+                                  is T9 only (A1 / T2 keep no per-gate ledger on the row the shadow reads; they take
+                                  the most recent).
   tenant release (scope 2)        its tenant's inputs + 1-2 inputs of ANOTHER tenant (`probe`), written with the
                                   candidate's view: a release resolved for the wrong tenant shows up as a leak.
   per input                       one write through the production writer path (eval_writers.regenerate) with the
@@ -27,8 +31,9 @@ approved cut E2 as corrected by cost-cuts K2 / K4:
   money                           a hard cap per run (default $7, cost-cuts K3), read from llm_call_log before and
                                   after each input; the $25 month cap; stop at the first hard stop (fail-only).
 
-Verdict: pass = every input written clean and as many inputs as the size rule asks; fail = a hard stop; informative
-= fewer real inputs than the size (Dev); invalid = the cap or > 20% errors.
+Verdict: pass = every input written clean and as many inputs as the size rule asks (per bucket); fail = a hard stop;
+informative = fewer real inputs than the rule (Dev), a lowered / forced size, or an error; invalid = the cap or > 20%
+errors.
 
 Cross-tenant probe rows (WM-18 open item, decided here): a probe row belongs to the probed tenant (its text) and points
 at the other tenant's release (ON DELETE CASCADE). Erasing either tenant deletes it; the AA-839 planner reports it as a
@@ -78,10 +83,11 @@ class ShadowConfig:
             raise ShadowRefused("a shadow run needs a release")
         if not (0 < float(self.cap_usd) <= cfg.SHADOW_RUN_CAP_USD):
             raise ShadowRefused(f"cap_usd must be > 0 and <= {cfg.SHADOW_RUN_CAP_USD}")
+        top = cfg.SHADOW_SIZE_WIDE + cfg.SHADOW_SIZE_DEFAULT          # the biggest rule (t9_social, no channel)
         for name in ("size", "force_size"):
             v = getattr(self, name)
-            if v is not None and not 1 <= v <= cfg.SHADOW_SIZE_WIDE:
-                raise ShadowRefused(f"{name} must be 1..{cfg.SHADOW_SIZE_WIDE}")
+            if v is not None and not 1 <= v <= top:
+                raise ShadowRefused(f"{name} must be 1..{top}")
 
 
 def planned_size(release: dict, conf: ShadowConfig) -> tuple[int, Optional[str]]:
@@ -95,6 +101,23 @@ def planned_size(release: dict, conf: ShadowConfig) -> tuple[int, Optional[str]]
     if conf.size is not None and conf.size < rule:
         return conf.size, "size_lowered"
     return rule, None
+
+
+def planned_quota(release: dict, conf: ShadowConfig, n: int) -> dict[str, int]:
+    """Per-bucket input counts for `n` inputs (eval_checks.shadow_quota; a lowered size fills Facebook first)."""
+    rule = ec.shadow_quota(release["writer"], release["content_class"], channel=conf.channel)
+    if set(rule) == {"facebook", "other"}:
+        fb = min(n, rule["facebook"])
+        return {"facebook": fb, "other": max(0, n - fb)}
+    return {"all": n}
+
+
+def _prompt_version(release: dict, writer: str) -> str:
+    """The prompt register of the release (`fingerprint.prompt_sha256`, recorded by its R0 replay), else
+    '<writer>:unrecorded' (a writer's system prompt is built per input; a shadow run does not measure it)."""
+    fp = _j(release.get("fingerprint")) or {}
+    sha_ = fp.get("prompt_sha256") if isinstance(fp, dict) else None
+    return str(sha_ or f"{writer}:unrecorded")[:64]
 
 
 def sha(obj: Any) -> str:
@@ -130,6 +153,7 @@ _T9_SQL = """
        AND cp.created_at >= now() - make_interval(days => $1)
        AND (CASE WHEN $2 THEN cp.writer_input->>'channel' = 'blog' ELSE cp.writer_input->>'channel' <> 'blog' END)
        AND ($3::text IS NULL OR cp.writer_input->>'channel' = $3)
+       AND ($9::text IS NULL OR cp.writer_input->>'channel' IS DISTINCT FROM $9)
        AND ($4::uuid IS NULL OR cp.tenant_id = $4::uuid)
        AND ($5::uuid IS NULL OR cp.tenant_id <> $5::uuid)
        AND NOT (cp.piece_id::text = ANY($6::text[]))
@@ -153,18 +177,11 @@ _T2_SQL = """
                AND j.finished_at >= now() - make_interval(days => $1)
                AND ($2::text IS NULL OR j.payload->>'tenant_id' = $2)
                AND ($3::text IS NULL OR j.payload->>'tenant_id' <> $3)
+               AND NOT (coalesce(j.payload->>'published_tour_id', '') = ANY($4::text[]))
              ORDER BY j.payload->>'published_tour_id', j.payload->>'tenant_id', j.finished_at DESC) t
      WHERE NOT (input_id = ANY($4::text[]))
      ORDER BY finished_at DESC
      LIMIT $5
-"""
-
-_PT_SQL = """
-    SELECT pt.id, pt.tour_id, pt.aa_name, pt.aa_subtitle, pt.aa_summary, pt.aa_description, pt.aa_highlights,
-           pt.aa_itineraries, pt.seo_title, pt.seo_meta, pt.seo_keywords_used, rt.country, rt.duration
-      FROM gold_aa_internal.published_tours pt
-      LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
-     WHERE pt.id = $1::uuid
 """
 
 _A1_SQL = """
@@ -179,6 +196,7 @@ _A1_SQL = """
              WHERE gc.metadata->>'writer_version' = 'v2' AND rt.deleted_at IS NULL
                AND gc.created_at >= now() - make_interval(days => $1)
                AND NOT (gc.id::text = ANY($2::text[]))
+               AND NOT (gc.tour_id::text = ANY($2::text[]))
              ORDER BY gc.tour_id, gc.created_at DESC) t
      ORDER BY created_at DESC
      LIMIT $3
@@ -198,9 +216,13 @@ async def golden_ids(conn) -> list[str]:
     return sorted(ids)
 
 
-async def _load_t9(conn, writer, *, n, channel, tenant, not_tenant, exclude, gates) -> list[dict]:
+async def _load_t9(conn, writer, *, n, channel, tenant, not_tenant, exclude, gates,
+                   not_channel: Optional[str] = None) -> list[dict]:
+    if n <= 0:
+        return []
     rows = await conn.fetch(_T9_SQL, cfg.SHADOW_WINDOW_DAYS, writer == "t9_blog",
-                            channel if writer == "t9_social" else None, tenant, not_tenant, exclude, gates, n)
+                            channel if writer == "t9_social" else None, tenant, not_tenant, exclude, gates, n,
+                            not_channel if writer == "t9_social" else None)
     return [{"input_source": "content_piece", "input_id": r["input_id"], "tenant_id": r["tenant_id"],
              "channel": r["channel"], "input": {"writer_input": _j(r["writer_input"]), "atom_id": r["atom_id"],
                                                 "tenant_id": r["tenant_id"]}} for r in rows]
@@ -208,7 +230,8 @@ async def _load_t9(conn, writer, *, n, channel, tenant, not_tenant, exclude, gat
 
 async def _load_t2(pool, conn, *, n, tenant, not_tenant, exclude) -> list[dict]:
     from services.acp_shared.brand_pack import fetch_brand_pack_conn
-    from services.jobs.t2_rewrite_job import brand_rules_from_pack, source_tour_dict, t2_seo
+    # the T2 job's own source query and builders: the shadow input is what production writes from
+    from services.jobs.t2_rewrite_job import _PT_SQL, brand_rules_from_pack, source_tour_dict, t2_seo
 
     out = []
     for r in await conn.fetch(_T2_SQL, cfg.SHADOW_WINDOW_DAYS, tenant, not_tenant, exclude, n):
@@ -250,29 +273,37 @@ async def _load_a1(conn, *, n, exclude) -> list[dict]:
     return out
 
 
-async def select_inputs(pool, release: dict, *, n: int, channel: Optional[str], gates: list[str]) -> list[dict]:
-    """Owner inputs (n) + the cross-tenant probe inputs of a tenant release (marked `probe`)."""
+async def select_inputs(pool, release: dict, *, n: int, channel: Optional[str], gates: list[str],
+                        quota: Optional[dict[str, int]] = None) -> list[dict]:
+    """Owner inputs (n, per `quota` bucket: {"all": n} or {"facebook": f, "other": o}) + the cross-tenant probe inputs
+    of a tenant release (marked `probe`). Every input carries its `bucket`."""
     writer = release["writer"]
     tenant = release["tenant_id"] if release["scope"] == "tenant" else None
+    quota = quota or {"all": n}
     async with pool.acquire() as conn:
         exclude = await golden_ids(conn)
         if writer == "a1":
-            return await _load_a1(conn, n=n, exclude=exclude)
+            return [{**x, "bucket": "all"} for x in await _load_a1(conn, n=n, exclude=exclude)]
         if writer == "t2":
             own = await _load_t2(pool, conn, n=n, tenant=tenant, not_tenant=None, exclude=exclude)
+            own = [{**x, "bucket": "all"} for x in own]
             probe = await _load_t2(pool, conn, n=cfg.SHADOW_PROBE_INPUTS, tenant=None, not_tenant=tenant,
                                    exclude=exclude) if tenant else []
         else:
-            own = await _load_t9(conn, writer, n=n, channel=channel, tenant=tenant, not_tenant=None,
-                                 exclude=exclude, gates=gates)
-            if gates and len(own) < n:       # targeted first, then the most recent to fill the size
-                seen = [x["input_id"] for x in own]
-                own += await _load_t9(conn, writer, n=n - len(own), channel=channel, tenant=tenant, not_tenant=None,
-                                      exclude=exclude + seen, gates=[])
+            own = []
+            for bucket, k in quota.items():
+                ch, not_ch = {"facebook": ("facebook", None), "other": (None, "facebook")}.get(bucket, (channel, None))
+                got = await _load_t9(conn, writer, n=k, channel=ch, tenant=tenant, not_tenant=None,
+                                     exclude=exclude, gates=gates, not_channel=not_ch)
+                if gates and len(got) < k:       # targeted first, then the most recent to fill the size
+                    seen = [x["input_id"] for x in got]
+                    got += await _load_t9(conn, writer, n=k - len(got), channel=ch, tenant=tenant, not_tenant=None,
+                                          exclude=exclude + seen, gates=[], not_channel=not_ch)
+                own += [{**x, "bucket": bucket} for x in got]
             probe = await _load_t9(conn, writer, n=cfg.SHADOW_PROBE_INPUTS, channel=channel, tenant=None,
                                    not_tenant=tenant, exclude=exclude, gates=[]) if tenant else []
     k = ec.shadow_probe_count(release["scope"], len(probe))
-    return own + [{**p, "probe": True} for p in probe[:k]]
+    return own + [{**p, "probe": True, "bucket": "probe"} for p in probe[:k]]
 
 
 async def tenant_packs(pool, tenant_ids: set[str]) -> dict[str, dict]:
@@ -322,7 +353,8 @@ async def run_shadow(pool, conf: ShadowConfig, *, writer_fn=None, flush=None, se
     rules = await store.rules(list(release.get("rule_ids") or []))
     gates = target_gates({r["gate_class"] for r in rules if r.get("gate_class")})
     rule_texts = [(r["rule_id"], r["rule_text"]) for r in rules]
-    inputs = await select(pool, release, n=n, channel=conf.channel, gates=gates)
+    quota = planned_quota(release, conf, n)
+    inputs = await select(pool, release, n=n, channel=conf.channel, gates=gates, quota=quota)
     packs = await packs_fn(pool, {i.get("tenant_id") for i in inputs} | {release.get("tenant_id")})
     fp = await store.fingerprint(writer)
     month_start = await store.month_spend()
@@ -331,11 +363,14 @@ async def run_shadow(pool, conf: ShadowConfig, *, writer_fn=None, flush=None, se
     details: dict[str, Any] = {"size_rule": ec.shadow_size(writer, release["content_class"], channel=conf.channel),
                                "size": n, "size_note": size_note, "channel": conf.channel, "target_gates": gates,
                                "found": sum(1 for i in inputs if not i.get("probe")),
+                               "quota": quota,
+                               "found_by_bucket": {b: sum(1 for i in inputs if not i.get("probe")
+                                                          and i.get("bucket", "all") == b) for b in quota},
                                "probe_inputs": sum(1 for i in inputs if i.get("probe")), "cap_usd": conf.cap_usd,
                                "t9_first_draft_only": writer in ew.T9_WRITERS}
     run_id = await store.create_run({"writer": writer, "release_id": conf.release_id, "cap": conf.cap_usd,
                                      "fingerprint": fp, "details": details, "triggered_by": conf.triggered_by[:128],
-                                     "prompt_version": str(fp.get("prompt_sha256") or f"{writer}:unrecorded")[:64]})
+                                     "prompt_version": _prompt_version(release, writer)})
     counts = {"written": 0, "pass": 0, "fail": 0, "error": 0, "hard_stop_2": 0, "hard_stop_3": 0}
     stop_reason = None
 
@@ -405,7 +440,11 @@ async def _finish_shadow(store, run_id, details, counts, stop_reason, n, spent, 
         verdict = "fail"
     elif stop_reason in ("budget_cap", "error") or counts["written"] == 0:
         verdict = "invalid"
-    elif details["found"] < n or counts["error"] > 0:
+    elif (details.get("size_note") or details["found"] < max(n, details.get("size_rule") or 0)
+          or any(details.get("found_by_bucket", {}).get(b, 0) < k for b, k in (details.get("quota") or {}).items())
+          or counts["error"] > 0):
+        # a lowered / forced size, fewer real inputs than the rule (in total or in a bucket: Facebook's 50) or any
+        # error: evidence of the machinery, never an attachable pass (WM-21 scope 1; R2's --limit is the same)
         verdict = "informative"
     else:
         verdict = "pass"
@@ -494,9 +533,10 @@ async def estimate(pool, conf: ShadowConfig) -> dict:
     n, note = planned_size(release, conf)
     rules = await store.rules(list(release.get("rule_ids") or []))
     gates = target_gates({r["gate_class"] for r in rules if r.get("gate_class")})
-    inputs = await select_inputs(pool, release, n=n, channel=conf.channel, gates=gates) if n else []
+    quota = planned_quota(release, conf, n)
+    inputs = await select_inputs(pool, release, n=n, channel=conf.channel, gates=gates, quota=quota) if n else []
     return {"release_id": conf.release_id, "writer": release["writer"], "content_class": release["content_class"],
-            "size": n, "size_note": note, "target_gates": gates,
+            "size": n, "size_note": note, "quota": quota, "target_gates": gates,
             "inputs": [{"source": i["input_source"], "id": i["input_id"], "probe": bool(i.get("probe"))}
                        for i in inputs],
             "estimated_usd_max": round(len(inputs) * cfg.SHADOW_INPUT_ESTIMATE_USD[release["writer"]], 3),

@@ -16,10 +16,17 @@ from services.writing_memory.eval_judge import JUDGE_CLASSES, judge_version, par
 
 @pytest.mark.parametrize("writer,channel,expected", [
     ("a1", None, 20), ("t9_blog", "blog", 20), ("t9_social", "linkedin", 20), ("t9_social", "instagram", 20),
-    ("t9_social", None, 20), ("t2", None, 50), ("t9_social", "facebook", 50),
+    ("t9_social", None, 70), ("t2", None, 50), ("t9_social", "facebook", 50),
 ])
 def test_shadow_size_for_a_rules_release(writer, channel, expected):
     assert ec.shadow_size(writer, "rules", channel=channel) == expected
+    assert sum(ec.shadow_quota(writer, "rules", channel=channel).values()) == expected
+
+
+def test_shadow_quota_of_t9_social_with_no_channel_keeps_facebook_50():
+    assert ec.shadow_quota("t9_social", "rules") == {"facebook": 50, "other": 20}
+    assert ec.shadow_quota("t9_social", "rules", channel="linkedin") == {"all": 20}
+    assert ec.shadow_quota("t9_social", "repair_hint_only") == {"all": 10}
 
 
 @pytest.mark.parametrize("writer", ["a1", "t2", "t9_blog", "t9_social"])
@@ -87,7 +94,8 @@ FOREIGN = {"tenant-b": ec.tenant_fingerprint({
 
 def test_isolation_clean_output():
     r = ec.isolation_probe("A pretend walk past a fictional lake.", foreign=FOREIGN)
-    assert r == {"leak": False, "tenants": [], "name_hits": 0, "shingle_hits": 0, "n": 6, "foreign_tenants": 1}
+    assert r == {"leak": False, "tenants": [], "weak_tenants": [], "name_hits": 0, "shingle_hits": 0, "n": 6,
+                 "min_shingles": 2, "foreign_tenants": 1}
 
 
 def test_isolation_finds_a_foreign_brand_name():
@@ -95,14 +103,35 @@ def test_isolation_finds_a_foreign_brand_name():
     assert r["leak"] and r["tenants"] == ["tenant-b"] and r["name_hits"] == 1
 
 
-def test_isolation_finds_a_foreign_six_word_run():
+def test_isolation_finds_a_copied_foreign_voice_line():
+    r = ec.isolation_probe("Then we wander slowly through invented valleys with a cup of tea.", foreign=FOREIGN)
+    assert r["leak"] and r["shingle_hits"] >= 2
+
+
+def test_isolation_one_foreign_run_is_reported_not_a_leak():
     r = ec.isolation_probe("Then we wander slowly through invented valleys again.", foreign=FOREIGN)
-    assert r["leak"] and r["shingle_hits"] >= 1
+    assert not r["leak"] and r["weak_tenants"] == ["tenant-b"] and r["shingle_hits"] == 1
+
+
+def test_isolation_generic_travel_phrasing_is_never_a_leak():
+    foreign = {"tenant-b": ec.tenant_fingerprint({
+        "brand_name": "Zzother Pretend Tours",
+        "voice_examples": ["Discover one of the most beautiful places in Vietnam with us"]})}
+    r = ec.isolation_probe("This is one of the most beautiful places in Asia.", foreign=foreign)
+    assert not r["leak"] and r["shingle_hits"] == 0 and r["weak_tenants"] == []
+
+
+def test_isolation_ignores_a_run_two_foreign_tenants_share():
+    line = "We wander slowly through invented valleys with a cup of made up tea"
+    foreign = {"tenant-b": ec.tenant_fingerprint({"brand_name": "Zzother Pretend Tours", "voice_examples": [line]}),
+               "tenant-c": ec.tenant_fingerprint({"brand_name": "Zzthird Fake Trips", "voice_examples": [line]})}
+    r = ec.isolation_probe("Then we wander slowly through invented valleys with a cup of tea.", foreign=foreign)
+    assert not r["leak"] and r["shingle_hits"] == 0
 
 
 def test_isolation_allows_what_the_source_holds():
-    src = "We wander slowly through invented valleys with friends"
-    r = ec.isolation_probe("Then we wander slowly through invented valleys with joy.", foreign=FOREIGN,
+    src = "We wander slowly through invented valleys with a cup of made up tea"
+    r = ec.isolation_probe("Then we wander slowly through invented valleys with a cup of tea.", foreign=FOREIGN,
                            allowed_text=src)
     assert not r["leak"]
 

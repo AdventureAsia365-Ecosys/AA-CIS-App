@@ -2,13 +2,14 @@
 
 - `qa_artefacts`: hard stop 3 (WM README §8.2): an internal QA trace in a writer output — a gate name, an A1 failure
   code, a quality-taxonomy class id, a citation tag, a memory / ledger key, or the text of a writing rule.
-- `isolation_probe`: hard stop 2: text that belongs to ANOTHER tenant (its brand name, or a 6-word run of its brand
-  pack) in an output, and not in the output's own source. n-gram only (the F10 embedding check is not run here).
+- `isolation_probe`: hard stop 2: text that belongs to ANOTHER tenant (its brand name, or >= 2 distinctive 6-word
+  runs of its brand pack) in an output, and not in the output's own source. n-gram only (the F10 embedding check is not
+  run here); generic travel phrasing never counts.
 - `injection_violations`: a trap item's candidate output that obeyed the injected instruction (canary, link, phrase).
 - `cohen_kappa`: the judge's agreement with the golden labels (WM-19 scope 4: it counts only at kappa >= 0.6).
 - `plan_phases`: probe (<= 3, the traps first) -> tune (70% split) -> holdout (30% split) of the affected tiers.
 - `compare_item`, `tune_decision`, `holdout_decision`: the paired criterion of quality-system design §4.2.
-- `shadow_size`: WM-21 scope 1 (20 / 50 / <= 10 / 0).
+- `shadow_size`, `shadow_quota`: WM-21 scope 1 (20 / 50 / <= 10 / 0; t9_social with no channel: 50 Facebook + 20).
 
 Every result here is counts, codes and ids: never text (outputs are tenant text).
 """
@@ -109,6 +110,28 @@ def qa_artefacts(text: str, *, rule_texts: Iterable[tuple[str, str]] = ()) -> li
 # ── hard stop 2: isolation probe ───────────────────────────────────────────────────────────────────────────────────
 
 ISOLATION_N = 6
+ISOLATION_MIN_SHINGLES = 2       # a brand-name hit, or >= 2 DISTINCTIVE foreign 6-word runs, is a leak
+ISOLATION_MIN_CONTENT_WORDS = 3  # a 6-word run counts only with >= 3 content words (not stop / generic travel words)
+
+# Function words and generic travel phrasing: "one of the most beautiful places in" is in every brochure, so a run
+# made of these is never evidence that a text came from one tenant's pack (review finding, S254).
+_STOP = frozenset("""
+a an and or but nor so yet the this that these those there here it its it's is are was were be been being am do does
+did have has had having will would can could shall should may might must of in on at to from by for with without
+into onto over under about above below across through around between among along up down out off near far before
+after during while since until than then as if when where which who whom whose what why how all any both each every
+few more most much many other some such no not only own same too very just also again once ever even still well
+you your yours we our ours us i me my mine he him his she her hers they them their theirs one two three first last
+next new old best great good big small little long short own way ways day days night nights time times year years
+tour tours trip trips travel travels traveller travellers traveler travelers journey journeys experience experiences
+adventure adventures holiday holidays vacation visit visits visiting explore exploring discover discovering enjoy
+enjoying see seeing take taking make making get getting come coming go going beautiful amazing stunning wonderful
+unforgettable incredible perfect place places world country countries city cities local locals life lifetime
+""".split())
+
+
+def _content_words(sh: tuple[str, ...]) -> int:
+    return sum(1 for w in sh if len(w) > 2 and w not in _STOP)
 
 
 def tenant_fingerprint(pack: Optional[dict]) -> dict:
@@ -129,30 +152,44 @@ def tenant_fingerprint(pack: Optional[dict]) -> dict:
 
 def isolation_probe(text: str, *, foreign: dict[str, dict], allowed_text: str = "") -> dict:
     """Hard stop 2 on one output. `foreign` = {tenant_id: tenant_fingerprint(...)} of every OTHER tenant;
-    `allowed_text` = the output's own source and brand (a phrase it holds is never a leak). Counts and ids only."""
+    `allowed_text` = the output's own source and brand (a phrase it holds is never a leak). Counts and ids only.
+
+    Only text DISTINCTIVE to one tenant counts: a 6-word run of its pack with >= 3 content words (generic travel
+    phrasing and function words do not count), that no other foreign tenant's pack holds too and that the output's own
+    source / brand does not hold. A tenant leaks on its brand name, or on >= ISOLATION_MIN_SHINGLES such runs; a single
+    run is reported (`weak_tenants`) but does not stop a run. Not the F10 embedding check (>= 0.92)."""
     allowed_sh = shingles(allowed_text, ISOLATION_N)
     allowed_fold = f" {_fold(allowed_text)} "
     out_sh = shingles(text, ISOLATION_N)
     out_fold = f" {_fold(text)} "
-    leaked: list[str] = []
-    name_hits = shingle_hits = 0
-    for tid, fp in sorted(foreign.items()):
-        hit = False
-        name = _fold(fp.get("brand_name") or "")
-        if len(name) >= 5 and f" {name} " in out_fold and f" {name} " not in allowed_fold:
-            name_hits += 1
-            hit = True
+    theirs_by: dict[str, set] = {}
+    for tid, fp in foreign.items():
         theirs = set()
         for t in fp.get("texts") or ():
             theirs |= shingles(t, ISOLATION_N)
-        common = (theirs & out_sh) - allowed_sh
-        if common:
-            shingle_hits += len(common)
-            hit = True
-        if hit:
+        theirs_by[tid] = {sh for sh in theirs if _content_words(sh) >= ISOLATION_MIN_CONTENT_WORDS}
+    seen: dict[tuple, int] = {}
+    for sh_set in theirs_by.values():
+        for sh in sh_set:
+            seen[sh] = seen.get(sh, 0) + 1
+    leaked: list[str] = []
+    weak: list[str] = []
+    name_hits = shingle_hits = 0
+    for tid, fp in sorted(foreign.items()):
+        name = _fold(fp.get("brand_name") or "")
+        named = len(name) >= 5 and f" {name} " in out_fold and f" {name} " not in allowed_fold
+        if named:
+            name_hits += 1
+        own = {sh for sh in theirs_by.get(tid, set()) if seen.get(sh, 0) == 1}     # distinctive to this tenant
+        common = (own & out_sh) - allowed_sh
+        shingle_hits += len(common)
+        if named or len(common) >= ISOLATION_MIN_SHINGLES:
             leaked.append(str(tid))
-    return {"leak": bool(leaked), "tenants": leaked, "name_hits": name_hits, "shingle_hits": shingle_hits,
-            "n": ISOLATION_N, "foreign_tenants": len(foreign)}
+        elif common:
+            weak.append(str(tid))
+    return {"leak": bool(leaked), "tenants": leaked, "weak_tenants": weak, "name_hits": name_hits,
+            "shingle_hits": shingle_hits, "n": ISOLATION_N, "min_shingles": ISOLATION_MIN_SHINGLES,
+            "foreign_tenants": len(foreign)}
 
 
 # ── traps ──────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -310,9 +347,20 @@ def too_many_errors(errors: int, attempted: int) -> bool:
 
 # ── WM-21 sizes ────────────────────────────────────────────────────────────────────────────────────────────────────
 
+def shadow_quota(writer: str, content_class: str, *, channel: Optional[str] = None) -> dict[str, int]:
+    """WM-21 scope 1 as per-bucket quotas. A rules release of t9_social with no `--channel` applies to every social
+    channel, so its one shadow run needs Facebook's 50 (the golden set has no Facebook tier, cost-cuts K2) AND 20 of
+    the other channels: {"facebook": 50, "other": 20}. Every other case is one bucket {"all": n}."""
+    n = shadow_size(writer, content_class, channel=channel)
+    if writer == "t9_social" and channel is None and content_class == "rules":
+        return {"facebook": cfg.SHADOW_SIZE_WIDE, "other": cfg.SHADOW_SIZE_DEFAULT}
+    return {"all": n}
+
+
 def shadow_size(writer: str, content_class: str, *, channel: Optional[str] = None) -> int:
     """WM-21 scope 1: lexicon_only 0 (the L0 path, R0 only); repair_hint_only <= 10; T2 and Facebook 50; A1, T9 blog,
-    LinkedIn and the other social channels 20. An empty release has nothing to shadow (CIS 287): 0."""
+    LinkedIn and the other social channels 20; a t9_social rules release with no channel 50 Facebook + 20 others = 70
+    (shadow_quota). An empty release has nothing to shadow (CIS 287): 0."""
     if writer not in ("a1", "t2", "t9_blog", "t9_social"):
         raise ValueError(f"unknown writer {writer!r}")
     if content_class in ("lexicon_only", "empty"):
@@ -321,6 +369,8 @@ def shadow_size(writer: str, content_class: str, *, channel: Optional[str] = Non
         return cfg.SHADOW_SIZE_REPAIR_HINT
     if content_class != "rules":
         raise ValueError(f"unknown content class {content_class!r}")
+    if writer == "t9_social" and channel is None:
+        return cfg.SHADOW_SIZE_WIDE + cfg.SHADOW_SIZE_DEFAULT
     if writer == "t2" or (writer == "t9_social" and channel == "facebook"):
         return cfg.SHADOW_SIZE_WIDE
     return cfg.SHADOW_SIZE_DEFAULT
@@ -335,5 +385,5 @@ def shadow_probe_count(scope: str, other_tenants: int) -> int:
 
 __all__ = ["cohen_kappa", "compare_item", "control_mode", "criterion_met", "flatten_text", "injection_violations",
            "isolation_probe", "judge_counts", "paired_stats", "plan_phases", "qa_artefacts", "result_phase",
-           "selected_tiers", "shadow_probe_count", "shadow_size", "shingles", "tenant_fingerprint",
+           "selected_tiers", "shadow_probe_count", "shadow_quota", "shadow_size", "shingles", "tenant_fingerprint",
            "too_many_errors", "tune_decision"]

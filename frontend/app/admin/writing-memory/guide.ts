@@ -484,7 +484,9 @@ export const WRITING_MEMORY_GUIDE: GuideContent = {
     { term: "R0 baseline", text: "R0 with no rule: checks that the replay agrees with the stored gate results." },
     { term: "L0", text: "The fast path: a T9 lexicon rule proven by R0 goes live in one click." },
     { term: "R2 / shadow", text: "Evaluation runs that a release with other rules needs. R2 runs the golden set "
-      + "(at most $10 a run); shadow writes recent real inputs that nobody sees (20, or 50 for T2 and Facebook)." },
+      + "(at most $10 a run); shadow writes recent real inputs that nobody sees (20, or 50 for T2 and Facebook; "
+      + "a social release for every channel: 50 Facebook + 20 others). Only runs of that release count as its "
+      + "evidence." },
     { term: "Release", text: "A versioned bundle of rules for one writer and one owner. It needs one approval "
       + "before it goes live." },
     { term: "Golden set", text: "A fixed set of test inputs (tours, blog and social posts, plus traps) used to "

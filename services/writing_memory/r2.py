@@ -5,13 +5,20 @@ One run = one `shared.prompt_eval_runs` row (pipeline writing_memory, run_kind r
 (the API and the CIS 287 trigger accept it only as a finished r2 run of the same writer with verdict pass).
 
 Sequence (WM-19 scope 1, cost-cuts #3):
-  0. calibrate  the stored CONTROL of every planned item is re-judged by the current judge (`writing_memory_eval`,
-                ~$0.002 a call): mode `rejudge`, scored_result_id = the stored result it scored. The control is the
-                output of the owner's active release (its eval run's candidate output; release 0 = the AA-729
-                baseline, i.e. the frozen fixture output). Never regenerated outside a `reverify` run (scope 2; the
-                CIS 284 trigger refuses it too). Cohen's kappa of the judge vs the golden labels on the frozen
-                controls decides whether the judge COUNTS (kappa >= 0.6 on >= 10 pairs, scope 4); otherwise the run
-                is informative only: it stops after tune (no holdout money) and cannot pass.
+  0. calibrate  two things, both with the current judge (`writing_memory_eval`, ~$0.002 a call), both stored as
+                mode `rejudge` rows (scored_result_id = the stored result the text came from), one row per item:
+                (a) CALIBRATION, every run, whatever supplies the control: the FROZEN labelled output of every labelled
+                    non-trap item of the writer and owner (not only the planned ones, so a cheap `--limit` run is
+                    calibrated too), scored against the baseline_import run's score_only row. Cohen's kappa of these
+                    verdicts vs the golden labels decides whether the judge COUNTS (kappa >= 0.6 on >= 10 pairs,
+                    scope 4); otherwise the run is informative only: it stops after tune (no holdout money) and
+                    cannot pass.
+                (b) the CONTROL of every planned item: the stored output of the owner's active release (its eval
+                    run's candidate output; release 0 = the AA-729 baseline's score_only row, i.e. the frozen fixture
+                    output, so (a) and (b) are the same judge call). Never regenerated outside a `reverify` run (scope
+                    2; the CIS 284 trigger refuses it too).
+                When (a) and (b) are different texts the row keeps the control's verdict and the calibration verdict
+                goes in `details.calibration`; an item with no planned control keeps a calibration-only row.
   1. probe      <= 3 items, the injection traps first (filled up with tune items).
   2. tune       the tune split (70%) of the affected tiers (A1 / T2 always add fact_dense + long_9d, scope 7).
   3. holdout    the holdout split (30%) only when tune passed.
@@ -32,7 +39,11 @@ writing-memory stage applies the same way (budget.py).
 
 `--seed-fault` (operator check of the stop, WM-19 Done-when "a seeded failing candidate stops at tune"): the candidate
 of each item is its stored control text with an injected fault (an unsourced inclusion claim, or a QA trace), no writer
-call (judge cost only), traps skipped; never with a release (the run cannot become evidence).
+call (judge cost only), traps skipped; never with a release, and never verdict `pass` (a fault the judge misses ends
+`informative`); the release evidence check also requires the run's release_id to be the release's (releases.py, CIS
+292), so a seeded run can never become evidence.
+
+`goal` `non_inferior` is refused for a rules / repair_hint_only release (they must improve, §4.2).
 
 CLI (inside the api/worker container; DRY RUN prints the plan and the estimate, $0):
   python -m services.writing_memory.r2 --writer a1 [--release <id>] [--tiers fact_dense,long_9d] [--limit 8]
@@ -83,6 +94,7 @@ class Store(Protocol):
     async def tenant_packs(self, set_id: str) -> dict[str, dict]: ...
     async def baseline_run(self, set_id: str, writer: str) -> Optional[str]: ...
     async def control_sources(self, run_id: str, item_ids: list[str]) -> dict[str, dict]: ...
+    async def calibration_sources(self, run_id: str, item_ids: list[str]) -> dict[str, dict]: ...
     async def rule_texts(self, rule_ids: list[str]) -> list[tuple[str, str]]: ...
     async def fingerprint(self, writer: str) -> dict: ...
     async def create_run(self, row: dict) -> str: ...
@@ -199,6 +211,34 @@ def control_text(src: Optional[dict], item: dict) -> tuple[Optional[dict], bool]
     return item.get("control_output"), True
 
 
+def calibration_items(items: list[dict]) -> list[dict]:
+    """The items whose FROZEN output calibrates the judge: labelled pass / fail, not a trap, not human-edited
+    (post_edit), with a frozen output."""
+    return [it for it in items if not it.get("trap") and not it.get("post_edit")
+            and it.get("label_verdict") in ("pass", "fail") and it.get("control_output") is not None]
+
+
+def _release_prompt(release: Optional[dict]) -> Optional[str]:
+    """The release's prompt register (`fingerprint.prompt_sha256`, recorded by an R0 replay), when known."""
+    fp = (release or {}).get("fingerprint")
+    if isinstance(fp, str):
+        try:
+            fp = json.loads(fp)
+        except ValueError:
+            fp = None
+    return fp.get("prompt_sha256") if isinstance(fp, dict) else None
+
+
+def prompt_version(writer: str, writer_prompt: Optional[str]) -> str:
+    """`prompt_eval_runs.prompt_version` of an R2 run: the writer prompt register when the release names one, else
+    the eval judge's version (`<writer>:judge-<12 hex>`): a writer's system prompt is built per input (brand, channel,
+    tour) and is measured by the R0 replay, not here."""
+    if writer_prompt:
+        return str(writer_prompt)[:64]
+    from services.writing_memory.eval_judge import judge_version
+    return f"{writer}:judge-{judge_version()}"[:64]
+
+
 class _Stop(Exception):
     def __init__(self, reason: str, phase: str):
         super().__init__(reason, phase)
@@ -226,6 +266,10 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
         if release["status"] not in ("draft", "evaluated"):
             raise R2Refused(f"a {release['status']} release keeps its evidence (draft / evaluated only)")
     owner_tenant = release["tenant_id"] if release and release["scope"] == "tenant" else None
+    goal = conf.goal or default_goal(release)
+    if goal == "non_inferior" and release and release["content_class"] in ("rules", "repair_hint_only"):
+        raise R2Refused(f"a {release['content_class']} release must improve (goal improve, §4.2); non_inferior is for "
+                        "an empty release or a code train")
     gs = await store.golden_set()
     if gs is None:
         raise R2Refused(f"no active golden set {GOLDEN_SET!r}")
@@ -233,16 +277,15 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
     if not items:
         raise R2Refused("no golden items for this writer and owner")
     active = await store.active_parts(writer, owner_tenant)
-    control_view, cand_view = build_views(writer, active, release)
-    goal = conf.goal or default_goal(release)
     ctl_mode = ec.control_mode(conf.run_kind)
+    baseline = await store.baseline_run(gs["set_id"], writer)
     control_run = None
     for scope in ("tenant", "platform"):
         part = active.get(scope)
         if part and part.get("eval_run_id"):
             control_run = part["eval_run_id"]
             break
-    control_run = control_run or await store.baseline_run(gs["set_id"], writer)
+    control_run = control_run or baseline
     if ctl_mode == "rejudge" and control_run is None:
         raise R2Refused("no control run (no active release with an eval run, no baseline import)")
 
@@ -251,7 +294,11 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
     if conf.seed_fault:
         plan["probe"] = [it for it in plan["probe"] if it.get("split") != "trap"]
     planned = plan["probe"] + plan["tune"] + plan["holdout"]
+    planned_ids = {it["item_id"] for it in planned}
     sources = await store.control_sources(control_run, [it["item_id"] for it in planned]) if control_run else {}
+    calib = calibration_items(items)
+    frozen_src = await store.calibration_sources(baseline, [it["item_id"] for it in calib]) if baseline else {}
+    calib_ids = {it["item_id"] for it in calib}
     rule_texts = await store.rule_texts(list((release or {}).get("rule_ids") or []))
     packs = await store.tenant_packs(gs["set_id"])
     shared_inputs = gs.get("shared_inputs") or {}
@@ -259,22 +306,35 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
     month_start = await store.month_spend()
     started = datetime.now(timezone.utc)
     t0 = time.monotonic()
+    writer_prompt = _release_prompt(release)
     details: dict[str, Any] = {
-        "control_run_id": control_run, "goal": goal, "control_mode": ctl_mode, "cap_usd": conf.cap_usd,
-        "planned": {k: len(v) for k, v in plan.items()}, "limit": conf.limit, "seeded_fault": conf.seed_fault,
+        "control_run_id": control_run, "calibration_run_id": baseline, "goal": goal, "control_mode": ctl_mode,
+        "cap_usd": conf.cap_usd, "planned": {k: len(v) for k, v in plan.items()}, "calibration_items": len(calib),
+        "limit": conf.limit, "seeded_fault": conf.seed_fault,
         "candidate": "release" if release else "current", "t9_first_draft_only": writer in ew.T9_WRITERS,
-        "golden_set": f"{gs['name']}@{gs['version']}"}
+        "golden_set": f"{gs['name']}@{gs['version']}", "writer_prompt_sha256": writer_prompt,
+        "views": "per item owner (active_parts(writer, item tenant))"}
     run_id = await store.create_run({
-        "prompt_version": str(fp.get("prompt_sha256") or f"{writer}:unrecorded")[:64],
+        "prompt_version": prompt_version(writer, writer_prompt),
         "triggered_by": conf.triggered_by[:128], "run_kind": conf.run_kind, "writer": writer,
         "release_id": conf.release_id, "golden_set_id": gs["set_id"], "tiers": sorted(tiers) if tiers else [],
         "cost_cap_usd": conf.cap_usd, "fingerprint": fp, "details": details})
     out = Outcome(run_id=run_id)
     counters = {"attempted": 0, "errors": 0, "no_control": 0, "skipped_post_edit": 0, "hard_stops": {},
-                "controls_judged": 0, "control_errors": 0}
+                "controls_judged": 0, "control_errors": 0, "calibration_judged": 0, "calibration_errors": 0}
     compared: dict[str, list[dict]] = {"probe": [], "tune": [], "holdout": []}
     controls: dict[str, dict] = {}
     pairs: list[tuple[str, str]] = []
+    view_cache: dict[Optional[str], tuple[Optional[dict], Optional[dict]]] = {owner_tenant: build_views(
+        writer, active, release)}
+
+    async def views_for(tenant_id: Optional[str]) -> tuple[Optional[dict], Optional[dict]]:
+        """(control view, candidate view) of an item's OWNER: a platform run over tenant items writes each with its
+        tenant's active tenant release, as production (and the shadow) do."""
+        key = owner_tenant if owner_tenant else tenant_id
+        if key not in view_cache:
+            view_cache[key] = build_views(writer, await store.active_parts(writer, key), release)
+        return view_cache[key]
 
     async def spent() -> float:
         await flush()
@@ -315,43 +375,68 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
                 "judge_model": getattr(judge, "model", None), "judge_version": getattr(judge, "judge_version", None),
                 "cost_usd": round(max(cost, 0.0), 6), "details": det or {}}
 
+    async def judged(it: dict, text_out: dict, err_key: str):
+        await reserve(cfg.JUDGE_CALL_ESTIMATE_USD, "calibrate")
+        try:
+            return await judge(it, text_out, "control")
+        except Exception as e:  # noqa: BLE001 — a judge failure is a counted error, never a verdict
+            counters[err_key] += 1
+            logger.warning("aa919_r2_control_judge_failed", run_id=run_id, item_id=it["item_id"], what=err_key,
+                           error=f"{type(e).__name__}: {str(e)[:200]}")
+            return None
+
     stop_reason, stopped_phase = None, None
     tune_result = None
     try:
         with bind_eval_stage(cfg.EVAL_STAGE, run_id):
-            # 0. calibrate: re-judge the stored controls (rejudge mode); reverify regenerates them per item below
-            if ctl_mode == "rejudge":
-                for it in planned:
-                    if it.get("trap"):
-                        continue
-                    src = sources.get(it["item_id"])
-                    text_out, frozen = control_text(src, it)
-                    if src is None:
+            # 0. calibrate (every run) + re-judge the stored controls (rejudge mode; reverify regenerates them below)
+            for it in [x for x in items if not x.get("trap") and (x["item_id"] in planned_ids
+                                                                   or x["item_id"] in calib_ids)]:
+                iid = it["item_id"]
+                fsrc = frozen_src.get(iid) if iid in calib_ids else None
+                csrc, ctl_text, is_frozen = None, None, False
+                if ctl_mode == "rejudge" and iid in planned_ids:
+                    csrc = sources.get(iid)
+                    ctl_text, is_frozen = control_text(csrc, it)
+                    if csrc is None:
                         counters["no_control"] += 1
-                        continue
-                    if text_out is None:
+                    elif ctl_text is None:
                         counters["skipped_post_edit"] += 1
-                        continue
-                    await reserve(cfg.JUDGE_CALL_ESTIMATE_USD, "calibrate")
-                    before = await spent()
-                    try:
-                        v = await judge(it, text_out, "control")
-                    except Exception as e:  # noqa: BLE001 — a judge failure is a counted control error
-                        counters["control_errors"] += 1
-                        logger.warning("aa919_r2_control_judge_failed", run_id=run_id, item_id=it["item_id"],
-                                       error=f"{type(e).__name__}: {str(e)[:200]}")
-                        continue
-                    cost = await spent() - before
-                    await store.insert_result(result_row(it, arm="control", mode="rejudge", verdict=v.verdict,
-                                                         score=v.score, codes=v.failure_codes, judge=v,
-                                                         scored=src["result_id"], cost=cost,
-                                                         det={"source_mode": src.get("mode"), "frozen": frozen}))
+                same = (fsrc is not None and csrc is not None and ctl_text is not None and is_frozen
+                        and csrc["result_id"] == fsrc["result_id"])
+                before = await spent()
+                cal_v = ctl_v = None
+                if fsrc is not None:
+                    cal_v = await judged(it, it["control_output"], "calibration_errors")
+                    if cal_v is not None:
+                        counters["calibration_judged"] += 1
+                        pairs.append((it["label_verdict"], cal_v.verdict))
+                        if same:
+                            ctl_v = cal_v
+                if ctl_text is not None and ctl_v is None and not (same and cal_v is None):
+                    ctl_v = await judged(it, ctl_text, "control_errors")
+                elif same and cal_v is None:
+                    counters["control_errors"] += 1
+                if ctl_v is None and cal_v is None:
+                    continue
+                cost = await spent() - before
+                if ctl_v is not None:
+                    cal = "same_row" if same else (None if cal_v is None else {
+                        "scored_result_id": fsrc["result_id"], "verdict": cal_v.verdict, "score": cal_v.score,
+                        "failure_codes": list(cal_v.failure_codes)[:50], "label": it.get("label_verdict")})
+                    row = result_row(it, arm="control", mode="rejudge", verdict=ctl_v.verdict, score=ctl_v.score,
+                                     codes=ctl_v.failure_codes, judge=ctl_v, scored=csrc["result_id"], cost=cost,
+                                     det={"source_mode": csrc.get("mode"), "frozen": is_frozen, "calibration": cal})
                     counters["controls_judged"] += 1
-                    controls[it["item_id"]] = {"verdict": v.verdict, "failure_codes": v.failure_codes,
-                                               "output": text_out}
-                    if frozen and it.get("label_verdict") in ("pass", "fail"):
-                        pairs.append((it["label_verdict"], v.verdict))
-                    await after("calibrate")
+                    controls[iid] = {"verdict": ctl_v.verdict, "failure_codes": ctl_v.failure_codes,
+                                     "output": ctl_text}
+                else:
+                    row = result_row(it, arm="control", mode="rejudge", verdict=cal_v.verdict, score=cal_v.score,
+                                     codes=cal_v.failure_codes, judge=cal_v, scored=fsrc["result_id"], cost=cost,
+                                     det={"source_mode": "score_only", "frozen": True, "calibration": "only",
+                                          "label": it.get("label_verdict")})
+                await store.insert_result(row)
+                await after("calibrate")
             out.judge_kappa = ec.cohen_kappa(pairs)
             out.judge_counts = ec.judge_counts(out.judge_kappa, len(pairs))
             if progress:
@@ -364,6 +449,7 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
                     await reserve(cfg.R2_ITEM_ESTIMATE_USD[writer] + 2 * cfg.JUDGE_CALL_ESTIMATE_USD, phase)
                     counters["attempted"] += 1
                     before = await spent()
+                    control_view, cand_view = await views_for(it.get("tenant_id"))
                     if ctl_mode == "regenerate" and not it.get("trap"):
                         ctl = await _control_regenerate(it, writer_fn=writer_fn, writer=writer, view=control_view,
                                                         shared_inputs=shared_inputs, judge=judge,
@@ -471,8 +557,8 @@ async def _finish(store, out: Outcome, run_id, conf, stop_reason, stopped_phase,
         verdict = "fail"
     elif stop_reason in ("budget_cap", "error"):
         verdict = "invalid"
-    elif not out.judge_counts or tune_result != "pass" or not plan["holdout"] or truncated:
-        verdict = "informative"
+    elif not out.judge_counts or tune_result != "pass" or not plan["holdout"] or truncated or conf.seed_fault:
+        verdict = "informative"          # a seeded-fault run is an operator check: never an attachable pass
     else:
         verdict = "pass" if ec.criterion_met(holdout_stats, goal) else "fail"
     try:
@@ -564,20 +650,39 @@ class PgStore:
                       AND golden_set_id = $1::uuid ORDER BY created_at DESC LIMIT 1""", set_id, writer)
 
     async def control_sources(self, run_id, item_ids):
+        """The stored output each item's control re-judges. An r2 run: its candidate output. The baseline_import run
+        (release 0): the frozen fixture text (control / score_only, output NULL) before any AA-729 regenerate score
+        row, so release 0's control is the frozen labelled output."""
         if not run_id or not item_ids:
             return {}
         async with self.pool.acquire() as conn:
+            kind = await conn.fetchval("SELECT run_kind FROM shared.prompt_eval_runs WHERE id = $1::uuid", run_id)
             rows = await conn.fetch(
                 """SELECT result_id::text AS result_id, item_id::text AS item_id, arm, mode, output
                      FROM shared.eval_item_result
                     WHERE run_id = $1::uuid AND item_id = ANY($2::uuid[]) AND verdict <> 'error'
                       AND mode IN ('score_only', 'regenerate')""", run_id, item_ids)
-        rank = {("candidate", "regenerate"): 0, ("control", "regenerate"): 1, ("control", "score_only"): 2}
+        if kind == "baseline_import":
+            rank = {("control", "score_only"): 0, ("control", "regenerate"): 1}
+        else:
+            rank = {("candidate", "regenerate"): 0, ("control", "regenerate"): 1, ("control", "score_only"): 2}
         out: dict[str, dict] = {}
         for r in sorted(rows, key=lambda r: rank.get((r["arm"], r["mode"]), 9)):
             if (r["arm"], r["mode"]) in rank:
                 out.setdefault(r["item_id"], {**dict(r), "output": _j(r["output"])})
         return out
+
+    async def calibration_sources(self, run_id, item_ids):
+        """The baseline import's control / score_only rows (the frozen labelled text): what calibration re-judges."""
+        if not run_id or not item_ids:
+            return {}
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT result_id::text AS result_id, item_id::text AS item_id, arm, mode
+                     FROM shared.eval_item_result
+                    WHERE run_id = $1::uuid AND item_id = ANY($2::uuid[]) AND arm = 'control'
+                      AND mode = 'score_only' AND verdict <> 'error'""", run_id, item_ids)
+        return {r["item_id"]: {**dict(r), "output": None} for r in rows}
 
     async def rule_texts(self, rule_ids):
         if not rule_ids:
@@ -671,11 +776,16 @@ async def estimate(pool, conf: R2Config) -> dict:
         raise R2Refused("no active golden set")
     items = await store.items(gs["set_id"], conf.writer, owner)
     plan = ec.plan_phases(items, tiers=ec.selected_tiers(conf.writer, conf.tiers), limit=conf.limit)
+    if conf.seed_fault:
+        plan["probe"] = [it for it in plan["probe"] if it.get("split") != "trap"]
     n = {k: len(v) for k, v in plan.items()}
+    calib = calibration_items(items)
     per = cfg.R2_ITEM_ESTIMATE_USD[conf.writer] + cfg.JUDGE_CALL_ESTIMATE_USD
-    judge_only = sum(n.values()) * cfg.JUDGE_CALL_ESTIMATE_USD
+    # calibration (every labelled item) + the planned controls (the same call for release 0's frozen controls)
+    judge_only = (len(calib) + sum(n.values())) * cfg.JUDGE_CALL_ESTIMATE_USD
     gen = sum(n.values()) * (cfg.JUDGE_CALL_ESTIMATE_USD if conf.seed_fault else per)
     return {"writer": conf.writer, "release": conf.release_id, "items": len(items), "plan": n,
+            "calibration_items": len(calib), "calibrated_possible": len(calib) >= cfg.MIN_KAPPA_PAIRS,
             "estimated_usd_max": round(judge_only + gen, 3), "cap_usd": conf.cap_usd,
             "month_spend_usd": round(await store.month_spend(), 4), "month_cap_usd": cfg.MONTH_CAP_USD}
 

@@ -107,11 +107,18 @@ def _release(**kw):
 
 def test_planned_size_follows_the_rule_and_only_lowers():
     conf = shadow.ShadowConfig(release_id="rel-1")
-    assert shadow.planned_size(_release(), conf) == (20, None)
+    li = shadow.ShadowConfig(release_id="rel-1", channel="linkedin")
+    assert shadow.planned_size(_release(), li) == (20, None)
+    # no channel: the release applies to every social channel -> Facebook 50 + the others 20
+    assert shadow.planned_size(_release(), conf) == (70, None)
+    assert shadow.planned_quota(_release(), conf, 70) == {"facebook": 50, "other": 20}
+    assert shadow.planned_quota(_release(), conf, 5) == {"facebook": 5, "other": 0}
+    assert shadow.planned_quota(_release(), li, 20) == {"all": 20}
     assert shadow.planned_size(_release(), shadow.ShadowConfig(release_id="rel-1", channel="facebook")) == (50, None)
     assert shadow.planned_size(_release(writer="t2"), conf) == (50, None)
     assert shadow.planned_size(_release(), shadow.ShadowConfig(release_id="rel-1", size=5)) == (5, "size_lowered")
-    assert shadow.planned_size(_release(), shadow.ShadowConfig(release_id="rel-1", size=30)) == (20, None)
+    assert shadow.planned_size(_release(), shadow.ShadowConfig(release_id="rel-1", channel="linkedin", size=30)) == (
+        20, None)
     assert shadow.planned_size(_release(content_class="repair_hint_only"), conf) == (10, None)
     assert shadow.planned_size(_release(content_class="lexicon_only"), conf) == (0, None)
     assert shadow.planned_size(_release(content_class="empty"),
@@ -122,7 +129,7 @@ def test_shadow_config_caps():
     with pytest.raises(shadow.ShadowRefused):
         shadow.ShadowConfig(release_id="r", cap_usd=7.5).validate()
     with pytest.raises(shadow.ShadowRefused):
-        shadow.ShadowConfig(release_id="r", size=51).validate()
+        shadow.ShadowConfig(release_id="r", size=71).validate()
 
 
 # ── WM-21: the run ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -166,10 +173,10 @@ class FakeShadowStore:
         self.rows.append(dict(row))
 
 
-def _inputs(n_own, n_probe=0):
+def _inputs(n_own, n_probe=0, bucket="all"):
     def one(i, tenant, probe):
         return {"input_source": "content_piece", "input_id": str(uuid.UUID(int=i)), "tenant_id": tenant,
-                "channel": "linkedin", "probe": probe,
+                "channel": "linkedin", "probe": probe, "bucket": "probe" if probe else bucket,
                 "input": {"writer_input": {"channel": "linkedin", "seed": f"Invented seed {i}.",
                                            "brand_pack": {"brand_name": BRANDS[tenant]}}, "tenant_id": tenant}}
     return [one(i, TENANT_A, False) for i in range(n_own)] + [one(100 + i, TENANT_B, True) for i in range(n_probe)]
@@ -184,7 +191,7 @@ def _run(store, conf, inputs, *, text=lambda inp, view: "A clean invented post."
         assert call_log.eval_label()[0] == cfg.SHADOW_STAGE
         return {"content_text": text(inp, view)}
 
-    async def select(pool, release, *, n, channel, gates):
+    async def select(pool, release, *, n, channel, gates, quota=None):
         return inputs
 
     async def packs(pool, tids):
@@ -197,9 +204,12 @@ def _run(store, conf, inputs, *, text=lambda inp, view: "A clean invented post."
     return out, views
 
 
+LI = {"release_id": "rel-1", "channel": "linkedin"}
+
+
 def test_shadow_pass_writes_one_row_per_input_with_the_candidate_view():
     store = FakeShadowStore(_release())
-    out, views = _run(store, shadow.ShadowConfig(release_id="rel-1"), _inputs(20, 2))
+    out, views = _run(store, shadow.ShadowConfig(**LI), _inputs(20, 2))
     assert out["verdict"] == "pass" and out["counts"]["written"] == 22
     assert len(store.rows) == 22 and all(r["verdict"] == "pass" and r["release_id"] == "rel-1" for r in store.rows)
     probe_rows = [r for r in store.rows if r["probe"]]
@@ -214,14 +224,14 @@ def test_shadow_stops_at_the_first_leak():
 
     def text(inp, view):
         return "Book with Zzfake Agency." if inp["tenant_id"] == TENANT_B else "A clean invented post."
-    out, _ = _run(store, shadow.ShadowConfig(release_id="rel-1"), _inputs(3, 2), text=text)
+    out, _ = _run(store, shadow.ShadowConfig(**LI), _inputs(3, 2), text=text)
     assert (out["verdict"], out["stop_reason"]) == ("fail", "hard_stop")
     assert store.rows[-1]["isolation"]["leak"] and store.rows[-1]["probe"]
 
 
 def test_shadow_finds_the_rule_text_as_a_qa_trace():
     store = FakeShadowStore(_release())
-    out, _ = _run(store, shadow.ShadowConfig(release_id="rel-1"), _inputs(5),
+    out, _ = _run(store, shadow.ShadowConfig(**LI), _inputs(5),
                   text=lambda i, v: "Do not open with a rhetorical question. Then walk.")
     assert out["verdict"] == "fail" and store.rows[0]["qa_artefacts"] == ["rule:r-1"]
     assert len(store.rows) == 1
@@ -229,13 +239,33 @@ def test_shadow_finds_the_rule_text_as_a_qa_trace():
 
 def test_shadow_with_fewer_real_inputs_is_informative():
     store = FakeShadowStore(_release())
-    out, _ = _run(store, shadow.ShadowConfig(release_id="rel-1"), _inputs(4))
+    out, _ = _run(store, shadow.ShadowConfig(**LI), _inputs(4))
     assert out["verdict"] == "informative"
+
+
+def test_shadow_with_a_lowered_size_is_never_a_pass():
+    store = FakeShadowStore(_release())
+    out, _ = _run(store, shadow.ShadowConfig(**LI, size=1), _inputs(1))
+    assert out["verdict"] == "informative" and store.runs[out["run_id"]]["details"]["size_note"] == "size_lowered"
+
+
+def test_t9_social_with_no_channel_passes_only_with_facebooks_fifty():
+    # 70 clean inputs, but all "other": the Facebook bucket is short -> informative, not an attachable pass
+    store = FakeShadowStore(_release())
+    out, _ = _run(store, shadow.ShadowConfig(release_id="rel-1"), _inputs(70, bucket="other"))
+    d = store.runs[out["run_id"]]["details"]
+    assert out["verdict"] == "informative" and d["quota"] == {"facebook": 50, "other": 20}
+    assert d["found_by_bucket"] == {"facebook": 0, "other": 70}
+    store2 = FakeShadowStore(_release())
+    both = _inputs(50, bucket="facebook") + [{**x, "input_id": str(uuid.UUID(int=900 + i))}
+                                             for i, x in enumerate(_inputs(20, bucket="other"))]
+    out2, _ = _run(store2, shadow.ShadowConfig(release_id="rel-1"), both)
+    assert out2["verdict"] == "pass"
 
 
 def test_shadow_cap_is_enforced():
     store = FakeShadowStore(_release(), spend_per_write=0.4)
-    out, _ = _run(store, shadow.ShadowConfig(release_id="rel-1", cap_usd=1.0), _inputs(20))
+    out, _ = _run(store, shadow.ShadowConfig(**LI, cap_usd=1.0), _inputs(20))
     # the pre-call reservation is an estimate ($0.03 a T9 social input); an input that costs more is caught right
     # after it by the logged spend: the run stops, at most one input past the cap
     assert (out["verdict"], out["stop_reason"]) == ("invalid", "budget_cap")
@@ -249,7 +279,7 @@ def test_shadow_refuses_an_empty_release_without_force_and_an_active_one():
         _run(FakeShadowStore(_release(status="active")), shadow.ShadowConfig(release_id="rel-1"), _inputs(1))
     out, _ = _run(FakeShadowStore(_release(content_class="empty")),
                   shadow.ShadowConfig(release_id="rel-1", force_size=2), _inputs(2))
-    assert out["verdict"] == "pass"
+    assert out["verdict"] == "informative"          # an operator check, never attachable evidence
 
 
 def test_shadow_writer_error_is_counted():

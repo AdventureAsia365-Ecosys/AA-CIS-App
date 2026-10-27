@@ -135,6 +135,27 @@ def _run_problem(run: Optional[dict], writer: str, what: str, ok_kinds: dict[str
     return None
 
 
+def release_link_problem(run: Optional[dict], release: dict, what: str) -> Optional[tuple[str, str]]:
+    """An eval (r2) or shadow run is evidence only for the release it ran (CIS 292 mirrors this): its release_id is
+    the release's; an r2 run is not a seeded-fault operator check and not a code-train run (`candidate: current`). The
+    baseline import (release 0's eval, no release) is exempt; r0 replays are per writer, not per release."""
+    if run is None or what not in ("eval", "shadow"):
+        return None
+    if what == "eval" and run.get("run_kind") == "baseline_import":
+        return None
+    rid, mine = run.get("release_id"), release.get("release_id")
+    if not rid or str(rid) != str(mine):
+        whose = "no release (a code-train or operator run)" if not rid else "another release"
+        return f"{what}_wrong_release", f"the {what} run evaluated {whose}; attach a {what} run of this release"
+    if what == "eval" and run.get("run_kind") == "r2":
+        d = _details(run)
+        if d.get("seeded_fault"):
+            return "eval_seeded_fault", "a seeded-fault run is an operator check of the stop, never evidence"
+        if d.get("candidate", "release") != "release":
+            return "eval_wrong_release", "the r2 run wrote today's writers (a code-train run), not this release"
+    return None
+
+
 def transition_problem(old: str, new: str, retired_reason: Optional[str] = None) -> Optional[tuple[str, str]]:
     if (old, new) not in TRANSITIONS:
         return "bad_transition", f"{old} -> {new} is not a release transition"
@@ -177,11 +198,13 @@ def evidence_problem(release: dict, runs: dict[str, Optional[dict]], rules: list
                                                  f"{MIN_R0_INPUTS} inputs (got {diffs} diffs, {inputs} inputs)")
     if "eval" in need:
         ok = {"r2": "pass", "baseline_import": "baseline"} if cls == "empty" else {"r2": "pass"}
-        p = _run_problem(runs.get("eval"), writer, "eval", ok)
+        p = (_run_problem(runs.get("eval"), writer, "eval", ok)
+             or release_link_problem(runs.get("eval"), release, "eval"))
         if p:
             return p
     if "shadow" in need:
-        p = _run_problem(runs.get("shadow"), writer, "shadow", {"shadow": "pass"})
+        p = (_run_problem(runs.get("shadow"), writer, "shadow", {"shadow": "pass"})
+             or release_link_problem(runs.get("shadow"), release, "shadow"))
         if p:
             return p
     ids = set(release.get("rule_ids") or [])
@@ -511,7 +534,8 @@ async def create_draft(conn, *, writer: str, scope: str = "platform", tenant_id:
 async def attach_evidence(conn, release_id: str, *, r0_run_id: Optional[str] = None,
                           eval_run_id: Optional[str] = None, shadow_run_id: Optional[str] = None, actor: str) -> dict:
     """Name the release's evidence runs (draft / evaluated only); it becomes `evaluated` once the runs its class
-    needs are all named. The runs are checked at activation (and here, for a readable early answer)."""
+    needs are all named. Here: an eval / shadow run must be a run OF this release (release_link_problem, 409); kind,
+    verdict and finish are checked at activation (API mirror + the CIS 287 / 292 trigger)."""
     rel = await get_release(conn, release_id, for_update=True)
     if rel is None:
         raise ReleaseError(404, "not_found", "Unknown release")
@@ -519,6 +543,14 @@ async def attach_evidence(conn, release_id: str, *, r0_run_id: Optional[str] = N
         raise ReleaseError(409, "not_editable", f"a {rel['status']} release keeps its evidence")
     new = {"r0_run_id": r0_run_id or rel["r0_run_id"], "eval_run_id": eval_run_id or rel["eval_run_id"],
            "shadow_run_id": shadow_run_id or rel["shadow_run_id"]}
+    for what, rid in (("eval", eval_run_id), ("shadow", shadow_run_id)):
+        if rid:                          # a readable early refusal; activation re-checks it (API + CIS 292)
+            row = await conn.fetchrow(f"SELECT {_RUN_COLUMNS} FROM shared.prompt_eval_runs WHERE id = $1::uuid", rid)
+            if row is None:
+                raise ReleaseError(409, f"{what}_missing", f"no such {what} run")
+            p = release_link_problem(dict(row), rel, what)
+            if p:
+                raise ReleaseError(409, *p)
     need = {"empty": ("r0", "eval"), "lexicon_only": ("r0",), "repair_hint_only": ("eval", "shadow"),
             "rules": ("eval", "shadow")}[rel["content_class"]]
     complete = all(new[f"{w}_run_id"] for w in need)
@@ -700,6 +732,6 @@ async def close_month(conn, writer: str, month: date, *, actor: str) -> dict:
 __all__ = ["CONTENT_CLASSES", "DBRefused", "EMERGENCY_REASONS", "MIN_R0_INPUTS", "ReleaseError", "STATUSES",
            "TRAIN_KINDS", "WIRED_CLASSES", "WRITERS", "WRITER_STAGES", "activate", "active_releases", "approve",
            "attach_evidence", "check", "close_month", "content_class_of", "create_draft", "current_fingerprint",
-           "evidence_problem", "get_release", "is_human", "items_sha256", "list_releases", "reject", "reverify_reasons",
-           "reverify_scan", "reverify_scan_safe", "rollback", "serialise", "set_memory_enabled", "transition_problem",
-           "wiring_problem", "writers"]
+           "evidence_problem", "get_release", "is_human", "items_sha256", "list_releases", "reject",
+           "release_link_problem", "reverify_reasons", "reverify_scan", "reverify_scan_safe", "rollback", "serialise",
+           "set_memory_enabled", "transition_problem", "wiring_problem", "writers"]
