@@ -16,6 +16,7 @@ import asyncio
 import contextvars
 import json
 import threading
+import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Iterator, Optional
@@ -91,6 +92,23 @@ def resolve_tenant(tenant_id) -> Optional[str]:
     return _clean_tenant(tenant_id) or current_tenant_id()
 
 
+def _row_tenant(tenant_id, stage: Optional[str] = None) -> Optional[str]:
+    """The `tenant_id` the INSERT sends as `$1::uuid`: `resolve_tenant`, or NULL when that is not a UUID.
+
+    AA-993 follow-up: asyncpg refuses a non-UUID string for a `::uuid` argument before the row is sent, and the
+    write swallows the error, so an already-billed call lost its row. Live, a job enqueued with the platform slug
+    `"aa_internal"` lost every S1 row that way. A tenant is always a UUID, so a value that is not one is not a tenant:
+    the row is written with tenant NULL (the platform convention) and the bad value is logged."""
+    tid = resolve_tenant(tenant_id)
+    if tid is None:
+        return None
+    try:
+        return str(uuid.UUID(str(tid)))
+    except ValueError:
+        logger.warning("llm_call_log_tenant_not_uuid", stage=stage, tenant_id=str(tid)[:64])
+        return None
+
+
 def _normalize_model_provider(model: str, provider: Optional[str]) -> tuple[str, Optional[str]]:
     """AA-617 — central place so no call site has to know the model-string conventions.
 
@@ -146,7 +164,7 @@ async def record_call(
         conn = await asyncpg.connect(get_database_url(), ssl="require")
         try:
             await conn.execute(
-                _INSERT_SQL, resolve_tenant(tenant_id), stage, role, clean_model, tokens_in,
+                _INSERT_SQL, _row_tenant(tenant_id, stage), stage, role, clean_model, tokens_in,
                 tokens_out, cost_usd,
                 json.dumps(quality_signal), content_piece_id, angle_gate_request_id, stop_reason,
                 account, fallback_used, provider, current_job_id(),
@@ -176,7 +194,7 @@ async def record_call_with_pool(
     try:
         async with pool.acquire() as conn:
             await conn.execute(
-                _INSERT_SQL, resolve_tenant(tenant_id), stage, role, clean_model, tokens_in,
+                _INSERT_SQL, _row_tenant(tenant_id, stage), stage, role, clean_model, tokens_in,
                 tokens_out, cost_usd,
                 json.dumps(quality_signal), content_piece_id, angle_gate_request_id, stop_reason,
                 account, fallback_used, provider, current_job_id(),
@@ -263,10 +281,11 @@ _ROW_FIELDS = ("stage", "role", "model", "tokens_in", "tokens_out", "cost_usd", 
 
 def _insert_args(row: dict) -> tuple:
     clean_model, provider = _normalize_model_provider(row.get("model") or "unknown", row.get("provider"))
-    return (resolve_tenant(row.get("tenant_id")), row["stage"], row["role"], clean_model, row.get("tokens_in"),
-            row.get("tokens_out"), row.get("cost_usd"), json.dumps(row.get("quality_signal") or {}),
-            row.get("content_piece_id"), row.get("angle_gate_request_id"), row.get("stop_reason"),
-            row.get("account"), row.get("fallback_used"), provider, current_job_id())
+    return (_row_tenant(row.get("tenant_id"), row.get("stage")), row["stage"], row["role"], clean_model,
+            row.get("tokens_in"), row.get("tokens_out"), row.get("cost_usd"),
+            json.dumps(row.get("quality_signal") or {}), row.get("content_piece_id"),
+            row.get("angle_gate_request_id"), row.get("stop_reason"), row.get("account"), row.get("fallback_used"),
+            provider, current_job_id())
 
 
 async def record_calls(rows: list[dict]) -> None:

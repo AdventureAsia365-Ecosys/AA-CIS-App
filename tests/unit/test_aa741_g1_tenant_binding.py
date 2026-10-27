@@ -78,6 +78,7 @@ async def test_pool_path_uses_the_binding():
     ({"request_id": "r", "tenant_id": TENANT, "goal": "promotion"}, TENANT),  # T8 angles (AA-764)
     ({"tenant_id": TENANT}, TENANT),                                          # T7 slate (AA-764)
     ({"tenant_id": call_log.PLATFORM_TENANT_ID, "tour_id": "t"}, None),       # S1 platform
+    ({"tenant_id": "aa_internal", "tour_id": "t"}, None),                     # S1 platform slug (AA-993)
     ({"tour_ids": ["t"]}, None),                                              # no tenant
     ({"tenant_id": None}, None),
     ({"tenant_id": "None"}, None),

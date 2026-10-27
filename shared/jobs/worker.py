@@ -78,17 +78,33 @@ def ecs_task_revision() -> Optional[int]:
         return None
 
 
+PLATFORM_TENANT_SLUG = "aa_internal"   # the slug TourRunRequest.tenant_id accepts for the platform tenant
+
+
 def job_tenant_id(payload: Optional[dict]) -> Optional[str]:
     """AA-741 G1 — the tenant a job works for, for call_log.bind_tenant. `shared.job` has no
     tenant column: T2/T9/S1 payloads carry `tenant_id` (T9 also nests it in `context`).
-    The platform tenant (aa_internal) is not a customer — its LLM rows keep tenant_id NULL."""
+    The platform tenant (aa_internal) is not a customer — its LLM rows keep tenant_id NULL.
+
+    AA-993 follow-up: the platform tenant also arrives as its slug — `POST /admin/run-tour-async` has always accepted
+    `"tenant_id": "aa_internal"` (the executor maps it). Bound as-is, every llm_call_log write of the job sent
+    `'aa_internal'` as `$1::uuid` and was dropped, and decide() refused Jev for "a tenant not on the allow-list". A
+    tenant is a UUID: the slug and any other non-UUID value bind no tenant (platform)."""
     if not isinstance(payload, dict):
         return None
     ctx = payload.get("context")
     tid = payload.get("tenant_id") or (ctx.get("tenant_id") if isinstance(ctx, dict) else None)
-    if tid is None or str(tid) in ("", "None", call_log.PLATFORM_TENANT_ID):
+    if tid is None:
         return None
-    return str(tid)
+    raw = str(tid).strip()
+    if raw in ("", "None") or raw.lower() == PLATFORM_TENANT_SLUG:
+        return None
+    try:
+        tid = str(uuid.UUID(raw))
+    except ValueError:
+        logger.warning("job_tenant_not_uuid", tenant_id=raw[:64])
+        return None
+    return None if tid == call_log.PLATFORM_TENANT_ID else tid
 
 
 class Worker:
