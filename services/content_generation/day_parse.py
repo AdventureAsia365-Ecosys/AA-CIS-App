@@ -12,6 +12,8 @@ one function).
 * `parse_duration(text)` → `Duration(days, nights, sub_day, hours, ambiguous, range)`.
 * `source_day_markers(text)` → `[(day_from, day_to, line_idx)]` — the source "Day N" lines with ranges
   expanded ("Days 1–3:" → (1, 3)); the marker regex is the one `parse_source_day_word_counts` splits on.
+* `trusted_day_ranges(text, markers, duration)` → `{first: last}` — the subset of those ranges the day gap check
+  and the v1/T2 per-day length list count (a separator after the range end, cut at the next marker and the duration).
 * `output_days(text)` → `[(n, title, first_sentence)]` — the canonical "Day N — Title" blocks of a written
   itinerary in order, duplicates kept, a ranged block expanded to each day it covers.
 * `canonical_blocks(text)` → `[CanonicalBlock(first, last, title, body)]` — the canonical blocks themselves, the one
@@ -49,7 +51,15 @@ _DAY_MARKER_RE = re.compile(
 # "Day 1 - 3 hours drive to Paro" is day 1 with a 3-hour drive, not days 1–3.
 _RANGE_UNIT_RE = re.compile(r"^\s*(?:hours?|hrs?|h\b|km|kms|kilomet|miles?|mins?|minutes?|nights?|days?|m\b|ft\b|"
                             r"metres?|meters?|people|pax|persons?)", re.IGNORECASE)
+# AA-990 review (S253): "Day 2 - 4-hour trek" / "Day 2 - 10-km walk" — a number joined to a word by a hyphen is a
+# quantity, not a range end.
+_JOINED_WORD_RE = re.compile(r"^[-–][^\W\d_]")
 _MAX_RANGE_SPAN = 14
+
+
+def _quantity_follows(rest: str) -> bool:
+    """True when the text after a would-be range end makes that number a quantity ("3 hours", "4-hour")."""
+    return bool(_RANGE_UNIT_RE.match(rest) or _JOINED_WORD_RE.match(rest))
 
 
 def day_range(first: int, last: Optional[int]) -> tuple[int, int]:
@@ -167,8 +177,8 @@ def marker_match(line: str):
 
 def source_day_markers(text: str) -> list[tuple[int, int, int]]:
     """(day_from, day_to, line_idx) for every source line that starts with a "Day N" marker; a range
-    "Days 1–3" gives (1, 3), a single day (n, n). A "range" followed by a unit ("Day 1 - 3 hours …") or one
-    that runs backwards / spans more than two weeks is read as a single day."""
+    "Days 1–3" gives (1, 3), a single day (n, n). A "range" followed by a unit ("Day 1 - 3 hours …", "Day 2 -
+    4-hour trek") or one that runs backwards / spans more than two weeks is read as a single day."""
     out = []
     for idx, line in enumerate((text or "").splitlines()):
         stripped = line.strip()
@@ -178,14 +188,14 @@ def source_day_markers(text: str) -> list[tuple[int, int, int]]:
         first = _day_num(m.group(1))
         last = first
         if m.group(2):
-            if not _RANGE_UNIT_RE.match(stripped[m.end(2):]):
+            if not _quantity_follows(stripped[m.end(2):]):
                 last = day_range(first, int(m.group(2)))[1]
         else:
             # S248 (S1-first step 1): a list of consecutive days ("Day 05 & 06:", "Day 11, 12 & 13:") is a range
             # too; before, days 6, 12 and 13 of such a source read as missing and the oracle charged the writer
             # with DAY_OUTPUT_EXTRA (golden s1-004).
             lst = _DAY_LIST_RE.match(stripped[m.end(1):])
-            if lst and not _RANGE_UNIT_RE.match(stripped[m.end(1) + lst.end():]):
+            if lst and not _quantity_follows(stripped[m.end(1) + lst.end():]):
                 nums = [first] + [int(n) for n in re.findall(r"\d{1,3}", lst.group(0))]
                 if all(b == a + 1 for a, b in zip(nums, nums[1:])) and nums[-1] <= first + _MAX_RANGE_SPAN:
                     last = nums[-1]
@@ -194,6 +204,40 @@ def source_day_markers(text: str) -> list[tuple[int, int, int]]:
 
 
 _DAY_LIST_RE = re.compile(r"(?:\s*(?:,|&|\band\b)\s*\d{1,3}\b)+", re.IGNORECASE)
+# what may follow the end of a source range heading the day checks trust: nothing, or a heading separator
+# (":", "|", ".", a dash followed by a space) — "Days 12-15: Beach", "Day 12 - 15 – Beach", "**Days 12-15**"
+_RANGE_HEAD_END_RE = re.compile(r"[*\s]*(?:$|[:|.]|[-–—](?:\s|$))")
+
+
+def trusted_day_ranges(text: str, markers: list[tuple[int, int, int]], duration=None) -> dict[int, int]:
+    """AA-990 review (S253): {first: last} for the source range markers the day checks may count as every day they
+    cover (`itinerary_day_gap` — a hard block on writer v2 — and the v1/T2 PER-DAY SOURCE LENGTH list). Stricter
+    than `source_day_markers` (which feeds the shadow day oracle and the v2 day plan unchanged), because a range
+    read from a title that starts with a number ("Day 3 - 5 temples of Hue in one day") would hold a correct page
+    and push the writer to invent days. A range counts when:
+    * a heading separator (or the line end) follows the range end — "Days 12-15: Beach", "Day 12-15 — Beach";
+      a day list ("Day 11, 12 & 13:") is explicit and needs none;
+    * and it is cut at the next marker's day minus 1 (when that marker starts later) and at the tour's exact
+      day count (`parse_duration(duration).exact_days`), when known.
+    A range cut down to its first day is left out (the day is in `day_word_counts` already)."""
+    lines = (text or "").splitlines()
+    cap = parse_duration(duration).exact_days if duration else None
+    out: dict[int, int] = {}
+    for i, (first, last, idx) in enumerate(markers):
+        if last <= first or idx >= len(lines):
+            continue
+        stripped = lines[idx].strip()
+        m = marker_match(stripped)
+        if m is None or (m.group(2) and not _RANGE_HEAD_END_RE.match(stripped[m.end(2):])):
+            continue
+        nxt = markers[i + 1][0] if i + 1 < len(markers) else None
+        if nxt is not None and nxt > first:
+            last = min(last, nxt - 1)
+        if cap:
+            last = min(last, cap)
+        if last > first:
+            out[first] = last
+    return out
 
 
 _SENT_END_RE = re.compile(r"(?<=[.!?])\s")

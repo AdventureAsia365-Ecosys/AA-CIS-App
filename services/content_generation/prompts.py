@@ -37,7 +37,9 @@ def _clamp_midpoint() -> float:
 # existing imports keep working. Line-anchored so "Easy Day 82 km Tarmac Road" as a day's own title text is
 # never read as a "Day 82" marker (AA-346); a leading bullet, spelled-out numbers ("Day One") and ranges
 # ("Days 1–3:" → the range's first day here) are accepted.
-from .day_parse import _DAY_MARKER_RE, _NUM_WORDS, _day_num, parse_duration, source_day_markers  # noqa: E402,F401
+from .day_parse import (  # noqa: E402,F401
+    _DAY_MARKER_RE, _NUM_WORDS, _day_num, parse_duration, source_day_markers, trusted_day_ranges,
+)
 
 
 def _estimate_day_count(duration_hint: str) -> int:
@@ -61,9 +63,11 @@ def parse_source_day_word_counts(itineraries_raw: str, duration_hint: str = "") 
     maps every day to the full (unsegmented) source, since no per-day boundary could be found.
 
     Returns {"day_word_counts": {day_num: word_count}, "day_text": {day_num: text},
-    "used_fallback": bool, "markers": [(day_from, day_to, line_idx)]}. AA-925: ``markers`` are the source
-    "Day N" lines with ranges expanded (day_parse.source_day_markers) — the day oracle reads them; the split
-    itself is unchanged (a range "Days 1–3" is one block keyed by its first day).
+    "used_fallback": bool, "markers": [(day_from, day_to, line_idx)], "day_ranges": {first: last}}. AA-925:
+    ``markers`` are the source "Day N" lines with ranges expanded (day_parse.source_day_markers) — the day oracle
+    reads them; the split itself is unchanged (a range "Days 1–3" is one block keyed by its first day).
+    AA-990 (S253): ``day_ranges`` = the ranges the day gap check counts as every day they cover and the PER-DAY
+    SOURCE LENGTH list names as one block (day_parse.trusted_day_ranges); {} on the fallback.
     """
     text = itineraries_raw or ""
     lines = text.splitlines()
@@ -81,6 +85,7 @@ def parse_source_day_word_counts(itineraries_raw: str, duration_hint: str = "") 
             "day_text": {d: text for d in range(1, est_days + 1)},
             "used_fallback": True,
             "markers": markers,
+            "day_ranges": {},
         }
 
     day_word_counts = {}
@@ -93,7 +98,23 @@ def parse_source_day_word_counts(itineraries_raw: str, duration_hint: str = "") 
         segment_text = " ".join(segment_lines).strip()
         day_word_counts[day_num] = max(len(segment_text.split()), 1)
         day_text[day_num] = segment_text
-    return {"day_word_counts": day_word_counts, "day_text": day_text, "used_fallback": False, "markers": markers}
+    return {"day_word_counts": day_word_counts, "day_text": day_text, "used_fallback": False, "markers": markers,
+            "day_ranges": trusted_day_ranges(text, markers, duration_hint)}
+
+
+def _per_day_label(day: int, ranges: dict) -> str:
+    """AA-990 (S253): the head of one PER-DAY SOURCE LENGTH line — "Day 12" (byte-identical to before for a day that
+    is not a range), "Days 12-15" for a source block covering 12..15 (``day_ranges``)."""
+    last = (ranges or {}).get(day)
+    return f"Days {day}-{last}" if last else f"Day {day}"
+
+
+def _per_day_range_note(day: int, ranges: dict) -> str:
+    last = (ranges or {}).get(day)
+    if not last:
+        return ""
+    return (f" (one source block: write ONE itinerary object with \"day\": \"{day}-{last}\", or one object per"
+            f" day {day} to {last}; never drop a day of it)")
 
 
 # AA-792: the writer rules shared by the A1 (SYSTEM_PROMPT) and the T2 tenant (T2_SYSTEM_PROMPT)
@@ -453,6 +474,10 @@ def build_rewrite_prompt(tour: dict, seo: dict, few_shots: list[dict] = None,
         " (source had no clear per-day markers — estimated evenly; treat as a rough guide)"
         if _day_counts["used_fallback"] else ""
     )
+    # AA-990 (S253): a source block covering several days ("Days 12-15:") is named as such — the day gap check
+    # counts each covered day, so the writer must know it may write one "12-15" object for it (or one per day).
+    # A source without a trusted range gives a byte-identical list.
+    _ranges = _day_counts.get("day_ranges") or {}
     # AA-747: when S1_PER_DAY_TARGETS is on, give the writer an explicit per-day TARGET word count
     # (source day words × the clamp midpoint) alongside the source count, so it aims straight at the
     # band the AA-353 clamp checks instead of inferring it from the 0.7x-1.3x guidance. OFF by
@@ -460,12 +485,14 @@ def build_rewrite_prompt(tour: dict, seo: dict, few_shots: list[dict] = None,
     if per_day_targets and not _day_counts["used_fallback"]:
         _mid = _clamp_midpoint()
         per_day_length_text = "\n".join(
-            f"Day {d}: {w} words (target ~{max(1, round(w * _mid))} words)"
+            f"{_per_day_label(d, _ranges)}: {w} words (target ~{max(1, round(w * _mid))} words)"
+            f"{_per_day_range_note(d, _ranges)}"
             for d, w in sorted(_day_counts["day_word_counts"].items())
         ) + _fallback_note
     else:
         per_day_length_text = "\n".join(
-            f"Day {d}: {w} words" for d, w in sorted(_day_counts["day_word_counts"].items())
+            f"{_per_day_label(d, _ranges)}: {w} words{_per_day_range_note(d, _ranges)}"
+            for d, w in sorted(_day_counts["day_word_counts"].items())
         ) + _fallback_note
 
     # AA-748: when S1_STRUCTURED_FACTS is on and facts were extracted, add a compact SOURCE FACTS

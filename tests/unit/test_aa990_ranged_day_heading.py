@@ -163,9 +163,34 @@ def test_the_flag_fix_day_nudge_leaves_a_ranged_block_alone():
     ("Day 1 - 3 hours drive to Paro", "Day 1 — 3 hours drive to Paro"),   # not a range
     ("Day 12 — 15 km ride", "Day 12 — 15 km ride"),
     ("Day 15-12 — Beach", "Day 15 — 12 — Beach"),                         # invalid: the old single-day rewrite
+    # AA-990 review: a number joined to a word is the title, never a range end
+    ("Day 2 – 4-hour trek to Base Camp", "Day 2 — 4-hour trek to Base Camp"),
+    ("Day 5 – 3-hour drive to Kandy", "Day 5 — 3-hour drive to Kandy"),
+    ("Day 2 - 10-km walk", "Day 2 — 10-km walk"),
+    ("Day 2 - 4 hour trek", "Day 2 — 4 hour trek"),
+    # prose: a range mid-line is left alone; a single day mid-line keeps the AA-228 rewrite
+    ("Day 1 — Hanoi\nThe walk from Day 3 to 5 — the hardest stretch — follows.",
+     "Day 1 — Hanoi\nThe walk from Day 3 to 5 — the hardest stretch — follows."),
+    ("Day 1 — Hanoi\nfrom Day 3 to 5 — the hardest stretch", "Day 1 — Hanoi\nfrom Day 3 to 5 — the hardest stretch"),
+    ("Arrive. Day 2 -- Halong", "Arrive. Day 2 — Halong"),
+    ("Day 1 -- Arrive\n\n Day 12 – 15 -- Beach", "Day 1 — Arrive\n\n Day 12-15 — Beach"),   # Haiku "||" shape
 ])
 def test_dash_normaliser_keeps_ranges(raw, expected):
-    assert g._DAY_DASH_RE.sub(g._canonical_day_dash, raw) == expected
+    assert g.normalise_day_dashes(raw) == expected
+
+
+def test_validate_never_splits_prose_out_as_a_ranged_day():
+    page = ("Day 1 — Hanoi\nArrive in Hanoi.\n\nDay 2 – 4-hour trek to Base Camp\nThe trek starts early, and the "
+            "walk from Day 3 to 5 — the hardest stretch — climbs to the pass.\n\nDay 3 — Pass\nx")
+    state = {"tour": {"name": "t", "duration": "3 days",
+                      "itineraries": "Day 1: Hanoi\nArrive.\nDay 2: Trek\nTrek.\nDay 3: Pass\nWalk."},
+             "retry_count": 0,
+             "generated": {"name": "Trek", "summary": "A trek.", "highlights": ["a", "b", "c", "d"],
+                           "itineraries": page}}
+    it = g.validate_node(state)["generated"]["itineraries"]
+    assert "Day 2 — 4-hour trek to Base Camp" in it
+    assert "walk from Day 3 to 5 — the hardest stretch" in it and "Day 3-5" not in it
+    assert [b.first for b in canonical_blocks(it)] == [1, 2, 3]
 
 
 def test_validate_keeps_the_ranged_heading_and_fires_no_day_code():
@@ -211,6 +236,68 @@ def test_final_day_guard_holds_a_v2_draft_that_folded_the_range():
     out = g.final_day_guard(state)
     assert CODE in out["failure_codes"] and out["day_guard_missing"] == [13, 14, 15]
     assert out["revalidate_passed"] is False
+
+
+# ── 5b. AA-990 review: only a trusted source range raises the (v2 hard) day check ─────────────────────
+
+_HUE = ("Day 1: Arrive in Hanoi\nTransfer to the hotel.\nDay 2: Halong Bay\nCruise on the bay.\n"
+        "Day 3 - 5 temples of Hue in one day, then fly home.\nVisit the citadel and the tombs.")
+
+
+def test_numeric_source_title_is_not_a_range_for_the_day_check():
+    tour = {"name": "Vietnam", "duration": "3 days", "itineraries": _HUE}
+    page = "Day 1 — Hanoi\nx\n\nDay 2 — Halong Bay\ny\n\nDay 3 — Five temples of Hue\nz"
+    gap = g.itinerary_day_gap(tour, page)
+    assert gap["missing"] == [] and gap["source_days"] == [1, 2, 3]
+    state = {"tour": tour, "generated": {"itineraries": page}, "writer_version": "v2", "failure_codes": [],
+             "feedback": "", "revalidate_ran": True, "revalidate_passed": True}
+    assert CODE not in (g.final_day_guard(state).get("failure_codes") or [])
+    # no duration: the missing separator after "5" is enough
+    assert g.itinerary_day_gap({**tour, "duration": ""}, page)["missing"] == []
+
+
+def test_hyphenated_quantity_is_not_a_source_range():
+    src = "Day 1: Arrive.\nDay 2 - 4-hour trek to camp.\nDay 3: Home."
+    assert source_day_markers(src) == [(1, 1, 0), (2, 2, 1), (3, 3, 2)]
+    assert source_day_markers("Day 1: a\nDay 2 – 10-km walk\nDay 3: b")[1] == (2, 2, 1)
+
+
+@pytest.mark.parametrize("src,duration,expected", [
+    ("Day 1: a\nDays 2-4: Beach\nDay 5: b", "5 days", {2: 4}),
+    ("Day 1: a\nDay 2 - 4 – Beach\nDay 5: b", "", {2: 4}),
+    ("Day 1: a\n**Days 2-4**\nDay 5: b", "", {2: 4}),
+    ("Day 1: a\nDays 2-4 Beach\nDay 5: b", "", {}),                 # no separator after the range end
+    ("Day 1: a\nDays 2-6: Beach\nDay 5: b", "", {2: 4}),            # cut at the next marker
+    ("Day 1: a\nDay 2: b\nDays 3-6: Beach", "4 days", {3: 4}),      # cut at the duration
+    ("Day 1: a\nDay 2: b\nDays 3-6: Beach", "3 days", {}),          # cut down to one day
+    ("Day 1: a\nDay 2, 3 & 4: Beach\nDay 5: b", "", {2: 4}),        # a day list is explicit
+])
+def test_trusted_day_ranges(src, duration, expected):
+    from services.content_generation.day_parse import trusted_day_ranges
+
+    assert trusted_day_ranges(src, source_day_markers(src), duration) == expected
+
+
+def test_v1_t2_prompt_names_a_ranged_source_block():
+    from services.content_generation.prompts import build_rewrite_prompt
+
+    prompt = build_rewrite_prompt(SRI_LANKA, {})
+    assert "\nDay 11: " in prompt and "\nDay 16: " in prompt
+    assert '\nDays 12-15: 14 words (one source block: write ONE itinerary object with "day": "12-15"' in prompt
+    targeted = build_rewrite_prompt(SRI_LANKA, {}, per_day_targets=True)
+    assert "\nDays 12-15: 14 words (target ~" in targeted and '"day": "12-15"' in targeted
+    # a source without a trusted range: no "Days" line, nothing about a range
+    plain = build_rewrite_prompt({**SRI_LANKA, "itineraries": _HUE, "duration": "3 days"}, {})
+    assert "\nDays " not in plain and "one source block" not in plain and "\nDay 3: " in plain
+
+
+def test_t2_rewrite_of_a_ranged_master_page():
+    """A tenant T2 rewrite reads the Master aa_itineraries as its source: "Day 12-15 —" there is a trusted range."""
+    master = _page(list(range(1, 12)) + [16], ranged=(12, 15))
+    tour = {"name": "Maldives and Sri Lanka", "duration": "16 days", "itineraries": master}
+    assert g.itinerary_day_gap(tour, master)["missing"] == []
+    folded = _page(list(range(1, 13)) + [16])
+    assert g.itinerary_day_gap(tour, folded)["missing"] == [13, 14, 15]
 
 
 def test_day_oracle_sees_the_ranged_days():
