@@ -5,7 +5,7 @@
   writing_signal_fact_filter  WM-11: classify the `pending` signals (pass / grey / fail, $0), then queue an automatic
                               mining run when its trigger holds. The trigger needs WRITING_MEMORY_AUTO_MINE on the
                               worker (default off: the result only reports `mine_gate`). Payload {"limit": int}.
-  writing_memory_mine         WM-12: one mining run (the only paid kind: <= 50 judge-route calls, <= $1, month cap
+  writing_memory_mine         WM-12: one mining run (paid: <= 50 judge-route calls, <= $1, month cap
                               $25). Payload {"trigger": "auto" | "manual", "requested_by": "<admin id>"}. A refused
                               trigger ends the job as succeeded with `ran: false` and the reason (nothing to retry).
 
@@ -14,8 +14,13 @@
                               re-run on stored T9 texts against their stored ledgers). Payload {"rule_ids": [..],
                               "requested_by": "<admin id>"} | {"baseline": true}.
 
-All four are background kinds (they never take the worker's reserve slots of a wave) with concurrency 1. The mine
-kind has max_attempts 1: a paid run is never retried by the runner (an admin starts a new one).
+  writing_memory_r2           AA-919 WM-19: one R2 run of a candidate release (or today's writers) against the golden
+                              set (paid, <= $10 hard cap). Payload = services.writing_memory.r2.R2Config.
+  writing_memory_shadow       AA-919 WM-21: one targeted shadow run of a release on recent real inputs (paid, <= $7).
+                              Payload = services.writing_memory.shadow.ShadowConfig.
+
+All of them are background kinds (they never take the worker's reserve slots of a wave) with concurrency 1. The paid
+kinds (mine, r2, shadow) have max_attempts 1: a paid run is never retried by the runner (an admin starts a new one).
 """
 from __future__ import annotations
 
@@ -117,4 +122,53 @@ async def run_r0_job(ctx: JobContext) -> dict:
     return out
 
 
-__all__ = ["BACKFILL", "FACT_FILTER", "MINE", "R0"]
+R2 = "writing_memory_r2"
+SHADOW = "writing_memory_shadow"
+
+
+async def _progress(ctx: JobContext, **fields) -> None:
+    try:
+        await ctx.progress(**{k: v for k, v in fields.items() if v is not None})
+    except Exception as e:  # noqa: BLE001 — progress is cosmetic, never fails a paid run
+        logger.warning("aa919_progress_failed", job_id=ctx.job_id, error=str(e)[:200])
+
+
+# AA-919 WM-19: one R2 run (paid, <= $10 hard cap from llm_call_log, $25 month cap). max_attempts 1: a paid run is
+# never retried by the runner (the operator starts a new one); a refused run (R2Refused) ends as failed with the reason,
+# nothing spent. expected_seconds: a full A1 run is ~50 items x ~60-90 s of graph, so up to ~75 minutes.
+# deploy_blocking: a deploy releases a running job back to the queue, and a re-claimed run would start over and pay
+# again (a release does not count as an attempt), so a running R2 / shadow job blocks the deploy (AA-993 G5 guard).
+@job_kind(R2, concurrency=1, max_attempts=1, expected_seconds=5400, background=True, deploy_blocking=True)
+async def run_r2_job(ctx: JobContext) -> dict:
+    from services.writing_memory.r2 import R2Refused, config_from_payload, run_with_pool
+    conf = config_from_payload(ctx.payload)
+    if not conf.triggered_by or conf.triggered_by == "manual":
+        conf.triggered_by = f"job:{ctx.job_id}"
+    try:
+        out = await run_with_pool(ctx.pool, conf, progress=lambda **f: _progress(ctx, **f))
+    except R2Refused as e:
+        raise NonRetryable(f"R2 refused: {e}")
+    ctx.add_cost(out.cost_usd)
+    result = {"run_id": out.run_id, "verdict": out.verdict, "stop_reason": out.stop_reason,
+              "stopped_phase": out.stopped_phase, "cost_usd": round(out.cost_usd, 6), "judge_kappa": out.judge_kappa,
+              "judge_counts": out.judge_counts, "counts": out.counts}
+    logger.info("aa919_r2_job_done", **{k: result[k] for k in ("run_id", "verdict", "stop_reason", "cost_usd")})
+    return result
+
+
+# AA-919 WM-21: one targeted shadow run (paid, <= $7 hard cap; T2 / Facebook 50 inputs of ~90 s each at worst).
+@job_kind(SHADOW, concurrency=1, max_attempts=1, expected_seconds=5400, background=True, deploy_blocking=True)
+async def run_shadow_job(ctx: JobContext) -> dict:
+    from services.writing_memory.shadow import ShadowRefused, config_from_payload, run_shadow
+    conf = config_from_payload(ctx.payload)
+    if not conf.triggered_by or conf.triggered_by == "manual":
+        conf.triggered_by = f"job:{ctx.job_id}"
+    try:
+        out = await run_shadow(ctx.pool, conf, progress=lambda **f: _progress(ctx, **f))
+    except ShadowRefused as e:
+        raise NonRetryable(f"shadow refused: {e}")
+    ctx.add_cost(out["cost_usd"])
+    return out
+
+
+__all__ = ["BACKFILL", "FACT_FILTER", "MINE", "R0", "R2", "SHADOW"]

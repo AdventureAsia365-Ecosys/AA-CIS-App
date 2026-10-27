@@ -37,6 +37,12 @@ DEFAULT_MODEL_TIER = os.environ.get("DEFAULT_MODEL_TIER", "haiku")
 LEGACY_ACC2_NATIVE_ENV = "LLM_LEGACY_ACC2_NATIVE"
 
 
+def _in_eval_run() -> bool:
+    """AA-919: True while a writing-memory eval run is bound (call_log.bind_eval_stage)."""
+    from .call_log import eval_label
+    return eval_label() is not None
+
+
 def legacy_acc2_native_enabled() -> bool:
     """AA-843 — whether the legacy haiku/sonnet chain still tries acc2-native Bedrock first.
 
@@ -357,8 +363,10 @@ class LLMClient:
         else:
             resp = self._call_route(request, chain, primary_acct, fallback_acct, role=role)
 
+        # AA-919: no A/B shadow call inside a writing-memory eval run (call_log.bind_eval_stage): it would add spend
+        # and llm_shadow_log rows for an eval, not production traffic (cost-cuts K2, "shadow_sample_pct = 0").
         if (stage_cfg and not request.model_tier and stage_cfg.shadow_model_id
-                and random.random() * 100 < stage_cfg.shadow_sample_pct):
+                and random.random() * 100 < stage_cfg.shadow_sample_pct and not _in_eval_run()):
             self._start_shadow(request, stage_cfg, resp, primary_acct, fallback_acct)
         return resp
 

@@ -216,7 +216,7 @@ def test_warns_once_per_stage():
 
 # Every stage whose caller builds an LLMRequest with json_schema= (S251 inventory of AA-CIS-App).
 STRUCTURED_STAGES = ("supply_content_writer", "a3_place_dedupe", "a3_place_dedupe_check", "s1_source_facts",
-                     "s1_brand_audit", "t2_brand_audit", "writing_memory_mine")
+                     "s1_brand_audit", "t2_brand_audit", "writing_memory_mine", "writing_memory_eval")
 # Known legacy primaries on a structured stage: the schema is asked by prompt only (this file's gateway path). Move a
 # stage to a catalog key, then drop it from here; never add one without a decision.
 LEGACY_STRUCTURED_ALLOWED = {"a3_place_dedupe_check"}

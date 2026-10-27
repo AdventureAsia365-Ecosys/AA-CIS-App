@@ -80,6 +80,49 @@ def bind_tenant(tenant_id: Optional[str]) -> Iterator[None]:
         _current_tenant_id.reset(token)
 
 
+# AA-919 WM-19 / WM-21 — an eval run (the writing-memory R2 runner, the targeted shadow) drives the REAL writer paths,
+# so their rows would land under the production stages (s1_generate, t2_generate, t9_write, the judges, Jev) and on the
+# tenant's usage. While an eval label is bound, every row of this module is written under the eval stage instead
+# (`writing_memory_eval` / `writing_memory_shadow`), the real stage goes to quality_signal.real_stage, the run id to
+# quality_signal.eval_run and the tenant / piece / request ids are written NULL (the tenant to
+# quality_signal.eval_tenant), like the AA-729 harness did with in-process patches. Routing is untouched: the request's
+# own stage still picks the model. The run's cost is then one indexed query (stage + eval_run), which is what the
+# runner's hard cap reads. Same propagation as `_current_job_id`.
+_eval_label: ContextVar[Optional[tuple[str, str]]] = ContextVar("llm_call_log_eval_label", default=None)
+
+
+def eval_label() -> Optional[tuple[str, str]]:
+    """(eval stage, run id) while an eval run is bound, else None."""
+    return _eval_label.get()
+
+
+@contextmanager
+def bind_eval_stage(stage: str, run_id: str) -> Iterator[None]:
+    if not stage or not run_id:
+        raise ValueError("bind_eval_stage needs a stage and a run id")
+    token = _eval_label.set((str(stage), str(run_id)))
+    try:
+        yield
+    finally:
+        _eval_label.reset(token)
+
+
+def _relabel(stage: str, tenant_id, quality_signal: Optional[dict], content_piece_id, angle_gate_request_id):
+    """(stage, row tenant, quality_signal, piece, request) as the INSERT sends them: unchanged without an eval
+    label; relabelled to the eval stage (tenant / piece / request NULL) with one."""
+    label = _eval_label.get()
+    if label is None:
+        return stage, _row_tenant(tenant_id, stage), quality_signal, content_piece_id, angle_gate_request_id
+    eval_stage, run_id = label
+    qs = dict(quality_signal or {})
+    qs.setdefault("real_stage", stage)
+    qs["eval_run"] = run_id
+    tid = resolve_tenant(tenant_id)
+    if tid is not None:
+        qs.setdefault("eval_tenant", str(tid)[:64])
+    return eval_stage, None, qs, None, None
+
+
 def _clean_tenant(tenant_id) -> Optional[str]:
     """`None`, `""` and `"None"` (a `str(None)` at a call site) all mean no tenant."""
     if tenant_id is None or str(tenant_id) in ("", "None"):
@@ -160,13 +203,15 @@ async def record_call(
     "satellite-" prefix stripped (see _normalize_model_provider). All optional — a caller that
     hasn't been threaded through yet writes NULL, staying backward compatible field-by-field."""
     clean_model, provider = _normalize_model_provider(model, provider)
+    row_stage, row_tenant, row_signal, row_piece, row_request = _relabel(
+        stage, tenant_id, quality_signal, content_piece_id, angle_gate_request_id)
     try:
         conn = await asyncpg.connect(get_database_url(), ssl="require")
         try:
             await conn.execute(
-                _INSERT_SQL, _row_tenant(tenant_id, stage), stage, role, clean_model, tokens_in,
+                _INSERT_SQL, row_tenant, row_stage, role, clean_model, tokens_in,
                 tokens_out, cost_usd,
-                json.dumps(quality_signal), content_piece_id, angle_gate_request_id, stop_reason,
+                json.dumps(row_signal), row_piece, row_request, stop_reason,
                 account, fallback_used, provider, current_job_id(),
             )
         finally:
@@ -191,12 +236,14 @@ async def record_call_with_pool(
     (record_call). The call was already billed — 347k Jev calls (30/09–09/10) went unlogged when
     a single shared connection rejected the write with "another operation is in progress"."""
     clean_model, provider = _normalize_model_provider(model, provider)
+    row_stage, row_tenant, row_signal, row_piece, row_request = _relabel(
+        stage, tenant_id, quality_signal, content_piece_id, angle_gate_request_id)
     try:
         async with pool.acquire() as conn:
             await conn.execute(
-                _INSERT_SQL, _row_tenant(tenant_id, stage), stage, role, clean_model, tokens_in,
+                _INSERT_SQL, row_tenant, row_stage, role, clean_model, tokens_in,
                 tokens_out, cost_usd,
-                json.dumps(quality_signal), content_piece_id, angle_gate_request_id, stop_reason,
+                json.dumps(row_signal), row_piece, row_request, stop_reason,
                 account, fallback_used, provider, current_job_id(),
             )
     except Exception as e:
@@ -281,11 +328,13 @@ _ROW_FIELDS = ("stage", "role", "model", "tokens_in", "tokens_out", "cost_usd", 
 
 def _insert_args(row: dict) -> tuple:
     clean_model, provider = _normalize_model_provider(row.get("model") or "unknown", row.get("provider"))
-    return (_row_tenant(row.get("tenant_id"), row.get("stage")), row["stage"], row["role"], clean_model,
+    stage, tenant, signal, piece, request = _relabel(row["stage"], row.get("tenant_id"),
+                                                     row.get("quality_signal") or {}, row.get("content_piece_id"),
+                                                     row.get("angle_gate_request_id"))
+    return (tenant, stage, row["role"], clean_model,
             row.get("tokens_in"), row.get("tokens_out"), row.get("cost_usd"),
-            json.dumps(row.get("quality_signal") or {}), row.get("content_piece_id"),
-            row.get("angle_gate_request_id"), row.get("stop_reason"), row.get("account"), row.get("fallback_used"),
-            provider, current_job_id())
+            json.dumps(signal or {}), piece, request, row.get("stop_reason"), row.get("account"),
+            row.get("fallback_used"), provider, current_job_id())
 
 
 async def record_calls(rows: list[dict]) -> None:

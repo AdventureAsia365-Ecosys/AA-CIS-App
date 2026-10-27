@@ -68,7 +68,9 @@ def test_background_kind_never_claimed_with_two_or_fewer_free_slots(free):
                           "supply_media_purge",
                           # AA-917 writing memory: backfill, fact filter, mining (cap 1 each); AA-918 the R0 replay
                           "writing_signal_backfill", "writing_signal_fact_filter", "writing_memory_mine",
-                          "writing_memory_r0"}
+                          "writing_memory_r0",
+                          # AA-919 WM-19 / WM-21: the R2 runner and the targeted shadow (paid, cap 1 each)
+                          "writing_memory_r2", "writing_memory_shadow"}
     assert bool(background & set(w.claim_caps(free))) == (free > worker.BACKGROUND_RESERVE)
 
 
