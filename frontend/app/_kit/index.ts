@@ -16,6 +16,7 @@ export { Providers } from "./Providers";
 
 // AA-919 — the Guide tab pattern: every admin page with a Guide tab keeps a GuideContent in
 // app/admin/<page>/guide.ts and renders it with GuidePanel (see guideContent.ts for the rules).
+export { AdminMain } from "./AdminMain";
 export * from "./guideContent";
 export { GuidePanel } from "./GuidePanel";
 

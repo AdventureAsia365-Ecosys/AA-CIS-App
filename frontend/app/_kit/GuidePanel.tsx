@@ -147,19 +147,20 @@ export function GuidePanel({ content, testId = "guide-panel" }: { content: Guide
   const n = new Map(outline.map((o) => [o.id, o.n]));
   return (
     <article data-testid={testId} aria-labelledby={`${testId}-title`}
-      style={{ maxWidth: 880, minWidth: 0, boxSizing: "border-box", padding: "clamp(14px, 3vw, 24px)",
+      style={{ width: "100%", minWidth: 0, boxSizing: "border-box", padding: "clamp(14px, 3vw, 24px)",
         background: K.card, border: `1px solid ${K.line}`, borderRadius: RADIUS.lg, fontFamily: sans,
         fontSize: 13.5, lineHeight: 1.6, color: K.body, overflowWrap: "anywhere" }}>
       <h2 id={`${testId}-title`} style={{ margin: 0, fontSize: 19, fontWeight: 600, color: K.ink }}>
         {content.title}
       </h2>
       {content.intro && <p style={{ margin: "6px 0 0", color: K.muted }}>{content.intro}</p>}
+      <div className={outline.length >= GUIDE_TOC_MIN_SECTIONS ? "aa-guide-layout aa-guide-layout--toc" : "aa-guide-layout"}>
       {outline.length >= GUIDE_TOC_MIN_SECTIONS && (
-        <nav aria-label="On this page" style={{ marginTop: 16, padding: "12px 14px", borderRadius: RADIUS.lg,
-          border: `1px solid ${K.line}`, background: K.bg }}>
+        <nav aria-label="On this page" className="aa-guide-toc" style={{ marginTop: 16, padding: "12px 14px",
+          borderRadius: RADIUS.lg, border: `1px solid ${K.line}`, background: K.bg }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: K.muted, marginBottom: 6 }}>On this page</div>
-          <ol style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: "4px 16px",
-            gridTemplateColumns: "repeat(auto-fill, minmax(min(220px, 100%), 1fr))" }}>
+          <ol className="aa-guide-toc-list" style={{ listStyle: "none", margin: 0, padding: 0, display: "grid",
+            gap: "4px 16px" }}>
             {outline.map((o) => (
               <li key={o.id}>
                 <a href={`#${guideAnchor(o.id)}`} style={{ color: K.ink2, textDecoration: "none", fontSize: 13 }}>
@@ -171,6 +172,7 @@ export function GuidePanel({ content, testId = "guide-panel" }: { content: Guide
           </ol>
         </nav>
       )}
+      <div className="aa-guide-body" style={{ minWidth: 0 }}>
       {content.sections.map((s) => (
         <Section key={s.id} id={s.id} n={n.get(s.id) ?? 0} heading={s.heading}>
           {s.blocks.map((b, i) => <Block key={i} b={b} />)}
@@ -181,6 +183,8 @@ export function GuidePanel({ content, testId = "guide-panel" }: { content: Guide
           <Terms items={content.glossary} />
         </Section>
       )}
+      </div>
+      </div>
     </article>
   );
 }
