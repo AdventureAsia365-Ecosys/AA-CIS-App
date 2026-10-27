@@ -111,9 +111,10 @@ test.describe('AA-752 — admin shell', { tag: '@staff' }, () => {
     const { context, page } = await adminPage(browser);
     try {
       await page.goto('/admin/master-content', { waitUntil: 'domcontentloaded' });
-      // Read a real tour name from the Master Content table (first non-empty cell with letters).
+      // Read a real tour name from the Master Content table (first non-empty cell with letters). The page uses the
+      // split frame (`.aa-admin-split`, #1056), so select by the <main> element, not the frame class.
       const name = await page.waitForFunction(() => {
-        const cells = Array.from(document.querySelectorAll('.aa-admin-main table tbody tr td'));
+        const cells = Array.from(document.querySelectorAll('main table tbody tr td'));
         for (const c of cells) {
           const t = (c.textContent ?? '').trim();
           if (t.length >= 4 && /[A-Za-z]/.test(t)) return t;
