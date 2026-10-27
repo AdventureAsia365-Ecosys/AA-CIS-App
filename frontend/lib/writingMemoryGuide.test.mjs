@@ -1,64 +1,50 @@
 // frontend/lib/writingMemoryGuide.test.mjs
-// AA-919: the Writing memory Guide content (writingMemoryGuide.ts) stays English-only, complete and in step with the
-// page. Run: npm run test:unit (node --test with --experimental-strip-types; the guide module holds only type-level TS).
+// AA-919: the Writing memory Guide (app/admin/writing-memory/guide.ts) keeps its outline, its header buttons and the
+// facts that were corrected against the code. The shape, English-only text and page-label checks every guide shares
+// are in guides.test.mjs. Run: npm run test:unit.
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-import { GUIDE_LOCALE, WRITING_MEMORY_GUIDE as guide } from "./writingMemoryGuide.ts";
+import { WRITING_MEMORY_GUIDE as guide } from "../app/admin/writing-memory/guide.ts";
+import { guideControlLabels, guideUiLabels } from "../app/_kit/guideContent.ts";
 import { LINT_LABEL } from "./writingMemory.ts";
 
-const blocks = () => guide.sections.flatMap((s) => s.blocks);
 const text = JSON.stringify(guide);
+const section = (id) => guide.sections.find((s) => s.id === id);
 
-test("one English locale, the seven sections in order", () => {
-  assert.equal(GUIDE_LOCALE, "en");
-  assert.equal(guide.locale, "en");
-  assert.deepEqual(guide.sections.map((s) => s.id),
-    ["purpose", "loop", "tabs", "labels", "routine", "not-in-ui", "glossary"]);
-  assert.doesNotMatch(text.replaceAll("Nghiệp", ""), /[ăâđêôơưạảấầẩẫậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỵỷỹ]/i, "no Vietnamese text");
-});
-
-test("every block is well formed", () => {
-  for (const b of blocks()) {
-    if (b.type === "list") assert.ok(b.items.length > 0);
-    if (b.type === "flow") assert.ok(b.steps.length >= 2);
-    if (b.type === "terms") for (const t of b.items) assert.ok(t.term && t.text, t.term);
-    if (b.type === "action") for (const k of ["label", "does", "cost", "when"]) assert.ok(b[k], `${b.label} ${k}`);
-  }
+test("six sections in order, then the glossary", () => {
+  assert.deepEqual(guide.sections.map((s) => s.id), ["purpose", "loop", "tabs", "labels", "routine", "not-in-ui"]);
+  for (const t of ["Signal", "Cluster", "Rule", "Candidate", "R0", "L0", "Release", "Golden set", "Memory switch",
+    "Scope"]) assert.ok(guide.glossary.some((g) => g.term === t), t);
 });
 
 test("the loop opens with a diagram from edits to the writers", () => {
-  const flow = guide.sections.find((s) => s.id === "loop").blocks.find((b) => b.type === "flow");
+  const flow = section("loop").blocks.find((b) => b.kind === "flow");
   assert.ok(flow, "loop has a flow");
   assert.match(flow.steps[0], /edits/);
   assert.match(flow.steps.at(-1), /Writers/);
 });
 
-test("the guide names the page's own labels", () => {
-  const page = readFileSync(new URL("../app/admin/writing-memory/WritingMemory.tsx", import.meta.url), "utf8");
-  for (const label of Object.values(LINT_LABEL)) assert.ok(text.includes(label), label);
-  for (const label of ["has a rule", "next run drafts it", "needs 3 signals", "Activate (L0)", "Run R0", "Roll back",
-    "Save and lint", "Not activatable yet", "recurs (R2 eligible)", "under k",
-    "stale: the rule changed after this run", "Clusters over threshold", "Learning-loop spend this month",
-    "Next automatic run", "Refresh"]) {
-    assert.ok(page.includes(label), `page lost ${label}`);
-    assert.ok(text.includes(label), `guide lacks ${label}`);
-  }
-  const buttons = blocks().filter((b) => b.type === "action").map((b) => b.label);
-  for (const b of buttons) assert.ok(page.includes(b), `no header button ${b}`);
-  assert.deepEqual(buttons, ["Backfill (dry run)", "Backfill signals", "Run fact filter", "R0 baseline", "Mine rules"]);
+test("one control card per header button, with the page's labels", () => {
+  assert.deepEqual(guideControlLabels(guide),
+    ["Backfill (dry run)", "Backfill signals", "Run fact filter", "R0 baseline", "Mine rules"]);
+  const labels = guideUiLabels(guide);
+  for (const l of Object.values(LINT_LABEL)) assert.ok(labels.includes(l), `lint badge ${l}`);
+  for (const l of ["has a rule", "next run drafts it", "needs 3 signals", "L0 passed", "L0 failed",
+    "Texts it would newly flag"]) assert.ok(labels.includes(l), l);
 });
 
-test("the glossary covers the core terms", () => {
-  const terms = guide.sections.find((s) => s.id === "glossary").blocks.flatMap((b) => b.items.map((t) => t.term));
-  for (const t of ["Signal", "Cluster", "Rule", "Candidate", "R0", "L0", "Release", "Golden set", "Memory switch",
-    "Scope"]) assert.ok(terms.includes(t), t);
-});
-
-test("no ids or account numbers in a public repo", () => {
-  assert.doesNotMatch(text, /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-  assert.doesNotMatch(text, /\b\d{12}\b/);
-  assert.doesNotMatch(text, /arn:aws/);
+test("the facts corrected against the code stay corrected", () => {
+  assert.doesNotMatch(text, /Would fire on/, "R0 counts texts, not pieces");
+  assert.match(text, /NONE/, "a paid draft can store nothing");
+  assert.match(text, /\$2 per day for mining/, "the day cap is mining only");
+  assert.match(text, /approved and active rules of one writer/, "the token cap counts approved and active rules");
+  assert.match(text, /rollback drill/, "the drill approves as an agent too");
+  assert.match(text, /'L0 passed' alone does not enable Activate/);
+  assert.match(text, /nothing to prove/, "the most common L0 failure is listed");
+  assert.match(text, /For an A1 or T2 rule it reads the signals only/);
+  assert.match(text, /reason-only signals/, "thresholds count human signals");
+  assert.match(text, /A tenant rule names no other tenant's brand or forbidden word/);
+  assert.match(text, /model id, not a person/);
 });

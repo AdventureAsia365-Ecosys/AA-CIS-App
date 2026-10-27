@@ -1,13 +1,15 @@
 "use client";
 // app/admin/writing-memory/WritingMemory.tsx — AA-917 WM-14: Tenant output › Writing memory (app ADR 0010).
 //
-// Two tabs:
+// Three tabs:
 //   Signals     the writing signals (edits, reason codes, gate failures) as the miner sees them: totals, the month's
 //               learning-loop spend against its $25 cap, the mining trigger, the clusters over threshold (basis,
 //               support, open rule, masked samples), and the signal list with its fact status. A grey signal waits
 //               for the admin's pass / fail.
 //   Candidates  the rules the miner drafted: text, scope, support, lint result; a drawer with the provenance
 //               (every signal, with its source), edit (the lint runs again) and reject (with a reason).
+//   Guide       how to use the page, in plain words (AA-919): guide.ts rendered by the kit GuidePanel, like every
+//               admin page's Guide tab. The description's "New here? Read the Guide" link opens it.
 // Header actions queue a job: backfill (or its dry run), fact filter, or a manual mining run (the paid one: a confirm
 // step shows the month's spend against the cap first; the API refuses it with its reason when the trigger does not
 // hold), or the R0 baseline (AA-918, $0: the gates re-run on stored T9 texts against their stored ledgers). Automatic
@@ -23,16 +25,19 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Play, RefreshCw } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
-  Badge, Button, ConfirmModal, DataTable, Drawer, ErrorState, K, PageHeader, StatusBadge, TableSkeleton, Tabs, apiGet,
-  formatDateTime, mono, useToast, type ColumnDef,
+  Badge, Button, ConfirmModal, DataTable, Drawer, ErrorState, GuidePanel, K, PageHeader, StatusBadge, TableSkeleton,
+  Tabs, apiGet, formatDateTime, mono, useToast, type ColumnDef,
 } from "../../_kit";
 import {
   L0_WRITERS, LINT_CHECKS, LINT_LABEL, WM_API, factTone, lintCheck, owner, r0Of, ruleTone, usd, wmSend,
   type Cluster, type ClustersResponse, type Example, type R0Result, type Rule, type RuleDetail, type RulesPage,
   type Signal, type SignalsPage, type Summary,
 } from "@/lib/writingMemory";
+import { WRITING_MEMORY_GUIDE } from "./guide";
 
-const TABS = [{ key: "signals", label: "Signals" }, { key: "candidates", label: "Candidates" }];
+// Daily-use tabs first; the Guide tab last (the kit pattern for a page's Guide tab, app/_kit/guideContent.ts).
+const TABS = [{ key: "signals", label: "Signals" }, { key: "candidates", label: "Candidates" },
+  { key: "guide", label: "Guide" }];
 
 function Stat({ label, value, hint }: { label: string; value: React.ReactNode; hint?: React.ReactNode }) {
   return (
@@ -144,8 +149,9 @@ function SignalsTab() {
       <section>
         <h2 style={{ fontSize: 15, margin: "0 0 4px" }}>Clusters over threshold</h2>
         <div style={{ fontSize: 12.5, color: K.muted, marginBottom: 8 }}>
-          Tenant rule: ≥ 2 edits on ≥ 2 pieces. Platform rule from tenant edits: ≥ 3 tenants. A1: ≥ 2 reviewers, or a
-          gate failing on ≥ 5% of the last 30 days&apos; pieces. Only pass signals count.
+          Every cluster: ≥ 2 signals on ≥ 2 pieces. Tenant rule: human signals of one tenant. Platform rule from
+          tenant signals: ≥ 3 tenants. AA&apos;s own human signals: ≥ 2 reviewers. A1 gate failures: on ≥ 5% of the
+          last 30 days&apos; A1 pieces. Only pass signals count.
         </div>
         {clusters.isLoading ? <TableSkeleton rows={4} cols={6} /> : clusters.error ? (
           <ErrorState message={(clusters.error as Error).message} onRetry={() => clusters.refetch()} />
@@ -203,7 +209,7 @@ function R0Panel({ r0, fresh }: { r0: R0Result; fresh: boolean }) {
   return (
     <div style={{ display: "grid", gap: 4, fontSize: 12.5, lineHeight: 1.5 }}>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {r0.l0_applicable && <Badge tone={r0.l0_ok ? "success" : "danger"}>L0 {r0.l0_ok ? "passed" : "failed"}</Badge>}
+        {r0.l0_applicable && <Badge tone={r0.l0_ok ? "success" : "danger"}>{r0.l0_ok ? "L0 passed" : "L0 failed"}</Badge>}
         <Badge tone={r0.r2_eligible ? "success" : "warning"}>{r0.r2_eligible ? "recurs (R2 eligible)" : "under k"}</Badge>
         {!fresh && <Badge tone="warning">stale: the rule changed after this run</Badge>}
         <Badge dot={false}>{formatDateTime(r0.computed_at)} · ${r0.cost_usd.toFixed(2)}</Badge>
@@ -211,8 +217,9 @@ function R0Panel({ r0, fresh }: { r0: R0Result; fresh: boolean }) {
       {r0.l0_reason && <div style={{ color: K.danger }}>{r0.l0_reason}</div>}
       <div>Phrase in stored text: {r0.phrase.before} → {r0.phrase.after} after the rule · new hard stops:{" "}
         {counts(r0.new_hard_stops)}</div>
-      <div>Would fire on {r0.pieces.fires} of {r0.pieces.pieces} pieces ({r0.pieces.texts} texts replayed,
-        {" "}{r0.pieces.source_exempt} source-exempt{r0.pieces.errors ? `, ${r0.pieces.errors} errors` : ""})</div>
+      <div>Texts it would newly flag: {r0.pieces.fires} of {r0.pieces.texts} stored texts (final, discarded attempts,
+        before-edit) from {r0.pieces.pieces} pieces ({r0.pieces.source_exempt} source-exempt
+        {r0.pieces.errors ? `, ${r0.pieces.errors} errors` : ""})</div>
       <div>Past failures it would have prevented: {r0.prevented.total} ({r0.prevented.blocking} blocking) —
         {" "}{counts(r0.prevented.by_gate)}</div>
       <div>Signals matched: {r0.signals.matched} ({r0.signals.explained_edits} edits, {r0.signals.system} system) ·
@@ -341,7 +348,8 @@ function RuleDrawer({ ruleId, onClose }: { ruleId: string | null; onClose: () =>
             {r0Of(rule) ? <R0Panel r0={r0Of(rule) as R0Result} fresh={rule.r0_fresh} />
               : <div style={{ color: K.muted, fontSize: 12.5 }}>No R0 run on this rule yet.</div>}
             <div style={{ color: K.muted2, fontSize: 11.5 }}>
-              R0 replays up to 300 stored pieces on the worker&apos;s CPU (minutes, $0): run it outside a wave.</div>
+              R0 replays a T9 rule over up to 300 stored pieces (approved or held, last 90 days); an A1 or T2 rule
+              over its signals only. On the worker&apos;s CPU (minutes, $0): run it outside a wave.</div>
             {rule.status === "active" && (
               <div style={{ display: "flex", gap: 8 }}>
                 <input placeholder="Why roll it back?" value={reason} onChange={(e) => setReason(e.target.value)}
@@ -438,8 +446,12 @@ export default function WritingMemory() {
     <div style={{ padding: "8px 0" }}>
       <PageHeader title="Writing memory"
         breadcrumbs={[{ label: "Tenant output" }, { label: "Writing memory" }]}
-        description="What the writers could learn from edits and repeated gate failures. Rules are drafted here and
-          reach a writer through an approved release; a lexicon rule proven by R0 can go live at once (L0)."
+        description={<>What the writers could learn from edits and repeated gate failures. Rules are drafted here and
+          reach a writer through an approved release; a lexicon rule proven by R0 can go live at once (L0).{" "}
+          <button type="button" onClick={() => setTab("guide")} data-testid="wm-guide-link"
+            style={{ background: "none", border: "none", padding: 0, font: "inherit", color: K.accentDeep,
+              textDecoration: "underline", textUnderlineOffset: 2, cursor: "pointer" }}>
+            New here? Read the Guide</button></>}
         actions={<>
           <Button variant="ghost" onClick={() => qc.invalidateQueries({ queryKey: ["wm"] })}>
             <RefreshCw size={14} /> Refresh</Button>
@@ -461,8 +473,8 @@ export default function WritingMemory() {
           <p style={{ margin: "0 0 8px" }}>One run drafts a rule per cluster over threshold on the judge model: at most
             {" "}{budget?.max_calls_per_run ?? 50} calls and {usd(budget?.run_cap_usd ?? 1)}.</p>
           <p style={{ margin: 0 }}>Spent this month: <strong>{usd(budget?.month_spent_usd ?? 0)}</strong> of the
-            {" "}{usd(budget?.month_cap_usd ?? 25)} cap. A run is refused when the month is over the cap or 3 runs
-            already ran this month.</p>
+            {" "}{usd(budget?.month_cap_usd ?? 25)} cap. A run is refused when 3 runs already ran this month. Over the
+            month cap, the run stops before its first paid call but still counts as one of the 3.</p>
         </div>} />
       {summary.data && <SummaryBar s={summary.data} />}
       {summary.data?.last_jobs && (
@@ -473,7 +485,8 @@ export default function WritingMemory() {
         </div>
       )}
       <div style={{ marginBottom: 14 }}><Tabs tabs={TABS} active={tab} onChange={setTab} /></div>
-      {tab === "signals" ? <SignalsTab /> : <CandidatesTab />}
+      {tab === "signals" ? <SignalsTab /> : tab === "candidates" ? <CandidatesTab />
+        : <GuidePanel content={WRITING_MEMORY_GUIDE} testId="wm-guide" />}
     </div>
   );
 }
