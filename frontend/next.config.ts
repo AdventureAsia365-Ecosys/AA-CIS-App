@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 import path from "path";
 import { withSentryConfig } from "@sentry/nextjs";
-import { PORTAL_BASE_URL } from "./lib/apps";
+import { PORTAL_BASE_URL, TRIP_PAGE_BASE_URL } from "./lib/apps";
 
 // AA-876 — security headers on every admin response, same list as the portal (AA-885). The CSP is
 // deliberately minimal (no script-src / style-src yet: the pages use inline styles and Next inline
@@ -47,6 +47,10 @@ const nextConfig: NextConfig = {
       { source: "/portal", destination: `${PORTAL_BASE_URL}/portal`, permanent: true },
       { source: "/portal/:path*", destination: `${PORTAL_BASE_URL}/portal/:path*`, permanent: true },
       { source: "/tenant-login", destination: `${PORTAL_BASE_URL}/tenant-login`, permanent: true },
+      // AA-979 P2b (runbook §4.3) — the public trip page moved to the AA-Partner CRM web on the client host. 307, not
+      // 301, until the P2b clean-up (critic S5: browsers cache a 301 with no expiry, so it could not be rolled back);
+      // the query string carries over. app/trip/[tourId] stays here as the rollback target until then.
+      { source: "/trip/:path*", destination: `${TRIP_PAGE_BASE_URL}/trip/:path*`, permanent: false },
     ];
   },
 };
