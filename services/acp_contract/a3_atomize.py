@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from datetime import datetime
 from typing import Callable
 
 import structlog
@@ -171,6 +172,7 @@ async def run_a3_atomize(
     tour_id: str, rewritten: dict, pool, country: str = "",
     version_id: str | None = None, force: bool = False,
     should_stop: Callable[[], bool] | None = None,
+    force_since: datetime | None = None,
 ) -> dict:
     """A3 atomize — decompose atoms from a published Master Content tour, owner_scope="platform".
     Reuses AA-299's proven prompt/parse pipeline (services/acp_shared/atom_extraction.py:
@@ -203,7 +205,8 @@ async def run_a3_atomize(
 
     AA-993 G3 — `should_stop()` (the job's cancel event) is asked before each day's read; True raises AtomizeStopped.
     A day already being read finishes (its atoms and fingerprint row commit together), so a stop never leaves a half
-    day. The legacy whole-tour path is one read, asked once before it.
+    day. The legacy whole-tour path is one read, asked once before it. `force_since` (per-day path only): see
+    `_atomize_per_day`.
     """
     row = {
         "id": tour_id,
@@ -226,7 +229,7 @@ async def run_a3_atomize(
                                                 forbidden_words=forbidden_words, force=force)
     return await _atomize_per_day(
         tour_id, version_id, row, days, source_hash, pool, country,
-        forbidden_words=forbidden_words, force=force, should_stop=should_stop,
+        forbidden_words=forbidden_words, force=force, should_stop=should_stop, force_since=force_since,
     )
 
 
@@ -406,6 +409,7 @@ async def _atomize_per_day(
     tour_id: str, version_id: str, row: dict, days: dict,
     source_hash: str, pool, country: str, forbidden_words: list[str] | None = None,
     force: bool = False, should_stop: Callable[[], bool] | None = None,
+    force_since: datetime | None = None,
 ) -> dict:
     """AA-508 — one day at a time: fingerprint-gated skip (blocks the LLM call, not just logged
     after one), content-hash atom_id, real UPSERT. See atom_extraction.py::content_hash_atom_id()/
@@ -419,6 +423,10 @@ async def _atomize_per_day(
     A day whose LLM call or JSON parse fails is asked once more right away (`_ask_atoms`, AA-645 S250); a day
     that still fails keeps no fingerprint row for itself, so the next call (the `a3_atomize` job's next attempt,
     see AtomizeIncomplete) re-asks exactly that day and only that day.
+
+    AA-993 G3 review — `force_since` (the forced job's first-attempt start): under `force`, a day whose fingerprint
+    matches AND was written at or after it was already re-read by this same job (an attempt a deploy released, or one
+    that ended AtomizeIncomplete), so it is skipped instead of paid for again. Without it `force` re-reads every day.
     """
     # AA-619 — resolve the stage config ONCE, up front, so the day-fingerprint is keyed to the
     # SAME model the call below actually uses (read from DB config, not a hardcoded constant).
@@ -429,17 +437,22 @@ async def _atomize_per_day(
 
     async with pool.acquire() as conn:
         existing = await conn.fetch(
-            """SELECT day_number, fingerprint_hash FROM acp_contract.atomize_day_fingerprint
+            """SELECT day_number, fingerprint_hash, atomized_at FROM acp_contract.atomize_day_fingerprint
                WHERE tenant_tour_version_id = $1::uuid""",
             version_id,
         )
     existing_fp = {r["day_number"]: r["fingerprint_hash"] for r in existing}
+    read_at = {r["day_number"]: r.get("atomized_at") for r in existing}
+
+    def _read_by_this_job(day_num: int) -> bool:
+        at = read_at.get(day_num)
+        return force_since is not None and at is not None and at >= force_since
 
     to_ask = []
     for day_num in sorted(days):
         day = days[day_num]
         fp = _day_fingerprint(day["title"], day["body"], _a3_cfg.model_id)
-        if force or existing_fp.get(day_num) != fp:
+        if existing_fp.get(day_num) != fp or (force and not _read_by_this_job(day_num)):
             to_ask.append((day_num, day, fp))
 
     # AA-645 step 0 (C6): whatever is read below, a day this itinerary does not have keeps no live atom. Cheap (one

@@ -21,6 +21,11 @@ through the `metadata.s1_job_id` marker when the release fell between the INSERT
 The job ends with `phase = "done"` (the only early return, `services/jobs/s1_rewrite_job.py`) and clears the bulky
 keys. The stage never moves back (a resumed run passing an earlier step again writes nothing).
 
+The saved rewrite is NOT kept after a real failure (review fix): a version INSERT that fails on the content itself
+(asyncpg DataError, e.g. a title longer than `seo_title varchar(70)`) drops it (`forget_rewrite`), so the next internal
+attempt rewrites as before G2; and a job that fails after its 3 internal attempts clears `persist_stage` and the bulky
+keys, so a Jobs-page Retry starts clean. A release (CancelledError) keeps the checkpoint: that is what it is for.
+
 Writes never raise: a failed checkpoint write is logged and the run goes on (the checkpoint saves money on a resume;
 it must not fail a run that is otherwise fine). The one case that still makes a second version: the `rewritten` write
 is lost (or the result is not plain JSON) and the job is then released after its INSERT; the resumed run has no result
@@ -144,6 +149,29 @@ class S1Checkpoint:
         self.writer_state = None
         await self.mark("rewritten", s1_rewrite_result=safe, s1_auto_upgraded=auto_upgraded,
                         s1_dataforseo_used=dataforseo_used, s1_writer_state=None)
+
+    async def forget_rewrite(self, reason: str) -> None:
+        """Drop the saved rewrite so the next attempt rewrites from scratch (the pre-G2 behaviour).
+
+        Called when the version INSERT fails on the saved content itself (a data error such as a value too long for
+        its column): replaying the same result would fail the same way on every attempt. Only valid before the INSERT
+        (no `content_inserted` yet), which is the only place it is called. Never raises."""
+        logger.warning("s1_checkpoint_rewrite_dropped", job_id=self.job_id, stage=self.stage, reason=reason[:200])
+        self.stage = None
+        self.result = None
+        self.writer_state = None
+        self.version_id = None
+        self._stopped = False
+        try:
+            await self._save(clear_fields())
+        except Exception as e:  # noqa: BLE001 — never fail a run over a checkpoint write
+            logger.warning("s1_checkpoint_write_failed", job_id=self.job_id, stage=None, error=str(e)[:200])
+
+
+def clear_fields() -> dict:
+    """progress fields that wipe the resume state: written when a saved rewrite is dropped and when the job fails, so a
+    Retry of a failed job (`queue.retry` keeps `progress`) starts with a fresh rewrite."""
+    return {"persist_stage": None, **{k: None for k in BULKY_KEYS}}
 
 
 async def mark(checkpoint: Optional[S1Checkpoint], stage: str, **fields: Any) -> None:

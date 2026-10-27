@@ -31,6 +31,8 @@ def test_summary_columns_null_out_payload_and_result_only():
     assert "NULL::jsonb AS payload" in queue._SUMMARY_COLUMNS
     assert "NULL::jsonb AS result" in queue._SUMMARY_COLUMNS
     assert "progress" in queue._SUMMARY_COLUMNS  # the list's progress column still needs it
+    # AA-993 G2 review: the s1_rewrite checkpoint payloads are not polled with the list
+    assert "(j.progress - 's1_writer_state' - 's1_rewrite_result') AS progress" in queue._SUMMARY_COLUMNS
 
 
 @pytest.mark.asyncio

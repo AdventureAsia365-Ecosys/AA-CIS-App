@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import structlog
 
-from services.content_generation.s1_checkpoint import BULKY_KEYS, S1Checkpoint
+from services.content_generation.s1_checkpoint import BULKY_KEYS, S1Checkpoint, clear_fields
 from shared.jobs.registry import JobContext, NonRetryable, job_kind
 
 logger = structlog.get_logger()
@@ -97,6 +97,13 @@ async def run(ctx: JobContext) -> dict:
 
     # _run_tour_safe swallows the final failure and returns None after 3 internal attempts.
     if result is None:
+        # AA-993 G2 review: a failed job leaves no resume state. `queue.retry` (Jobs page Retry) keeps `progress`, so a
+        # stale checkpoint would replay the same failing result; clearing it also drops the bulky keys from the
+        # failed row. A release never reaches this line (the handler is cancelled), so deploy resumes keep theirs.
+        try:
+            await ctx.progress(**clear_fields())
+        except Exception as e:  # noqa: BLE001 — the run failure below is the error that matters
+            logger.warning("s1_checkpoint_clear_failed", job_id=ctx.job_id, error=str(e)[:200])
         raise RuntimeError("run_tour failed after retries (see logs)")
 
     version_id = result.get("version_id")

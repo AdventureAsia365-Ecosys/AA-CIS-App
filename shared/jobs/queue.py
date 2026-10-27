@@ -374,8 +374,12 @@ _LIST_COLUMNS = (
 # S241 — the Jobs page list polls; payload/result can be large JSON (and only the drawer, which
 # reads one job via `get`, shows them). `fields="summary"` selects them as NULL so the response
 # keeps the same keys but carries no blobs. `progress` stays: the list's progress column reads it.
+# AA-993 G2 review: the s1_rewrite checkpoint payloads (`s1_writer_state`, `s1_rewrite_result`, tens of KB of draft
+# text) stay out of the polled list too; the drawer's get() still returns the whole progress.
 _SUMMARY_COLUMNS = _LIST_COLUMNS.replace(
-    "payload, progress, result,", "NULL::jsonb AS payload, progress, NULL::jsonb AS result,"
+    "payload, progress, result,",
+    "NULL::jsonb AS payload, (j.progress - 's1_writer_state' - 's1_rewrite_result') AS progress, "
+    "NULL::jsonb AS result,",
 )
 
 

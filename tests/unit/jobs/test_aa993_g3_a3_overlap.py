@@ -323,3 +323,50 @@ async def test_a_cancelled_handler_stops_its_thread_and_drops_its_late_progress(
     await asyncio.sleep(0.05)
     fields = [c.kwargs for c in ctx.progress.await_args_list] + [c.kwargs for c in ctx.progress.call_args_list]
     assert not any(f.get("step") == "late write from the released thread" for f in fields)
+
+
+def _forced_ctx(progress):
+    job = queue.Job(id="job-g3", kind="a3_atomize",
+                    payload={"tour_id": TOUR_ID, "version_id": VERSION_ID, "country": "VN", "force": True,
+                             "rewritten": {"name": "T", "itineraries": THREE_DAYS}},
+                    status="running", attempt=1, max_attempts=2, progress=progress, cost_usd=0.0)
+    ctx = JobContext(None, job, {})
+    ctx.progress = AsyncMock()
+    return ctx
+
+
+@pytest.mark.asyncio
+async def test_forced_job_records_its_first_start_and_reuses_it_on_a_later_attempt():
+    """AA-993 G3 review: `force_since` is set once (first attempt) and passed to the chain on every attempt, so a
+    re-claimed forced job skips the days it already re-read."""
+    seen = []
+
+    async def bg(tour_id, rewritten, country, version_id, **kw):
+        seen.append(kw.get("force_since"))
+        return {}
+
+    ctx = _forced_ctx({})
+    with patch("services.export.handler._run_a3_atomize_background", bg):
+        await a3_atomize_job.run(ctx)
+    first = ctx.progress.await_args_list[0].kwargs["force_since"]
+    assert seen[0] is not None and seen[0].isoformat() == first and seen[0].tzinfo is not None
+
+    ctx2 = _forced_ctx({"force_since": first})       # the re-claimed row keeps its progress
+    with patch("services.export.handler._run_a3_atomize_background", bg):
+        await a3_atomize_job.run(ctx2)
+    assert seen[1] == seen[0]
+    assert ctx2.progress.await_args_list[0].kwargs["force_since"] == first
+
+
+@pytest.mark.asyncio
+async def test_unforced_job_passes_no_force_since():
+    seen = {}
+
+    async def bg(tour_id, rewritten, country, version_id, **kw):
+        seen.update(kw)
+        return {}
+
+    ctx = _ctx()
+    with patch("services.export.handler._run_a3_atomize_background", bg):
+        await a3_atomize_job.run(ctx)
+    assert "force_since" not in seen and "force_since" not in ctx.progress.await_args_list[0].kwargs

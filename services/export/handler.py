@@ -217,13 +217,17 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
                                       reraise: bool = False, progress=None, force: bool = False,
                                       retry_failed_days: bool = False,
                                       should_stop: Optional[Callable[[], bool]] = None,
-                                      tour_lock: bool = False) -> dict:
+                                      tour_lock: bool = False, force_since=None) -> dict:
     """AA-993 G3 — `tour_lock=True` (the `a3_atomize` job) runs the whole chain below under the tour's session lock
     (a3_tour_lock); `should_stop` (the job's cancel event) is asked at every day boundary and between the later steps
     and raises AtomizeStopped. Both default off, so any other caller is unchanged. A lock that could not be taken
-    (TourLockTimeout) is raised with `reraise`, else logged and returned in the outcome like any other failure."""
+    (TourLockTimeout) is raised with `reraise`, else logged and returned in the outcome like any other failure.
+    `force_since` (the forced job's first-attempt start, review fix) lets a forced re-claim skip the days this same
+    job already re-read (`a3_atomize._atomize_per_day`)."""
     kw = dict(reraise=reraise, progress=progress, force=force, retry_failed_days=retry_failed_days,
               should_stop=should_stop)
+    if force_since is not None:
+        kw["force_since"] = force_since
     if not tour_lock:
         return await _a3_atomize_chain(tour_id, rewritten, country, version_id, **kw)
     try:
@@ -239,7 +243,7 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
 async def _a3_atomize_chain(tour_id: str, rewritten: dict, country: str, version_id: str,
                             reraise: bool = False, progress=None, force: bool = False,
                             retry_failed_days: bool = False,
-                            should_stop: Optional[Callable[[], bool]] = None) -> dict:
+                            should_stop: Optional[Callable[[], bool]] = None, force_since=None) -> dict:
     """AA-526 — the actual A3 atomize call, launched fire-and-forget from process_export() so a
     slow multi-day LLM atomize run (services.acp_contract.a3_atomize.run_a3_atomize(), up to
     one LLM call per itinerary day) never adds latency to — or risks an API Gateway
@@ -278,6 +282,7 @@ async def _a3_atomize_chain(tour_id: str, rewritten: dict, country: str, version
             tour_id, rewritten, pool,
             country=country, version_id=version_id, force=force,
             **({"should_stop": should_stop} if should_stop is not None else {}),
+            **({"force_since": force_since} if force_since is not None else {}),
         )
         logger.info("a3_atomize_done", tour_id=tour_id, result=result)
         outcome["atomize"] = {k: result.get(k) for k in ("status", "atom_count", "days_total", "days_read",

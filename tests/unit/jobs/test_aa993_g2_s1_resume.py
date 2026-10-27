@@ -13,6 +13,7 @@ import uuid
 from contextlib import ExitStack
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import asyncpg
 import pytest
 
 from api.routers import admin_pipeline
@@ -266,6 +267,88 @@ async def test_internal_retry_after_a_failed_persist_step_reuses_the_version():
         out = await sj.run(_ctx(row_progress))
     assert failed["n"] == 1 and rewrite.calls == 1
     _assert_one_of_each(db, out)
+
+
+def _failing_insert(error_factory, times):
+    """A FakeConn.fetchval whose generated_content INSERT raises `error_factory()` the first `times` times."""
+    real_fetchval = FakeConn.fetchval
+    failed = {"n": 0}
+
+    async def fetchval(self, sql, *args):
+        if "INSERT INTO silver_aa_internal.generated_content" in sql and failed["n"] < times:
+            failed["n"] += 1
+            raise error_factory()
+        return await real_fetchval(self, sql, *args)
+
+    return fetchval, failed
+
+
+@pytest.mark.asyncio
+async def test_insert_data_error_drops_the_saved_rewrite_so_the_next_attempt_rewrites():
+    """Review fix: a version INSERT that fails on the content itself (a title over seo_title varchar(70)) would fail
+    the same way on every attempt if the saved rewrite were replayed; the next internal attempt rewrites instead."""
+    db, rewrite, row_progress = FakeDB(), FakeRewrite(), {}
+    fetchval, failed = _failing_insert(
+        lambda: asyncpg.exceptions.StringDataRightTruncationError("value too long for type character varying(70)"), 1)
+    with _patches(db, rewrite), patch.object(FakeConn, "fetchval", fetchval), \
+            patch("api.routers.admin_pipeline.asyncio.sleep", AsyncMock()):
+        out = await sj.run(_ctx(row_progress))
+    assert failed["n"] == 1
+    assert rewrite.writer_calls == 2, "the attempt after a data error replayed the saved rewrite"
+    _assert_one_of_each(db, out)
+    assert row_progress["phase"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_insert_transient_error_keeps_the_saved_rewrite():
+    db, rewrite, row_progress = FakeDB(), FakeRewrite(), {}
+    fetchval, failed = _failing_insert(lambda: ConnectionResetError("connection reset"), 1)
+    with _patches(db, rewrite), patch.object(FakeConn, "fetchval", fetchval), \
+            patch("api.routers.admin_pipeline.asyncio.sleep", AsyncMock()):
+        out = await sj.run(_ctx(row_progress))
+    assert failed["n"] == 1 and rewrite.writer_calls == 1, "a transient error paid the rewrite again"
+    _assert_one_of_each(db, out)
+
+
+@pytest.mark.asyncio
+async def test_failed_job_leaves_no_resume_state():
+    """Review fix: queue.retry keeps progress, so a failed job must not leave a checkpoint a Retry would replay (and
+    must not keep the bulky keys on the failed row)."""
+    db, rewrite, row_progress = FakeDB(), FakeRewrite(), {}
+    fetchval, failed = _failing_insert(lambda: ConnectionResetError("connection reset"), 3)
+    with _patches(db, rewrite), patch.object(FakeConn, "fetchval", fetchval), \
+            patch("api.routers.admin_pipeline.asyncio.sleep", AsyncMock()):
+        with pytest.raises(RuntimeError, match="failed after retries"):
+            await sj.run(_ctx(row_progress))
+        assert failed["n"] == 3 and rewrite.writer_calls == 1
+        assert row_progress["persist_stage"] is None
+        assert row_progress["s1_rewrite_result"] is None and row_progress["s1_writer_state"] is None
+        assert db.versions == []
+
+        # the Jobs page Retry (queue.retry keeps progress): a fresh rewrite, not a replay of the failed one
+        db.accounting = 0   # the failure handler's pipeline_runs 'failed' mark is not the cost update
+        out = await sj.run(_ctx(row_progress))
+    assert rewrite.writer_calls == 2
+    _assert_one_of_each(db, out)
+
+
+@pytest.mark.asyncio
+async def test_forget_rewrite_resets_the_checkpoint_and_clears_the_row():
+    save = AsyncMock()
+    ck = S1Checkpoint("j", {"persist_stage": "rewritten", "s1_rewrite_result": {"generated": {"a": 1}}}, save)
+    assert ck.reached("rewritten")
+    await ck.forget_rewrite("DataError: too long")
+    assert ck.stage is None and ck.result is None and ck.resume_writer_state is None
+    save.assert_awaited_once_with({"persist_stage": None, "s1_writer_state": None, "s1_rewrite_result": None})
+    await ck.mark("rewritten")   # later stages are recorded again
+    assert ck.stage == "rewritten"
+
+
+@pytest.mark.asyncio
+async def test_forget_rewrite_never_raises():
+    ck = S1Checkpoint("j", {}, AsyncMock(side_effect=RuntimeError("db down")))
+    await ck.forget_rewrite("x")
+    assert ck.stage is None
 
 
 @pytest.mark.asyncio

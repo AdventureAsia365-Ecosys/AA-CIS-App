@@ -529,11 +529,15 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
       graph at validate (`build_graph_resumed`, the saved writer-state delta, v2 stamp kept — not the Bedrock Batch
       seed, which is v1-only); after the rewrite it pays nothing again; one version (found again by
       `generated_content.metadata.s1_job_id`), one `quality_scores` row (NOT EXISTS guard), one review entry. The early
-      return is only `phase = "done"`. `a3_atomize`: a `threading.Event` set when the handler is cancelled stops the
+      return is only `phase = "done"`. A real failure does not keep the checkpoint: a version INSERT data error drops
+      the saved rewrite (next internal attempt rewrites) and a failed job clears `persist_stage` + the bulky keys, so a
+      Jobs-page Retry rewrites; only a release (cancel) resumes. The polled Jobs list strips `s1_writer_state` /
+      `s1_rewrite_result` from `progress`. `a3_atomize`: a `threading.Event` set when the handler is cancelled stops the
       thread at the next day boundary / between later steps (`AtomizeStopped`, late progress writes dropped), the
       chain runs under a session advisory lock on the tour (`handler.a3_tour_lock`, own connection, two int4 keys
       `hashtext('a3_atomize'), hashtext(tour_id)`; a waiting run polls, honours its own stop, gives up after 1800 s),
-      and `release_delay_seconds = 120`.
+      and `release_delay_seconds = 120`; a `force` job records `progress.force_since` (first attempt) and a later
+      attempt skips days whose fingerprint matches and `atomized_at >= force_since` (already re-read by this job).
   - After a deploy the old task drains for ~5 min; its worker stops claiming as soon as a worker of a
     newer ECS task-definition revision is live (AA-711, `job_worker.task_revision`, migration 199).
   - Job cost (AA-652 follow-up, migration 177): the worker binds the job id around each handler

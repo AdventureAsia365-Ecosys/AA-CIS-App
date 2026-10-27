@@ -540,6 +540,16 @@ async def _version_of_job(conn, tour_id: str, job_id: str) -> Optional[str]:
     return str(vid) if vid else None
 
 
+# AA-993 G2 review: version INSERT errors that come from the content itself (class 22 data errors such as
+# StringDataRightTruncation, NOT NULL / CHECK violations). The same saved rewrite would fail every time, so it is
+# dropped; other errors (connection lost, a version_num race on the unique key) keep it for the next attempt.
+_CONTENT_INSERT_ERRORS = (
+    asyncpg.exceptions.DataError,
+    asyncpg.exceptions.NotNullViolationError,
+    asyncpg.exceptions.CheckViolationError,
+)
+
+
 async def _execute_run_tour(
     req: TourRunRequest,
     job_id: str | None = None,
@@ -889,6 +899,11 @@ async def _execute_run_tour(
                     logger.error("version_insert_returned_null", tour_id=req.tour_id)
             except Exception as _ins_err:
                 logger.error("version_insert_failed", tour_id=req.tour_id, error=str(_ins_err))
+                if (checkpoint is not None and isinstance(_ins_err, _CONTENT_INSERT_ERRORS)
+                        and checkpoint.reached("rewritten")):
+                    # AA-993 G2 review: the saved content itself does not fit (e.g. a title longer than
+                    # seo_title varchar(70)); replaying it would fail every attempt, so the next one rewrites.
+                    await checkpoint.forget_rewrite(f"{type(_ins_err).__name__}: {_ins_err}")
                 raise
             if version_id:
                 await _ckpt.mark(checkpoint, "content_inserted", version_id=str(version_id))
