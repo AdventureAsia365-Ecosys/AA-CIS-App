@@ -15,7 +15,7 @@ import pytest
 from fastapi import HTTPException
 
 from services.acp_shared import place_cards as pc
-from services.acp_shared.atom_seed import writer_facts
+from services.acp_shared.atom_seed import _location_lines, writer_facts, writer_identity
 from shared.jobs.registry import NonRetryable
 from shared.llm_client.models import LLMResponse
 from tests.unit.test_aa772_place_card_cost import FakeDB, _atom, _ensure
@@ -164,6 +164,14 @@ def test_settlement_localities_are_kept(locality, name, region, country):
     ("The town remains the seat of the district administration.", "Nepal", "admin_role"),
     ("The bridge was the work of French engineers.", "Vietnam", "authorship"),
     ("Its architect was Edwin Lutyens.", "India", "authorship"),
+    # review S253: a sentence naming the country is still about a division when a division word is in it
+    ("Pleiku is the capital of Gia Lai Province in Vietnam.", "Vietnam", "admin_role"),
+    ("Pleiku is the provincial capital of Gia Lai, Vietnam.", "Vietnam", "admin_role"),
+    ("Pleiku is the capital of Vietnam's Gia Lai Province.", "Vietnam", "admin_role"),
+    ("Kandy is the capital of Central Province, Sri Lanka.", "Sri Lanka", "admin_role"),
+    ("Kandy is the capital of the Central Province of Sri Lanka.", "Sri Lanka", "admin_role"),
+    ("It is the largest city and capital of Bulgan Province, Mongolia.", "Mongolia", "admin_role"),
+    ("Lhasa is the capital of Tibet.", "China", "admin_role"),           # an alias of China, not its name
 ])
 def test_unverifiable_claims(text, country, why):
     assert pc.unverifiable_claim(text, country) == why
@@ -173,6 +181,8 @@ def test_unverifiable_claims(text, country, why):
     ("It served as the capital of Portuguese India during the period of Portuguese rule.", "India"),   # C08, past
     ("Malé is the capital and most populous city of the Maldives.", "Maldives"),                        # C14, national
     ("Ulaanbaatar is the capital of Mongolia.", "Mongolia"),
+    ("Hanoi is the capital of Viet Nam.", "Vietnam"),                                                   # ISO name
+    ("Vientiane is the capital and largest city of Laos.", "Laos"),
     ("Hue is the former imperial capital of Vietnam.", "Vietnam"),
     ("Luang Prabang was the royal capital of the Kingdom of Laos.", "Laos"),
     ("It is a historic post office building in Nuwara Eliya.", "Sri Lanka"),                           # C18 fact 0
@@ -192,6 +202,68 @@ def test_writer_seed_drops_unverifiable_facts_unless_an_admin_verified_the_card(
     card = {"display_name": "Pleiku", "country": "Vietnam", "status": "auto_checked", "facts": json.dumps(facts)}
     assert writer_facts(card) == ["North Vietnamese forces took Pleiku in March 1975."]
     assert writer_facts(dict(card, status="verified")) == [f["text"] for f in facts]
+
+
+# ── identity rules at seed time (cards built before AA-784) ──────────────────────────────────────────────────────
+
+SEED_LOCATION = {
+    "C04": "Location: Thado Koshi, Nepal (the itinerary calls it Thado Koshigaon)",
+    "C13": "Location: Barafu Camp, Kilimanjaro, Tanzania (the itinerary calls it Barafu hut)",
+    "C14": "Location: Malé, Maldives (the itinerary calls it Colombo International Airport to Male)",
+    "C15": "Location: Thien Mu Pagoda, Hue, Vietnam",
+}
+
+
+@pytest.mark.parametrize("cid", sorted(SEED_LOCATION))
+def test_writer_seed_location_applies_the_identity_rules_to_stored_cards(cid):
+    stored, names = SPOT_CHECK_BAD[cid]
+    card = dict(stored, status="auto_checked")
+    line = _location_lines(names[0], card["country"], card)[0]
+    assert line == SEED_LOCATION[cid] + " (do not place it in any other town, region or country)"
+    assert card == dict(stored, status="auto_checked")                  # the stored card is not changed
+
+
+def test_writer_seed_location_keeps_a_verified_card_as_stored():
+    stored, _ = SPOT_CHECK_BAD["C13"]
+    assert writer_identity(dict(stored, status="verified")) == ("Moshi", "Kilimanjaro")
+    assert writer_identity(dict(stored, status="auto_checked")) == ("", "Kilimanjaro")
+
+
+# ── a rejected / held card is never duplicated under a new key (C07) ──────────────────────────────────────────────
+
+C07_STORED = {"card_id": "c07", "place_key": "china nepal friendship bridge|nepal and china",
+              "display_name": "China–Nepal Friendship Bridge", "locality": "Kodari / Zhangmu", "region": None,
+              "country": "Nepal and China", "status": "rejected", "cost_usd": 0.0, "facts": []}
+
+
+@pytest.mark.parametrize("country,locality,region", [
+    ("Nepal", "Kodari", "Bagmati Province"),
+    ("China", "Zhangmu", "Tibet Autonomous Region"),
+])
+def test_a_held_compound_country_card_is_not_replaced_or_duplicated_by_a_single_country_draft(
+        country, locality, region):
+    db = FakeDB([_atom("a1", "China-Nepal Friendship Bridge", country)], cards=[C07_STORED])
+    draft = {"display_name": "China–Nepal Friendship Bridge", "locality": locality, "region": region,
+             "country": country, "naming_note": "", "aliases": [],
+             "facts": [{"text": "The bridge crosses the Bhote Koshi river.", "kind": "what_it_is"}]}
+    out = _ensure(db, ScriptedLLM(draft), ["a1"])
+    assert out["linked_new"] == 0 and out["missed"] == 1
+    assert list(db.cards) == ["c07"] and db.cards["c07"]["status"] == "rejected"
+    assert db.cards["c07"]["country"] == "Nepal and China"                 # not replaced
+    assert db.links["a1"] == {"card_id": None, "miss_reason": "identity_rejected"}
+
+
+@pytest.mark.parametrize("stored_country,draft_country", [
+    ("Nepal and China", "India"),        # a compound that does not name the draft's country
+    ("Nepal", "Nepal"),                  # a single-country rejected card under a legacy key: AA-772 rule (redraft)
+])
+def test_a_rejected_card_blocks_only_a_draft_its_compound_country_names(stored_country, draft_country):
+    stored = dict(C07_STORED, country=stored_country, place_key="china nepal friendship bridge|kodari|nepal")
+    db = FakeDB([_atom("a1", "China-Nepal Friendship Bridge", draft_country)], cards=[stored])
+    draft = {"display_name": "China–Nepal Friendship Bridge", "locality": "", "region": "", "country": draft_country,
+             "naming_note": "", "aliases": [], "facts": []}
+    out = _ensure(db, ScriptedLLM(draft), ["a1"])
+    assert out["linked_new"] == 1 and len(db.cards) == 2 and db.cards["c07"]["status"] == "rejected"
 
 
 # ── prompts + check parsing ─────────────────────────────────────────────────────────────────────────────────────

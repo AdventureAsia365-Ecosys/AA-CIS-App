@@ -147,6 +147,9 @@ class FakeDB:
         if "AA-809" in sql:                             # post-draft resolver: one country's cards
             return [c for c in self.cards.values() if c["status"] != "rejected"
                     and (c["place_key"].endswith(args[0][1:]) or (c.get("country") or "").lower() == args[1])]
+        if "AA-784 held" in sql:                        # rejected cards under another key, by country spelling
+            return [c for c in self.cards.values() if c["status"] == "rejected" and c["place_key"] != args[0]
+                    and any(p.strip("%") in (c.get("country") or "").lower() for p in args[1])]
         if "split_part(place_key" in sql:
             return [c for c in self.cards.values() if c["status"] != "rejected"
                     and c["place_key"].split("|")[0] in args[0]]

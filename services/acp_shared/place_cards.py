@@ -636,12 +636,30 @@ _UNVERIFIABLE_CLAIMS = tuple((name, re.compile(rx, re.IGNORECASE)) for name, rx 
 ))
 
 
+# 'capital [city] [and (the) <up to 2 words> city|town] of (the) <country>': the national-capital phrasings.
+_CAPITAL_OF = r"\bcapital(?: city)?(?: and (?:the )?(?:\w+ ){0,2}(?:city|town|metropolis))? of (?:the )?"
+# A sentence naming one of these besides the national pattern is about a division ('the capital of Gia Lai Province
+# in Vietnam', 'the provincial capital of Gia Lai, Vietnam'): not a national capital.
+_DIVISION_MARKERS = _ADMIN_WORDS | {"provincial", "regional", "prefectural", "region", "regions"}
+
+
 def _national_capital(text: str, country: Optional[str]) -> bool:
-    """'… is the capital of Mongolia' / 'Malé is the capital and most populous city of the Maldives' on a card of that
-    country: the card's country is named shortly after 'capital' in the same sentence."""
-    c = fold(country)
-    return bool(c) and any(re.search(rf"\bcapital\b(?: \w+){{0,8}} {re.escape(c)}\b", fold(part))
-                           for part in re.split(r"[.;]", text))
+    """'… is the capital of Mongolia' / 'Malé is the capital and most populous city of the Maldives' / 'Hanoi is the
+    capital of Viet Nam' on a card of that country: 'capital' is followed DIRECTLY by 'of (the) <the country's name or
+    ISO name>', and no administrative word ('province', 'state', 'provincial' …) is in the sentence outside the
+    country's own name ('Czech Republic'). 'Pleiku is the capital of Gia Lai Province in Vietnam' is not one."""
+    c = _countries.resolve(country)
+    names = {n for n in ({fold(country)} | ({fold(c.name), fold(c.iso_name)} if c else set())) if n}
+    if not names:
+        return False
+    rx = re.compile(_CAPITAL_OF + "(?:" + "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True))
+                    + r")\b")
+    for part in re.split(r"[.;]", text):
+        f = fold(part)
+        m = rx.search(f)
+        if m and not set((f[:m.start()] + " " + f[m.end():]).split()) & _DIVISION_MARKERS:
+            return True
+    return False
 
 
 def unverifiable_claim(text: Optional[str], country: Optional[str] = None) -> Optional[str]:
@@ -947,6 +965,59 @@ async def find_card_for_draft(conn, key: str, name: str, aliases: list[str], loc
     return pick("draft_alias", hits) if hits else None
 
 
+_REJECTED_CANDIDATES_SQL = """
+    SELECT card_id, place_key, display_name, country FROM acp_shared.place_card
+    WHERE status = 'rejected' AND place_key <> $1 AND lower(country) LIKE ANY($2::text[])
+    -- AA-784 held: rejected cards under ANOTHER key whose stored country may be a compound naming the draft's
+"""
+
+
+def _compound_includes(card_country: Optional[str], country: str) -> bool:
+    """The stored card's country is a COMPOUND (pre-AA-990: 'Nepal and China') that names `country`."""
+    if _countries.resolve(card_country) is not None:
+        return False
+    parts = {c.name for c in _countries.resolve_parts(card_country)}
+    return len(parts) > 1 and (_countries.name(country) or country) in parts
+
+
+async def find_rejected_for_draft(conn, key: str, name: str, country: str) -> Optional[str]:
+    """AA-784 — the REJECTED compound-country card a checked draft names, or None. A card stored before AA-990 under
+    a compound country ('Nepal and China', C07) is never reached by a new draft: AA-990 stores one ISO country, so
+    the draft has another place_key and never has the same identity (_store_card's rules cannot fire). Such a
+    rejection is a hold an admin lifts (edit the card or verify it), never a duplicate under a new key. Same core name
+    (or feature-synonym key), the draft's country one of the compound's. A rejected SINGLE-country card under another
+    key keeps the AA-772 rule (the atoms get a fresh draft); one under the same key the _store_card rule. A generic
+    name keys on its locality: not matched here."""
+    if is_generic_name(name):
+        return None
+    c = _countries.resolve(country)
+    spellings = sorted({fold(country), *(c.spellings() if c else ())} - {""})
+    if not spellings:
+        return None
+    rows = [r for r in await conn.fetch(_REJECTED_CANDIDATES_SQL, key, [f"%{s}%" for s in spellings])
+            if _compound_includes(r["country"], country)]
+    forms = itinerary_alias_forms(name)
+    for keyfn in (core_key, match_key):
+        keys = {keyfn(f) for f in forms}
+        for r in rows:
+            if any(keyfn(f) in keys for f in itinerary_alias_forms(r["display_name"])):
+                return str(r["card_id"])
+    return None
+    c = _countries.resolve(country)
+    spellings = sorted({fold(country), *(s for s in (c.spellings() if c else ()))} - {""})
+    if not spellings:
+        return None
+    rows = await conn.fetch(_REJECTED_CANDIDATES_SQL, key, [f"%{s}%" for s in spellings])
+    forms = itinerary_alias_forms(name)
+    for keyfn in (core_key, match_key):
+        keys = {keyfn(f) for f in forms}
+        for r in rows:
+            if _card_in_country(r["country"], country) and any(
+                    keyfn(f) in keys for f in itinerary_alias_forms(r["display_name"])):
+                return str(r["card_id"])
+    return None
+
+
 # ── Build ──────────────────────────────────────────────────────────────────────────────────────
 
 def _representative(atoms: list[dict]) -> dict:
@@ -1090,7 +1161,14 @@ async def build_card_for_group(group_key: tuple[str, str], atoms: list[dict], po
                 "UPDATE acp_shared.place_card SET cost_usd = cost_usd + $2, updated_at = now() WHERE card_id = $1",
                 card_id, fields[-1])
         else:
-            card_id = await _store_card(conn, key, fields)
+            rejected = await find_rejected_for_draft(conn, key, name, country)
+            if rejected is not None:
+                # AA-784: the draft names a rejected compound-country card (a hold): no duplicate, no link.
+                logger.info("place_card_names_rejected", atom_id=rep["atom_id"], place=rep["place"], card=name,
+                            rejected_card_id=rejected)
+                card_id = None
+            else:
+                card_id = await _store_card(conn, key, fields)
         if card_id is not None:
             card_id = str(card_id)
             await conn.executemany(_LINK_SQL, [(a["atom_id"], card_id) for a in atoms])
@@ -1562,5 +1640,5 @@ __all__ = ["ensure_place_cards", "build_card_for_atom", "build_card_for_group", 
            "card_skip_reason", "find_existing_cards", "find_local_cards", "pick_local_card", "is_generic_name",
            "atom_group_key", "itinerary_alias_forms", "miss_is_active", "RULE_VERSION", "PROMPT_SHA",
            "duplicate_clusters", "merged_facts", "merge_cards", "MergeError", "traveller_clause",
-           "find_card_for_draft", "match_key", "region_problem", "locality_problem", "clean_identity",
-           "unverifiable_claim", "drop_unverifiable", "rebuild_place_cards", "REBUILD_MAX_CARDS"]
+           "find_card_for_draft", "find_rejected_for_draft", "match_key", "region_problem", "locality_problem",
+           "clean_identity", "unverifiable_claim", "drop_unverifiable", "rebuild_place_cards", "REBUILD_MAX_CARDS"]
