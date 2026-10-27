@@ -34,52 +34,54 @@ ANGLE = {"name": "The Craft School", "why_it_works": "w", "formula_fit": "f",
          "best_final_style": "Close on it being an accessible, structured stop."}
 CHANNELS = ("blog", "linkedin", "facebook", "instagram", "tiktok", "ads", "email", "landing_page")
 
-# The four test brands' style guides (invented test tenants), as their packs hold them.
-TERRA_GUIDE = """Explain the pace clearly.
-Mention comfort, safety, learning, and variety.
-Show how the trip works for both adults and children.
-Use simple but polished language.
-Avoid childish language.
+# The four test brands' style guides. Synthetic stand-ins with the same shape as the panel packs (do-points, then
+# "Write like this:" with an example, then "Avoid:"): the real pack text is golden-set text and stays out of this
+# public repo (AA-919 golden-text guard, fake fixtures only).
+TERRA_GUIDE = """Say plainly how fast each day moves.
+Name the rest breaks, comfort and safety points.
+Show what parents and kids each get from a day.
+Keep the wording plain yet neat.
+Skip baby talk.
 
 Write like this:
-“Each day balances active discovery with time to rest, making the journey engaging for children.”
+“Mornings are for walking together, afternoons are free for a swim.”
 
 Avoid:
-Do not make the tour sound like a school trip."""
-ATLAS_GUIDE = """Use slower, more polished sentences.
-Focus on place, heritage, atmosphere, guiding, and privacy.
-Avoid too much operational detail unless it supports comfort or exclusivity.
-Make the journey feel layered and personal.
+Never make the trip read like a class outing."""
+ATLAS_GUIDE = """Let sentences run longer and finer.
+Dwell on the setting, its history, the guides and private time.
+Leave logistics out unless they add ease or exclusivity.
+Give the route depth and a personal feel.
 
 Write like this:
-“This journey moves at a considered pace, balancing historic cities, quiet landscapes, and private moments.”
+“The route lingers in old towns and still valleys, with time kept aside for you alone.”
 
 Avoid:
-Do not use backpacker or group-tour language."""
-TRAIL_GUIDE = """Use active verbs.
-Keep sentences short and dynamic.
-Make the trip feel social, mobile, and alive.
-Focus on what the traveller does, feels, and discovers.
-Use natural modern language, not formal travel-brochure language.
+Never sound like a hostel noticeboard."""
+TRAIL_GUIDE = """Pick strong verbs.
+Keep lines brief and quick.
+Make the trip feel shared, on the move and lively.
+Centre what the rider does and sees.
+Talk like a friend, not a brochure.
 
 Write like this:
-“Start the morning on a forest trail, spend the afternoon cycling between villages.”
+“Ride the ridge at dawn, then swim in the river by noon.”
 
 Avoid:
-Do not sound too premium or formal.
+Never sound stiff or upmarket.
 Second person, active verbs, contractions are fine, no consultancy maxims."""
-WILD_GUIDE = """Use careful nature language.
-Be specific about landscapes and habitats.
-Be cautious with wildlife claims.
-Show respect for communities, guides, and ecosystems.
-Avoid exaggerated sustainability claims unless verified.
-Use calm, observant writing.
+WILD_GUIDE = """Choose nature words with care.
+Name the exact habitats and terrain.
+Keep animal sightings modest.
+Treat villages, guides and wild places with respect.
+Claim green credentials only when checked.
+Write quietly and watchfully.
 
 Write like this:
-“Travellers spend time in forests, wetlands, and village areas.”
+“Days pass among wetlands, forest edges and farm villages.”
 
 Avoid:
-Do not use exploitative wildlife language like “get up close”."""
+Never promise close contact with animals."""
 
 TERRA = {"brand_name": "Terra Family Expeditions", "brand_type": "Premium family adventure travel brand",
          "voice": ["Warm", "Reassuring", "Clear", "Practical", "Family-aware", "Encouraging", "Trustworthy"],
@@ -165,19 +167,19 @@ def test_atmosphere_changes_only_its_sentence_length_words():
 # ---------------------------------------------------------------- BRAND FOCUS: reading the style guide
 
 @pytest.mark.parametrize("name, expected", [
-    ("TERRA", ["Explain the pace clearly.", "Mention comfort, safety, learning, and variety.",
-               "Show how the trip works for both adults and children.", "Use simple but polished language.",
-               "Avoid childish language."]),
-    ("ATLAS", ["Use slower, more polished sentences.", "Focus on place, heritage, atmosphere, guiding, and privacy.",
-               "Avoid too much operational detail unless it supports comfort or exclusivity.",
-               "Make the journey feel layered and personal."]),
-    ("TRAIL", ["Use active verbs.", "Keep sentences short and dynamic.",
-               "Make the trip feel social, mobile, and alive.",
-               "Focus on what the traveller does, feels, and discovers.",
-               "Use natural modern language, not formal travel-brochure language."]),
-    ("WILD", ["Use careful nature language.", "Be specific about landscapes and habitats.",
-              "Be cautious with wildlife claims.", "Show respect for communities, guides, and ecosystems.",
-              "Avoid exaggerated sustainability claims unless verified.", "Use calm, observant writing."]),
+    ("TERRA", ["Say plainly how fast each day moves.", "Name the rest breaks, comfort and safety points.",
+               "Show what parents and kids each get from a day.", "Keep the wording plain yet neat.",
+               "Skip baby talk."]),
+    ("ATLAS", ["Let sentences run longer and finer.", "Dwell on the setting, its history, the guides and private time.",
+               "Leave logistics out unless they add ease or exclusivity.",
+               "Give the route depth and a personal feel."]),
+    ("TRAIL", ["Pick strong verbs.", "Keep lines brief and quick.",
+               "Make the trip feel shared, on the move and lively.",
+               "Centre what the rider does and sees.",
+               "Talk like a friend, not a brochure."]),
+    ("WILD", ["Choose nature words with care.", "Name the exact habitats and terrain.",
+              "Keep animal sightings modest.", "Treat villages, guides and wild places with respect.",
+              "Claim green credentials only when checked.", "Write quietly and watchfully."]),
 ])
 def test_the_four_panel_brands(name, expected):
     """The points end at the first header ('Write like this:'): no example sentence and no 'Avoid:' item."""
@@ -211,7 +213,7 @@ def test_the_four_panel_brands(name, expected):
     # a quoted word is part of a rule; a quoted example sentence (4+ words, or an unclosed quote) is skipped
     ('Use "you" for the traveller.\nName the day.', ['Use "you" for the traveller.', "Name the day."]),
     ("Say “we” for the guides.", ["Say “we” for the guides."]),
-    ("Focus on the group.\n“Each day balances active discovery\nName the day.",
+    ("Focus on the group.\n“Mornings start slowly at the lodge\nName the day.",
      ["Focus on the group.", "Name the day."]),
     # no split after an abbreviation or before a lower-case word
     ("Use short sentences, e.g. three per paragraph.", ["Use short sentences, e.g. three per paragraph."]),

@@ -1577,38 +1577,38 @@ LinkedIn 6.83 → 6.42 (n = 6), Trail Pulse blog 7.17 → 6.67 (n = 3), WildKind
 - **D-b, Terra LinkedIn carries an institutional closer in every arm, and it comes from the angle brief.** 20 of the
   42 Terra LinkedIn posts of rounds 1–6 (and 4 of 6 in round 6) have "… is a structured, accessible stop" (or
   "an organised, purposeful stop", "a structured, dependable stop", "a structured, stable institution"). The T8
-  angle's `best_final_style` for that request ends: "The reassuring practical note touches on this being a
-  government-run school in Thimphu, making it an accessible, structured stop." The LinkedIn WARM_PRACTICAL
+  angle's `best_final_style` for that request ends on the school being state-run and so an "accessible,
+  structured" stop (paraphrased: golden-set text stays out of this public repo, AA-919). The LinkedIn WARM_PRACTICAL
   structure asks for "one reassuring practical point", and the seed has no pace, comfort or logistics fact for
   that stop, so the writer copies the brief's wording. Round 4 already named "a grounded, accessible stop" as a
   DON'T in `PROMPT_RULES`; the brief still wins. The judges quote it as "institutional", "cool", "flat" (the
   "stiff / institutional" reasons: round 3 4, round 6 9 of 20).
 - **D-c, the brand's own style-guide points are missing, and nothing restates them.** The brand-voice reasons name a
   style-guide point the piece leaves out in 6 of 20 round-6 pieces: Terra "nothing on pace, rest, comfort or
-  safety" (its style guide: "Explain the pace clearly. Mention comfort, safety, learning, and variety."), Atlas &
-  Hearth "says little about guiding, privacy or stays" ("Focus on place, heritage, atmosphere, guiding, and
-  privacy."), Trail Pulse "little momentum or social feel" ("Make the trip feel social, mobile, and alive."),
-  WildKind "little observant nature language" ("Be specific about landscapes and habitats."). "Encyclopedic /
+  safety" (its style guide asks for pace and comfort), Atlas & Hearth "says little about guiding, privacy or
+  stays" (its guide lists guiding and privacy), Trail Pulse "little momentum or social feel" (its guide asks for a
+  social, mobile feel), WildKind "little observant nature language" (its guide asks for specific habitats); the
+  guides are paraphrased here, not quoted (AA-919 golden-text guard). "Encyclopedic /
   reference prose" is in 9 of 20 round-6 reasons (round 3: 8). The style guide sits in the brand block with a
   long hedge ("never state its claims about pace, rest … unless the content seed says so"), followed by
   1,500–2,000 words of DON'T rules. Rounds 4–6 told the writer what not to do; no line maps the brand's own asks
   to the seed facts that can meet them. Terra's seeds do have pace facts (day numbers, overnights, an optional
-  boat ride, a lunch stop); round 3 used them ("the room to move through a landscape at a pace that suits the
-  terrain"), round 6 Terra blogs mention pace 0.5 times a piece against 2.25 in round 3.
+  boat ride, a lunch stop); round 3 used them (a line on moving through the landscape at the terrain's own
+  pace), round 6 Terra blogs mention pace 0.5 times a piece against 2.25 in round 3.
 - **D-d, family brands never got the "back to the traveller" line.** Round 6 gave it only to texture brands
   (R6-D3); two of four round-6 Terra blogs are "an encyclopedia entry" to the judges.
 - **D-e, the ATMOSPHERE texture lengthened sentences.** Mean sentence length (voice_rubric `measure`): Atlas &
-  Hearth 21.4 (round 5) → 24.4 words (round 6), WildKind 18.9 → 24.3. The judges quote the long ones ("carries the
-  greatest density of the heritage the entire route is built around", "clunky lines"). The texture says "told in
+  Hearth 21.4 (round 5) → 24.4 words (round 6), WildKind 18.9 → 24.3. The judges quote the long ones (a heritage-density
+  sentence of 15 words, "clunky lines"). The texture says "told in
   unhurried, well-built sentences"; "unhurried" is a word the S1 writer v2 already lists as abstract filler, and a
-  round-5 WildKind tell was "terrain that rewards careful, unhurried movement".
+  round-5 WildKind tell paired "careful, unhurried" with the terrain.
 - Not a cause: the deterministic pass (round 6 made 23 edits on 20 pieces, none on a voice line of Trail Pulse or
   WildKind), reader presence (the share of sentences that name the reader is 0.25 in round 6 against 0.21 in round
   3, blog), and the one "the seed describes" leak (a re-panel artefact: the live T9 loop's F13 `LEAK_RE` catches
   "the seed"; the re-panel script runs no gate).
 
-What round 3 had that round 6 lacks is mostly the aphorisms and verdicts the AI-tells lens docks ("the land is still
-deciding what it wants to be", "this is a village, not a programme"). Bringing them back would trade AI-tells for
+What round 3 had that round 6 lacks is mostly the aphorisms and verdicts the AI-tells lens docks (a land-still-deciding
+aphorism, a "not X but Y" village line). Bringing them back would trade AI-tells for
 voice; round 7 instead gives the writer the brand's own points to cover from the seed, and removes the brief that
 makes the Terra LinkedIn closer.
 
@@ -1618,8 +1618,7 @@ makes the Terra LinkedIn closer.
   prompt (every channel, every brand): the angle lines are an internal brief, not copy; follow their focus and shape,
   never copy their phrasing (only the place names and facts they share with the content seed), and leave out any
   detail, reassurance or framing they ask for that the seed does not give. It targets D-b at its source: T8 keeps
-  writing briefs ("making it an accessible, structured stop", "Emphasise what a visiting family observes: training in
-  progress") that SOURCE FIDELITY and VISIT DETAIL forbid, and the writer resolved that conflict for the brief. The
+  writing briefs (an "accessible, structured" closer, a line on what a visiting family watches) that SOURCE FIDELITY and VISIT DETAIL forbid, and the writer resolved that conflict for the brief. The
   line says "content seed" in lower case so the section label "CONTENT SEED (" stays the first upper-case
   "CONTENT SEED" of the prompt (test_aa779 indexes it). T8's own prompt is not touched (out of this lane; the brief is
   still useful as shape).
