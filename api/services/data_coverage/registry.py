@@ -343,6 +343,13 @@ ROWS: tuple[Row, ...] = (
     Row("geo.names_waiting", "places", "Place names unknown / pending", f("geo", "names_waiting"), "backlog",
         "defect", unit="names", denominator=f("geo", "names_total"), denominator_label="place names",
         issue="name resolution", drill="/admin/places", sources=("geo",)),
+    # AA-990: place_geocode runs whenever names are due (place_extract enqueues it, it continues itself, and after the
+    # Geoapify daily credit stop it queues itself for the reset), so a name due for more than a day means geocoding
+    # stalled (no job, a failing job, geocoder unavailable) or the backlog is bigger than the daily credits.
+    Row("geo.names_stalled", "places", "Place names due for geocoding for more than 24 h",
+        f("geo", "names_due_over_24h"), "must", "defect", unit="names", denominator=f("geo", "names_total"),
+        denominator_label="place names", issue="AA-990 place_geocode stalled", drill="/admin/jobs",
+        sources=("geo",)),
     Row("geo.shapes", "places", "Line places with a usable shape", f("geo", "shapes_usable"), "backlog",
         unit="shapes", denominator=f("geo", "line_shapes"), denominator_label="line places",
         expected=f("geo", "shapes_not_found"), expected_note="no geometry exists (not_found)", issue="shape fetch",

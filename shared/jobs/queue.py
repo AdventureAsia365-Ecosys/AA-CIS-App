@@ -443,18 +443,30 @@ async def latest(pool, kind: str, statuses: tuple = ()) -> Optional[dict]:
     return _row_dict(rows[0]) if rows else None
 
 
+# AA-990: a queued row due more than this far ahead is not interrupted by a deploy (it sits in the table until its
+# run_after; whichever image is running then claims it), so the deploy guard does not count it. Every scheduled
+# run_after in the runner is <= 20 min (debounce cap, retry backoff <= 15 min, staff invite delay) except the
+# place_geocode run queued for the next Geoapify credit reset (up to ~24 h ahead), which would otherwise block every
+# deploy until 00:10 UTC.
+DEPLOY_GATE_HORIZON_S = 3600
+
+
 async def active_count(pool, exempt_kinds: Sequence[str] = ()) -> dict:
-    """AA-725 — queued + running jobs right now, with NO time filter, for the pre-deploy guard.
+    """AA-725 — queued + running jobs right now, with NO lower time bound, for the pre-deploy guard.
     A deploy restarts the containers; any job in these two states would be interrupted (re-queued
     by the reaper, or lost if in-process), so CI blocks the deploy while this is non-zero.
-    AA-832: rows of `exempt_kinds` (kinds registered with deploy_gate_exempt) are not counted."""
+    AA-832: rows of `exempt_kinds` (kinds registered with deploy_gate_exempt) are not counted.
+    AA-990: queued rows whose run_after is more than DEPLOY_GATE_HORIZON_S ahead are not counted either; they are
+    reported as `scheduled_later` (no running job, nothing due soon: a deploy loses nothing)."""
     rows = await pool.fetch(
-        "SELECT status, count(*)::int AS n FROM shared.job "
-        "WHERE status IN ('queued', 'running') AND NOT (kind = ANY($1::text[])) GROUP BY status",
-        list(exempt_kinds),
+        "SELECT CASE WHEN status = 'queued' AND run_after > now() + make_interval(secs => $2) "
+        "THEN 'scheduled_later' ELSE status END AS status, count(*)::int AS n FROM shared.job "
+        "WHERE status IN ('queued', 'running') AND NOT (kind = ANY($1::text[])) GROUP BY 1",
+        list(exempt_kinds), DEPLOY_GATE_HORIZON_S,
     )
-    by_status = {r["status"]: r["n"] for r in rows}
-    return {"active": sum(by_status.values()), "by_status": by_status}
+    counts = {r["status"]: r["n"] for r in rows}
+    later = counts.pop("scheduled_later", 0)
+    return {"active": sum(counts.values()), "by_status": counts, "scheduled_later": later}
 
 
 # ── worker liveness (AA-687, migration 178) ─────────────────────────────────────────────────────
