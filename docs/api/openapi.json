@@ -14334,7 +14334,7 @@
     },
     "/admin/job-runner/deploy-gate": {
       "get": {
-        "description": "Pre-deploy guard (AA-725 part 1). CI has no RDS access (private subnet), so it asks the live\nAPI instead of querying shared.job directly. Returns the number of jobs that a deploy would\ninterrupt; CI blocks the roll when `safe_to_deploy` is false. Gated by the admin secret so it\nis not a public queue-size probe.\n\nAA-832: kinds registered with `deploy_gate_exempt` are not counted, and are listed in\n`exempt_kinds` so the CI log says why a queued row of theirs did not block. No kind uses the flag\nsince AA-751 moved the 5-minute RDS sample into the api process (api/core/ops_metrics_sampler.py).",
+        "description": "Pre-deploy guard (AA-725 part 1; meaning changed by AA-993 G5, design D1.4). CI has no RDS access (private\nsubnet), so it asks the live API instead of querying the database. CI blocks the roll when `safe_to_deploy` is\nfalse, which is only while a rerun wave is open (`open_waves`) or a job of a `deploy_blocking` kind is running\n(`blocking_running`) or queued due within 15 min (`blocking_due`); `blocked_by` says why in words. Queued/running\njobs of other kinds no longer block (the worker drains and releases them, G1-G4); they are still reported in\n`active` / `by_status` / `scheduled_later` (kinds registered with `deploy_gate_exempt` left out, listed in\n`exempt_kinds`). Gated by the admin secret so it is not a public queue-size probe.",
         "operationId": "deploy_gate_admin_job_runner_deploy_gate_get",
         "parameters": [
           {
@@ -14390,7 +14390,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-725 — queued+running count for the pre-deploy CI guard",
+        "summary": "AA-993 G5 — open waves and running deploy-blocking jobs, for the CI guard",
         "tags": [
           "admin-job-runner"
         ]

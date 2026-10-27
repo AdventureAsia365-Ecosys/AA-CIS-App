@@ -81,6 +81,28 @@ def test_guard_blocks_and_override_releases(gate, case):
     assert "OVERRIDDEN" in released.stdout
 
 
+def test_guard_passes_with_queued_and_running_jobs_when_the_gate_says_safe(gate):
+    """AA-993 G5: queued/running jobs alone no longer block; the guard follows `safe_to_deploy` only."""
+    r = _guard(url=gate(200, {"safe_to_deploy": True, "active": 7, "by_status": {"queued": 4, "running": 3},
+                              "open_waves": 0, "blocking_running": {}, "blocked_by": []}))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "7 queued/running job(s) are released and re-claimed" in r.stdout
+
+
+@pytest.mark.parametrize("body, reason", [
+    ({"safe_to_deploy": False, "active": 0, "open_waves": 1, "blocked_by": ["1 rerun wave(s) open"]},
+     "1 rerun wave(s) open"),
+    ({"safe_to_deploy": False, "active": 1, "blocking_running": {"data_erasure": 1},
+      "blocked_by": ["1 data_erasure job(s) running (deploy-blocking kind)"]},
+     "1 data_erasure job(s) running (deploy-blocking kind)"),
+    ({"safe_to_deploy": False, "active": 2}, "a rerun wave is open or a deploy-blocking job is running"),
+], ids=["open-wave", "blocking-kind", "no-reason-field"])
+def test_guard_names_the_blocking_reason(gate, body, reason):
+    r = _guard(url=gate(200, body))
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert f"::error::Deploy blocked: {reason}." in r.stdout
+
+
 def _audit(tmp_path, lines, today="2026-10-17"):
     ignore = tmp_path / "ignore.txt"
     ignore.write_text("\n".join(lines) + "\n")

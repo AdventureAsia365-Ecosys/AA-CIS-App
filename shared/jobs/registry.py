@@ -37,9 +37,9 @@ class JobKind:
     # AA-712: a background kind never takes one of the worker's last BACKGROUND_RESERVE free
     # slots (worker.claim_caps), so it cannot starve the pipeline kinds of a wave (S217 lesson).
     background: bool = False
-    # AA-832: the pre-deploy guard (GET /admin/job-runner/deploy-gate) does not count this kind's
-    # queued/running rows. Only for short, read-only, frequently re-scheduled kinds whose loss to a
-    # deploy costs one sample at most. Unused since AA-751 (the RDS sample left the job runner).
+    # AA-832: the deploy gate (GET /admin/job-runner/deploy-gate) leaves this kind's queued/running rows out of its
+    # `active` count. Since AA-993 G5 that count is information only (it no longer blocks); the flag still keeps
+    # always-queued kinds out of it. Used by the test-only noop_sleep (AA-993 G1).
     deploy_gate_exempt: bool = False
     # AA-839: POST /admin/job-runner/jobs/{id}/retry asks this first; a message = refused (409). For kinds whose
     # job must never run twice from the same payload (an approved, destructive apply).
@@ -49,8 +49,10 @@ class JobKind:
     # draining task until the process ends): set it to the ECS stopTimeout so the old task is gone before a new
     # worker re-claims. 0 = due at once (the default).
     release_delay_seconds: int = 0
-    # AA-993 G1: a kind that a deploy must not interrupt (not safe to re-run after a release). Registry flag only in
-    # G1; the deploy guard reads it from G5 on (a running row of such a kind will block the deploy).
+    # AA-993 G1/G5: a kind that a deploy must not interrupt (not safe to re-run after a release). The deploy gate
+    # (worker.deploy_gate_status) is unsafe while a row of such a kind is RUNNING or QUEUED and due within 15 min (the
+    # old task would claim it before its SIGTERM); a queued row due later does not block.
+    # Today: data_erasure, s1_batch_ingest.
     deploy_blocking: bool = False
 
 

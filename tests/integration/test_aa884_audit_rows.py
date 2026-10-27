@@ -251,4 +251,4 @@ async def test_worker_git_sha_and_deploy_gate(env):
         await p.execute("DELETE FROM shared.job_worker WHERE worker_id = $1", wid)
     from shared.jobs.worker import deploy_gate_status
     gate = await deploy_gate_status(p)
-    assert set(gate) >= {"active", "safe_to_deploy", "exempt_kinds"}
+    assert set(gate) >= {"active", "safe_to_deploy", "exempt_kinds", "open_waves", "blocking_running", "blocked_by"}

@@ -504,9 +504,9 @@ DEPLOY_GATE_HORIZON_S = 3600
 
 
 async def active_count(pool, exempt_kinds: Sequence[str] = ()) -> dict:
-    """AA-725 — queued + running jobs right now, with NO lower time bound, for the pre-deploy guard.
-    A deploy restarts the containers; any job in these two states would be interrupted (re-queued
-    by the reaper, or lost if in-process), so CI blocks the deploy while this is non-zero.
+    """AA-725 — queued + running jobs right now, with NO lower time bound. Since AA-993 G5 the deploy gate reports
+    this as information only (the decision is `deploy_blockers`): a deploy releases the running ones and the new
+    revision re-claims them; queued ones are claimed by whichever image is live.
     AA-832: rows of `exempt_kinds` (kinds registered with deploy_gate_exempt) are not counted.
     AA-990: queued rows whose run_after is more than DEPLOY_GATE_HORIZON_S ahead are not counted either; they are
     reported as `scheduled_later` (no running job, nothing due soon: a deploy loses nothing)."""
@@ -519,6 +519,33 @@ async def active_count(pool, exempt_kinds: Sequence[str] = ()) -> dict:
     counts = {r["status"]: r["n"] for r in rows}
     later = counts.pop("scheduled_later", 0)
     return {"active": sum(counts.values()), "by_status": counts, "scheduled_later": later}
+
+
+# AA-993 G5 review: a QUEUED row of a deploy_blocking kind due within this window also blocks. The guard runs before
+# the image build + push and the old task keeps claiming until its SIGTERM several minutes later, so such a row would
+# otherwise be claimed by the old task and cut mid-run. 15 min covers build + push + roll; a row due later waits for
+# whichever image is live then (the blocking kinds are enqueued due at once, max_attempts=1, so this is rare).
+DEPLOY_BLOCKING_HORIZON_S = 900
+
+
+async def deploy_blockers(pool, blocking_kinds: Sequence[str] = ()) -> dict:
+    """AA-993 G5 (design D1.4) — what blocks a deploy: open rerun waves (`shared.rerun_wave`, migration 217), and rows
+    of `blocking_kinds` (kinds registered with `deploy_blocking`) per kind that are RUNNING (`blocking_running`) or
+    QUEUED and due within DEPLOY_BLOCKING_HORIZON_S (`blocking_due`: the old task would claim them before its SIGTERM).
+    A queued row due later does not block. One round trip; raises on a read error so the deploy gate fails closed."""
+    rows = await pool.fetch(
+        "SELECT 'wave' AS what, NULL::text AS kind, count(*)::int AS n FROM shared.rerun_wave WHERE status = 'open' "
+        "UNION ALL "
+        "SELECT CASE WHEN status = 'running' THEN 'running' ELSE 'due' END, kind, count(*)::int FROM shared.job "
+        "WHERE kind = ANY($1::text[]) AND (status = 'running' "
+        "OR (status = 'queued' AND run_after <= now() + make_interval(secs => $2))) GROUP BY 1, 2",
+        list(blocking_kinds), DEPLOY_BLOCKING_HORIZON_S,
+    )
+    open_waves = sum(r["n"] for r in rows if r["what"] == "wave")
+    running = {r["kind"]: r["n"] for r in rows if r["what"] == "running" and r["n"]}
+    due = {r["kind"]: r["n"] for r in rows if r["what"] == "due" and r["n"]}
+    return {"open_waves": open_waves, "blocking_running": dict(sorted(running.items())),
+            "blocking_due": dict(sorted(due.items()))}
 
 
 # ── worker liveness (AA-687, migration 178) ─────────────────────────────────────────────────────

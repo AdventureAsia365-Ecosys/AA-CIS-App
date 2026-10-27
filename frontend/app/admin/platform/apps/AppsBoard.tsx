@@ -249,9 +249,11 @@ function CisBody({ card }: { card: CisCard }) {
     parity = { tone: "neutral", label: "Not compared", title: "The API reports no commit (local / CI process) or the workers could not be read" };
   }
   const gate = card.deploy_gate;
+  // AA-993 G5: the jobs a deploy releases (info); the gate blocks only on an open wave or a deploy-blocking kind.
   const gateDetail = gate
     ? Object.entries(gate.by_status).map(([s, n]) => `${n} ${s}`).join(", ")
     : "";
+  const gateReasons = gate?.blocked_by?.length ? gate.blocked_by.join("; ") : "";
   return (
     <>
       <Fields>
@@ -269,15 +271,24 @@ function CisBody({ card }: { card: CisCard }) {
             {card.workers === null ? "unreadable" : `${workers.length} live`}
           </span>
         </Field>
-        <Field label="Deploy gate" title="Queued + running jobs a deploy would interrupt (same answer as the CI guard)">
+        <Field label="Deploy gate" title="Same answer as the CI guard: a deploy waits only while a rerun wave is open or a deploy-blocking job runs; other queued / running jobs are released and picked up by the new revision">
           {gate === null ? (
             <span style={{ color: K.muted }}>unreadable</span>
           ) : gate.safe_to_deploy ? (
-            <Badge tone="success" dot={false}>Safe to deploy</Badge>
+            <>
+              <Badge tone="success" dot={false}>Safe to deploy</Badge>
+              {gateDetail && (
+                <span style={{ color: K.muted, fontSize: 12 }} title="Released on deploy and re-claimed by the new revision">
+                  {gateDetail} (released on deploy)
+                </span>
+              )}
+            </>
           ) : (
             <>
-              <Badge tone="warning" dot={false}>{gate.active} active job{gate.active === 1 ? "" : "s"}</Badge>
-              {gateDetail && <span style={{ color: K.muted, fontSize: 12 }}>{gateDetail}</span>}
+              <Badge tone="warning" dot={false}>Deploy waits</Badge>
+              <span style={{ color: K.muted, fontSize: 12 }}>
+                {gateReasons || `${gate.active} active job${gate.active === 1 ? "" : "s"}`}
+              </span>
             </>
           )}
         </Field>

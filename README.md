@@ -89,7 +89,7 @@ Local commands are in the header of `secret-scan.yml`.
 ## Deploy
 
 - **Backend:** merge to `main` → `Deploy Dev` (`.github/workflows/deploy-dev.yml`): pre-deploy job
-  guard (blocks while `shared.job` has queued/running jobs), build + push to ECR, new task
+  guard (blocks only while a rerun wave is open or a deploy-blocking kind runs, AA-993 G5), build + push to ECR, new task
   definitions for api and worker on one image, wait stable, same-SHA check, smoke tests.
 - **Frontend deploys:** CI-created via `.github/workflows/vercel-deploy.yml` (only when `frontend/**`
   changes: PR → preview + UI smoke, `main` → production); the Vercel Git integration is off via

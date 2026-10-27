@@ -18,7 +18,7 @@ on:
   workflow_dispatch:
     inputs:
       override_running_jobs:
-        description: "AA-725 — reason to deploy anyway while jobs are queued/running (Nghiệp only). Leave empty to respect the guard."
+        description: "AA-725 — reason to deploy anyway while a rerun wave is open or a deploy-blocking job runs (AA-993 G5; Nghiệp only). Leave empty to respect the guard."
         required: false
         type: string
 permissions:
@@ -36,13 +36,14 @@ env:
   ECS_CLUSTER: ${{ secrets.ECS_CLUSTER }}
   ECS_SERVICE: ${{ secrets.ECS_SERVICE }}
 jobs:
-  # AA-725 part 1 — pre-deploy guard. A deploy restarts the api/worker containers; any job that is
-  # queued or running would be interrupted (S212: 3 PRs merged mid Thailand wave killed 16 S1
-  # jobs). CI has no RDS access (private subnet), so it asks the LIVE api, which counts shared.job
-  # with no time filter. The guard blocks the roll when a job is active, unless a workflow_dispatch
-  # run supplied `override_running_jobs` with a reason (logged below). Kinds registered with
-  # `deploy_gate_exempt` (AA-832; no kind uses it since AA-751) are not counted; the response lists
-  # them in `exempt_kinds`.
+  # AA-725 part 1 — pre-deploy guard; meaning changed by AA-993 G5 (design D1.4). CI has no RDS
+  # access (private subnet), so it asks the LIVE api. The guard blocks the roll only while a rerun
+  # wave is open (shared.rerun_wave) or a job of a `deploy_blocking` kind is running (or queued, due
+  # within 15 min: this guard runs before the build, and the old task would claim it); any other
+  # running job is drained and released by the worker on SIGTERM and re-claimed by the new revision
+  # (G1-G4), and queued jobs are claimed by whichever image is live. A workflow_dispatch run with an
+  # `override_running_jobs` reason (Nghiệp only) passes anyway (logged below). The response still
+  # reports queued/running counts (`active`, `by_status`) and why it blocks (`blocked_by`).
   preflight:
     name: Pre-deploy job guard
     runs-on: ubuntu-latest
@@ -51,7 +52,7 @@ jobs:
       - uses: actions/checkout@v5
       # Fails closed (AA-868): a missing secret or an unreachable gate blocks the roll; an
       # override reason lets it through (also the way out when the API itself is down).
-      - name: Check for queued/running jobs
+      - name: Check for an open wave or a running deploy-blocking job
         env:
           ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
           OVERRIDE: ${{ inputs.override_running_jobs }}

@@ -507,10 +507,11 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     fires when no sample arrives). This replaced the AA-832 chain (ops-probe Lambda every 5 min ->
     `POST /admin/job-runner/rds-role-connections/schedule` -> job `ops_rds_role_connections` -> worker),
     both now removed. `@job_kind(..., deploy_gate_exempt=True)` stays as a mechanism (the pre-deploy
-    guard `GET /admin/job-runner/deploy-gate` skips and lists such kinds in `exempt_kinds`); only the test-only
-    kind `noop_sleep` uses it (AA-993 G1, below). AA-990: the guard also sets apart queued rows due more than 1 h ahead
-    (`queue.DEPLOY_GATE_HORIZON_S`, reported as `scheduled_later`): a deploy cannot interrupt them. Today that is
-    only the `place_geocode` run queued for the next Geoapify credit reset.
+    guard `GET /admin/job-runner/deploy-gate` leaves such kinds out of its info counts and lists them in
+    `exempt_kinds`; since AA-993 G5 those counts no longer block); only the test-only kind `noop_sleep` uses it
+    (AA-993 G1, below). AA-990: the info counts also set apart queued rows due more than 1 h ahead
+    (`queue.DEPLOY_GATE_HORIZON_S`, reported as `scheduled_later`). Today that is only the `place_geocode` run
+    queued for the next Geoapify credit reset.
   - The worker runs as its own ECS service `aa-cis-dev-worker` (`python -m shared.jobs.worker`,
     AA-651); the API task sets `JOB_WORKER_IN_API=false`. The in-API loop (FastAPI lifespan) still
     exists for local/dev use.
@@ -538,8 +539,15 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
       `.github/verify/cis.rows`) returns `released`, `counted`, `jobs`, `by_kind`.
     - Registry fields: `release_delay_seconds` (a released job is due that much later; for kinds whose thread
       outlives the cancelled handler, set to the stopTimeout; `a3_atomize` = 120 since G3) and
-      `deploy_blocking` (a kind a deploy must not interrupt; recorded only, the deploy guard reads it from G5 on; it
-      cannot be combined with `deploy_gate_exempt`). `GET /summary` lists both per kind.
+      `deploy_blocking` (a kind a deploy must not interrupt: the deploy gate is unsafe while one of its rows runs or
+      is queued due within 15 min, G5; today `data_erasure` and `s1_batch_ingest`; it cannot be combined with `deploy_gate_exempt`). `GET
+      /summary` lists both per kind.
+    - **Deploy gate (AA-993 G5, design D1.4).** `GET /admin/job-runner/deploy-gate` (`worker.deploy_gate_status`,
+      also the Platform Apps card) answers `safe_to_deploy = false` only while a rerun wave is open (`open_waves`,
+      `shared.rerun_wave.status = 'open'`) or a `deploy_blocking` kind runs (`blocking_running` per kind) or is
+      queued due within `queue.DEPLOY_BLOCKING_HORIZON_S` = 15 min (`blocking_due`: the guard runs before the image
+      build and the old task would claim it before its SIGTERM); `blocked_by` names the reasons. Queued/running jobs of other kinds no longer block: the worker drains them
+      and the new revision re-claims a released job. `active` / `by_status` / `scheduled_later` stay as info.
     - `noop_sleep` (`services/jobs/noop_sleep_job.py`): a test-only kind, registered only when `JOB_TEST_KINDS=1`
       (set it on api **and** worker, or the post-deploy verify's worker-kinds row goes red); sleeps
       `payload.seconds` (1..3600), resumes from `progress.slept_seconds`, `max_attempts=1`, `deploy_gate_exempt`.
@@ -685,7 +693,7 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   21:00 UTC = 04:00 ICT) calls `POST /admin/photos/sync/schedule`: one incremental `photo_sync` job
   per CON country, idempotent per UTC day, skipped while another `photo_sync` job is queued or
   running (not skipped during a rerun wave: no LLM work); `/admin/photos/summary` reports it as
-  `last_scheduled`. Those serial jobs hold the deploy gate for a while around 04:00 ICT. With
+  `last_scheduled`. (Before AA-993 G5 those serial jobs held the deploy gate around 04:00 ICT; they no longer do.) With
   `match_destinations` it fills empty `shared.destinations.cover_image_url` (read by the TripPlanner)
   — off until the destinations are re-extracted from the rerun tours (the schedule never sets it).
 - **Place pipeline (AA-712, ADR 0007, migration 226)**: CIS — not TripPlanner — computes each live
