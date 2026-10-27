@@ -52,7 +52,8 @@ function EvidenceBadges({ r }: { r: Release }) {
         const run = r.evidence?.[slot] ?? null;
         if (!run && !need.includes(slot)) return null;
         const word = evidenceWord(slot, run, r.content_class);
-        const tone = evidenceOk(slot, run, r.content_class) ? "success" : run ? "danger" : "warning";
+        const tone = evidenceOk(slot, run, r.content_class) ? "success"
+          : run && !run.missing && !run.finished ? "warning" : run ? "danger" : "warning";
         return <Badge key={slot} tone={tone} dot={false}>{label} {word}</Badge>;
       })}
     </div>
@@ -162,7 +163,7 @@ function NewDraftModal({ open, onClose, onCreated }: { open: boolean; onClose: (
   const [f, setF] = useState({ writer: "t9_social" as Writer, scope: "platform", tenant: "", rules: "", notes: "" });
   const [busy, setBusy] = useState(false);
   const ruleIds = f.rules.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
-  const bad = (f.scope === "tenant" && !isUuid(f.tenant)) || ruleIds.some((id) => !isUuid(id));
+  const bad = (f.scope === "tenant" && !isUuid(f.tenant)) || ruleIds.some((id) => !isUuid(id)) || ruleIds.length > 40;
 
   async function create() {
     setBusy(true);
@@ -389,7 +390,7 @@ function ReleaseDrawer({ releaseId, onClose, canAdmin, active }: { releaseId: st
               {(allowed.rollback || allowed.reject || r.status === "active") && (
                 <div style={{ display: "grid", gap: 6 }}>
                   <input placeholder={allowed.rollback ? "Why roll it back?" : "Why reject it?"} value={reason}
-                    onChange={(e) => setReason(e.target.value)} style={inputStyle}
+                    onChange={(e) => setReason(e.target.value)} style={inputStyle} maxLength={400}
                     aria-label={allowed.rollback ? "Rollback reason" : "Reject reason"} />
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     {allowed.rollback && <Button variant="danger" disabled={reason.trim().length < 3 || busy}
