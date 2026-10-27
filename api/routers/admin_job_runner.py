@@ -7,6 +7,7 @@
   GET  /admin/job-runner/summary           counts per kind and status, registered kinds
   GET  /admin/job-runner/jobs/{id}/llm-calls  LLM calls the job made (AA-687)
   GET  /admin/job-runner/workers           worker liveness, running per worker, queue depth (AA-687)
+  GET  /admin/job-runner/released          jobs released on worker shutdown since a time (AA-993 G1)
   GET  /admin/job-runner/retention         retention kinds: policy, table size, last runs (AA-825)
   POST /admin/job-runner/retention/run     enqueue one retention kind (DRY RUN unless approved);
                                            with older_than: an admin-only manual override proof run
@@ -24,7 +25,7 @@ Not under /admin/jobs: that path serves the older shared.pipeline_jobs (AA-223, 
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Literal, Optional
 
 import structlog
@@ -151,7 +152,10 @@ async def summary(request: Request):
     return {
         "counts": [dict(r) for r in rows],
         "kinds": [{"kind": k.name, "concurrency": k.concurrency, "max_attempts": k.max_attempts,
-                   "expected_seconds": k.expected_seconds}
+                   "expected_seconds": k.expected_seconds,
+                   # AA-993 G1: what a deploy does to this kind's running job.
+                   "deploy_gate_exempt": k.deploy_gate_exempt, "deploy_blocking": k.deploy_blocking,
+                   "release_delay_seconds": k.release_delay_seconds}
                   for k in kinds().values()],
         # AA-687: a job released this many times on shutdown is failed (queue.release()).
         "max_releases": queue.MAX_RELEASES,
@@ -182,6 +186,25 @@ async def workers(request: Request):
         "queued": [_iso(q) for q in health["queued"]],
         "alive_seconds": health["alive_seconds"],
     }
+
+
+RELEASED_DEFAULT_WINDOW = timedelta(hours=24)
+
+
+@router.get("/released", summary="AA-993 — jobs released on worker shutdown since a time")
+async def released(request: Request,
+                   since: Optional[str] = Query(None, description="ISO-8601 datetime; default: 24 h ago")):
+    """AA-993 G1 (ADR 0016 D1.6) — how many running jobs the workers released on shutdown (SIGTERM, drain window
+    over) at or after `since`, from each job's `progress.release_log`. `counted` = releases that counted toward
+    queue.MAX_RELEASES (no worker of a newer task revision was alive); a deploy's releases are not counted. Read by
+    the post-deploy verify (CI cannot reach RDS); machine GET, see api/core/staff_authz.py MACHINE_ROUTES."""
+    since_dt = _parse_dt(since, "since") if isinstance(since, str) else None
+    if since_dt is None:
+        since_dt = datetime.now(timezone.utc) - RELEASED_DEFAULT_WINDOW
+    elif since_dt.tzinfo is None:
+        since_dt = since_dt.replace(tzinfo=timezone.utc)
+    out = await queue.released_since(request.app.state.pool, since_dt)
+    return {"since": since_dt.isoformat(), **out, "max_releases": queue.MAX_RELEASES}
 
 
 @router.get("/jobs/{job_id}", summary="AA-650 — one job")

@@ -194,40 +194,88 @@ async def fail(pool, job: Job, worker_id: str, error: str, *, retryable: bool,
 
 # A job whose worker keeps stopping mid-run (e.g. the process is replaced each time the job runs)
 # is failed after this many releases instead of looping forever — a release does not count as an
-# attempt, so without this cap such a job would never end.
+# attempt, so without this cap such a job would never end. AA-993 G1: a release while a worker of a newer
+# task revision is alive (a deploy) is not counted here (release(count_release=False)).
 MAX_RELEASES = 3
 
+# AA-993 G1: every release on shutdown appends {at, counted, worker} to progress.release_log (the last
+# RELEASE_LOG_KEEP entries are kept), read by GET /admin/job-runner/released. No new column: shared.job is a hot table
+# (critic 6: an ADD COLUMN would break the running `RETURNING *` claim), and progress is in the shared job template.
+RELEASE_LOG_KEEP = 20
 
-async def release(pool, job_id: str, worker_id: str, cost_usd: Optional[float]) -> str:
-    """Graceful shutdown: back to the queue at once, and the interrupted attempt is not counted.
+
+async def release(pool, job_id: str, worker_id: str, cost_usd: Optional[float], *,
+                  count_release: bool = True, delay_seconds: int = 0) -> str:
+    """Graceful shutdown: back to the queue, and the interrupted attempt is not counted.
+
+    `count_release` (AA-993 G1): False when a worker of a newer task revision is alive, i.e. a deploy replaced
+    this worker; then `progress.releases` (the MAX_RELEASES count) is unchanged, so deploys never fail a job.
+    `delay_seconds`: the job is due again that much later (the kind's release_delay_seconds).
     Returns the new status: 'queued', 'cancelled' (an admin asked to cancel it), 'failed'
-    (released MAX_RELEASES times), or '' when the job was no longer ours."""
+    (a counted release reached MAX_RELEASES), or '' when the job was no longer ours."""
     row = await pool.fetchrow(
         """
         WITH cur AS (
-            SELECT coalesce((progress->>'releases')::int, 0) + 1 AS releases, cancel_requested
+            SELECT coalesce((progress->>'releases')::int, 0) + CASE WHEN $5 THEN 1 ELSE 0 END AS releases,
+                   cancel_requested,
+                   CASE WHEN jsonb_typeof(progress->'release_log') = 'array' THEN progress->'release_log'
+                        ELSE '[]'::jsonb END
+                   || jsonb_build_array(jsonb_build_object('at', now(), 'counted', $5::boolean,
+                                                           'worker', $2::text)) AS log
             FROM shared.job WHERE id = $1::uuid
+        ), kept AS (
+            SELECT coalesce(jsonb_agg(e ORDER BY o), '[]'::jsonb) AS log
+            FROM cur, jsonb_array_elements(cur.log) WITH ORDINALITY AS t(e, o)
+            WHERE o > jsonb_array_length(cur.log) - $7
         )
         UPDATE shared.job j SET
             status = CASE WHEN cur.cancel_requested THEN 'cancelled'
-                          WHEN cur.releases >= $4 THEN 'failed' ELSE 'queued' END,
+                          WHEN $5 AND cur.releases >= $4 THEN 'failed' ELSE 'queued' END,
             attempt = greatest(j.attempt - 1, 0),
             error = CASE WHEN cur.cancel_requested THEN 'cancelled by admin'
-                         WHEN cur.releases >= $4 THEN 'stopped mid-run ' || cur.releases
+                         WHEN $5 AND cur.releases >= $4 THEN 'stopped mid-run ' || cur.releases
                               || ' times (the worker process keeps stopping while this job runs)'
                          ELSE j.error END,
-            finished_at = CASE WHEN cur.cancel_requested OR cur.releases >= $4 THEN now()
+            finished_at = CASE WHEN cur.cancel_requested OR ($5 AND cur.releases >= $4) THEN now()
                                ELSE j.finished_at END,
-            cost_usd = coalesce($3, j.cost_usd), run_after = now(),
+            cost_usd = coalesce($3, j.cost_usd), run_after = now() + make_interval(secs => $6),
             locked_by = NULL, locked_until = NULL, updated_at = now(),
-            progress = j.progress || jsonb_build_object('released', true, 'releases', cur.releases)
-        FROM cur
+            progress = j.progress || jsonb_build_object(
+                'released', true, 'releases', cur.releases, 'last_released_at', now(),
+                'shutdown_releases', coalesce((j.progress->>'shutdown_releases')::int, 0) + 1,
+                'release_log', kept.log)
+        FROM cur, kept
         WHERE j.id = $1::uuid AND j.status = 'running' AND j.locked_by = $2
         RETURNING j.status
         """,
-        job_id, worker_id, cost_usd, MAX_RELEASES,
+        job_id, worker_id, cost_usd, MAX_RELEASES, bool(count_release), max(int(delay_seconds or 0), 0),
+        RELEASE_LOG_KEEP,
     )
     return row["status"] if row else ""
+
+
+async def released_since(pool, since: datetime) -> dict:
+    """AA-993 G1 — releases on shutdown at or after `since`, from progress.release_log: the total, how many counted
+    toward MAX_RELEASES (no newer worker was alive), the distinct jobs, and the split per kind."""
+    rows = await pool.fetch(
+        """
+        SELECT j.kind, count(*)::int AS released,
+               count(*) FILTER (WHERE coalesce((e->>'counted')::boolean, true))::int AS counted,
+               count(DISTINCT j.id)::int AS jobs
+        FROM shared.job j
+        CROSS JOIN LATERAL jsonb_array_elements(
+            CASE WHEN jsonb_typeof(j.progress->'release_log') = 'array' THEN j.progress->'release_log'
+                 ELSE '[]'::jsonb END) AS e
+        WHERE j.updated_at >= $1 AND (e->>'at')::timestamptz >= $1
+        GROUP BY j.kind ORDER BY j.kind
+        """,
+        since,
+    )
+    by_kind = {r["kind"]: {"released": r["released"], "counted": r["counted"], "jobs": r["jobs"]} for r in rows}
+    return {"released": sum(v["released"] for v in by_kind.values()),
+            "counted": sum(v["counted"] for v in by_kind.values()),
+            "jobs": sum(v["jobs"] for v in by_kind.values()),
+            "by_kind": by_kind}
 
 
 async def reap(pool) -> dict:

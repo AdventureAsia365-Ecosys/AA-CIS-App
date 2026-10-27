@@ -120,6 +120,10 @@ def _good():
         "/admin/job-runner/summary": {"admin": True, "status": 200, "body": {"kinds": [{"kind": k} for k in KINDS]}},
         "/admin/job-runner/deploy-gate": {"admin": True, "status": 200, "body": {"safe_to_deploy": True}},
         "/admin/overview": {"admin": True, "status": 200, "body": {"tours": 1}},
+        # AA-993 G1: jobs released on shutdown (1 by the deploy, not counted toward MAX_RELEASES)
+        "/admin/job-runner/released": {"admin": True, "status": 200, "body": {
+            "since": "2026-10-27T00:00:00+00:00", "released": 1, "counted": 0, "jobs": 1,
+            "by_kind": {"noop": {"released": 1, "counted": 0, "jobs": 1}}, "max_releases": 3}},
         "/admin/job-runner/workers": {"admin": True, "status": 200, "body": {"workers": [
             {"alive": True, "git_sha": SHA, "caps": {k: 1 for k in KINDS}},
             # an old-revision worker still draining: neither its SHA nor its caps make the verify red
@@ -236,6 +240,11 @@ def _admin_row_500(http, ecs):
     http["/admin/overview"] = {"admin": True, "status": 500, "body": {"detail": "boom"}}
 
 
+def _released_missing(http, ecs):
+    """An image without the AA-993 G1 endpoint (404)."""
+    del http["/admin/job-runner/released"]
+
+
 @needs_tools
 @pytest.mark.parametrize("breaker, red_rows", [
     (_health_sha_mismatch, {"health"}),
@@ -250,6 +259,7 @@ def _admin_row_500(http, ecs):
     (_no_worker_on_sha, {"worker-sha", "worker-kinds"}),
     (_worker_missing_a_kind, {"worker-kinds"}),
     (_admin_row_500, {"overview"}),
+    (_released_missing, {"job-runner-released"}),
 ])
 def test_each_failure_is_red(run_verify, breaker, red_rows):
     http, ecs = copy.deepcopy(_good())
@@ -276,8 +286,8 @@ def test_stale_expected_sha_is_red_on_the_sha_rows(run_verify):
 def test_missing_admin_secret_is_red_and_admin_rows_report_not_run(run_verify):
     r, summary = run_verify(*_good(), ADMIN_SECRET="")
     assert r.returncode == 1, r.stdout
-    assert _failed_rows(summary) == {"admin-secret", "job-runner-summary", "deploy-gate", "overview", "worker-sha",
-                                     "worker-kinds"}, summary
+    assert _failed_rows(summary) == {"admin-secret", "job-runner-summary", "deploy-gate", "overview",
+                                     "job-runner-released", "worker-sha", "worker-kinds"}, summary
     # the public and ECS rows still ran
     for row in ("api-rollout", "worker-image", "health", "health-ready"):
         assert f"| {row} | PASS |" in summary, row

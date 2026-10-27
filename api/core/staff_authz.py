@@ -456,6 +456,7 @@ MACHINE_ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/admin/job-runner/deploy-gate"): "CI deploy-dev.yml: pre-deploy gate + post-deploy smoke",
     ("GET", "/admin/job-runner/summary"): "CI deploy-dev.yml: post-deploy smoke",
     ("GET", "/admin/job-runner/workers"): "CI deploy-dev.yml: post-deploy smoke (worker parity)",
+    ("GET", "/admin/job-runner/released"): "CI post-deploy-verify.yml: jobs released on shutdown (AA-993 G1)",
     ("GET", "/admin/overview"): "CI deploy-dev.yml: post-deploy smoke",
     ("POST", "/admin/dfs-balance/check"): "Infra Lambda dfs_balance_check (daily, AA-627)",
     ("POST", "/admin/jev-canary/check"): "Infra Lambda dfs_balance_check (daily, AA-720)",

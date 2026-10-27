@@ -478,8 +478,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     fires when no sample arrives). This replaced the AA-832 chain (ops-probe Lambda every 5 min ->
     `POST /admin/job-runner/rds-role-connections/schedule` -> job `ops_rds_role_connections` -> worker),
     both now removed. `@job_kind(..., deploy_gate_exempt=True)` stays as a mechanism (the pre-deploy
-    guard `GET /admin/job-runner/deploy-gate` skips and lists such kinds in `exempt_kinds`); no kind
-    uses it today. AA-990: the guard also sets apart queued rows due more than 1 h ahead
+    guard `GET /admin/job-runner/deploy-gate` skips and lists such kinds in `exempt_kinds`); only the test-only
+    kind `noop_sleep` uses it (AA-993 G1, below). AA-990: the guard also sets apart queued rows due more than 1 h ahead
     (`queue.DEPLOY_GATE_HORIZON_S`, reported as `scheduled_later`): a deploy cannot interrupt them. Today that is
     only the `place_geocode` run queued for the next Geoapify credit reset.
   - The worker runs as its own ECS service `aa-cis-dev-worker` (`python -m shared.jobs.worker`,
@@ -492,6 +492,29 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     atomize for a whole wave (S217).
   - A graceful shutdown releases running jobs (attempt not counted); a crash is caught by the
     reaper after the 90 s lease.
+  - Drain on shutdown (AA-993 G1, ADR 0016 D1; root design `docs/audits/2026-10-26-S252-aa993-delivery-pipeline/`).
+    On SIGTERM (`worker.serve()`) the service worker stops claiming, gives running jobs `JOB_WORKER_GRACE_SECONDS`
+    (`worker_grace_seconds()`; AA-CIS-Infra sets 100 on `aa-cis-dev-worker`; absent = 20 s as before) and then
+    releases the rest. The window must leave 15 s of the container's ECS stopTimeout
+    (`JOB_WORKER_STOP_TIMEOUT_SECONDS`, default 120); otherwise the worker refuses to start (ValueError). The in-API
+    worker keeps the 20 s class default. Logs: `job_worker_draining` (running, kinds, grace), `job_worker_drained`
+    (finished / released), `job_released_on_shutdown` (next_status, `counted`, `release_delay_seconds`).
+    - A release while a worker of a newer task revision is alive (a deploy, `queue.newer_worker_alive`) does not count
+      toward `queue.MAX_RELEASES` (`queue.release(count_release=False)`), so deploys never fail a job; with no newer
+      worker (or the check failing) it counts, as before.
+    - Every release appends `{at, counted, worker}` to `progress.release_log` (last 20) and bumps
+      `progress.shutdown_releases`; `progress.releases` stays the MAX_RELEASES counter. JSON in `progress`, not a
+      column: `shared.job` is a hot table and the claim uses `RETURNING *` (design critic 6).
+      `GET /admin/job-runner/released?since=` (default 24 h; machine GET in `MACHINE_ROUTES`, a row in
+      `.github/verify/cis.rows`) returns `released`, `counted`, `jobs`, `by_kind`.
+    - Registry fields: `release_delay_seconds` (a released job is due that much later; for kinds whose thread
+      outlives the cancelled handler, set to the stopTimeout; none yet, G3 sets it on `a3_atomize`) and
+      `deploy_blocking` (a kind a deploy must not interrupt; recorded only, the deploy guard reads it from G5 on; it
+      cannot be combined with `deploy_gate_exempt`). `GET /summary` lists both per kind.
+    - `noop_sleep` (`services/jobs/noop_sleep_job.py`): a test-only kind, registered only when `JOB_TEST_KINDS=1`
+      (set it on api **and** worker, or the post-deploy verify's worker-kinds row goes red); sleeps
+      `payload.seconds` (1..3600), resumes from `progress.slept_seconds`, `max_attempts=1`, `deploy_gate_exempt`.
+      It is the live drain proof: enqueue it, deploy, read the logs and `/released`.
   - After a deploy the old task drains for ~5 min; its worker stops claiming as soon as a worker of a
     newer ECS task-definition revision is live (AA-711, `job_worker.task_revision`, migration 199).
   - Job cost (AA-652 follow-up, migration 177): the worker binds the job id around each handler

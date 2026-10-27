@@ -17,3 +17,4 @@ health-ready|public|GET /health/ready|200|.status == "ok" and .db == "ok" and .g
 job-runner-summary|admin|GET /admin/job-runner/summary|200|(.kinds | length) > 0
 deploy-gate|admin|GET /admin/job-runner/deploy-gate|200|has("safe_to_deploy")
 overview|admin|GET /admin/overview|200|type == "object"
+job-runner-released|admin|GET /admin/job-runner/released|200|(.released | type) == "number" and (.counted | type) == "number"

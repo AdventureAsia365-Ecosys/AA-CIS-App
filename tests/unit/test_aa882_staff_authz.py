@@ -378,6 +378,7 @@ def test_machine_routes_cover_every_role_less_caller_and_nothing_else():
     assert set(MACHINE_ROUTES) == {
         ("GET", "/admin/job-runner/deploy-gate"), ("GET", "/admin/job-runner/summary"),
         ("GET", "/admin/job-runner/workers"), ("GET", "/admin/overview"),
+        ("GET", "/admin/job-runner/released"),   # AA-993 G1 (post-deploy verify)
         ("POST", "/admin/dfs-balance/check"), ("POST", "/admin/jev-canary/check"),
         ("POST", "/admin/jev/402-sweep"), ("POST", "/admin/waves/check"),
         ("POST", "/admin/job-runner/retention/schedule"),

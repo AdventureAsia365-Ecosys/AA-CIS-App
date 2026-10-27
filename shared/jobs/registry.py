@@ -44,6 +44,14 @@ class JobKind:
     # AA-839: POST /admin/job-runner/jobs/{id}/retry asks this first; a message = refused (409). For kinds whose
     # job must never run twice from the same payload (an approved, destructive apply).
     retry_refusal: Optional[Callable[[dict], Optional[str]]] = None
+    # AA-993 G1 (ADR 0016 D1): a job of this kind released on shutdown is due again only this many seconds later
+    # (queue.release run_after). For kinds whose work outlives the cancelled handler (a thread keeps running on the
+    # draining task until the process ends): set it to the ECS stopTimeout so the old task is gone before a new
+    # worker re-claims. 0 = due at once (the default).
+    release_delay_seconds: int = 0
+    # AA-993 G1: a kind that a deploy must not interrupt (not safe to re-run after a release). Registry flag only in
+    # G1; the deploy guard reads it from G5 on (a running row of such a kind will block the deploy).
+    deploy_blocking: bool = False
 
 
 _KINDS: dict[str, JobKind] = {}
@@ -61,10 +69,16 @@ RETIRED_KINDS: dict[str, str] = {
 def job_kind(name: str, *, concurrency: int = 1, max_attempts: int = 3,
              on_terminal: Optional[Callable[[Any, dict], Awaitable[None]]] = None,
              expected_seconds: int = 600, background: bool = False, deploy_gate_exempt: bool = False,
-             retry_refusal: Optional[Callable[[dict], Optional[str]]] = None):
+             retry_refusal: Optional[Callable[[dict], Optional[str]]] = None,
+             release_delay_seconds: int = 0, deploy_blocking: bool = False):
+    if release_delay_seconds < 0:
+        raise ValueError(f"job kind {name!r}: release_delay_seconds must be >= 0")
+    if deploy_blocking and deploy_gate_exempt:
+        raise ValueError(f"job kind {name!r}: deploy_blocking and deploy_gate_exempt contradict each other")
+
     def deco(fn):
         _KINDS[name] = JobKind(name, fn, concurrency, max_attempts, on_terminal, expected_seconds, background,
-                               deploy_gate_exempt, retry_refusal)
+                               deploy_gate_exempt, retry_refusal, release_delay_seconds, deploy_blocking)
         return fn
     return deco
 
