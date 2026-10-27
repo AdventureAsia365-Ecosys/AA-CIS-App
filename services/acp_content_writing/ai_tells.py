@@ -50,6 +50,14 @@ lets the children and the parents do what the seed says the group does, takes wa
 rest cues, drops the one-sentence-per-section cap and gives three DON'T / WRITE INSTEAD pairs;
 ``FAMILY_SHORT_POST_RULE`` (plain-text posts) asks for one concrete family moment; ``VISIT_DETAIL_RULE`` says naming
 who in the group does a seed moment is not a new fact (a FAMILY BRAND brief only). ``AI_TELLS_VERSION`` stays v3.
+
+Round 7 (S254, the S252 7-arm panel: brand voice round 3 7.17 → round 6 6.75) is prompt-side, plus one residue
+shape: ``ANGLE_BRIEF_RULE`` says the angle lines are a brief, never copy (the T8 brief's "an accessible, structured
+stop" became the Terra LinkedIn closer in 20 of 42 posts); ``brand_focus_rule`` restates the style guide's own first
+rules as a checklist met only from the seed (the judges' "nothing on pace, rest or comfort", "little about guiding
+or privacy"), with ``TRAVELLER_RETURN_LINE`` for a brand that has no texture block; the ATMOSPHERE texture asks for
+sentences of ordinary length (round 6 lengthened them); the "is a structured, accessible stop" verdict is residue in
+``hygiene.AI_TELL_LINE_RES``. The pass is unchanged, so ``AI_TELLS_VERSION`` stays v3.
 """
 from __future__ import annotations
 
@@ -221,12 +229,15 @@ _OBSERVATION_VOICE = frozenset("""nature-led observant respectful ethical respon
 _OBSERVATION_TYPE = frozenset("""nature nature-led wildlife conservation responsible eco eco-friendly ecological
 sustainable""".split())
 
-BRAND_TEXTURE_COMMON = """
-- Every factual paragraph comes back to the traveller within two sentences: after at most two sentences about
+# Round 7: the same line also closes the BRAND FOCUS block of a brand with no texture (a family brand, a pack with
+# no texture signal), so it is one constant; BRAND_TEXTURE_COMMON's bytes are unchanged.
+TRAVELLER_RETURN_LINE = (
+    """- Every factual paragraph comes back to the traveller within two sentences: after at most two sentences about
   what a place is (its history, geology, figures or other names), the next sentence puts the reader there, in a
   moment the CONTENT SEED gives (where they ride, walk, eat or sleep). A stretch that reads like a reference work
   or an encyclopedia entry is not finished. When the seed gives no moment for a place, keep its facts to two
-  sentences and move on.
+  sentences and move on.""")
+BRAND_TEXTURE_COMMON = "\n" + TRAVELLER_RETURN_LINE + """
 - Texture never adds content and never needs a tell: SOURCE FIDELITY, VISIT DETAIL and the AI TELLS rules apply to
   every line. No verdict line, no aphorism, no praise, no denial set-up and no list of three to make the voice.
 - In the DON'T / WRITE INSTEAD pairs below, <...> is a fact from the content seed, never an invented one."""
@@ -249,12 +260,13 @@ BRAND_TEXTURE_MOMENTUM_FAQ = """
   In the FAQ: "you", short sentences, the fact first."""
 BRAND_TEXTURE_ATMOSPHERE = """
 - ATMOSPHERE: atmosphere comes from the concrete sensory or material detail the CONTENT SEED or FACTS give (light,
-  stone, wood, a river, silence, a meal, the time of day), told in unhurried, well-built sentences (still within
-  the AI TELLS length limits) with the reader present in the moment. Only detail the seed gives: SOURCE FIDELITY
-  forbids inventing what a place looks, sounds or feels like. Never reach for atmosphere with an aphorism ("The
-  architecture is the devotion made structural.", "the land is still deciding what it wants to be"), with praise
-  ("one of the most layered destinations in ...") or with a line about what a place asks of or gives the reader.
-  When the seed gives no sensory detail, the calm comes from the sentence itself: one fact, fully and plainly told.
+  stone, wood, a river, silence, a meal, the time of day), told in calm, plainly built sentences of ordinary
+  length (one fact or one moment each; the AI TELLS length limits apply) with the reader present in the moment.
+  Only detail the seed gives: SOURCE FIDELITY forbids inventing what a place looks, sounds or feels like. Never
+  reach for atmosphere with an aphorism ("The architecture is the devotion made structural.", "the land is still
+  deciding what it wants to be"), with praise ("one of the most layered destinations in ...") or with a line about
+  what a place asks of or gives the reader. When the seed gives no sensory detail, the calm comes from the sentence
+  itself: one fact, fully and plainly told.
   - DON'T "The valley is one of the most layered destinations in the region."
     WRITE the seed's own detail, with the reader in it:
     "You reach <place> <at the time of day the content seed gives>,
@@ -444,6 +456,105 @@ def family_presence_rule(brand_audience: Optional[dict], channel: Optional[str] 
             if any(_family_word_counts(words, k) for k in range(len(words))):
                 return FAMILY_RULE + (FAMILY_SHORT_POST_RULE if channel in FAMILY_SHORT_POST_CHANNELS else "")
     return ""
+
+
+# AA-790 round 7 (S254; S252 7-arm panel: brand voice round 3 7.17 → round 6 6.75). Two causes the rounds before
+# did not touch:
+# * the T8 angle brief is copied as wording. 20 of 42 Terra LinkedIn posts of rounds 1-6 end on "… is a structured,
+#   accessible stop", the angle's own words ("making it an accessible, structured stop") for a stop whose seed has
+#   no practical fact; the judges call it "institutional". ANGLE_BRIEF_RULE follows the three angle lines.
+# * the brand's own style-guide points are not covered ("nothing on pace, rest, comfort or safety", "says little
+#   about guiding, privacy or stays", "little social feel"). The style guide sits in the brand block, hedged and
+#   followed by the DON'T rules; nothing maps its points to the seed facts that can meet them. BRAND FOCUS restates
+#   the guide's first rules (before its "Write like this:" / "Avoid:" parts) as a checklist, met only from the
+#   seed; a brand with no texture block (a family brand, a no-signal pack) also gets TRAVELLER_RETURN_LINE there.
+# 'content seed' in lower case, as SYSTEM_PROMPT writes it: the line sits above the "CONTENT SEED (" section, whose
+# label stays the first upper-case "CONTENT SEED" of the prompt.
+ANGLE_BRIEF_RULE = ("ANGLE BRIEF: the SELECTED ANGLE lines above are an internal brief, not copy. Follow their "
+                    "focus and shape; never copy their phrasing into the piece (only the place names and facts "
+                    "they share with the content seed); leave out any detail, reassurance or framing they ask for "
+                    "that the content seed does not give.")
+
+BRAND_FOCUS_HEAD = "\nBRAND FOCUS FOR THIS BRAND (the first rules of its style guide, in its own words):"
+BRAND_FOCUS_USE = """
+Cover each point wherever the CONTENT SEED or FACTS give you a fact for it, and check the piece against every point
+before you finish. A point about the trip itself (its pace, rest, comfort, stays, meals, safety, guiding, privacy,
+the group, the habitats or the people met) is met only by what the seed or FACTS give for it: a day number, a
+walking or driving time, where the night is, a meal, what is optional, who leads, what is private. Use every such
+fact the seed gives, in the brand's words, where it belongs in the piece. When the seed gives nothing for a point,
+leave that point out: never a general line in its place ("a structured, accessible stop", "a comfortable pace
+throughout", "expert guiding at every step"). SOURCE FIDELITY, VISIT DETAIL and the AI TELLS rules apply to every
+line."""
+# Not a style-guide point, so not in the list "in its own words": its own lead-in.
+BRAND_FOCUS_TRAVELLER_HEAD = "\nOne more rule for this brand (not from its style guide):\n"
+FOCUS_MAX_POINTS = 8
+FOCUS_MAX_CHARS = 200
+_FOCUS_BULLET_RE = re.compile(r"^(?:[-*•·]|\d{1,2}[.)])[ \t]*")
+# A sentence ends at . ! ? followed by a word that does not start in lower case ('e.g. three per paragraph' stays one
+# sentence), and never right after a common abbreviation ('e.g. Bhutan', 'St. Paul').
+_FOCUS_SENTENCE_RE = re.compile(r"(?<!\be\.g\.)(?<!\bi\.e\.)(?<!\bvs\.)(?<!\bSt\.)(?<!\bMt\.)(?<!\bapprox\.)"
+                                r"(?<!\bincl\.)(?<=[.!?])[ \t]+(?=[^\sa-z])")
+# A quoted span (straight or curly double quotes; an unclosed quote runs to the end of the line).
+_FOCUS_QUOTE_RE = re.compile(r"[\"“]([^\"“”]*)(?:[\"”]|$)")
+FOCUS_QUOTE_MIN_WORDS = 4  # a quoted span this long is an example sentence; 'Use "you" for the traveller.' is a rule
+# Labels that open the style guide's examples or its don'ts, even with text after the colon ('Avoid: hype.').
+_FOCUS_HEADER_LABEL_RE = re.compile(r"^(?:avoid|don['’]?t|do\s+not|never|examples?|write\s+like|not\s+like|instead)\b",
+                                    re.I)
+
+
+def _focus_header(text: str) -> bool:
+    """A header starts the style guide's examples or its don'ts, and the focus points end there: a short label
+    (at most five words, no full stop) before a colon with nothing after it ('Write like this:', 'Avoid:'), or a
+    known example / don't label with text after it ('Avoid: hype, slang.', 'Examples: …', "Don't: …"). A
+    'Label: rule' line such as 'Tone: warm and calm.' or 'Explain the pace: day lengths, rest.' is a point."""
+    head, colon, rest = text.partition(":")
+    if not colon or "." in head or not 0 < len(head.split()) <= 5:
+        return False
+    return not rest.strip() or bool(_FOCUS_HEADER_LABEL_RE.match(head.strip()))
+
+
+def _focus_quotes_example(line: str) -> bool:
+    """The line quotes an example sentence (a quoted span of ``FOCUS_QUOTE_MIN_WORDS`` words or more)."""
+    return any(len(m.group(1).split()) >= FOCUS_QUOTE_MIN_WORDS for m in _FOCUS_QUOTE_RE.finditer(line))
+
+
+def brand_focus_points(brand_audience: Optional[dict]) -> list[str]:
+    """The style guide's first rules, one per line or sentence, up to the first header ('Write like this:',
+    'Avoid:'; see ``_focus_header``). Bullets and numbers are dropped; a line that quotes an example sentence (four
+    or more words in quotes) is skipped (the brand block keeps the examples, and they are never copy); at most
+    ``FOCUS_MAX_POINTS`` points of at most ``FOCUS_MAX_CHARS`` characters and at least two words. Read from the pack
+    only, never from a tenant name."""
+    guide = str((brand_audience or {}).get("style_guide") or "")
+    points: list[str] = []
+    for raw in guide.splitlines():
+        line = _FOCUS_BULLET_RE.sub("", raw.strip()).strip()
+        if not line:
+            continue
+        if _focus_header(line):
+            break
+        if _focus_quotes_example(line):
+            continue
+        for sentence in _FOCUS_SENTENCE_RE.split(line):
+            sentence = sentence.strip()
+            if _focus_header(sentence):
+                return points[:FOCUS_MAX_POINTS]
+            if len(sentence.split()) >= 2 and len(sentence) <= FOCUS_MAX_CHARS:
+                points.append(sentence if sentence[-1] in ".!?" else sentence + ".")
+        if len(points) >= FOCUS_MAX_POINTS:
+            break
+    return points[:FOCUS_MAX_POINTS]
+
+
+def brand_focus_rule(brand_audience: Optional[dict]) -> str:
+    """The BRAND FOCUS block ('' when the style guide gives no point): the points, how to meet them from the seed
+    only, and, for a brand with no BRAND TEXTURE block, ``TRAVELLER_RETURN_LINE`` (a texture block already has it)."""
+    points = brand_focus_points(brand_audience)
+    if not points:
+        return ""
+    out = BRAND_FOCUS_HEAD + "".join(f"\n- {p}" for p in points) + BRAND_FOCUS_USE
+    if not brand_textures(brand_audience):
+        out += BRAND_FOCUS_TRAVELLER_HEAD + TRAVELLER_RETURN_LINE
+    return out
 
 # ---------------------------------------------------------------- context
 
@@ -1872,6 +1983,6 @@ def lead_focus(seed: Optional[str], index: int) -> Optional[str]:
     return facts[index % len(facts)]
 
 
-__all__ = ["AI_TELLS_VERSION", "BLOG_HEADING_RULE", "PROMPT_RULES", "SOCIAL_AUDIENCE_RULE", "VISIT_DETAIL_RULE",
-           "TellContext", "angle_text", "brand_voice_rule", "census", "lead_focus", "residue", "rewrite",
-           "seed_facts"]
+__all__ = ["AI_TELLS_VERSION", "ANGLE_BRIEF_RULE", "BLOG_HEADING_RULE", "PROMPT_RULES", "SOCIAL_AUDIENCE_RULE",
+           "TRAVELLER_RETURN_LINE", "VISIT_DETAIL_RULE", "TellContext", "angle_text", "brand_focus_points",
+           "brand_focus_rule", "brand_voice_rule", "census", "lead_focus", "residue", "rewrite", "seed_facts"]
