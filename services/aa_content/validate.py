@@ -3,8 +3,9 @@
 The SQL CHECKs of CIS 275 hold the same limits (kind, locale, group_key, title 1-300, body <= 20000, applies_to keys);
 this module adds what SQL cannot see, with an error the editor can show next to the field:
 
-- ``applies_to.country_codes``: upper-case ISO 3166-1 alpha-2 of a country AA sells (``services/places/guards.py``
-  AA_ISO2), no duplicates;
+- ``applies_to.country_codes``: upper-case ISO 3166-1 alpha-2 of any country (``shared/countries``, the mirror of
+  shared.countries; AA-990: no hand-made "AA country" list, as the contract's ``^[A-Z]{2}$`` already allowed), no
+  duplicates;
 - ``applies_to.tours``: ``{source_system: "cis", source_id}`` with a source_id of 1-128 characters (the catalog key);
 - at publish: a title and a body, and for a prep pack the visa rule of the contract (AaContent.body_markdown: "Visa
   items are an official link only", Q1 2.3): every section that mentions a visa (visa / e-visa / eVisa / thị thực,
@@ -17,7 +18,7 @@ import re
 import unicodedata
 from typing import Any, Optional
 
-from services.places.guards import AA_ISO2
+from shared import countries as _countries
 
 KINDS = ("prep_pack", "starter_template", "campaign_block")
 LOCALES = ("en", "vi")
@@ -25,7 +26,7 @@ GROUP_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,79}$")
 TITLE_MAX = 300
 BODY_MAX = 20000
 SOURCE_ID_MAX = 128
-AA_COUNTRY_CODES = frozenset(code.upper() for code in AA_ISO2)
+COUNTRY_CODES = frozenset(c.iso2 for c in _countries.all_countries())
 
 # visa / visas / e-visa / evisa / eVisa / thị thực (matched on NFC text); "visa card" / "Visa debit" is a payment card.
 _VISA_RE = re.compile(r"\be-?visas?\b|\bvisas?\b|thị\s+thực", re.IGNORECASE)
@@ -102,9 +103,9 @@ def applies_to(value: Any) -> dict:
         seen: list[str] = []
         for code in codes:
             text = code.strip().upper() if isinstance(code, str) else ""
-            if text not in AA_COUNTRY_CODES:
+            if text not in COUNTRY_CODES:
                 raise ContentInvalid("invalid_country", "applies_to.country_codes",
-                                     f"{code!r} is not the ISO code of a country Adventure Asia sells")
+                                     f"{code!r} is not an ISO 3166-1 alpha-2 country code")
             if text not in seen:
                 seen.append(text)
         out["country_codes"] = seen

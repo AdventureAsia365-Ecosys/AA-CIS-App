@@ -14,6 +14,7 @@ backfill and the orphan report; the trigger as cis_app (insert, rename, explicit
 of the two tables reaches the resolver (the trigger runs as the writer, MIG-6) and the guard refuses the states that
 break it; the Done-when reads as booking and tripplanner.
 """
+import importlib.util
 import os
 import re
 import sys
@@ -29,6 +30,11 @@ import test_aa712_migration_228 as t228  # noqa: E402  (seed helpers only)
 import test_aa860_migration_245 as t245  # noqa: E402
 from test_aa860_migration_245 import rds_like_245  # noqa: E402,F401  (module fixture: Dev after 244 + 245)
 from services.places import guards  # noqa: E402
+
+_spec = importlib.util.spec_from_file_location(
+    "aa990_country_data", os.path.join(os.path.dirname(__file__), "..", "..", "scripts", "aa990_country_data.py"))
+GEN288 = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(GEN288)
 
 MIG = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations")
 BEFORE = ("253_catalog_l4_read_model.sql", "256_catalog_line_places.sql", "257_geo_place_dedupe.sql",
@@ -221,8 +227,10 @@ def test_seed_and_resolver(cur):
     assert cur.fetchall() == [("KR", "KOR", "410", "South Korea", "Korea, Republic of"),
                               ("LA", "LAO", "418", "Laos", "Lao People's Democratic Republic"),
                               ("VN", "VNM", "704", "Vietnam", "Viet Nam")]
-    # Every spelling services/places/guards.py knows resolves to the same code in SQL.
-    spellings = sorted(set(guards.COUNTRY_ISO2) | set(guards._ALIASES))
+    # Every spelling services/places/guards.py knows resolves to the same code in SQL (AA-990: guards reads the
+    # shared/countries mirror; the aliases 288 adds are checked by test_aa990_migration_288, after 288).
+    added = {a for _, extra in GEN288.alias_additions() for a in extra}
+    spellings = sorted(s for s in guards.COUNTRY_ISO2 if s not in added)
     for name in spellings:
         cur.execute("SELECT shared.country_iso2(%s)", (f"  {name.upper()} ",))
         assert cur.fetchone()[0] == guards.iso2(name).upper(), name

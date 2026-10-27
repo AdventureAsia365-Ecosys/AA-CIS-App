@@ -13,8 +13,9 @@ Madhya Pradesh. The model knows these places. So:
      otherwise the model's point is kept ('llm', precision 'area'; a hard place kind — temple, pass,
      lake, village… — is put on the /admin/places review list). AA-847: a linear feature (river, road, trail) is
      precision 'line' either way — drawn from geo.place_shape (job place_shape), never a pin;
-  3. hard guards (guards.point_ok): AA country, inside its bounding box; a confirming result in
-     another country than the model's is ignored.
+  3. hard guards (guards.point_ok): any ISO 3166-1 country (AA-990: the PLACE's own country, which may differ from
+     the tour's — a tour sold as India that climbs Kilimanjaro has Tanzanian places), inside that country's bounding
+     box; a confirming result in another country than the model's is ignored.
 
 A failed model batch or a geocoder error leaves the names pending (retried later), never a guess.
 The geocoder's daily credit guard, and a setup / auth failure (no key, secret unreadable, HTTP 401/403),
@@ -57,7 +58,7 @@ SYSTEM_PROMPT = (
 class Item:
     key: tuple            # (name_norm, country_norm, locality_norm) — geo.place_name key
     name: str             # display name to locate
-    country: str          # the country it is expected in (card / tour country)
+    country: str          # a hint only: the card / tour country; the answer's country is where the place really is
     tour_name: str = ""
     locality: Optional[str] = None
 
@@ -131,7 +132,8 @@ Example: {{"Paro": [27.43, 89.41, "Bhutan"], "Taroko Gorge": [24.16, 121.62, "Ta
 
 def parse_answer(raw: str, labels: list[str]) -> dict[str, Optional[Proposal]]:
     """Model JSON -> {label: Proposal(lat, lng, canonical country, native name?) | None}; anything
-    malformed -> None; a native name is kept only in native script for Taiwan / South Korea.
+    malformed, or a country that names no ISO country, -> None; a native name is kept only in native script for
+    Taiwan / South Korea. The country is the model's (where the place really is), not the tour's (AA-990).
     Raises ValueError when the answer has no JSON object at all (the batch is retried)."""
     try:
         start, end = raw.index("{"), raw.rindex("}") + 1

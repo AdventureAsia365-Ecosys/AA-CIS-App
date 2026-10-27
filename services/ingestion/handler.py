@@ -177,7 +177,9 @@ async def process_file(s3_bucket: str, s3_key: str, seo_mode: str = "standard") 
         seen_keys: set[tuple[str, str]] = set()
 
         # AA-690 — Jev ingest gates, the same function the Upload preview uses. Asked only for rows
-        # with itinerary text. Only enforced, confident verdicts drop a row or fill its country.
+        # with itinerary text. Only enforced, confident verdicts drop a row. AA-990: Jev's country guess is
+        # never written — a tour's country is what its source says (the column, else the file name), so a
+        # row with neither stays NULL (country_raw_unresolved / data coverage); the guess is a preview note.
         from services.ingestion.jev_gates import assess_rows_standalone
         jev_idx = [i for i, r in enumerate(records) if (r.get("src_itineraries") or "").strip()]
         jev_list = await assess_rows_standalone([records[i] for i in jev_idx], filename)
@@ -189,8 +191,6 @@ async def process_file(s3_bucket: str, s3_key: str, seo_mode: str = "standard") 
 
         for idx, r in enumerate(records):
             jev = jev_by_row.get(idx)
-            if jev is not None and jev.country and not r.get("country"):
-                r["country"] = jev.country
             r["source_id"] = source_id
             r["batch_id"] = batch_id_new
             nname, nprov = normalize_group_key(r.get("src_name", ""), r.get("provider"))

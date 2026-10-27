@@ -27,11 +27,15 @@ def test_vocabulary_matches_the_backend():
     assert tuple(_ts_array("STATUSES")) == store.STATUSES
 
 
-def test_country_list_matches_the_aa_countries():
+def test_country_quick_picks_are_iso_countries():
+    """AA-990: the backend takes any ISO 3166-1 code; each quick pick is one, under its shared.countries name."""
+    from shared import countries
     block = re.search(r"export const AA_COUNTRIES[^=]*=\s*\{(.*?)\};", TS, re.S)
     assert block
-    codes = set(re.findall(r"\b([A-Z]{2}):", block.group(1)))
-    assert codes == set(validate.AA_COUNTRY_CODES)
+    picks = dict(re.findall(r'\b([A-Z]{2}): "([^"]+)"', block.group(1)))
+    assert len(picks) >= 20
+    assert set(picks) <= validate.COUNTRY_CODES
+    assert {code: countries.by_iso2(code).name for code in picks} == picks
 
 
 def test_limits_match():

@@ -367,6 +367,23 @@ def _single_kind(facts: dict, groups: set[str]) -> list[str]:
             and set(item_groups(" ".join(e["value"].split()[:3]))) & groups]
 
 
+_SOURCE_TEXT_FIELDS = ("name", "subtitle", "summary", "highlights", "itineraries", "description")
+
+
+def destination(tour: dict, country: str) -> str:
+    """AA-990 — where the tour happens, for the facts box. The source country (raw_tours.country, what the source file
+    lists) unless the source text names other countries and never names that one: a trek sold as India whose source
+    says "Mount Kilimanjaro, Tanzania" is "Tanzania", not "India". Code only, from the source text."""
+    from shared import countries
+
+    text = " ".join(field_text(tour.get(f)) for f in _SOURCE_TEXT_FIELDS)
+    named = countries.countries_named(text)
+    own = countries.name(country) or country
+    if named and own not in named:
+        return ", ".join(sorted(named))
+    return country
+
+
 def at_a_glance(tour: dict, facts: dict) -> list[str]:
     """The facts box of arm E: `Label: value` lines from source fields only; a field the source lacks is left out
     (it is on the ask-the-supplier list instead)."""
@@ -376,7 +393,7 @@ def at_a_glance(tour: dict, facts: dict) -> list[str]:
         lines.append(f"Duration: {dur}")
     country = field_text(tour.get("country")).strip()
     if country:
-        lines.append(f"Destination: {country}")
+        lines.append(f"Destination: {destination(tour, country)}")
     for line in field_text(tour.get("description")).splitlines():   # with_agency_fields lines
         for _key, label in AGENCY_FIELDS:
             if line.startswith(label + ": "):

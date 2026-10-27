@@ -39,8 +39,9 @@ export const STATUS_FILTER_LABEL: Record<AaState, string> = {
   retired: "Retired",
 };
 
-// The countries Adventure Asia sells: services/places/guards.py ISO2_COUNTRY (upper case, as applies_to stores them).
-// tests/unit/test_aa977_editor_mirror.py keeps this list equal to validate.AA_COUNTRY_CODES.
+// The editor's country quick picks (upper case, as applies_to stores them). The backend accepts any ISO 3166-1 code
+// (services/aa_content/validate.py COUNTRY_CODES, AA-990); tests/unit/test_aa977_editor_mirror.py keeps every code
+// here an ISO code with its shared.countries name.
 export const AA_COUNTRIES: Record<string, string> = {
   BT: "Bhutan", KH: "Cambodia", CN: "China", IN: "India", ID: "Indonesia", JP: "Japan", KG: "Kyrgyzstan",
   LA: "Laos", MY: "Malaysia", MN: "Mongolia", MM: "Myanmar", NP: "Nepal", PK: "Pakistan", PH: "Philippines",

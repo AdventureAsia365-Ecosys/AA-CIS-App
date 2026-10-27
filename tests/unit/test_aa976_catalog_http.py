@@ -60,7 +60,9 @@ def test_every_zone_exists_in_the_tz_database():
 
 
 @pytest.mark.parametrize("name, code", [("Vietnam", "VN"), ("Tibet", "CN"), ("sri lanka", "LK"),
-                                        ("Viet Nam", "VN"), ("Philippines", "PH"), ("Atlantis", None), (None, None)])
+                                        ("Viet Nam", "VN"), ("Philippines", "PH"), ("Tanzania", "TZ"),
+                                        ("Russia", "RU"), ("Singapore", "SG"), ("India and Pakistan", None),
+                                        ("Atlantis", None), (None, None)])
 def test_country_code(name, code):
     assert geo.country_code(name) == code
 
@@ -70,6 +72,7 @@ def test_country_code(name, code):
     ("ID", 106.8, "Asia/Jakarta"), ("ID", 115.26, "Asia/Makassar"), ("ID", 140.7, "Asia/Jayapura"),
     ("MY", 101.7, "Asia/Kuala_Lumpur"), ("MY", 116.1, "Asia/Kuching"), ("MN", 91.6, "Asia/Hovd"),
     ("MN", 106.9, "Asia/Ulaanbaatar"), ("ID", None, "Asia/Jakarta"), ("XX", 1.0, None), (None, None, None),
+    ("TZ", 37.35, "Africa/Dar_es_Salaam"), ("SG", None, "Asia/Singapore"), ("US", None, "America/New_York"),
 ])
 def test_time_zone(code, lng, zone):
     assert geo.time_zone(code, lng) == zone
@@ -97,6 +100,22 @@ def test_indonesia_zone_lines(place, lat, lng, zone):
     assert geo.time_zone("ID", lng, lat) == zone, place
 
 
+@pytest.mark.parametrize("code, lat, lng, zone", [
+    ("RU", 55.75, 37.62, "Europe/Moscow"), ("RU", 43.12, 131.9, "Asia/Vladivostok"),
+    ("RU", 64.73, -177.5, "Asia/Anadyr"),            # Chukotka east of the antimeridian
+    ("US", 34.05, -118.24, "America/Los_Angeles"), ("CN", 39.47, 75.99, "Asia/Shanghai"),   # Kashgar: Beijing time
+])
+def test_any_iso_country_gets_its_nearest_zone(code, lat, lng, zone):
+    """AA-990: a place in any ISO country gets a zone of its own country (not the tour's)."""
+    assert geo.time_zone(code, lng, lat) == zone
+
+
+def test_kilimanjaro_day_on_an_india_tour_uses_tanzania_time():
+    body = mapping.destination_body({"destination_id": "00000000-0000-0000-0000-000000000002", "name": "Moshi",
+                                     "country": "Tanzania", "lat": -3.35, "lng": 37.34})
+    assert body["time_zone"] == "Africa/Dar_es_Salaam"
+
+
 def test_destination_zone_uses_latitude():
     body = mapping.destination_body({"destination_id": "00000000-0000-0000-0000-000000000001", "name": "Bitung",
                                      "country": "Indonesia", "lat": 1.44, "lng": 125.19})
@@ -105,15 +124,17 @@ def test_destination_zone_uses_latitude():
 
 def test_guards_country_spellings_is_the_public_alias_source():
     from services.places import guards
-    assert guards.country_spellings("cn") == ["china", "tibet"]
-    assert guards.country_spellings("LK") == ["sri lanka", "sri-landka"]
+    assert guards.country_spellings("cn") == ["china", "people's republic of china", "prc", "tibet"]
+    assert {"sri lanka", "sri-landka", "srilanka"} <= set(guards.country_spellings("LK"))
     assert "kyrgyz republic" in guards.country_spellings("kg")
-    assert guards.country_spellings("") == [] and guards.country_spellings("sg") == []
-    assert guards.country_spellings("ph") == ["philippines", "republic of the philippines"]      # AA-990
+    assert guards.country_spellings("") == [] and guards.country_spellings("zz") == []
+    assert {"philippines", "republic of the philippines"} <= set(guards.country_spellings("ph"))      # AA-990
+    assert "singapore" in guards.country_spellings("sg")         # AA-990: every ISO country
 
 
 def test_spellings_cover_aliases():
-    assert geo.spellings("CN") == ["china", "tibet"]
+    assert geo.spellings("CN") == ["china", "people's republic of china", "prc", "tibet"]
+    assert "tanzania" in geo.spellings("TZ")
     assert "viet nam" in geo.spellings("VN")
     assert geo.spellings("ZZ") == []
 
