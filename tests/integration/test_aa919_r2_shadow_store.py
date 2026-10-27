@@ -248,7 +248,7 @@ async def test_shadow_a1_never_selects_a_newer_version_of_a_golden_tour(conn):
     for tid in (golden_tour, other_tour):
         await conn.execute(
             "INSERT INTO silver_aa_internal.raw_tours (tour_id, tenant_id, batch_id, src_name, country, duration) "
-            "VALUES ($1::uuid, $2::uuid, $3::uuid, 'aa919 invented loop', 'Testland', '3 days') "
+            "VALUES ($1::uuid, $2::uuid, $3::uuid, 'aa919 invented loop', 'Vietnam', '3 days') "
             "ON CONFLICT (tour_id) DO NOTHING", tid, master, batch)
         await conn.execute(
             "INSERT INTO silver_aa_internal.generated_content (id, tour_id, tenant_id, version_num, metadata) "
