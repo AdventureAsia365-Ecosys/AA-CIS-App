@@ -52,6 +52,17 @@ def _reset_jev_decision_memo():
     decide.reset_decision_memo()
 
 
+@pytest.fixture(autouse=True)
+def _reset_daily_limit_column_cache():
+    """AA-993: services/acp_publish/daily_limit.py caches "does shared.tenants.daily_publish_limit exist" in the
+    process-global ``_column`` (a False answer for 300 s). Clear it around every test so no test sees an answer
+    another test left behind: the result would depend on test order and on which xdist worker ran what."""
+    from services.acp_publish import daily_limit
+    daily_limit._forget_column()
+    yield
+    daily_limit._forget_column()
+
+
 async def _no_seed(conn, atom_id, tenant_id):
     """AA-768 — T8/T9 unit tests script conn.fetchrow side-effects in call order; with no seed the
     callers fall back to the atom label exactly as before. The real composition is tested in

@@ -141,14 +141,18 @@ class TestNoInventedPlan:
             "tours_quota_monthly": None, "api_calls_quota_monthly": None, "price_usd_monthly": None,
             "source_active": 0, "source_superseded": 0, "source_trashed": 0,
             "master_active": 0, "master_inactive": 0, "master_trashed": 0,
+            # AA-993: the full column set list_tenants reads, the AA-819 override read included (see
+            # test_aa797_tenant_admin TestListTenants): no dependence on the daily_limit column cache.
+            "daily_publish_limit": None,
         }]
+        conn.fetchval.return_value = True
         out = await admin.list_tenants(_request(conn), x_admin_secret=_SECRET, include_inactive=False)
         t = out["tenants"][0]
         assert t["plan_attached"] is False
         assert t["plan"] == {"tours_quota_monthly": None, "api_calls_quota_monthly": None,
                              "price_usd_monthly": None}
         assert t["this_month"]["llm_cost_usd"] == pytest.approx(1.2345)
-        sql = conn.fetch.call_args.args[0]
+        sql = conn.fetch.call_args_list[0].args[0]
         assert "COALESCE(u.price_usd_monthly" not in sql
         assert "COALESCE(u.llm_cost_usd, 0)" in sql
 

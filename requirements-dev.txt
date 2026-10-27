@@ -4,3 +4,7 @@
 # AA-993 (CIS-1): pytest-cov 5.0.0 pulls coverage unpinned. Unit Tests runs with COVERAGE_CORE=sysmon,
 # verified on this version (same covered-line set as the C tracer).
 coverage==7.17.0
+
+# AA-993 (CIS-2): Unit Tests runs tests/unit + tests/acp in one pytest invocation on 4 workers
+# (-n 4 --dist loadfile). pytest-xdist 3.8.0 brings execnet>=2.1.
+pytest-xdist==3.8.0
