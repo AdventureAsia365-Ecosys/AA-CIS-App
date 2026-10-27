@@ -2,50 +2,20 @@ import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
 
-// AA-732 — UI-kit conventions enforced in admin page code (no new dependency; core
-// `no-restricted-syntax` only). AA-885: the tenant portal is its own app with the same rules in
-// portal/eslint.config.mjs.
-//
-// Rules (see CONTEXT.md "UI kit"):
-//   1. no raw <table>        → use the kit DataTable
-//   2. no hand-rolled modal  → use the kit Modal / Drawer (proxied by `role="dialog"` on a raw
-//                              element outside the kit)
-//   3. no `className` on JSX → UI v2 is inline style + brand tokens, not Tailwind classes
-//
-// Severity policy (brief): files already migrated onto the kit are held to `error`; legacy files
-// not yet migrated are `warn` so `npm run lint` stays green and no legacy page is rewritten.
-// Flat config is last-match-wins per rule, so the broad `warn` block comes first and the
-// specific `error` block for already-clean kit files comes after.
-//
-// The kit itself (app/_kit/**) is exempt: DataTable renders the one <table>, Modal/Drawer own the
-// one role="dialog".
-const KIT_RESTRICTED_SYNTAX = [
-  {
-    selector: "JSXOpeningElement[name.name='table']",
-    message:
-      "No raw <table> in page code — use the kit DataTable (app/_kit). (AA-732 kit rule)",
-  },
-  {
-    selector: "JSXAttribute[name.name='role'][value.value='dialog']",
-    message:
-      "No hand-rolled modal/dialog in page code — use the kit Modal or Drawer (app/_kit). (AA-732 kit rule)",
-  },
-  {
-    selector: "JSXAttribute[name.name='className']",
-    message:
-      "No className on JSX in UI-v2 pages — use inline style + brand tokens (app/_kit/core/tokens). (AA-732 kit rule)",
-  },
-];
+import { kitConfig } from "./app/_kit/core/eslint-kit.mjs";
 
-// Already fully migrated onto the kit AND clean of all three patterns today → enforce at `error`
-// so they cannot regress. Measured 2026-10-09 (0 raw <table>, 0 className, 0 hand-rolled dialog).
-const KIT_CLEAN_FILES = [
-  "app/admin/_components/SettingsKitTab.tsx",
-  "app/admin/_components/AdminLiveWriter.tsx",
-  "app/admin/api-docs/page.tsx", // AA-577 follow-up — built on the kit from the start
-  "app/admin/data-model/page.tsx", // AA-894 — built on the kit from the start
-];
-
+// AA-994 S1c (root ADR 0016 decision 7) — UI kit conformance rules, shipped with the kit core
+// (app/_kit/core/eslint-kit.mjs, byte-identical in every app that vendors the core). The `inline` preset
+// (inline style + K tokens) runs at `error` on all page code under app/; the kit itself (app/_kit/**: the
+// shell, DataTable, Modal, Drawer, PageFrame) is exempt because it is where the raw elements belong.
+// Rules: no raw <main> / <table> / dialog, no hard-coded colour, no hand-styled <button>, no var(--aa-*)
+// string, no --aa-* definition from JS, no import of the legacy adminUi / portal ui.tsx layers, no className.
+//
+// Existing violations (of these and of the Next rules) are frozen in eslint-suppressions.json (ESLint bulk
+// suppressions). The file may only shrink: CI ("Frontend Lint") runs `eslint --prune-suppressions`, fails when
+// the committed file differs from the pruned one, and fails when an entry grows against the base branch
+// (app/_kit/core/check-kit-copy.mjs --suppressions). After fixing violations: npx eslint --prune-suppressions.
+// Never run --suppress-all to hide a new violation.
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
@@ -58,23 +28,11 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
   ]),
 
-  // (B) Broad warn: all admin page code. Legacy, not-yet-migrated files surface as
-  // warnings — visible, non-blocking, and never rewritten.
-  {
-    files: ["app/admin/**/*.tsx"],
+  kitConfig({
+    preset: "inline",
+    files: ["app/**/*.{ts,tsx,js,jsx,mjs}"],
     ignores: ["app/_kit/**"],
-    rules: {
-      "no-restricted-syntax": ["warn", ...KIT_RESTRICTED_SYNTAX],
-    },
-  },
-
-  // (A) Specific error: files already on the kit and clean today. Last match wins → `error`.
-  {
-    files: KIT_CLEAN_FILES,
-    rules: {
-      "no-restricted-syntax": ["error", ...KIT_RESTRICTED_SYNTAX],
-    },
-  },
+  }),
 ]);
 
 export default eslintConfig;

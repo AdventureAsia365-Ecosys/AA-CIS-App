@@ -13,6 +13,7 @@
       "brand.ts",
       "theme.ts",
       "check-kit-copy.mjs",
+      "eslint-kit.mjs",
       "MANIFEST.json"
     ]
   },
@@ -42,10 +43,13 @@
       "sha256": "bc6773a9a5a69ae55496752779c9c2fc8ac49eb07ed832cc91edff70c21dda00"
     },
     "check-kit-copy.mjs": {
-      "sha256": "7b3b794fdaceaf9d3db6b87a9a86317ca7cf67cbd6cc8c1b5aee025d455f6145"
+      "sha256": "847b2dde64714a2284eec33f5da0b877727e55787faa3909360f1b9b206a036f"
     },
     "csv.ts": {
       "sha256": "3609313353164f3d0089b9e5675248d6a825c8826808b2f6b968ddb750c5189f"
+    },
+    "eslint-kit.mjs": {
+      "sha256": "873dcb9df5b88228581a1daaba613ff29a4202d22323b9a78800b8fc10e8a137"
     },
     "guide.ts": {
       "sha256": "2f98d7ba5a97579d96ab4b77f7e502167714177171ce8392c488c311cfdd2660"

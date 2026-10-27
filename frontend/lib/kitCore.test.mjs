@@ -13,7 +13,8 @@ import { fileURLToPath } from "node:url";
 
 import {
   HEADER, MANIFEST, aaDefinitions, buildManifest, closureProblems, copyProblems, cssDefinitionProblems, headerProblems,
-  importProblem, importSpecifiers, main, manifestText, selfProblems, sha256,
+  importProblem, importSpecifiers, main, manifestText, readSuppressions, selfProblems, sha256, suppressionProblems,
+  suppressionTotals,
 } from "../app/_kit/core/check-kit-copy.mjs";
 import { createThemeStore, themeRestoreScript } from "../app/_kit/core/theme.ts";
 
@@ -259,4 +260,59 @@ test("the CIS binding uses the cis_theme key", () => {
   assert.match(src, /THEME_KEY = "cis_theme"/);
   assert.match(src, /createThemeStore\(\{ storageKey: THEME_KEY \}\)/);
   assert.match(readFileSync(join(FRONTEND, "app", "layout.tsx"), "utf8"), /__html: themeStore\.restoreScript/);
+});
+
+// ---- AA-994 S1c: the ESLint suppressions file only shrinks (plan guard G11) --------------------------------------
+
+const supp = (o) => Object.fromEntries(Object.entries(o).map(([f, rules]) =>
+  [f, Object.fromEntries(Object.entries(rules).map(([r, count]) => [r, { count }]))]));
+
+test("suppressions: fewer, equal or moved entries pass; a grown entry, a grown rule total or a gone file fail", (t) => {
+  const base = readSuppressions(JSON.stringify(supp({ "app/a.tsx": { R: 3, S: 1 }, "app/b.tsx": { R: 2 } })));
+  assert.deepEqual(suppressionTotals(base), { R: 5, S: 1 });
+  const ok = (head) => suppressionProblems(base, readSuppressions(JSON.stringify(supp(head))));
+  assert.deepEqual(ok({ "app/a.tsx": { R: 3, S: 1 }, "app/b.tsx": { R: 2 } }), [], "unchanged");
+  assert.deepEqual(ok({ "app/a.tsx": { R: 1 } }), [], "shrunk");
+  assert.deepEqual(ok({ "app/a.tsx": { R: 3, S: 1 }, "app/b2.tsx": { R: 2 } }), [], "b.tsx renamed to b2.tsx");
+  assert.match(ok({ "app/a.tsx": { R: 4, S: 1 }, "app/b.tsx": { R: 1 } }).join("\n"), /app\/a\.tsx: R suppressed 3 -> 4/);
+  assert.match(ok({ "app/a.tsx": { R: 3, S: 1 }, "app/b.tsx": { R: 2 }, "app/new.tsx": { R: 1 } }).join("\n"),
+    /R: 5 -> 6 suppressed in total/, "a new file with new suppressions grows the total");
+  assert.match(ok({ "app/a.tsx": { R: 3, S: 1, T: 1 } }).join("\n"), /T: 0 -> 1/, "a new rule");
+
+  const d = scratch(t);
+  mkdirSync(join(d, "app"));
+  writeFileSync(join(d, "app", "a.tsx"), "x");
+  const gone = suppressionProblems(base, readSuppressions(JSON.stringify(supp({ "app/a.tsx": { R: 1 }, "app/b.tsx": { R: 1 } }))),
+    { root: d });
+  assert.equal(gone.length, 1);
+  assert.match(gone[0], /app\/b\.tsx: listed but the file no longer exists/);
+  assert.throws(() => readSuppressions("[]"), /not an object/);
+  assert.throws(() => readSuppressions(JSON.stringify({ "a.tsx": { R: { count: -1 } } })), /integer count/);
+});
+
+test("--suppressions CLI: exit 0 when it shrinks, 1 when it grows, 2 without a base file", (t) => {
+  const d = scratch(t);
+  writeFileSync(join(d, "page.tsx"), "x");
+  const base = join(d, "base.json");
+  const head = join(d, "eslint-suppressions.json");
+  writeFileSync(base, JSON.stringify(supp({ "page.tsx": { R: 2 } })));
+  const quiet = (fn) => {
+    const [log, err] = [console.log, console.error];
+    console.log = console.error = () => {};
+    try { return fn(); } finally { [console.log, console.error] = [log, err]; }
+  };
+  writeFileSync(head, JSON.stringify(supp({ "page.tsx": { R: 1 } })));
+  assert.equal(quiet(() => main(["--suppressions", base, head])), 0);
+  writeFileSync(head, JSON.stringify(supp({ "page.tsx": { R: 3 } })));
+  assert.equal(quiet(() => main(["--suppressions", base, head])), 1);
+  assert.equal(quiet(() => main(["--suppressions", join(d, "nope.json"), head])), 2);
+  assert.equal(quiet(() => main(["--suppressions", base])), 2);
+});
+
+test("eslint-kit.mjs is core, in the tokens profile, and the committed suppressions file parses", () => {
+  const manifest = buildManifest(CORE);
+  assert.ok("eslint-kit.mjs" in manifest.files);
+  assert.ok(manifest.profiles.tokens.includes("eslint-kit.mjs"), "TripPlanner gets the rules with the tokens");
+  const s = readSuppressions(readFileSync(join(FRONTEND, "eslint-suppressions.json"), "utf8"));
+  assert.ok(Object.keys(s).every((f) => !f.startsWith("app/_kit/")), "the kit itself is never suppressed");
 });

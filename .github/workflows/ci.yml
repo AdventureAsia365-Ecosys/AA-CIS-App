@@ -324,11 +324,23 @@ jobs:
           output-file: sbom-${{ github.sha }}.cdx.json
           artifact-name: sbom-${{ github.sha }}.cdx.json
 
-  # AA-732 — frontend ESLint (UI-kit conventions). New, NON-required job: it is not one of the 5
-  # existing required checks and does not rename them.
+  # AA-732 — frontend ESLint (UI-kit conventions). AA-994 S1c (root ADR 0016 decision 7, plan guards G1-G9, G11): a
+  # real gate now, no continue-on-error, meant to be a REQUIRED check (branch protection, plan hand step H2). Page code
+  # is linted with the kit preset (app/_kit/core/eslint-kit.mjs) at `error`; violations that existed before S1c are
+  # frozen in frontend/eslint-suppressions.json (ESLint bulk suppressions), which may only shrink:
+  #   1. the kit rules' own RuleTester suite;
+  #   2. `eslint --prune-suppressions`: fails on any violation not covered by the file, and rewrites the file to the
+  #      violations that still exist;
+  #   3. the committed file must equal the pruned one (a fix that did not prune its entries fails here);
+  #   4. no entry and no rule total may grow against the base branch's file (a `--suppress-all` that hides new
+  #      violations fails here), and no entry may name a deleted file.
+  # Steps 3 and 4 run even when step 2 fails, so one run shows every reason.
   frontend-lint:
     name: Frontend Lint
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
     steps:
       - uses: actions/checkout@v5
 
@@ -336,29 +348,57 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install frontend dependencies
-        working-directory: frontend
         run: npm ci
 
-      # 74 pre-existing errors in legacy pages; fixed under AA-601, then remove continue-on-error.
-      # Step-level (not job-level): a job-level continue-on-error still shows a red check on every PR.
-      - name: Run ESLint (write summary to the job summary)
-        working-directory: frontend
-        continue-on-error: true
+      - name: Kit lint rules (RuleTester)
+        run: node --test --no-warnings lib/eslintKit.test.mjs
+
+      - name: ESLint (kit preset at error, suppressions pruned)
+        id: eslint
         run: |
           set +e
-          npm run lint 2>&1 | tee lint-output.txt
+          npx eslint --prune-suppressions 2>&1 | tee lint-output.txt
           STATUS=${PIPESTATUS[0]}
-          SUMMARY_LINE=$(grep -E "problems \(" lint-output.txt | tail -n1)
+          SUMMARY_LINE=$(grep -E "problems? \(" lint-output.txt | tail -n1)
           {
             echo "### Frontend ESLint"
             echo ""
-            echo "${SUMMARY_LINE:-No summary line (lint produced no problems)}"
+            echo "${SUMMARY_LINE:-No unsuppressed problems.}"
             echo ""
-            echo "_Non-required job; 74 pre-existing legacy errors tracked under AA-601._"
+            echo "_Kit rules at error (root ADR 0016 decision 7); pre-existing violations are frozen in frontend/eslint-suppressions.json, which only shrinks._"
           } >> "$GITHUB_STEP_SUMMARY"
-          exit $STATUS 
+          exit $STATUS
+
+      - name: Suppressions file is pruned
+        if: ${{ !cancelled() && steps.eslint.conclusion != 'skipped' }}
+        run: |
+          if ! git diff --exit-code -- eslint-suppressions.json; then
+            echo "::error file=frontend/eslint-suppressions.json::Violations were fixed but their suppressions were not removed. Run 'npx eslint --prune-suppressions' in frontend/ and commit eslint-suppressions.json (the diff above)."
+            exit 1
+          fi
+          git checkout -- eslint-suppressions.json
+
+      - name: Suppressions do not grow
+        if: ${{ !cancelled() && steps.eslint.conclusion != 'skipped' }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+        run: |
+          case "$BASE_SHA" in
+            ""|0000000000000000000000000000000000000000)
+              echo "::notice::No base commit for this event: suppressions growth check skipped."
+              exit 0 ;;
+          esac
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          BASE_FILE="$RUNNER_TEMP/base-eslint-suppressions.json"
+          if ! git show "$BASE_SHA:frontend/eslint-suppressions.json" > "$BASE_FILE" 2>/dev/null; then
+            echo "::notice::The base commit has no frontend/eslint-suppressions.json (this change creates the baseline): growth check skipped."
+            exit 0
+          fi
+          node app/_kit/core/check-kit-copy.mjs --suppressions "$BASE_FILE" eslint-suppressions.json
 
   # AA-885 — ESLint for the tenant portal app (portal/, same UI-kit rules as the admin). NON-required,
   # AA-979: lints the frozen copy only; the portal is developed in AA-Partner now.
@@ -400,7 +440,7 @@ jobs:
   # required check: tsc catches prop/type errors ESLint misses, and `next build` catches what only a build
   # sees (server/client boundaries, route config, Turbopack). Builds without any secret or env var (the
   # app reads its API URL and Cognito settings at runtime); Sentry source-map upload is skipped without
-  # SENTRY_AUTH_TOKEN. ESLint stays in the non-required "Frontend Lint" job (AA-601 legacy errors).
+  # SENTRY_AUTH_TOKEN. ESLint runs in the separate "Frontend Lint" job (a gate since AA-994 S1c).
   frontend-build:
     name: Frontend Build
     runs-on: ubuntu-latest

@@ -1,0 +1,645 @@
+{
+  "app/admin/_components/BrandIdentityEditor.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 9
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 10
+    },
+    "react-hooks/set-state-in-effect": {
+      "count": 1
+    }
+  },
+  "app/admin/_components/CompareModal.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 2
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "react-hooks/set-state-in-effect": {
+      "count": 1
+    }
+  },
+  "app/admin/_components/FilterBar.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/admin/_components/Pagination.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 3
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 1
+    }
+  },
+  "app/admin/_components/SettingsKitTab.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/admin/_components/SocialContentSubNav.tsx": {
+    "aa-kit/no-class-name": {
+      "count": 1
+    },
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/admin/_components/TourDetailPanelV2.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 10
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 3
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 6
+    },
+    "aa-kit/no-raw-table": {
+      "count": 2
+    },
+    "react-hooks/set-state-in-effect": {
+      "count": 4
+    }
+  },
+  "app/admin/_components/WritingReasonChips.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 1
+    }
+  },
+  "app/admin/_components/adminUi.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 2
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 42
+    }
+  },
+  "app/admin/_components/auditPanels.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "aa-kit/no-raw-table": {
+      "count": 1
+    }
+  },
+  "app/admin/aa-content/AaContentEditor.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 2
+    }
+  },
+  "app/admin/api-docs/page.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 3
+    }
+  },
+  "app/admin/atom-curation/page.tsx": {
+    "aa-kit/no-class-name": {
+      "count": 4
+    },
+    "aa-kit/no-hand-styled-button": {
+      "count": 9
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "aa-kit/no-raw-table": {
+      "count": 1
+    },
+    "react-hooks/set-state-in-effect": {
+      "count": 9
+    },
+    "react/no-unescaped-entities": {
+      "count": 7
+    }
+  },
+  "app/admin/content-quality/PieceDrawer.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/admin/content-quality/PieceLabel.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/admin/content-quality/PlaceCardFactsDrawer.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/admin/content-quality/SentenceActions.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/admin/content-quality/Severity.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/admin/content-quality/TourVersionDrawer.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/admin/content-quality/page.tsx": {
+    "aa-kit/no-class-name": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/admin/data-coverage/page.tsx": {
+    "aa-kit/no-class-name": {
+      "count": 2
+    }
+  },
+  "app/admin/data-model/page.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 4
+    }
+  },
+  "app/admin/decisions/page.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 12
+    },
+    "aa-kit/no-raw-table": {
+      "count": 3
+    }
+  },
+  "app/admin/jobs/JobDrawer.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "aa-kit/no-raw-table": {
+      "count": 2
+    }
+  },
+  "app/admin/jobs/JobKinds.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "aa-kit/no-raw-table": {
+      "count": 1
+    }
+  },
+  "app/admin/jobs/JobsTable.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/admin/jobs/WorkerHealth.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "aa-kit/no-raw-table": {
+      "count": 1
+    }
+  },
+  "app/admin/jobs/page.tsx": {
+    "aa-kit/no-class-name": {
+      "count": 1
+    },
+    "aa-kit/no-hand-styled-button": {
+      "count": 2
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/admin/llm-usage/BudgetsPanel.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "aa-kit/no-raw-table": {
+      "count": 1
+    }
+  },
+  "app/admin/llm-usage/page.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 3
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 3
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "aa-kit/no-raw-table": {
+      "count": 6
+    }
+  },
+  "app/admin/master-content/page.tsx": {
+    "aa-kit/no-class-name": {
+      "count": 1
+    },
+    "aa-kit/no-hand-styled-button": {
+      "count": 27
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 2
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 42
+    },
+    "aa-kit/no-raw-table": {
+      "count": 3
+    }
+  },
+  "app/admin/overview/_components/AppHealthStrip.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/admin/overview/_components/BookingFunnelCard.tsx": {
+    "aa-kit/no-raw-table": {
+      "count": 1
+    }
+  },
+  "app/admin/overview/_components/CostByAppCard.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-raw-table": {
+      "count": 1
+    }
+  },
+  "app/admin/overview/_components/TripPlannerCard.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/admin/overview/page.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "aa-kit/no-raw-table": {
+      "count": 3
+    }
+  },
+  "app/admin/photos/page.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "aa-kit/no-raw-table": {
+      "count": 2
+    }
+  },
+  "app/admin/places/LinesTab.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 3
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/admin/places/MergesTab.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/admin/places/page.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 2
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/admin/platform-stats/page.tsx": {
+    "aa-kit/no-class-name": {
+      "count": 1
+    },
+    "aa-kit/no-hand-styled-button": {
+      "count": 2
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "aa-kit/no-raw-table": {
+      "count": 2
+    },
+    "react-hooks/set-state-in-effect": {
+      "count": 3
+    },
+    "react/no-unescaped-entities": {
+      "count": 3
+    }
+  },
+  "app/admin/platform/apps/AppsBoard.tsx": {
+    "aa-kit/no-raw-table": {
+      "count": 1
+    }
+  },
+  "app/admin/platform/audit/AuditLog.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    }
+  },
+  "app/admin/review/ClaimChecks.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/admin/review/ReasonActionModal.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/admin/review/RegenerateModal.tsx": {
+    "aa-kit/no-class-name": {
+      "count": 1
+    },
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 1
+    }
+  },
+  "app/admin/review/ReviewEditor.tsx": {
+    "aa-kit/no-class-name": {
+      "count": 2
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 4
+    }
+  },
+  "app/admin/review/page.tsx": {
+    "aa-kit/no-class-name": {
+      "count": 1
+    },
+    "aa-kit/no-hand-styled-button": {
+      "count": 2
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/admin/review/reviewModel.ts": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 5
+    }
+  },
+  "app/admin/s1-rewrite/page.tsx": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 3
+    },
+    "aa-kit/no-hand-styled-button": {
+      "count": 2
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 4
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "aa-kit/no-raw-table": {
+      "count": 1
+    },
+    "react-hooks/set-state-in-effect": {
+      "count": 1
+    }
+  },
+  "app/admin/seo-intelligence/page.tsx": {
+    "aa-kit/no-raw-table": {
+      "count": 3
+    }
+  },
+  "app/admin/settings/CatalogTab.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/admin/settings/JevCreditTab.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "aa-kit/no-raw-table": {
+      "count": 1
+    }
+  },
+  "app/admin/settings/ModelsTab.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "aa-kit/no-raw-table": {
+      "count": 1
+    }
+  },
+  "app/admin/settings/ShadowReportTab.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/admin/settings/StageRouteEditor.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 5
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/admin/settings/page.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/admin/supply-content/SupplyContentDetail.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    }
+  },
+  "app/admin/tenant-activity/page.tsx": {
+    "aa-kit/no-class-name": {
+      "count": 1
+    },
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "aa-kit/no-raw-table": {
+      "count": 1
+    },
+    "react-hooks/set-state-in-effect": {
+      "count": 1
+    }
+  },
+  "app/admin/tenants/_components/Tenant360Cost.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/admin/tenants/_components/Tenant360Markets.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/admin/tenants/_components/Tenant360Quality.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/admin/tenants/_components/Tenant360Settings.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/admin/tenants/page.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 13
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 3
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 14
+    },
+    "aa-kit/no-raw-table": {
+      "count": 5
+    },
+    "react-hooks/set-state-in-effect": {
+      "count": 3
+    },
+    "react-hooks/static-components": {
+      "count": 6
+    }
+  },
+  "app/admin/upload/page.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 7
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 16
+    },
+    "aa-kit/no-raw-table": {
+      "count": 5
+    },
+    "react-hooks/purity": {
+      "count": 1
+    },
+    "react-hooks/set-state-in-effect": {
+      "count": 2
+    }
+  },
+  "app/admin/writing-memory/WritingMemory.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    }
+  },
+  "app/login/LoginForm.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 2
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 4
+    }
+  },
+  "app/trip/[tourId]/page.tsx": {
+    "aa-kit/no-hex-colour": {
+      "count": 9
+    },
+    "aa-kit/no-raw-main": {
+      "count": 1
+    }
+  }
+}
