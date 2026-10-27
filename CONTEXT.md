@@ -180,7 +180,7 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     itself `data-kit-frame`), `GuidePanel.tsx` + `guide.ts` (the content shape; the page passes its content as a
     prop), `theme.ts` (`createThemeStore({ storageKey })` + its restore script) and `useTheme.ts`
     (`createThemeHooks(store)`), `useHydrated.ts`, `useMediaQuery.ts`, `sidebarStore.ts`, `useSidebar.ts`,
-    `check-kit-copy.mjs`, `MANIFEST.json` and **`tokens.css`** (AA-994 S1b: the one `--aa-*` token set of every
+    `check-kit-copy.mjs`, **`eslint-kit.mjs`** (AA-994 S1c, see "Kit lint" below), `MANIFEST.json` and **`tokens.css`** (AA-994 S1b: the one `--aa-*` token set of every
     frontend — light and dark palettes, `--aa-scrim` / `--aa-hero-bg`, shadows, `--aa-font-*` as
     `var(--font-*, "<family>")`, and the type / radius / space / z / motion scales from TripPlanner AA-995;
     `app/globals.css` imports it and keeps only CIS-local rules such as the legacy `--bg-*` / `--text-*` variables and
@@ -202,6 +202,27 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     root layout's restore script is `themeStore.restoreScript`). Pages import the barrel `app/_kit` (which re-exports
     core), never `core/` directly; only the root layout, the login form and the legacy `adminUi.tsx` import core
     files directly (server layout, light login bundle, and no import cycle through the barrel's `Sidebar`).
+  - **Kit lint (AA-994 S1c, root ADR 0016 decision 7)**: `core/eslint-kit.mjs` is a dependency-free ESLint 9 plugin
+    shipped with the core (byte-identical in every app; presets `inline` for CIS / portal / CRM web and `tailwind` for
+    Booking / TripPlanner). `frontend/eslint.config.mjs` applies `kitConfig({ preset: "inline" })` at `error` to
+    `app/**` except `app/_kit/**` (the kit owns the raw elements): no raw `<main>` (PageFrame / AdminMain), `<table>`
+    (DataTable), `<dialog>` / `role="dialog"` (Modal / Drawer), no hex / rgb() / hsl() colour, no `<button>` with
+    `style` / `className` (kit Button), no `var(--aa-*)` string (use `K`), no `--aa-*` set from JS, no import of
+    `app/admin/_components/adminUi` or the portal `ui.tsx` (`no-legacy-kit`), no `className`. Violations that existed
+    on 27/10/2026 are frozen in `frontend/eslint-suppressions.json` (ESLint bulk suppressions); the file only shrinks.
+    **Frontend Lint** (a gate, no `continue-on-error`; to be made required) runs the rules' RuleTester suite
+    (`lib/eslintKit.test.mjs`), `eslint --prune-suppressions`, fails when the committed file differs from the pruned
+    one, and fails when an entry or a rule total grows against the base branch (`check-kit-copy.mjs --suppressions`);
+    a new entry may only carry the violations of a deleted / renamed file into a file the base did not have, so fixing
+    one old violation never buys a new one elsewhere. Inline disables of kit rules are not allowed: CI
+    (`check-kit-copy.mjs --no-kit-disable app --ignore _kit`) fails on an `eslint-disable…` that names an `aa-kit/`
+    rule, on a bare `eslint-disable` / `-line` / `-next-line` (it switches every rule off) and on a
+    `/* eslint aa-kit/…: off */` comment in page code; the suppressions file is the only baseline. Disables that name
+    other rules (`react-hooks/…`, `@next/next/no-img-element`) stay allowed.
+    After fixing old violations: `npx eslint --prune-suppressions` in `frontend/` and commit the file; never
+    `--suppress-all` to hide a new one. The pre-push hook (`scripts/pre-push.sh`, check `frontend_kit` + `frontend_lint`)
+    runs the kit self-check, the CSS check, the no-kit-disable check, the suppressions growth check and ESLint on the
+    changed frontend files (all of `frontend/` when the config, the rules or the suppressions changed).
   - **UI kit (AA-662, `frontend/app/_kit/`)**: the shared component library for UI v2, built on
     TanStack Table (`@tanstack/react-table`) and brand tokens (inline styles, no Tailwind
     classNames). Exports `DataTable` (per-column filter, multi-sort, column show/hide, pagination,
@@ -850,7 +871,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
 - **Portal UI smoke**: moved to AA-Partner with the portal (AA-979: `e2e/smoke-portal/`, `ui-smoke-portal.yml`).
   Lint: `portal-lint` CI job (non-required); `tsc` + `next build` in the `portal-build` job (AA-879). e2e specs carry no hardcoded credentials (shared helper
   `tests/e2e/helpers/auth.ts` reads the env). ESLint enforces UI-kit conventions in
-  `frontend/eslint.config.mjs` (`frontend-lint` CI job, non-required) and `portal/eslint.config.mjs` (AA-759/AA-760: `error`
+  `frontend/eslint.config.mjs` (`frontend-lint` CI job, the kit preset at `error` with a shrinking suppressions file
+  since AA-994 S1c, see "Kit lint") and `portal/eslint.config.mjs` (AA-759/AA-760: `error`
   for every portal file except the 3 legacy ones listed in `KIT_LEGACY_FILES`, which stay `warn` until migrated).
 - **Cognito E2E (AA-816 E1, `.github/workflows/e2e-cognito.yml`)**: `workflow_dispatch` on `main` only,
   GitHub environment `e2e`, OIDC role from secret `E2E_MAIL_ROLE_ARN` (Infra `aa-cis-dev-e2e-mail-reader`,

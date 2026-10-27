@@ -24,7 +24,7 @@
 set -uo pipefail
 
 SELF=$(realpath "${BASH_SOURCE[0]}")
-CHECK_IDS=(resource_ids text_guard quality_lint flake8 unit frontend_tsc frontend_lint portal_tsc portal_lint)
+CHECK_IDS=(resource_ids text_guard quality_lint flake8 unit frontend_kit frontend_tsc frontend_lint portal_tsc portal_lint)
 
 # --- CI command lines, verbatim from .github/workflows/ci.yml (printed when a check fails) -----------------------
 # shellcheck disable=SC2054  # the commas belong to flake8's option values
@@ -41,11 +41,12 @@ CI_CMD[quality_lint]="python -m services.quality.lint --report   (ci.yml Lint > 
 CI_CMD[unit]="COVERAGE_CORE=sysmon pytest tests/unit/ -v --tb=short --cov=services --cov=shared --cov-report=term-missing --cov-report=xml:coverage.xml && pytest tests/acp/ -v --tb=short && python3 .github/scripts/coverage_ratchet.py coverage.xml --base <base>   (ci.yml Unit Tests; CI installs: uv pip install --system -r requirements.txt -r requirements-dev.txt)"
 UNIT_INSTALL="pip install -r requirements.txt -r requirements-dev.txt"
 CI_CMD[frontend_tsc]="cd frontend && npx tsc --noEmit -p .   (ci.yml Frontend Build > Type-check; next build stays CI-only)"
-CI_CMD[frontend_lint]="cd frontend && npm run lint   (ci.yml Frontend Lint; continue-on-error in CI, so report-only here)"
+CI_CMD[frontend_kit]="cd frontend && node app/_kit/core/check-kit-copy.mjs --self && node app/_kit/core/check-kit-copy.mjs --css . && node app/_kit/core/check-kit-copy.mjs --suppressions <base eslint-suppressions.json> eslint-suppressions.json --base-files <git ls-tree -r --name-only <base> -- frontend/> && node app/_kit/core/check-kit-copy.mjs --no-kit-disable app --ignore _kit   (ci.yml Frontend Build > Kit core self-check; Frontend Lint > Suppressions do not grow, No inline disable of a kit rule)"
+CI_CMD[frontend_lint]="cd frontend && npx eslint --prune-suppressions && git diff --exit-code eslint-suppressions.json   (ci.yml Frontend Lint; locally only the changed files, or all of frontend/ when the lint config, the kit rules or the suppressions file changed; fix, or after fixing old violations: npx eslint --prune-suppressions <files>)"
 CI_CMD[portal_tsc]="cd portal && npx tsc --noEmit -p .   (ci.yml Portal Build > Type-check; next build stays CI-only)"
 CI_CMD[portal_lint]="cd portal && npm run lint   (ci.yml Portal Lint; continue-on-error in CI, so report-only here)"
 # Checks that CI runs with continue-on-error: a failure is reported, never blocks.
-REPORT_ONLY=" frontend_lint portal_lint "
+REPORT_ONLY=" portal_lint "
 # Unit Tests job env (ci.yml test-unit > Run unit tests): dummy values only, no real secret. COVERAGE_CORE only matters
 # with --cov (full mode); CI pins the coverage version it was verified on in requirements-dev.txt.
 UNIT_ENV=(COVERAGE_CORE=sysmon ENVIRONMENT=test AWS_REGION=us-west-1 AWS_DEFAULT_REGION=us-west-1
@@ -87,7 +88,7 @@ plan_checks() {
     [[ $py_lint == 1 ]] && echo flake8
     [[ $py == 1 ]] && echo unit
   fi
-  [[ $fe == 1 ]] && { echo frontend_tsc; echo frontend_lint; }
+  [[ $fe == 1 ]] && { echo frontend_kit; echo frontend_tsc; echo frontend_lint; }
   [[ $po == 1 ]] && { echo portal_tsc; echo portal_lint; }
   return 0
 }
@@ -98,6 +99,23 @@ flake8_targets() {
   for f in "$@"; do
     case $f in api/*.py|services/*.py|shared/*.py) echo "$f" ;; esac
   done
+}
+
+# frontend_lint_targets FILE...: what ESLint lints in fast mode, relative to frontend/: the changed files ESLint reads
+# (still present), or "." (all of frontend/) when a change can move results in files that did not change: the lint
+# config, the kit rules, the suppressions file, the package set. Prints nothing when no frontend code changed.
+frontend_lint_targets() {
+  local f all=0 out=()
+  for f in "$@"; do
+    case $f in
+      frontend/eslint.config.mjs|frontend/eslint-suppressions.json|frontend/app/_kit/core/eslint-kit.mjs|\
+      frontend/package.json|frontend/package-lock.json|frontend/tsconfig.json) all=1 ;;
+      frontend/*.ts|frontend/*.tsx|frontend/*.js|frontend/*.jsx|frontend/*.mjs|frontend/*.cjs)
+        [[ -f $f ]] && out+=("${f#frontend/}") ;;
+    esac
+  done
+  if (( all )); then echo .; return; fi
+  printf '%s\n' "${out[@]}" | sed '/^$/d'
 }
 
 # module_of FILE: services/quality/lint.py -> services.quality.lint ; shared/x/__init__.py -> shared.x
@@ -225,13 +243,13 @@ self_test() {
   expect "Q0 case json: unit"                      fast 0 "resource_ids text_guard quality_lint unit" tests/unit/quality/cases/a1_contract.json
   expect ".trivyignore: unit"                      fast 0 "resource_ids text_guard quality_lint unit" .trivyignore
   expect "yaml registry: quality lint"             fast 0 "resource_ids text_guard quality_lint" services/quality/registry.yaml
-  expect "frontend only: tsc + lint, never build"  fast 0 "resource_ids text_guard quality_lint frontend_tsc frontend_lint" frontend/app/page.tsx
+  expect "frontend only: tsc + lint, never build"  fast 0 "resource_ids text_guard quality_lint frontend_kit frontend_tsc frontend_lint" frontend/app/page.tsx
   expect "portal only"                             fast 0 "resource_ids text_guard quality_lint portal_tsc portal_lint" portal/app/x.tsx
   expect "workflow only: unit (CI gate tests)"     fast 0 "resource_ids text_guard quality_lint unit" .github/workflows/ci.yml
   expect "ratchet config: unit"                    fast 0 "resource_ids text_guard quality_lint unit" .github/coverage-ratchet.json
-  expect "mixed backend + frontend"                fast 0 "resource_ids text_guard quality_lint flake8 unit frontend_tsc frontend_lint" shared/db.py frontend/lib/a.ts
+  expect "mixed backend + frontend"                fast 0 "resource_ids text_guard quality_lint flake8 unit frontend_kit frontend_tsc frontend_lint" shared/db.py frontend/lib/a.ts
   expect "full mode, docs only: python checks"     full 0 "resource_ids text_guard quality_lint flake8 unit" docs/a.md
-  expect "full mode + frontend"                    full 0 "resource_ids text_guard quality_lint flake8 unit frontend_tsc frontend_lint" frontend/a.tsx
+  expect "full mode + frontend"                    full 0 "resource_ids text_guard quality_lint flake8 unit frontend_kit frontend_tsc frontend_lint" frontend/a.tsx
   expect "--ci, docs only: never skips by diff"    full 1 "$all" docs/a.md
   expect "--ci, empty diff"                        fast 1 "$all"
 
@@ -241,6 +259,16 @@ self_test() {
   r=0; [[ $got == "services/a.py api/b.py " ]] || r=1; verdict "flake8 targets stay in CI scope" "$got" "$r"
   got="$(module_of services/quality/lint.py) $(module_of shared/llm_client/__init__.py)"
   r=0; [[ $got == "services.quality.lint shared.llm_client" ]] || r=1; verdict "module names" "$got" "$r"
+  # Frontend lint targets: changed lintable files only (relative to frontend/); a config / rule / suppressions change
+  # lints everything; non-code and deleted files are dropped.
+  got=$(frontend_lint_targets frontend/app/layout.tsx frontend/app/globals.css frontend/app/gone.tsx docs/a.md | tr '\n' ' ')
+  r=0; [[ $got == "app/layout.tsx " ]] || r=1; verdict "frontend lint targets: changed code files only" "$got" "$r"
+  got=$(frontend_lint_targets frontend/app/layout.tsx frontend/eslint-suppressions.json | tr '\n' ' ')
+  r=0; [[ $got == ". " ]] || r=1; verdict "frontend lint targets: suppressions change lints all" "$got" "$r"
+  got=$(frontend_lint_targets frontend/app/_kit/core/eslint-kit.mjs | tr '\n' ' ')
+  r=0; [[ $got == ". " ]] || r=1; verdict "frontend lint targets: kit rule change lints all" "$got" "$r"
+  got=$(frontend_lint_targets portal/app/x.tsx | tr '\n' ' ')
+  r=0; [[ -z $got ]] || r=1; verdict "frontend lint targets: portal files are not frontend" "$got" "$r"
   # Uses the repo's own tests (grep only, nothing is run): a changed test file maps to itself, and the lint
   # module maps to its test file.
   got=$(MAX_TEST_FILES=1000 unit_targets tests/unit/test_aa926_lint.py services/quality/lint.py docs/x.md | tr '\n' ' ')
@@ -404,6 +432,39 @@ do_unit() {
     env "${UNIT_ENV[@]}" "$PY" -m pytest -q --tb=short "${targets[@]}"
 }
 
+# do_frontend_kit: the dependency-free kit checks (no node_modules needed): core self-check, no --aa-* definition
+# outside core/tokens.css, no inline disable of a kit rule in page code, and the ESLint suppressions file does not
+# grow against the diff base (new entries only in files the base did not have) (CI: Frontend Build "Kit core
+# self-check" + Frontend Lint "Suppressions do not grow" and "No inline disable of a kit rule").
+do_frontend_kit() {
+  if ! command -v node >/dev/null 2>&1; then fail_check frontend_kit "node is not installed" "install Node 22 (CI: setup-node 22)"; return; fi
+  local base_file=$LOG_DIR/base-eslint-suppressions.json base_list=$LOG_DIR/base-frontend-files.txt supp=(true)
+  if git show "$BASE:frontend/eslint-suppressions.json" >"$base_file" 2>/dev/null \
+    && git ls-tree -r --name-only "$BASE" -- frontend/ | sed 's#^frontend/##' >"$base_list"; then
+    supp=(node app/_kit/core/check-kit-copy.mjs --suppressions "$base_file" eslint-suppressions.json --base-files "$base_list")
+  fi
+  run_check frontend_kit "kit core self-check + --css + no kit disable + suppressions growth vs $BASE (frontend/)" bash -c '
+    cd frontend || exit 2
+    node app/_kit/core/check-kit-copy.mjs --self || exit $?
+    node app/_kit/core/check-kit-copy.mjs --css . || exit $?
+    node app/_kit/core/check-kit-copy.mjs --no-kit-disable app --ignore _kit || exit $?
+    "$@"' _ "${supp[@]}"
+}
+
+# do_frontend_lint: ESLint (kit preset at error + bulk suppressions) on the changed frontend files, or on all of
+# frontend/ when the config, the rules or the suppressions changed (frontend_lint_targets). In --full / --ci mode the
+# CI command itself: prune, then the committed file must equal the pruned one.
+do_frontend_lint() {
+  local targets=()
+  if [[ $MODE == full ]]; then
+    node_check frontend frontend_lint bash -c 'npx eslint --prune-suppressions && git diff --exit-code -- eslint-suppressions.json'
+    return
+  fi
+  mapfile -t targets < <(frontend_lint_targets "${CHANGED[@]}")
+  if (( ${#targets[@]} == 0 )); then RESULTS+=("SKIP  -     frontend_lint (no changed file ESLint reads)"); return; fi
+  node_check frontend frontend_lint npx eslint --no-warn-ignored -- "${targets[@]}"
+}
+
 main() {
   cd "$(git rev-parse --show-toplevel)" || exit 2
   MODE=fast CI_MODE=0 DRY=0 ONLY="" HEAD_REF=HEAD BASE=${AA_PREPUSH_BASE:-origin/main}
@@ -485,8 +546,9 @@ main() {
         fi
         run_check "$id" "flake8 ${targets[*]} (CI flags)" "${flake[@]}" "${targets[@]}" "${FLAKE8_ARGS[@]}" ;;
       unit) do_unit ;;
+      frontend_kit) do_frontend_kit ;;
       frontend_tsc) node_check frontend "$id" npx tsc --noEmit -p . ;;
-      frontend_lint) node_check frontend "$id" npm run lint ;;
+      frontend_lint) do_frontend_lint ;;
       portal_tsc) node_check portal "$id" npx tsc --noEmit -p . ;;
       portal_lint) node_check portal "$id" npm run lint ;;
     esac
