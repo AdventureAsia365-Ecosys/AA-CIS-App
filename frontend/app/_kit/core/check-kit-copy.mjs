@@ -7,6 +7,9 @@
 //                                             of MANIFEST.json; no extra file; MANIFEST.json matches kit.lock.json
 //   node <core>/check-kit-copy.mjs --self     canonical copy (AA-CIS-App): MANIFEST.json is current, every file has
 //                                             the header line, and core imports nothing outside itself
+//   node <core>/check-kit-copy.mjs --css <app-root>
+//                                             no CSS file under <app-root> defines an `--aa-*` variable, except this
+//                                             core's tokens.css (ADR 0016 decisions 3c, 4; AA-994 S1b)
 //   options: --dir <path> (default: this script's folder), --profile full|tokens (default: kit.lock.json's, else full),
 //            --lock <path> (default: the nearest kit.lock.json in up to 4 parent folders)
 // Exit codes: 0 fine, 1 problems found (listed on stderr), 2 usage error.
@@ -35,6 +38,14 @@ export const ALLOWED_PACKAGES = [
 const FIX_COPY = "edit AA-CIS-App frontend/app/_kit/core, then sync (tools/kit/kit-sync.sh); never edit the copy";
 const FIX_SELF = "run `node scripts/kit-manifest.mjs` in frontend/ and commit MANIFEST.json";
 const CODE_EXT = /\.(ts|tsx|mts|mjs|js|jsx)$/;
+/** Folders the CSS check never enters (dependencies, build output, test reports). */
+const CSS_SKIP_DIRS = new Set([
+  "node_modules", ".next", ".vercel", ".git", "out", "build", "dist", "coverage", "test-results", "playwright-report",
+]);
+/** An `--aa-*` custom property definition (`--aa-name:`); a `var(--aa-name)` read never has the colon. */
+const AA_DEFINITION = /(?<![\w-])--aa-[\w-]+\s*:/g;
+const FIX_CSS = "define `--aa-*` values only in AA-CIS-App frontend/app/_kit/core/tokens.css; app variables use the " +
+  "app's own prefix (--bk-*, --tp-*, --crm-*)";
 
 export function sha256(buf) {
   return createHash("sha256").update(buf).digest("hex");
@@ -214,6 +225,41 @@ export function selfProblems(dir) {
   return out;
 }
 
+/** CSS with its comments blanked (same length, newlines kept, so offsets still give line numbers). */
+export function stripCssComments(css) {
+  return css.replace(/\/\*[\s\S]*?(?:\*\/|$)/g, (m) => m.replace(/[^\n]/g, " "));
+}
+
+/** The `--aa-*` definitions in a CSS text, as [line, name] pairs (comments ignored). */
+export function aaDefinitions(css) {
+  const code = stripCssComments(css);
+  return [...code.matchAll(AA_DEFINITION)].map((m) => [
+    code.slice(0, m.index).split("\n").length, m[0].replace(/\s*:$/, ""),
+  ]);
+}
+
+/** ADR 0016 decisions 3c and 4 (G10 of the AA-994 plan): every `.css` file under root, except the core tokens file,
+ *  defines no `--aa-*` variable. One problem per definition, as "path:line: …". */
+export function cssDefinitionProblems(root, tokensPath) {
+  const allowed = resolve(tokensPath);
+  const out = [];
+  const walk = (d) => {
+    for (const ent of readdirSync(d, { withFileTypes: true })) {
+      const p = join(d, ent.name);
+      if (ent.isDirectory()) {
+        if (!CSS_SKIP_DIRS.has(ent.name)) walk(p);
+      } else if (ent.name.endsWith(".css") && resolve(p) !== allowed) {
+        const rel = relative(root, p).split(sep).join("/");
+        for (const [line, name] of aaDefinitions(readFileSync(p, "utf8"))) {
+          out.push(`${rel}:${line}: defines ${name}`);
+        }
+      }
+    }
+  };
+  walk(resolve(root));
+  return out;
+}
+
 /** The nearest kit.lock.json above a consumer core folder (portal/app/_kit/core → portal/kit.lock.json). */
 export function findLock(dir) {
   let d = resolve(dir);
@@ -269,7 +315,9 @@ export function copyProblems(dir, { profile, lockPath } = {}) {
 }
 
 function parseArgs(argv) {
-  const opts = { self: false, dir: dirname(fileURLToPath(import.meta.url)), profile: null, lock: undefined };
+  const opts = {
+    self: false, css: null, dir: dirname(fileURLToPath(import.meta.url)), profile: null, lock: undefined,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const val = () => {
@@ -277,6 +325,7 @@ function parseArgs(argv) {
       return argv[++i];
     };
     if (a === "--self") opts.self = true;
+    else if (a === "--css") opts.css = resolve(val());
     else if (a === "--dir") opts.dir = resolve(val());
     else if (a === "--profile") opts.profile = val();
     else if (a === "--lock") opts.lock = resolve(val());
@@ -290,6 +339,21 @@ export function main(argv) {
   try { opts = parseArgs(argv); } catch (e) {
     console.error(`check-kit-copy: ${e.message}`);
     return 2;
+  }
+  if (opts.css) {
+    if (!existsSync(opts.css) || !statSync(opts.css).isDirectory()) {
+      console.error(`check-kit-copy: --css ${opts.css} is not a folder`);
+      return 2;
+    }
+    const problems = cssDefinitionProblems(opts.css, join(opts.dir, "tokens.css"));
+    if (problems.length) {
+      console.error(`check-kit-copy: --aa-* definitions outside the kit core under ${opts.css}: ${problems.length}`);
+      for (const p of problems) console.error(`  - ${p}`);
+      console.error(`  fix: ${FIX_CSS}`);
+      return 1;
+    }
+    console.log(`check-kit-copy: no --aa-* definition outside ${join(opts.dir, "tokens.css")} under ${opts.css}: OK`);
+    return 0;
   }
   const lockPath = opts.lock === undefined ? findLock(opts.dir) : opts.lock;
   const problems = opts.self ? selfProblems(opts.dir) : copyProblems(opts.dir, { profile: opts.profile, lockPath });

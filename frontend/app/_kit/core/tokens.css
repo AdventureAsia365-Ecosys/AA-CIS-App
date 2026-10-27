@@ -1,0 +1,325 @@
+/* UI kit core (root ADR 0016). Canonical: AA-CIS-App frontend/app/_kit/core. Edit only there; copies are checked byte for byte (kit.lock.json). */
+/* app/_kit/core/tokens.css — the one `--aa-*` token set of every ecosystem frontend (AA-994 S1b, root ADR 0016
+   decision 4). CIS admin imports it from app/globals.css; AA-Partner (portal, CRM web) and AA-Booking get it with the
+   full kit core, AA-TripPlanner-Web with the tokens profile (tools/kit/kit-sync.sh in the root repo).
+
+   Rules:
+     - This file is the only place an `--aa-*` value is defined. An app adds its own variables under its own prefix
+       (`--bk-*`, `--tp-*`, `--crm-*`); `check-kit-copy.mjs --css <app>` fails on an `--aa-*` definition anywhere else.
+     - Values are the stricter of the former copies: AA-760 light values (portal / CRM), the S248 muted fixes (CIS),
+       AA-812 D6 / AA-995 values where TripPlanner was stricter (accent-deep), and TripPlanner's --aa-scrim and
+       --aa-hero-bg. frontend/lib/tokensContrast.test.mjs checks every text pair in both themes (and the scrims):
+       a change that drops a pair under its WCAG threshold fails Frontend Build.
+     - Plain CSS only (no Tailwind directives, no imports): it is read by Tailwind 4 (CIS, Partner, Booking), Tailwind 3
+       (TripPlanner) and the contrast test's parser. No braces inside comments.
+
+   Theme. The kit token object `K` (tokens.ts) and the CIS admin object `A` read these variables via `var()`, so one
+   <html data-theme="light|dark"> switch recolours every kit component. The value is written before paint by the
+   restore script of theme.ts (createThemeStore; each app has its own storage key: cis_theme, bk_theme, tp_theme):
+   no stored choice follows prefers-color-scheme, an explicit 'light' | 'dark' wins.
+   `BRAND` (brand.ts) stays hex for pages that are always light (login, legal pages).
+
+   LIGHT is the brand palette of adventure.asia with the WCAG AA fixes above. DARK is a considered dark palette:
+   dark-slate surfaces, light text, the brand gold kept recognisable, semantic red/green/amber readable on dark,
+   text ≥ 4.5:1 on card / bg (WCAG AA).
+*/
+
+/* ── LIGHT (default + explicit light) ──────────────────────────────────────── */
+:root,
+[data-theme="light"] {
+  /* Accent — brand gold */
+  --aa-accent:        #DB9628;
+  --aa-accent-deep:   #875D12;   /* AA-994 S1b (AA-812 D6, stricter than AA-760 #8A5F12): was #9E6E16 → 5.83:1 card, 5.40:1 bg, 5.28:1 accent-tint, 4.58:1 accent-soft */
+  --aa-accent-soft:   #F4E2C2;
+  --aa-accent-tint:   #FBF3E3;
+  --aa-accent-border: #DDA64E;
+  --aa-gold:          #DB9628; /* alias of accent (admin A.gold / A.gold === accent) */
+  --aa-gold-tint:     #FBF3E3; /* A.goldTint */
+  /* Secondary — brand slate */
+  --aa-slate:         #35495E;
+  /* Danger / error (red) */
+  --aa-red:           #C20101;
+  --aa-red-soft:      #FBE9E7;
+  --aa-red-tint:      #FDF4F3;
+  --aa-red-border:    #F2C4BF;
+  /* Success (green) */
+  --aa-green:         #276B4E;   /* AA-760: was #2E7D5B (4.30:1 on green-soft, the READY pill) → 5.47:1 green-soft, 6.36:1 card */
+  --aa-green-soft:    #E4F1E9;
+  /* Amber / warning (admin A.amber/amberSoft) */
+  --aa-amber:         #F59E0B;
+  --aa-amber-soft:    #FEF3C7;
+  /* Kit amber (K.amber/amberSoft — a slightly different, consistent kit value) */
+  --aa-kit-amber:      #8F5F16;  /* AA-760: was #B5791F (3.22:1 on kit-amber-soft) → 4.83:1 kit-amber-soft, 5.50:1 card */
+  --aa-kit-amber-soft: #FBEFD6;
+  /* Info (blue) — kit owns these (K.info/infoSoft) */
+  --aa-info:          #1E40AF;
+  --aa-info-soft:     #DBEAFE;
+  /* Purple — kit tone */
+  --aa-purple:        #5B21B6;
+  --aa-purple-soft:   #EDE9FE;
+  /* Neutrals / surfaces */
+  --aa-ink:           #1F2933;
+  --aa-ink2:          #2A333E;
+  --aa-ink3:          #3A4453;
+  --aa-body:          #33363D;
+  --aa-muted:         #5A6270;   /* S248 AA-760: was #6B7380 (4.43:1 on bg, 4.02:1 on line2) → 6.2:1 card, 5.7:1 bg, 5.2:1 line2, 5.6:1 neutral-bg */
+  --aa-muted2:        #626A78;   /* AA-760: was #9099A6 (2.9:1 on card, 2.7:1 on bg) → 5.4:1 card, 5.0:1 bg, 4.6:1 line2 */
+  --aa-bg:            #F8F6F2;
+  --aa-card:          #FFFFFF;
+  --aa-line:          #E9E4DB;
+  --aa-line2:         #F0EBE0;
+
+  /* ── Status / semantic pill tokens (consolidated from ad-hoc hex across the
+       11 admin files — status pills, legacy tints, decision zones). Each maps a
+       light hex to a dark-readable counterpart below. ── */
+  /* neutral pill (gray) */
+  --aa-neutral-bg:    #F3F4F6;
+  --aa-neutral-fg:    #4B5563;
+  --aa-neutral-fg2:   #5F6673;   /* S248 AA-760: was #6B7280 (4.39:1 on neutral-bg) → 5.25:1; still lighter than neutral-fg */
+  --aa-neutral-border:#E5E7EB;
+  /* strong green text/border (status pills that used #16A34A / #047857 / #065F46 / #86EFAC / #BBF7D0 / #D1FAE5 / #F0FDF4) */
+  --aa-green-strong:  #16A34A;
+  --aa-green-deep:    #047857;
+  --aa-green-darkest: #065F46;
+  --aa-green-border:  #86EFAC;
+  --aa-green-border2: #BBF7D0;
+  --aa-green-bg:      #D1FAE5;
+  --aa-green-bg2:     #F0FDF4;
+  --aa-green-bg3:     #EAF3DE;
+  --aa-green-border3: #B8DFA0;
+  /* strong amber / orange text + tints (#B45309 #D97706 #92400E #C2410C #B5791F #FEF9C3 #FEF3C7 #FFEDD5 #FEFCE8 #FFFBEB #FEF9C3 #FDE68A #FED7AA #FFF7ED #FFF9E6 #FFF0C4) */
+  --aa-amber-strong:  #B45309;
+  --aa-amber-deep:    #92400E;
+  --aa-amber-orange:  #C2410C;
+  --aa-amber-orange2: #D97706;
+  --aa-amber-bg:      #FEF3C7;
+  --aa-amber-bg2:     #FEF9C3;
+  --aa-amber-bg3:     #FFEDD5;
+  --aa-amber-bg4:     #FEFCE8;
+  --aa-amber-bg5:     #FFFBEB;
+  --aa-amber-bg6:     #FFF7ED;
+  --aa-amber-bg7:     #FFF9E6;
+  --aa-amber-bg8:     #FFF0C4;
+  --aa-amber-border:  #FDE68A;
+  --aa-amber-border2: #FED7AA;
+  /* blue (info variants used by status maps / links #3B82F6 #2563EB #1E40AF #1D4ED8 #EFF6FF #DBEAFE #F8FAFF) */
+  --aa-blue:          #3B82F6;
+  --aa-blue-deep:     #2563EB;
+  --aa-blue-darkest:  #1E40AF;
+  --aa-blue-link:     #1D4ED8;
+  --aa-blue-bg:       #EFF6FF;
+  --aa-blue-bg2:      #DBEAFE;
+  --aa-blue-bg3:      #F8FAFF;
+  /* purple (#7C3AED #5B21B6 #3730A3 #EDE9FE #EEF2FF #F5F3FF) */
+  --aa-purple-strong: #7C3AED;
+  --aa-purple-deep:   #3730A3;
+  --aa-purple-bg:     #EEF2FF;
+  --aa-purple-bg2:    #F5F3FF;
+  /* red variants (#B91C1C #FCA5A5 #FFFCFC) */
+  --aa-red-strong:    #B91C1C;
+  --aa-red-border2:   #FCA5A5;
+  --aa-red-tint2:     #FFFCFC;
+  /* dark/toast surfaces (#1C1917 toast, #2A333E notif dropdown, #2563EB active) */
+  --aa-toast-bg:      #1C1917;
+  --aa-on-dark:       #F8F6F2;   /* light text on a dark surface (chart tooltip, toast) */
+  /* sidebar-specific neutrals (the sidebar is a dark panel in BOTH themes) */
+  --aa-side-bg:       #1F2933;   /* A.ink */
+  --aa-side-panel:    #2A333E;   /* notif dropdown */
+  --aa-side-text:     #C9CFD8;
+  --aa-side-text2:    #8A929D;
+  --aa-side-text3:    #6E7681;
+  --aa-side-title:    #F4F1EC;
+  /* neutral card bg stripes used by panels */
+  --aa-panel-bg0:     #FAFAF8;
+  --aa-panel-bg1:     #F8FAFF;
+  --aa-panel-bg2:     #F0FDF4;
+  --aa-panel-bg3:     #F5F3FF;
+  /* on-accent — text on the gold primary buttons, badges, avatar dots. AA-760: dark ink, as in dark mode —
+     white on #DB9628 is 2.50:1 (fails WCAG AA for the 11–13 px labels); #1A1206 is 7.42:1. Never white on gold. */
+  --aa-on-accent:     #1A1206;
+  /* on-solid — white text/icon that must stay white in BOTH themes, sitting on a solid coloured
+     surface (green/red/blue/dark buttons, toasts, spinner icons on coloured buttons). */
+  --aa-on-solid:      #FFFFFF;
+
+  /* Photo surfaces (AA-812 D6 / AA-995, promoted from TripPlanner by AA-994 S1b). --aa-scrim: flat scrim under
+     small white text on a photo (pills, captions); .68 keeps white text ≥ 4.5:1 even over a white pixel (6.41:1).
+     --aa-hero-bg: solid dark under a text-over-photo hero while the photo loads, fails or is missing. */
+  --aa-scrim:         rgba(15, 20, 27, 0.68);
+  --aa-hero-bg:       #1F2933;
+
+  /* Elevation (AA-995, promoted). Light geometry; cards keep an --aa-line border in both themes. */
+  --aa-shadow-sm:     0 1px 2px rgba(31, 41, 51, 0.06), 0 1px 1px rgba(31, 41, 51, 0.04);
+  --aa-shadow-md:     0 6px 16px -4px rgba(31, 41, 51, 0.10), 0 2px 4px rgba(31, 41, 51, 0.06);
+  --aa-shadow-lg:     0 18px 40px -12px rgba(31, 41, 51, 0.22);
+}
+
+/* ── DARK (explicit dark OR system dark with no stored choice) ─────────────────
+   data-theme="dark" is set by the restore script when the resolved theme is
+   dark. Values chosen for AA contrast on the dark surfaces below. ── */
+[data-theme="dark"] {
+  /* Accent — gold kept recognisable, nudged brighter for contrast on dark */
+  --aa-accent:        #E8A838;
+  --aa-accent-deep:   #F0C070;   /* "deep" is used as text-on-tint; on dark it must be light */
+  --aa-accent-soft:   #4A3A1C;
+  --aa-accent-tint:   #332814;
+  --aa-accent-border: #6B531F;
+  --aa-gold:          #E8A838;
+  --aa-gold-tint:     #332814;
+  --aa-slate:         #8CA3BC;
+  /* Danger */
+  --aa-red:           #F2746F;
+  --aa-red-soft:      #3A1E1C;
+  --aa-red-tint:      #2A1716;
+  --aa-red-border:    #6E3330;
+  /* Success */
+  --aa-green:         #4FB488;
+  --aa-green-soft:    #15301F;
+  /* Amber */
+  --aa-amber:         #F0B04A;
+  --aa-amber-soft:    #38290F;
+  --aa-kit-amber:      #E0A040;
+  --aa-kit-amber-soft: #352711;
+  /* Info — S241 UI verify: #7FA0F0 read dim on the navy pill (REVIEWER badge, 11px caps); lifted to
+     7.8:1 on --aa-info-soft (8.7:1 on card), in line with the accent badge (8.6:1). */
+  --aa-info:          #A5BEF7;
+  --aa-info-soft:     #1C2847;
+  /* Purple */
+  --aa-purple:        #B99BF0;
+  --aa-purple-soft:   #2A1F42;
+  /* Neutrals / surfaces — dark slate */
+  --aa-ink:           #EAEEF4;   /* was darkest ink → now the lightest text */
+  --aa-ink2:          #D4DAE2;
+  --aa-ink3:          #B8C0CC;
+  --aa-body:          #D4DAE2;
+  --aa-muted:         #A0A8B4;   /* S248 AA-760: was #9099A6 (4.3:1 on line) → 6.8:1 card, 5.9:1 line2, 5.5:1 neutral-bg, 5.2:1 line */
+  --aa-muted2:        #959EAC;   /* S248 AA-760: was #8A93A2 (4.29:1 on neutral-bg, 4.0:1 on line) → 6.0:1 card, 5.2:1 line2, 4.9:1 neutral-bg, 4.6:1 line; stays dimmer than muted */
+  --aa-bg:            #0F141B;
+  --aa-card:          #19212C;
+  --aa-line:          #2A3542;
+  --aa-line2:         #222C38;
+
+  /* Status / semantic pills — dark surfaces + light foregrounds */
+  --aa-neutral-bg:    #263040;
+  --aa-neutral-fg:    #B8C0CC;
+  --aa-neutral-fg2:   #9099A6;
+  --aa-neutral-border:#303B4A;
+  --aa-green-strong:  #4FB488;
+  --aa-green-deep:    #5CC095;
+  --aa-green-darkest: #7FD1AC;
+  --aa-green-border:  #2E6B4E;
+  --aa-green-border2: #2E6B4E;
+  --aa-green-bg:      #15301F;
+  --aa-green-bg2:     #15301F;
+  --aa-green-bg3:     #1C3320;
+  --aa-green-border3: #3A6B3A;
+  --aa-amber-strong:  #F0B04A;
+  --aa-amber-deep:    #F0B04A;
+  --aa-amber-orange:  #F2975A;
+  --aa-amber-orange2: #F0A848;
+  --aa-amber-bg:      #38290F;
+  --aa-amber-bg2:     #352A10;
+  --aa-amber-bg3:     #3A2512;
+  --aa-amber-bg4:     #322C12;
+  --aa-amber-bg5:     #322810;
+  --aa-amber-bg6:     #38260F;
+  --aa-amber-bg7:     #332A12;
+  --aa-amber-bg8:     #3A2E14;
+  --aa-amber-border:  #6B5420;
+  --aa-amber-border2: #6E4A24;
+  --aa-blue:          #6FA0F0;
+  --aa-blue-deep:     #7FA0F0;
+  --aa-blue-darkest:  #9CB6F5;
+  --aa-blue-link:     #8FB0F5;
+  --aa-blue-bg:       #1C2847;
+  --aa-blue-bg2:      #1C2847;
+  --aa-blue-bg3:      #1A2335;
+  --aa-purple-strong: #B99BF0;
+  --aa-purple-deep:   #C4ABF5;
+  --aa-purple-bg:     #2A1F42;
+  --aa-purple-bg2:    #241B3A;
+  --aa-red-strong:    #F2746F;
+  --aa-red-border2:   #6E3330;
+  --aa-red-tint2:     #2A1716;
+  --aa-toast-bg:      #0A0E13;
+  --aa-on-dark:       #EAEEF4;
+  /* Sidebar stays a dark panel; slightly deeper than the dark page bg so it reads as a panel */
+  --aa-side-bg:       #141A22;
+  --aa-side-panel:    #222C38;
+  --aa-side-text:     #C9CFD8;
+  --aa-side-text2:    #8A929D;
+  --aa-side-text3:    #6E7681;
+  --aa-side-title:    #F4F1EC;
+  --aa-panel-bg0:     #1C242F;
+  --aa-panel-bg1:     #1A2130;
+  --aa-panel-bg2:     #15301F;
+  --aa-panel-bg3:     #241B3A;
+  --aa-on-accent:     #1A1206;   /* dark text on the brighter gold button reads better */
+  --aa-on-solid:      #FFFFFF;
+  --aa-scrim:         rgba(5, 8, 12, 0.72);
+  --aa-hero-bg:       #19212C;
+  /* Same geometry, darker. */
+  --aa-shadow-sm:     0 1px 2px rgba(0, 0, 0, 0.45), 0 1px 1px rgba(0, 0, 0, 0.30);
+  --aa-shadow-md:     0 6px 16px -4px rgba(0, 0, 0, 0.45), 0 2px 4px rgba(0, 0, 0, 0.35);
+  --aa-shadow-lg:     0 18px 40px -12px rgba(0, 0, 0, 0.55);
+}
+
+/* ── Type, radius, space, z-index and motion scales (theme independent) ──────────────────────────────────────────
+   Fonts: the `var(--font-*, "<family>")` form works with next/font (which sets --font-poppins etc. on <html> or
+   <body>, TripPlanner) and with a Google Fonts <link> (CIS, Partner, Booking: the variable is unset, so the family
+   name is used). Families are those of brand.ts (FONT_SANS / FONT_DISPLAY / FONT_MONO). Script faces stay app-local
+   (Booking --bk-font-*, TripPlanner --tp-font-script).
+   The other scales were introduced by TripPlanner AA-995 ("Golden Hour") and promoted unchanged by AA-994 S1b; the
+   CIS admin does not read them yet (its components use `K` numbers). */
+:root {
+  --aa-font-sans:    var(--font-poppins, "Poppins"), system-ui, -apple-system, "Segoe UI", sans-serif;
+  --aa-font-display: var(--font-fahkwang, "Fahkwang"), var(--font-poppins, "Poppins"), Georgia, serif;
+  --aa-font-mono:    var(--font-jetbrains-mono, "JetBrains Mono"), "IBM Plex Mono", monospace;
+
+  /* Fluid type between 390 and 1440 px (clamp is linear on vw). */
+  --aa-text-display: clamp(2rem, 1.4rem + 2.6vw, 3.25rem);       /* 32 -> 52 */
+  --aa-text-h1:      clamp(1.75rem, 1.35rem + 1.7vw, 2.5rem);    /* 28 -> 40 */
+  --aa-text-h3:      clamp(1.125rem, 1.08rem + 0.2vw, 1.25rem);  /* 18 -> 20 */
+  --aa-text-lead:    1.0625rem;                                  /* 17; 18 from 1024 px */
+  --aa-text-body:    1rem;
+  --aa-text-small:   0.875rem;
+  --aa-text-caption: 0.8125rem;
+  --aa-text-kicker:  0.75rem;
+
+  --aa-radius-sm:   6px;   /* badges, small chips */
+  --aa-radius-md:   12px;  /* inputs, thumbs */
+  --aa-radius-lg:   16px;  /* cards */
+  --aa-radius-xl:   24px;  /* hero search card */
+  --aa-radius-pill: 999px;
+
+  --aa-space-1: 4px;  --aa-space-2: 8px;  --aa-space-3: 12px; --aa-space-4: 16px; --aa-space-5: 20px;
+  --aa-space-6: 24px; --aa-space-7: 32px; --aa-space-8: 48px; --aa-space-9: 64px; --aa-space-10: 96px;
+
+  --aa-z-header: 30;
+  --aa-z-sticky-cta: 40;
+  --aa-z-popover: 50;
+
+  /* Motion. Under <html data-motion="reduce"> every duration collapses to 0.01ms (below); an app that never sets
+     data-motion keeps these values. */
+  --aa-dur-instant: 100ms;
+  --aa-dur-fast:    160ms;
+  --aa-dur-base:    240ms;
+  --aa-dur-slow:    420ms;
+  --aa-dur-reveal:  560ms;
+  --aa-ease-std: cubic-bezier(0.4, 0, 0.2, 1);
+  --aa-ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --aa-ease-in:  cubic-bezier(0.4, 0, 1, 1);
+}
+
+@media (min-width: 1024px) {
+  :root {
+    --aa-text-lead: 1.125rem;
+  }
+}
+
+html[data-motion="reduce"] {
+  --aa-dur-instant: 0.01ms;
+  --aa-dur-fast:    0.01ms;
+  --aa-dur-base:    0.01ms;
+  --aa-dur-slow:    0.01ms;
+  --aa-dur-reveal:  0.01ms;
+}

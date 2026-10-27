@@ -8,9 +8,9 @@ fixed in S247, the admin in S248. Light --aa-muted was #6B7380 (4.43:1 on the pa
 
 Surfaces: card, page background, the line2 tint (the "no state yet" badge, table header rows) and the neutral pill
 background. --aa-line is not one: it is only a border / divider / progress-track colour, never behind text (S248 grep).
-Token blocks in <app>/app/globals.css:
-the first `[data-theme="light"] {` block holds the light palette, the first `[data-theme="dark"] {` block the dark
-one.
+Token blocks in <app>/app/_kit/core/tokens.css (AA-994 S1b moved them out of globals.css; the full pair matrix is
+frontend/lib/tokensContrast.test.mjs): the first `[data-theme="light"] {` block holds the light palette, the first
+`[data-theme="dark"] {` block the dark one.
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ THEMES = ["light", "dark"]
 
 
 def _block(app: str, theme: str) -> str:
-    src = (ROOT / app / "app/globals.css").read_text()
+    src = (ROOT / app / "app/_kit/core/tokens.css").read_text()
     start = src.index(f'[data-theme="{theme}"] {{')
     return src[start:src.index("\n}", start)]
 

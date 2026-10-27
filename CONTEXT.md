@@ -180,12 +180,20 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     itself `data-kit-frame`), `GuidePanel.tsx` + `guide.ts` (the content shape; the page passes its content as a
     prop), `theme.ts` (`createThemeStore({ storageKey })` + its restore script) and `useTheme.ts`
     (`createThemeHooks(store)`), `useHydrated.ts`, `useMediaQuery.ts`, `sidebarStore.ts`, `useSidebar.ts`,
-    `check-kit-copy.mjs` and `MANIFEST.json`. Rules: every core file starts with the header line "UI kit core (root
+    `check-kit-copy.mjs`, `MANIFEST.json` and **`tokens.css`** (AA-994 S1b: the one `--aa-*` token set of every
+    frontend — light and dark palettes, `--aa-scrim` / `--aa-hero-bg`, shadows, `--aa-font-*` as
+    `var(--font-*, "<family>")`, and the type / radius / space / z / motion scales from TripPlanner AA-995;
+    `app/globals.css` imports it and keeps only CIS-local rules such as the legacy `--bg-*` / `--text-*` variables and
+    the shell CSS). Values are the stricter of the former copies (AA-760, S248, AA-812 D6); light gold buttons carry
+    dark `--aa-on-accent` text. No other CSS file may define an `--aa-*` variable (apps use `--bk-*`, `--tp-*`,
+    `--crm-*`). Rules: every core file starts with the header line "UI kit core (root
     ADR 0016). Canonical: …"; core imports only `./` files of core and `react`, `react-dom`, `next/*`,
     `lucide-react`, `@tanstack/react-table`, `@tanstack/react-query` (no `@/`, no `../`); after any core edit run
     `node scripts/kit-manifest.mjs` in `frontend/` (rewrites `MANIFEST.json`: sha256 per file + the tokens profile).
     **Frontend Build** runs `node app/_kit/core/check-kit-copy.mjs --self` (manifest current, header lines, import
-    closure of core and of the tokens profile) and `lib/kitCore.test.mjs`. A consumer runs the same script without
+    closure of core and of the tokens profile), `check-kit-copy.mjs --css .` (no `--aa-*` definition outside
+    `core/tokens.css`), `lib/kitCore.test.mjs` and `lib/tokensContrast.test.mjs` (WCAG contrast of every checked text
+    pair in both themes, plus white text over the photo scrim; helpers in `lib/contrast.mjs`). A consumer runs the same script without
     `--self` against its copy and `kit.lock.json`; copies are written only by the root `tools/kit/kit-sync.sh` and
     never edited in place (root hook `kit-core-edit-guard.sh`). CIS-local, outside `core/`: `api.ts`,
     `guideContent.ts` (the guide checks, re-exporting the core shape), the shell (`AdminShell`, `Sidebar`, `Topbar`,
