@@ -362,6 +362,11 @@ class RebuildConn:
         c = self.cards[args[0]]
         if c["status"] != "auto_checked":
             return None
+        if "naming_note" not in sql:                       # AA-784 S254: placement-only clean-up
+            assert "facts" not in sql and "country" not in sql and "display_name" not in sql
+            c.update(locality=args[1], region=args[2])
+            c["cost_usd"] += args[3]
+            return args[0]
         c.update(locality=args[1], region=args[2], naming_note=args[3], facts=json.loads(args[4]))
         c["cost_usd"] += args[5]
         return args[0]
@@ -423,13 +428,90 @@ def test_rebuild_keeps_old_facts_minus_unverifiable_when_the_new_check_keeps_non
 
 
 def test_rebuild_leaves_the_card_when_the_draft_moves_country_or_the_check_rejects():
-    conn = RebuildConn([_stored(C13_ID, "Barafu Camp", "Tanzania", "Moshi", "Kilimanjaro")], {"a1": C13_ID},
+    conn = RebuildConn([_stored(C13_ID, "Barafu Camp", "Tanzania", None, "Kilimanjaro")], {"a1": C13_ID},
                        {"a1": _atom("a1", "Barafu hut", "Tanzania")})
-    out = _rebuild(conn, ScriptedLLM(dict(BARAFU, country="Kenya")), [C13_ID])
-    assert out["outcomes"] == {"country_changed": 1} and conn.cards[C13_ID]["locality"] == "Moshi"
+    llm = ScriptedLLM(dict(BARAFU, country="Kenya", region="Rift Valley"))
+    out = _rebuild(conn, llm, [C13_ID])
+    assert out["outcomes"] == {"country_changed": 1} and conn.cards[C13_ID]["region"] == "Kilimanjaro"
+    assert out["cards"][0]["drafted_country"] == "Kenya" and llm.check_prompts == []    # no check call
+    conn.cards[C13_ID]["locality"] = "Moshi"
     out = _rebuild(conn, ScriptedLLM(BARAFU, {"identity_ok": False}), [C13_ID])
     assert out["outcomes"] == {"identity_rejected": 1} and conn.cards[C13_ID]["locality"] == "Moshi"
     assert conn.cards[C13_ID]["cost_usd"] == pytest.approx(0.01 + 0.002 + 0.004)   # money spent is recorded
+
+
+# AA-784 S254: the 6 cross-border cards of the S253 r3 spot check that the country guard kept stale.
+DMZ_ID = "2e811048-2872-4731-a693-75a2e4fabbd2"
+MAHALANGUR_ID = "beadfa48-b7cd-438b-9bc4-6dc8ca92d968"
+IRKUTSK_ID = "1d19f815-244e-4edf-a33e-d0d76bb45f3e"
+
+
+@pytest.mark.parametrize("card_id, name, country, locality, region, place, drafted, after", [
+    (DMZ_ID, "Korean Demilitarized Zone", "North Korea and South Korea", None, "Korean Peninsula", "DMZ",
+     "South Korea", (None, None)),
+    (MAHALANGUR_ID, "Mahalangur Himal", "Nepal and China", "Khumbu", "Koshi Province", "Mahalangur Himal",
+     "Nepal", (None, None)),
+    ("c3267a16-b269-4562-b639-25f2bc1fd903", "Gobi Desert", "China and Mongolia", None,
+     "Southern Mongolia and northern China", "Gobi Desert", "Mongolia", (None, None)),
+    ("d9c773c4-9611-420e-a4a7-44db1b968765", "Kanchenjunga Range", "India and Nepal", None, "Eastern Himalaya",
+     "Kanchenjunga", "Nepal", (None, None)),
+    # both sides written 'A / B' pass the cross-border rule and are kept
+    (DMZ_ID, "Korean Demilitarized Zone", "North Korea and South Korea", None, "Kaesong / Gyeonggi Province", "DMZ",
+     "South Korea", None),
+])
+def test_rebuild_refuses_the_country_but_clears_stale_cross_border_placement(
+        card_id, name, country, locality, region, place, drafted, after):
+    stored = _stored(card_id, name, country, locality, region)
+    conn = RebuildConn([stored], {"a1": card_id}, {"a1": _atom("a1", place, country)})
+    draft = {"display_name": name, "locality": "Somewhere", "region": "Elsewhere", "country": drafted,
+             "naming_note": "A new note.", "facts": [{"text": "A drafted fact.", "kind": "setting"}]}
+    llm = ScriptedLLM(draft)
+    out = _rebuild(conn, llm, [card_id])
+    card = conn.cards[card_id]
+    # the guard still refuses the draft: name, country, note and facts as stored, no check call
+    assert (card["display_name"], card["country"], card["naming_note"]) == (name, country, None)
+    assert card["facts"] == json.dumps(OLD_FACTS) and llm.check_prompts == []
+    assert card["cost_usd"] == pytest.approx(0.01 + 0.002)                           # the draft is recorded
+    row = out["cards"][0]
+    if after is None:
+        assert out["outcomes"] == {"country_changed": 1} and (card["locality"], card["region"]) == (locality, region)
+        return
+    assert out["outcomes"] == {"country_changed_cleaned": 1}
+    assert (card["locality"], card["region"]) == after                              # never the draft's values
+    assert row["after"]["locality"] == after[0] and row["after"]["region"] == after[1]
+    assert {c["reason"] for c in row["cleared"]} == {"cross_border"} and row["drafted_country"] == drafted
+
+
+def test_rebuild_placement_clean_up_respects_an_admin_verdict_taken_meanwhile():
+    conn = RebuildConn([_stored(MAHALANGUR_ID, "Mahalangur Himal", "Nepal and China", "Khumbu", "Koshi Province")],
+                       {"a1": MAHALANGUR_ID}, {"a1": _atom("a1", "Mahalangur Himal", "Nepal")})
+    llm = ScriptedLLM({"display_name": "Mahalangur Himal", "country": "Nepal", "facts": []})
+    real = conn.fetchval
+
+    async def verified_meanwhile(sql, *args):
+        conn.cards[MAHALANGUR_ID]["status"] = "verified"
+        return await real(sql, *args)
+
+    conn.fetchval = verified_meanwhile
+    out = _rebuild(conn, llm, [MAHALANGUR_ID])
+    assert out["outcomes"] == {"status_changed": 1} and conn.cards[MAHALANGUR_ID]["locality"] == "Khumbu"
+
+
+def test_a_country_written_another_way_is_the_same_country():
+    """Irkutsk (stored 'Russia'): the draft's country is normalised to 'Russian Federation' (AA-990) — the same
+    country, so the card is rebuilt under the r3 rules instead of being refused as 'country_changed'."""
+    assert pc.same_country("Russia", "Russian Federation") and pc.same_country("Viet Nam", "Vietnam")
+    assert not pc.same_country("Nepal and China", "Nepal") and not pc.same_country("Kenya", "Tanzania")
+    assert pc.same_country("Nepal and China", "nepal and china")
+    conn = RebuildConn([_stored(IRKUTSK_ID, "Irkutsk", "Russia", "Irkutsk", "Irkutsk Oblast")], {"a1": IRKUTSK_ID},
+                       {"a1": _atom("a1", "Irkutsk", "Mongolia")})
+    draft = {"display_name": "Irkutsk", "locality": "Irkutsk", "region": "Irkutsk Oblast",
+             "country": "Russian Federation", "naming_note": "",
+             "facts": [{"text": "Irkutsk stands on the Angara River.", "kind": "setting"}]}
+    out = _rebuild(conn, ScriptedLLM(draft), [IRKUTSK_ID])
+    card = conn.cards[IRKUTSK_ID]
+    assert out["outcomes"] == {"rebuilt": 1} and card["country"] == "Russia"          # stored country kept
+    assert card["locality"] is None and card["region"] == "Irkutsk Oblast"            # 'is_place' cleared
 
 
 def test_rebuild_skips_reviewed_generic_unlinked_and_unknown_cards():
