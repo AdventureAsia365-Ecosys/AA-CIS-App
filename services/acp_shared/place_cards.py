@@ -93,15 +93,8 @@ Return ONLY JSON:
 
 - display_name: the place's usual English name (fix spelling variants, e.g. "Pawangka" -> the \
 common spelling, mentioning the variant in naming_note).
-- locality: the town, city or village the place is IN (its municipality). Empty string when the \
-place is outside any settlement (in a national park or nature reserve, on a mountain, at a trek camp \
-or hut, a pass, a glacier, a lake or in a desert), when the place is itself a town or village, or when \
-you are not sure. Never the nearest town, trailhead or a neighbouring village instead.
-- region: the first-level administrative division the place is in TODAY (a state, province, \
-administrative region, or a city with province status), using its current name after any merger or \
-reform. Never a geographic, trekking or marketing area: not "Northern Mongolia", "Central Vietnam", \
-"Khumbu", "Everest Region" or "North Malé Atoll". Empty string when the place is itself a \
-first-level division or you are not sure. Short names only.
+- locality: the town or city it is in or next to; region: province / state / historical region. \
+Short names only. Empty string when it does not apply or you are not sure.
 - country: the one country it is in today (a route may cross a border, so this can differ from \
 the country the tour is sold as).
 - naming_note: one sentence on how to name the location for an international travel audience \
@@ -119,42 +112,24 @@ reaching or visiting the place is omitted.
 - Only facts you are confident are widely documented. No prices, fees, opening hours, \
 visitor numbers, rankings or superlatives, and nothing about the tour or trip itself. \
 Write a number only if it is a well-established fact (e.g. a founding century).
-- No claims about the place's CURRENT status or administrative role (what it is the capital or seat \
-of, what a building is used for now, whether it still operates or continues to serve): such claims go \
-out of date after reforms, closures and restorations. Write them in the past tense with a date, or not \
-at all. Name a designer or architect only when the attribution is certain and widely documented.
 - If the itinerary name is too generic to identify one real place (e.g. "the market", \
 "hotel"), return {"display_name": "", "facts": []}."""
 
 _CHECK_SYSTEM = """You check a reference card about a real place. For the place identity and \
 for each numbered fact, answer whether it is accurate and well-established.
 
-Return ONLY JSON: {"identity_ok": true/false, "locality_ok": true/false, "region_ok": true/false, \
-"verdicts": ["supported" | "unsure" | "wrong", ...]}
-- identity_ok: the display name and country are correct for the place the itinerary means. A tour \
-may cross a border: do not reject only because the card's country is a neighbouring country of the one \
-the tour is sold as.
-- locality_ok: false when the locality is not the town, city or village the place is IN — for example \
-the nearest town of a place inside a national park, on a mountain, at a trek camp, pass, glacier or \
-lake, or a neighbouring village. true when it is right or empty.
-- region_ok: false when the region is not the first-level administrative division (state, province, \
-administrative region, city with province status) the place is in today — for example a geographic, \
-trekking or marketing area ("Northern Mongolia", "Central Vietnam", "Khumbu", "North Malé Atoll") or a \
-name replaced by an administrative reform. true when it is right or empty.
+Return ONLY JSON: {"identity_ok": true/false, "verdicts": ["supported" | "unsure" | "wrong", ...]}
+- identity_ok: the display name, locality, region and country are correct for the place the \
+itinerary means. A tour may cross a border: do not reject only because the card's country is a \
+neighbouring country of the one the tour is sold as.
 - One verdict per numbered fact, same order. "supported" only when you are confident the fact \
-is correct and widely documented; "unsure" when you cannot confirm it; "wrong" when it is false.
-- Answer "unsure" for any claim about the place's CURRENT status or administrative role (is the \
-capital or seat of something, currently, still, continues to, now serves as, remains): reforms, \
-closures and restorations make such claims go out of date and you have no source. Answer "unsure" \
-for who designed it ("designed by", an architect's name): the card carries no source for it."""
+is correct and widely documented; "unsure" when you cannot confirm it; "wrong" when it is false."""
 
 # A changed prompt invalidates every stored miss (a new prompt may identify the place). It never
 # re-drafts an existing card: ensure_place_cards() skips linked atoms and reuses cards by alias / core
 # name, and its only callers are bounded (T8: one atom; place_cards_build: one tour, MAX_PLACES).
 # AA-774 changed the facts bullet: old cards keep their facts and are filtered at seed time.
 # AA-808 added the traveller-clause bullet (hash changes with it; existing cards are not re-drafted).
-# AA-784 (S253) added the locality / region / current-status rules and the check's locality_ok / region_ok: the hash
-# change retries stored misses once; existing cards change only through rebuild_place_cards().
 PROMPT_SHA = hashlib.sha256(f"{_CARD_SYSTEM}\n{_CHECK_SYSTEM}\nfacts={MAX_FACTS}".encode()).hexdigest()[:16]
 
 
@@ -437,257 +412,6 @@ def _trim(text: Optional[str], limit: int = 600) -> str:
     return text if len(text) <= limit else text[:limit].rsplit(" ", 1)[0] + "…"
 
 
-# ── AA-784 (S253): identity and fact hygiene — deterministic, no model call ───────────────────────
-# Blind spot check of the live build (S252, 20 cards, GPT-6 Luna × Haiku 4.5): 7/20 wrong locality or region and
-# 3/83 kept facts false. Region: 4/7 were geographic or trekking areas, not administrative divisions ("Northern
-# Mongolia", "Central Vietnam", "Khumbu", "North Malé Atoll"). Locality: 2/7 were the nearest town of a point outside
-# any settlement (Barafu Camp -> Moshi, Thado Koshi -> Lukla). Facts: 2/3 were present-tense status claims gone out of
-# date (Pleiku "is the province's capital" before the 2025 merger; Nuwara Eliya Post Office "continues to serve as a
-# post office" while closed for restoration) and 1 an authorship claim (Zenkov Cathedral "designed by Andrei Zenkov").
-# The draft and check prompts carry the same rules; these functions hold them whatever the model answers. A field they
-# clear becomes empty (unknown), never a guess: an empty locality / region is not an error, a wrong one is.
-
-_DIRECTION_WORDS = frozenset({
-    "north", "northern", "south", "southern", "east", "eastern", "west", "western", "central", "middle", "upper",
-    "lower", "inner", "outer", "far", "northeast", "northeastern", "northwest", "northwestern", "southeast",
-    "southeastern", "southwest", "southwestern"})
-# Words of administrative units' own names. A region carrying one is never cleared by the SHAPE rules below
-# ("Rift Valley Province", "Central Province", "Tibet Autonomous Region"). Not "region": "Central Highlands Region".
-_ADMIN_WORDS = frozenset({
-    "province", "provinces", "state", "prefecture", "county", "district", "division", "governorate", "oblast", "krai",
-    "department", "municipality", "aimag", "aimak", "territory", "emirate", "canton", "voivodeship", "dzongkhag",
-    "autonomous", "administrative", "metropolitan", "republic", "parish"})
-# Landform words: a region named by one is an area, not an administrative unit ("Kathmandu Valley", "Mekong Delta",
-# "Thar Desert", "Central Highlands").
-_AREA_WORDS = frozenset({
-    "valley", "valleys", "highlands", "plateau", "delta", "basin", "steppe", "desert", "mountains", "range",
-    "lowlands", "foothills", "plains", "gorge", "coast", "coastline", "peninsula", "archipelago", "ghats"})
-# Landform words that are also in real administrative names ("Kaafu Atoll", "Andaman and Nicobar Islands"): an area
-# only together with a direction word ("North Malé Atoll", "Northern Islands").
-_AREA_WORDS_WITH_DIRECTION = frozenset({"atoll", "atolls", "island", "islands", "plain", "hills", "lakes", "river"})
-# A direction word + a country is a geographic area ("Northern Mongolia", "Central Vietnam", "South India") except
-# these first-level divisions.
-_DIRECTION_COUNTRY_DIVISIONS = frozenset({
-    "inner mongolia", "south australia", "western australia", "northern ireland"})
-# Trekking / mountain / marketing areas the drafter gives as a region, compared after the trailing area noun
-# ("Everest Region" -> "everest"). None is an administrative division.
-_AREA_NOUNS = frozenset({"region", "area", "zone", "massif", "sector"})
-_NON_ADMIN_AREAS = frozenset({
-    "khumbu", "everest", "annapurna", "langtang", "manaslu", "helambu", "rolwaling", "gokyo", "dolpo", "makalu",
-    "kanchenjunga", "kangchenjunga", "sagarmatha", "upper mustang", "lower mustang", "golden triangle", "indochina",
-    "himalaya", "himalayas", "karakoram", "hindu kush", "pamir", "pamirs", "gobi", "altai", "khangai", "silk road"})
-_ROUTE_WORDS = frozenset({"trek", "circuit", "trail", "route"})
-# A card whose own name ends in one of these IS a first-level division: it has no region above it.
-_DIVISION_NAME_ENDS = frozenset({"province", "prefecture", "aimag", "aimak", "oblast", "governorate", "dzongkhag",
-                                 "state", "krai"})
-
-# Places outside any settlement: their locality is empty, never the nearest town (Barafu Camp -> Moshi).
-_REMOTE_WORDS = frozenset({
-    "camp", "camps", "hut", "huts", "pass", "glacier", "glaciers", "icefall", "peak", "peaks", "summit", "mount", "mt",
-    "mountain", "mountains", "volcano", "crater", "ridge", "col", "lake", "lakes", "tso", "tsho", "nuur", "gorge",
-    "canyon", "desert", "plateau", "range", "valley"})
-_REMOTE_PHRASES = ("national park", "nature reserve", "wildlife sanctuary", "conservation area", "protected area",
-                   "biosphere reserve", "marine park")
-_REMOTE_LEADING = frozenset({"lake", "mount", "mt", "glacier"})
-_PASS_SUFFIX = "la"  # Tibetan / Ladakhi "pass" as the LAST word ("Khardung La", "Thorong La"), never "La Paz"
-# A village is its own locality: a different settlement there is a neighbouring one (Thado Koshi -> Lukla).
-# Nepali "-gaon" / "-gaun" (village) only on a Nepal card: "Goregaon" is a Mumbai suburb.
-_VILLAGE_WORDS = frozenset({"village", "villages"})
-_VILLAGE_SUFFIX_COUNTRIES = {"nepal": ("gaon", "gaun")}
-
-
-def _words(text: Optional[str]) -> list[str]:
-    return fold(text).split()
-
-
-def _bare(text: Optional[str]) -> str:
-    """core_key() without administrative words: 'Bulgan Province' == 'Bulgan', 'Paro Town' == 'Paro'."""
-    return " ".join(w for w in core_key(text).split() if w not in _ADMIN_WORDS)
-
-
-_COUNTRY_NAMES: dict[str, str] = {}
-
-
-def _country_by_name(text: Optional[str]) -> Optional[str]:
-    """The canonical country a text names by its name or ISO short name ('Vietnam', 'Viet Nam'), or None. Not by an
-    alias or a code: shared.countries aliases include sub-national names ('Tibet' -> China) that are real regions."""
-    if not _COUNTRY_NAMES:
-        for c in _countries.all_countries():
-            _COUNTRY_NAMES.setdefault(fold(c.name), c.name)
-            _COUNTRY_NAMES.setdefault(fold(c.iso_name), c.name)
-    return _COUNTRY_NAMES.get(fold(text))
-
-
-def region_problem(region: Optional[str], *, name: Optional[str] = None,
-                   country: Optional[str] = None) -> Optional[str]:
-    """Why `region` is not a first-level administrative division of the card, or None to keep it.
-
-    'country' — the region is the card's country; 'is_place' — the region is the place itself, or the place is itself
-    a first-level division ('Bulgan Province'); 'trek_area' — a trekking / mountain / marketing area ('Khumbu',
-    'Everest Region', 'Annapurna Circuit'); 'geographic' — a direction + a country ('Northern Mongolia',
-    'Central Vietnam') or a landform area ('Kathmandu Valley', 'North Malé Atoll'). A list of regions
-    ('Ladakh, Gilgit-Baltistan, Xinjiang': a range across borders) is left alone."""
-    words = _words(region)
-    if not words:
-        return None
-    whole = _country_by_name(region)
-    if whole is not None:
-        card_country = _countries.resolve(country)
-        return "country" if card_country is None or whole == card_country.name else None
-    name_words = _words(name)
-    # exact name only: 'Khövsgöl Lake' sits in 'Khövsgöl Province', a town 'Bulgan' in 'Bulgan Province'
-    if name_words and (words == name_words or name_words[-1] in _DIVISION_NAME_ENDS
-                       or name_words[-2:] == ["autonomous", "region"]):
-        return "is_place"
-    if words[-1] in _ROUTE_WORDS:
-        return "trek_area"
-    stem = list(words)
-    while len(stem) > 1 and stem[-1] in _AREA_NOUNS:
-        stem.pop()
-    if " ".join(stem) in _NON_ADMIN_AREAS:
-        return "trek_area"
-    if any(w in _ADMIN_WORDS for w in words):
-        return None
-    directed = any(w in _DIRECTION_WORDS for w in words)
-    if any(w in _AREA_WORDS for w in words) or (directed and any(w in _AREA_WORDS_WITH_DIRECTION for w in words)):
-        return "geographic"
-    if directed and " ".join(words) not in _DIRECTION_COUNTRY_DIVISIONS:
-        rest = " ".join(w for w in words if w not in _DIRECTION_WORDS)
-        if rest and _country_by_name(rest) is not None:
-            return "geographic"
-    return None
-
-
-def _remote_name(name: str) -> bool:
-    """The name's HEAD is a remote kind: its last word ('Barafu Camp', 'Nam Ou Valley', 'Thorong La'), a leading
-    'Lake' / 'Mount' ('Mount Everest'), or a park phrase at its end ('Kilimanjaro National Park'). A building named
-    after one is not remote: 'Sagarmatha National Park Visitor Centre' is in Namche Bazaar, 'Lake Palace' in Udaipur.
-    Each form of the name counts ('Tonle Sap (Tonle Sap Lake)')."""
-    for form in name_forms(name):
-        words = form.split()
-        if not words:
-            continue
-        if (words[-1] in _REMOTE_WORDS or words[0] in _REMOTE_LEADING
-                or any(form.endswith(p) for p in _REMOTE_PHRASES) or (len(words) > 1 and words[-1] == _PASS_SUFFIX)):
-            return True
-    return False
-
-
-def _village_name(name: str, country: Optional[str]) -> bool:
-    words = _words(name)
-    suffixes = _VILLAGE_SUFFIX_COUNTRIES.get(fold(country), ())
-    return any(w in _VILLAGE_WORDS for w in words) or any(w.endswith(suffixes) for w in words if suffixes)
-
-
-def locality_problem(locality: Optional[str], *, name: Optional[str], region: Optional[str] = None,
-                     country: Optional[str] = None, place_names: tuple = ()) -> Optional[str]:
-    """Why `locality` is not the settlement the place is IN, or None to keep it.
-
-    'is_place' — the locality is the place itself (a town's card); 'same_as_region' — it repeats the region (the
-    region stays); 'remote_place' — the place (its display name or an itinerary name) is outside any settlement: a
-    camp, hut, pass, glacier, peak, lake, valley, national park … ; 'village' — the place is a village and the
-    locality is another settlement. A generic name ('City Palace') keeps its locality: its card key needs it."""
-    if not _words(locality) or is_generic_name(name):
-        return None
-    if _bare(locality) == _bare(name):
-        return "is_place"
-    # whole words only: the town 'Luang Prabang' is in 'Luang Prabang Province' (both are right)
-    if _words(region) and core_key(locality) == core_key(region):
-        return "same_as_region"
-    names = [n for n in (name, *place_names) if n]
-    if any(_remote_name(n) for n in names):
-        return "remote_place"
-    if any(_village_name(n, country) for n in names):
-        return "village"
-    return None
-
-
-def clean_identity(card: dict, *, place_names: tuple = (), country: Optional[str] = None) -> list[dict]:
-    """Clear a drafted card's region / locality that break the AA-784 rules (in place). Region first: a cleared region
-    no longer makes the locality redundant. Returns one {"field", "reason", "value"} per cleared field."""
-    out = []
-    name = card.get("display_name") if isinstance(card.get("display_name"), str) else ""
-    for field in ("region", "locality"):
-        value = card.get(field) if isinstance(card.get(field), str) else ""
-        if field == "region":
-            why = region_problem(value, name=name, country=country)
-        else:
-            why = locality_problem(value, name=name, region=card.get("region") or "", country=country,
-                                   place_names=tuple(place_names))
-        if why:
-            out.append({"field": field, "reason": why, "value": value})
-            card[field] = ""
-    return out
-
-
-# Present-tense status / administrative-role claims and authorship claims: the check keeps a fact only when it is
-# sure, but it has no source and these go out of date or are commonly misattributed. Never kept on a card.
-_PAST_MARKERS = r"(?:was|were|former(?:ly)?|until|once|old|historic(?:al)?|ancient|imperial|royal)"
-_UNVERIFIABLE_CLAIMS = tuple((name, re.compile(rx, re.IGNORECASE)) for name, rx in (
-    ("current_status", r"\b(?:currently|at present|presently|nowadays|to this day)\b|\bto date\b(?=\s*(?:[,.;]|$))"
-                       r"|\b(?:is|are|remains?) still\b|\bcontinues? to\b"
-                       r"|\bstill (?:serves?|functions?|operates?|houses?|stands?|in use|used|active|working|runs?)\b"
-                       r"|\b(?:serves?|functions?|operates?) as\b"
-                       r"|\b(?:today|now)\b[^.;]{0,40}\b(?:serves?|houses?|functions?|operates?|used as|home to|"
-                       r"part of|belongs? to)\b"),
-    ("admin_role", rf"\b(?:is|are|remains?)\b(?:(?!\b{_PAST_MARKERS}\b)[^.;]){{0,60}}?"
-                   r"\b(?:(?<!in the )capital|administrative (?:cent(?:er|re)|seat|headquarters)|seat of)\b"),
-    ("authorship", r"\b(?:designed|planned|engineered) by\b|\barchitects?\b|\bthe work of\b"),
-))
-
-
-# 'capital [city] [and (the) <up to 2 words> city|town] of (the) <country>': the national-capital phrasings.
-_CAPITAL_OF = r"\bcapital(?: city)?(?: and (?:the )?(?:\w+ ){0,2}(?:city|town|metropolis))? of (?:the )?"
-# A sentence naming one of these besides the national pattern is about a division ('the capital of Gia Lai Province
-# in Vietnam', 'the provincial capital of Gia Lai, Vietnam'): not a national capital.
-_DIVISION_MARKERS = _ADMIN_WORDS | {"provincial", "regional", "prefectural", "region", "regions"}
-
-
-def _national_capital(text: str, country: Optional[str]) -> bool:
-    """'… is the capital of Mongolia' / 'Malé is the capital and most populous city of the Maldives' / 'Hanoi is the
-    capital of Viet Nam' on a card of that country: 'capital' is followed DIRECTLY by 'of (the) <the country's name or
-    ISO name>', and no administrative word ('province', 'state', 'provincial' …) is in the sentence outside the
-    country's own name ('Czech Republic'). 'Pleiku is the capital of Gia Lai Province in Vietnam' is not one."""
-    c = _countries.resolve(country)
-    names = {n for n in ({fold(country)} | ({fold(c.name), fold(c.iso_name)} if c else set())) if n}
-    if not names:
-        return False
-    rx = re.compile(_CAPITAL_OF + "(?:" + "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True))
-                    + r")\b")
-    for part in re.split(r"[.;]", text):
-        f = fold(part)
-        m = rx.search(f)
-        if m and not set((f[:m.start()] + " " + f[m.end():]).split()) & _DIVISION_MARKERS:
-            return True
-    return False
-
-
-def unverifiable_claim(text: Optional[str], country: Optional[str] = None) -> Optional[str]:
-    """The claim kind ('current_status' / 'admin_role' / 'authorship') when a fact asserts something the check cannot
-    verify without a source, or None. A national capital ('… is the capital of Mongolia' on a Mongolia card) is kept:
-    stable and widely documented, unlike a provincial seat after a reform (Pleiku, 2025)."""
-    text = " ".join((text or "").split())
-    for name, rx in _UNVERIFIABLE_CLAIMS:
-        if not rx.search(text):
-            continue
-        if name == "admin_role" and _national_capital(text, country):
-            continue
-        return name
-    return None
-
-
-def drop_unverifiable(facts: list[dict], country: Optional[str] = None, card_name: str = "") -> list[dict]:
-    """`facts` without the unverifiable_claim() ones (logged)."""
-    out = []
-    for f in facts:
-        why = unverifiable_claim(f.get("text"), country)
-        if why:
-            logger.info("place_card_fact_unverifiable", card=card_name, claim=why, text=(f.get("text") or "")[:120])
-            continue
-        out.append(f)
-    return out
-
-
 def draft_card(atom: dict) -> tuple[dict, float, object]:
     """One `a3_place_card` call. Returns (card dict, cost, response)."""
     user = (f"PLACE AS THE ITINERARY NAMES IT: {atom['place']}\n"
@@ -700,14 +424,8 @@ def draft_card(atom: dict) -> tuple[dict, float, object]:
     return _parse_json(resp.content), resp.cost_usd, resp
 
 
-def _flag_false(value) -> bool:
-    """True only for an explicit false ('false' as text too); a missing key keeps the field."""
-    return value is False or (isinstance(value, str) and value.strip().lower() == "false")
-
-
-def check_card(card: dict, atom: dict) -> tuple[bool, list[str], float, object, dict]:
-    """One `a3_place_card_check` call. Returns (identity_ok, verdict per fact, cost, response, placement) where
-    placement = {"locality_ok", "region_ok"} (AA-784: a wrong locality / region is cleared, not a rejected card)."""
+def check_card(card: dict, atom: dict) -> tuple[bool, list[str], float, object]:
+    """One `a3_place_card_check` call. Returns (identity_ok, verdict per fact, cost, response)."""
     facts = card.get("facts") or []
     numbered = "\n".join(f"{i}. {f['text']}" for i, f in enumerate(facts, 1))
     user = (f"ITINERARY NAME: {atom['place']} (tour sold as {atom.get('country') or 'unknown'}; "
@@ -723,9 +441,7 @@ def check_card(card: dict, atom: dict) -> tuple[bool, list[str], float, object, 
     verdicts = [str(v).strip().lower() for v in verdicts]
     if len(verdicts) != len(facts):
         verdicts = ["unsure"] * len(facts)  # misaligned reply → keep nothing
-    placement = {"locality_ok": not _flag_false(data.get("locality_ok")),
-                 "region_ok": not _flag_false(data.get("region_ok"))}
-    return bool(data.get("identity_ok")), verdicts, resp.cost_usd, resp, placement
+    return bool(data.get("identity_ok")), verdicts, resp.cost_usd, resp
 
 
 async def _log(pool, stage: str, role: str, resp, quality_signal: dict) -> None:
@@ -965,59 +681,6 @@ async def find_card_for_draft(conn, key: str, name: str, aliases: list[str], loc
     return pick("draft_alias", hits) if hits else None
 
 
-_REJECTED_CANDIDATES_SQL = """
-    SELECT card_id, place_key, display_name, country FROM acp_shared.place_card
-    WHERE status = 'rejected' AND place_key <> $1 AND lower(country) LIKE ANY($2::text[])
-    -- AA-784 held: rejected cards under ANOTHER key whose stored country may be a compound naming the draft's
-"""
-
-
-def _compound_includes(card_country: Optional[str], country: str) -> bool:
-    """The stored card's country is a COMPOUND (pre-AA-990: 'Nepal and China') that names `country`."""
-    if _countries.resolve(card_country) is not None:
-        return False
-    parts = {c.name for c in _countries.resolve_parts(card_country)}
-    return len(parts) > 1 and (_countries.name(country) or country) in parts
-
-
-async def find_rejected_for_draft(conn, key: str, name: str, country: str) -> Optional[str]:
-    """AA-784 — the REJECTED compound-country card a checked draft names, or None. A card stored before AA-990 under
-    a compound country ('Nepal and China', C07) is never reached by a new draft: AA-990 stores one ISO country, so
-    the draft has another place_key and never has the same identity (_store_card's rules cannot fire). Such a
-    rejection is a hold an admin lifts (edit the card or verify it), never a duplicate under a new key. Same core name
-    (or feature-synonym key), the draft's country one of the compound's. A rejected SINGLE-country card under another
-    key keeps the AA-772 rule (the atoms get a fresh draft); one under the same key the _store_card rule. A generic
-    name keys on its locality: not matched here."""
-    if is_generic_name(name):
-        return None
-    c = _countries.resolve(country)
-    spellings = sorted({fold(country), *(c.spellings() if c else ())} - {""})
-    if not spellings:
-        return None
-    rows = [r for r in await conn.fetch(_REJECTED_CANDIDATES_SQL, key, [f"%{s}%" for s in spellings])
-            if _compound_includes(r["country"], country)]
-    forms = itinerary_alias_forms(name)
-    for keyfn in (core_key, match_key):
-        keys = {keyfn(f) for f in forms}
-        for r in rows:
-            if any(keyfn(f) in keys for f in itinerary_alias_forms(r["display_name"])):
-                return str(r["card_id"])
-    return None
-    c = _countries.resolve(country)
-    spellings = sorted({fold(country), *(s for s in (c.spellings() if c else ()))} - {""})
-    if not spellings:
-        return None
-    rows = await conn.fetch(_REJECTED_CANDIDATES_SQL, key, [f"%{s}%" for s in spellings])
-    forms = itinerary_alias_forms(name)
-    for keyfn in (core_key, match_key):
-        keys = {keyfn(f) for f in forms}
-        for r in rows:
-            if _card_in_country(r["country"], country) and any(
-                    keyfn(f) in keys for f in itinerary_alias_forms(r["display_name"])):
-                return str(r["card_id"])
-    return None
-
-
 # ── Build ──────────────────────────────────────────────────────────────────────────────────────
 
 def _representative(atoms: list[dict]) -> dict:
@@ -1077,57 +740,6 @@ async def _store_card(conn, key: str, fields: tuple):
         """, key, *fields)
 
 
-async def _draft_checked(rep: dict, place_names: tuple, pool, signal: dict, *,
-                         keep: Optional[dict] = None) -> dict:
-    """Draft + AA-784 identity rules + check + unverifiable-fact filter for one place (2 paid calls, both logged).
-
-    `keep` (rebuild_place_cards): the stored card's display_name and country — the draft's are replaced by them
-    before the check, so what is checked is what is stored; a draft placing the place in another country is
-    'country_changed' (no check call). Returns {"outcome": 'ok' | 'no_name' | 'identity_rejected' |
-    'country_changed', "model", "cost", and when ok: "name", "locality", "region", "country", "note", "facts" (kept),
-    "card" (the cleaned draft, aliases included), "cleared" (fields the rules or the check emptied)}."""
-    card, cost, resp = await asyncio.to_thread(draft_card, rep)
-    await _log(pool, "a3_place_card", "validate", resp, signal)
-    model = getattr(resp, "model_used", None)
-    out = {"outcome": "no_name", "model": model, "cost": round(cost or 0, 6)}
-    name = (card.get("display_name") or "").strip() if isinstance(card.get("display_name"), str) else ""
-    raw_country = card.get("country") if isinstance(card.get("country"), str) else ""
-    country = normalise_card_country(raw_country, rep.get("country"))
-    if not name or not country:
-        return out
-    if keep is not None:
-        if fold(country) != fold(keep["country"]):
-            logger.info("place_card_rebuild_country_changed", place=rep["place"], card=keep["display_name"],
-                        stored=keep["country"], drafted=country)
-            return dict(out, outcome="country_changed")
-        name, country = keep["display_name"], keep["country"]
-        card["display_name"], card["country"] = name, country
-    card["facts"] = _clean_facts(card.get("facts"), name)
-    card["aliases"] = _clean_aliases(card.get("aliases"))
-    cleared = clean_identity(card, place_names=place_names, country=country)
-    for c in cleared:
-        logger.info("place_card_identity_cleaned", place=rep["place"], card=name, **c)
-    ok, verdicts, cost2, resp2, placement = await asyncio.to_thread(check_card, card, rep)
-    supported = [f for f, v in zip(card["facts"], verdicts) if v == "supported"]
-    kept = drop_unverifiable(supported, country, name)
-    for field in ("locality", "region"):
-        if not placement[f"{field}_ok"] and (card.get(field) or "").strip():
-            cleared.append({"field": field, "reason": "check", "value": card[field]})
-            logger.info("place_card_identity_cleaned", place=rep["place"], card=name, **cleared[-1])
-            card[field] = ""
-    out["cost"] = round((cost or 0) + (cost2 or 0), 6)
-    await _log(pool, "a3_place_card_check", "validate", resp2,
-               dict(signal, identity_ok=ok, facts=len(card["facts"]), kept=len(kept),
-                    unverifiable=len(supported) - len(kept), cleared=[c["field"] for c in cleared]))
-    if not ok:
-        logger.info("place_card_identity_rejected", atom_id=rep["atom_id"], place=rep["place"], card=name)
-        return dict(out, outcome="identity_rejected")
-    return dict(out, outcome="ok", name=name, country=country, card=card, facts=kept, cleared=cleared,
-                locality=(card.get("locality") or "").strip() or None,
-                region=(card.get("region") or "").strip() or None,
-                note=(card.get("naming_note") or "").strip() or None)
-
-
 async def build_card_for_group(group_key: tuple[str, str], atoms: list[dict], pool) -> tuple[Optional[str], str]:
     """Draft + check ONE card for every atom of one (place_norm, country) group and link them.
     Returns (card_id, 'linked'), (card_id, 'linked_after_draft') when the checked draft names an
@@ -1135,18 +747,34 @@ async def build_card_for_group(group_key: tuple[str, str], atoms: list[dict], po
     stored so the place is not drafted again before its retry_after."""
     rep = _representative(atoms)
     signal = {"atom_id": rep["atom_id"], "place": rep["place"], "group_atoms": len(atoms)}
-    res = await _draft_checked(rep, tuple(a["place"] for a in atoms), pool, signal)
-    if res["outcome"] != "ok":
-        await _record_miss(pool, group_key, atoms, res["outcome"], res["model"])
-        return None, res["outcome"]
-    name, locality, region, country = res["name"], res["locality"], res["region"], res["country"]
-    card, kept = res["card"], res["facts"]
+    card, cost, resp = await asyncio.to_thread(draft_card, rep)
+    await _log(pool, "a3_place_card", "validate", resp, signal)
+    model = getattr(resp, "model_used", None)
+    name = (card.get("display_name") or "").strip() if isinstance(card.get("display_name"), str) else ""
+    raw_country = card.get("country") if isinstance(card.get("country"), str) else ""
+    country = normalise_card_country(raw_country, rep.get("country"))
+    card["facts"] = _clean_facts(card.get("facts"), name or rep["place"])
+    card["aliases"] = _clean_aliases(card.get("aliases"))
+    if not name or not country:
+        await _record_miss(pool, group_key, atoms, "no_name", model)
+        return None, "no_name"
+    ok, verdicts, cost2, resp2 = await asyncio.to_thread(check_card, card, rep)
+    kept = [f for f, v in zip(card["facts"], verdicts) if v == "supported"]
+    await _log(pool, "a3_place_card_check", "validate", resp2,
+               dict(signal, identity_ok=ok, facts=len(card["facts"]), kept=len(kept)))
+    if not ok:
+        logger.info("place_card_identity_rejected", atom_id=rep["atom_id"], place=rep["place"], card=name)
+        await _record_miss(pool, group_key, atoms, "identity_rejected", model)
+        return None, "identity_rejected"
+    locality = (card.get("locality") or "").strip() or None
+    region = (card.get("region") or "").strip() or None
     if is_generic_name(name) and not (locality or region):
         # 'City Palace' with no town is not one place: no card rather than one per country.
-        await _record_miss(pool, group_key, atoms, "no_name", res["model"])
+        await _record_miss(pool, group_key, atoms, "no_name", model)
         return None, "no_name"
     key = place_key(name, country, locality or region)
-    fields = (name, locality, region, country, res["note"], json.dumps(kept), res["cost"])
+    fields = (name, locality, region, country, (card.get("naming_note") or "").strip() or None,
+              json.dumps(kept), round(cost + cost2, 6))
     outcome = "linked"
     async with pool.acquire() as conn, conn.transaction():
         # AA-809: the draft may name a card that exists under another key (S233 legacy 3-part key,
@@ -1161,14 +789,7 @@ async def build_card_for_group(group_key: tuple[str, str], atoms: list[dict], po
                 "UPDATE acp_shared.place_card SET cost_usd = cost_usd + $2, updated_at = now() WHERE card_id = $1",
                 card_id, fields[-1])
         else:
-            rejected = await find_rejected_for_draft(conn, key, name, country)
-            if rejected is not None:
-                # AA-784: the draft names a rejected compound-country card (a hold): no duplicate, no link.
-                logger.info("place_card_names_rejected", atom_id=rep["atom_id"], place=rep["place"], card=name,
-                            rejected_card_id=rejected)
-                card_id = None
-            else:
-                card_id = await _store_card(conn, key, fields)
+            card_id = await _store_card(conn, key, fields)
         if card_id is not None:
             card_id = str(card_id)
             await conn.executemany(_LINK_SQL, [(a["atom_id"], card_id) for a in atoms])
@@ -1177,7 +798,7 @@ async def build_card_for_group(group_key: tuple[str, str], atoms: list[dict], po
                                group_key[0], group_key[1])
     if card_id is None:
         logger.info("place_card_same_as_rejected", atom_id=rep["atom_id"], place=rep["place"], card=name)
-        await _record_miss(pool, group_key, atoms, "identity_rejected", res["model"])
+        await _record_miss(pool, group_key, atoms, "identity_rejected", model)
         return None, "identity_rejected"
     return card_id, outcome
 
@@ -1311,102 +932,6 @@ async def relink_tour_place_cards(pool, tour_id: str) -> dict:
     async with pool.acquire() as conn:
         ids = [r["atom_id"] for r in await conn.fetch(_TOUR_PLACE_ATOMS_SQL, tour_id, RELINK_MAX_ATOMS)]
     return await ensure_place_cards(ids, pool, max_places=0)
-
-
-# ── AA-784 (S253): rebuild named cards in place ───────────────────────────────────────────────────
-
-REBUILD_MAX_CARDS = 40   # = place_cards_build MAX_PLACES: one paid draft + one check per card
-REBUILD_MAX_ATOMS = 50   # the linked atoms read per card (the representative sentence needs only a few)
-_REBUILD_CARDS_SQL = """
-    SELECT card_id, place_key, display_name, locality, region, country, naming_note, facts, status
-    FROM acp_shared.place_card WHERE card_id = ANY($1::uuid[])
-"""
-_REBUILD_ATOMS_SQL = """
-    SELECT atom_id FROM acp_shared.atom_place_card WHERE card_id = $1::uuid ORDER BY atom_id LIMIT $2
-"""
-# status re-read in the WHERE: an admin who verified / rejected the card while the job ran wins.
-_REBUILD_UPDATE_SQL = """
-    UPDATE acp_shared.place_card
-    SET locality = $2, region = $3, naming_note = $4, facts = $5::jsonb, cost_usd = cost_usd + $6, updated_at = now()
-    WHERE card_id = $1::uuid AND status = 'auto_checked'
-    RETURNING card_id
-"""
-_ADD_COST_SQL = "UPDATE acp_shared.place_card SET cost_usd = cost_usd + $2, updated_at = now() WHERE card_id = $1::uuid"
-
-
-def _identity(row) -> dict:
-    return {"locality": row["locality"], "region": row["region"], "naming_note": row["naming_note"],
-            "facts": len(stored_facts(row["facts"]))}
-
-
-async def _rebuild_one(row, pool) -> dict:
-    card_id = str(row["card_id"])
-    out = {"card_id": card_id, "display_name": row["display_name"], "country": row["country"],
-           "before": _identity(row)}
-    if row["status"] != "auto_checked":
-        return dict(out, outcome=f"skipped_{row['status']}")   # an admin's verdict stands
-    if is_generic_name(row["display_name"]):
-        return dict(out, outcome="skipped_generic")             # its key carries the locality
-    async with pool.acquire() as conn:
-        ids = [r["atom_id"] for r in await conn.fetch(_REBUILD_ATOMS_SQL, card_id, REBUILD_MAX_ATOMS)]
-        atoms = [dict(r) for r in await conn.fetch(_ATOM_PLACE_QUERY, ids)] if ids else []
-    if not atoms:
-        return dict(out, outcome="no_atoms")
-    rep = _representative(atoms)
-    signal = {"atom_id": rep["atom_id"], "place": rep["place"], "group_atoms": len(atoms), "rebuild_card": card_id}
-    res = await _draft_checked(rep, tuple(dict.fromkeys(a["place"] for a in atoms)), pool, signal,
-                               keep={"display_name": row["display_name"], "country": row["country"]})
-    out["cost_usd"] = res["cost"]
-    async with pool.acquire() as conn:
-        if res["outcome"] != "ok":
-            await conn.execute(_ADD_COST_SQL, card_id, res["cost"])
-            return dict(out, outcome=res["outcome"])            # the card is left as it was
-        facts = res["facts"]
-        if not facts:
-            # the new check kept nothing: keep the old checked facts, minus the claims the new rules drop
-            facts = drop_unverifiable(stored_facts(row["facts"]), row["country"], row["display_name"])
-        updated = await conn.fetchval(_REBUILD_UPDATE_SQL, card_id, res["locality"], res["region"], res["note"],
-                                      json.dumps(facts), res["cost"])
-        if updated is None:
-            await conn.execute(_ADD_COST_SQL, card_id, res["cost"])
-            return dict(out, outcome="status_changed")
-    after = {"locality": res["locality"], "region": res["region"], "naming_note": res["note"], "facts": len(facts)}
-    logger.info("place_card_rebuilt", card_id=card_id, card=row["display_name"], before=out["before"], after=after,
-                cleared=res["cleared"])
-    return dict(out, outcome="rebuilt", after=after, cleared=res["cleared"],
-                facts_from="new_check" if res["facts"] else "old_filtered")
-
-
-async def rebuild_place_cards(card_ids: list[str], pool) -> dict:
-    """AA-784 — re-draft and re-check named cards IN PLACE under the current prompts and identity rules (one paid
-    draft + one check per card, ≤ REBUILD_MAX_CARDS). The card keeps its card_id, place_key, display_name, country,
-    atom links and aliases — only locality, region, naming_note and facts change (the checked draft is held to the
-    stored name and country; a draft placing it in another country changes nothing: 'country_changed'). Verified /
-    rejected cards and generic-name cards are skipped. A miss (no_name / identity_rejected) leaves the card as it was
-    and is reported, never stored as a place_card_miss (the place has a card). Returns counters + one row per card."""
-    ids = [c for c in dict.fromkeys(str(c) for c in card_ids or []) if c]
-    if len(ids) > REBUILD_MAX_CARDS:
-        raise ValueError(f"at most {REBUILD_MAX_CARDS} cards per rebuild")
-    async with pool.acquire() as conn:
-        rows = {str(r["card_id"]): r for r in await conn.fetch(_REBUILD_CARDS_SQL, ids)} if ids else {}
-    sem = asyncio.Semaphore(_CONCURRENCY)
-
-    async def one(cid: str) -> dict:
-        if cid not in rows:
-            return {"card_id": cid, "outcome": "not_found"}
-        async with sem:
-            try:
-                return await _rebuild_one(rows[cid], pool)
-            except Exception as e:  # noqa: BLE001 — soft-fail per card
-                logger.warning("place_card_rebuild_failed", card_id=cid, error=str(e)[:200])
-                return {"card_id": cid, "outcome": "error", "error": str(e)[:200]}
-
-    cards = await asyncio.gather(*(one(c) for c in ids))
-    counts: dict[str, int] = {}
-    for c in cards:
-        counts[c["outcome"]] = counts.get(c["outcome"], 0) + 1
-    return {"requested": len(ids), "outcomes": counts,
-            "cost_usd": round(sum(c.get("cost_usd") or 0 for c in cards), 6), "cards": list(cards)}
 
 
 # ── Duplicates + merge (admin) ─────────────────────────────────────────────────────────────────
@@ -1640,5 +1165,4 @@ __all__ = ["ensure_place_cards", "build_card_for_atom", "build_card_for_group", 
            "card_skip_reason", "find_existing_cards", "find_local_cards", "pick_local_card", "is_generic_name",
            "atom_group_key", "itinerary_alias_forms", "miss_is_active", "RULE_VERSION", "PROMPT_SHA",
            "duplicate_clusters", "merged_facts", "merge_cards", "MergeError", "traveller_clause",
-           "find_card_for_draft", "find_rejected_for_draft", "match_key", "region_problem", "locality_problem",
-           "clean_identity", "unverifiable_claim", "drop_unverifiable", "rebuild_place_cards", "REBUILD_MAX_CARDS"]
+           "find_card_for_draft", "match_key"]

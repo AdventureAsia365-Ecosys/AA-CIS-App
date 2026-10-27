@@ -51,16 +51,6 @@ first created it; its label and members move on. A run therefore relabels only i
 atoms' prior Segments + the pool's pseudo Segments), re-mints a fresh id that collides with another
 country's Segment or an alias old id (`avoid_foreign_ids`, same rule as the S239 repair), and checks
 after writing, in the same transaction, that no written id holds live atoms of two countries.
-
-**AA-988 (S253) — one id per derived Segment.** `_mint` (`place|verb|country`) is coarser than the
-join rule, so two Segments of one run that are not one moment ("Hutong / walk through to see the
-local lifestyle" vs the existing "the Hutong / stroll through") could mint the same id; one was then
-dropped by `reconcile_ids` (atoms left without a member row) or took the existing Segment's id
-(glued in, relabelled). `derive_segments` now re-mints every Segment holding a contested id — one
-minted twice, or the stored id of a pool pseudo it does not contain (`_unique_ids`: the existing
-Segment that owns the id keeps it; uncontested ids are unchanged),
-`reconcile_ids` raises on a duplicate id, and the run checks before writing that every forming atom
-of the tour is in exactly one Segment (`assert_each_atom_in_one_segment`).
 """
 from __future__ import annotations
 
@@ -101,10 +91,6 @@ CONNECTORS = frozenset(
 # Two places match when half their distinctive words agree, or when one is written out of the
 # other — the long name for a walk contains the short one.
 SIMILARITY = 0.5
-
-# The atom id `run_segment_matching` gives an EXISTING Segment in the pool ("pseudo atom"):
-# this prefix + the Segment's stored id. Never a real `tour_atoms` row, never written as a member.
-_PSEUDO_PREFIX = "__existing_segment__"
 
 
 class Key(NamedTuple):
@@ -250,65 +236,15 @@ def derive_segments(atoms: list[SegmentAtom], apart: frozenset = frozenset(),
         )
         # AA-857 — the guard below `_connected` already enforces; a failure here is a bug, never data.
         assert_one_country(members, by_id)
-        segments.append((
+        segments.append(
             Segment(
                 id=_mint(canonical, label.country),
                 place=label.place,
                 action=label.action,
                 atom_ids=tuple(sorted(members)),
-            ),
-            canonical,
-            label.country,
-        ))
-    return sorted(_unique_ids(segments), key=lambda segment: segment.id)
-
-
-def _unique_ids(minted: list[tuple[Segment, Key, str]]) -> list[Segment]:
-    """AA-988 (S253) — give every derived Segment its own id.
-
-    `_mint` hashes `place|verb|country` only, which is coarser than the join rule
-    (`_looks_like_one_moment` also needs `_about_the_same_thing`): "Hutong / walk through to see
-    the local lifestyle" and "the Hutong / stroll through" are two moments with one mint.
-    `reconcile_ids` keys Segments by id, so one of them used to vanish (its atoms got no member
-    row) or the new one took the existing Segment's id (glued in and relabelled).
-
-    An id is contested when more than one Segment mints it, OR when an existing Segment of the
-    pool (a pseudo atom) has it as its stored id. The second case needs no second holder: an
-    existing Segment whose pseudo joins a new atom with a shorter canonical key mints a different
-    id, and a lone new Segment that is not that moment can then mint the stored id on its own —
-    `reconcile_ids` would alias the stored id away and `_plan_writes` would write the new atom
-    into it and relabel it. Uncontested ids are the plain `_mint`, byte for byte (ADR 0002).
-
-    For a contested id, the Segment holding the pseudo atom of that very id (the existing Segment
-    the id belongs to) keeps it; every other holder is re-minted with `_mint_specific`. Without
-    such a holder all are re-minted, and a pseudo gets its stored id back through `_claims` (its
-    pseudo atom is assigned to it). A re-mint never lands on another pseudo's stored id either.
-    """
-    # The stored id of every existing Segment in the pool (its pseudo atom is `_PSEUDO_PREFIX` + id).
-    stored = {atom_id[len(_PSEUDO_PREFIX):] for segment, _, _ in minted
-              for atom_id in segment.atom_ids if atom_id.startswith(_PSEUDO_PREFIX)}
-    groups: dict[str, list[int]] = {}
-    for index, (segment, _, _) in enumerate(minted):
-        groups.setdefault(segment.id, []).append(index)
-    out = [segment for segment, _, _ in minted]
-    for base_id, members in groups.items():
-        if len(members) < 2 and base_id not in stored:
-            continue
-        owner = f"{_PSEUDO_PREFIX}{base_id}"
-        seen: dict[tuple, int] = {}
-        for index in sorted((i for i in members if owner not in minted[i][0].atom_ids),
-                            key=lambda i: minted[i][0].atom_ids):
-            segment, canonical, country = minted[index]
-            full = (canonical.place, canonical.verb, canonical.said, tuple(sorted(canonical.about)), country)
-            n = seen.get(full, 0)
-            identifier = _mint_specific(canonical, country, n)
-            # A stored id may itself be an earlier re-mint: skip it unless this Segment owns it.
-            while identifier in stored and f"{_PSEUDO_PREFIX}{identifier}" not in segment.atom_ids:
-                n += 1
-                identifier = _mint_specific(canonical, country, n)
-            seen[full] = n + 1
-            out[index] = replace(segment, id=identifier)
-    return out
+            )
+        )
+    return sorted(segments, key=lambda segment: segment.id)
 
 
 def _sort_day(day: int | None) -> int:
@@ -353,21 +289,6 @@ def _mint(canonical: Key, country: str = "") -> str:
     return hashlib.sha256((f"{base}|{country}" if country else base).encode()).hexdigest()[:16]
 
 
-def _mint_specific(canonical: Key, country: str, n: int) -> str:
-    """AA-988 — the id of a Segment whose `_mint` collides with another Segment of the same run.
-
-    The full key (`place|verb|country|said|about`) plus `n`, the index among colliding Segments
-    with an identical full key, ordered by their atom ids. Place and verb are `[a-z0-9 ]` only, so
-    this input never equals a `_mint` input (six parts against at most three)."""
-    base = f"{' '.join(canonical.place)}|{canonical.verb}"
-    about = " ".join(sorted(canonical.about))
-    return hashlib.sha256(f"{base}|{country}|{canonical.said}|{about}|{n}".encode()).hexdigest()[:16]
-
-
-class DuplicateSegmentIdError(ValueError):
-    """AA-988 — `reconcile_ids` got two derived Segments with one id (one would be dropped silently)."""
-
-
 def reconcile_ids(
     derived: list[Segment], assigned: Mapping[str, str]
 ) -> tuple[list[Segment], dict[str, str]]:
@@ -383,16 +304,7 @@ def reconcile_ids(
     to (for THIS tenant only — the caller scopes it). Where a new Atom bridges two Segments, one
     id has to give way; the surviving id is chosen by content, not by order, and the other is
     returned as an alias so old references still resolve.
-
-    AA-988 — `derived` must hold each id once (`derive_segments` guarantees it); a duplicate raises
-    `DuplicateSegmentIdError` instead of keeping only the last Segment and losing the other's atoms.
     """
-    counts: dict[str, int] = {}
-    for segment in derived:
-        counts[segment.id] = counts.get(segment.id, 0) + 1
-    duplicates = sorted(identifier for identifier, count in counts.items() if count > 1)
-    if duplicates:
-        raise DuplicateSegmentIdError(f"derived Segments share ids {duplicates[:10]}")
     by_id = {segment.id: segment for segment in derived}
     ids = {segment.id: segment.id for segment in derived}
     taken = set(ids.values())
@@ -571,29 +483,6 @@ def assert_one_country(atom_ids: Iterable[str], by_id: Mapping[str, SegmentAtom]
         raise MixedCountrySegmentError(f"segment would span countries {sorted(countries)}")
 
 
-class SegmentCoverageError(ValueError):
-    """AA-988 — a forming atom would be written into no Segment, or into more than one."""
-
-
-def assert_each_atom_in_one_segment(to_write: Iterable[Segment], atom_ids: Iterable[str]) -> None:
-    """AA-988 — raise unless every given atom sits in exactly one of the Segments to write.
-
-    `run_segment_matching` checks its tour's forming atoms against `_plan_writes`' `to_write`
-    before it writes anything, so a Segment lost on the way (the S253 id collision) fails the
-    run instead of leaving atoms without a member row."""
-    held: dict[str, int] = {}
-    for segment in to_write:
-        for atom_id in segment.atom_ids:
-            held[atom_id] = held.get(atom_id, 0) + 1
-    wanted = sorted(set(atom_ids))
-    missing = [a for a in wanted if held.get(a, 0) == 0]
-    repeated = [a for a in wanted if held.get(a, 0) > 1]
-    if missing or repeated:
-        raise SegmentCoverageError(
-            f"forming atoms not in exactly one Segment to write: missing {len(missing)} {missing[:10]}, "
-            f"in several {len(repeated)} {repeated[:10]}")
-
-
 def remint_id(segment_id: str, country: str, n: int) -> str:
     """AA-857 — the n-th collision-safe replacement for `segment_id` in `country` (lower/btrim).
 
@@ -733,6 +622,8 @@ def _connected(keyed: list[tuple[str, Key]], allowed=None, involving: frozenset 
 
 
 # ── DB-facing wrapper (impure) — everything above this line is a pure function ─────────────
+
+_PSEUDO_PREFIX = "__existing_segment__"
 
 # AA-695 A3-7 — "same real-world place?" for place pairs the moment rule would join although they are
 # written differently (Bukchon vs Jeonju Hanok Village, Wat Saket vs Wat Si Saket). Only an enforced,
@@ -1122,9 +1013,6 @@ async def run_segment_matching(tour_id: str, pool) -> dict:
             guard = await _avoid_foreign_ids_db(conn, segments, aliases, claimed, tour_country)
             segments, aliases, remints = guard.segments, guard.aliases, guard.remints
             to_write, alias_rows, segment_rows = _plan_writes(segments, aliases)
-            # AA-988 (S253) — every forming atom of this tour lands in exactly one Segment, or the
-            # run fails here, before any write (the transaction rolls back).
-            assert_each_atom_in_one_segment(to_write, [a.atom_id for a in forming_atoms])
             written_ids = {s.id for s in to_write} | {target for _, target in alias_rows}
             # AA-857 — damage that predates this run (a Segment already mixed) is reported, and the
             # post-write check below fails only when this run adds a country to it.

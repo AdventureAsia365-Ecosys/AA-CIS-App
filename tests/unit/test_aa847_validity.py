@@ -162,10 +162,12 @@ def test_day_text_names():
     assert not v.day_text_names("Day 5 — Khimsar to Jaisalmer", "Amber Fort")
 
 
-def test_day_blocks_keep_the_last_repeated_day_and_fold_ranges():
+def test_day_blocks_keep_the_last_repeated_day_and_expand_ranges():
+    # AA-990 (S253): a "Day 2-3 —" block is the text of days 2 and 3 (it used to be folded into day 1)
     b = v.day_blocks(_itin("Day 1 — A\nfirst", "Day 2-3 — B\nrange", "Day 1 — C\nlast"))
-    assert sorted(b) == [1]
+    assert sorted(b) == [1, 2, 3]
     assert "last" in b[1] and "range" not in b[1]
+    assert b[2] == b[3] == "B\nrange"
 
 
 # ── the report ──────────────────────────────────────────────────────────────────────────────────────────────────────

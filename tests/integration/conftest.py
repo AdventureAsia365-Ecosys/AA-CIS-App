@@ -383,6 +383,10 @@ def _apply_schema(conn):
         # 20-name chk_raw_tours_country, so no other integration test may insert a raw_tours row whose country is
         # outside those 20 names (it would fail here and pass on Dev).
         and not f.startswith('288')
+        # AA-990 (S253): 289 restates catalog._tour_day_text (253) and catalog.v_tour (273's catalog part) through the
+        # catalog recipe; both are skipped here. test_aa990_migration_289 applies 253 + 256 + 257 + 258 + 273 + 289
+        # the DB Migrate way on the RDS-like state and rolls back.
+        and not f.startswith('289')
     ])
 
     for mf in migration_files:

@@ -163,8 +163,15 @@ def render_fact_sheet(tour: dict, facts: dict, plan: dict) -> str:
     """The new writer's only input: the source organised by code. Every value is verbatim from the source."""
     days_line = ", ".join(f"Day {d['day']}" for d in plan["days"])
     groups = sorted({d["range"] for d in plan["days"] if d["range"]})
+    # AA-990 (S253): one object per day stays the preferred shape, but a source that groups days with no day-by-day
+    # detail must not force the writer to invent what happens on each day (rule 1): it may then write ONE object for
+    # the range ("day": "A-B"), which every day reader counts as days A..B (day_parse.day_range). Only in the user
+    # prompt, only for a source with a range: the system prompt (and its prompt_version) is unchanged.
     group_note = "".join(f" Days {a}–{b} are one block in the source: write one short block per day that only"
-                         f" restates what the source says for them." for a, b in groups)
+                         f" restates what the source says for them; when the source does not tell those days apart,"
+                         f" write one object for the whole range instead, with \"day\": \"{a}-{b}\" (this overrides"
+                         f" rule 6 for these days only), and never invent what happens on each day."
+                         for a, b in groups)
     parts = [
         f"TOUR (source name): {field_text(tour.get('name')).strip()}",
         f"COUNTRY: {field_text(tour.get('country')).strip() or '(not stated)'}",
@@ -541,6 +548,25 @@ def as_list(value) -> list:
     return [value]
 
 
+_DAY_RANGE_VALUE_RE = re.compile(r"^\s*(?:days?\s*)?(\d{1,3})\s*(?:[-–—]|to)\s*(\d{1,3})\s*$", re.IGNORECASE)
+
+
+def _day_label(value) -> str:
+    """The heading number of one writer itinerary object: the day as written, except that a valid range in any
+    spelling ("12–15", "12 to 15", "Days 12-15") becomes the canonical "12-15" (AA-990: day_parse.CANONICAL_HEAD,
+    validate's dash normaliser and catalog._tour_day_text read it as days 12..15). An invalid range ("15-12") is
+    left as written: the canonical parser reads it as day 15 and the day checks report the rest."""
+    from services.content_generation.day_parse import day_range
+
+    text = str(value if value is not None else "").strip()
+    m = _DAY_RANGE_VALUE_RE.match(text)
+    if m:
+        first, last = day_range(int(m.group(1)), int(m.group(2)))
+        if last > first:
+            return f"{first}-{last}"
+    return text
+
+
 def serialize_days(items: list) -> str:
     """The canonical "Day N — Title\\nBody" string from the writer's itineraries array, in the array's order and
     with duplicates kept (the day oracle must see a duplicate; serialize_itinerary_days keys by day and hides it)."""
@@ -548,7 +574,7 @@ def serialize_days(items: list) -> str:
     for it in items or []:
         if not isinstance(it, dict):
             continue
-        day = str(it.get("day", "")).strip()
+        day = _day_label(it.get("day", ""))
         title = str(it.get("title") or "").strip()
         body = str(it.get("body") or "").strip()
         out.append(f"Day {day} — {title}\n{body}".strip())

@@ -34,6 +34,7 @@ from .itinerary_utils import (
     ITINERARY_CLAMP_MIN, ITINERARY_CLAMP_MAX, MAX_NUDGES_PER_TOUR, NUDGE_SKIP_REASON,
     clamp_distance, nudge_itinerary_day, nudge_voice_hint, generated_day_word_counts,
 )
+from .day_parse import CANONICAL_HEAD_NC, day_range
 
 logger = structlog.get_logger()
 
@@ -252,15 +253,25 @@ def itinerary_day_gap(tour: dict, itinerary) -> Optional[dict]:
     if parsed["used_fallback"]:
         return None
     source_day_words = parsed["day_word_counts"]
+    # AA-990 (S253): both sides count a ranged heading as every day it covers — the source's "Days 12-15:" marker
+    # (day_word_counts keys a block by its first day) and the output's "Day 12-15 —" block
+    # (generated_day_word_counts expands it). Before, the source range counted as day 12 only, so an output that
+    # folded days 13-15 away was not missing anything. Only TRUSTED ranges count (``day_ranges``,
+    # day_parse.trusted_day_ranges: a separator after the range end, cut at the next marker and the duration):
+    # this is a hard block on writer v2, and "Day 3 - 5 temples of Hue" in a 3-day source is day 3, not days 3-5.
+    source_days = sorted({d for first, last in (parsed.get("day_ranges") or {}).items()
+                          for d in range(first, last + 1)} | set(source_day_words))
     generated_day_words = generated_day_word_counts(itinerary if isinstance(itinerary, str) else str(itinerary or ""))
-    missing = sorted(set(source_day_words) - set(generated_day_words))
-    return {"source_day_words": source_day_words, "generated_day_words": generated_day_words, "missing": missing}
+    missing = sorted(set(source_days) - set(generated_day_words))
+    return {"source_day_words": source_day_words, "source_days": source_days,
+            "generated_day_words": generated_day_words, "missing": missing}
 
 
 def day_gap_issue(gap: dict) -> str:
     missing = gap["missing"]
+    n_source = len(gap.get("source_days") or gap["source_day_words"])
     return (f"Itinerary missing {len(missing)} day(s) vs source "
-            f"({len(gap['source_day_words'])} source days -> {len(gap['generated_day_words'])} output days): "
+            f"({n_source} source days -> {len(gap['generated_day_words'])} output days): "
             f"day {'/'.join(str(d) for d in missing)}")
 
 
@@ -295,7 +306,7 @@ def final_day_guard(state: dict) -> dict:
             out["failure_codes"] = codes
             out["feedback"] = "; ".join(x for x in (state.get("feedback") or "", day_gap_issue(gap)) if x)
             logger.warning("final_day_guard_mismatch", tour_id=state.get("tour_id"), missing=gap["missing"],
-                           source_days=len(gap["source_day_words"]), output_days=len(gap["generated_day_words"]))
+                           source_days=len(gap["source_days"]), output_days=len(gap["generated_day_words"]))
     if DAY_COUNT_CODE in codes and DAY_COUNT_CODE in hard_block_codes(state) and out.get("revalidate_ran"):
         out = {**out, "revalidate_passed": False}
     return out
@@ -872,6 +883,39 @@ def seed_generated_node(state: ContentState) -> ContentState:
     }
 
 
+# AA-228 day-title separator normaliser ("Day N -- title", "Day N – title" -> "Day N — title"). AA-990 (S253): a ranged
+# heading keeps its range — "Day 12-15 — Beach" was rewritten to "Day 12 — 15 — Beach", which every reader took as
+# Day 12 alone (days 13-15 lost without a day-count finding: Sri Lanka b45db4c8).
+# AA-990 review: a range (and the plural "Days") is only read at the START of a line, and only when the range end is
+# followed by whitespace and a dash — so a number joined to a word ("Day 2 – 4-hour trek", "Day 2 - 10-km walk")
+# stays the title, and prose ("from Day 3 to 5 — the hardest stretch") is left alone. Group 4 = the range end; a range
+# that day_parse.day_range rejects (backwards, over two weeks) keeps the old single-day rewrite.
+_DAY_HEAD_DASH_RE = re.compile(
+    r"(?<![^\n])([ \t]*)Day(s?)[ \t]+(\d+)(?:[ \t]*(?:[-–]|to)[ \t]*(\d{1,3})(?=[ \t]+[-–—]))?\s*[-–—]+\s*")
+# anywhere else: the AA-228 single-day rewrite, as before — except over a range heading the line-start pass wrote
+_DAY_DASH_RE = re.compile(r"\bDay\s+(\d+)(?!-\d{1,3} —)\s*[-–—]+\s*")
+# a canonical heading for the "title | prose" and blank-line normalisers: a single "Day N —" anywhere (AA-228), a
+# ranged / plural one only at a line start
+_SINGLE_HEAD = r"Day\s+\d+\s+—"
+_HEAD_ANY = r"(?:(?<![^\n])[ \t]*" + CANONICAL_HEAD_NC + r"|" + _SINGLE_HEAD + r")"
+
+
+def _canonical_day_dash(m: "re.Match") -> str:
+    lead, plural, first = m.group(1), m.group(2), int(m.group(3))
+    if m.group(4):
+        last = day_range(first, int(m.group(4)))[1]
+        if last > first:
+            return f"{lead}Day {first}-{last} — "
+        return f"{lead}Day{plural} {first} — {m.group(4)} — "
+    return f"{lead}Day{plural} {first} — "
+
+
+def normalise_day_dashes(it: str) -> str:
+    """AA-228 + AA-990: every day-heading dash spelling -> the canonical "Day N — " / "Day A-B — "."""
+    it = _DAY_HEAD_DASH_RE.sub(_canonical_day_dash, it)       # line starts: ranges and "Days" kept (AA-990)
+    return _DAY_DASH_RE.sub(r"Day \1 — ", it)                # anywhere: single day, as before
+
+
 def validate_node(state: ContentState) -> ContentState:
     """Node 2: Quality check — structured failure codes, 4 sub-dimensions, score 0-10."""
     generated = state.get("generated", {})
@@ -884,10 +928,12 @@ def validate_node(state: ContentState) -> ContentState:
             # AA-228: normalize day-title separator to a single canonical form across model tiers.
             # Haiku emits "Day N -- title | prose ... || Day N+1", Sonnet/GPT emit "Day N — title".
             it = it.replace("||", "\n\n")                         # inter-day inline sep -> blank line
-            it = _re.sub(r"\bDay\s+(\d+)\s*[-–—]+\s*", r"Day \1 — ", it)  # any dash -> em-dash
-            it = _re.sub(r"(Day\s+\d+\s+—\s+[^\n|]+?)\s*\|\s*", r"\1\n", it)  # "title | prose" -> newline
-            # ensure a blank line before each "Day N" that isn't already at start/after blank line
-            it = _re.sub(r"(?<=\S)\n?(?=Day\s+\d+\s+—)", "\n\n", it.lstrip())
+            it = normalise_day_dashes(it)                          # any dash -> em-dash, ranges kept (AA-990)
+            it = _re.sub(r"(" + _HEAD_ANY + r"\s+[^\n|]+?)\s*\|\s*", r"\1\n", it)  # "title | prose" -> newline
+            # ensure a blank line before each "Day N" that isn't already at start/after blank line; a ranged or
+            # plural heading only where it already starts a line (AA-990 review: never split prose out as a day)
+            it = _re.sub(r"(?<=\S)\n?(?=" + _SINGLE_HEAD + r")", "\n\n", it.lstrip())
+            it = _re.sub(r"(?<=\S)\n(?=[ \t]*" + CANONICAL_HEAD_NC + r")", "\n\n", it)
             it = _re.sub(r"[ \t]+\n", "\n", it)                   # strip trailing spaces before newline
             it = _re.sub(r"\n[ \t]+", "\n", it)                   # strip leading spaces after newline
             it = _re.sub(r"\n{3,}", "\n\n", it)                   # collapse extra blank lines

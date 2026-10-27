@@ -13,6 +13,8 @@ from json_repair import repair_json
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 
+from .day_parse import CANONICAL_DAY_RE, canonical_blocks
+
 # AA-353: hard clamp on actual/source word-count ratio per day, checked AFTER the model returns
 # its structured itineraries array (the prompt's own 0.7x-1.3x guidance is a softer target the
 # model aims for; this is the line that triggers a real fix).
@@ -151,35 +153,50 @@ on-brand."""
 # FRESH per-day word counts on every call (see AA-329 implementation notes for why this is
 # preferred over trusting the one-shot state["itinerary_day_ratios"]) and lets flag_fix_node
 # target a single violating day for repair without touching the others.
-_CANONICAL_DAY_RE = re.compile(r"^Day\s+(\d+)\s+—\s*(.*)$", re.MULTILINE)
+# AA-990 (S253): the heading regex and the ranged-heading rule live in day_parse (the leaf module), so this parser,
+# output_days, places.validity and the SQL twin catalog._tour_day_text read "Day 12-15 —" the same way.
+_CANONICAL_DAY_RE = CANONICAL_DAY_RE
 
 
 def parse_canonical_itinerary_days(text: str) -> dict:
     """{day_num: {"title": str, "body": str}} from the canonical "Day N — Title\\nBody" string.
     Returns {} when the text doesn't use that format (e.g. legacy/non-array-contract content) —
-    callers must treat an empty result as "cannot determine", not "zero days"."""
-    text = text or ""
+    callers must treat an empty result as "cannot determine", not "zero days".
+
+    AA-990 (S253): a ranged heading "Day 12-15 — Title" covers each of its days: days 12..15 all get the block's
+    title and body, and their entries carry "range": (12, 15) so serialize_itinerary_days writes the block back once
+    (no invented per-day text). A repeated day keeps the LAST block (dict semantics, as catalog._tour_day_text)."""
     days = {}
-    matches = list(_CANONICAL_DAY_RE.finditer(text))
-    for i, m in enumerate(matches):
-        day_num = int(m.group(1))
-        title = m.group(2).strip()
-        start = m.end()
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-        body = text[start:end].strip()
-        days[day_num] = {"title": title, "body": body}
+    for b in canonical_blocks(text):
+        for n in b.days:
+            entry = {"title": b.title, "body": b.body}
+            if b.ranged:
+                entry["range"] = (b.first, b.last)
+            days[n] = entry
     return days
 
 
 def serialize_itinerary_days(days: dict) -> str:
-    """Inverse of parse_canonical_itinerary_days — same format _process_itineraries emits."""
-    return "\n\n".join(
-        f"Day {d} — {days[d]['title']}\n{days[d]['body']}".strip()
-        for d in sorted(days)
-    )
+    """Inverse of parse_canonical_itinerary_days — same format _process_itineraries emits. AA-990: the days of one
+    ranged block (same "range", title and body) are written back as ONE "Day A-B — Title" block at its first day."""
+    out, written = [], set()
+    for d in sorted(days):
+        v = days[d]
+        rng = v.get("range")
+        if rng:
+            key = (tuple(rng), v["title"], v["body"])
+            if key in written:
+                continue
+            written.add(key)
+            head = f"{rng[0]}-{rng[1]}"
+        else:
+            head = d
+        out.append(f"Day {head} — {v['title']}\n{v['body']}".strip())
+    return "\n\n".join(out)
 
 
 def generated_day_word_counts(text: str) -> dict:
     """{day_num: body_word_count} from the canonical string — body only, matching AA-353's own
-    actual_words = len(body.split()) (title isn't counted toward length)."""
+    actual_words = len(body.split()) (title isn't counted toward length). AA-990: each day of a ranged block counts
+    as present, with the block's word count."""
     return {d: len(v["body"].split()) for d, v in parse_canonical_itinerary_days(text).items()}

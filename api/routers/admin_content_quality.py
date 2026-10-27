@@ -1732,27 +1732,3 @@ async def build_place_cards(body: PlaceCardBuild, request: Request, x_admin_secr
         created_by=x_admin_user_id or "admin",
     )
     return {"job_id": job_id, "created": created}
-
-
-class PlaceCardRebuild(BaseModel):
-    card_ids: list[str] = Field(min_length=1, max_length=place_cards.REBUILD_MAX_CARDS)
-
-
-@router.post("/place-cards/rebuild")
-async def rebuild_place_cards(body: PlaceCardRebuild, request: Request, x_admin_secret: str = Header(None),
-                              x_admin_user_id: Optional[str] = Header(None)):
-    """AA-784 — enqueue `place_cards_build` in rebuild mode for named cards: each is re-drafted and re-checked IN
-    PLACE under the current prompts and identity rules (one paid draft + check per card, ≤40; card id, name, country
-    and links kept; verified / rejected cards skipped). One attempt: a retry would pay again for cards already done."""
-    verify_admin_secret(x_admin_secret)
-    try:
-        ids = list(dict.fromkeys(str(UUID(c.strip())) for c in body.card_ids))
-    except ValueError:
-        raise HTTPException(status_code=422, detail="card_ids must be place card ids (uuid)")
-    from shared.jobs import queue as job_queue
-    job_id, created = await job_queue.enqueue(
-        request.app.state.pool, "place_cards_build", {"card_ids": ids},
-        max_attempts=1,
-        created_by=x_admin_user_id or "admin",
-    )
-    return {"job_id": job_id, "created": created, "card_ids": ids}
