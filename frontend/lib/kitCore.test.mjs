@@ -57,6 +57,25 @@ test("core imports nothing outside itself (no ../, no @/ alias, only allowed pac
   assert.deepEqual(closureProblems(CORE), []);
 });
 
+// A client-only React hook in a module without "use client" breaks a consumer's Next build as soon as a server
+// component imports the kit barrel (AA-994: useMediaQuery.ts did, so the CRM web barrel had to drop it).
+const CLIENT_HOOKS =
+  /\b(useState|useEffect|useLayoutEffect|useInsertionEffect|useReducer|useRef|useCallback|useMemo|useContext|useId|useTransition|useDeferredValue|useSyncExternalStore|useOptimistic|useActionState|createContext)\b/;
+
+test('every core module that imports a client-only React hook starts with "use client"', () => {
+  const missing = [];
+  for (const f of readdirSync(CORE).filter((n) => /\.(ts|tsx)$/.test(n))) {
+    const text = readFileSync(join(CORE, f), "utf8");
+    const reactValueImports = [...text.matchAll(/^import\s+(?!type\b)\{([^}]*)\}\s+from\s+"react";/gm)]
+      .map((m) => m[1].split(",").filter((s) => !/^\s*type\s/.test(s)).join(","));
+    if (!reactValueImports.some((names) => CLIENT_HOOKS.test(names))) continue;
+    // The directive must be the first statement; only the header comment and other comments may precede it.
+    const firstStatement = text.split("\n").find((l) => l.trim() && !l.trim().startsWith("//"));
+    if (firstStatement?.trim() !== '"use client";') missing.push(f);
+  }
+  assert.deepEqual(missing, []);
+});
+
 test("ADR 0016 decision 1: the portable files are in core, the CIS-specific ones stay outside", () => {
   const core = new Set(readdirSync(CORE));
   for (const f of ["tokens.ts", "brand.ts", "primitives.tsx", "DataTable.tsx", "csv.ts", "savedViews.ts", "Drawer.tsx",

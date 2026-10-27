@@ -1,4 +1,5 @@
 // UI kit core (root ADR 0016). Canonical: AA-CIS-App frontend/app/_kit/core. Edit only there; copies are checked byte for byte (kit.lock.json).
+"use client";
 // app/_kit/core/useMediaQuery.ts
 // AA-752 — a React-Compiler-safe media-query hook (useSyncExternalStore, no setState-in-effect,
 // same pattern as useSidebarCollapsed / useThemeChoice). Server snapshot is always false so SSR
