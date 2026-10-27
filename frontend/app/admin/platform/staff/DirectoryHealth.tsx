@@ -9,6 +9,9 @@
 // api/routers/admin_platform.py, staff.read = admin; BFF API_READ_RULES "platform").
 // S243 — readiness is recomputed from the staff rows on every load (`readiness_now`), so it agrees with the
 // page header right after a disable or invite; only the sign-in comparison (Cognito drift) is "as of" the last check.
+// S253 — Dev only: the E2E test accounts root ADR 0006a allows (A10, A10a, A10b) come in `known_e2e_exceptions`, each
+// with its ADR clause; they are listed in their own block and are not counted in "to check". An E2E address with any
+// other group set stays a finding.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
@@ -45,6 +48,23 @@ interface Report {
   };
   breakglass: { email: string; present: boolean; issues: string[] };
   groups_missing: string[];
+  // Dev only, not counted in drift_total. Optional: reports stored before S253 do not have them.
+  known_e2e_enabled?: boolean;
+  known_e2e_exceptions?: KnownE2E[];
+}
+
+interface KnownE2E {
+  email: string | null;
+  username: string;
+  status: string;
+  enabled: boolean;
+  groups: string[];
+  /** e.g. "ADR 0006a A10a" */
+  clause: string;
+  reason: string;
+  row_username: string | null;
+  /** the report categories this account is left out of (e.g. cognito_without_row); empty = checked like any account */
+  exempt_from: string[];
 }
 
 interface JobRef {
@@ -82,6 +102,18 @@ const KIND: Record<string, string> = {
   cognito_disabled: "sign-in disabled",
   email: "email",
 };
+
+const EXEMPT: Record<string, string> = {
+  cognito_without_row: "no staff account here, by design",
+};
+
+function knownLine(k: KnownE2E): string {
+  const where = k.exempt_from.length
+    ? k.exempt_from.map((c) => EXEMPT[c] ?? c).join(", ")
+    : `staff account ${k.row_username ?? "?"}, checked like any account`;
+  const state = k.enabled ? "" : ", sign-in disabled";
+  return `${k.groups.join(", ") || "no groups"} (${where}${state})`;
+}
 
 function who(f: Finding): string {
   return f.email || f.username || f.row_username || "unknown";
@@ -127,6 +159,7 @@ export default function DirectoryHealth() {
   const running = !!data?.active || run.isPending;
   const lines = report ? findingLines(report) : [];
   const pending = report?.pending_first_sign_in ?? [];
+  const known = report?.known_e2e_exceptions ?? [];
   const live = data?.readiness_now ?? null;
   const readiness: Readiness | null = live ?? report?.readiness ?? null;
 
@@ -205,6 +238,24 @@ export default function DirectoryHealth() {
               </div>
             )}
           </div>
+          )}
+          {known.length > 0 && (
+            <div data-testid="directory-e2e-exceptions" style={{ lineHeight: 1.5 }}>
+              <span style={{ fontWeight: 500 }}>Known E2E test accounts: </span>
+              <span style={{ color: K.muted }}>
+                allowed on Dev by the identity ADR, so not counted in &ldquo;to check&rdquo;. Any other sign-in group on
+                these addresses is still a finding.
+              </span>
+              <ul style={{ margin: "4px 0 0", paddingLeft: 18, overflowWrap: "anywhere" }}>
+                {known.map((k) => (
+                  <li key={k.email ?? k.username}>
+                    <Badge tone="info" dot={false}>{k.clause}</Badge>{" "}
+                    {k.email ?? k.username}: {k.reason}{" "}
+                    <span style={{ color: K.muted }}>{knownLine(k)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
           {lines.length > 0 && (
             <details data-testid="directory-findings">

@@ -11,6 +11,10 @@
 //
 // L1 only: agency name, state, flags (owner yes/no, holds travellers yes/no), meters. No trip, pipeline, revenue or
 // traveller data is requested or shown anywhere on this page. No polling (S240): load on open + Refresh.
+// AA-978 follow-up (crm.ops.v1 1.2, S253): the State column names who locked a locked agency next to the badge
+// (TenantSummary.lock_source: "by AA staff", "by CIS tenant lifecycle", …; an unknown source is shown raw), and one
+// line above the table shows the CIS membership feed's health as the CRM reports it (platform-wide, the same value on
+// every agency). Read-only display: no new route or write.
 // English only (CIS admin has no language switch here); strings are plain so they can move to an i18n file.
 
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -37,6 +41,7 @@ import {
   crmWrite,
   isTicket,
   lockSourceText,
+  platformMembershipFeed,
   stateLabel,
   type CrmConsole,
   type TenantPage,
@@ -77,6 +82,7 @@ export default function AgenciesConsole() {
   const rows = useMemo(() => agencies.data?.pages.flatMap((p) => p.items ?? []) ?? [], [agencies.data]);
   const canWrite = !!consoleQ.data?.can_write;
   const isProd = consoleQ.data?.environment === "prod";
+  const feed = platformMembershipFeed(rows);
 
   const columns = useMemo<ColumnDef<TenantSummary, unknown>[]>(() => [
     {
@@ -91,9 +97,14 @@ export default function AgenciesConsole() {
       accessorKey: "state", header: "State",
       cell: (c) => {
         const s = stateLabel(c.row.original.state);
-        // AA-978 follow-up: a locked row names who locked it (the drawer shows the details and the feed health).
+        // AA-978 follow-up: a locked row names who locked it (the drawer shows the details and what lifts it).
         const by = lockSourceText(c.row.original);
-        return <span title={by?.label}><Badge tone={s.tone}>{s.label}</Badge></span>;
+        return (
+          <span title={by?.label} style={{ display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+            <Badge tone={s.tone}>{s.label}</Badge>
+            {by && <span data-testid="crm-row-lock-source" style={{ color: K.muted, fontSize: 12 }}>{by.short}</span>}
+          </span>
+        );
       },
     },
     {
@@ -141,6 +152,14 @@ export default function AgenciesConsole() {
           {consoleQ.data && !canWrite && (
             <div data-testid="crm-console-readonly" style={{ ...noteStyle, marginBottom: 12 }}>
               Read only: your staff account is not in the crm-platform-admin group, so the actions are hidden.
+            </div>
+          )}
+          {feed && (
+            <div data-testid="crm-console-membership-feed" title={feed.detail}
+              style={{ ...noteStyle, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+              <span style={{ color: K.ink }}>CIS membership feed, as the CRM reports it (all agencies):</span>
+              <Badge tone={feed.tone}>{feed.label}</Badge>
+              <span>last successful pull: {feed.lastPull}</span>
             </div>
           )}
           <DataTable<TenantSummary>

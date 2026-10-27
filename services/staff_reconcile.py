@@ -29,6 +29,12 @@ What it reports (the `result` of a `staff_directory_reconcile` job, services/job
                                email or a cognito_sub, count + usernames. `ready` only when both are empty.
   breakglass                   the break-glass user: present, CONFIRMED, disabled at rest, in cis-admin and
                                booking-admin. Each deviation is an issue.
+  known_e2e_exceptions         Dev only (ENVIRONMENT exactly "dev", api/core/e2e_staff.dev_only_e2e_environment):
+                               the E2E staff identities root ADR 0006a A10 / A10a / A10b allows, each with its ADR
+                               clause, listed apart and NOT counted in drift_total. Only the exact address with its
+                               exact staff group set (and, for A10 / A10b, its directory row with the expected role)
+                               is listed; an E2E address with any other group set, a missing or wrong row, or on any
+                               other environment goes through the categories above like every user (AA-816 S253).
 
 ListUsers cannot tell whether a user has a password (no attribute says so, and AdminGetUser is denied), so
 (d) is status based; `notes` in the result says so.
@@ -38,8 +44,10 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from types import MappingProxyType
 from typing import Any, Iterable, Optional
 
+from api.core import e2e_staff
 from api.core.identity_config import workforce_issuer
 from api.core.staff_identity import GROUP_ROLES, role_from_groups
 
@@ -83,6 +91,41 @@ NOTES = (
     "as drift: staff sign in with an email code, which may leave that status as it is.",
     "Report only: nothing in Cognito or shared.admin_users was changed.",
 )
+KNOWN_E2E_NOTE = ("Dev: the E2E staff accounts root ADR 0006a allows (A10, A10a, A10b) are listed under "
+                  "known_e2e_exceptions and not counted as drift, only with their exact address and staff groups.")
+
+
+@dataclass(frozen=True)
+class KnownE2E:
+    """One E2E staff identity root ADR 0006a allows: its exact staff group set and its CIS directory row (the CIS role
+    the row must hold, or None when the identity is never in the CIS directory)."""
+    clause: str
+    reason: str
+    groups: frozenset[str]
+    directory_role: Optional[str]
+
+
+# Read-only, code constant (never configuration), exact addresses: the same allow-list the WORKFORCE pre token trigger
+# (AA-CIS-Infra identity_triggers/workforce.py) and CIS migrations 250 / 283 hold. TEMPORARY with A10 (AA-816).
+KNOWN_E2E_STAFF: "MappingProxyType[str, KnownE2E]" = MappingProxyType({
+    e2e_staff.E2E_REVIEWER_TEST_STAFF_EMAIL: KnownE2E(
+        clause="ADR 0006a A10",
+        reason="Cognito email-code E2E test account: reviewer only, no Booking access.",
+        groups=frozenset({"cis-reviewer"}), directory_role="reviewer"),
+    e2e_staff.E2E_BOOKING_TEST_STAFF_EMAIL: KnownE2E(
+        clause="ADR 0006a A10a",
+        reason="Booking staff admin E2E account (read-only in Booking); never in the CIS staff directory.",
+        groups=frozenset({"booking-admin"}), directory_role=None),
+    e2e_staff.E2E_CIS_ADMIN_TEST_STAFF_EMAIL: KnownE2E(
+        clause="ADR 0006a A10b",
+        reason="Dev-only CIS admin E2E account: read-only session, no Booking access.",
+        groups=frozenset({"cis-admin"}), directory_role=e2e_staff.E2E_CIS_ADMIN_TEST_STAFF_ROLE),
+})
+
+
+def known_e2e_enabled() -> bool:
+    """The known E2E exceptions apply only where ENVIRONMENT is exactly "dev" (the A10b guard, read per call)."""
+    return e2e_staff.dev_only_e2e_environment()
 
 
 def breakglass_email() -> str:
@@ -188,6 +231,9 @@ class CognitoUser:
     status: str
     enabled: bool
     groups: set[str] = field(default_factory=set)
+    # The raw `email` attribute is ASCII. str.lower() folds some non-ASCII letters to ASCII (U+212A KELVIN SIGN -> k),
+    # so a look-alike address must never match an allow-listed E2E address (root ADR 0006a A10a).
+    email_ascii: bool = False
 
     @property
     def key(self) -> str:
@@ -211,8 +257,10 @@ def parse_users(raw_users: list[dict], raw_groups: dict[str, Optional[list[dict]
         attrs = _attrs(raw)
         username = raw.get("Username") or ""
         email = _norm_email(attrs.get("email")) or (_norm_email(username) if "@" in username else None)
+        raw_email = attrs.get("email")
         u = CognitoUser(username=username, sub=attrs.get("sub"), email=email,
-                        status=raw.get("UserStatus") or "UNKNOWN", enabled=bool(raw.get("Enabled", True)))
+                        status=raw.get("UserStatus") or "UNKNOWN", enabled=bool(raw.get("Enabled", True)),
+                        email_ascii=isinstance(raw_email, str) and raw_email.isascii())
         users[u.key] = u
         by_username[username] = u
     for group, members in raw_groups.items():
@@ -236,9 +284,18 @@ def _sorted_groups(groups: Iterable[str]) -> list[str]:
     return sorted(groups, key=lambda g: (order.get(g, len(order)), g))
 
 
+def known_e2e_spec(u: CognitoUser) -> Optional[KnownE2E]:
+    """The ADR entry for this user's address: the email attribute, ASCII, exact after trimming and lower-casing."""
+    if not u.email_ascii or not u.email:
+        return None
+    return KNOWN_E2E_STAFF.get(u.email)
+
+
 def reconcile(raw_users: list[dict], raw_groups: dict[str, Optional[list[dict]]], rows: list[dict],
-              grants: list[dict], *, issuer: str, breakglass: str) -> dict:
-    """The report. Pure: no I/O, so every category is unit-tested with plain dicts."""
+              grants: list[dict], *, issuer: str, breakglass: str, known_e2e: bool = False) -> dict:
+    """The report. Pure: no I/O, so every category is unit-tested with plain dicts.
+
+    ``known_e2e`` switches on the known E2E exceptions block; the job passes :func:`known_e2e_enabled` (Dev only)."""
     users = parse_users(raw_users, raw_groups)
     breakglass = breakglass.lower()
     booking_grant = {g["admin_user_id"]: g["role"] for g in grants if g.get("app") == "booking"}
@@ -254,6 +311,12 @@ def reconcile(raw_users: list[dict], raw_groups: dict[str, Optional[list[dict]]]
     drift: list[dict] = []
     status_findings: list[dict] = []
     pending_first_sign_in: list[dict] = []
+    known: list[dict] = []
+
+    def known_entry(spec: KnownE2E, u: CognitoUser, row: Optional[dict], exempt_from: list[str]) -> dict:
+        return {"email": u.email, "username": u.username, "status": u.status, "enabled": u.enabled,
+                "groups": _sorted_groups(u.groups), "clause": spec.clause, "reason": spec.reason,
+                "row_username": row.get("username") if row else None, "exempt_from": exempt_from}
 
     for u in sorted(users.values(), key=lambda x: (x.email or x.username)):
         if is_breakglass(u):
@@ -274,13 +337,25 @@ def reconcile(raw_users: list[dict], raw_groups: dict[str, Optional[list[dict]]]
                 reason = "row_inactive"
             else:
                 continue          # disabled in Cognito and inactive in the directory: consistent
+        spec = known_e2e_spec(u) if known_e2e else None
         if reason is not None:
+            if (spec is not None and spec.directory_role is None and reason == "no_row"
+                    and u.groups == set(spec.groups)):
+                # A10a: by design not in the CIS directory, so "no staff account" is the expected state.
+                known.append(known_entry(spec, u, None, ["cognito_without_row"]))
+                continue
             # (a) already carries the status: no second (d) entry for the same person.
             without_row.append({"email": u.email, "username": u.username, "enabled": u.enabled,
                                 "status": u.status, "groups": _sorted_groups(u.groups), "reason": reason,
                                 "row_username": row.get("username") if row else None})
             continue
-        drift.extend(_row_drift(row, u, booking_grant.get(row["id"])))
+        row_drift = _row_drift(row, u, booking_grant.get(row["id"]))
+        drift.extend(row_drift)
+        if (spec is not None and spec.directory_role is not None and not row_drift
+                and u.groups == set(spec.groups) and row.get("role") == spec.directory_role):
+            # A10 / A10b: in the directory with the one role the ADR allows. Nothing is exempted (every check above
+            # and (d) below still runs); listed so the non-company address on the Staff page is explained.
+            known.append(known_entry(spec, u, row, []))
         # (d) only for an enabled user matched to an active row: a disabled one is already (c)
         # cognito_disabled, and nobody signs in through it.
         if u.enabled and u.status != CONFIRMED:
@@ -320,6 +395,7 @@ def reconcile(raw_users: list[dict], raw_groups: dict[str, Optional[list[dict]]]
         "missing_cognito_sub": len(missing_sub),
         "breakglass_issues": len(bg["issues"]),
         "groups_missing": len(groups_missing),
+        "known_e2e_exceptions": len(known),
     }
     counts["drift_total"] = (counts["cognito_without_row"] + counts["rows_unknown_to_cognito"]
                              + counts["group_drift"] + counts["status_findings"] + counts["breakglass_issues"]
@@ -337,7 +413,10 @@ def reconcile(raw_users: list[dict], raw_groups: dict[str, Optional[list[dict]]]
         "breakglass": bg,
         "groups": {g: (None if members is None else len(members)) for g, members in raw_groups.items()},
         "groups_missing": groups_missing,
-        "notes": list(NOTES),
+        # Not counted in drift_total (AA-816 S253); empty and switched off outside Dev.
+        "known_e2e_enabled": known_e2e,
+        "known_e2e_exceptions": known,
+        "notes": list(NOTES) + ([KNOWN_E2E_NOTE] if known_e2e else []),
     }
 
 

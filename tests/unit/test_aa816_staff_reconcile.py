@@ -364,6 +364,178 @@ def test_group_role_maps_match_sign_in_and_the_grant_table():
     assert all(g == f"booking-{r}" for g, r in sr.BOOKING_GROUP_ROLES)
 
 
+# ── known E2E exceptions (root ADR 0006a A10 / A10a / A10b; AA-816 follow-up S253) ───────────────
+
+E2E_REV = "e2e@e2e-mail.lumiguides.it.com"
+E2E_BOOKING = "e2e-booking@e2e-mail.lumiguides.it.com"
+E2E_CIS_ADMIN = "e2e-cis-admin@e2e-mail.lumiguides.it.com"
+
+
+def _e2e_world():
+    """The clean world plus the three Dev E2E identities exactly as the ADR allows them: A10 reviewer row, A10a only in
+    Cognito (booking-admin, no CIS row), A10b admin row; all never signed in with a password."""
+    users, groups, rows, grants = _clean_world()
+    rev = _user(E2E_REV, "s-e2e", status="FORCE_CHANGE_PASSWORD")
+    bk = _user(E2E_BOOKING, "s-e2e-bk", status="FORCE_CHANGE_PASSWORD")
+    adm = _user(E2E_CIS_ADMIN, "s-e2e-adm", status="FORCE_CHANGE_PASSWORD")
+    users += [rev, bk, adm]
+    groups["cis-reviewer"] = [rev]
+    groups["booking-admin"] = groups["booking-admin"] + [bk]
+    groups["cis-admin"] = groups["cis-admin"] + [adm]
+    rows += [_row("e2e", role="reviewer", email=E2E_REV, sub="s-e2e"),
+             _row("e2e-cis-admin", role="admin", email=E2E_CIS_ADMIN, sub="s-e2e-adm")]
+    return users, groups, rows, grants
+
+
+def _run_e2e(users, groups, rows, grants, known_e2e=True):
+    return sr.reconcile(users, groups, rows, grants, issuer=ISS, breakglass=BG, known_e2e=known_e2e)
+
+
+def test_known_e2e_addresses_match_the_directory_and_the_a10b_module():
+    from api.core import e2e_staff
+    from api.services import staff_directory
+
+    assert e2e_staff.E2E_REVIEWER_TEST_STAFF_EMAIL == staff_directory.E2E_TEST_STAFF_EMAIL
+    assert sr.KNOWN_E2E_STAFF[E2E_REV].directory_role == staff_directory.E2E_TEST_STAFF_ROLE
+    assert sr.KNOWN_E2E_STAFF[E2E_CIS_ADMIN].directory_role == staff_directory.E2E_CIS_ADMIN_TEST_STAFF_ROLE
+    assert set(sr.KNOWN_E2E_STAFF) == {E2E_REV, E2E_BOOKING, E2E_CIS_ADMIN}
+    assert {e.clause for e in sr.KNOWN_E2E_STAFF.values()} == {"ADR 0006a A10", "ADR 0006a A10a", "ADR 0006a A10b"}
+    with pytest.raises(TypeError):
+        sr.KNOWN_E2E_STAFF["x@e2e-mail.lumiguides.it.com"] = sr.KNOWN_E2E_STAFF[E2E_REV]  # read-only
+
+
+def test_on_dev_the_e2e_identities_are_listed_apart_and_not_drift():
+    report = _run_e2e(*_e2e_world())
+    assert report["drift_total"] == 0, report
+    assert report["cognito_without_row"] == []
+    got = {k["email"]: (k["clause"], k["exempt_from"], k["row_username"]) for k in report["known_e2e_exceptions"]}
+    assert got == {E2E_REV: ("ADR 0006a A10", [], "e2e"),
+                   E2E_BOOKING: ("ADR 0006a A10a", ["cognito_without_row"], None),
+                   E2E_CIS_ADMIN: ("ADR 0006a A10b", [], "e2e-cis-admin")}
+    assert report["counts"]["known_e2e_exceptions"] == 3 and report["known_e2e_enabled"] is True
+    assert all(k["reason"] for k in report["known_e2e_exceptions"])
+    assert sr.KNOWN_E2E_NOTE in report["notes"]
+    # the two directory rows are still checked like any staff row: their pending status is listed as usual
+    assert sorted(f["email"] for f in report["pending_first_sign_in"]) == [E2E_CIS_ADMIN, E2E_REV]
+
+
+def test_off_dev_the_a10a_identity_is_drift_as_before():
+    report = _run_e2e(*_e2e_world(), known_e2e=False)
+    assert report["known_e2e_exceptions"] == [] and report["known_e2e_enabled"] is False
+    assert report["counts"]["known_e2e_exceptions"] == 0
+    assert [(f["email"], f["reason"]) for f in report["cognito_without_row"]] == [(E2E_BOOKING, "no_row")]
+    assert report["drift_total"] == 1
+    assert sr.KNOWN_E2E_NOTE not in report["notes"]
+
+
+def test_the_default_is_off():
+    users, groups, rows, grants = _e2e_world()
+    report = sr.reconcile(users, groups, rows, grants, issuer=ISS, breakglass=BG)
+    assert report["known_e2e_exceptions"] == [] and report["drift_total"] == 1
+
+
+@pytest.mark.parametrize("value,enabled", [("dev", True), ("Dev", False), ("dev ", False), ("prod", False),
+                                           ("stg", False), ("test", False), ("", False), (None, False)])
+def test_known_e2e_is_on_only_where_environment_is_exactly_dev(monkeypatch, value, enabled):
+    if value is None:
+        monkeypatch.delenv("ENVIRONMENT", raising=False)
+    else:
+        monkeypatch.setenv("ENVIRONMENT", value)
+    assert sr.known_e2e_enabled() is enabled
+
+
+@pytest.mark.parametrize("extra", ["cis-reviewer", "cis-admin", "booking-sales"])
+def test_a10a_with_an_unexpected_group_stays_drift(extra):
+    users, groups, rows, grants = _e2e_world()
+    bk = next(u for u in users if u["Username"] == "s-e2e-bk")
+    groups[extra] = groups[extra] + [bk]
+    report = _run_e2e(users, groups, rows, grants)
+    assert [(f["email"], f["reason"]) for f in report["cognito_without_row"]] == [(E2E_BOOKING, "no_row")]
+    assert E2E_BOOKING not in {k["email"] for k in report["known_e2e_exceptions"]}
+    assert report["counts"]["known_e2e_exceptions"] == 2 and report["drift_total"] == 1
+
+
+def test_a10a_without_its_group_stays_drift():
+    users, groups, rows, grants = _e2e_world()
+    groups["booking-admin"] = [u for u in groups["booking-admin"] if u["Username"] != "s-e2e-bk"]
+    report = _run_e2e(users, groups, rows, grants)
+    assert [f["email"] for f in report["cognito_without_row"]] == [E2E_BOOKING]
+    assert report["drift_total"] == 1
+
+
+def test_a10b_with_another_group_or_a_booking_group_stays_drift():
+    users, groups, rows, grants = _e2e_world()
+    adm = next(u for u in users if u["Username"] == "s-e2e-adm")
+    groups["booking-admin"] = groups["booking-admin"] + [adm]
+    report = _run_e2e(users, groups, rows, grants)
+    assert [(d["username"], d["kind"]) for d in report["group_drift"]] == [("e2e-cis-admin", "booking_role")]
+    assert E2E_CIS_ADMIN not in {k["email"] for k in report["known_e2e_exceptions"]}
+    assert report["drift_total"] == 1
+
+
+def test_a10_with_cis_admin_instead_of_cis_reviewer_stays_drift():
+    users, groups, rows, grants = _e2e_world()
+    rev = next(u for u in users if u["Username"] == "s-e2e")
+    groups["cis-reviewer"] = []
+    groups["cis-admin"] = groups["cis-admin"] + [rev]
+    report = _run_e2e(users, groups, rows, grants)
+    assert [(d["username"], d["kind"], d["directory"], d["cognito"]) for d in report["group_drift"]] == [
+        ("e2e", "cis_role", "reviewer", "admin")]
+    assert E2E_REV not in {k["email"] for k in report["known_e2e_exceptions"]}
+
+
+def test_a10_or_a10b_without_their_directory_row_stays_drift():
+    users, groups, rows, grants = _e2e_world()
+    rows = [r for r in rows if r["username"] not in ("e2e", "e2e-cis-admin")]
+    report = _run_e2e(users, groups, rows, grants)
+    assert sorted((f["email"], f["reason"]) for f in report["cognito_without_row"]) == [
+        (E2E_CIS_ADMIN, "no_row"), (E2E_REV, "no_row")]
+    assert [k["email"] for k in report["known_e2e_exceptions"]] == [E2E_BOOKING]
+    assert report["drift_total"] == 2
+
+
+def test_a10b_row_with_the_wrong_role_stays_drift():
+    users, groups, rows, grants = _e2e_world()
+    for r in rows:
+        if r["username"] == "e2e-cis-admin":
+            r["role"] = "reviewer"
+    report = _run_e2e(users, groups, rows, grants)
+    assert [(d["username"], d["kind"]) for d in report["group_drift"]] == [("e2e-cis-admin", "cis_role")]
+    assert E2E_CIS_ADMIN not in {k["email"] for k in report["known_e2e_exceptions"]}
+
+
+@pytest.mark.parametrize("email", [
+    "e2e-booking@e2e-mail.lumiguides.it.com.evil",          # another domain
+    "x.e2e-booking@e2e-mail.lumiguides.it.com",             # another local part
+    "e2e-booking@sub.e2e-mail.lumiguides.it.com",           # a sub-domain
+    "e2e-boo\u212aing@e2e-mail.lumiguides.it.com",          # KELVIN SIGN: lower() folds it to "k"
+])
+def test_only_the_exact_ascii_address_is_a_known_exception(email):
+    users, groups, rows, grants = _clean_world()
+    look = _user(email, "s-look")
+    users.append(look)
+    groups["booking-admin"] = groups["booking-admin"] + [look]
+    report = _run_e2e(users, groups, rows, grants)
+    assert report["known_e2e_exceptions"] == []
+    assert [f["reason"] for f in report["cognito_without_row"]] == ["no_row"] and report["drift_total"] == 1
+
+
+def test_a_disabled_a10a_identity_is_still_listed_with_its_state():
+    users, groups, rows, grants = _e2e_world()
+    for u in users:
+        if u["Username"] == "s-e2e-bk":
+            u["Enabled"] = False
+    report = _run_e2e(users, groups, rows, grants)
+    bk = next(k for k in report["known_e2e_exceptions"] if k["email"] == E2E_BOOKING)
+    assert bk["enabled"] is False and bk["groups"] == ["booking-admin"] and report["drift_total"] == 0
+
+
+def test_summary_fields_count_known_e2e_without_addresses():
+    fields = sr.summary_fields(_run_e2e(*_e2e_world()))
+    assert fields["known_e2e_exceptions"] == 3 and fields["drift_total"] == 0
+    assert "@" not in repr(fields)
+
+
 # ── the job ───────────────────────────────────────────────────────────────────────────────────────
 
 class _Conn:
@@ -425,6 +597,34 @@ async def test_job_runs_end_to_end_and_logs_counts(monkeypatch):
     line = next(e for e in logs if e["event"] == "staff_reconcile_summary")
     assert line["cognito_without_row"] == 1 and line["drift_total"] == 1 and line["ready"] is True
     assert "ghost" not in repr(line)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("environment,drift,known", [("dev", 0, 1), ("prod", 1, 0)])
+async def test_job_lists_the_a10a_identity_apart_only_on_dev(monkeypatch, environment, drift, known):
+    from services.jobs import staff_reconcile_job as job
+    from shared.jobs import queue
+
+    monkeypatch.setattr(queue, "set_progress", AsyncMock())
+    monkeypatch.delenv("COGNITO_WORKFORCE_ISSUER", raising=False)
+    monkeypatch.setenv("ENVIRONMENT", environment)
+    users, groups, rows, grants = _clean_world()
+    bk = _user(E2E_BOOKING, "s-e2e-bk", status="FORCE_CHANGE_PASSWORD")
+    groups["booking-admin"] = groups["booking-admin"] + [bk]
+    client = _client()
+    pool = MagicMock()
+    pool.acquire = MagicMock(return_value=_Acquire(_Conn(rows, grants)))
+    with Stubber(client) as stub:
+        stub.add_response("list_users", {"Users": users + [bk]}, {"UserPoolId": POOL, "Limit": 60})
+        for g in sr.STAFF_GROUPS:
+            stub.add_response("list_users_in_group", {"Users": groups[g]},
+                              {"UserPoolId": POOL, "GroupName": g, "Limit": 60})
+        ctx = registry.JobContext(pool, Job(id="job-3", kind=job.KIND, payload={"trigger": "manual"},
+                                            status="running", attempt=1, max_attempts=2, progress={}, cost_usd=0.0),
+                                  {"cognito": client})
+        result = await job.run(ctx)
+    assert result["drift_total"] == drift and result["counts"]["known_e2e_exceptions"] == known
+    assert result["known_e2e_enabled"] is (environment == "dev")
 
 
 @pytest.mark.asyncio

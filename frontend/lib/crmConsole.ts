@@ -231,31 +231,38 @@ export function stateLabel(state: string): { label: string; tone: Tone } {
 }
 
 // AA-978 follow-up (crm.ops.v1 1.2): who locked a locked agency, and the CIS membership feed's health.
-export const LOCK_SOURCE_LABEL: Record<LockSource, { label: string; detail: string }> = {
+export const LOCK_SOURCE_LABEL: Record<LockSource, { label: string; short: string; detail: string }> = {
   aa_ops: {
     label: "Locked by AA",
+    short: "by AA staff",
     detail: "Locked from this console (or before the CRM recorded who locked). An AA unlock lifts it.",
   },
   cis_tenant: {
     label: "Locked by CIS: tenant locked or deleted",
+    short: "by CIS tenant lifecycle",
     detail: "CIS locked or deleted this tenant, and the membership feed passed it on. A CIS unlock lifts it.",
   },
   cis_membership: {
     label: "Locked by CIS: no active owner",
+    short: "by CIS: no active owner",
     detail: "CIS removed the agency's last active owner. The owner recovery or an AA unlock lifts it.",
   },
 };
 
 /** Who locked the agency, or null when it is not locked. A locked agency from a 1.1 producer (no lock_source) reads
- * "source not reported". */
+ * "source not reported"; a source this page does not know yet is shown raw. `short` is the few words the agency list
+ * puts next to the State badge ("by AA staff", "by CIS tenant lifecycle", …). */
 export function lockSourceText(
   summary: Pick<TenantSummary, "state" | "lock_source">,
-): { code: string | null; label: string; detail: string } | null {
+): { code: string | null; label: string; short: string; detail: string } | null {
   if (summary.state !== "locked") return null;
   const src = summary.lock_source;
-  if (!src) return { code: null, label: "Locked (source not reported)", detail: "The CRM did not say who locked it." };
-  const known = (LOCK_SOURCE_LABEL as Record<string, { label: string; detail: string }>)[src];
-  return known ? { code: src, ...known } : { code: src, label: `Locked (${src})`, detail: "" };
+  if (!src) {
+    return { code: null, label: "Locked (source not reported)", short: "source not reported",
+      detail: "The CRM did not say who locked it." };
+  }
+  const known = Object.hasOwn(LOCK_SOURCE_LABEL, src) ? LOCK_SOURCE_LABEL[src as LockSource] : undefined;
+  return known ? { code: src, ...known } : { code: src, label: `Locked (${src})`, short: `by ${src}`, detail: "" };
 }
 
 export const FEED_STATE_LABEL: Record<MembershipFeedState, { label: string; tone: Tone; detail: string }> = {
@@ -293,6 +300,14 @@ export function membershipFeed(
   const lag = summary.membership_feed_lag_s;
   const lastPull = lag == null || !Number.isFinite(lag) ? "none yet" : `${formatLag(lag)} ago`;
   return { state, ...FEED_STATE_LABEL[state], lastPull };
+}
+
+/** The membership feed health for the whole page: the CRM reports the same platform-wide value on every agency, so the
+ * first loaded agency carries it. Null when no agency is loaded (the CRM then reported nothing). */
+export function platformMembershipFeed(
+  items: ReadonlyArray<Pick<TenantSummary, "membership_feed_state" | "membership_feed_lag_s">>,
+): ReturnType<typeof membershipFeed> | null {
+  return items.length ? membershipFeed(items[0]) : null;
 }
 
 export const DATA_REQUEST_STATUS_LABEL: Record<DataRequestStatus, { label: string; tone: Tone }> = {
