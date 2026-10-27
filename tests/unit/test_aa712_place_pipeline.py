@@ -133,19 +133,21 @@ def test_guard_countries_cover_every_raw_tours_country():
     assert {guards.canonical_country(c) for c in allowed} == allowed
     for c in allowed:
         iso = guards.iso2(c)
-        assert iso in guards.BBOX and iso in guards.ISO2_ISO3 and iso in guards.AA_ISO2
+        assert iso in guards.BBOX and iso in guards.ISO2_ISO3 and iso in guards.ISO2_COUNTRY
     assert guards.point_ok(-8.65, 115.2, "Indonesia") is None           # Bali
     assert guards.point_ok(3.14, 101.69, "Malaysia") is None            # Kuala Lumpur
     assert guards.point_ok(42.87, 74.59, "Kyrgyzstan") is None          # Bishkek
     assert guards.point_ok(39.65, 66.96, "Uzbekistan") is None          # Samarkand
     assert gc.GeoapifyGeocoder.params("Ubud", guards.iso2("Indonesia"))["filter"] == "countrycode:id"
-    assert {"id", "my", "kg", "uz"} <= set(guards.AA_ISO2)
+    assert {"id", "my", "kg", "uz"} <= set(guards.ISO2_COUNTRY)
 
 
 def test_point_guard_country_and_bbox():
     assert guards.point_ok(18.79, 98.98, "Thailand") is None                 # Chiang Mai
     assert guards.point_ok(18.79, 98.98, "Vietnam") == "outside_country_bbox"
-    assert guards.point_ok(48.85, 2.35, "France") == "not_aa_country"
+    assert guards.point_ok(48.85, 2.35, "France") is None                    # AA-990: any ISO country (Paris)
+    assert guards.point_ok(48.85, 2.35, "Atlantis") == "unknown_country"
+    assert guards.point_ok(48.85, 2.35, "Thailand") == "outside_country_bbox"
     assert guards.point_ok(0, 0, "Laos") == "out_of_range"
     assert guards.point_ok(29.65, 91.1, "Tibet") is None                      # Lhasa → China
     assert guards.canonical_country("SRI-LANDKA") == "Sri Lanka"

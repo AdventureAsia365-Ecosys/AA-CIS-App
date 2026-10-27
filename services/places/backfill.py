@@ -223,7 +223,7 @@ async def estimate(conn, tours: list[dict], geocoder_cost_per_request: float, ge
             tours_with_places += 1
         for x in comps:
             if x.locality_norm is not None and x.name_norm:
-                keys.add((x.name_norm, country_norm(canonical(x.country)), x.locality_norm))
+                keys.add((x.name_norm, country_norm(canonical(x.country, c)), x.locality_norm))
     resolved = await store.resolved_names(conn, keys)
     known = await store.known_destinations(conn, keys - set(resolved))
     pending = await conn.fetch(

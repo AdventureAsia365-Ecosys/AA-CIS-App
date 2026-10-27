@@ -9,7 +9,6 @@ build_tour_graph(): live sources → one graph build, swapped in (design §3 tou
 from __future__ import annotations
 
 import asyncio
-import re
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Optional
 
@@ -20,6 +19,7 @@ from services.places import days as days_mod
 from services.places import graph as graph_mod
 from services.places import guards, locate, store
 from services.places.names import country_norm, locality_key, name_norm
+from shared import countries as _countries
 
 logger = structlog.get_logger()
 
@@ -30,34 +30,16 @@ class _NotLive(Exception):
     """Raised inside the persist transaction to roll it back when the version is no longer live."""
 
 
-_COUNTRY_LIST_SPLIT = re.compile(r"\s*(?:,|/|;|&|\band\b)\s*", re.I)
-_PAREN = re.compile(r"\(.*?\)")
-
-
-def aa_countries_in(text: Optional[str]) -> list[str]:
-    """AA-990: the AA countries named in a free-text country, in order — 'Nepal and China' -> ['Nepal', 'China'],
-    'India, Pakistan' -> ['India'] (while Pakistan is not an AA country), 'Myanmar (Burma)' -> ['Myanmar'],
-    'Russia' -> []. Uses guards.canonical_country, so it follows the guard's country list."""
-    seen: list[str] = []
-    for part in _COUNTRY_LIST_SPLIT.split((text or "").strip()):
-        c = guards.canonical_country(_PAREN.sub("", part).strip())
-        if c and c not in seen:
-            seen.append(c)
-    return seen
-
-
 def canonical(country: Optional[str], tour_country: Optional[str] = None) -> str:
-    """The canonical AA country; AA-990: a place card's free-text country naming several countries ("Nepal and China",
-    a border peak) becomes the TOUR's country when it is one of them, else the first AA one — so the name key reuses
-    the destination other tours resolved instead of a dirty "nepal and china" key. A non-AA-only string is kept."""
-    c = guards.canonical_country(country)
-    if c:
-        return c
-    listed = aa_countries_in(country)
-    if listed:
-        tc = guards.canonical_country(tour_country)
-        return tc if tc in listed else listed[0]
-    return (country or "").strip()
+    """The canonical ISO country name (shared/countries) a place / component is keyed on. AA-990: one rule with new
+    place cards (shared.countries.one_country, as place_cards.normalise_card_country): a known name or alias ->
+    its canonical name ('tanzania' -> 'Tanzania', cross-border kept); a free-text compound ("Nepal and China", a
+    border peak) -> the tour's country when it is literally one of the named countries, else the FIRST named one —
+    never the tour's country when the text does not name it. So the name key reuses the destination other tours
+    resolved instead of a dirty "nepal and china" key; the located destination still carries the place's real
+    country (locate accepts any ISO country). Text that names no country ('Himalayas') is kept as written."""
+    one = _countries.one_country(country, tour_country)
+    return one.name if one else (country or "").strip()
 
 
 @dataclass

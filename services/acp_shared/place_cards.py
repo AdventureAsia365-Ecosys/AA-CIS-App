@@ -53,6 +53,7 @@ import structlog
 from json_repair import repair_json
 
 from services.acp_contract.ranking_reference import PLACE_KINDS, names_somewhere
+from shared import countries as _countries
 from shared.llm_client.call_log import record_call_with_pool
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
@@ -247,6 +248,24 @@ def place_key(display_name: str, country: str, locality: Optional[str] = None) -
     if is_generic_name(display_name):
         return f"{core_key(display_name)}|{fold(locality)}|{fold(country)}"
     return f"{core_key(display_name)}|{fold(country)}"
+
+
+def normalise_card_country(raw: Optional[str], tour_country: Optional[str]) -> str:
+    """AA-990 — the ONE ISO country a new card is stored under (its canonical shared.countries name); a compound is
+    never stored as a country. The model's free text ('Viet Nam', 'India and Pakistan', 'Pakistan, India, China')
+    goes through shared.countries.one_country — the same rule services/places/pipeline.canonical keys place names on:
+    whole first; else its parts (split on , / & ; and or — never on '-': Timor-Leste), the tour's country when it is
+    one of them, else the first part. Nothing resolves -> the tour's
+    country (today's fallback), canonical when it resolves. The place may be in another country than the tour
+    (cross-border): a 'Tanzania' card on a tour sold as India stays Tanzania. Code only: the prompts are unchanged
+    (a prompt change rotates PROMPT_SHA and pays for re-drafts)."""
+    one = _countries.one_country(raw, tour_country)
+    if one:
+        return one.name
+    tour = _countries.resolve(tour_country)
+    if tour:
+        return tour.name
+    return (raw or tour_country or "").strip()
 
 
 def atom_group_key(atom: dict) -> tuple[str, str]:
@@ -733,7 +752,7 @@ async def build_card_for_group(group_key: tuple[str, str], atoms: list[dict], po
     model = getattr(resp, "model_used", None)
     name = (card.get("display_name") or "").strip() if isinstance(card.get("display_name"), str) else ""
     raw_country = card.get("country") if isinstance(card.get("country"), str) else ""
-    country = (raw_country or rep.get("country") or "").strip()
+    country = normalise_card_country(raw_country, rep.get("country"))
     card["facts"] = _clean_facts(card.get("facts"), name or rep["place"])
     card["aliases"] = _clean_aliases(card.get("aliases"))
     if not name or not country:

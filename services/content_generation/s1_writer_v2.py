@@ -367,6 +367,26 @@ def _single_kind(facts: dict, groups: set[str]) -> list[str]:
             and set(item_groups(" ".join(e["value"].split()[:3]))) & groups]
 
 
+_SOURCE_TEXT_FIELDS = ("name", "subtitle", "summary", "highlights", "itineraries", "description")
+
+
+def destination(tour: dict, country: str) -> Optional[str]:
+    """AA-990 — the facts box Destination value: the source country (raw_tours.country, what the source file lists),
+    or None (the line is left out) when the source text names other countries by name and never names that one (a
+    trek sold as India whose text says "Moshi, Tanzania"). Never a guessed country: the other country named in the
+    text is not written either ("Pangong Lake ... lies in China" on a Ladakh tour, "on the Nepal border" on a Sikkim
+    tour). Countries count only by their proper name as written (shared.countries.countries_named_as_proper_names):
+    "Khmer ruins", "Japanese Covered Bridge", "Thai massage" or "fine china" name no country. Code only."""
+    from shared import countries
+
+    text = " ".join(field_text(tour.get(f)) for f in _SOURCE_TEXT_FIELDS)
+    named = countries.countries_named_as_proper_names(text)
+    own = countries.name(country) or country
+    if named and own not in named:
+        return None
+    return country
+
+
 def at_a_glance(tour: dict, facts: dict) -> list[str]:
     """The facts box of arm E: `Label: value` lines from source fields only; a field the source lacks is left out
     (it is on the ask-the-supplier list instead)."""
@@ -375,8 +395,9 @@ def at_a_glance(tour: dict, facts: dict) -> list[str]:
     if dur:
         lines.append(f"Duration: {dur}")
     country = field_text(tour.get("country")).strip()
-    if country:
-        lines.append(f"Destination: {country}")
+    where = destination(tour, country) if country else None
+    if where:
+        lines.append(f"Destination: {where}")
     for line in field_text(tour.get("description")).splitlines():   # with_agency_fields lines
         for _key, label in AGENCY_FIELDS:
             if line.startswith(label + ": "):

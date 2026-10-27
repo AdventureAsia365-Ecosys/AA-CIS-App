@@ -1,8 +1,11 @@
 """AA-712 — quality guards for coordinates (design §4).
 
 Hard (a point failing these is never stored):
-  - the country is one AA sells (or a neighbour it crosses into) — ISO list from TripPlanner
-    geocode.py, and the point lies inside that country's bounding box;
+  - the country is an ISO 3166-1 country (AA-990: shared.countries through the in-code mirror shared/countries, any
+    country — no hand-made "AA country" list), and the point lies inside THAT country's bounding box and its polygon
+    (10 km border buffer, services/places/shape.py). The country checked is the PLACE's own country (the model's
+    answer, confirmed by the geocoder), never the tour's: a tour sold as India may climb Kilimanjaro in Tanzania, a
+    Thailand tour may sleep in Siem Reap (cross-border, normal);
   - when a geocoder confirms, its country must equal the model's country.
 Soft (per destination, across tours): the transit-aware 600 km outlier rule — an outlier is
 recorded per (destination, tour, day) when the stop is > OUTLIER_KM from every other stop
@@ -15,76 +18,43 @@ import math
 from dataclasses import dataclass
 from typing import Iterable, Optional
 
-# Country name (lowercase) -> ISO 3166-1 alpha-2: the ONE list of countries AA sells (every live tour's country).
-# TripPlanner geocode.COUNTRY_ISO had 14 countries; AA-712 added Indonesia / Malaysia / Kyrgyzstan / Uzbekistan
-# (migration 150), AA-990 Pakistan / Philippines (migration 197). It equals the chk_raw_tours_country constraint:
-# tests/unit/test_aa990_country_lists.py parses the latest migration that defines it. Tibet is China.
-# Every other CIS country list imports from here (aa_content.validate, catalog_http.geo, places.geocoder / shape).
-COUNTRY_ISO2 = {
-    "bhutan": "bt", "cambodia": "kh", "china": "cn", "india": "in", "indonesia": "id", "japan": "jp",
-    "kyrgyzstan": "kg", "laos": "la", "malaysia": "my", "mongolia": "mn", "myanmar": "mm", "nepal": "np",
-    "pakistan": "pk", "philippines": "ph", "south korea": "kr", "sri lanka": "lk", "taiwan": "tw",
-    "thailand": "th", "tibet": "cn", "uzbekistan": "uz", "vietnam": "vn",
-}
-ISO2_COUNTRY = {"bt": "Bhutan", "kh": "Cambodia", "cn": "China", "in": "India", "id": "Indonesia", "jp": "Japan",
-                "kg": "Kyrgyzstan", "la": "Laos", "my": "Malaysia", "mn": "Mongolia", "mm": "Myanmar",
-                "np": "Nepal", "pk": "Pakistan", "ph": "Philippines", "kr": "South Korea", "lk": "Sri Lanka",
-                "tw": "Taiwan", "th": "Thailand", "uz": "Uzbekistan", "vn": "Vietnam"}
-ISO2_ISO3 = {"bt": "BTN", "kh": "KHM", "cn": "CHN", "in": "IND", "id": "IDN", "jp": "JPN", "kg": "KGZ",
-             "la": "LAO", "my": "MYS", "mn": "MNG", "mm": "MMR", "np": "NPL", "pk": "PAK", "ph": "PHL",
-             "kr": "KOR", "lk": "LKA", "tw": "TWN", "th": "THA", "uz": "UZB", "vn": "VNM"}
-ISO3_ISO2 = {v: k for k, v in ISO2_ISO3.items()}
-AA_ISO2 = sorted(ISO2_COUNTRY)
-# Known dirty raw_tours.country values (TripPlanner country_normalize.py) and common variants.
-# Each one must also be a shared.countries alias (CIS 279): tests/integration/test_aa851_migration_279.py.
-_ALIASES = {"sri-landka": "sri lanka", "okinawa": "japan", "viet nam": "vietnam", "korea": "south korea",
-            "republic of korea": "south korea", "lao pdr": "laos", "burma": "myanmar",
-            "kyrgyz republic": "kyrgyzstan", "republic of the philippines": "philippines",
-            "islamic republic of pakistan": "pakistan"}
+from shared import countries as _countries
 
-# (min_lat, max_lat, min_lng, max_lng), generous by ~0.3°. Kinmen/Matsu are Taiwan; Andaman is India.
-BBOX = {
-    "bt": (26.4, 28.6, 88.5, 92.4), "kh": (9.6, 15.0, 102.0, 108.0), "cn": (17.8, 53.9, 73.2, 135.4),
-    "in": (6.2, 37.4, 67.8, 97.7), "jp": (23.8, 45.9, 122.6, 146.2), "la": (13.6, 22.8, 99.8, 107.9),
-    "mn": (41.3, 52.4, 87.4, 120.2), "mm": (9.3, 28.9, 91.9, 101.5), "np": (26.1, 30.8, 79.8, 88.5),
-    "kr": (32.8, 38.9, 124.3, 132.1), "lk": (5.6, 10.1, 79.3, 82.2), "tw": (21.6, 26.6, 118.0, 122.4),
-    "th": (5.3, 20.8, 97.1, 105.9), "vn": (8.2, 23.7, 101.9, 109.8),
-    "id": (-11.3, 6.4, 94.7, 141.4), "my": (0.6, 7.7, 99.3, 119.6), "kg": (38.9, 43.6, 69.0, 80.6),
-    "uz": (36.9, 45.9, 55.7, 73.5),
-    # Pakistan 23.7-37.1 N / 60.8-77.1 E (Gilgit-Baltistan to Karakoram; east edge stops short of Leh/Nubra),
-    # Philippines 4.6-21.1 N / 116.9-126.6 E
-    # (Tawi-Tawi to Batanes, Palawan to Mindanao's east coast) — AA-990.
-    "pk": (23.3, 37.4, 60.6, 77.4), "ph": (4.3, 21.4, 116.6, 126.9),
-}
+# Views of the mirror for the few importers (lower-case ISO alpha-2 keys, as the place code has always used them):
+#   COUNTRY_ISO2  every lower-case spelling (name, ISO name, alias; 'tibet' -> 'cn') -> alpha-2
+#   ISO2_COUNTRY  alpha-2 -> canonical name ('vn' -> 'Vietnam', 'tz' -> 'Tanzania')
+#   ISO2_ISO3 / ISO3_ISO2, BBOX (min_lat, max_lat, min_lng, max_lng), generous by ~0.3°; the 20 boxes tuned by hand
+#   before AA-990 are kept as they were (scripts/aa990_country_data.py BBOX_TUNED).
+COUNTRY_ISO2 = {s: c.iso2.lower() for c in _countries.all_countries() for s in sorted(c.spellings())}
+ISO2_COUNTRY = {c.iso2.lower(): c.name for c in _countries.all_countries()}
+ISO2_ISO3 = {c.iso2.lower(): c.iso3 for c in _countries.all_countries()}
+ISO3_ISO2 = {v: k for k, v in ISO2_ISO3.items()}
+BBOX = {c.iso2.lower(): c.bbox for c in _countries.all_countries() if c.bbox}
 
 OUTLIER_KM = 600.0
+# point_ok's polygon check: a point this close to the country's border still counts (border rivers, coarse polygons).
+POLYGON_BUFFER_KM = 10.0
 # Geocoders whose accepted result replaces the model's point (services/places/geocoder.CONFIRMED_BY).
 CONFIRMED_BY = frozenset({"geoapify"})
 
 
 def canonical_country(name: Optional[str]) -> Optional[str]:
-    """'thailand' / 'SRI-LANDKA' / 'Tibet' -> 'Thailand' / 'Sri Lanka' / 'China'; None if not AA."""
-    key = (name or "").strip().lower()
-    key = _ALIASES.get(key, key)
-    iso = COUNTRY_ISO2.get(key)
-    return ISO2_COUNTRY.get(iso) if iso else None
+    """'thailand' / 'SRI-LANDKA' / 'Tibet' / 'tanzania' -> 'Thailand' / 'Sri Lanka' / 'China' / 'Tanzania'; None when
+    the text names no ISO country (a compound such as 'India and Pakistan' included)."""
+    return _countries.name(name)
 
 
 def iso2(name: Optional[str]) -> str:
-    c = canonical_country(name)
-    return COUNTRY_ISO2.get(c.lower(), "") if c else ""
+    c = _countries.resolve(name)
+    return c.iso2.lower() if c else ""
 
 
 def country_spellings(code: Optional[str]) -> list[str]:
     """Every lower-case country spelling :func:`iso2` maps to one ISO code, aliases included
-    ('cn' -> ['china', 'tibet'], 'lk' -> ['sri lanka', 'sri-landka']); [] when the code is not AA.
+    ('cn' -> ['china', "people's republic of china", 'prc', 'tibet']); [] for an unknown code.
     Used to filter raw_tours.country by ISO code (catalog.http.v1, AA-976)."""
-    key = (code or "").strip().lower()
-    if not key:
-        return []
-    names = {name for name, iso in COUNTRY_ISO2.items() if iso == key}
-    names |= {alias for alias in _ALIASES if iso2(alias) == key}
-    return sorted(names)
+    c = _countries.by_iso2(code)
+    return sorted(c.spellings()) if c else []
 
 
 def km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -103,15 +73,22 @@ def in_country(lat: float, lng: float, country: Optional[str]) -> bool:
 
 
 def point_ok(lat: Optional[float], lng: Optional[float], country: Optional[str]) -> Optional[str]:
-    """None when the point may be stored, else the reason it may not (hard guard)."""
+    """None when the point may be stored, else the reason it may not (hard guard). `country` is the PLACE's own
+    country (any ISO country), not the tour's."""
     if lat is None or lng is None:
         return "no_point"
     if not (-90 <= lat <= 90 and -180 <= lng <= 180) or (lat == 0 and lng == 0):
         return "out_of_range"
     if canonical_country(country) is None:
-        return "not_aa_country"
+        return "unknown_country"
     if not in_country(lat, lng, country):
         return "outside_country_bbox"
+    # AA-990: the box alone accepts wrong-country answers next to the border (Kilimanjaro as Kenya, Siem Reap as
+    # Thailand, Skardu as India): the point must also lie in the country's polygon (10 km border buffer). Lazy import:
+    # shape imports only geomatch, so there is no cycle.
+    from services.places import shape
+    if not shape.in_country(lat, lng, iso2(country), buffer_km=POLYGON_BUFFER_KM):
+        return "outside_country_polygon"
     return None
 
 

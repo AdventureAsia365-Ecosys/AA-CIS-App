@@ -266,18 +266,11 @@ _MENTIONS_DAY_TRIP = re.compile(
 
 
 def _countries_named(text: str) -> set[str]:
-    """AA-794: canonical names (shared.country_resolver.COUNTRY_MASTER) of the countries a text
-    names, by canonical name or a word alias of 4+ letters ("Viet Nam", "Burma", "Bali"). The short
-    codes (LAO, IND, PRC…) are left out — as words in prose they are noise, not a country."""
-    from shared.country_resolver import COUNTRY_MASTER
-    low = f" {(text or '').lower()} "
-    found = set()
-    for canonical, aliases in COUNTRY_MASTER.items():
-        for name in {canonical.upper(), *(a for a in aliases if len(a) >= 4)}:
-            if re.search(r"(?<![a-z])" + re.escape(name.lower()) + r"(?![a-z])", low):
-                found.add(canonical)
-                break
-    return found
+    """AA-794: canonical names of the countries a text names, by name or a word alias of 4+ letters ("Viet Nam",
+    "Burma", "Bali"). AA-990: every ISO 3166-1 country (shared/countries), so a meta that names Tanzania on a
+    Kilimanjaro trek sold as India never gets ", in India."; codes and prose-ambiguous words ("turkey") are left out."""
+    from shared import countries
+    return countries.countries_named(text)
 
 
 def _extend_short_meta(meta: str, facts: dict, forbidden) -> Optional[str]:
@@ -289,8 +282,8 @@ def _extend_short_meta(meta: str, facts: dict, forbidden) -> Optional[str]:
         # AA-794: raw_tours.country holds ONE country, so a Laos→Vietnam tour got ", in Laos." after
         # a meta ending in Cuc Phuong (Vietnam). When the tour name or the meta names any other
         # country, no "in <country>" tail is added; a days-only tail is still allowed.
-        from shared.country_resolver import resolve_country
-        own = resolve_country(country) or country
+        from shared import countries
+        own = countries.name(country) or country
         if _countries_named(f"{(facts or {}).get('name') or ''} {body}") - {own}:
             country = ""
     if days and (_MENTIONS_DAYS.search(body) or _MENTIONS_DAY_TRIP.search(body)):

@@ -422,7 +422,8 @@ _INSERT_VERSION_SQL = """
         price_raw, inclusions, exclusions, links,
         activities, feature, best_time_to_go,
         pipeline_status,
-        source_group_id, source_version, source_status
+        source_group_id, source_version, source_status,
+        country_raw_unresolved
     ) VALUES (
         $1::uuid, $2::uuid, $3::uuid,
         $4, $5, $6,
@@ -432,23 +433,39 @@ _INSERT_VERSION_SQL = """
         $17, $18, $19, $20::jsonb,
         $21::jsonb, $22, $23,
         'ingested',
-        $24::uuid, $25, $26
+        $24::uuid, $25, $26,
+        $27
     )
     RETURNING tour_id::text
 """
 
 
+def _staged_country(payload: dict) -> tuple[Optional[str], Optional[str]]:
+    """AA-990: (country, country_raw_unresolved) for a staged payload. upload_staging.parsed_payload rows parsed before
+    CIS 288 / the S0 change may hold a Jev-filled or non-canonical name; raw_tours.country is a foreign key to
+    shared.countries (name) since 288, so it is canonicalised here. A value that names no country is not written: it
+    moves to country_raw_unresolved (the verbatim row stays in the staged payload)."""
+    from shared import countries
+
+    raw = payload.get("country")
+    raw = raw.strip() if isinstance(raw, str) else None
+    country = countries.name(raw) if raw else None
+    unresolved = payload.get("country_raw_unresolved") or (raw if raw and country is None else None)
+    return country, unresolved
+
+
 async def _insert_version(conn, *, tenant_id: str, batch_id: str, payload: dict, group_id: str, version: int,
                           status: str) -> str:
+    country, country_raw_unresolved = _staged_country(payload)
     return await conn.fetchval(
         _INSERT_VERSION_SQL,
         tenant_id, batch_id, payload.get("source_id"), payload.get("tour_id_external"), payload.get("sku"),
         payload.get("provider"), payload.get("src_name"), payload.get("src_subtitle"), payload.get("src_summary"),
         payload.get("src_description"), json.dumps(payload.get("src_highlights") or []),
-        payload.get("src_itineraries"), payload.get("country"), payload.get("duration"), payload.get("group_size"),
+        payload.get("src_itineraries"), country, payload.get("duration"), payload.get("group_size"),
         payload.get("period"), payload.get("price_raw"), payload.get("inclusions"), payload.get("exclusions"),
         json.dumps(payload.get("links") or []), json.dumps(payload.get("activities") or []), payload.get("feature"),
-        payload.get("best_time_to_go"), group_id, version, status)
+        payload.get("best_time_to_go"), group_id, version, status, country_raw_unresolved)
 
 
 async def supersede(conn, *, decision: str, tenant_id: str, batch_id: str, payload: dict,

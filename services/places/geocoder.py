@@ -77,7 +77,7 @@ class GeocoderUnavailable(GeocoderError):
 class Confirmed:
     lat: float
     lng: float
-    country: str            # canonical AA country name
+    country: str            # canonical ISO country name (shared/countries), the PLACE's country
     place_id: Optional[str]
     located_by: str         # 'geoapify' (shared.destinations.located_by)
     meta: dict = field(default_factory=dict, compare=False, hash=False)   # audit: provider, type, confidence…

@@ -13,14 +13,16 @@ Madhya Pradesh. The model knows these places. So:
      otherwise the model's point is kept ('llm', precision 'area'; a hard place kind — temple, pass,
      lake, village… — is put on the /admin/places review list). AA-847: a linear feature (river, road, trail) is
      precision 'line' either way — drawn from geo.place_shape (job place_shape), never a pin;
-  3. hard guards (guards.point_ok): AA country, inside its bounding box; a confirming result in
-     another country than the model's is ignored.
+  3. hard guards (guards.point_ok): any ISO 3166-1 country (AA-990: the PLACE's own country, which may differ from
+     the tour's — a tour sold as India that climbs Kilimanjaro has Tanzanian places), inside that country's bounding
+     box and polygon (10 km border buffer); a confirming result in another country than the model's is ignored.
 
 A failed model batch or a geocoder error leaves the names pending (retried later), never a guess.
 AA-990: the answer is read leniently (code fences, prose around it, a one-key wrapper object, keys re-spelt within
 `name_norm` or answered without the " (Locality)" part of a label); an unreadable answer is asked again once as two
 halves before its names count a try; and each name that does not get a point carries its own reason
-(`unknown_to_model` = the model said null, `missing_in_answer`, `malformed_answer`, `not_aa_country:<country>`).
+(`unknown_to_model` = the model said null, `missing_in_answer`, `malformed_answer`, `unknown_country:<text>` = the
+model's country names no ISO 3166-1 country; any ISO country is taken, subject to guards.point_ok).
 The geocoder's daily credit guard, and a setup / auth failure (no key, secret unreadable, HTTP 401/403),
 defer the rest of the run: no try consumed, no further paid model call.
 """
@@ -56,7 +58,9 @@ DEFER_UNAVAILABLE = "geocoder_unavailable"
 REASON_NULL = "unknown_to_model"          # the model said null: it does not know the place
 REASON_MISSING = "missing_in_answer"      # the answer has no key for this name (dropped or re-spelt beyond name_norm)
 REASON_MALFORMED = "malformed_answer"     # the value is not [lat, lng, country, ...]
-NOT_AA_COUNTRY = "not_aa_country"         # f"{NOT_AA_COUNTRY}:<the model's country>": a country the guard does not take
+# f"{UNKNOWN_COUNTRY}:<the model's text>": the text names no ISO 3166-1 country ('Siberia', 'India and Pakistan');
+# any ISO country is accepted here (shared/countries) and then checked by guards.point_ok (bbox + polygon).
+UNKNOWN_COUNTRY = "unknown_country"
 
 SYSTEM_PROMPT = (
     "You are a geographer for Adventure Asia. For each place named on a tour itinerary you give "
@@ -69,7 +73,7 @@ SYSTEM_PROMPT = (
 class Item:
     key: tuple            # (name_norm, country_norm, locality_norm) — geo.place_name key
     name: str             # display name to locate
-    country: str          # the country it is expected in (card / tour country)
+    country: str          # a hint only: the card / tour country; the answer's country is where the place really is
     tour_name: str = ""
     locality: Optional[str] = None
 
@@ -178,7 +182,7 @@ def _proposal(v) -> "Proposal | str":
         return REASON_MALFORMED
     country = guards.canonical_country(raw_country)
     if not country:
-        return f"{NOT_AA_COUNTRY}:{raw_country.strip()[:40]}"
+        return f"{UNKNOWN_COUNTRY}:{raw_country.strip()[:40]}"
     native = v[3] if len(v) > 3 and isinstance(v[3], str) else None
     if not (country in NATIVE_NAME_COUNTRIES and geomatch.has_native_script(native)):
         native = None
@@ -227,7 +231,8 @@ def read_answer(raw: str, labels: list[str], plain: Optional[dict[str, str]] = N
 
 def parse_answer(raw: str, labels: list[str]) -> dict[str, Optional[Proposal]]:
     """Model JSON -> {label: Proposal(lat, lng, canonical country, native name?) | None}; anything
-    malformed -> None; a native name is kept only in native script for Taiwan / South Korea.
+    malformed, or a country that names no ISO country, -> None; a native name is kept only in native script for
+    Taiwan / South Korea. The country is the model's (where the place really is), not the tour's (AA-990).
     Raises ValueError (AnswerUnreadable) when the answer has no JSON object at all (the batch is retried).
     :func:`read_answer` says why a label got None."""
     return {k: (v if isinstance(v, Proposal) else None) for k, v in read_answer(raw, labels).items()}

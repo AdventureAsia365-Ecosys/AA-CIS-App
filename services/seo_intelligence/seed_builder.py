@@ -250,7 +250,8 @@ def activity_terms(activities) -> list[str]:
 
 
 def _country_words() -> dict[str, str]:
-    """Lowercase country names/aliases (≥ 4 letters) → canonical country, from COUNTRY_MASTER."""
+    """Lowercase country names/aliases (≥ 4 letters) → canonical country, from COUNTRY_MASTER (the SEO word list; it
+    restricts nothing — AA-990 keeps this keyword filter as it was, the ISO-wide country list is shared/countries)."""
     from shared.country_resolver import COUNTRY_MASTER
     out: dict[str, str] = {}
     for canonical, aliases in COUNTRY_MASTER.items():
@@ -298,6 +299,9 @@ def names_foreign_place(keyword: str, foreign_places) -> bool:
     return any((f" {p} " in text) if " " in p else (p in words) for p in foreign_places)
 
 
+_MOUNT_WORDS = frozenset({"mount", "mt"})
+
+
 def rank_keyword_ideas(ideas: list[dict], place_terms: list[str], cap: int = 25,
                        activity_words: list[str] | None = None, country: str = "",
                        foreign_places=None) -> list[dict]:
@@ -307,6 +311,17 @@ def rank_keyword_ideas(ideas: list[dict], place_terms: list[str], cap: int = 25,
     phrasing. Generic country ideas ("india tour packages") are dropped even with high volume. Pure."""
     places = [t for t in (place_terms or []) if t and t not in _WEAK_PLACE_WORDS]
     acts = [t for t in (activity_words or []) if t]
+    # AA-990: a place the tour's own title names is never "foreign", even when it lies in another country than the
+    # tour is sold as (a trek sold as India that climbs Kilimanjaro: "mount kilimanjaro" is a Tanzania destination).
+    # The title must name ALL of the place's distinctive words: one shared word is not enough ("golden rock",
+    # Myanmar, stays foreign on the Thailand tour "Golden Triangle and Chiang Rai").
+    own = set(places)
+
+    def _title_names(place: str) -> bool:
+        words = {w for w in place.split()} - _WEAK_PLACE_WORDS - _GENERIC_TITLE_WORDS - _MOUNT_WORDS
+        return bool(words) and words <= own
+
+    foreign_places = frozenset(p for p in (foreign_places or ()) if not _title_names(p))
 
     def _vol(i: dict) -> int:
         v = i.get("search_volume")
