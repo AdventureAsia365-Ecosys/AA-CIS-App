@@ -2358,7 +2358,13 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   Jev read) for panel labelling ($0).
 - **A1 day oracle + quality shadow** (AA-925, Quality System v1 Q-2): one duration / day-marker reader,
   `services/content_generation/day_parse.py` (`prompts._estimate_day_count` and `seo_meta_utils.tour_days`
-  are thin wrappers; "3 hours" is one day, "7D/6N" seven). `validate_node` runs the deterministic day oracle
+  are thin wrappers; "3 hours" is one day, "7D/6N" seven). It also owns the ONE ranged-heading rule (AA-990
+  S253, `day_range` / `CANONICAL_HEAD` / `canonical_blocks`): "Day 12-15" (hyphen, en dash or "to") covers days
+  12..15 when 12 < 15 <= 12 + 14, else it is the single first day; source markers, written headings
+  (`itinerary_utils`, `output_days`), validate's dash normaliser, the day gap check / `final_day_guard`,
+  `places/validity`, `places/days`, the T2 day markers and the SQL twin `catalog._tour_day_text` /
+  `v_tour.duration_days` (CIS 289) all apply it, so a ranged day is never folded into the day before.
+  `validate_node` runs the deterministic day oracle
   (`services/quality/day_oracle.py`: sub-day split, duplicate / out-of-order / skipped / extra day, departure
   mid-trip, count vs duration, `SOURCE_DAY_CONTRADICTION` — a source fault, never charged to the writer —
   and `DAY_CHECK_SKIPPED`) and the S2 cut signature (`seo_meta_utils.meta_cut_signature`, "…a 20-kilometre.").
@@ -2704,15 +2710,7 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   T8 job (request atom) and the `place_cards_build` job — T9 only reads cards (S234). One draft per
   place: free rule skip (unnamed / logistics places), atoms grouped by folded place + country, reuse
   through `place_card_alias` / core name, and misses cached in `place_card_miss`; a generic name such
-  as "City Palace" keeps its locality in the key and is never reused across tours by name; AA-784 S253: region is
-  a first-level administrative division or empty and locality the settlement the place is IN or empty —
-  `place_cards.clean_identity` clears geographic / trekking areas and the nearest town of a remote point before the
-  check, and the check's `locality_ok` / `region_ok` clear a field instead of rejecting the card; present-tense
-  status / administrative-role and authorship facts are never kept (`unverifiable_claim`, also applied to older
-  cards' facts at seed time unless verified; the identity rules likewise to older cards' `Location:` line); a
-  rejected card stored under a compound country (pre-AA-990) blocks a draft naming it (a hold only an admin
-  lifts); `place_cards_build` with `{"card_ids": [...]}` re-drafts named cards
-  in place — admin `POST /admin/content-quality/place-cards/rebuild`),
+  as "City Palace" keeps its locality in the key and is never reused across tours by name),
   `Day N`, same-country sibling evidence labelled "other trips", and a SCOPE line (which days and
   places the piece covers). S234: sibling lines only when the card has <3 facts (≤2, none naming
   another place); a Route's moments are in day order, skip Segments ranking excluded, carry no

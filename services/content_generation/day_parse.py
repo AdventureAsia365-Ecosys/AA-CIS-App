@@ -13,7 +13,17 @@ one function).
 * `source_day_markers(text)` → `[(day_from, day_to, line_idx)]` — the source "Day N" lines with ranges
   expanded ("Days 1–3:" → (1, 3)); the marker regex is the one `parse_source_day_word_counts` splits on.
 * `output_days(text)` → `[(n, title, first_sentence)]` — the canonical "Day N — Title" blocks of a written
-  itinerary in order, duplicates kept (the itinerary_utils regex).
+  itinerary in order, duplicates kept, a ranged block expanded to each day it covers.
+* `canonical_blocks(text)` → `[CanonicalBlock(first, last, title, body)]` — the canonical blocks themselves, the one
+  reader every written-itinerary parser builds on (itinerary_utils, output_days, places.validity, the SQL twin
+  catalog._tour_day_text from CIS 289).
+
+AA-990 (S253) — ONE ranged-heading rule. A heading "Day A-B" (hyphen, en dash or "to"; "Day" or "Days") covers every
+day A..B when A < B <= A + 14 (`day_range`); otherwise (backwards "Day 15-12", a span over two weeks) it is the single
+day A. Source markers (`source_day_markers`) and written headings (`CANONICAL_DAY_RE`) apply the same rule, so a
+ranged day is never folded into the day before and a day count counts A..B as present. Before, the written-side
+readers only knew "Day N —": "Day 12-15 — Beach leisure" was folded into Day 11 (and validate's dash normaliser
+rewrote it to "Day 12 — 15 — Beach leisure", which read as Day 12 alone): Sri Lanka b45db4c8 lost days 13-15.
 """
 from __future__ import annotations
 
@@ -34,12 +44,31 @@ _NUM_WORDS = {w: i for i, w in enumerate(
     "twenty-five twenty-six twenty-seven twenty-eight twenty-nine thirty".split())}
 _DAY_MARKER_RE = re.compile(
     r"^[\s►▶•*#>\-–—·|\"'“”‘’„«»]*days?\s*#?\s*(\d{1,3}|" + "|".join(sorted(_NUM_WORDS, key=len, reverse=True))
-    + r")\b(?:\s*[-–—]\s*(\d{1,3})\b)?[*\s]*[:\-–—|.]?\s*",
+    + r")\b(?:\s*(?:[-–—]|to\b)\s*(\d{1,3})\b)?[*\s]*[:\-–—|.]?\s*",
     re.IGNORECASE)
 # "Day 1 - 3 hours drive to Paro" is day 1 with a 3-hour drive, not days 1–3.
 _RANGE_UNIT_RE = re.compile(r"^\s*(?:hours?|hrs?|h\b|km|kms|kilomet|miles?|mins?|minutes?|nights?|days?|m\b|ft\b|"
                             r"metres?|meters?|people|pax|persons?)", re.IGNORECASE)
 _MAX_RANGE_SPAN = 14
+
+
+def day_range(first: int, last: Optional[int]) -> tuple[int, int]:
+    """AA-990 (S253): the days a heading "Day {first}-{last}" covers — (first, last) when first < last <= first + 14,
+    else (first, first): a backwards range ("Day 15-12") or one spanning more than two weeks is read as the single
+    day `first` (the day-count checks then report whatever that leaves missing), never a silent fold."""
+    if last is not None and first < last <= first + _MAX_RANGE_SPAN:
+        return first, last
+    return first, first
+
+
+# AA-990 (S253): the canonical heading of a WRITTEN itinerary ("Day N — Title", graph._process_itineraries /
+# s1_writer_v2.serialize_days), with an optional range "Day 12-15 — Title" / "Days 12–15 — " / "Day 12 to 15 — ".
+# The em dash is not a range separator here: it is the title separator. Group 1 = first day, group 2 = range end
+# (validate with `day_range`), group 3 = title. SQL twin: catalog._tour_day_text (CIS 289) — keep them identical.
+CANONICAL_HEAD = r"Days?\s+(\d+)(?:[ \t]*(?:[-–]|to)[ \t]*(\d{1,3}))?\s+—"
+CANONICAL_DAY_RE = re.compile(r"^" + CANONICAL_HEAD + r"\s*(.*)$", re.MULTILINE)
+# the same heading without groups, for splitters and normalisers (lookaheads)
+CANONICAL_HEAD_NC = r"Days?\s+\d+(?:[ \t]*(?:[-–]|to)[ \t]*\d{1,3})?\s+—"
 
 
 def _day_num(token: str) -> int:
@@ -149,9 +178,8 @@ def source_day_markers(text: str) -> list[tuple[int, int, int]]:
         first = _day_num(m.group(1))
         last = first
         if m.group(2):
-            end = int(m.group(2))
-            if first < end <= first + _MAX_RANGE_SPAN and not _RANGE_UNIT_RE.match(stripped[m.end(2):]):
-                last = end
+            if not _RANGE_UNIT_RE.match(stripped[m.end(2):]):
+                last = day_range(first, int(m.group(2)))[1]
         else:
             # S248 (S1-first step 1): a list of consecutive days ("Day 05 & 06:", "Day 11, 12 & 13:") is a range
             # too; before, days 6, 12 and 13 of such a source read as missing and the oracle charged the writer
@@ -171,17 +199,42 @@ _DAY_LIST_RE = re.compile(r"(?:\s*(?:,|&|\band\b)\s*\d{1,3}\b)+", re.IGNORECASE)
 _SENT_END_RE = re.compile(r"(?<=[.!?])\s")
 
 
-def output_days(text: str) -> list[tuple[int, str, str]]:
-    """(day, title, first_sentence) of each canonical "Day N — Title\\nBody" block of a written itinerary,
-    in order, duplicates kept (parse_canonical_itinerary_days keys by day and would hide a duplicate)."""
-    from .itinerary_utils import _CANONICAL_DAY_RE
+@dataclass(frozen=True)
+class CanonicalBlock:
+    first: int
+    last: int           # == first unless the heading is a valid range ("Day 12-15 —")
+    title: str
+    body: str
 
+    @property
+    def days(self) -> range:
+        return range(self.first, self.last + 1)
+
+    @property
+    def ranged(self) -> bool:
+        return self.last > self.first
+
+
+def canonical_blocks(text: str) -> list[CanonicalBlock]:
+    """The canonical "Day N — Title\\nBody" blocks of a written itinerary in order, duplicates kept; a heading
+    "Day A-B —" gives one block covering A..B (`day_range`). [] when the text has no canonical heading."""
     text = text or ""
-    matches = list(_CANONICAL_DAY_RE.finditer(text))
+    matches = list(CANONICAL_DAY_RE.finditer(text))
     out = []
     for i, m in enumerate(matches):
+        first = int(m.group(1))
+        last = day_range(first, int(m.group(2)) if m.group(2) else None)[1]
         end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-        body = text[m.end():end].strip()
-        first = _SENT_END_RE.split(body, maxsplit=1)[0].strip() if body else ""
-        out.append((int(m.group(1)), m.group(2).strip(), first))
+        out.append(CanonicalBlock(first, last, m.group(3).strip(), text[m.end():end].strip()))
+    return out
+
+
+def output_days(text: str) -> list[tuple[int, str, str]]:
+    """(day, title, first_sentence) of each canonical "Day N — Title\\nBody" block of a written itinerary,
+    in order, duplicates kept (parse_canonical_itinerary_days keys by day and would hide a duplicate). AA-990: a
+    ranged block ("Day 12-15 — Beach") gives one entry per day it covers, so the day oracle sees 12..15 present."""
+    out = []
+    for b in canonical_blocks(text):
+        first = _SENT_END_RE.split(b.body, maxsplit=1)[0].strip() if b.body else ""
+        out.extend((n, b.title, first) for n in b.days)
     return out

@@ -44,9 +44,11 @@ _EM = "—"
 # the customer-facing text fields of a T2 version (t2_rewrite_job's `rewritten` dict); `trip_type` is a
 # label ('cultural') but is converted the same way in case a model writes prose there
 TEXT_FIELDS = ("name", "subtitle", "summary", "highlights", "itineraries", "seo_title", "seo_meta", "trip_type")
-_CANONICAL_MARKER_RE = re.compile(rf"^(Day[ \t]+\d+)[ \t]+{_EM}[ \t]*", re.MULTILINE)
+# AA-990 (S253): a ranged heading ("Day 12-15 — Beach", day_parse.CANONICAL_HEAD) is a day marker too
+_DAY_MARKER = r"Days?[ \t]+\d+(?:[ \t]*(?:[-–]|to)[ \t]*\d{1,3})?"
+_CANONICAL_MARKER_RE = re.compile(rf"^({_DAY_MARKER})[ \t]+{_EM}[ \t]*", re.MULTILINE)
 # a day line after the marker became a colon: group 1 the "Day N" marker, group 2 the title
-_COLON_DAY_LINE_RE = re.compile(r"^(Day[ \t]+\d+): (.*)$", re.MULTILINE)
+_COLON_DAY_LINE_RE = re.compile(rf"^({_DAY_MARKER}): (.*)$", re.MULTILINE)
 # the marker used for the whole tour when a day title has its own colon (see the module docstring)
 DAY_MARKER_ALT = " · "
 

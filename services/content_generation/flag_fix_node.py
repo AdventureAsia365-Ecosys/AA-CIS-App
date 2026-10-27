@@ -370,6 +370,10 @@ def _repair_still_compressed_days(state: dict, itinerary_text: str, nudge_budget
 
     still_violating = []  # (clamp_distance, day_num, ratio)
     for day_num, day in days.items():
+        if day.get("range"):
+            # AA-990 (S253): a ranged block ("Day 12-15 —") is one text for several days; a one-day nudge would
+            # rewrite it as a single day and drop the others. Its length is left as written.
+            continue
         src_words = source_words_by_day.get(day_num)
         if not src_words:
             continue

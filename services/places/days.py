@@ -29,15 +29,17 @@ from typing import Awaitable, Callable, Optional
 
 import structlog
 
+from services.content_generation.day_parse import day_range
+
 logger = structlog.get_logger()
 
 # Bump when parse/rule/prompt/anchor logic changes: every tour's days_hash changes and the next
 # place_extract recomputes (and may pay for) its skeleton.
 RULE_VERSION = 1
 
-# "Day 3 — Stok to Sakti", "Day 4-5: Trek to Base Camp", "Day 12 - Departure"
+# "Day 3 — Stok to Sakti", "Day 4-5: Trek to Base Camp", "Day 12 - Departure", "Days 12 to 15 — Beach" (AA-990)
 _DAY_HEAD = re.compile(
-    r"^\s*Day\s+(\d{1,2})(?:\s*[-–—&]\s*(\d{1,2}))?\s*[—–:\-]\s*(.+?)\s*$", re.M | re.I)
+    r"^\s*Days?\s+(\d{1,2})(?:\s*(?:[-–—&]|to\b)\s*(\d{1,2}))?\s*[—–:\-]\s*(.+?)\s*$", re.M | re.I)
 # "Stok to Sakti via Thiksay—48 Kilometers" -> ("Stok", "Sakti")
 _A_TO_B = re.compile(
     r"^(?:(?:drive|trek|fly|ride|cycle|transfer|travel|walk|hike)\s+(?:from\s+)?)?"
@@ -82,14 +84,13 @@ def days_hash(itinerary_text: Optional[str]) -> str:
 
 
 def parse_days(text: str) -> list[DayBlock]:
-    """Split an itinerary into "Day N — title" blocks. A range ("Day 4-5") covers both days."""
+    """Split an itinerary into "Day N — title" blocks. A range ("Day 4-5") covers both days — the one ranged-heading
+    rule of day_parse.day_range (AA-990): a backwards range or one over two weeks is the single first day."""
     heads = list(_DAY_HEAD.finditer(text or ""))
     blocks: list[DayBlock] = []
     for i, m in enumerate(heads):
         start = int(m.group(1))
-        end = int(m.group(2)) if m.group(2) else start
-        if end < start:
-            end = start
+        end = day_range(start, int(m.group(2)) if m.group(2) else None)[1]
         body_end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
         blocks.append(DayBlock(start, end, m.group(3).strip(), text[m.end():body_end].strip()))
     return blocks

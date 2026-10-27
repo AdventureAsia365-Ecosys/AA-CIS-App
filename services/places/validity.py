@@ -11,9 +11,11 @@ Checks (per live tour; the v_tour liveness rule on the base tables, read as cis_
 explicitly — cis_app's RLS policies are USING (true)):
 
   V1 duration — the tour's day count disagrees with its duration:
-     ranged_heading          a "Day 5-6 —" heading: the canonical parser (itinerary_utils / catalog._tour_day_text)
-                             folds that text into the previous day, while days.py covers both days
-     missing_day_numbers     canonical "Day N —" numbers are not 1..max
+     ranged_heading          a "Day 5-6 —" heading covering several days with one block (informational). Since
+                             AA-990 (S253) every reader applies one rule (day_parse.day_range): the canonical parser
+                             (itinerary_utils, catalog._tour_day_text from CIS 289), days.py and this report give
+                             each day 5..6 the block's text; before, the canonical parser folded it into day 4
+     missing_day_numbers     canonical "Day N —" days (a valid range counted as every day it covers) are not 1..max
      duration_text_vs_days   fewer itinerary days than duration_days (the v_tour rule: the duration text first,
                              else the highest canonical day)
      extra_days              more itinerary days than duration_days
@@ -41,6 +43,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
+from services.content_generation import day_parse
 from services.places import days as days_mod
 from services.places import dedupe, geomatch
 
@@ -68,7 +71,6 @@ GATE_REASONS = ("near_duplicate", "linear_feature", "area_feature", "linear_with
 DRAWN_SHAPE_STATUSES = ("ok", "manual", "approximate")
 
 _DURATION_RE = re.compile(r"(\d+)\s*-?\s*days?")
-_CANONICAL_RE = re.compile(r"(?:^|\n)Day\s+(\d+)\s+—")
 
 
 # ── V1 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -83,8 +85,9 @@ def duration_days(duration_raw: Optional[str], itinerary: Optional[str]) -> Opti
 
 
 def canonical_days(itinerary: Optional[str]) -> list[int]:
-    """Canonical day numbers ("Day N —"), the parse_canonical_itinerary_days / _tour_day_text rule."""
-    return sorted({int(m.group(1)) for m in _CANONICAL_RE.finditer(itinerary or "")})
+    """Canonical day numbers ("Day N —", a "Day A-B —" block counting as A..B), the parse_canonical_itinerary_days /
+    catalog._tour_day_text / v_tour rule (day_parse.canonical_blocks)."""
+    return sorted({n for b in day_parse.canonical_blocks(itinerary or "") for n in b.days})
 
 
 def duration_findings(duration_raw: Optional[str], itinerary: Optional[str]) -> list[tuple[str, str]]:
@@ -225,12 +228,12 @@ def day_text_names(day_text: Optional[str], name: Optional[str]) -> bool:
 
 
 def day_blocks(itinerary: Optional[str]) -> dict[int, str]:
-    """day -> 'title\\nbody' of the canonical blocks (catalog._tour_day_text: a repeated day keeps the last block)."""
+    """day -> 'title\\nbody' of the canonical blocks (catalog._tour_day_text: a repeated day keeps the last block; a
+    "Day A-B —" block is the text of each day A..B)."""
     out = {}
-    for part in re.split(r"\n(?=Day\s+\d+\s+—)", itinerary or ""):
-        m = re.match(r"\s*Day\s+(\d+)\s+—", part)
-        if m:
-            out[int(m.group(1))] = part
+    for b in day_parse.canonical_blocks(itinerary or ""):
+        for n in b.days:
+            out[n] = f"{b.title}\n{b.body}"
     return out
 
 
