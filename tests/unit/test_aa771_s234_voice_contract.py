@@ -477,7 +477,13 @@ class TestT9Prompt:
         BRAND TEXTURE block (ai_tells.brand_texture_rule), and SYSTEM_PROMPT's style-guide rule says that block sets
         sentence shape and where the reader stands, never content: writer_prompt_version 79cd046a → b5978839. The
         Trail Pulse fixture is energetic, so `single` and `route` gain the MOMENTUM block; without it they are the
-        round-5 bytes (30305b79… / c212a3a2…)."""
+        round-5 bytes (30305b79… / c212a3a2…).
+        Updated AA-790 round 7 (S254, 7-arm panel of round 6: brand voice below round 3, 28/10/2026): every user
+        prompt gets the ANGLE BRIEF line after the three angle lines (ai_tells.ANGLE_BRIEF_RULE), a pack whose style
+        guide gives points gets the BRAND FOCUS block (ai_tells.brand_focus_rule; the fixture's "Focus on the group."),
+        and SYSTEM_PROMPT's style-guide rule says that block covers the guide's points only from the content seed:
+        writer_prompt_version b5978839 → ccad14c4. Without the ANGLE BRIEF line and the BRAND FOCUS block, `single`
+        and `route` are the round-6 bytes (58f9c85f… / 0aeab9e9…)."""
         pack = {"brand_name": "Trail Pulse", "brand_type": "Young active adventure travel brand",
                 "core_idea": "Active trips for people who like to move.", "customer_segment": "25-40 years old",
                 "voice": ["Energetic", "Fresh", "Direct", "Friendly", "Modern", "Confident", "Lightly playful"],
@@ -498,9 +504,9 @@ class TestT9Prompt:
         def sha(s):
             return hashlib.sha256(s.encode()).hexdigest()
         assert GOAL["key"] == GOALS[0]["key"]
-        assert sha(SYSTEM_PROMPT) == "b5978839f7b24efec987aa89e4ffa77a50af2023d1c8ce14b734e9eb9b0ad17f"
-        assert sha(single) == "58f9c85f586ebec43d0b77c853a38163dd852b0d29384652e681d507a8a13e76"
-        assert sha(route) == "0aeab9e9bde2c7b6f7a286d01f673b817e483924cbeaf3e1fcad11028e84a29c"
+        assert sha(SYSTEM_PROMPT) == "ccad14c4c0c69309da8a988d25dfd6f8854050d6d25e6bfbff3e538344ff2f7c"
+        assert sha(single) == "c5ac421fa81985cba3753670bd94930e91748636b24ac8f2b2ccae5081915c5b"
+        assert sha(route) == "25236e27a284a41fe0ebd19cb8790fbbed771b83628243bbf502ec9187d3fdbc"
 
     def test_prompts_carry_no_em_dash_but_the_rule(self):
         """AA-778 — our own prompt text primed the habit (S234: 78 in the writer prompts). The one em-dash

@@ -65,15 +65,21 @@ _BRIDGE = ("A BRAND TEXTURE block, when the brief has one, belongs to the style 
            "where the reader stands, never content.")
 
 
+# round 7's own bridge sentence (test_aa790_writer_round7), taken out to compare with round 5
+_ROUND7_BRIDGE = (" A BRAND FOCUS block, when the\n  brief has one, is the style guide's own points: it says which of "
+                  "them to cover where the content seed has a\n  fact for it, never content of its own.")
+
+
 def test_writer_prompt_version_is_round_six():
     """SYSTEM_PROMPT's style-guide rule gains the BRAND TEXTURE bridge, so the SYSTEM_PROMPT hash moves."""
-    assert service.WRITER_PROMPT_VERSION == "b5978839"  # round 5: 79cd046a; round 4: 2b510e08; round 3: 24363541
+    # round 6 shipped b5978839, round 7 pins its own: test_aa790_writer_round7.test_writer_prompt_version_is_round_seven
+    assert service.WRITER_PROMPT_VERSION not in ("79cd046a", "2b510e08", "24363541")
     assert ai_tells.AI_TELLS_VERSION == "ai_tells.v3"  # the pass makes no new edit
 
 
 def test_system_prompt_is_round_five_plus_the_bridge():
     assert _BRIDGE in _flat(prompts.SYSTEM_PROMPT)
-    before = prompts.SYSTEM_PROMPT.replace(
+    before = prompts.SYSTEM_PROMPT.replace(_ROUND7_BRIDGE, "").replace(
         " A BRAND TEXTURE block, when the brief has one, belongs to the\n  style guide: it sets sentence shape and "
         "where the reader stands, never content.", "")
     assert hashlib.sha256(before.encode()).hexdigest() == (
@@ -209,7 +215,9 @@ def test_momentum_text():
 def test_atmosphere_text():
     rule = _flat(BRAND_TEXTURE_ATMOSPHERE)
     assert "concrete sensory or material detail the CONTENT SEED or FACTS give" in rule
-    assert "unhurried, well-built sentences (still within the AI TELLS length limits)" in rule
+    # round 7: "told in unhurried, well-built sentences (still within the AI TELLS length limits)" lengthened the
+    # round-6 sentences (Atlas & Hearth 21.4 → 24.4 words); test_aa790_writer_round7 pins the new wording
+    assert "calm, plainly built sentences of ordinary length" in rule
     assert ("Only detail the seed gives: SOURCE FIDELITY forbids inventing what a place looks, sounds or feels like."
             in rule)
     assert "aphorism" in rule and '"The architecture is the devotion made structural."' in rule
@@ -379,7 +387,11 @@ _PACKS = {"TERRA": TERRA, "FAMRUN": FAMRUN, "PLAIN": PLAIN, "EMPTY": {}}
 
 @pytest.mark.parametrize("name, channel", sorted(_ROUND5_USER_PROMPTS))
 def test_family_and_no_signal_user_prompts_are_byte_identical_to_round_five(name, channel):
+    """Round 7 (S254) adds the ANGLE BRIEF line to every prompt; without it these are the round-5 bytes (no pack
+    here has a style guide, so none gets a BRAND FOCUS block)."""
     p = _prompt(channel, _PACKS[name])
+    assert p.count(ai_tells.ANGLE_BRIEF_RULE) == 1 and "BRAND FOCUS" not in p
+    p = p.replace("\n" + ai_tells.ANGLE_BRIEF_RULE, "")
     assert "BRAND TEXTURE" not in p
     assert _sha16(p) == _ROUND5_USER_PROMPTS[(name, channel)]
     assert (FAMILY_RULE in p) == (name == "TERRA")

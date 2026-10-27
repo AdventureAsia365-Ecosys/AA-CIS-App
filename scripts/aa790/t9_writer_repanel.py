@@ -25,6 +25,7 @@ Output rows have the pilot row shape (``id``, ``piece_id``, ``tenant``, ``channe
 private root ``.tmp-session/``, never in this repo.
 
   python3 /tmp/s.py --ids <id,id,...> [--dry-run] [--max-usd 2.0] [--out /tmp/aa790-repanel.json] [--s3 s3://b/k]
+                    [--arm r7]
 
 ``--dry-run`` builds every prompt and prints its size, the lead fact and the stored text's census; no model call, $0.
 """
@@ -210,6 +211,7 @@ def main() -> int:
     ap.add_argument("--max-usd", type=float, default=2.0)
     ap.add_argument("--out", default="/tmp/aa790-repanel.json")
     ap.add_argument("--s3", help="also upload the JSON to this s3://bucket/key")
+    ap.add_argument("--arm", default="", help="a label stored on every row (round 7: 'r6b' control, 'r7')")
     a = ap.parse_args()
 
     from services.acp_content_writing import ai_tells
@@ -220,7 +222,7 @@ def main() -> int:
     missing = sorted(set(ids) - {r["piece_id"] for r in rows})
     print(f"AA790 rows={len(rows)} missing={missing} writer_prompt_version={WRITER_PROMPT_VERSION}", flush=True)
     model_tier = None if a.dry_run else stage_model()
-    print(f"AA790 model_tier={model_tier} stage={STAGE} cap=${a.max_usd}", flush=True)
+    print(f"AA790 model_tier={model_tier} stage={STAGE} cap=${a.max_usd} arm={a.arm or '-'}", flush=True)
     index = write_indexes(rows)
     run_id = uuid.uuid4().hex[:12]
     spent, out = 0.0, []
@@ -239,13 +241,19 @@ def main() -> int:
                "status": "rewrite", "cta": args["cta"], "brand_pack": args["brand_audience"], "custom_validators": {},
                "label": None, "source": STAGE, "before_text": r["content_text"],
                "ai_tells_before": ai_tells.census(r["content_text"] or "", tell),
-               "lead_focus": args.get("lead_focus"), "writer_prompt_version": WRITER_PROMPT_VERSION}
+               "lead_focus": args.get("lead_focus"), "writer_prompt_version": WRITER_PROMPT_VERSION, "arm": a.arm}
         if a.dry_run:
             from services.acp_content_writing.prompts import build_user_prompt
-            rec["prompt_chars"] = len(build_user_prompt(**args))
+            user = build_user_prompt(**args)
+            rec["prompt_chars"] = len(user)
+            # AA-790 round 7: the BRAND FOCUS points and the ANGLE BRIEF line the deployed image renders
+            # (getattr: the same script also runs the round-6 control arm on an image without them)
+            focus = getattr(ai_tells, "brand_focus_points", lambda _p: [])(args["brand_audience"])
+            rec["brand_focus_points"] = len(focus)
             print(f"AA790 dry {rec['id']} {channel} prompt_chars={rec['prompt_chars']} "
                   f"lead={bool(rec['lead_focus'])} before={rec['ai_tells_before']['fixable_total']}"
-                  f"+{rec['ai_tells_before']['residue']}", flush=True)
+                  f"+{rec['ai_tells_before']['residue']} focus={len(focus)} "
+                  f"angle_brief={'ANGLE BRIEF:' in user}", flush=True)
             out.append(rec)
             continue
         est = EST_USD.get(channel, EST_USD_DEFAULT)
