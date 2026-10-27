@@ -62,7 +62,7 @@ import { ChevronDown, ChevronRight, ChevronUp, Radio } from "lucide-react";
 import SocialContentSubNav from "../_components/SocialContentSubNav";
 import { A, mono, sans, Card, Badge, LoadingScreen } from "../_components/adminUi";
 import { fetchJson, EmptyState, ErrorState } from "../_components/auditPanels";
-import { PageHeader, formatDateTime } from "../../_kit";
+import { AdminMain, AdminPaneBody, AdminPaneHeader, PageHeader, formatDateTime } from "../../_kit";
 
 // ── Types — match GET /api/admin/a4/content-log's response (AA-568 extension) ──────────────────
 
@@ -285,8 +285,8 @@ export default function ContentTracePage() {
   }, []);
 
   return (
-    <div className="aa-admin-main" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflowY: "auto" }}>
-        <div style={{ flexShrink: 0, background: A.bg, padding: "28px 32px 16px", borderBottom: `1px solid ${A.line}` }}>
+    <AdminMain variant="split">
+        <AdminPaneHeader>
           <PageHeader
             title="06 · Content Trace"
             description={
@@ -341,7 +341,7 @@ export default function ContentTracePage() {
               ))}
             </div>
           )}
-        </div>
+        </AdminPaneHeader>
 
         {/* AA-572 point 6 — `overflowX: "auto"` lives HERE (the real, single scrolling ancestor:
             `flex:1, minHeight:0` already correctly bounds its height against the page's own
@@ -351,7 +351,7 @@ export default function ContentTracePage() {
             same class/shape as atom-curation/page.tsx's own body) sets NO overflow of its own, so
             it doesn't reintroduce that bug: this outer div stays the only scrolling ancestor, and
             the table's `<th position:sticky>` still resolves against it unchanged. */}
-        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "auto", padding: "20px 32px 32px" }}>
+        <AdminPaneBody scroll style={{ overflowX: "auto" }}>
           <div className="a527-dash-body" style={{ display: "flex", gap: 20, alignItems: "flex-start" }}>
             {/* AA-575 — Content Trace is a genuinely separate Next.js route/page from
                 atom-curation/page.tsx (01-05's tab-state owner), which is exactly why it never
@@ -387,8 +387,8 @@ export default function ContentTracePage() {
               )}
             </div>
           </div>
-        </div>
-      </div>
+        </AdminPaneBody>
+    </AdminMain>
   );
 }
 

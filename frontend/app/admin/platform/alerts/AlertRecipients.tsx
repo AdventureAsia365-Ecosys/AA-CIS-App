@@ -35,7 +35,7 @@ import {
   mono,
   sans,
   useToast,
-  type ColumnDef,
+  type ColumnDef, AdminMain,
 } from "../../../_kit";
 import { staffErrorMessage } from "@/lib/rbac";
 import {
@@ -443,7 +443,7 @@ export default function AlertRecipients() {
   );
 
   return (
-    <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "28px 36px 56px" }}>
+    <AdminMain>
       <PageHeader
         title={<span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><BellRing size={18} /> Alert recipients</span>}
         description={description}
@@ -585,7 +585,7 @@ export default function AlertRecipients() {
           </p>
         }
       />
-    </main>
+    </AdminMain>
   );
 }
 

@@ -20,7 +20,7 @@ import {
   A, serif, mono, sans,
   Card, SLabel, Btn, Badge, LoadingScreen, TH, TD,
 } from "../_components/adminUi";
-import { Modal, PageHeader, formatDate, formatDateTime, useIsPhone } from "../../_kit";
+import { ScrollX, AdminMain, Modal, PageHeader, formatDate, formatDateTime, useIsPhone } from "../../_kit";
 import { Tenant360Settings } from "./_components/Tenant360Settings";
 import { Tenant360Cost } from "./_components/Tenant360Cost";
 import { Tenant360Quality } from "./_components/Tenant360Quality";
@@ -335,6 +335,7 @@ function ToursTabContent({ tours, toursView }: { tours: RewrittenTour[]; toursVi
           Internal catalog — showing all published tours
         </div>
       )}
+      <ScrollX>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
         <thead><tr>{headers.map((h, i) => (
           <th key={h} style={{ ...TH, fontSize: 10, textAlign: i >= 2 ? "right" : "left" }}>{h}</th>
@@ -361,6 +362,7 @@ function ToursTabContent({ tours, toursView }: { tours: RewrittenTour[]; toursVi
           }
         </tbody>
       </table>
+      </ScrollX>
     </>
   );
 }
@@ -370,6 +372,7 @@ function PipelineTabContent({ runs, pipelineNote }: { runs: PipelineRun[]; pipel
       {pipelineNote && (
         <div style={{ fontSize: 11, color: A.muted, marginBottom: 10, fontStyle: "italic" }}>{pipelineNote}</div>
       )}
+      <ScrollX>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
         <thead><tr>{["Started", "Tours", "Passed", "Model", "Cost", "Status"].map((h, i) => (
           <th key={h} style={{ ...TH, fontSize: 10, textAlign: i >= 1 ? "right" : "left" }}>{h}</th>
@@ -389,6 +392,7 @@ function PipelineTabContent({ runs, pipelineNote }: { runs: PipelineRun[]; pipel
           ))}
         </tbody>
       </table>
+      </ScrollX>
     </>
   );
 }
@@ -406,7 +410,7 @@ function ApiTabContent({ usage }: { usage: TenantDetails["api_usage"] }) {
           <div style={{ height: "100%", width: `${pct}%`, background: barColor, borderRadius: 4, transition: "width .4s" }} />
         </div>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 160px), 1fr))", gap: 10 }}>
         {([["Total Calls", usage.total_calls.toLocaleString()], ["Rate Limit", `${usage.rate_limit_per_min}/min`], ["Quota Used", `${pct}%`]] as [string, string][]).map(([l, v]) => (
           <div key={l} style={{ padding: "10px 14px", background: A.card, border: `1px solid ${A.line}`, borderRadius: 8 }}>
             <div style={{ fontSize: 10, color: A.muted2, marginBottom: 3 }}>{l}</div>
@@ -609,6 +613,7 @@ function ActivityTabContent({ items }: { items: RewriteActivityItem[] }) {
   return (
     <div>
       <div style={{ fontSize: 11, color: A.muted2, marginBottom: 10 }}>Rewrite activity for this tenant</div>
+      <ScrollX>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
         <thead><tr>{["Tour Name", "Country", "Version", "Status", "Score", "Date"].map((h, i) => (
           <th key={h} style={{ ...TH, fontSize: 10, textAlign: i >= 2 ? "right" : "left" }}>{h}</th>
@@ -631,6 +636,7 @@ function ActivityTabContent({ items }: { items: RewriteActivityItem[] }) {
           }
         </tbody>
       </table>
+      </ScrollX>
     </div>
   );
 }
@@ -878,6 +884,7 @@ function ChannelGateTelemetry({ tenantId }: { tenantId: string }) {
   if (state === "error") return <div style={{ fontSize: 12, color: A.red }}>Failed to load gate telemetry</div>;
   if (!rows || rows.length === 0) return <div style={{ fontSize: 12, color: A.muted }}>No gate activity for this tenant yet.</div>;
   return (
+    <ScrollX>
     <table style={{ width: "100%", borderCollapse: "collapse" }}>
       <thead><tr>{["Channel", "Total", "Warn", "Held", "Failed", "Published"].map((h, i) => (
         <th key={h} style={{ ...TH, textAlign: i === 0 ? "left" : "right" }}>{h}</th>))}</tr></thead>
@@ -894,6 +901,7 @@ function ChannelGateTelemetry({ tenantId }: { tenantId: string }) {
         ))}
       </tbody>
     </table>
+    </ScrollX>
   );
 }
 
@@ -1315,7 +1323,7 @@ function TenantsPageInner() {
 
   return (
     <>
-        <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: "auto", padding: "28px 36px 56px" }}>
+        <AdminMain>
           <PageHeader
             title="Tenants"
             description={`${totalActive} active · ${totalSrcActive.toLocaleString()} source tours · ${totalMstrActive.toLocaleString()} published`}
@@ -1394,6 +1402,7 @@ function TenantsPageInner() {
                 </div>
               )
             ) : (
+              <ScrollX>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
@@ -1410,9 +1419,10 @@ function TenantsPageInner() {
                   ))}
                 </tbody>
               </table>
+              </ScrollX>
             )}
           </Card>
-        </main>
+        </AdminMain>
 
       {showCreate && <CreateModal onClose={() => setShowCreate(false)} onCreated={k => { setShowCreate(false); setNewKey(k); load(); }} />}
       {newKey && <ApiKeyModal keyData={newKey} onClose={() => setNewKey(null)} />}

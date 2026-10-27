@@ -21,7 +21,7 @@ import {
   apiGet,
   apiSend,
   formatDateTime,
-  useToast,
+  useToast, ScrollX,
 } from "../../_kit";
 import {
   HIDDEN_STAGES,
@@ -238,6 +238,7 @@ function JevStagesCard() {
       {rows === null ? <Spinner /> : rows.length === 0 ? (
         <div style={{ fontSize: 12.5, color: A.muted }}>No Jev questions configured yet.</div>
       ) : (
+        <ScrollX>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
           <tbody>
             {rows.map((q) => (
@@ -255,6 +256,7 @@ function JevStagesCard() {
             ))}
           </tbody>
         </table>
+        </ScrollX>
       )}
     </Card>
   );

@@ -182,7 +182,12 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     "On this page" contents list for long guides, note / warning callouts, label chips, step diagrams, control cards),
     adds the "Guide" tab after its daily-use tabs and a "New here? Read the Guide" link in its description, and is
     registered in `frontend/lib/guides.test.mjs`, which checks the shape and that every documented label is still on
-    the page), and `apiGet`/`apiSend` fetch
+    the page), `AdminMain` (S252: **the one content frame of every admin page** — standard padding 28/36/56 on
+    desktop, the `.aa-admin-main` phone rule (16px, 84px above the BottomNav), its own vertical scroll and
+    `minWidth: 0` so a wide table scrolls inside its card, never the page; `variant="split"` with `AdminPaneHeader` /
+    `AdminPaneBody` for pages with a sticky header band (same 36px / 16px insets, no double inset on phones); every
+    `app/admin/**/page.tsx` renders it once together with the kit `PageHeader`, and no admin file hand-writes a
+    `<main>` or the frame classes — guarded by `frontend/lib/adminFrame.test.mjs`), and `apiGet`/`apiSend` fetch
     helpers. New pages import
     from `app/_kit`. The legacy primitives (`admin/_components/adminUi.tsx`,
     `auditPanels.tsx`, `FilterBar.tsx`, `Pagination.tsx`, portal `_components/ui.tsx`,

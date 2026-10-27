@@ -30,7 +30,7 @@ import {
   apiGet,
   downloadCsv,
   sans,
-  toCsv,
+  toCsv, AdminMain,
 } from "../../_kit";
 import {
   CSV_COLUMNS,
@@ -91,7 +91,7 @@ export default function DataCoveragePage() {
   };
 
   return (
-    <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "28px 36px 56px" }}>
+    <AdminMain>
       <SkeletonStyle />
       <PageHeader
         title="Data coverage"
@@ -131,7 +131,7 @@ export default function DataCoveragePage() {
           </div>
         </div>
       )}
-    </main>
+    </AdminMain>
   );
 }
 

@@ -456,10 +456,14 @@ export function PageHeader({
               fontSize: 12,
               color: K.muted2,
               marginBottom: 6,
+              // S252 — a long last crumb (a tour title) wraps instead of widening the page.
+              flexWrap: "wrap",
+              minWidth: 0,
+              overflowWrap: "anywhere",
             }}
           >
             {breadcrumbs.map((b, i) => (
-              <span key={i} style={{ display: "inline-flex", gap: 6 }}>
+              <span key={i} style={{ display: "inline-flex", gap: 6, minWidth: 0 }}>
                 {b.href ? (
                   <a href={b.href} style={{ color: K.muted, textDecoration: "none" }}>
                     {b.label}
@@ -516,6 +520,10 @@ export function Tabs({
         background: K.line2,
         borderRadius: RADIUS.md,
         width: "fit-content",
+        // S252 — more tabs than fit on a phone scroll inside the bar (like adminUi.TabBar since S224); the page never
+        // scrolls sideways.
+        maxWidth: "100%",
+        overflowX: "auto",
         fontFamily: sans,
       }}
     >
@@ -537,6 +545,8 @@ export function Tabs({
               fontFamily: sans,
               boxShadow: on ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
               transition: "all .15s",
+              whiteSpace: "nowrap",
+              flexShrink: 0,
             }}
           >
             {t.label}

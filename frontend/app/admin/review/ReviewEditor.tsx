@@ -273,7 +273,7 @@ export function ReviewEditor({
 
       <ClaimChecks reviewId={item.id} canLabel={canLabel} />
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px 20px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: "14px 20px" }}>
         {TEXT_FIELDS.map((f) => (
           <div key={f} style={{ gridColumn: f === "seo_title" ? "1 / -1" : "auto" }}>
             <FieldLabel field={f} fails={fails[f]} />
@@ -321,7 +321,7 @@ export function ReviewEditor({
 
         <div style={{ gridColumn: "1 / -1" }}>
           <FieldLabel field="aa_itineraries" fails={fails.aa_itineraries} />
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: 12 }}>
             <textarea
               value={draft.aa_itineraries}
               readOnly={readOnly}

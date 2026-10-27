@@ -24,7 +24,7 @@ import {
   StatusBadge,
   ToastProvider,
   useAdminIdentity,
-  useToast,
+  useToast, AdminMain,
 } from "../../_kit";
 import { can } from "@/lib/rbac";
 import { ReviewEditor } from "./ReviewEditor";
@@ -408,7 +408,7 @@ function ReviewQueueInner() {
   }
 
   return (
-    <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: "auto", padding: "32px 36px 56px" }}>
+    <AdminMain>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}.spin{animation:spin .8s linear infinite}`}</style>
 
       <PageHeader
@@ -632,7 +632,7 @@ function ReviewQueueInner() {
           <CheckCircle size={32} style={{ margin: "0 auto 8px", color: A.green, display: "block" }} />
         </div>
       )}
-    </main>
+    </AdminMain>
   );
 }
 

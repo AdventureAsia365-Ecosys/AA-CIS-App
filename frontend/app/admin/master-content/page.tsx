@@ -9,7 +9,7 @@ import {
   A, alpha, serif, sans, mono,
   SLabel, Badge, Btn, LoadingScreen, StatCard, Card, TH, TD,
 } from "../_components/adminUi";
-import { PageHeader, formatDate, useIsPhone, useAdminIdentity } from "../../_kit";
+import { AdminMain, AdminPaneHeader, PageHeader, formatDate, useIsPhone, useAdminIdentity } from "../../_kit";
 import { can, staffErrorMessage } from "@/lib/rbac";
 import { BarChart2, Star, DollarSign } from "lucide-react";
 import { TourDetailPanelV2 } from "../_components/TourDetailPanelV2";
@@ -1074,9 +1074,9 @@ function MasterContentPageInner() {
 
   if (loading) {
     return (
-        <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, padding: "32px 36px", overflowY: "auto" }}>
+        <AdminMain>
           <LoadingScreen msg="Loading master content…" />
-        </main>
+        </AdminMain>
     );
   }
 
@@ -1097,10 +1097,10 @@ function MasterContentPageInner() {
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
 
       {/* Main area: flex column, fills height */}
-      <div className="aa-admin-main" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0, minHeight: 0 }}>
+      <AdminMain variant="split" style={{ overflow: "hidden" }}>
 
         {/* ── Section 1: Page header + Stats (fixed) ──────────────────────── */}
-        <div style={{ flexShrink: 0, padding: "20px 32px 16px", background: A.bg, borderBottom: `1px solid ${A.line}` }}>
+        <AdminPaneHeader>
           <PageHeader
             title="Master Content"
             description={`aa_internal tenant · ${AA_INTERNAL_ID.slice(0, 8)}…`}
@@ -1121,7 +1121,7 @@ function MasterContentPageInner() {
           {/* AA-718: stats are now filter-aware (match the table's current filter) + the cost is a
               labelled 30-day window reconciled with External Spend, with the all-time figure as
               context. */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 160px), 1fr))", gap: 12 }}>
             <StatCard icon={<BarChart2 size={16} />}    label="Tours (filtered)"
               value={String(summary?.catalog_total ?? serverTotal)}
               sub={anyFilterActive ? "↳ matching current filters" : "↳ whole catalog"} />
@@ -1161,7 +1161,7 @@ function MasterContentPageInner() {
               )}
             </Card>
           </div>
-        </div>
+        </AdminPaneHeader>
 
         {/* ── Section 2: Rewritten Tours (flex, scrollable) ───────────────── */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", borderBottom: `2px solid ${A.line}` }}>
@@ -1198,9 +1198,9 @@ function MasterContentPageInner() {
           </div>
 
           {/* Sticky inner header */}
-          <div style={{
+          <div className="aa-admin-pane-x" style={{
             position: "sticky", top: 0, zIndex: 5, background: A.card,
-            padding: "10px 32px 8px", borderBottom: `1px solid ${A.line}`,
+            padding: "10px 36px 8px", borderBottom: `1px solid ${A.line}`,
             display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexShrink: 0,
           }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -1690,7 +1690,7 @@ function MasterContentPageInner() {
         {/* AA-722: the "Recent Pipeline Runs" section (fed by the stale shared.pipeline_runs, which
             only S0 upload writes) was removed. The master-pool score distribution now shows in the
             stat-card row above (Score distribution). */}
-      </div>
+      </AdminMain>
 
       {/* Detail panel v2 */}
       {detailTourId && (

@@ -185,14 +185,19 @@ class TestListTenants:
             "overage_usd": 0, "llm_cost_usd": 0, "tours_quota_monthly": 10, "api_calls_quota_monthly": 0,
             "price_usd_monthly": 0, "source_active": 0, "source_superseded": 0, "source_trashed": 0,
             "master_active": 0, "master_inactive": 0, "master_trashed": 0,
+            # AA-993: the full column set list_tenants reads, the AA-819 override read included. Migration 230 is
+            # applied (fetchval) so the override read runs and gets the same stub rows: the test no longer depends
+            # on the daily_limit column cache another test left behind (it failed when run alone or under xdist).
+            "daily_publish_limit": None,
         }
+        conn.fetchval.return_value = True
         conn.fetch.return_value = [
             {**base, "is_active": True, "cancelled_at": None},
             {**base, "is_active": False, "cancelled_at": None},
             {**base, "is_active": False, "cancelled_at": CANCELLED},
         ]
         out = await admin.list_tenants(_request(conn), x_admin_secret=_SECRET, include_inactive=False)
-        sql, flag = conn.fetch.call_args.args
+        sql, flag = conn.fetch.call_args_list[0].args
         assert "WHERE t.is_active = true OR $1::boolean" in sql and flag is False
         assert [t["status"] for t in out["tenants"]] == ["active", "suspended", "offboarded"]
         assert out["tenants"][2]["cancelled_at"] == CANCELLED.isoformat()

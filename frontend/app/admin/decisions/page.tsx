@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { BookOpen, ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { A, sans, mono, Card, SLabel, Btn, LoadingScreen, TH, TD, CHART_TOOLTIP } from "../_components/adminUi";
-import { PageHeader, formatDateTime } from "../../_kit";
+import { AdminMain, AdminPaneBody, AdminPaneHeader, PageHeader, formatDateTime } from "../../_kit";
 import { useChartColors } from "../../_kit/useTheme";
 
 // ── types ──────────────────────────────────────────────────────────────────────────────────────
@@ -139,7 +139,7 @@ function Guide() {
     </div>
   );
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 16 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))", gap: 16 }}>
       <Card>
         <SLabel>What this page is</SLabel>
         <p style={{ fontSize: 13, lineHeight: 1.6, margin: 0 }}>
@@ -305,15 +305,15 @@ export default function DecisionsPage() {
     <button onClick={() => setTab(t)} style={{
       padding: "9px 16px", border: "none", borderBottom: `3px solid ${tab === t ? A.accent : "transparent"}`,
       background: "none", fontFamily: sans, fontSize: 13.5, fontWeight: tab === t ? 700 : 500,
-      color: tab === t ? A.ink : A.muted, cursor: "pointer",
+      color: tab === t ? A.ink : A.muted, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
     }}>{label}</button>
   );
   const resetPage = <T,>(set: (v: T) => void) => (v: T) => { set(v); setVPage(0); };
 
   return (
-    <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, overflowY: "auto" }}>
+    <AdminMain variant="split">
         {/* Sticky header + tabs */}
-        <div style={{ position: "sticky", top: 0, zIndex: 5, background: A.bg, padding: "22px 32px 0", borderBottom: `1px solid ${A.line}` }}>
+        <AdminPaneHeader sticky style={{ paddingBottom: 0 }}>
           <PageHeader
             title="Jev Decisions"
             description={
@@ -331,12 +331,12 @@ export default function DecisionsPage() {
               </>
             }
           />
-          <div style={{ display: "flex", gap: 4, marginTop: 12 }}>
+          <div style={{ display: "flex", gap: 4, marginTop: 12, maxWidth: "100%", overflowX: "auto" }}>
             {tabBtn("overview", "Overview")}{tabBtn("questions", `Questions (${qs.length})`)}{tabBtn("verdicts", "Verdicts")}{tabBtn("guide", "Guide")}
           </div>
-        </div>
+        </AdminPaneHeader>
 
-        <div style={{ padding: "20px 32px 40px" }}>
+        <AdminPaneBody>
           {error && <Card style={{ color: A.red, marginBottom: 16 }}>{error}</Card>}
           {!data && !error && tab !== "guide" && <LoadingScreen msg="Loading…" />}
 
@@ -491,7 +491,7 @@ export default function DecisionsPage() {
                     <ModePill m={q.mode} /><span style={{ fontSize: 12, color: A.muted }}>stage {q.stage}</span>
                     <span style={{ flex: 1 }} /><Btn size="sm" onClick={() => setOpen(null)}>Close</Btn>
                   </div>
-<div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 1fr) minmax(260px, 1fr)", gap: 18 }}>
+<div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: 18 }}>
                               <div>
                                 <SLabel>Question asked</SLabel>
                                 <div style={{ fontSize: 13.5, fontWeight: 600, color: A.ink }}>{q.instructions}</div>
@@ -590,7 +590,7 @@ export default function DecisionsPage() {
               <BookOpen size={13} /> Colours: {ZONES.map(z => <ZonePill key={z} z={z} />)} · modes: {(["off", "shadow", "enforce"] as Mode[]).map(m => <ModePill key={m} m={m} />)}
             </div>
           )}
-        </div>
-      </main>
+        </AdminPaneBody>
+      </AdminMain>
   );
 }
