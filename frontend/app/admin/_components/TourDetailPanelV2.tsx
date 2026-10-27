@@ -635,7 +635,9 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                   disabled={savingAll}
                   style={{
                     padding: "9px 22px", borderRadius: 7, border: "none", cursor: savingAll ? "not-allowed" : "pointer",
-                    background: "var(--aa-blue-deep)", color: "var(--aa-on-accent)", fontSize: 13, fontWeight: 600, opacity: savingAll ? 0.6 : 1,
+                    // AA-994 S1b: --aa-on-accent is dark ink in both themes now (gold buttons); on this blue fill the
+                    // label takes the card colour: white in light (5.2:1 on #2563EB), dark slate in dark (6.3:1).
+                    background: "var(--aa-blue-deep)", color: "var(--aa-card)", fontSize: 13, fontWeight: 600, opacity: savingAll ? 0.6 : 1,
                   }}
                 >
                   {savingAll ? "Saving…" : "Save All"}

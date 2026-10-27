@@ -8,6 +8,7 @@
   "generator": "frontend/scripts/kit-manifest.mjs",
   "profiles": {
     "tokens": [
+      "tokens.css",
       "tokens.ts",
       "brand.ts",
       "theme.ts",
@@ -41,7 +42,7 @@
       "sha256": "bc6773a9a5a69ae55496752779c9c2fc8ac49eb07ed832cc91edff70c21dda00"
     },
     "check-kit-copy.mjs": {
-      "sha256": "357d46b9b58a8a5d82a1d6dee36dfcfba6995928396b79210c6af4a8c394f947"
+      "sha256": "7b3b794fdaceaf9d3db6b87a9a86317ca7cf67cbd6cc8c1b5aee025d455f6145"
     },
     "csv.ts": {
       "sha256": "3609313353164f3d0089b9e5675248d6a825c8826808b2f6b968ddb750c5189f"
@@ -61,8 +62,11 @@
     "theme.ts": {
       "sha256": "23d70cb0649f15fbe55e7ef91a7cfa2780128f93a371c286e27db4dcbcddeb00"
     },
+    "tokens.css": {
+      "sha256": "17f8bc6cf10dd0e6586510fc5b4c75476d76e047c9b0d1fc7bc08dc9bcf52899"
+    },
     "tokens.ts": {
-      "sha256": "fe2d9fd20a91d9258fcbde6c4bf6c0885b8f09bcdabdf26bf54c6b09f790ca3e"
+      "sha256": "7a7754c9bee02b06cb58b606e51ec4bd3568762fdd06baa68c6ed1659794d0d1"
     },
     "useHydrated.ts": {
       "sha256": "ff03882575b53db53178d782e184fc9844ab02f03e5c89d09ff981f2422180a4"

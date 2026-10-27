@@ -420,10 +420,13 @@ jobs:
       # AA-994 S1a (root ADR 0016 decision 5): the canonical UI kit core (app/_kit/core) — MANIFEST.json current,
       # every file with the header line, imports closed (only ./ files of core and the allowed packages). Then its
       # unit test (copy check on edited / missing / extra files, theme store). Both are dependency-free: before npm ci.
+      # AA-994 S1b (decision 4, plan guards G10 + G15): no `--aa-*` definition in any CSS file but core/tokens.css, and
+      # the WCAG contrast matrix of core/tokens.css (every checked text pair, light + dark, and the photo scrim).
       - name: Kit core self-check
         run: |
           node app/_kit/core/check-kit-copy.mjs --self
-          node --test --experimental-strip-types --no-warnings lib/kitCore.test.mjs
+          node app/_kit/core/check-kit-copy.mjs --css .
+          node --test --experimental-strip-types --no-warnings lib/kitCore.test.mjs lib/tokensContrast.test.mjs
 
       - name: Install dependencies
         run: npm ci

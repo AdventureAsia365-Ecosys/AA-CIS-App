@@ -5,15 +5,15 @@
 // Run: npm run test:unit (CI: Frontend Build runs this file and `check-kit-copy.mjs --self`).
 
 import assert from "node:assert/strict";
-import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
-  HEADER, MANIFEST, buildManifest, closureProblems, copyProblems, headerProblems, importProblem, importSpecifiers,
-  main, manifestText, selfProblems, sha256,
+  HEADER, MANIFEST, aaDefinitions, buildManifest, closureProblems, copyProblems, cssDefinitionProblems, headerProblems,
+  importProblem, importSpecifiers, main, manifestText, selfProblems, sha256,
 } from "../app/_kit/core/check-kit-copy.mjs";
 import { createThemeStore, themeRestoreScript } from "../app/_kit/core/theme.ts";
 
@@ -60,7 +60,7 @@ test("ADR 0016 decision 1: the portable files are in core, the CIS-specific ones
   const core = new Set(readdirSync(CORE));
   for (const f of ["tokens.ts", "brand.ts", "primitives.tsx", "DataTable.tsx", "csv.ts", "savedViews.ts", "Drawer.tsx",
     "Modal.tsx", "Toast.tsx", "Providers.tsx", "theme.ts", "useTheme.ts", "useHydrated.ts", "useMediaQuery.ts",
-    "sidebarStore.ts", "useSidebar.ts", "PageFrame.tsx", "GuidePanel.tsx", "check-kit-copy.mjs", MANIFEST]) {
+    "sidebarStore.ts", "useSidebar.ts", "PageFrame.tsx", "GuidePanel.tsx", "check-kit-copy.mjs", "tokens.css", MANIFEST]) {
     assert.ok(core.has(f), `${f} is in core`);
   }
   for (const f of ["api.ts", "guideContent.ts", "SessionKeepAlive.tsx", "adminNav.tsx", "useNavSections.ts",
@@ -176,6 +176,45 @@ test("the tokens profile copy holds only the token files and passes", (t) => {
 test("usage errors exit 2", () => {
   assert.equal(main(["--nope"]), 2);
   assert.equal(main(["--dir"]), 2);
+  assert.equal(main(["--css"]), 2);
+  assert.equal(main(["--css", join(FRONTEND, "no-such-folder")]), 2);
+});
+
+// ── tokens.css (AA-994 S1b, ADR 0016 decision 4) ────────────────────────────────────────────────────────────
+
+test("tokens.css is in core, in the tokens profile, and globals.css imports it and defines no --aa-* itself", () => {
+  const manifest = JSON.parse(readFileSync(join(CORE, MANIFEST), "utf8"));
+  assert.ok(manifest.files["tokens.css"], "tokens.css is in MANIFEST.json");
+  assert.ok(manifest.profiles.tokens.includes("tokens.css"), "tokens.css is in the tokens profile");
+  const globals = readFileSync(join(FRONTEND, "app", "globals.css"), "utf8");
+  assert.match(globals, /^@import "tailwindcss";\n(?:\/\*[\s\S]*?\*\/\n)?@import "\.\/_kit\/core\/tokens\.css";$/m);
+  assert.deepEqual(aaDefinitions(globals), []);
+  assert.ok(aaDefinitions(readFileSync(join(CORE, "tokens.css"), "utf8")).length > 150);
+});
+
+test("no --aa-* definition outside core/tokens.css anywhere in the CIS frontend", () => {
+  assert.deepEqual(cssDefinitionProblems(FRONTEND, join(CORE, "tokens.css")), []);
+  assert.equal(main(["--css", FRONTEND]), 0);
+});
+
+test("the CSS check finds definitions, skips comments, var() reads, node_modules and the core tokens file", (t) => {
+  const root = scratch(t);
+  const core = join(root, "ui", "core");
+  mkdirSync(core, { recursive: true });
+  mkdirSync(join(root, "node_modules", "pkg"), { recursive: true });
+  mkdirSync(join(root, "app"), { recursive: true });
+  writeFileSync(join(core, "tokens.css"), ":root { --aa-ink: #000; }\n");
+  writeFileSync(join(root, "node_modules", "pkg", "x.css"), ":root { --aa-ink: #111; }\n");
+  writeFileSync(join(root, "app", "ok.css"), [
+    "/* --aa-ink: #222; in a comment */",
+    ".a { color: var(--aa-ink); background: var(--aa-bg, #fff); }",
+    ":root { --tp-band: #1F2933; --bk-font-script: x; }",
+  ].join("\n"));
+  writeFileSync(join(root, "app", "bad.css"), ":root {\n  --tp-x: 1px;\n  --aa-muted : #6B7380;\n}\n");
+  assert.deepEqual(cssDefinitionProblems(root, join(core, "tokens.css")), ["app/bad.css:3: defines --aa-muted"]);
+  assert.equal(main(["--css", root, "--dir", core]), 1);
+  rmSync(join(root, "app", "bad.css"));
+  assert.equal(main(["--css", root, "--dir", core]), 0);
 });
 
 // ── theme store (ADR 0016 decision 4) ────────────────────────────────────────────────────────────────────────
