@@ -3739,6 +3739,24 @@
         "title": "PlaceCardMerge",
         "type": "object"
       },
+      "PlaceCardRebuild": {
+        "properties": {
+          "card_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 40,
+            "minItems": 1,
+            "title": "Card Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "card_ids"
+        ],
+        "title": "PlaceCardRebuild",
+        "type": "object"
+      },
       "PlaceCardVerdict": {
         "properties": {
           "status": {
@@ -10228,6 +10246,96 @@
           }
         },
         "summary": "List Place Card Duplicates",
+        "tags": [
+          "admin-content-quality"
+        ]
+      }
+    },
+    "/admin/content-quality/place-cards/rebuild": {
+      "post": {
+        "description": "AA-784 — enqueue `place_cards_build` in rebuild mode for named cards: each is re-drafted and re-checked IN\nPLACE under the current prompts and identity rules (one paid draft + check per card, ≤40; card id, name, country\nand links kept; verified / rejected cards skipped). One attempt: a retry would pay again for cards already done.",
+        "operationId": "rebuild_place_cards_admin_content_quality_place_cards_rebuild_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaceCardRebuild"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rebuild Place Cards",
         "tags": [
           "admin-content-quality"
         ]
