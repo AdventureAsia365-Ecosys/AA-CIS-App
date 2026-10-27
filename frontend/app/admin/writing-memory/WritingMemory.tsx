@@ -1,13 +1,16 @@
 "use client";
 // app/admin/writing-memory/WritingMemory.tsx — AA-917 WM-14: Tenant output › Writing memory (app ADR 0010).
 //
-// Three tabs:
+// Four tabs:
 //   Signals     the writing signals (edits, reason codes, gate failures) as the miner sees them: totals, the month's
 //               learning-loop spend against its $25 cap, the mining trigger, the clusters over threshold (basis,
 //               support, open rule, masked samples), and the signal list with its fact status. A grey signal waits
 //               for the admin's pass / fail.
 //   Candidates  the rules the miner drafted: text, scope, support, lint result; a drawer with the provenance
 //               (every signal, with its source), edit (the lint runs again) and reject (with a reason).
+//   Releases    AA-919 WM-22 (ReleasesTab.tsx): the memory switch and train close per writer, every release with its
+//               evidence verdicts, and a drawer with the release actions (attach evidence, approve, activate, roll
+//               back, reject); New draft and Reverify scan above the list.
 //   Guide       how to use the page, in plain words (AA-919): guide.ts rendered by the kit GuidePanel, like every
 //               admin page's Guide tab. The description's "New here? Read the Guide" link opens it.
 // Header actions queue a job: backfill (or its dry run), fact filter, or a manual mining run (the paid one: a confirm
@@ -34,10 +37,11 @@ import {
   type Signal, type SignalsPage, type Summary,
 } from "@/lib/writingMemory";
 import { WRITING_MEMORY_GUIDE } from "./guide";
+import ReleasesTab from "./ReleasesTab";
 
 // Daily-use tabs first; the Guide tab last (the kit pattern for a page's Guide tab, app/_kit/guideContent.ts).
 const TABS = [{ key: "signals", label: "Signals" }, { key: "candidates", label: "Candidates" },
-  { key: "guide", label: "Guide" }];
+  { key: "releases", label: "Releases" }, { key: "guide", label: "Guide" }];
 
 function Stat({ label, value, hint }: { label: string; value: React.ReactNode; hint?: React.ReactNode }) {
   return (
@@ -486,6 +490,7 @@ export default function WritingMemory() {
       )}
       <div style={{ marginBottom: 14 }}><Tabs tabs={TABS} active={tab} onChange={setTab} /></div>
       {tab === "signals" ? <SignalsTab /> : tab === "candidates" ? <CandidatesTab />
+        : tab === "releases" ? <ReleasesTab />
         : <GuidePanel content={WRITING_MEMORY_GUIDE} testId="wm-guide" />}
     </AdminMain>
   );

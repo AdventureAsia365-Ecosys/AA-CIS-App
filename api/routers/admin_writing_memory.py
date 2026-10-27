@@ -33,11 +33,13 @@
                                                       r0_baseline = the R0 sanity check alone, $0)
 
 AA-919 (WM-18) — releases (services/writing_memory/releases.py; CIS 287). Ids, statuses and numbers only:
-  GET   /admin/writing-memory/releases?writer=&status=&scope=&tenant_id=&limit=&offset=   the releases
+  GET   /admin/writing-memory/releases?writer=&status=&scope=&tenant_id=&limit=&offset=   the releases, each with
+                                                      `evidence` {r0, eval, shadow}: the named run's kind / verdict
   GET   /admin/writing-memory/releases/active          the active release per writer and owner (the pointers the
                                                       writers resolve) and the memory switch per writer
-  GET   /admin/writing-memory/releases/{release_id}   one release, its evidence runs and `activation` (null, or the
-                                                      code and reason the API would refuse to activate it now)
+  GET   /admin/writing-memory/releases/{release_id}   one release, its evidence runs (with `summary`: whitelisted
+                                                      counts and hashes of the run details) and `activation` (null,
+                                                      or the code and reason the API would refuse to activate it now)
   POST  /admin/writing-memory/releases                {writer, scope, tenant_id?, rule_ids?, train_kind?,
                                                       emergency_reason?, emergency_ref?, notes?}: a draft
   POST  /admin/writing-memory/releases/reverify-scan  flag the active releases whose golden set, model route or gate
@@ -571,9 +573,12 @@ async def list_releases(request: Request, writer: Optional[str] = None, status: 
         async with _pool(request).acquire() as conn:
             items, total = await rel.list_releases(conn, writer=writer, status=status, scope=scope,
                                                    tenant_id=tenant_id, limit=limit, offset=offset)
+            verdicts = await rel.run_verdicts(conn, [r.get(f"{w}_run_id") for r in items
+                                                     for w in ("r0", "eval", "shadow")])
     except asyncpg.UndefinedTableError as e:
         raise _unavailable(e)
-    return {"items": [rel.serialise(r) for r in items], "total": total, "limit": limit, "offset": offset}
+    return {"items": [{**rel.serialise(r), "evidence": rel.evidence_of(r, verdicts)} for r in items],
+            "total": total, "limit": limit, "offset": offset}
 
 
 @router.get("/releases/active")
@@ -604,7 +609,8 @@ async def get_release(release_id: str, request: Request):
     except asyncpg.UndefinedTableError as e:
         raise _unavailable(e)
     return {**rel.serialise(row),
-            "runs": {k: (rel.serialise({kk: vv for kk, vv in v.items() if kk != "details"}) if v else None)
+            "runs": {k: ({**rel.serialise({kk: vv for kk, vv in v.items() if kk != "details"}),
+                          "summary": rel.run_summary(v.get("details"))} if v else None)
                      for k, v in runs.items()},
             "activation": None if problem is None else {"code": problem[0], "detail": problem[1]}}
 

@@ -66,16 +66,16 @@ export const WRITING_MEMORY_GUIDE: GuideContent = {
             + "over stored texts and signals. It shows where the rule would fire and which past failures it would "
             + "have prevented. R0 makes no model call.",
           "Go live. A T9 lexicon rule whose R0 passed: click Activate (L0), and the next T9 write uses it. Every "
-            + "other rule must go into a release: evaluation, then one human approval, then activation. The release "
-            + "path has no buttons yet (see 'Not on this page yet').",
+            + "other rule must go into a release: evaluation, then one human approval, then activation, on the "
+            + "Releases tab.",
         ] },
         { kind: "subheading", text: "Undo (rollback)" },
         { kind: "list", items: [
           "An L0 rule: open it in Candidates (status filter: active), type a reason, click Roll back. The next write "
             + "no longer gets it.",
-          "A release: rolling it back makes the previous release active again. No deploy is needed. Release 0 has "
-            + "no previous release, so it cannot be rolled back: turn that writer's memory switch off instead. Until "
-            + "the Releases tab arrives, an agent does both through the API.",
+          "A release: open it in Releases, type a reason, click Roll back. The previous release is active again. "
+            + "No deploy is needed. Release 0 has no previous release, so it cannot be rolled back: click Turn "
+            + "memory off for that writer instead.",
         ] },
       ],
     },
@@ -154,6 +154,64 @@ export const WRITING_MEMORY_GUIDE: GuideContent = {
             + "or the trip name. A tenant's own rule wins over a platform rule.",
           "It guides the writer before the gates. It never swaps words in the text afterwards.",
         ] },
+
+        { kind: "subheading", text: "Releases tab" },
+        { kind: "paragraph", text: "Writers, at the top: one row per writer with its Memory switch (on or off), the "
+          + "number of its active platform release, how many tenant releases are active, and the month its release "
+          + "train is closed through. Below: every release, newest number first, with filters on writer and status. "
+          + "Columns: Writer, Owner, No., Status, Content (class and rule count), Evidence, Drafted / approved by, "
+          + "Created, Activated, Prompt (the start of the prompt hash its R0 replay measured). Click a row to open "
+          + "its drawer." },
+        { kind: "list", items: [
+          "Turn memory off / Turn memory on (Writers): the kill switch, one click and a confirm. Off: the next write "
+            + "of that writer ignores every release. Turning it on needs an active platform release. It does not "
+            + "affect L0 rules.",
+          "Close month (Writers): pick a month. No regular release of that month or earlier can be activated after "
+            + "it. Lexicon releases, emergencies and rollbacks are never blocked. It cannot be reopened here.",
+          "New draft: pick the writer and the owner (Platform, or one tenant by its id), optionally rule ids. No rule "
+            + "ids makes an empty release. The drawer of the new draft opens.",
+          "Reverify scan: flags every active release whose golden set, model route or gates changed since its "
+            + "evidence. A flagged release keeps serving.",
+          "Attach evidence (drawer, draft or evaluated): the run ids the release needs. For an empty release, 'Use "
+            + "the active platform release's runs' fills in the R0 replay and baseline of that writer's live release. "
+            + "When every run it needs is attached, the release becomes evaluated.",
+          "Approve (drawer, evaluated): your one click, as the signed-in admin. The approval reference is optional: "
+            + "a link to the decision.",
+          "Activate (drawer, approved): greyed out, with 'Not activatable yet: …', while the evidence does not hold "
+            + "or the release has rules (the writers do not read rules yet). After the confirm, the release before "
+            + "it retires and this one serves the next write.",
+          "Roll back (drawer, active, with a previous release) and Reject (draft, evaluated or approved): type a "
+            + "reason of at least 3 characters first. A rolled-back release never comes back: a fix is a new release.",
+        ] },
+        { kind: "paragraph", text: "The drawer also shows each evidence run (kind, verdict, inputs, byte diffs, "
+          + "stored hashes reproduced, the prompt hash) and the fingerprint the reverify scan compares: golden set, "
+          + "gate taxonomy, writer and judge models, prompt." },
+
+        { kind: "subheading", text: "How a release works" },
+        { kind: "flow", steps: ["draft", "evaluated", "approved", "active"] },
+        { kind: "list", items: [
+          "A release is one versioned bundle of rules for one writer and one owner (the platform, or one tenant).",
+          "Activating a release retires the one before it. A release can be rejected at any step before active.",
+          "Evaluated means its evidence is attached. Empty release: an R0 replay with 0 differences over at least "
+            + "20 inputs, plus the baseline evaluation. Lexicon-only release: R0. Release with other rules: R2 and "
+            + "shadow runs.",
+          "Every release needs one approval by a signed-in admin (Approve on the Releases tab). None goes live by "
+            + "itself. One exception: an empty "
+            + "release (no rules), whatever its number or owner, may be approved by an agent when it carries a "
+            + "reference to the program owner's decision. Two command-line tools do this: the release 0 tool (it "
+            + "approved the platform release 0) and the rollback drill (it approved the test tenant's releases 0 and "
+            + "1).",
+          "One regular release per writer and owner per month (the monthly train). Lexicon rules, emergencies and "
+            + "rollbacks do not wait for it.",
+          "A live release is flagged 'reverify' when the golden set, a model route or the gates changed since its "
+            + "evidence. It keeps serving until it is checked again.",
+          "A tenant release holds only that tenant's rules. A platform rule built from tenant signals needs at least "
+            + "3 tenants. Every platform-scope rule, in a release or through Activate (L0), needs the program owner's "
+            + "OK first (ADR 0010 decision 10). The page does not enforce this.",
+        ] },
+        { kind: "callout", tone: "note",
+          text: "Release 0 is an empty release: while it is the active release, the writers' output is exactly the "
+            + "same as with no memory." },
 
         { kind: "subheading", text: "Header buttons" },
         { kind: "paragraph", text: "Refresh only reloads the page data. Every other button queues one background job, "
@@ -260,6 +318,17 @@ export const WRITING_MEMORY_GUIDE: GuideContent = {
           { term: "active", text: "In use by a writer. Never expires." },
           { term: "rejected", text: "Rejected by the lint or by an admin, or rolled back. The drawer shows why." },
           { term: "expired", text: "A candidate or approved rule left for 60 days. Checked when a mining run starts." },
+        ] },
+        { kind: "subheading", text: "Status (a release)" },
+        { kind: "terms", uiLabels: true, items: [
+          { term: "draft", text: "Created; its evidence runs are not all attached." },
+          { term: "evaluated", text: "Every evidence run it needs is attached. Waits for one admin's Approve." },
+          { term: "approved", text: "Approved by a signed-in admin. Activate puts it live." },
+          { term: "active", text: "The release the writer reads (when its memory is on). One per writer and owner." },
+          { term: "retired", text: "Replaced by a newer release, or rolled back. A rolled-back one never returns." },
+          { term: "rejected", text: "Stopped before it went live, with a reason." },
+          { term: "reverify", text: "Its golden set, a model route or the gates changed since its evidence. It keeps "
+            + "serving until it is checked again." },
         ] },
         { kind: "subheading", text: "Kind (a rule)" },
         { kind: "terms", items: [
@@ -369,6 +438,9 @@ export const WRITING_MEMORY_GUIDE: GuideContent = {
           "After a change to the gates: R0 baseline.",
           "To see what the backfill would copy before it runs (per source and tenant): Backfill (dry run).",
           "Candidates expire after 60 days, so review them before that.",
+          "After a model route or golden set change: Reverify scan on the Releases tab, then look for 'reverify' "
+            + "badges.",
+          "At the end of a month, if no more regular release should go live for it: Close month for each writer.",
         ] },
       ],
     },
@@ -380,8 +452,6 @@ export const WRITING_MEMORY_GUIDE: GuideContent = {
           + "through the API or a command-line tool." },
         { kind: "subheading", text: "Done by an agent today" },
         { kind: "list", items: [
-          "Releases: create, attach evidence, approve, activate, roll back, reject. A Releases tab is planned.",
-          "The per-writer memory switch, and closing a month's release train.",
           "Release 0 replay and approval, the rollback drill and the golden set import (command-line tools).",
         ] },
         { kind: "subheading", text: "Not built anywhere yet" },
@@ -396,30 +466,6 @@ export const WRITING_MEMORY_GUIDE: GuideContent = {
         ] },
         { kind: "callout", tone: "warning", title: "The memory switch does not stop L0 rules",
           text: "T9 reads active lexicon rules directly. To stop one, roll it back in its drawer." },
-        { kind: "subheading", text: "How a release works (for when the tab arrives)" },
-        { kind: "flow", steps: ["draft", "evaluated", "approved", "active"] },
-        { kind: "list", items: [
-          "A release is one versioned bundle of rules for one writer and one owner (the platform, or one tenant).",
-          "Activating a release retires the one before it. A release can be rejected at any step before active.",
-          "Evaluated means its evidence is attached. Empty release: an R0 replay with 0 differences over at least "
-            + "20 inputs, plus the baseline evaluation. Lexicon-only release: R0. Release with other rules: R2 and "
-            + "shadow runs.",
-          "Every release needs one approval by a signed-in admin. None goes live by itself. One exception: an empty "
-            + "release (no rules), whatever its number or owner, may be approved by an agent when it carries a "
-            + "reference to the program owner's decision. Two command-line tools do this: the release 0 tool (it "
-            + "approved the platform release 0) and the rollback drill (it approved the test tenant's releases 0 and "
-            + "1).",
-          "One regular release per writer and owner per month (the monthly train). Lexicon rules, emergencies and "
-            + "rollbacks do not wait for it.",
-          "A live release is flagged 'reverify' when the golden set, a model route or the gates changed since its "
-            + "evidence. It keeps serving until it is checked again.",
-          "A tenant release holds only that tenant's rules. A platform rule built from tenant signals needs at least "
-            + "3 tenants. Every platform-scope rule, in a release or through Activate (L0), needs the program owner's "
-            + "OK first (ADR 0010 decision 10). The page does not enforce this.",
-        ] },
-        { kind: "callout", tone: "note",
-          text: "Release 0 is an empty release: while it is the active release, the writers' output is exactly the "
-            + "same as with no memory." },
       ],
     },
   ],
