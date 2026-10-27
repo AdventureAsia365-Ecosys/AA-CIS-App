@@ -316,7 +316,8 @@ async def test_locate_defers_every_name_on_auth_failure_without_a_try():
     # Paro hit the 401; Punakha and the whole 2nd batch are deferred. Names the model itself answered null
     # for in the 1st batch keep that answer (it does not depend on the geocoder).
     assert ("Paro",) in deferred and ("Punakha",) in deferred and ("n39",) in deferred
-    assert all(o.reason == "unknown_to_model" for k, o in out.items() if k not in deferred)
+    # AA-990: names the answer has no key for say so (missing_in_answer), not unknown_to_model
+    assert all(o.reason == locate.REASON_MISSING for k, o in out.items() if k not in deferred)
     assert len(calls) == 1 and http.get.call_count == 1      # no 2nd paid model call, one request
 
 

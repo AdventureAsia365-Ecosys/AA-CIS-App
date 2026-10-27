@@ -265,6 +265,8 @@ SELECT count(*) FILTER (WHERE b.source_id IS NOT NULL AND b.status <> 'retired')
        coalesce(sum(tp.on_inactive_atoms), 0)::int AS components_on_inactive_atoms,
        (SELECT count(*) FROM geo.place_name)::int AS names_total,
        (SELECT count(*) FROM geo.place_name WHERE status IN ('unknown', 'pending'))::int AS names_waiting,
+       (SELECT count(*) FROM geo.place_name
+         WHERE status = 'pending' AND next_retry_at <= now() - interval '24 hours')::int AS names_due_over_24h,
        (SELECT count(*) FROM geo.place_shape WHERE kind = 'line')::int AS line_shapes,
        (SELECT count(*) FROM geo.place_shape WHERE kind = 'line' AND status IN ('ok', 'approximate', 'manual'))::int
            AS shapes_usable,
