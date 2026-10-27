@@ -90,6 +90,8 @@ async def test_run_tour_async_endpoint_202_enqueues_s1_rewrite():
     assert enq.await_args.args[1] == "s1_rewrite"
     # idempotency key = tour + model_tier + batch triple
     assert enq.await_args.kwargs["idempotency_key"] == f"s1_rewrite:{FAKE_UUID}:haiku:b-1"
+    # AA-993 follow-up: the "aa_internal" slug is enqueued as the platform tenant's UUID (the worker binds it)
+    assert enq.await_args.args[2]["tenant_id"] == admin_pipeline._MASTER_TENANT_ID
 
 
 @pytest.mark.asyncio

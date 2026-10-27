@@ -1386,6 +1386,10 @@ async def run_tour_async(req: TourRunRequest, request: Request, x_admin_secret: 
     from shared.jobs.registry import enqueue
 
     payload = req.model_dump(exclude={"review_id", "reason_code"})
+    # AA-993 follow-up: the job carries the platform tenant's UUID, never its slug. The worker binds the payload's
+    # tenant for every LLM log row and Jev decision of the job; the slug made each llm_call_log write fail.
+    if str(payload.get("tenant_id") or "").strip().lower() == "aa_internal":
+        payload["tenant_id"] = _MASTER_TENANT_ID
     # Dedup key = the same triple find_active_duplicate used (tour + model_tier + batch), so a
     # double-click or an overlapping wave reuses the in-flight job instead of writing a 2nd version.
     idem = f"s1_rewrite:{payload.get('tour_id')}:{payload.get('model_tier')}:{payload.get('batch_id')}"
