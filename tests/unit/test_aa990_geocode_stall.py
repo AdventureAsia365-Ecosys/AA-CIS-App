@@ -186,6 +186,76 @@ async def test_credit_reset_moves_an_already_queued_geocode_job(monkeypatch):
     assert "SET run_after = $2" in sql and "status = 'queued'" in sql and args == ("place_geocode", at)
 
 
+class _KeyedJobDb:
+    """No queued geocode row; `rows` maps job id -> status, `keys` idempotency key -> job id (queue.enqueue's
+    ON CONFLICT: a used key returns its row whatever the status)."""
+
+    def __init__(self, rows, keys):
+        self.rows, self.keys = dict(rows), dict(keys)
+
+    async def fetch(self, sql, *args):
+        return []
+
+    async def fetchval(self, sql, *args):
+        if sql == enq._STATUS_SQL:
+            return self.rows.get(args[0])
+        return None
+
+    async def enqueue(self, db, kind, payload, *, idempotency_key=None, **kw):
+        if idempotency_key in self.keys:
+            return self.keys[idempotency_key], False
+        job_id = f"new{len(self.rows)}"
+        self.rows[job_id] = "queued"
+        if idempotency_key:
+            self.keys[idempotency_key] = job_id
+        return job_id, True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["cancelled", "failed", "succeeded"])
+async def test_a_dead_reset_row_under_the_day_key_gets_a_new_queued_row(monkeypatch, status):
+    now = datetime(2026, 10, 26, 15, 10, tzinfo=timezone.utc)
+    day_key = f"place_geocode:credit_reset:{enq.next_credit_reset(now, jitter_s=0):%Y-%m-%d}"
+    db = _KeyedJobDb({"old": status}, {day_key: "old"})
+    monkeypatch.setattr(enq, "enqueue", db.enqueue)
+    job, _, created = await enq.enqueue_after_credit_reset(db, reason="r", now=now, caller_job_id="caller")
+    assert created and job != "old" and db.rows[job] == "queued"
+    assert db.keys[f"{day_key}:caller"] == job
+
+
+@pytest.mark.asyncio
+async def test_the_reset_row_stopping_again_queues_a_new_row_not_itself(monkeypatch):
+    # an admin retry ran the reset row early with no credits left: the day key points at the caller, running
+    now = datetime(2026, 10, 26, 15, 10, tzinfo=timezone.utc)
+    day_key = f"place_geocode:credit_reset:{enq.next_credit_reset(now, jitter_s=0):%Y-%m-%d}"
+    db = _KeyedJobDb({"self": "running"}, {day_key: "self"})
+    monkeypatch.setattr(enq, "enqueue", db.enqueue)
+    job, _, created = await enq.enqueue_after_credit_reset(db, reason="r", now=now, caller_job_id="self")
+    assert created and job not in ("self",) and db.rows[job] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_both_keys_used_falls_back_to_a_keyless_row(monkeypatch):
+    # the same job stopped twice (a retried attempt) after its suffixed row was cancelled too
+    now = datetime(2026, 10, 26, 15, 10, tzinfo=timezone.utc)
+    day_key = f"place_geocode:credit_reset:{enq.next_credit_reset(now, jitter_s=0):%Y-%m-%d}"
+    db = _KeyedJobDb({"old": "cancelled", "old2": "cancelled"}, {day_key: "old", f"{day_key}:c": "old2"})
+    monkeypatch.setattr(enq, "enqueue", db.enqueue)
+    job, _, created = await enq.enqueue_after_credit_reset(db, reason="r", now=now, caller_job_id="c")
+    assert created and job not in ("old", "old2") and db.rows[job] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_a_still_queued_day_key_row_is_reused(monkeypatch):
+    # the row went queued between the queued-row check and the insert (a race): reuse it
+    now = datetime(2026, 10, 26, 15, 10, tzinfo=timezone.utc)
+    day_key = f"place_geocode:credit_reset:{enq.next_credit_reset(now, jitter_s=0):%Y-%m-%d}"
+    db = _KeyedJobDb({"q": "queued"}, {day_key: "q"})
+    monkeypatch.setattr(enq, "enqueue", db.enqueue)
+    assert (await enq.enqueue_after_credit_reset(db, reason="r", now=now, caller_job_id="c"))[0::2] == ("q", False)
+    assert len(db.rows) == 1
+
+
 class _Pool:
     @asynccontextmanager
     async def acquire(self):
@@ -202,7 +272,7 @@ class _Geo:
         pass
 
 
-def _job_env(monkeypatch, result, remaining):
+def _job_env(monkeypatch, result, remaining, started=datetime(2026, 10, 26, 15, 0, tzinfo=timezone.utc)):
     from services.jobs import place_geocode_job as job
     from services.places import store
 
@@ -223,6 +293,7 @@ def _job_env(monkeypatch, result, remaining):
 
     async def due(conn):
         return remaining
+    monkeypatch.setattr(job, "_utcnow", lambda: started)
     monkeypatch.setattr(job, "get_geocoder", lambda: _Geo())
     monkeypatch.setattr(job, "load_run_budget", none)
     monkeypatch.setattr(job.llm, "make_generate", lambda *a, **kw: None)
@@ -243,7 +314,21 @@ async def test_credit_stop_with_names_due_queues_the_next_run(monkeypatch):
     out = await job._run_locked(ctx)
     assert out["status"] == "stopped_credit_limit" and out["pending_names_due"] == 3956
     assert out["next_job"] == "next" and out["next_run_after"] == "2026-10-27T00:12:00+00:00"
-    assert calls == [{"reason": "place_geocode:credit_reset"}]
+    assert calls == [{"reason": "place_geocode:credit_reset", "now": datetime(2026, 10, 26, 15, 0, tzinfo=timezone.utc),
+                      "caller_job_id": "j"}]
+
+
+@pytest.mark.asyncio
+async def test_a_run_crossing_utc_midnight_resumes_after_the_reset_of_the_day_it_counted(monkeypatch):
+    # started 23:58Z on yesterday's credit count, stopped at 00:01Z: the reset is 00:10Z today, not tomorrow
+    job, ctx, calls = _job_env(monkeypatch, {"names": 400, "deferred": 400, "stopped_credit_limit": True,
+                                             "relinked": {}}, remaining=10,
+                               started=datetime(2026, 10, 26, 23, 58, tzinfo=timezone.utc))
+    await job._run_locked(ctx)
+    assert calls[0]["now"] == datetime(2026, 10, 26, 23, 58, tzinfo=timezone.utc)
+    assert enq.next_credit_reset(calls[0]["now"], jitter_s=0) == datetime(2026, 10, 27, 0, 10, tzinfo=timezone.utc)
+    assert enq.next_credit_reset(datetime(2026, 10, 27, 0, 1, tzinfo=timezone.utc), jitter_s=0) \
+        == datetime(2026, 10, 28, 0, 10, tzinfo=timezone.utc)   # what reading the clock at the stop would give
 
 
 @pytest.mark.asyncio

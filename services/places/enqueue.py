@@ -7,7 +7,8 @@
                     now + debounce, capped at created_at + MAX_WAIT_S (the recompute pattern, AA-743).
   tour_graph_build  platform, debounced the same way.
                     AA-990: after a Geoapify credit stop it is queued ONCE for the next credit reset
-                    (enqueue_after_credit_reset: next 00:00 UTC + 10 min + jitter, key per reset day); later
+                    (enqueue_after_credit_reset: next 00:00 UTC + 10 min + jitter, key per reset day, suffixed with the
+                    stopping job when that row is no longer queued); later
                     debounced enqueues coalesce into that row and GREATEST() keeps its run_after.
   place_shape       AA-847, platform, debounced the same way: geometry of line places (rivers, roads, trails),
                     enqueued by place_geocode when it stored a new line, and by the admin shapes backfill.
@@ -182,16 +183,33 @@ def next_credit_reset(now: Optional[datetime] = None, *, jitter_s: Optional[int]
     return midnight + timedelta(seconds=CREDIT_RESET_DELAY_S + jitter)
 
 
+_STATUS_SQL = "SELECT status FROM shared.job WHERE id = $1::uuid"
+
+
 async def enqueue_after_credit_reset(db, *, reason: str, created_by: str = GEOCODE_KIND,
-                                     now: Optional[datetime] = None) -> tuple[str, datetime, bool]:
+                                     now: Optional[datetime] = None,
+                                     caller_job_id: Optional[str] = None) -> tuple[str, datetime, bool]:
     """(job_id, run_after, created). Queued geocode jobs are moved to the reset; when one exists it is the next run,
     otherwise one job is enqueued with the idempotency key `place_geocode:credit_reset:<reset day>` (a second stop the
-    same day returns the same row)."""
+    same day returns the same row).
+
+    The key's row is reused only while it is still QUEUED and is not the caller: a cancelled one (an operator cleared
+    it) or the reset row itself running out of credits again (an admin retry or release ran it early) would otherwise
+    leave nothing queued. Then the key is suffixed with the caller's job id, and as a last resort no key is used
+    (place_geocode runs at concurrency 1, so the queued-row check above already keeps it to one row)."""
     at = next_credit_reset(now)
     moved = await db.fetch(_DEFER_QUEUED_SQL, GEOCODE_KIND, at)
     existing = moved[0]["id"] if moved else await db.fetchval(_QUEUED_SQL, GEOCODE_KIND)
     if existing is not None:
         return str(existing), at, False
-    job_id, created = await enqueue(db, GEOCODE_KIND, {"reason": reason}, created_by=created_by, run_after=at,
-                                    idempotency_key=f"{GEOCODE_KIND}:credit_reset:{at:%Y-%m-%d}")
-    return job_id, at, created
+    day_key = f"{GEOCODE_KIND}:credit_reset:{at:%Y-%m-%d}"
+    keys: list[Optional[str]] = [day_key] + ([f"{day_key}:{caller_job_id}"] if caller_job_id else []) + [None]
+    for key in keys:
+        job_id, created = await enqueue(db, GEOCODE_KIND, {"reason": reason}, created_by=created_by, run_after=at,
+                                        idempotency_key=key)
+        if created or key is None:
+            return job_id, at, created
+        if job_id != str(caller_job_id) and await db.fetchval(_STATUS_SQL, job_id) == "queued":
+            return job_id, at, False
+        logger.info("place_geocode_reset_key_used", key=key, job=job_id)
+    raise AssertionError("unreachable: the keyless enqueue always returns")

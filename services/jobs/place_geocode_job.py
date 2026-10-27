@@ -24,6 +24,7 @@ geocoder/job:place_geocode $50/run) apply on a paid plan via GEOCODER_COST_PER_R
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Optional
 
 import structlog
@@ -79,6 +80,10 @@ class BudgetedGeocoder:
 LOCKED_DEBOUNCE_S = 60
 
 
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 @job_kind(KIND, concurrency=1, max_attempts=3, expected_seconds=1800, background=True)
 async def run(ctx: JobContext) -> Optional[dict]:
     """AA-847: one Geoapify client at a time — a place_shape run holding the lock makes this run re-enqueue itself
@@ -95,6 +100,9 @@ async def _run_locked(ctx: JobContext) -> Optional[dict]:
     p = ctx.payload or {}
     limit = max(1, min(int(p.get("limit") or MAX_NAMES_PER_RUN), MAX_NAMES_PER_RUN))
     inner = get_geocoder()
+    # AA-990: the credit count below is the count of THIS UTC day; the reset after it is the next midnight after
+    # `started`, not after the stop (a run crossing 00:00 UTC would otherwise wait a whole extra day).
+    started = _utcnow()
     if hasattr(inner, "credits_used_today"):
         async with ctx.pool.acquire() as conn:
             inner.credits_used_today = await store.geocoder_requests_today(conn, inner.name)
@@ -141,7 +149,8 @@ async def _run_locked(ctx: JobContext) -> Optional[dict]:
         elif result.get("stopped_credit_limit"):
             result["status"] = "stopped_credit_limit"
             if remaining:   # AA-990: resume after the daily credit reset, no person needed
-                job, at, _ = await enqueue_after_credit_reset(ctx.pool, reason=f"{KIND}:credit_reset")
+                job, at, _ = await enqueue_after_credit_reset(ctx.pool, reason=f"{KIND}:credit_reset", now=started,
+                                                             caller_job_id=ctx.job_id)
                 result["next_job"], result["next_run_after"] = job, at.isoformat()
             logger.warning("place_geocode_credit_limit", provider=inner.name, deferred=result.get("deferred"),
                            pending=remaining, next_run_after=result.get("next_run_after"))
