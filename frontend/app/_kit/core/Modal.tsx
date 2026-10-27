@@ -1,5 +1,6 @@
+// UI kit core (root ADR 0016). Canonical: AA-CIS-App frontend/app/_kit/core. Edit only there; copies are checked byte for byte (kit.lock.json).
 "use client";
-// app/_kit/Modal.tsx
+// app/_kit/core/Modal.tsx
 // AA-662 — centered modal for confirm / destructive actions.
 //
 // Controlled: parent owns `open`. Renders nothing when closed. Clicking the backdrop or pressing

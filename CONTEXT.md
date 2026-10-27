@@ -148,7 +148,10 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     - Staff have **no** access to the tenant portal (no staff session there; a support view is future
       work). Staff sign in on the admin host (the tenant-login "← Staff login" link).
     - **Vendored UI kit** (byte copies; since AA-979 guarded by AA-Partner's "Vendored CIS copies" check against
-      `frontend/` on this repo's main, not here): after a change to any of these admin files, copy it into
+      `frontend/` on this repo's main, not here). **Being replaced by the kit core (root ADR 0016, AA-994):** since
+      S1a the kit files below live in `frontend/app/_kit/core/` (brand tokens in `core/brand.ts`), so the Partner
+      check reports them "not found" until AA-994 S2a swaps it for `kit-sync.sh` + `check-kit-copy.mjs`; the list is
+      the pre-S1a one. Until then, after a change to any of these admin files, copy it into
       AA-Partner `portal/` (the frozen copy here is not updated) —
       `portal/app/_kit/tokens.ts`, `portal/app/_kit/primitives.tsx`, `portal/app/_kit/Modal.tsx`,
       `portal/app/_kit/Drawer.tsx`, `portal/app/_kit/Toast.tsx`, `portal/app/_kit/api.ts`,
@@ -167,8 +170,30 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     - Not moved yet: the public white-label page `/trip/[tourId]` stays on the admin app (stored `trip_url`s
       point at the admin host); no Sentry on the portal yet.
   - Shared brand tokens (adventure.asia: Fahkwang/Poppins, gold `#DB9628`, pill buttons, logo)
-    live in `frontend/app/_brand/tokens.ts` and are used by admin, portal and login pages
-    (AA-605; the portal has a guarded byte copy). New pages should reuse them.
+    live in `frontend/app/_kit/core/brand.ts` (was `app/_brand/tokens.ts` until AA-994 S1a) and are used by admin,
+    portal and login pages (AA-605; the portal has a guarded byte copy). New pages should reuse them.
+  - **UI kit core (AA-994 S1a, root ADR 0016)**: the portable part of the kit lives in `frontend/app/_kit/core/`,
+    the **canonical copy** for all five frontends (AA-Partner portal and CRM web, AA-Booking admin vendor it byte for
+    byte; AA-TripPlanner-Web takes the `tokens` profile). It holds `tokens.ts`, `brand.ts`, `primitives.tsx`,
+    `DataTable.tsx`, `csv.ts`, `savedViews.ts`, `Drawer.tsx`, `Modal.tsx`, `Toast.tsx`, `Providers.tsx`,
+    `PageFrame.tsx` (the S252 `AdminMain`, which stays an alias, as do `AdminPaneHeader` / `AdminPaneBody`; marks
+    itself `data-kit-frame`), `GuidePanel.tsx` + `guide.ts` (the content shape; the page passes its content as a
+    prop), `theme.ts` (`createThemeStore({ storageKey })` + its restore script) and `useTheme.ts`
+    (`createThemeHooks(store)`), `useHydrated.ts`, `useMediaQuery.ts`, `sidebarStore.ts`, `useSidebar.ts`,
+    `check-kit-copy.mjs` and `MANIFEST.json`. Rules: every core file starts with the header line "UI kit core (root
+    ADR 0016). Canonical: …"; core imports only `./` files of core and `react`, `react-dom`, `next/*`,
+    `lucide-react`, `@tanstack/react-table`, `@tanstack/react-query` (no `@/`, no `../`); after any core edit run
+    `node scripts/kit-manifest.mjs` in `frontend/` (rewrites `MANIFEST.json`: sha256 per file + the tokens profile).
+    **Frontend Build** runs `node app/_kit/core/check-kit-copy.mjs --self` (manifest current, header lines, import
+    closure of core and of the tokens profile) and `lib/kitCore.test.mjs`. A consumer runs the same script without
+    `--self` against its copy and `kit.lock.json`; copies are written only by the root `tools/kit/kit-sync.sh` and
+    never edited in place (root hook `kit-core-edit-guard.sh`). CIS-local, outside `core/`: `api.ts`,
+    `guideContent.ts` (the guide checks, re-exporting the core shape), the shell (`AdminShell`, `Sidebar`, `Topbar`,
+    `BottomNav`, `CommandPalette`, `SessionKeepAlive`), `adminNav.tsx`, `useNavSections.ts`, `useAdminIdentity.ts`,
+    `useReviewPendingCount.ts`, and `theme.ts` / `useTheme.ts` (the core store and hooks bound to `cis_theme`; the
+    root layout's restore script is `themeStore.restoreScript`). Pages import the barrel `app/_kit` (which re-exports
+    core), never `core/` directly; only the root layout, the login form and the legacy `adminUi.tsx` import core
+    files directly (server layout, light login bundle, and no import cycle through the barrel's `Sidebar`).
   - **UI kit (AA-662, `frontend/app/_kit/`)**: the shared component library for UI v2, built on
     TanStack Table (`@tanstack/react-table`) and brand tokens (inline styles, no Tailwind
     classNames). Exports `DataTable` (per-column filter, multi-sort, column show/hide, pagination,
@@ -195,7 +220,7 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     Content first). Living reference: the **UI Kit tab in admin Settings** (`/admin/settings?tab=ui-kit`,
     `app/admin/_components/SettingsKitTab.tsx`) — renders every primitive with static data.
   - **Data fetching (AA-662)**: `@tanstack/react-query` is the standard for UI v2, wired app-wide
-    via a single `QueryClientProvider` in `app/_kit/Providers.tsx`, mounted from the server root
+    via a single `QueryClientProvider` in `app/_kit/core/Providers.tsx`, mounted from the server root
     layout (`app/layout.tsx`) around all routes. Defaults: no refetch-on-focus, one retry, 30s
     stale. Pages that poll opt in per-query with `refetchInterval` (replaces the old hand-rolled
     `useState`/`useEffect`/`setInterval` fetch). Older pages keep their hand-rolled fetch until

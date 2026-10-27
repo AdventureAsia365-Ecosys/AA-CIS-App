@@ -1,11 +1,12 @@
-// app/_kit/GuidePanel.tsx — AA-919: renders a page's Guide tab from its GuideContent (app/_kit/guideContent.ts).
+// UI kit core (root ADR 0016). Canonical: AA-CIS-App frontend/app/_kit/core. Edit only there; copies are checked byte for byte (kit.lock.json).
+// app/_kit/core/GuidePanel.tsx — AA-919: renders a page's Guide tab from a GuideContent (core/guide.ts).
 //
-// Every admin page with a Guide tab uses this one component (no per-page guide layout): the page keeps its content as
-// a GuideContent in app/admin/<page>/guide.ts and renders <GuidePanel content={…} /> when the "Guide" tab is active.
-// One look for every guide, from the kit tokens (light and dark through the --aa-* variables): numbered sections, an
-// "On this page" table of contents for long guides (GUIDE_TOC_MIN_SECTIONS), sub-headings, lists, note / warning
-// callouts, term lists (page labels shown as chips), step diagrams and control cards. Phone width (390 px) works:
-// everything wraps, nothing scrolls sideways, and long words break.
+// The content is a prop: the page keeps its guide as data (CIS: a GuideContent in app/admin/<page>/guide.ts) and
+// renders <GuidePanel content={…} /> when the "Guide" tab is active; GuidePanel knows nothing about where it came
+// from. One look for every guide, from the kit tokens (light and dark through the --aa-* variables): numbered
+// sections, an "On this page" table of contents for long guides (GUIDE_TOC_MIN_SECTIONS), sub-headings, lists, note /
+// warning callouts, term lists (page labels shown as chips), step diagrams and control cards. Phone width (390 px)
+// works: everything wraps, nothing scrolls sideways, and long words break.
 
 import { AlertTriangle, ArrowRight, Info } from "lucide-react";
 import { K, RADIUS, alpha, sans } from "./tokens";
@@ -13,7 +14,7 @@ import { TONE } from "./primitives";
 import {
   GUIDE_CONTROL_CAPTIONS, GUIDE_GLOSSARY_HEADING, GUIDE_GLOSSARY_ID, GUIDE_TOC_MIN_SECTIONS, guideAnchor, guideOutline,
   type GuideBlock, type GuideContent, type GuideTerm,
-} from "./guideContent";
+} from "./guide";
 
 const PROSE: React.CSSProperties = { margin: "8px 0", color: K.body };
 
@@ -141,7 +142,7 @@ function Section({ id, n, heading, children }: { id: string; n: number; heading:
   );
 }
 
-/** A page's Guide tab: renders one GuideContent. Every admin page with a Guide tab uses it (see guideContent.ts). */
+/** A page's Guide tab: renders the GuideContent it is given (the page owns the content; core/guide.ts). */
 export function GuidePanel({ content, testId = "guide-panel" }: { content: GuideContent; testId?: string }) {
   const outline = guideOutline(content);
   const n = new Map(outline.map((o) => [o.id, o.n]));

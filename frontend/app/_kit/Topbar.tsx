@@ -15,7 +15,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, usePathname } from "next/navigation";
 import { Search, Bell, Sun, Moon, Monitor, Settings, LogOut, ChevronDown, Menu as MenuIcon } from "lucide-react";
-import { K, sans, serif, alpha, formatDateTime } from "./tokens";
+import { K, sans, serif, alpha, formatDateTime } from "./core/tokens";
 import { useThemeChoice } from "./useTheme";
 import type { ThemeChoice } from "./theme";
 import { ROLE_LABEL, isReadOnlyRole, isStaffRole } from "@/lib/rbac";

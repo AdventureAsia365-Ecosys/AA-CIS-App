@@ -1,5 +1,6 @@
+// UI kit core (root ADR 0016). Canonical: AA-CIS-App frontend/app/_kit/core. Edit only there; copies are checked byte for byte (kit.lock.json).
 "use client";
-// app/_kit/Drawer.tsx
+// app/_kit/core/Drawer.tsx
 // AA-662 — right-side slide-over for detail / edit views.
 //
 // Controlled by `open`. Backdrop click + Escape close it. Slides in from the right; on narrow

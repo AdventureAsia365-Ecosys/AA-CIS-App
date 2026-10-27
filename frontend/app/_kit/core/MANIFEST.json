@@ -1,0 +1,80 @@
+{
+  "_header": "UI kit core (root ADR 0016). Canonical: AA-CIS-App frontend/app/_kit/core. Edit only there; copies are checked byte for byte (kit.lock.json).",
+  "adr": "root ADR 0016",
+  "canonical": {
+    "repo": "AdventureAsia365-Ecosys/AA-CIS-App",
+    "path": "frontend/app/_kit/core"
+  },
+  "generator": "frontend/scripts/kit-manifest.mjs",
+  "profiles": {
+    "tokens": [
+      "tokens.ts",
+      "brand.ts",
+      "theme.ts",
+      "check-kit-copy.mjs",
+      "MANIFEST.json"
+    ]
+  },
+  "files": {
+    "DataTable.tsx": {
+      "sha256": "6fe21f2554960f84fac16851df779283718d3d4daae5638d7a9f4b64a3cda9d4"
+    },
+    "Drawer.tsx": {
+      "sha256": "0ddf4e0fe403251d3122e15ecbce4b4e1e1dca5f35283ff4ff69ec3526d2a8b4"
+    },
+    "GuidePanel.tsx": {
+      "sha256": "c17bb6f391efb1c652a6f286e05b3b02d31cb38b20ecf49fccbf9d7bcc8104f7"
+    },
+    "Modal.tsx": {
+      "sha256": "7a6d6e58b2c4ffd0cc57300bb267154c0faf0f8fb0d64d438c58e0e168863614"
+    },
+    "PageFrame.tsx": {
+      "sha256": "ef558753dd05254cefa43c03b0e42260529e5cb3ea91c3bfed4efc701465be48"
+    },
+    "Providers.tsx": {
+      "sha256": "bbcd0aea4a7b76cad7098c1f6329fd8f137a25281767e75fc8c3d3c39887cfb2"
+    },
+    "Toast.tsx": {
+      "sha256": "8e5f11d80b39adfaabd706afa6b72f176b640676f6489d363555262f69f17d2e"
+    },
+    "brand.ts": {
+      "sha256": "bc6773a9a5a69ae55496752779c9c2fc8ac49eb07ed832cc91edff70c21dda00"
+    },
+    "check-kit-copy.mjs": {
+      "sha256": "357d46b9b58a8a5d82a1d6dee36dfcfba6995928396b79210c6af4a8c394f947"
+    },
+    "csv.ts": {
+      "sha256": "3609313353164f3d0089b9e5675248d6a825c8826808b2f6b968ddb750c5189f"
+    },
+    "guide.ts": {
+      "sha256": "2f98d7ba5a97579d96ab4b77f7e502167714177171ce8392c488c311cfdd2660"
+    },
+    "primitives.tsx": {
+      "sha256": "a96f3d52092facc793e428a52b9f7ae48462a6dba6e87790334249f8bbb13ed6"
+    },
+    "savedViews.ts": {
+      "sha256": "902e4502baa8e95134d6ef20773bf624fbc07ac044063824e3a424de33c5eb24"
+    },
+    "sidebarStore.ts": {
+      "sha256": "0199d90c435b8f015f930b694ad4689e1afc7c6065970516bb62334c42c91556"
+    },
+    "theme.ts": {
+      "sha256": "23d70cb0649f15fbe55e7ef91a7cfa2780128f93a371c286e27db4dcbcddeb00"
+    },
+    "tokens.ts": {
+      "sha256": "fe2d9fd20a91d9258fcbde6c4bf6c0885b8f09bcdabdf26bf54c6b09f790ca3e"
+    },
+    "useHydrated.ts": {
+      "sha256": "ff03882575b53db53178d782e184fc9844ab02f03e5c89d09ff981f2422180a4"
+    },
+    "useMediaQuery.ts": {
+      "sha256": "42b0d65a465666fa43b713c13a6b2eb647f395a3f89574b5d691f69f95cb4055"
+    },
+    "useSidebar.ts": {
+      "sha256": "cec75bb269a63cbcfffc98db9d8badca552ffc53166266e53ead2cf9453869b2"
+    },
+    "useTheme.ts": {
+      "sha256": "a5866120d8aca082a3d9f12e406ec319fed71658104d1cf9a133db591a07e774"
+    }
+  }
+}

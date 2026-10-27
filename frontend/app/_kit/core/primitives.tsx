@@ -1,5 +1,6 @@
+// UI kit core (root ADR 0016). Canonical: AA-CIS-App frontend/app/_kit/core. Edit only there; copies are checked byte for byte (kit.lock.json).
 "use client";
-// app/_kit/primitives.tsx
+// app/_kit/core/primitives.tsx
 // AA-662 — shared UI-kit primitives (brand-neutral, inline-style, token-driven).
 //
 // These are the canonical implementations. The admin (adminUi.tsx) and portal (ui.tsx) modules
@@ -589,6 +590,7 @@ export function ScrollX({
         ref={ref}
         data-testid={testId}
         data-overflows={overflows ? "true" : "false"}
+        data-kit-scroll=""
         tabIndex={overflows ? 0 : undefined}
         role={overflows ? "region" : undefined}
         aria-label={overflows ? hint : undefined}

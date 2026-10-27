@@ -25,15 +25,15 @@ import { useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { ArrowUpRight, CalendarCheck, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, Map as MapIcon } from "lucide-react";
 import { A, alpha, serif, sans } from "../admin/_components/adminUi";
-import { LOGO_SRC } from "../_brand/tokens";
+import { LOGO_SRC } from "./core/brand";
 import {
   SETTINGS_ENTRY, navActive, sectionGroups, visibleSections,
   type NavEntry, type NavGroup, type NavSection,
 } from "./adminNav";
 import { useNavSections } from "./useNavSections";
 import { APP_LINKS, type AppId, type AppLink } from "@/lib/apps";
-import { useSidebarCollapsed } from "./useSidebar";
-import { useHydrated } from "./useHydrated";
+import { useSidebarCollapsed } from "./core/useSidebar";
+import { useHydrated } from "./core/useHydrated";
 import { canSeePage } from "@/lib/rbac";
 import { useAdminIdentity } from "./useAdminIdentity";
 import { useReviewPendingCount } from "./useReviewPendingCount";

@@ -19,7 +19,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Search, FileText, Users, ListChecks, CornerDownLeft } from "lucide-react";
-import { K, RADIUS, sans, serif, alpha } from "./tokens";
+import { K, RADIUS, sans, serif, alpha } from "./core/tokens";
 import { allEntries, type NavEntry } from "./adminNav";
 import { useAdminIdentity } from "./useAdminIdentity";
 import { apiGet } from "./api";

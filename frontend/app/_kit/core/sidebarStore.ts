@@ -1,5 +1,6 @@
+// UI kit core (root ADR 0016). Canonical: AA-CIS-App frontend/app/_kit/core. Edit only there; copies are checked byte for byte (kit.lock.json).
 "use client";
-// app/_kit/sidebarStore.ts
+// app/_kit/core/sidebarStore.ts
 // AA-752 — admin sidebar collapsed state, shared by the Sidebar toggle, the `[` key handler and
 // the AdminShell layout grid (which widens/narrows the sidebar track).
 //

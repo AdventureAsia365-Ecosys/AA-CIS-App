@@ -15,7 +15,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 OVERVIEW = REPO / "frontend" / "app" / "admin" / "overview"
 SOURCES_TS = OVERVIEW / "_components" / "sources.ts"
-PRIMITIVES = REPO / "frontend" / "app" / "_kit" / "primitives.tsx"
+PRIMITIVES = REPO / "frontend" / "app" / "_kit" / "core" / "primitives.tsx"
 
 # Things a business reader should never see in a source text.
 FORBIDDEN = [
