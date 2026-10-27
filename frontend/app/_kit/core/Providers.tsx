@@ -1,5 +1,6 @@
+// UI kit core (root ADR 0016). Canonical: AA-CIS-App frontend/app/_kit/core. Edit only there; copies are checked byte for byte (kit.lock.json).
 "use client";
-// app/_kit/Providers.tsx
+// app/_kit/core/Providers.tsx
 // AA-662 — adopt @tanstack/react-query as the standard data-fetching layer for UI v2.
 //
 // This is the single app-wide QueryClientProvider. It is a client component (react-query needs

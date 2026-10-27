@@ -5,7 +5,7 @@
 //
 // Checks, over every .tsx file under app/admin:
 //   1. no hand-written <main> and no hand-set `aa-admin-main` / `aa-admin-split` / `aa-admin-pane` class: the frame
-//      and its pane classes come only from app/_kit/AdminMain.tsx;
+//      and its pane classes come only from app/_kit/core/PageFrame.tsx (AdminMain is its alias);
 //   2. every admin page (page.tsx, except a redirect-only page) reaches the kit AdminMain and the kit PageHeader,
 //      in the page file itself or in a module it imports from app/admin (followed transitively).
 

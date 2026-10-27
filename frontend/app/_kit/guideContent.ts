@@ -1,83 +1,23 @@
-// app/_kit/guideContent.ts — AA-919: the one data shape of an admin page's Guide tab, and its checks.
+// app/_kit/guideContent.ts — AA-919: the checks of an admin page's Guide tab (CIS-local, root ADR 0016 decision 1).
 //
 // Every admin page with a Guide tab uses this pattern, with no per-page variant:
 //   1. the content is a `GuideContent` in `app/admin/<page>/guide.ts` (data only: plain strings, no JSX);
 //   2. the page adds `{ key: "guide", label: "Guide" }` to its kit `Tabs` (after the daily-use tabs) and renders
-//      `<GuidePanel content={…} />` (app/_kit/GuidePanel.tsx) for it, plus a short "New here? Read the Guide" link
-//      in its PageHeader description that switches to that tab;
+//      `<GuidePanel content={…} />` (app/_kit/core/GuidePanel.tsx) for it, plus a short "New here? Read the Guide"
+//      link in its PageHeader description that switches to that tab;
 //   3. the guide is registered in `lib/guides.test.mjs`, which runs `guideProblems` (shape) and checks that every
 //      `uiLabels` term still appears in the page's code, so a renamed label fails CI.
 // Guides are English (admin UI default) and quote the page's own labels verbatim. Public repo: no ids, ARNs or
 // tenant names in a guide.
 //
-// Data and pure functions only, no imports: `node --test --experimental-strip-types` loads this file directly.
+// The content shape and the render helpers (types, captions, `guideAnchor`, `guideOutline`) are part of the kit core
+// (app/_kit/core/guide.ts, AA-994 S1a) and re-exported here, so importers of this module do not change.
+// Pure functions only: `node --test --experimental-strip-types` loads this file and core/guide.ts directly, which is
+// why the import below names the `.ts` file (tsconfig `allowImportingTsExtensions`).
 
-/** The two callout tones: `note` (useful to know) and `warning` (a trap, a cost, or the code and docs disagreeing). */
-export type GuideCalloutTone = "note" | "warning";
+import { GUIDE_GLOSSARY_ID, type GuideContent, type GuideTerm } from "./core/guide.ts";
 
-/** One term and what it means (a label on the page, or a glossary word). */
-export interface GuideTerm { term: string; text: string }
-
-/** A building block of a guide section, rendered in order by GuidePanel. */
-export type GuideBlock =
-  | { kind: "paragraph"; text: string }
-  /** A sub-heading inside a section. */
-  | { kind: "subheading"; text: string }
-  | { kind: "list"; items: string[]; ordered?: boolean }
-  | { kind: "callout"; tone: GuideCalloutTone; title?: string; text: string }
-  /** Terms and meanings. `uiLabels`: each term is a label the page itself prints (a status, a badge); GuidePanel
-   * shows it as a chip, and the guide test checks it still exists in the page's code. Several labels of one term are
-   * joined with " / " ("L0 passed / L0 failed"). */
-  | { kind: "terms"; items: GuideTerm[]; uiLabels?: boolean }
-  /** A small diagram: steps joined by arrows (they wrap on a phone). */
-  | { kind: "flow"; steps: string[] }
-  /** One button or control of the page: its exact label, what it does, and optionally its cost, when to use it and
-   * when not to. The captions are the kit's (GUIDE_CONTROL_CAPTIONS), the same on every page. */
-  | { kind: "control"; label: string; does: string; cost?: string; when?: string; avoid?: string };
-
-export interface GuideSection {
-  /** Anchor of the section, unique in the guide: lower-case letters, digits and dashes. */
-  id: string;
-  /** Plain heading; GuidePanel numbers sections itself, so cross-references name the section, not its number. */
-  heading: string;
-  blocks: GuideBlock[];
-}
-
-export interface GuideContent {
-  title: string;
-  /** One or two sentences under the title: who the guide is for and how to read it. */
-  intro?: string;
-  sections: GuideSection[];
-  /** Optional glossary, rendered as the last section (id `glossary`). */
-  glossary?: GuideTerm[];
-}
-
-/** The captions of a `control` block, one wording for every guide. */
-export const GUIDE_CONTROL_CAPTIONS = {
-  does: "What it does",
-  cost: "Cost and time",
-  when: "Use it when",
-  avoid: "Do not use it when",
-} as const;
-
-export const GUIDE_GLOSSARY_ID = "glossary";
-export const GUIDE_GLOSSARY_HEADING = "Glossary";
-/** A guide with at least this many sections (glossary included) gets an "On this page" table of contents. */
-export const GUIDE_TOC_MIN_SECTIONS = 4;
-
-/** The DOM id of a section's anchor (prefixed, so it never clashes with the page's own ids). */
-export function guideAnchor(sectionId: string): string {
-  return `guide-${sectionId}`;
-}
-
-/** The sections as GuidePanel shows them: content sections, then the glossary when there is one, numbered from 1. */
-export function guideOutline(g: GuideContent): { id: string; heading: string; n: number }[] {
-  const out = g.sections.map((s, i) => ({ id: s.id, heading: s.heading, n: i + 1 }));
-  if (g.glossary && g.glossary.length) {
-    out.push({ id: GUIDE_GLOSSARY_ID, heading: GUIDE_GLOSSARY_HEADING, n: out.length + 1 });
-  }
-  return out;
-}
+export * from "./core/guide.ts";
 
 const ID_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 

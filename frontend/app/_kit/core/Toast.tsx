@@ -1,5 +1,6 @@
+// UI kit core (root ADR 0016). Canonical: AA-CIS-App frontend/app/_kit/core. Edit only there; copies are checked byte for byte (kit.lock.json).
 "use client";
-// app/_kit/Toast.tsx
+// app/_kit/core/Toast.tsx
 // AA-662 — toast notifications for the UI kit.
 //
 // Usage: wrap a page/section in <ToastProvider>, then call const toast = useToast(); toast.success(

@@ -18,7 +18,7 @@ import { Topbar } from "./Topbar";
 import { BottomNav } from "./BottomNav";
 import { CommandPalette } from "./CommandPalette";
 import { SessionKeepAlive } from "./SessionKeepAlive";
-import { K } from "./tokens";
+import { K } from "./core/tokens";
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
   const [paletteOpen, setPaletteOpen] = useState(false);

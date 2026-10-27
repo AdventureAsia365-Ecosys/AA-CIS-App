@@ -1,4 +1,5 @@
-// app/_kit/savedViews.ts
+// UI kit core (root ADR 0016). Canonical: AA-CIS-App frontend/app/_kit/core. Edit only there; copies are checked byte for byte (kit.lock.json).
+// app/_kit/core/savedViews.ts
 // AA-662 — DataTable saved views, persisted in localStorage per user.
 //
 // A "view" is a named snapshot of a table's state (column visibility, sorting, filters, page size).

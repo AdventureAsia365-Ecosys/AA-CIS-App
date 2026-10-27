@@ -1,4 +1,5 @@
-// app/_brand/tokens.ts
+// UI kit core (root ADR 0016). Canonical: AA-CIS-App frontend/app/_kit/core. Edit only there; copies are checked byte for byte (kit.lock.json).
+// app/_kit/core/brand.ts (was app/_brand/tokens.ts)
 // AA-605 — single source of Adventure Asia brand tokens for BOTH the admin UI
 // (admin/_components/adminUi.tsx, `A`) and the tenant portal (portal/_components/ui.tsx, `T`).
 // Values come from the live adventure.asia site (audited 24/09/2026): gold primary button

@@ -1,14 +1,14 @@
 // app/(admin)/_components/adminUi.tsx
-// Design system for admin — Adventure Asia brand tokens (app/_brand/tokens.ts, AA-605).
+// Design system for admin — Adventure Asia brand tokens (app/_kit/core/brand.ts, AA-605).
 // AA-601 part B: `A` returns the `var(--aa-…)` CSS variables from app/globals.css (light = the
 // previous hex, dark = the dark palette), so <html data-theme="dark"> recolours every admin page.
-// `BRAND` stays hex for the login pages / portal `T`. Use `alpha(color, pct)` (from _kit/tokens)
+// `BRAND` stays hex for the login pages / portal `T`. Use `alpha(color, pct)` (from _kit/core/tokens)
 // for translucent fills — the old hex-alpha-suffix trick breaks with var().
 
 import { Loader2 } from "lucide-react";
-import { FONT_DISPLAY, FONT_MONO, FONT_SANS } from "../../_brand/tokens";
-import { alpha } from "../../_kit/tokens";
-import { Button } from "../../_kit/primitives";
+import { FONT_DISPLAY, FONT_MONO, FONT_SANS } from "../../_kit/core/brand";
+import { alpha } from "../../_kit/core/tokens";
+import { Button } from "../../_kit/core/primitives";
 
 export { alpha };
 
@@ -178,7 +178,7 @@ export function LoadingScreen({ msg = "Loading..." }: { msg?: string }) {
 }
 
 // ── Button ────────────────────────────────────────────────────────────────────
-// AA-752: the brand button lives once in the kit (`_kit/primitives.tsx` `Button`). `Btn` keeps its
+// AA-752: the brand button lives once in the kit (`_kit/core/primitives.tsx` `Button`). `Btn` keeps its
 // existing name/signature (used across admin) and delegates, so the gold-pill primary + gold-outline
 // secondary are defined in a single place. `size="sm"` stays non-uppercase (dense table rows).
 export function Btn({ children, onClick, variant = "secondary", size = "md", disabled = false, style = {}, title, ariaLabel }: {

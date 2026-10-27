@@ -1,5 +1,6 @@
+// UI kit core (root ADR 0016). Canonical: AA-CIS-App frontend/app/_kit/core. Edit only there; copies are checked byte for byte (kit.lock.json).
 "use client";
-// app/_kit/DataTable.tsx
+// app/_kit/core/DataTable.tsx
 // AA-662 — the shared table for every UI-v2 page, built on TanStack Table (@tanstack/react-table v8).
 //
 // Features (all optional, enabled by props):
@@ -637,6 +638,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
         </div>
       ) : (
         <div
+          data-kit-scroll=""
           style={{
             border: `1px solid ${K.line}`,
             borderRadius: RADIUS.lg,

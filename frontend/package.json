@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:unit": "node --test --experimental-strip-types --no-warnings lib/*.test.mjs"
+    "test:unit": "node --test --experimental-strip-types --no-warnings lib/*.test.mjs",
+    "kit:manifest": "node scripts/kit-manifest.mjs",
+    "kit:check": "node app/_kit/core/check-kit-copy.mjs --self"
   },
   "dependencies": {
     "@sentry/nextjs": "^10.75.2",
