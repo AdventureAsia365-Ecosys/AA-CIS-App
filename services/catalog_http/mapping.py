@@ -270,11 +270,12 @@ def tour_body(tour: Mapping[str, Any], *, days: Iterable[Mapping[str, Any]] = ()
     photo_list: list[dict] = []
     seen_photos: set[str] = set()
     for row in sorted(photos, key=lambda r: int(r.get("position") or 0)):
-        key = str(row.get("photo_id") or row.get("path"))
+        # AA-995: dedupe by the served path, not photo_id — since mig 290 every copy of the same file (sha256) keeps
+        # its own photo_id but shares one canonical /content/photos/<id> path, so photo_id would let it through twice.
         url = photo_url(row.get("path") or "", photo_base)
-        if not url or key in seen_photos:
+        if not url or url in seen_photos:
             continue
-        seen_photos.add(key)
+        seen_photos.add(url)
         photo_list.append({"url": url, "alt": _clip(row.get("place_label"), MAX_ALT) or None})
     body = {
         "source_system": SOURCE_SYSTEM,

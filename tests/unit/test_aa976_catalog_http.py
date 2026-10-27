@@ -245,6 +245,19 @@ def test_out_of_range_coordinates_become_null(views):
     assert (place["lat"], place["lng"]) == (None, None)
 
 
+def test_photos_deduped_by_path_not_photo_id(views):
+    """AA-995: copies of one file keep their own photo_id but share the canonical path (mig 290) — served once,
+    at the first copy's position, keeping that copy's alt text."""
+    views.details[SID_A]["photos"] = [
+        {"source_id": SID_A, "photo_id": "p9", "path": "/content/photos/p1", "place_label": "Later copy",
+         "position": 3},
+        {"source_id": SID_A, "photo_id": "p1", "path": "/content/photos/p1", "place_label": "First", "position": 1},
+        {"source_id": SID_A, "photo_id": "p2", "path": "/content/photos/p2", "place_label": "Bay", "position": 2},
+    ]
+    assert _body(views)["photos"] == [{"url": f"{BASE}/content/photos/p1?size=large", "alt": "First"},
+                                      {"url": f"{BASE}/content/photos/p2?size=large", "alt": "Bay"}]
+
+
 def test_photo_url_rules():
     assert mapping.photo_url("/content/photos/x", BASE + "/") == f"{BASE}/content/photos/x?size=large"
     assert mapping.photo_url("/p?a=1", BASE) == f"{BASE}/p?a=1&size=large"
