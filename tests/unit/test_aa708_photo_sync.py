@@ -289,3 +289,36 @@ def test_large_jpeg_decoded_at_reduced_scale(monkeypatch):
     sizes, w, h = S.make_sizes(buf.getvalue())
     assert (w, h) == (8000, 5000) and seen["size"] == (1600, 1000)
     assert Image.open(_io.BytesIO(sizes["large"])).size[0] == 1600
+
+
+class _CoverConn:
+    def __init__(self):
+        self.calls = []
+
+    async def execute(self, sql, *args):
+        self.calls.append((sql, args))
+        return "UPDATE 2"
+
+
+@pytest.mark.asyncio
+async def test_destination_cover_uses_canonical_photo_path(monkeypatch):
+    """AA-995: the cover comes from v_destination_photos.path (mig 290 canonical id of the same sha256), not from a
+    duplicate copy's own place_photo.id; covers set earlier by this job (same prefix) are rewritten."""
+    monkeypatch.setenv("PUBLIC_API_BASE", "https://api.example.invalid/")
+    conn = _CoverConn()
+    assert await S.fill_destination_covers(conn) == 2
+    (sql, args), = conn.calls
+    flat = " ".join(sql.split())
+    assert "FROM shared.v_destination_photos p" in flat and "p.position = 1" in flat
+    assert "shared.place_photo" not in flat and "p.id" not in flat
+    assert "SET cover_image_url = $1 || p.path || '?size=large'" in flat
+    assert "LIKE $2 || '%'" in flat
+    assert args == ("https://api.example.invalid", "https://api.example.invalid/content/photos/")
+
+
+def test_migration_290_view_path_is_the_canonical_row():
+    from pathlib import Path
+    sql = (Path(__file__).resolve().parents[2] / "api/migrations/290_photo_path_by_content.sql").read_text()
+    view = sql[sql.index("CREATE OR REPLACE VIEW shared.v_destination_photos"):]
+    assert "'/content/photos/' || COALESCE(c.id, p.id)::text AS path" in view
+    assert "ORDER BY q.created_at, q.id LIMIT 1" in view

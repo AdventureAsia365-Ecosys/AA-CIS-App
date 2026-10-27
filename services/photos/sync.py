@@ -282,16 +282,20 @@ async def sync_folder(conn, client: DriveClient, s3, *, country: str, root_id: s
 
 async def fill_destination_covers(conn) -> int:
     """Set shared.destinations.cover_image_url from matched photos. Only empty covers, or covers this
-    job set earlier, are written — an image set by anyone else is left alone."""
-    prefix = f"{public_base()}/content/photos/"
+    job set earlier, are written — an image set by anyone else is left alone.
+
+    AA-995: the cover is the destination's position-1 photo in shared.v_destination_photos, whose ``path`` names the
+    canonical row of the same file (mig 290: earliest matched, served row with that sha256). A cover this job set
+    earlier on a duplicate copy's id is rewritten to the canonical id, so one picture has one URL everywhere."""
+    base = public_base()
+    prefix = f"{base}/content/photos/"
     res = await conn.execute(
         """
-        UPDATE shared.destinations d SET cover_image_url = $1 || p.id::text || '?size=large'
-          FROM (SELECT DISTINCT ON (destination_id) id, destination_id FROM shared.place_photo
-                 WHERE status = 'matched' AND destination_id IS NOT NULL AND s3_key_large IS NOT NULL
-                 ORDER BY destination_id, (match_source = 'manual') DESC, file_name) p
-         WHERE d.id = p.destination_id
-           AND (d.cover_image_url IS NULL OR d.cover_image_url LIKE $1 || '%')
-           AND d.cover_image_url IS DISTINCT FROM $1 || p.id::text || '?size=large'
-        """, prefix)
+        UPDATE shared.destinations d SET cover_image_url = $1 || p.path || '?size=large'
+          FROM shared.v_destination_photos p
+         WHERE p.position = 1
+           AND d.id = p.destination_id
+           AND (d.cover_image_url IS NULL OR d.cover_image_url LIKE $2 || '%')
+           AND d.cover_image_url IS DISTINCT FROM $1 || p.path || '?size=large'
+        """, base, prefix)
     return int(res.split()[-1])
