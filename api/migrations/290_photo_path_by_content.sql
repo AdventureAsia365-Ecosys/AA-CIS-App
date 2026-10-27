@@ -16,9 +16,9 @@
 --   2. Index place_photo_sha256_matched_idx for the canonical lookup.
 -- /content/photos/<id> serves any matched row, and the canonical row has the same bytes (same sha256).
 
+-- Runs as the file's runner: DB Migrate logs in as the owner of schema shared (cis_owner since 245), like 279 part A.
 BEGIN;
 SET LOCAL lock_timeout = '10s';
-SET LOCAL ROLE cis_owner;
 
 CREATE INDEX IF NOT EXISTS place_photo_sha256_matched_idx
     ON shared.place_photo (sha256, created_at, id)

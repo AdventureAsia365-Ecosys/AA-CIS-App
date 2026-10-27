@@ -5,6 +5,7 @@ Real Postgres; everything is seeded in one transaction that is rolled back.
 import os
 import sys
 import uuid
+from datetime import timedelta
 
 import asyncpg
 import pytest
@@ -41,7 +42,7 @@ async def _tour(c):
     return tour_id
 
 
-async def _photo(c, *, sha, tour_id=None, destination_id=None, status="matched", served=True, age="0 s"):
+async def _photo(c, *, sha, tour_id=None, destination_id=None, status="matched", served=True, age=timedelta(0)):
     pid = str(uuid.uuid4())
     await c.execute(
         """INSERT INTO shared.place_photo (id, drive_file_id, drive_root_id, folder_path, country, file_name, tour_id,
@@ -60,12 +61,12 @@ async def test_copies_share_the_earliest_served_row_path(conn):
     dest = str(await c.fetchval("INSERT INTO shared.destinations (name, country, lat, lng) "
                                 "VALUES ('zz995 place', 'Vietnam', 10, 100) RETURNING id"))
     # Earliest copy is rejected or not served: it never becomes the canonical row.
-    await _photo(c, sha=SHA_A, status="rejected", age="3 days")
-    await _photo(c, sha=SHA_A, served=False, age="2 days")
-    first = await _photo(c, sha=SHA_A, tour_id=t1, age="1 day")
+    await _photo(c, sha=SHA_A, status="rejected", age=timedelta(days=3))
+    await _photo(c, sha=SHA_A, served=False, age=timedelta(days=2))
+    first = await _photo(c, sha=SHA_A, tour_id=t1, age=timedelta(days=1))
     second = await _photo(c, sha=SHA_A, tour_id=t2)
     on_place = await _photo(c, sha=SHA_A, destination_id=dest)
-    other = await _photo(c, sha=SHA_B, tour_id=t2, age="1 hour")
+    other = await _photo(c, sha=SHA_B, tour_id=t2, age=timedelta(hours=1))
     no_sha = await _photo(c, sha=None, tour_id=t1)
 
     rows = {r["photo_id"]: r["path"] for r in await c.fetch(
