@@ -235,6 +235,10 @@
     "capability": null,
     "module": "api.routers.admin_job_runner"
   },
+  "GET /admin/job-runner/released": {
+    "capability": null,
+    "module": "api.routers.admin_job_runner"
+  },
   "GET /admin/job-runner/retention": {
     "capability": null,
     "module": "api.routers.admin_job_runner"
