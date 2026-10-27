@@ -50,7 +50,7 @@ import structlog
 
 from services.acp_content_writing.hygiene import fold, phrase_tokens, proper_nouns
 from services.acp_shared.offered import OFFERED, evidence_status, single_status_line, status_line
-from services.acp_shared.place_cards import core_key, is_generic_name, place_key
+from services.acp_shared.place_cards import clean_identity, core_key, is_generic_name, place_key, unverifiable_claim
 from services.acp_shared.place_cards import fold as place_fold
 from services.acp_shared.seed_canon import canonical_facts, overnight_card_off_route
 
@@ -141,15 +141,32 @@ def _card_facts(card: Optional[dict]) -> list[str]:
 
 def writer_facts(card: Optional[dict]) -> list[str]:
     """AA-774 — the card facts rendered for the writer: `WRITER_FACT_KINDS` only (a missing kind
-    counts as what_it_is)."""
-    return [f["text"] for f in _card_fact_dicts(card) if (f.get("kind") or "what_it_is") in WRITER_FACT_KINDS]
+    counts as what_it_is). AA-784 (S253): minus present-tense status / administrative-role and authorship claims
+    (`place_cards.unverifiable_claim`) — the rule new cards are built with, applied to cards built before it — unless
+    an admin verified the card (its facts were read by a person)."""
+    keep_all = (card or {}).get("status") == "verified"
+    country = (card or {}).get("country")
+    return [f["text"] for f in _card_fact_dicts(card) if (f.get("kind") or "what_it_is") in WRITER_FACT_KINDS
+            and (keep_all or not unverifiable_claim(f["text"], country))]
+
+
+def writer_identity(card: dict, place: Optional[str] = None) -> tuple[str, str]:
+    """AA-784 (S253) — the card's (locality, region) as the writer sees them: minus a region that is not a first-level
+    division and a locality that is not the settlement the place is IN (`place_cards.clean_identity`, free, it only
+    ever clears) — the rule new cards are built with, applied to cards built before it, like `writer_facts` — unless
+    an admin verified the card."""
+    if card.get("status") == "verified":
+        return card.get("locality") or "", card.get("region") or ""
+    shown = {k: card.get(k) for k in ("display_name", "locality", "region")}
+    clean_identity(shown, place_names=(place.strip(),) if place and place.strip() else (), country=card.get("country"))
+    return shown.get("locality") or "", shown.get("region") or ""
 
 
 def _location_lines(place: Optional[str], country: Optional[str], card: Optional[dict]) -> list[str]:
     lines: list[str] = []
     if card and card.get("display_name"):
-        where = ", ".join(p for p in (card["display_name"], card.get("locality"), card.get("region"),
-                                       card.get("country")) if p)
+        locality, region = writer_identity(card, place)
+        where = ", ".join(p for p in (card["display_name"], locality, region, card.get("country")) if p)
         if place and place.strip() and place.strip().lower() != card["display_name"].lower():
             where += f" (the itinerary calls it {place.strip()})"
         lines.append(f"Location: {where} (do not place it in any other town, region or country)")
