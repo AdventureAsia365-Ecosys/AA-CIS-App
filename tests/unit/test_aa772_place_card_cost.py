@@ -359,7 +359,7 @@ def test_rejected_cards_are_never_reused():
 
 def _existing(status, **kw):
     return dict({"card_id": "c1", "place_key": "khovsgol|mongolia", "display_name": "Khövsgöl Lake",
-                 "locality": "Khatgal", "region": "Khövsgöl Province", "country": "Mongolia", "status": status,
+                 "locality": None, "region": "Khövsgöl Province", "country": "Mongolia", "status": status,
                  "cost_usd": 0.01}, **kw)
 
 
@@ -386,7 +386,8 @@ def test_key_conflict_with_a_rejected_card_and_a_new_identity_replaces_it():
     _ensure(db, FakeLLM(), ["a1"])
     card = db.cards["c1"]
     assert db.links["a1"]["card_id"] == "c1" and card["status"] == "auto_checked"
-    assert card["locality"] == "Khatgal" and card["facts"] == GOOD_CARD["facts"]
+    # AA-784: a lake has no locality — the drafted nearest town (Khatgal) is cleared before the check
+    assert card["locality"] is None and card["facts"] == GOOD_CARD["facts"]
 
 
 def test_atoms_linked_to_a_rejected_card_are_resolved_again():
