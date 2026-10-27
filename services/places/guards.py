@@ -51,7 +51,8 @@ BBOX = {
     "th": (5.3, 20.8, 97.1, 105.9), "vn": (8.2, 23.7, 101.9, 109.8),
     "id": (-11.3, 6.4, 94.7, 141.4), "my": (0.6, 7.7, 99.3, 119.6), "kg": (38.9, 43.6, 69.0, 80.6),
     "uz": (36.9, 45.9, 55.7, 73.5),
-    # Pakistan 23.7-37.1 N / 60.8-77.1 E (Gilgit-Baltistan to Karakoram; east edge stops short of Leh/Nubra), Philippines 4.6-21.1 N / 116.9-126.6 E
+    # Pakistan 23.7-37.1 N / 60.8-77.1 E (Gilgit-Baltistan to Karakoram; east edge stops short of Leh/Nubra),
+    # Philippines 4.6-21.1 N / 116.9-126.6 E
     # (Tawi-Tawi to Batanes, Palawan to Mindanao's east coast) — AA-990.
     "pk": (23.3, 37.4, 60.6, 77.4), "ph": (4.3, 21.4, 116.6, 126.9),
 }
