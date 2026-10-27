@@ -282,6 +282,7 @@ POLICY: dict[tuple[str, str], str] = {
     ("PATCH", "/admin/content-quality/tour-versions/{version_id}/signals/{signal_id}"): QUALITY_WRITE,
     ("POST", "/admin/content-quality/requests/{request_id}/regenerate-angles"): QUALITY_WRITE,
     ("POST", "/admin/content-quality/place-cards/build"): QUALITY_WRITE,
+    ("POST", "/admin/content-quality/place-cards/rebuild"): QUALITY_WRITE,  # AA-784
     ("PATCH", "/admin/content-quality/place-cards/{card_id}"): QUALITY_WRITE,
     ("PATCH", "/admin/content-quality/place-cards/{card_id}/facts"): QUALITY_WRITE,
     ("POST", "/admin/content-quality/place-cards/{keep_id}/merge"): QUALITY_WRITE,

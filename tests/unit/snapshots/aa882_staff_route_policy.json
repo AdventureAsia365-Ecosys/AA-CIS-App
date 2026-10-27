@@ -823,6 +823,10 @@
     "capability": "quality.write",
     "module": "api.routers.admin_content_quality"
   },
+  "POST /admin/content-quality/place-cards/rebuild": {
+    "capability": "quality.write",
+    "module": "api.routers.admin_content_quality"
+  },
   "POST /admin/content-quality/place-cards/{keep_id}/merge": {
     "capability": "quality.write",
     "module": "api.routers.admin_content_quality"
