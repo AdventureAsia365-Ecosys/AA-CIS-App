@@ -1130,6 +1130,16 @@ _REJECTED_CANDIDATES_SQL = """
 """
 
 
+def same_country(a: Optional[str], b: Optional[str]) -> bool:
+    """AA-784 — one country written two ways: equal folded, or both resolve to the same canonical shared.countries
+    name ('Russia' == 'Russian Federation', 'Viet Nam' == 'Vietnam'). A compound ('Nepal and China') resolves to
+    nothing, so it only equals itself."""
+    if fold(a) == fold(b):
+        return True
+    ca, cb = _countries.resolve(a), _countries.resolve(b)
+    return ca is not None and cb is not None and ca.name == cb.name
+
+
 def _compound_includes(card_country: Optional[str], country: str) -> bool:
     """The stored card's country is a COMPOUND (pre-AA-990: 'Nepal and China') that names `country`."""
     if _countries.resolve(card_country) is not None:
@@ -1254,10 +1264,10 @@ async def _draft_checked(rep: dict, place_names: tuple, pool, signal: dict, *,
     if not name or not country:
         return out
     if keep is not None:
-        if fold(country) != fold(keep["country"]):
+        if not same_country(country, keep["country"]):
             logger.info("place_card_rebuild_country_changed", place=rep["place"], card=keep["display_name"],
                         stored=keep["country"], drafted=country)
-            return dict(out, outcome="country_changed")
+            return dict(out, outcome="country_changed", drafted_country=country)
         name, country = keep["display_name"], keep["country"]
         card["display_name"], card["country"] = name, country
     card["facts"] = _clean_facts(card.get("facts"), name)
@@ -1490,6 +1500,14 @@ _REBUILD_UPDATE_SQL = """
     RETURNING card_id
 """
 _ADD_COST_SQL = "UPDATE acp_shared.place_card SET cost_usd = cost_usd + $2, updated_at = now() WHERE card_id = $1::uuid"
+# AA-784 (S254): the rule-only placement clean-up of a card whose draft named another country — locality / region
+# only; name, country, naming_note and facts stay as stored.
+_REBUILD_PLACEMENT_SQL = """
+    UPDATE acp_shared.place_card
+    SET locality = $2, region = $3, cost_usd = cost_usd + $4, updated_at = now()
+    WHERE card_id = $1::uuid AND status = 'auto_checked'
+    RETURNING card_id
+"""
 
 
 def _identity(row) -> dict:
@@ -1515,6 +1533,8 @@ async def _rebuild_one(row, pool) -> dict:
     res = await _draft_checked(rep, tuple(dict.fromkeys(a["place"] for a in atoms)), pool, signal,
                                keep={"display_name": row["display_name"], "country": row["country"]})
     out["cost_usd"] = res["cost"]
+    if res["outcome"] == "country_changed":
+        return await _clean_placement_only(row, atoms, res, out, pool)
     async with pool.acquire() as conn:
         if res["outcome"] != "ok":
             await conn.execute(_ADD_COST_SQL, card_id, res["cost"])
@@ -1535,11 +1555,40 @@ async def _rebuild_one(row, pool) -> dict:
                 facts_from="new_check" if res["facts"] else "old_filtered")
 
 
+async def _clean_placement_only(row, atoms: list[dict], res: dict, out: dict, pool) -> dict:
+    """AA-784 (S254) — the draft placed the card in another country (mostly a legacy compound-country card, 'Nepal and
+    China', which AA-990 drafts never match): the guard still refuses the draft — its name, country, note and facts are
+    not used — but the identity rules (clean_identity: cross-border 'A / B', region / locality rules) are applied to the
+    STORED locality and region, so a stale value ('Korean Peninsula', 'Khumbu') is cleared. Free: no check call. A
+    rule only ever empties a field, never writes a new value. 'country_changed' when nothing is cleared."""
+    card = {"display_name": row["display_name"], "country": row["country"],
+            "locality": row["locality"] or "", "region": row["region"] or ""}
+    cleared = clean_identity(card, place_names=tuple(dict.fromkeys(a["place"] for a in atoms)),
+                             country=row["country"])
+    async with pool.acquire() as conn:
+        if not cleared:
+            await conn.execute(_ADD_COST_SQL, out["card_id"], res["cost"])
+            return dict(out, outcome="country_changed", drafted_country=res.get("drafted_country"))
+        locality, region = card["locality"].strip() or None, card["region"].strip() or None
+        updated = await conn.fetchval(_REBUILD_PLACEMENT_SQL, out["card_id"], locality, region, res["cost"])
+        if updated is None:
+            await conn.execute(_ADD_COST_SQL, out["card_id"], res["cost"])
+            return dict(out, outcome="status_changed")
+    after = {"locality": locality, "region": region, "naming_note": row["naming_note"],
+             "facts": out["before"]["facts"]}
+    logger.info("place_card_placement_cleaned", card_id=out["card_id"], card=row["display_name"],
+                stored_country=row["country"], drafted_country=res.get("drafted_country"), before=out["before"],
+                after=after, cleared=cleared)
+    return dict(out, outcome="country_changed_cleaned", drafted_country=res.get("drafted_country"), after=after,
+                cleared=cleared)
+
+
 async def rebuild_place_cards(card_ids: list[str], pool) -> dict:
     """AA-784 — re-draft and re-check named cards IN PLACE under the current prompts and identity rules (one paid
     draft + one check per card, ≤ REBUILD_MAX_CARDS). The card keeps its card_id, place_key, display_name, country,
     atom links and aliases — only locality, region, naming_note and facts change (the checked draft is held to the
-    stored name and country; a draft placing it in another country changes nothing: 'country_changed'). Verified /
+    stored name and country; a draft placing it in another country is refused, and only the identity rules clear the
+    stored locality / region: 'country_changed_cleaned', or 'country_changed' when nothing breaks them). Verified /
     rejected cards and generic-name cards are skipped. A miss (no_name / identity_rejected) leaves the card as it was
     and is reported, never stored as a place_card_miss (the place has a card). Returns counters + one row per card."""
     ids = [c for c in dict.fromkeys(str(c) for c in card_ids or []) if c]
