@@ -444,7 +444,9 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     `POST /admin/job-runner/rds-role-connections/schedule` -> job `ops_rds_role_connections` -> worker),
     both now removed. `@job_kind(..., deploy_gate_exempt=True)` stays as a mechanism (the pre-deploy
     guard `GET /admin/job-runner/deploy-gate` skips and lists such kinds in `exempt_kinds`); no kind
-    uses it today.
+    uses it today. AA-990: the guard also sets apart queued rows due more than 1 h ahead
+    (`queue.DEPLOY_GATE_HORIZON_S`, reported as `scheduled_later`): a deploy cannot interrupt them. Today that is
+    only the `place_geocode` run queued for the next Geoapify credit reset.
   - The worker runs as its own ECS service `aa-cis-dev-worker` (`python -m shared.jobs.worker`,
     AA-651); the API task sets `JOB_WORKER_IN_API=false`. The in-API loop (FastAPI lifespan) still
     exists for local/dev use.
@@ -602,7 +604,12 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   otherwise the model's point stays (`llm`, `geo_precision='area'` — never drawn as a pin; hard kinds
   such as temple / pass / lake / village get `review_reason` for `/admin/places`). Generic phrases
   ("ger camp", "local market") are not geocoded. Free plan 3,000 credits/day: ≤ 5 req/s, retry on
-  429/5xx, daily credit guard 2,500 (UTC day, `geo.geocode_call`). Key: Secrets Manager
+  429/5xx, daily credit guard 2,500 (UTC day, `geo.geocode_call`); AA-990: a run stopped by it with names still
+  due queues the next run for 00:10 UTC + jitter (`enqueue.enqueue_after_credit_reset`, one row per reset day, queued
+  geocode rows moved there too), and the data coverage page flags names due for > 24 h (`geo.names_stalled`). The
+  locate answer is read leniently (`locate.json_object`, re-spelt keys by `name_norm`), an unreadable batch is asked
+  again as two halves, and a name without a point carries its reason (`unknown_to_model` = null,
+  `missing_in_answer`, `malformed_answer`, `not_aa_country:<c>`). Key: Secrets Manager
   `aa-cis/dev/geoapify` (plain string), worker task role reads it; never logged. **Attribution
   required wherever these coordinates are shown (CIS admin and every consumer, TripPlanner first):
   "Powered by Geoapify" (link) + "© OpenStreetMap contributors"** — also kept per row in

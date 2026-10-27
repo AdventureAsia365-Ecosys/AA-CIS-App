@@ -40,16 +40,28 @@ async def test_active_count_sums_queued_and_running():
         {"status": "running", "n": 1},
     ])
     out = await queue.active_count(pool)
-    assert out == {"active": 3, "by_status": {"queued": 2, "running": 1}}
-    # No time window: the guard must see every outstanding job, however old.
+    assert out == {"active": 3, "by_status": {"queued": 2, "running": 1}, "scheduled_later": 0}
+    # No lower time bound: the guard must see every outstanding job, however old. AA-990: only a queued row due more
+    # than DEPLOY_GATE_HORIZON_S AHEAD is set apart (scheduled_later), never an old one.
     sql = pool.fetch.call_args[0][0]
-    assert "interval" not in sql.lower()
+    assert "now() -" not in sql and "run_after <" not in sql
+    assert "run_after > now() + make_interval(secs => $2)" in sql
+    assert pool.fetch.call_args[0][2] == queue.DEPLOY_GATE_HORIZON_S
     assert "status IN ('queued', 'running')" in sql
 
 
 @pytest.mark.asyncio
+async def test_active_count_sets_far_future_queued_rows_apart():
+    """AA-990: the place_geocode run queued for the next Geoapify credit reset (up to ~24 h ahead) does not block."""
+    pool = _pool_with_counts([{"status": "scheduled_later", "n": 1}])
+    assert await queue.active_count(pool) == {"active": 0, "by_status": {}, "scheduled_later": 1}
+    pool = _pool_with_counts([{"status": "scheduled_later", "n": 1}, {"status": "queued", "n": 2}])
+    assert await queue.active_count(pool) == {"active": 2, "by_status": {"queued": 2}, "scheduled_later": 1}
+
+
+@pytest.mark.asyncio
 async def test_active_count_zero_when_idle():
-    assert await queue.active_count(_pool_with_counts([])) == {"active": 0, "by_status": {}}
+    assert await queue.active_count(_pool_with_counts([])) == {"active": 0, "by_status": {}, "scheduled_later": 0}
 
 
 @pytest.mark.asyncio
@@ -69,7 +81,7 @@ async def test_deploy_gate_safe_when_idle():
     pool = _pool_with_counts([])
     result = await admin_job_runner.deploy_gate(_make_request(pool), x_admin_secret=_TEST_SECRET)
     # AA-832: exempt kinds (deploy_gate_exempt) are listed, not counted; AA-751: none left
-    assert result == {"active": 0, "by_status": {}, "safe_to_deploy": True, "exempt_kinds": []}
+    assert result == {"active": 0, "by_status": {}, "scheduled_later": 0, "safe_to_deploy": True, "exempt_kinds": []}
 
 
 @pytest.mark.asyncio
