@@ -39,14 +39,12 @@ export const WRITING_MEMORY_GUIDE: GuideContent = {
       heading: "How it works, in 6 steps",
       blocks: [
         { kind: "flow", steps: [
-          "Human edits and gate failures",
-          "Signals",
+          "Capture (edits, gate failures → signals)",
           "Fact filter",
-          "Clusters",
-          "Candidate rules (Mine rules)",
-          "Check: lint + R0",
-          "Go live: Activate (L0), or a release (evaluate → approve → activate)",
-          "Writers use the rule",
+          "Cluster",
+          "Draft (Mine rules)",
+          "Check (lint + R0)",
+          "Go live (Activate (L0) or a release)",
         ] },
         { kind: "list", ordered: true, items: [
           "Capture. An admin cuts or rewrites a sentence of a T2 or T9 piece, or edits an A1 field. Each change is "
@@ -76,9 +74,8 @@ export const WRITING_MEMORY_GUIDE: GuideContent = {
           "An L0 rule: open it in Candidates (status filter: active), type a reason, click Roll back. The next write "
             + "no longer gets it.",
           "A release: rolling it back makes the previous release active again. No deploy is needed. Release 0 has "
-            + "no previous release, so its rollback is refused (409 no_previous): turn that writer's memory switch "
-            + "off instead. Every active platform release today is a release 0. Today an agent does both through the "
-            + "API.",
+            + "no previous release, so it cannot be rolled back: turn that writer's memory switch off instead. Until "
+            + "the Releases tab arrives, an agent does both through the API.",
         ] },
       ],
     },
@@ -127,7 +124,7 @@ export const WRITING_MEMORY_GUIDE: GuideContent = {
             + "banned is the Rule text itself, not the match phrases. 'Save and lint' runs the lint again. If the "
             + "lint fails, the rule becomes rejected, recorded as rejected by you (not by the lint). So the next "
             + "Mine rules run drafts its cluster again, with a new paid call. If the edit contains tenant text, a "
-            + "tenant brand name or a forbidden word, or is too long, nothing is saved and an error shows (422).",
+            + "tenant brand name or a forbidden word, or is too long, nothing is saved and an error message says why.",
           "Reject (candidates): type a reason (at least 3 characters), then click Reject.",
           "Run R0: free, no model call. For a T9 rule it replays the rule over the newest 300 stored T9 pieces "
             + "(approved or held, last 90 days) and the writer's signals. For an A1 or T2 rule it reads the signals "
@@ -136,7 +133,8 @@ export const WRITING_MEMORY_GUIDE: GuideContent = {
           "Activate (L0): only for a lexicon rule of t9_blog or t9_social. It stays greyed out, with 'Not "
             + "activatable yet: …', until every activation condition holds (listed under 'Reading the statuses and "
             + "badges'). After the click, the next T9 write gets the rule. A rule with Scope Platform reaches every "
-            + "tenant's T9 writes, so it needs Nghiệp's OK before you click. The page does not check this.",
+            + "tenant's T9 writes, so it needs the program owner's (Nghiệp's) OK before you click. The page does not "
+            + "check this.",
           "Roll back (active rules only): type a reason (at least 3 characters), then click. The rule becomes "
             + "rejected, and the next write no longer gets it.",
           "Provenance: every signal behind the rule, with its source and its before/after. Read it before you "
@@ -148,8 +146,8 @@ export const WRITING_MEMORY_GUIDE: GuideContent = {
         { kind: "subheading", text: "What an active L0 rule does" },
         { kind: "list", items: [
           "The phrase joins the brand's 'Never use' words for T9 writes. A platform rule reaches every tenant's T9 "
-            + "writes. A tenant rule reaches only that tenant's. When the rule lists channels (applies_to), it "
-            + "applies only on those channels.",
+            + "writes. A tenant rule reaches only that tenant's. When the rule lists channels, it applies only "
+            + "on those channels.",
           "With a replacement, the writer is also told 'Write X instead of Y'.",
           "If the phrase still appears, the lexicon gate flags it as blocking, and the repair step can fix it.",
           "It is skipped when the phrase is one of the tenant's signature words, or part of the CTA, the brand name "
@@ -249,8 +247,8 @@ export const WRITING_MEMORY_GUIDE: GuideContent = {
           "Platform rule from tenant signals: the same problem in at least 3 different tenants.",
           "Platform rule from AA's own human signals (A1, and the AA master tenant's own T2 and T9 pieces): at least "
             + "2 different reviewers.",
-          "Platform rule from A1 gate failures: on at least max(2, 5% of the A1 pieces of the last 30 days, rounded "
-            + "up) different pieces.",
+          "Platform rule from A1 gate failures: on at least 2 different pieces, or on 5% of the A1 pieces of the "
+            + "last 30 days (rounded up), whichever is more.",
         ] },
         { kind: "callout", tone: "warning", title: "Code and ADR differ here",
           text: "ADR 0010 names A1 only for the reviewers threshold. The code counts every human signal on AA's own "
@@ -360,9 +358,9 @@ export const WRITING_MEMORY_GUIDE: GuideContent = {
           "When the mining job has finished (Platform › Jobs), open Candidates. For each rule, read it and its "
             + "Provenance. Edit it if the wording is off. Reject it, with a reason, if it is wrong.",
           "For a T9 lexicon candidate you agree with: Run R0 (outside a wave), reopen the drawer, and check the R0 "
-            + "panel. If its Scope is Platform, get Nghiệp's OK first: every platform rule needs it, and the page "
-            + "does not enforce this. If 'Not activatable yet' is gone and the rule would not fire in the wrong "
-            + "places, click Activate (L0).",
+            + "panel. If its Scope is Platform, get the program owner's OK first: every platform rule needs it, and "
+            + "the page does not enforce this. If 'Not activatable yet' is gone and the rule would not fire in the "
+            + "wrong places, click Activate (L0).",
           "Set the status filter to active. Check that the live rules still make sense. Roll back any that hurt.",
           "Glance at the spend tile.",
         ] },
@@ -378,8 +376,8 @@ export const WRITING_MEMORY_GUIDE: GuideContent = {
       id: "not-in-ui",
       heading: "Not on this page yet",
       blocks: [
-        { kind: "paragraph", text: "Some steps have no button yet. On Nghiệp's request, an agent does them through the "
-          + "API or a command-line tool." },
+        { kind: "paragraph", text: "Some steps have no button yet. On the program owner's request, an agent does them "
+          + "through the API or a command-line tool." },
         { kind: "subheading", text: "Done by an agent today" },
         { kind: "list", items: [
           "Releases: create, attach evidence, approve, activate, roll back, reject. A Releases tab is planned.",
@@ -408,26 +406,20 @@ export const WRITING_MEMORY_GUIDE: GuideContent = {
             + "shadow runs.",
           "Every release needs one approval by a signed-in admin. None goes live by itself. One exception: an empty "
             + "release (no rules), whatever its number or owner, may be approved by an agent when it carries a "
-            + "reference to Nghiệp's decision. Two command-line tools do this: the release 0 tool (it approved the "
-            + "platform release 0) and the rollback drill (it approved the test tenant's releases 0 and 1).",
+            + "reference to the program owner's decision. Two command-line tools do this: the release 0 tool (it "
+            + "approved the platform release 0) and the rollback drill (it approved the test tenant's releases 0 and "
+            + "1).",
           "One regular release per writer and owner per month (the monthly train). Lexicon rules, emergencies and "
             + "rollbacks do not wait for it.",
           "A live release is flagged 'reverify' when the golden set, a model route or the gates changed since its "
             + "evidence. It keeps serving until it is checked again.",
           "A tenant release holds only that tenant's rules. A platform rule built from tenant signals needs at least "
-            + "3 tenants. Every platform-scope rule, in a release or through Activate (L0), needs Nghiệp's OK first "
-            + "(ADR 0010 decision 10). The page does not enforce this.",
-        ] },
-        { kind: "subheading", text: "State on 27/10/2026" },
-        { kind: "list", items: [
-          "Release 0 (empty) is active on the platform for all four writers (a1, t2, t9_blog, t9_social), with the "
-            + "memory switch on. It was approved through the release 0 tool, on Nghiệp's decision.",
-          "Its prompts are byte-for-byte the same as without memory, so the writers' output has not changed.",
-          "The rollback drill passed on one test tenant.",
-          "No active L0 rule on record; few or no clusters so far.",
+            + "3 tenants. Every platform-scope rule, in a release or through Activate (L0), needs the program owner's "
+            + "OK first (ADR 0010 decision 10). The page does not enforce this.",
         ] },
         { kind: "callout", tone: "note",
-          text: "This comes from the release 0 record, not a live read. The tiles and tables above are live." },
+          text: "Release 0 is an empty release: while it is the active release, the writers' output is exactly the "
+            + "same as with no memory." },
       ],
     },
   ],

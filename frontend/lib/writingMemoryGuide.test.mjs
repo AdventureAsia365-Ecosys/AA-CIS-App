@@ -19,11 +19,32 @@ test("six sections in order, then the glossary", () => {
     "Scope"]) assert.ok(guide.glossary.some((g) => g.term === t), t);
 });
 
-test("the loop opens with a diagram from edits to the writers", () => {
-  const flow = section("loop").blocks.find((b) => b.kind === "flow");
+test("the loop diagram and the numbered steps under it name the same 6 steps", () => {
+  const loop = section("loop");
+  const flow = loop.blocks.find((b) => b.kind === "flow");
+  const list = loop.blocks.find((b) => b.kind === "list" && b.ordered);
   assert.ok(flow, "loop has a flow");
+  assert.ok(list, "loop has a numbered list");
+  const n = Number(/in (\d+) steps/.exec(loop.heading)?.[1]);
+  assert.equal(flow.steps.length, n, "the heading counts the diagram's boxes");
+  assert.equal(list.items.length, n, "the heading counts the numbered steps");
+  // Each numbered step opens with the name of its box ("Capture (edits…)" → "Capture. …").
+  flow.steps.forEach((step, i) => {
+    const name = step.replace(/\s*\(.*$/, "");
+    assert.ok(list.items[i].startsWith(name), `step ${i + 1}: "${name}"`);
+  });
   assert.match(flow.steps[0], /edits/);
-  assert.match(flow.steps.at(-1), /Writers/);
+  assert.match(flow.steps.at(-1), /Go live/);
+});
+
+test("no dated snapshot in the guide: it is shown in the product and would go stale", () => {
+  assert.doesNotMatch(text, /\b\d{1,2}\/\d{1,2}\/20\d\d\b/, "no dd/mm/yyyy date");
+  assert.doesNotMatch(text, /State on/);
+});
+
+test("plain words: no HTTP codes or field names the page does not show", () => {
+  for (const re of [/\b(409|422)\b/, /no_previous/, /applies_to/, /max\(2/])
+    assert.doesNotMatch(text, re, String(re));
 });
 
 test("one control card per header button, with the page's labels", () => {

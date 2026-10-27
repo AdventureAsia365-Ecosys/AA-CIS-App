@@ -8,7 +8,8 @@
 // everything wraps, nothing scrolls sideways, and long words break.
 
 import { AlertTriangle, ArrowRight, Info } from "lucide-react";
-import { BTN_RADIUS, K, RADIUS, alpha, sans } from "./tokens";
+import { K, RADIUS, alpha, sans } from "./tokens";
+import { TONE } from "./primitives";
 import {
   GUIDE_CONTROL_CAPTIONS, GUIDE_GLOSSARY_HEADING, GUIDE_GLOSSARY_ID, GUIDE_TOC_MIN_SECTIONS, guideAnchor, guideOutline,
   type GuideBlock, type GuideContent, type GuideTerm,
@@ -16,10 +17,12 @@ import {
 
 const PROSE: React.CSSProperties = { margin: "8px 0", color: K.body };
 
+/** A label the page prints, shown as a neutral pill (same tone as the kit Badge, without its caps). */
 function Chip({ children }: { children: React.ReactNode }) {
+  const t = TONE.neutral;
   return (
-    <span style={{ display: "inline-block", padding: "1px 9px", borderRadius: 999, background: K.neutralBg,
-      color: K.neutralFg, fontSize: 12, fontWeight: 500, lineHeight: "20px" }}>
+    <span style={{ display: "inline-block", padding: "1px 9px", borderRadius: RADIUS.pill, background: t.bg,
+      color: t.fg, fontSize: 12, fontWeight: 500, lineHeight: "20px" }}>
       {children}
     </span>
   );
@@ -80,12 +83,10 @@ function Flow({ steps }: { steps: string[] }) {
 function Control({ b }: { b: Extract<GuideBlock, { kind: "control" }> }) {
   const rows = (["does", "cost", "when", "avoid"] as const).filter((k) => b[k]);
   return (
-    <div style={{ margin: "12px 0", padding: "12px 14px", borderRadius: 10, border: `1px solid ${K.line}`,
+    <div style={{ margin: "12px 0", padding: "12px 14px", borderRadius: RADIUS.lg, border: `1px solid ${K.line}`,
       background: K.bg }}>
-      <span style={{ display: "inline-block", padding: "3px 12px", borderRadius: BTN_RADIUS,
-        border: `1px solid ${K.line}`, background: K.card, color: K.ink, fontSize: 12.5, fontWeight: 600 }}>
-        {b.label}
-      </span>
+      {/* Plain bold text, not a button look-alike: the card describes the page's button, it is not clickable. */}
+      <div style={{ color: K.ink, fontSize: 13.5, fontWeight: 600 }}>{b.label}</div>
       <dl style={{ margin: "8px 0 0", display: "grid", gap: 8 }}>
         {rows.map((k) => (
           <div key={k}>
@@ -145,14 +146,16 @@ export function GuidePanel({ content, testId = "guide-panel" }: { content: Guide
   const outline = guideOutline(content);
   const n = new Map(outline.map((o) => [o.id, o.n]));
   return (
-    <article data-testid={testId} aria-label={content.title}
+    <article data-testid={testId} aria-labelledby={`${testId}-title`}
       style={{ maxWidth: 880, minWidth: 0, boxSizing: "border-box", padding: "clamp(14px, 3vw, 24px)",
         background: K.card, border: `1px solid ${K.line}`, borderRadius: RADIUS.lg, fontFamily: sans,
         fontSize: 13.5, lineHeight: 1.6, color: K.body, overflowWrap: "anywhere" }}>
-      <h2 style={{ margin: 0, fontSize: 19, fontWeight: 600, color: K.ink }}>{content.title}</h2>
+      <h2 id={`${testId}-title`} style={{ margin: 0, fontSize: 19, fontWeight: 600, color: K.ink }}>
+        {content.title}
+      </h2>
       {content.intro && <p style={{ margin: "6px 0 0", color: K.muted }}>{content.intro}</p>}
       {outline.length >= GUIDE_TOC_MIN_SECTIONS && (
-        <nav aria-label="On this page" style={{ marginTop: 16, padding: "12px 14px", borderRadius: 10,
+        <nav aria-label="On this page" style={{ marginTop: 16, padding: "12px 14px", borderRadius: RADIUS.lg,
           border: `1px solid ${K.line}`, background: K.bg }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: K.muted, marginBottom: 6 }}>On this page</div>
           <ol style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: "4px 16px",
