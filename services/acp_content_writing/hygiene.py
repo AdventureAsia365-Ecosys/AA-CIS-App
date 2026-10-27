@@ -2367,10 +2367,24 @@ TEMPLATE_LINE_RES = tuple(re.compile(p, re.I) for p in (
 # booking / limit / footing / weather word, or a day / time / season word, makes the sentence a fact.
 _ATTENTION_FACT_NEG = (r"(?![^\n]*\b(?:book(?:s|ing|ed)?|limited|seats?|footing|wet|rain(?:s|y)?|slippery|muddy|icy"
                        r"|permits?|tickets?|reserv(?:e|ed|ations?)|queues?|weather|safety|sell\s+out|sells\s+out)\b)")
-# AA-790 round 7 — a modifier that states a fact about the stop, never a verdict ('a short, optional stop').
+# AA-790 round 7 — the stop verdict ('… is a structured, accessible stop'). It fires only when one of the two stacked
+# adjectives is in a CLOSED lexicon of verdict adjectives (the words of the diagnosed Terra closers plus their close
+# kin), never on an open-ended "any adjective but a fact" rule: 'a small, family-run stop', 'a busy, open-air stop',
+# 'a large, modern institution' are seed facts and stay out. The other adjective must not be a fact about the stop
+# ('a short, calm stop' stays out). Each word ends at _STOP_ADJ_END, so 'free-flowing' is not 'free' and 'easier'
+# is not 'easy'.
+_STOP_ADJ_END = r"(?![\w'’-])"
+_STOP_VERDICT_ADJ = (r"(?:(?:well-)?structured|accessible|purposeful|(?:well-)?organi[sz]ed|dependable|reliable|stable"
+                     r"|straightforward|grounded|settled|welcoming|calm|easy(?:-to-navigate|-going)?|manageable"
+                     r"|meaningful|rewarding|enriching|worthwhile|engaging|reassuring|orderly|approachable"
+                     r"|(?:well-)?respected|trusted)" + _STOP_ADJ_END)
+# A modifier that states a fact about the stop, never a verdict ('a short, optional stop').
 _STOP_FACT_ADJ = (r"(?:optional|included|scheduled|short|brief|quick|long|full-day|half-day|overnight|lunch|dinner"
                   r"|paid|free|guided|private|steep|early|late|final|first|last|second|third|morning|afternoon"
-                  r"|evening|[\w-]*\d[\w-]*)")
+                  r"|evening|[\w-]*\d[\w-]*)" + _STOP_ADJ_END)
+_STOP_OTHER_ADJ = rf"(?!{_STOP_FACT_ADJ})[a-z][\w'’-]*"
+_STOP_ADJ_PAIR = (rf"(?:{_STOP_VERDICT_ADJ},\s+(?:and\s+)?{_STOP_OTHER_ADJ}"
+                  rf"|{_STOP_OTHER_ADJ},\s+(?:and\s+)?{_STOP_VERDICT_ADJ})")
 _SCHEDULE_NEG = (r"(?![^\n]*\b(?:mondays?|tuesdays?|wednesdays?|thursdays?|fridays?|saturdays?|sundays?|weekends?"
                  r"|weekdays?|today|tonight|tomorrow|mornings?|afternoons?|evenings?|nights?|daily|days?|weeks?"
                  r"|months?|seasons?|ramadan|lent|holidays?|festivals?|during|until|till|after|before|when|while"
@@ -2536,12 +2550,13 @@ AI_TELL_LINE_RES = tuple(re.compile(p, re.I) for p in (
     r"(?:\s+(?:in\s+(?:this|it|that|any\s+of\s+(?:this|it))|here|about\s+(?:it|this|that)))?"
     r"(?:\s*,\s*(?:and\s+)?no\b|(?<=this|that|here)\s*[.!]|(?<=\sit)\s*[.!])",
     # AA-790 round 7 (S254) — a stop summed up by two stacked adjectives instead of a fact: 'the institute is a
-    # structured, accessible stop', 'it is an organised, purposeful stop', 'which makes it a calm, easy-to-navigate
-    # part of the day' (20 of 42 Terra LinkedIn posts of rounds 1-6, copied from the angle brief). Structure: a copula /
-    # 'as' / 'makes it' + 'a ADJ, ADJ' + a trip unit noun. Never a modifier that is itself a fact ('a short, optional
-    # stop', 'a 30-minute, guided visit', 'a final, overnight stop').
-    rf"\b(?:is|was|as|makes?\s+(?:it|this|that|the\s+[\w-]+)|becomes?|remains?)\s+(?:a|an)\s+(?!{_STOP_FACT_ADJ}\b)"
-    rf"[a-z][\w'’-]*,\s+(?:and\s+)?(?!{_STOP_FACT_ADJ}\b)[a-z][\w'’-]*\s+(?:stop|visit|institution|part\s+of\s+"
+    # structured, accessible stop', "it's an organised, purposeful stop", 'which makes it a calm, easy-to-navigate
+    # part of the day' (20 of 42 Terra LinkedIn posts of rounds 1-6, copied from the angle brief). Structure: a copula
+    # (also "it's" / "that's" / "there's") / 'as' / 'makes it' + 'a ADJ, ADJ' + a trip unit noun, where one
+    # ADJ is a verdict word (_STOP_VERDICT_ADJ, a closed list) and the other is not a fact about the stop
+    # (_STOP_FACT_ADJ: 'a short, calm stop', 'a free, welcoming visit' stay out).
+    r"\b(?:is|was|as|(?:it|that|this|there)['’]s|makes?\s+(?:it|this|that|the\s+[\w-]+)|becomes?|remains?)"
+    rf"\s+(?:a|an)\s+{_STOP_ADJ_PAIR}\s+(?:stop|visit|institution|part\s+of\s+"
     r"(?:the|a|any|your|this)\s+(?:family\s+)?(?:day|trip|itinerary|journey|route|visit))\b",
     # 'After the ride, lunch is at <place>.' (a prompt slot the writer copied; see PLACEHOLDER_SLOT_PATTERN)
     PLACEHOLDER_SLOT_PATTERN,

@@ -160,10 +160,11 @@ def finish(text: str, row: dict, args: dict) -> tuple[str, list[str], dict]:
     return strip_citation_tags(text), log, writer_census
 
 
-def call_writer(row: dict, args: dict, model_tier: Optional[str], run_id: str) -> dict:
+def call_writer(row: dict, args: dict, model_tier: Optional[str], run_id: str, arm: str = "") -> dict:
     """One writer call through the gateway (AA-927 canonical pattern): the row is written once the reply is parsed;
     a reply that came back (billed) but cannot be parsed writes a billed_unusable row in the except branch and
-    re-raises. A call that raises inside ``generate()`` is logged by the gateway itself."""
+    re-raises. A call that raises inside ``generate()`` is logged by the gateway itself. ``arm`` goes into the
+    quality signal, so the wave-report cost per arm comes from ``quality_signal->>'arm'``."""
     from services.acp_content_writing import generate
     from services.acp_content_writing.prompts import SYSTEM_PROMPT, build_user_prompt
     from shared.llm_client.call_log import record_call_sync, record_unusable_sync
@@ -173,7 +174,7 @@ def call_writer(row: dict, args: dict, model_tier: Optional[str], run_id: str) -
     channel = args["channel_style"]["channel"]
     user = build_user_prompt(**args)
     signal = {"aa790_run": run_id, "piece": row["piece_id"], "channel": channel, "mode": "repanel_write",
-              "lead_focus": bool(args.get("lead_focus"))}
+              "lead_focus": bool(args.get("lead_focus")), "arm": arm}
     resp = LLMClient().generate(LLMRequest(system_prompt=SYSTEM_PROMPT, user_prompt=user, stage=STAGE,
                                            model_tier=model_tier, max_tokens=generate.max_tokens_for(channel)))
     try:
@@ -211,7 +212,8 @@ def main() -> int:
     ap.add_argument("--max-usd", type=float, default=2.0)
     ap.add_argument("--out", default="/tmp/aa790-repanel.json")
     ap.add_argument("--s3", help="also upload the JSON to this s3://bucket/key")
-    ap.add_argument("--arm", default="", help="a label stored on every row (round 7: 'r6b' control, 'r7')")
+    ap.add_argument("--arm", default="", help="a label stored on every row and in the llm_call_log quality_signal "
+                                              "(round 7: 'r6b' control, 'r7')")
     a = ap.parse_args()
 
     from services.acp_content_writing import ai_tells
@@ -264,7 +266,7 @@ def main() -> int:
             continue
         t0 = time.monotonic()
         try:
-            w = call_writer(r, args, model_tier, run_id)
+            w = call_writer(r, args, model_tier, run_id, a.arm)
         except Exception as e:  # noqa: BLE001 — recorded per piece, the run goes on
             spent += est  # a billed failure is logged by the gateway; reserve its estimate against the cap
             rec["error"] = f"{type(e).__name__}: {str(e)[:300]}"

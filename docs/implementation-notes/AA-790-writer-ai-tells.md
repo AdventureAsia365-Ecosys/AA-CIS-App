@@ -1626,9 +1626,14 @@ makes the Terra LinkedIn closer.
 - **R7-D2: the BRAND FOCUS block** (`ai_tells.brand_focus_points` / `brand_focus_rule`), last among the brand blocks
   (after PACE / RESTRAINT, BRAND TEXTURE and FAMILY BRAND), before the channel format. Targets D-c.
   - The points are the style guide's own first rules, in its own words: every line (or sentence) up to the first
-    header ("Write like this:", "Avoid:", "Examples: …": a label of at most five words before a colon). Bullets and
-    numbers are dropped; a line that quotes an example sentence is skipped (the brand block keeps the examples and says
-    they are never copy); at most 8 points, each 2+ words and at most 200 characters. Generic: it reads the pack, no
+    header. A header is a label of at most five words before a colon with nothing after it ("Write like this:",
+    "Avoid:"), or a known example / don't label with text after it ("Avoid: hype.", "Examples: …", "Don't: …",
+    "Never: …"); a "Label: rule" line ("Tone: warm and calm.", "Explain the pace: day lengths, rest.") is a point
+    (review fix R7-F3). Bullets and numbers are dropped; a line that quotes an example sentence (4+ words in quotes,
+    or an unclosed quote) is skipped (the brand block keeps the examples and says they are never copy), a quoted
+    word ('Use "you" for the traveller.') is not; sentences split at . ! ? before a word that does not start in lower
+    case and never after e.g. / i.e. / vs. / St. / Mt. / approx. / incl.; at most 8 points, each 2+ words and at most
+    200 characters. Generic: it reads the pack, no
     tenant name, no per-brand word list. On the four test brands it gives 5 / 4 / 5 / 6 points, exactly the "do"
     section of each guide.
   - How to meet them: only with what the seed or FACTS give (a day number, a walking or driving time, where the night
@@ -1642,16 +1647,23 @@ makes the Terra LinkedIn closer.
   back to the traveller within two sentences" line becomes one constant (`BRAND_TEXTURE_COMMON` is rebuilt from it,
   byte-identical, tested by sha). `brand_focus_rule` appends it, behind its own lead-in ("One more rule for this
   brand (not from its style guide):"), only when `brand_textures(pack)` is empty, so a family brand (D-d) gets it
-  and every prompt with a focus or texture block has it exactly once (tested: 5 packs × 8 channels).
+  and every prompt with a focus or texture block has it exactly once (tested: 5 packs × 8 channels). **Limit:** the
+  line rides the focus block, so a brand with no texture block AND no style-guide point (empty style guide, or one
+  that opens with a header) still gets no traveller line. That is on purpose for now: those packs' prompts stay
+  byte-identical to round 6 (the round-5/6 pins and the aa919 snapshot hold for them), and every panel brand has
+  points. If a no-guide family brand shows the encyclopedic pattern, emit the line on its own and move the pins.
 - **R7-D4: ATMOSPHERE asks for ordinary sentence length** (D-e): "told in unhurried, well-built sentences (still
   within the AI TELLS length limits)" → "told in calm, plainly built sentences of ordinary length (one fact or one
   moment each; the AI TELLS length limits apply)". Every other word of the block is the same (tested on the
   whitespace-flattened text; the line breaks moved). MOMENTUM, OBSERVATION, the FAQ lines and FAMILY_RULE are
   byte-identical.
-- **R7-D5: the stop verdict is residue**, one structural pattern in `hygiene.AI_TELL_LINE_RES`: a copula / "as" /
-  "makes it" + "a ADJ, ADJ" + a trip-unit noun (stop, visit, institution, part of the day / trip / itinerary …),
-  never when either modifier is itself a fact (`_STOP_FACT_ADJ`: optional, included, short, guided, private,
-  overnight, a number …). It rides the existing F15_voice "stock line" route (blocking on attempt 1 only → one
+- **R7-D5: the stop verdict is residue**, one structural pattern in `hygiene.AI_TELL_LINE_RES`: a copula (also
+  "it's" / "that's" / "there's") / "as" / "makes it" + "a ADJ, ADJ" + a trip-unit noun (stop, visit, institution,
+  part of the day / trip / itinerary …), only when one ADJ is in the CLOSED verdict lexicon `_STOP_VERDICT_ADJ`
+  (structured, accessible, purposeful, organised, dependable, reliable, stable, straightforward, grounded, settled,
+  welcoming, calm, easy(-to-navigate), manageable, meaningful, rewarding, respected …) and the other is not a fact
+  about the stop (`_STOP_FACT_ADJ`: optional, included, short, guided, private, overnight, a number …). Every word
+  ends at `(?![\w'’-])`, so "free-flowing" is not "free" and "easier" is not "easy" (review fix R7-F1, R7-F2). It rides the existing F15_voice "stock line" route (blocking on attempt 1 only → one
   one-sentence repair → never a hold): no new gate, the registry and the gate count do not move. Census ($0) over
   350 stored texts (AA-729 golden 30, S234 label pack 40, re-panel rows r2–r6 100, both S251/S252 panel sets 180):
   28 new residue hits, all the Terra LinkedIn closer (14 distinct sentences), 0 on any other text, 0 residue hits
@@ -1718,3 +1730,29 @@ makes the Terra LinkedIn closer.
 - **Paid plan (orchestrator):** in the PR body / lane result. Private panel helpers for it:
   root `.tmp-session/S254/aa790r7-panel/` (`build_blind_r7.py`, `panel9_wf.js`, `aggregate_r7.py`; smoke-tested
   with fake inputs).
+
+### Review fixes (S254, after the lane review)
+
+- **R7-F1 (major): the stop verdict was a deny-list.** The first pattern fired on any two stacked adjectives not in
+  `_STOP_FACT_ADJ`, so plain seed facts were stock lines ("The lodge is a small, family-run stop by the river.",
+  "The market is a busy, open-air stop on day two.", "The museum is a large, modern institution in the capital.",
+  "It is a shorter, easier stop than the fort.") and went to the one-sentence repair on attempt 1 on every channel.
+  Now one adjective must come from the closed verdict lexicon (R7-D5). The old FACTS case "a small, family-run
+  place" never tested the exemption ("place" is not a trip noun); 10 FACTS cases on the real nouns now do.
+- **R7-F2: recall.** Contracted copulas ("It's / It’s / That's a … stop") and a hyphenated verdict word that starts
+  with a fact word ("a calm, free-flowing visit") now fire; "a long-standing, respected institution" fires through
+  "respected". 5 new STOP_VERDICTS cases.
+- Census after the fix ($0, `stop_census.py` in the lane scratchpad): every string in the stored AA-790 JSON under
+  root `.tmp-session/s250`, `s251`, `s252/aa790` (4,364 files, 42,707 distinct sentences: pilot / re-panel texts,
+  seeds, judge reasons) gives the same 38 hits before and after, all the Terra closer family ("is a structured,
+  accessible stop" 13, "makes it a calm, easy-to-navigate part of the day" 6, "organised, purposeful" 4,
+  "structured, stable institution" 4, …), 0 lost, 0 new.
+- **R7-F3: style-guide parsing.** A "Label: rule" line ended the focus list ("Tone: warm and calm.",
+  "Explain the pace: day lengths, rest and comfort.", "Lead with the practical: pace, rest, comfort." all gave []);
+  a quoted single word dropped the line; "e.g." split a point in two. Fixed as in R7-D2; the test pinning
+  "Note: the brand is calm. …" → [] now expects both sentences as points. The four panel guides parse exactly as
+  before (5 / 4 / 5 / 6 points), so the prompts and every pin are unchanged. 16 new parsing cases.
+- **R7-F4: per-arm cost.** `t9_writer_repanel.py` passes `--arm` into the `shared.llm_call_log` quality signal
+  (both `record_call_sync` and `record_unusable_sync`), so cost per arm is `quality_signal->>'arm'`, not run_ids
+  copied from stdout.
+- **R7-F5: the TRAVELLER_RETURN_LINE limit** is stated in R7-D3 (kept as is, see there).

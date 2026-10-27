@@ -194,7 +194,29 @@ def test_the_four_panel_brands(name, expected):
     ("Focus on the group.\nWrite like “Ride the coast road.”\nName the day.", ["Focus on the group.", "Name the day."]),
     ("Focus on the group.\n\n\nName the day.", ["Focus on the group.", "Name the day."]),
     ("Calm.\nFocus on the group.", ["Focus on the group."]),  # one word is not a point
-    ("Note: the brand is calm. Focus on the group.", []),  # a label line first: nothing before it
+    # review fixes: a 'Label: rule' line is a point; only a bare label or a known example / don't label is a header
+    ("Note: the brand is calm. Focus on the group.", ["Note: the brand is calm.", "Focus on the group."]),
+    ("Tone: warm and calm. Pace: unhurried.\nFocus on the family.",
+     ["Tone: warm and calm.", "Pace: unhurried.", "Focus on the family."]),
+    ("Do: use verbs.\nDon't: use hype.\nName the day.", ["Do: use verbs."]),
+    ("Lead with the practical: pace, rest, comfort.\nUse short sentences.",
+     ["Lead with the practical: pace, rest, comfort.", "Use short sentences."]),
+    ("Explain the pace: day lengths, rest and comfort.\nMention safety.",
+     ["Explain the pace: day lengths, rest and comfort.", "Mention safety."]),
+    ("Tone: warm, clear and practical.\nExplain the pace clearly.",
+     ["Tone: warm, clear and practical.", "Explain the pace clearly."]),
+    ("Focus on the group.\nNever: hype.\nName the day.", ["Focus on the group."]),
+    ("Focus on the group.\nWrite like this: “Ride the coast road.”\nName the day.", ["Focus on the group."]),
+    ("Focus on the group.\nTips:\nName the day.", ["Focus on the group."]),  # a bare label is a header
+    # a quoted word is part of a rule; a quoted example sentence (4+ words, or an unclosed quote) is skipped
+    ('Use "you" for the traveller.\nName the day.', ['Use "you" for the traveller.', "Name the day."]),
+    ("Say “we” for the guides.", ["Say “we” for the guides."]),
+    ("Focus on the group.\n“Each day balances active discovery\nName the day.",
+     ["Focus on the group.", "Name the day."]),
+    # no split after an abbreviation or before a lower-case word
+    ("Use short sentences, e.g. three per paragraph.", ["Use short sentences, e.g. three per paragraph."]),
+    ("Name the place, i.e. Paro. Keep it short.", ["Name the place, i.e. Paro.", "Keep it short."]),
+    ("Name the saint, as in St. Paul. Keep it short.", ["Name the saint, as in St. Paul.", "Keep it short."]),
     ("Write like this:\n“Ride.”", []),
     ("", []),
     ("   \n  \n", []),
@@ -350,6 +372,12 @@ STOP_VERDICTS = [
     "The school is a well-structured, accessible stop.",
     "The market remains a lively, welcoming part of the family day.",
     "The visit becomes a settled, accessible part of any itinerary.",
+    # review fixes: contracted copulas, a hyphenated word that starts with a fact word, a praise pair
+    "It's a structured, accessible stop.",
+    "It’s a calm, easy stop.",
+    "That's an organised, purposeful visit for the group.",
+    "The school is a calm, free-flowing visit.",
+    "It is a long-standing, respected institution.",
 ]
 
 
@@ -372,6 +400,17 @@ FACTS = [
     "Paro is a final, overnight stop before the flight.",
     "The temple, a working, active monastery, is open daily.",  # no copula / 'as' before it
     "It is a free, private visit for the group.",
+    # review fixes: the real trip nouns with plain seed modifiers (the verdict lexicon is closed)
+    "The lodge is a small, family-run stop by the river.",
+    "The market is a busy, open-air stop on day two.",
+    "Punakha is a warm, low-lying stop after the pass.",
+    "The weekend market is a covered, two-level stop.",
+    "The hot spring is a natural, outdoor stop at the end of the trek.",
+    "The museum is a large, modern institution in the capital.",
+    "Day 3 is a relaxed, flexible part of the trip.",
+    "It is a shorter, easier stop than the fort.",  # 'easier' is not 'easy'
+    "It is a short, calm stop before lunch.",  # one verdict word, but the other is a fact
+    "It's a free, welcoming visit.",
 ]
 
 

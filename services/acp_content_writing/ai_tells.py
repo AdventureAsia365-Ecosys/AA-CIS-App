@@ -490,22 +490,40 @@ BRAND_FOCUS_TRAVELLER_HEAD = "\nOne more rule for this brand (not from its style
 FOCUS_MAX_POINTS = 8
 FOCUS_MAX_CHARS = 200
 _FOCUS_BULLET_RE = re.compile(r"^(?:[-*•·]|\d{1,2}[.)])[ \t]*")
-_FOCUS_SENTENCE_RE = re.compile(r"(?<=[.!?])[ \t]+(?=\S)")
-_FOCUS_QUOTE_RE = re.compile(r"[\"“”]")
+# A sentence ends at . ! ? followed by a word that does not start in lower case ('e.g. three per paragraph' stays one
+# sentence), and never right after a common abbreviation ('e.g. Bhutan', 'St. Paul').
+_FOCUS_SENTENCE_RE = re.compile(r"(?<!\be\.g\.)(?<!\bi\.e\.)(?<!\bvs\.)(?<!\bSt\.)(?<!\bMt\.)(?<!\bapprox\.)"
+                                r"(?<!\bincl\.)(?<=[.!?])[ \t]+(?=[^\sa-z])")
+# A quoted span (straight or curly double quotes; an unclosed quote runs to the end of the line).
+_FOCUS_QUOTE_RE = re.compile(r"[\"“]([^\"“”]*)(?:[\"”]|$)")
+FOCUS_QUOTE_MIN_WORDS = 4  # a quoted span this long is an example sentence; 'Use "you" for the traveller.' is a rule
+# Labels that open the style guide's examples or its don'ts, even with text after the colon ('Avoid: hype.').
+_FOCUS_HEADER_LABEL_RE = re.compile(r"^(?:avoid|don['’]?t|do\s+not|never|examples?|write\s+like|not\s+like|instead)\b",
+                                    re.I)
 
 
 def _focus_header(text: str) -> bool:
-    """'Write like this:', 'Avoid:', 'Examples: …', 'Do not write:' — a short label before a colon starts the
-    style guide's examples or its don'ts; the focus points end there."""
-    head, colon, _ = text.partition(":")
-    return bool(colon) and "." not in head and 0 < len(head.split()) <= 5
+    """A header starts the style guide's examples or its don'ts, and the focus points end there: a short label
+    (at most five words, no full stop) before a colon with nothing after it ('Write like this:', 'Avoid:'), or a
+    known example / don't label with text after it ('Avoid: hype, slang.', 'Examples: …', "Don't: …"). A
+    'Label: rule' line such as 'Tone: warm and calm.' or 'Explain the pace: day lengths, rest.' is a point."""
+    head, colon, rest = text.partition(":")
+    if not colon or "." in head or not 0 < len(head.split()) <= 5:
+        return False
+    return not rest.strip() or bool(_FOCUS_HEADER_LABEL_RE.match(head.strip()))
+
+
+def _focus_quotes_example(line: str) -> bool:
+    """The line quotes an example sentence (a quoted span of ``FOCUS_QUOTE_MIN_WORDS`` words or more)."""
+    return any(len(m.group(1).split()) >= FOCUS_QUOTE_MIN_WORDS for m in _FOCUS_QUOTE_RE.finditer(line))
 
 
 def brand_focus_points(brand_audience: Optional[dict]) -> list[str]:
     """The style guide's first rules, one per line or sentence, up to the first header ('Write like this:',
-    'Avoid:'). Bullets and numbers are dropped; a line that quotes an example sentence is skipped (the brand block
-    keeps the examples, and they are never copy); at most ``FOCUS_MAX_POINTS`` points of at most
-    ``FOCUS_MAX_CHARS`` characters and at least two words. Read from the pack only, never from a tenant name."""
+    'Avoid:'; see ``_focus_header``). Bullets and numbers are dropped; a line that quotes an example sentence (four
+    or more words in quotes) is skipped (the brand block keeps the examples, and they are never copy); at most
+    ``FOCUS_MAX_POINTS`` points of at most ``FOCUS_MAX_CHARS`` characters and at least two words. Read from the pack
+    only, never from a tenant name."""
     guide = str((brand_audience or {}).get("style_guide") or "")
     points: list[str] = []
     for raw in guide.splitlines():
@@ -514,7 +532,7 @@ def brand_focus_points(brand_audience: Optional[dict]) -> list[str]:
             continue
         if _focus_header(line):
             break
-        if _FOCUS_QUOTE_RE.search(line):
+        if _focus_quotes_example(line):
             continue
         for sentence in _FOCUS_SENTENCE_RE.split(line):
             sentence = sentence.strip()
