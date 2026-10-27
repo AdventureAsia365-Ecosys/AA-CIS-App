@@ -439,14 +439,56 @@ def traveller_clause(text: str) -> Optional[tuple[str, str]]:
 _YEAR = r"(?:c\.\s*|ca\.\s*|circa\s+)?\d{3,4}(?:\s*(?:CE|AD|BCE|BC))?"
 _LIFE_DATES_RE = re.compile(
     r"(\b\w[\w'’.-]*)\s*\("
-    rf"(?:{_YEAR}\s*(?:[–—-]|to)\s*{_YEAR}|(?:born|b\.|died|d\.)\s*{_YEAR})"
+    rf"(?:(?P<range>{_YEAR}\s*(?:[–—-]|to)\s*{_YEAR})|(?:born|b\.|died|d\.)\s*{_YEAR})"
     r"\)")
+# Review of round 3: a year RANGE after a capitalised word is also a polity, period, event or building span
+# ('Ayutthaya Kingdom (1351–1767)', 'The Edo Period (1603–1868)', 'World War II (1939–1945)', 'Suryavarman II
+# (1113–1150)' a reign) — often the fact's own content. Such a range is kept: after one of these head nouns, after a
+# Roman numeral (a regnal name or a numbered war: the range is usually the reign), or when it is not life-span long.
+_SPAN_HEAD_NOUNS = frozenset({
+    "dynasty", "dynasties", "kingdom", "kingdoms", "empire", "empires", "period", "periods", "era", "eras", "age",
+    "war", "wars", "rebellion", "revolution", "uprising", "invasion", "occupation", "siege", "campaign", "expedition",
+    "conflict", "emergency", "movement", "restoration", "republic", "sultanate", "shogunate", "caliphate", "khanate",
+    "regime", "rule", "reign", "raj", "protectorate", "colony", "mandate", "confederacy", "federation", "union",
+    "administration", "government", "state", "hall", "palace", "temple", "cathedral", "church", "mosque", "pagoda",
+    "monastery", "bridge", "tower", "fort", "fortress", "castle", "building", "auditorium", "museum", "station",
+    "railway", "line", "road", "canal", "wall", "gate", "construction"})
+_ROMAN_NUMERAL_RE = re.compile(r"^[IVXLC]+$")
+_LIFE_SPAN_YEARS = (15, 110)  # a notable person's recorded life span; outside it the range is a period or a build
+_YEAR_PART_RE = re.compile(r"(\d{3,4})\s*(BCE|BC|CE|AD)?")
+
+
+def _range_years(text: str) -> Optional[int]:
+    """Length in years of a 'Y1–Y2' range ('563–483 BCE' -> 80; a lone BC marker at the end applies to both)."""
+    parts = _YEAR_PART_RE.findall(text)
+    if len(parts) != 2:
+        return None
+    (y1, m1), (y2, m2) = parts
+    if m2 in ("BC", "BCE") and not m1:
+        m1 = m2
+    a = -int(y1) if m1 in ("BC", "BCE") else int(y1)
+    b = -int(y2) if m2 in ("BC", "BCE") else int(y2)
+    return b - a
+
+
+def _life_dates(m: re.Match) -> bool:
+    head = m.group(1)
+    if not head[0].isupper():
+        return False
+    if m.group("range") is None:  # '(born 1878)', '(d. 1939)': a person's
+        return True
+    if fold(head) in _SPAN_HEAD_NOUNS or _ROMAN_NUMERAL_RE.match(head):
+        return False
+    years = _range_years(m.group("range"))
+    return years is not None and _LIFE_SPAN_YEARS[0] <= years <= _LIFE_SPAN_YEARS[1]
 
 
 def strip_life_dates(text: Optional[str]) -> str:
     """`text` without parenthesised life dates right after a capitalised word — a name: 'Kruba Srivichai (1878–1938)
-    is remembered …' -> 'Kruba Srivichai is remembered …'. After a lowercase word ('the hall (1905–1908)') kept."""
-    return _LIFE_DATES_RE.sub(lambda m: m.group(1) if m.group(1)[0].isupper() else m.group(0), text or "")
+    is remembered …' -> 'Kruba Srivichai is remembered …'. Kept: after a lowercase word ('the hall (1905–1908)'), a
+    range after a polity / period / event / building noun or a Roman numeral ('Ayutthaya Kingdom (1351–1767)',
+    'Suryavarman II (1113–1150)'), and a range that is not life-span long (under 15 or over 110 years)."""
+    return _LIFE_DATES_RE.sub(lambda m: m.group(1) if _life_dates(m) else m.group(0), text or "")
 
 
 def _clean_facts(raw_facts, card_name: str = "") -> list[dict]:
@@ -578,10 +620,14 @@ def cross_border(name: Optional[str], *countries: Optional[str]) -> bool:
     return any(_compound_country(c) for c in countries)
 
 
-def _both_sides(value: str) -> bool:
-    """'Huay Xai / Chiang Khong', 'Ladakh, Gilgit-Baltistan, Xinjiang' (a range over three countries): every side."""
-    parts = re.split(r"[/,]", value)
-    return len(parts) > 1 and all(p.strip() for p in parts)
+def _sides(value: str) -> list[str]:
+    """The sides of a value written as every side, 'Huay Xai / Chiang Khong' -> ['Huay Xai', 'Chiang Khong'], or []
+    for one side. Only '/' separates sides (the prompts' "A / B"): a comma is 'Town, Province' ('Mae Sai, Chiang
+    Rai': one side)."""
+    parts = [p.strip() for p in value.split("/")]
+    return parts if len(parts) > 1 and all(parts) else []
+
+
 _PASS_SUFFIX = "la"  # Tibetan / Ladakhi "pass" as the LAST word ("Khardung La", "Thorong La"), never "La Paz"
 # A village is its own locality: a different settlement there is a neighbouring one (Thado Koshi -> Lukla).
 # Nepali "-gaon" / "-gaun" (village) only on a Nepal card: "Goregaon" is a Mumbai suburb.
@@ -705,19 +751,27 @@ def locality_problem(locality: Optional[str], *, name: Optional[str], region: Op
 def clean_identity(card: dict, *, place_names: tuple = (), country: Optional[str] = None) -> list[dict]:
     """Clear a drafted card's region / locality that break the AA-784 rules (in place). Region first. A place spanning
     a border (cross_border: a border name, or `country` / the card's own country a compound) keeps a field only as
-    both sides 'A / B' ('cross_border' otherwise). Returns one {"field", "reason", "value"} per cleared field."""
+    both sides 'A / B' ('cross_border' otherwise), each side also passing the field's own rules. Returns one
+    {"field", "reason", "value"} per cleared field."""
     out = []
     name = card.get("display_name") if isinstance(card.get("display_name"), str) else ""
     spans = cross_border(name, country, card.get("country") if isinstance(card.get("country"), str) else None)
     for field in ("region", "locality"):
         value = card.get(field) if isinstance(card.get(field), str) else ""
-        if spans:
-            why = "cross_border" if value.strip() and not _both_sides(value) else None
-        elif field == "region":
-            why = region_problem(value, name=name, country=country)
-        else:
-            why = locality_problem(value, name=name, region=card.get("region") or "", country=country,
-                                   place_names=tuple(place_names))
+        sides = [value]
+        if spans and value.strip():
+            sides = _sides(value)
+        why = "cross_border" if not sides else None
+        # every side still passes the field's own rules: a pass keeps no town on either side ('Sost / Tashkurgan'),
+        # a country is no region ('Thailand / Myanmar')
+        for side in sides:
+            if why:
+                break
+            if field == "region":
+                why = region_problem(side, name=name, country=country)
+            else:
+                why = locality_problem(side, name=name, region=card.get("region") or "", country=country,
+                                       place_names=tuple(place_names))
         if why:
             out.append({"field": field, "reason": why, "value": value})
             card[field] = ""

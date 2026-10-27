@@ -74,6 +74,37 @@ def test_cross_border_clear_is_reported():
         {"field": "locality", "reason": "cross_border", "value": "Mae Fa Luang"}]
 
 
+# review of round 3: a border card's sides still pass the per-field rules; only '/' separates sides
+BORDER_CASES = [
+    # a pass on a legacy compound-country card: no town on either side; the regions are right
+    ("Khunjerab Pass", "Sost / Tashkurgan", "Gilgit-Baltistan / Xinjiang", "Pakistan and China",
+     ("", "Gilgit-Baltistan / Xinjiang"), [("locality", "remote_place")]),
+    # same pass, single country: same locality rule
+    ("Khunjerab Pass", "Sost", "Gilgit-Baltistan", "Pakistan", ("", "Gilgit-Baltistan"),
+     [("locality", "remote_place")]),
+    # countries are no region, on either side
+    ("Myanmar–Thailand border", "", "Thailand / Myanmar", "Thailand", ("", ""), [("region", "country")]),
+    # 'Town, Province' is one side, not both
+    ("Myanmar–Thailand border", "Mae Sai, Chiang Rai", "", "Thailand", ("", ""), [("locality", "cross_border")]),
+    ("Myanmar–Thailand border", "", "Chiang Rai, Tachileik", "Thailand and Myanmar", ("", ""),
+     [("region", "cross_border")]),
+    # a trek area is no region on either side
+    ("Nangpa La", "", "Khumbu / Tibet", "Nepal and China", ("", ""), [("region", "trek_area")]),
+    # both sides, each a right value: kept
+    ("Fourth Thai–Lao Friendship Bridge", "Huay Xai / Chiang Khong", "Bokeo / Chiang Rai", "Laos and Thailand",
+     ("Huay Xai / Chiang Khong", "Bokeo / Chiang Rai"), []),
+]
+
+
+@pytest.mark.parametrize("name,locality,region,country,expected,cleared", BORDER_CASES,
+                         ids=[f"{c[0]}|{c[1]}|{c[2]}" for c in BORDER_CASES])
+def test_border_sides_still_pass_the_field_rules(name, locality, region, country, expected, cleared):
+    card = {"display_name": name, "locality": locality, "region": region, "country": country}
+    out = pc.clean_identity(card, country=country)
+    assert (card["locality"], card["region"]) == expected
+    assert [(o["field"], o["reason"]) for o in out] == cleared
+
+
 # ── locality: only remote kinds are emptied ─────────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("locality,name,region,country", [
@@ -172,6 +203,19 @@ def test_cross_border(name, countries, spans):
     ("The Ōkuma Auditorium (1927) is a landmark.", "The Ōkuma Auditorium (1927) is a landmark."),
     ("The old hall (1905–1908) burned down.", "The old hall (1905–1908) burned down."),
     ("The park was laid out in 1872.", "The park was laid out in 1872."),
+    # review of round 3: polity / period / event / building spans, reigns and non-life-span ranges keep their dates
+    ("Ayutthaya Kingdom (1351–1767) was a Siamese kingdom.", "Ayutthaya Kingdom (1351–1767) was a Siamese kingdom."),
+    ("Joseon Dynasty (1392-1897) built it.", "Joseon Dynasty (1392-1897) built it."),
+    ("The Edo Period (1603–1868) saw the town grow.", "The Edo Period (1603–1868) saw the town grow."),
+    ("The Khmer Empire (802–1431) ruled here.", "The Khmer Empire (802–1431) ruled here."),
+    ("It was damaged in World War II (1939–1945).", "It was damaged in World War II (1939–1945)."),
+    ("Suryavarman II (1113–1150) commissioned Angkor Wat.", "Suryavarman II (1113–1150) commissioned Angkor Wat."),
+    ("The Meiji Restoration (1868–1889) changed it.", "The Meiji Restoration (1868–1889) changed it."),
+    ("The Ōkuma Auditorium (1925–1927) is a landmark.", "The Ōkuma Auditorium (1925–1927) is a landmark."),
+    ("Bagan Kingdom (849 to 1297) left temples.", "Bagan Kingdom (849 to 1297) left temples."),
+    # still a person's life: BCE spans, a born / died year after a regnal name
+    ("The Buddha (563–483 BCE) taught here.", "The Buddha taught here."),
+    ("King Rama V (d. 1910) built it.", "King Rama V built it."),
 ])
 def test_strip_life_dates(text, out):
     assert pc.strip_life_dates(text) == out
