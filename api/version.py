@@ -11,4 +11,4 @@ manifest.
 deploy-dev.yml ignores a change to this file alone (``!api/version.py``), so merging a release PR does not redeploy.
 """
 
-__version__ = "0.11.0"  # x-release-please-version
+__version__ = "0.12.0"  # x-release-please-version

@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.12.0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/compare/v0.11.0...v0.12.0) (2026-10-27)
+
+
+### Features
+
+* canonical UI kit core in frontend/app/_kit/core with manifest and copy check ([#1067](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1067)) ([de63cb4](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/de63cb470beff874afdcaeed5d4d8555da46acb4))
+* Guide tab on Writing memory, built on a reusable kit Guide pattern ([#1054](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1054)) ([1b1b25b](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/1b1b25b81eaf4f0a3682967c404a07d9ac1e3220))
+* one kit token set in core/tokens.css with contrast and CSS guards ([#1071](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1071)) ([51d2a65](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/51d2a65a318e84168be764d7f74388bbaf12e16d))
+* photo read views give copies of one file a single canonical path (migration 290) ([#1068](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1068)) ([857f94b](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/857f94b2d932a461565a5ac08091bbff243fb7b8))
+* staff reconcile lists known E2E accounts apart; CRM agency list shows lock source and feed health ([#1063](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1063)) ([7b66218](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/7b66218842827324cba2cd880ccf1ef9f837a173))
+* worker drain window from env, deploy releases not counted, released endpoint ([#1072](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1072)) ([960dafd](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/960dafdad1440bd107254724c686dd4afc947a1f))
+
+
+### Bug Fixes
+
+* Browse Pool duration filter no longer overflows on hour-based tours ([#1048](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1048)) ([c9b0973](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/c9b097374240fd928453e087f5b874131feed15c))
+* every admin page uses the kit AdminMain frame ([#1056](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1056)) ([3e8b972](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/3e8b9722199c223ba6d5ab9dce7d5acb1ea48bcf))
+* Guide fills the page width; Writing memory uses the standard admin frame ([#1055](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1055)) ([6e6a252](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/6e6a252a453522a698fc52e9c12c8c5a55a9dd2b))
+* one ranged day heading rule for every day reader ([#1061](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1061)) ([63216eb](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/63216eb37bb33b6c69a5008881b15176cdef9f12))
+* Pakistan and the Philippines in the place country lists (one source, drift test) ([#1047](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1047)) ([e4d4a6a](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/e4d4a6a4cca34dc9bab5568ee4083d7d4d2d9c66))
+* place cards keep city localities and first-level city regions, clear one-sided border places ([#1065](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1065)) ([43a9213](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/43a92134ee684f467f3b8821c166c98ab4c16be6))
+* place cards keep only administrative regions, empty remote localities, drop unverifiable claims ([#1059](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1059)) ([83dfd11](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/83dfd11484ffcd2596799d806b1d4da55724d7b7))
+* place geocoding resumes after the daily credit limit and flags stalled names ([#1050](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1050)) ([6dc5d8d](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/6dc5d8d3ee868665e2e3647ce2f4e2aa8afd8cd7))
+* Places Merges tab no longer crashes when a dedupe run has conflicts ([#1058](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1058)) ([d1409c6](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/d1409c6d1e8f7737ca15bed705df653b2d490643))
+* restore the place-card and segment-matching changes that [#1061](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1061) reverted ([#1064](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1064)) ([f8545b3](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/f8545b38f4400cbad0b34e1710dcbc402f87d2a3))
+* S1 day parser reads quoted day headings; last-step day guard ([#1057](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1057)) ([81bd11d](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/81bd11dab0ca881ace33f4f76e97e99bcb8849e6))
+* segment matching never drops an atom on an id collision ([#1060](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1060)) ([9a5d0ae](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/9a5d0aeb7a1295047e7ef0528f3640e319fc1094))
+* tour countries come from shared.countries (ISO), not a hand list ([#1052](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1052)) ([69695ba](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/69695ba62d6e32be1a327b552634b0d144b871ea))
+
 ## [0.11.0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/compare/v0.10.0...v0.11.0) (2026-10-26)
 
 
