@@ -2704,7 +2704,15 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   T8 job (request atom) and the `place_cards_build` job — T9 only reads cards (S234). One draft per
   place: free rule skip (unnamed / logistics places), atoms grouped by folded place + country, reuse
   through `place_card_alias` / core name, and misses cached in `place_card_miss`; a generic name such
-  as "City Palace" keeps its locality in the key and is never reused across tours by name),
+  as "City Palace" keeps its locality in the key and is never reused across tours by name; AA-784 S253: region is
+  a first-level administrative division or empty and locality the settlement the place is IN or empty —
+  `place_cards.clean_identity` clears geographic / trekking areas and the nearest town of a remote point before the
+  check, and the check's `locality_ok` / `region_ok` clear a field instead of rejecting the card; present-tense
+  status / administrative-role and authorship facts are never kept (`unverifiable_claim`, also applied to older
+  cards' facts at seed time unless verified; the identity rules likewise to older cards' `Location:` line); a
+  rejected card stored under a compound country (pre-AA-990) blocks a draft naming it (a hold only an admin
+  lifts); `place_cards_build` with `{"card_ids": [...]}` re-drafts named cards
+  in place — admin `POST /admin/content-quality/place-cards/rebuild`),
   `Day N`, same-country sibling evidence labelled "other trips", and a SCOPE line (which days and
   places the piece covers). S234: sibling lines only when the card has <3 facts (≤2, none naming
   another place); a Route's moments are in day order, skip Segments ranking excluded, carry no
