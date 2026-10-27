@@ -124,6 +124,63 @@ def test_pseudo_with_an_old_formula_id_gets_its_stored_id_back():
     assert_each_atom_in_one_segment(to_write, [TARGET])
 
 
+def _own_pseudo(place, action, country="China"):
+    """A pseudo atom whose stored id is its own `_mint` (an AA-545+ Segment)."""
+    stored = _mint(_key(SegmentAtom("x", "", None, place, action, country)), country)
+    return stored, SegmentAtom(f"{_PSEUDO_PREFIX}{stored}", "", None, place, action, country)
+
+
+def _assert_lone_atom_not_given_the_stored_id(pool, stored, lone):
+    """The pseudo joins a new atom with a shorter canonical key (its component mints another id),
+    and `lone` — not that moment — mints the stored id on its own. It used to keep it: the stored id
+    was aliased to the joined Segment and `lone` was written into it, relabelled (review S253)."""
+    news = frozenset(a.atom_id for a in pool if not a.atom_id.startswith(_PSEUDO_PREFIX))
+    derived, segments, aliases, (to_write, alias_rows, segment_rows) = _run_pure(pool, involving=news)
+    [mine] = _holding(derived, lone)
+    assert mine.atom_ids == (lone,) and mine.id != stored
+    [existing] = _holding(segments, f"{_PSEUDO_PREFIX}{stored}")
+    assert existing.id == stored and lone not in existing.atom_ids
+    assert aliases == {} and alias_rows == []
+    assert not any(old == mine.id or new == mine.id for old, new in alias_rows)
+    [written] = [s for s in to_write if lone in s.atom_ids]
+    assert written.id == mine.id != stored
+    assert_each_atom_in_one_segment(to_write, sorted(news))
+    return mine, existing, segment_rows
+
+
+def test_lone_atom_does_not_take_a_pseudo_id_its_joined_segment_minted_away():
+    stored, pseudo = _own_pseudo("Old Hutong", "stroll through the lanes")
+    pool = [pseudo,
+            SegmentAtom("n1", TOUR, 1, "Hutong", "stroll through the lanes", "China"),
+            SegmentAtom("h", TOUR, 2, "Old Hutong", "walk to see the market", "China")]
+    assert _mint(_key(pool[2]), "China") == stored                    # the premise: H mints B alone
+    assert _mint(_key(pool[1]), "China") != stored                    # {N1, pseudo} mints another id
+    mine, existing, _ = _assert_lone_atom_not_given_the_stored_id(pool, stored, "h")
+    assert (mine.place, mine.action) == ("Old Hutong", "walk to see the market")
+    assert existing.atom_ids == (pseudo.atom_id, "n1")
+
+
+def test_lone_atom_does_not_take_the_id_of_a_pseudo_that_joined_a_shorter_key():
+    stored, pseudo = _own_pseudo("Hutong alley", "stroll through")
+    pool = [pseudo,
+            SegmentAtom("n1", TOUR, 1, "Hutong", "stroll", "China"),
+            SegmentAtom("b", TOUR, 2, "Hutong alley", WALK, "China")]
+    assert _mint(_key(pool[2]), "China") == stored
+    _assert_lone_atom_not_given_the_stored_id(pool, stored, "b")
+
+
+def test_remint_skips_another_pseudos_stored_id():
+    """A stored id may itself be an earlier `_mint_specific`; a re-mint must not land on it."""
+    stored, pseudo = _own_pseudo("Old Hutong", "stroll through the lanes")
+    lone = SegmentAtom("h", TOUR, 2, "Old Hutong", "walk to see the market", "China")
+    taken = sm._mint_specific(_key(lone), "China", 0)
+    other = SegmentAtom(f"{_PSEUDO_PREFIX}{taken}", "", None, "Temple of Heaven", "visit the altar", "China")
+    pool = [pseudo, other, SegmentAtom("n1", TOUR, 1, "Hutong", "stroll through the lanes", "China"), lone]
+    mine, _, _ = _assert_lone_atom_not_given_the_stored_id(pool, stored, "h")
+    assert mine.id not in (stored, taken)
+    assert mine.id == sm._mint_specific(_key(lone), "China", 1)
+
+
 def test_empty_action_atoms_at_one_place_get_distinct_ids():
     """Identical full keys that never join (no verb) are told apart by `n`, deterministically."""
     pool = [SegmentAtom("a1", "t", 1, "the market", ""), SegmentAtom("a2", "t", 1, "the market", "")]

@@ -56,8 +56,9 @@ after writing, in the same transaction, that no written id holds live atoms of t
 join rule, so two Segments of one run that are not one moment ("Hutong / walk through to see the
 local lifestyle" vs the existing "the Hutong / stroll through") could mint the same id; one was then
 dropped by `reconcile_ids` (atoms left without a member row) or took the existing Segment's id
-(glued in, relabelled). `derive_segments` now re-mints the members of such a collision group
-(`_unique_ids`: the existing Segment that owns the id keeps it; non-colliding ids are unchanged),
+(glued in, relabelled). `derive_segments` now re-mints every Segment holding a contested id — one
+minted twice, or the stored id of a pool pseudo it does not contain (`_unique_ids`: the existing
+Segment that owns the id keeps it; uncontested ids are unchanged),
 `reconcile_ids` raises on a duplicate id, and the run checks before writing that every forming atom
 of the tour is in exactly one Segment (`assert_each_atom_in_one_segment`).
 """
@@ -271,18 +272,27 @@ def _unique_ids(minted: list[tuple[Segment, Key, str]]) -> list[Segment]:
     `reconcile_ids` keys Segments by id, so one of them used to vanish (its atoms got no member
     row) or the new one took the existing Segment's id (glued in and relabelled).
 
-    Only collision groups (an id held by more than one Segment) change; every other id is the
-    plain `_mint`, byte for byte (ADR 0002). In a group, the Segment holding the pseudo atom of
-    that very id (the existing Segment the id belongs to) keeps it; every other member is
-    re-minted with `_mint_specific`. Without such an owner all members are re-minted, and a
-    pseudo gets its stored id back through `_claims` (its pseudo atom is assigned to it).
+    An id is contested when more than one Segment mints it, OR when an existing Segment of the
+    pool (a pseudo atom) has it as its stored id. The second case needs no second holder: an
+    existing Segment whose pseudo joins a new atom with a shorter canonical key mints a different
+    id, and a lone new Segment that is not that moment can then mint the stored id on its own —
+    `reconcile_ids` would alias the stored id away and `_plan_writes` would write the new atom
+    into it and relabel it. Uncontested ids are the plain `_mint`, byte for byte (ADR 0002).
+
+    For a contested id, the Segment holding the pseudo atom of that very id (the existing Segment
+    the id belongs to) keeps it; every other holder is re-minted with `_mint_specific`. Without
+    such a holder all are re-minted, and a pseudo gets its stored id back through `_claims` (its
+    pseudo atom is assigned to it). A re-mint never lands on another pseudo's stored id either.
     """
+    # The stored id of every existing Segment in the pool (its pseudo atom is `_PSEUDO_PREFIX` + id).
+    stored = {atom_id[len(_PSEUDO_PREFIX):] for segment, _, _ in minted
+              for atom_id in segment.atom_ids if atom_id.startswith(_PSEUDO_PREFIX)}
     groups: dict[str, list[int]] = {}
     for index, (segment, _, _) in enumerate(minted):
         groups.setdefault(segment.id, []).append(index)
     out = [segment for segment, _, _ in minted]
     for base_id, members in groups.items():
-        if len(members) < 2:
+        if len(members) < 2 and base_id not in stored:
             continue
         owner = f"{_PSEUDO_PREFIX}{base_id}"
         seen: dict[tuple, int] = {}
@@ -291,8 +301,13 @@ def _unique_ids(minted: list[tuple[Segment, Key, str]]) -> list[Segment]:
             segment, canonical, country = minted[index]
             full = (canonical.place, canonical.verb, canonical.said, tuple(sorted(canonical.about)), country)
             n = seen.get(full, 0)
+            identifier = _mint_specific(canonical, country, n)
+            # A stored id may itself be an earlier re-mint: skip it unless this Segment owns it.
+            while identifier in stored and f"{_PSEUDO_PREFIX}{identifier}" not in segment.atom_ids:
+                n += 1
+                identifier = _mint_specific(canonical, country, n)
             seen[full] = n + 1
-            out[index] = replace(segment, id=_mint_specific(canonical, country, n))
+            out[index] = replace(segment, id=identifier)
     return out
 
 
