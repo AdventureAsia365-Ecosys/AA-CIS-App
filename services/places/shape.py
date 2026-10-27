@@ -322,25 +322,32 @@ def _polygons_path() -> str:
 
 
 @lru_cache(maxsize=1)
-def _countries() -> dict:
+def _polygon_text() -> dict:
+    """{iso2: the country's polygons as one JSON string}: AA-990 holds every ISO country (~3.6 MB), so only the outer
+    document is parsed here; a country's rings are parsed by :func:`_country` the first time a run needs them."""
     with open(_polygons_path(), encoding="utf-8") as fh:
-        data = json.load(fh)
-    out = {}
-    for iso2, polys in data["countries"].items():
-        xs, ys, bands = [], [], {}
-        for poly in polys:
-            for ring in poly:
-                for (x1, y1), (x2, y2) in zip(ring, ring[1:]):
-                    xs += [x1, x2]
-                    ys += [y1, y2]
-                    for b in range(math.floor(min(y1, y2) / _BAND), math.floor(max(y1, y2) / _BAND) + 1):
-                        bands.setdefault(b, []).append((x1, y1, x2, y2))
-        out[iso2] = _Country((min(ys), min(xs), max(ys), max(xs)), bands)
-    return out
+        return json.load(fh)["countries"]
+
+
+@lru_cache(maxsize=None)
+def _country(iso2: str) -> Optional[_Country]:
+    text = _polygon_text().get(iso2)
+    if text is None:
+        return None
+    polys = json.loads(text) if isinstance(text, str) else text
+    xs, ys, bands = [], [], {}
+    for poly in polys:
+        for ring in poly:
+            for (x1, y1), (x2, y2) in zip(ring, ring[1:]):
+                xs += [x1, x2]
+                ys += [y1, y2]
+                for b in range(math.floor(min(y1, y2) / _BAND), math.floor(max(y1, y2) / _BAND) + 1):
+                    bands.setdefault(b, []).append((x1, y1, x2, y2))
+    return _Country((min(ys), min(xs), max(ys), max(xs)), bands)
 
 
 def country_isos() -> list:
-    return sorted(_countries())
+    return sorted(_polygon_text())
 
 
 def _inside_polygon(c: _Country, lat: float, lng: float) -> bool:
@@ -374,7 +381,7 @@ def _near_border(c: _Country, lat: float, lng: float, buffer_km: float) -> bool:
 def in_country(lat: float, lng: float, iso2: str, buffer_km: float = BORDER_BUFFER_KM) -> bool:
     """Inside the country's polygon, or within `buffer_km` of its border (a border river belongs to both sides).
     An unknown country → False."""
-    c = _countries().get((iso2 or "").lower())
+    c = _country((iso2 or "").lower())
     if c is None:
         return False
     pad = buffer_km / 100.0

@@ -32,7 +32,6 @@ import {
 } from "../../_kit";
 import { can } from "@/lib/rbac";
 import {
-  AA_COUNTRIES,
   EMPTY_FILTERS,
   KINDS,
   KIND_LABEL,
@@ -41,6 +40,7 @@ import {
   STATUSES,
   STATUS_FILTER_LABEL,
   aaCall,
+  countryLabel,
   countryOptions,
   isGroupKey,
   listUrl,
@@ -118,7 +118,7 @@ export default function AaContentConsole() {
       cell: (c) => {
         const codes = c.row.original.country_codes;
         if (!codes.length) return <span style={{ color: K.muted }}>All</span>;
-        return <span title={codes.map((x) => AA_COUNTRIES[x] ?? x).join(", ")}>{codes.join(", ")}</span>;
+        return <span title={codes.map(countryLabel).join(", ")}>{codes.join(", ")}</span>;
       },
     },
     { accessorKey: "updated_at", header: "Updated", cell: (c) => formatDateTime(c.row.original.updated_at) },

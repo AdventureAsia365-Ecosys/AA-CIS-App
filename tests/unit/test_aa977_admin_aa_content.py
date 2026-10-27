@@ -151,7 +151,7 @@ def test_list_passes_filters_and_paging(client, calls):
                            "offset": 20}
 
 
-@pytest.mark.parametrize("params", [{"kind": "x"}, {"locale": "fr"}, {"status": "live"}, {"country": "FR"},
+@pytest.mark.parametrize("params", [{"kind": "x"}, {"locale": "fr"}, {"status": "live"}, {"country": "XX"},
                                     {"limit": "0"}, {"limit": "101"}, {"offset": "-1"}])
 def test_list_refuses_bad_parameters(client, calls, params):
     assert client.get(BASE, params=params, headers=_h()).status_code == 422
@@ -302,10 +302,12 @@ def test_applies_to_is_normalized():
                                          {"source_system": "cis", "source_id": "k1"}]})
     assert out == {"country_codes": ["VN", "KH"], "tours": [{"source_system": "cis", "source_id": "k1"}]}
     assert validate.applies_to(None) == {} and validate.applies_to({}) == {}
+    # AA-990: any ISO 3166-1 country, not only the ones AA sold before (the contract allows ^[A-Z]{2}$)
+    assert validate.applies_to({"country_codes": ["fr", "TZ"]}) == {"country_codes": ["FR", "TZ"]}
 
 
 @pytest.mark.parametrize("value", [
-    [], {"regions": []}, {"country_codes": "VN"}, {"country_codes": ["FR"]}, {"country_codes": [1]},
+    [], {"regions": []}, {"country_codes": "VN"}, {"country_codes": ["XX"]}, {"country_codes": [1]},
     {"tours": [{"source_system": "booking", "source_id": "k"}]}, {"tours": [{"source_system": "cis"}]},
     {"tours": [{"source_system": "cis", "source_id": "x" * 129}]}, {"tours": [{"source_system": "cis",
                                                                               "source_id": "k", "x": 1}]},

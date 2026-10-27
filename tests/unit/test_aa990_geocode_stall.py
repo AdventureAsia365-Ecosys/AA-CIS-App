@@ -1,7 +1,8 @@
 """AA-990 / AA-905 — the place_geocode stall (S252 analysis RC1–RC5): the run that stops on the Geoapify daily
 credit limit queues the next one for the credit reset; the locate answer is read leniently (fences, prose, wrapper,
 re-spelt keys) and an unreadable one is asked again as two halves; each name without a point says why; a card's
-multi-country string keys on an AA country; the data coverage page flags names due for more than 24 h.
+multi-country string keys on one of the ISO countries it names; the data coverage page flags names due for more than
+24 h.
 
 Fakes only: no DB, no network, no paid call."""
 from __future__ import annotations
@@ -44,12 +45,18 @@ def test_wrapper_is_kept_when_its_key_is_a_label():
 
 def test_each_name_without_a_point_says_why():
     raw = ('{"Nowhere": null, "Bad": ["x", 1, "Laos"], "Listvyanka": [51.85, 104.87, "Russia"], '
+           '"Taiga Camp": [55.0, 100.0, "Siberia"], "K2 Base Camp": [35.8, 76.5, "India and Pakistan"], '
            '"Hoi An": [15.88, 108.33, "Vietnam"], "Night Market": [19.89, 102.13, "Laos"]}')
-    labels = ["Nowhere", "Bad", "Listvyanka", "Hội An", "Night Market (Luang Prabang)", "Dropped"]
+    labels = ["Nowhere", "Bad", "Listvyanka", "Taiga Camp", "K2 Base Camp", "Hội An", "Night Market (Luang Prabang)",
+              "Dropped"]
     out = locate.read_answer(raw, labels, {"Night Market (Luang Prabang)": "Night Market"})
     assert out["Nowhere"] == locate.REASON_NULL
     assert out["Bad"] == locate.REASON_MALFORMED
-    assert out["Listvyanka"] == "not_aa_country:Russia"
+    # any ISO country is taken (the place's own country; point_ok checks bbox + polygon next) — no "AA list"
+    assert out["Listvyanka"] == locate.Proposal(51.85, 104.87, "Russian Federation")
+    # only text that names no ISO country at all (a region, a compound) gets the reason
+    assert out["Taiga Camp"] == f"{locate.UNKNOWN_COUNTRY}:Siberia"
+    assert out["K2 Base Camp"] == "unknown_country:India and Pakistan"
     assert out["Hội An"] == locate.Proposal(15.88, 108.33, "Vietnam")                      # re-spelt within name_norm
     assert out["Night Market (Luang Prabang)"] == locate.Proposal(19.89, 102.13, "Laos")   # answered by plain name
     assert out["Dropped"] == locate.REASON_MISSING
@@ -115,21 +122,36 @@ async def test_one_name_batch_is_not_split():
     assert len(calls) == 1 and out[("paro",)].error.startswith("locate: no JSON object")
 
 
-# ── (d) a card's multi-country string keys on an AA country ──────────────────────────────────────────────────────
+# ── (d) a card's multi-country string keys on ONE of the countries it names (ISO, shared/countries) ──────────────
 
 @pytest.mark.parametrize("card_country, tour_country, want", [
     ("Nepal and China", "Nepal", "Nepal"),
     ("Nepal and China", "China", "China"),
-    ("Nepal and China", "Thailand", "Nepal"),          # not the tour's: the first AA one
+    ("Nepal and China", "Thailand", "Nepal"),          # the tour's is not named: the first named, never the tour's
     ("India, Pakistan", "India", "India"),
+    ("India, Pakistan", "Pakistan", "Pakistan"),       # every ISO country counts, not an "AA list"
     ("Myanmar (Burma)", "Thailand", "Myanmar"),
+    ("Nepal and China (Tibet)", "China", "China"),     # a parenthetical on one part never hides that part's country
     ("Laos / Thailand", "Thailand", "Thailand"),
-    ("thailand", "Laos", "Thailand"),                  # a plain AA country is unchanged
-    ("Russia", "Mongolia", "Russia"),                  # non-AA only: kept as before
+    ("thailand", "Laos", "Thailand"),                  # a plain country is canonical, never the tour's
+    ("Tanzania", "India", "Tanzania"),                 # cross-border: the place's own country
+    ("Russia", "Mongolia", "Russian Federation"),      # an alias -> the shared.countries name
+    ("Himalayas", "Nepal", "Himalayas"),               # names no country: kept as written, not forced to the tour's
     (None, "Laos", ""),
 ])
 def test_canonical_card_country(card_country, tour_country, want):
     assert pipeline.canonical(card_country, tour_country) == want
+
+
+@pytest.mark.parametrize("card_country, tour_country", [
+    ("Nepal and China", "China"), ("Nepal and China", "Thailand"), ("Myanmar (Burma)", "Thailand"),
+    ("Tanzania", "India"), ("Viet Nam", "Laos"), ("Nepal and China (Tibet)", "China"),
+])
+def test_component_key_and_new_card_country_follow_one_rule(card_country, tour_country):
+    """pipeline.canonical (the place-name key) and place_cards.normalise_card_country (a new card's country) agree
+    whenever the text names a country (shared.countries.one_country)."""
+    from services.acp_shared.place_cards import normalise_card_country
+    assert pipeline.canonical(card_country, tour_country) == normalise_card_country(card_country, tour_country)
 
 
 # ── (a) resume after the credit reset ─────────────────────────────────────────────────────────────────────────────

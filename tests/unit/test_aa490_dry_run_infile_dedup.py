@@ -155,3 +155,24 @@ class TestAA490DryRunInFileDedup:
         assert blocked["reason"] == "duplicate_tour"
         assert blocked["message"].startswith("This tour was deleted on 2026-10-20")
         assert "Restore" in blocked["message"] and blocked["deleted_at"].startswith("2026-10-20")
+
+
+@pytest.mark.asyncio
+async def test_dry_run_never_writes_jevs_country_guess(monkeypatch):
+    """AA-990 (AA-490 parity): Commit never writes Jev's country guess (services/ingestion/handler.py), so the preview
+    keeps the row's country None, reports it missing, and only notes the guess."""
+    from services.ingestion import jev_gates
+
+    async def guess(rows, *a, **k):
+        return [jev_gates.RowVerdict(country="India") for _ in rows]
+    records = [{"src_name": "Ladakh Trek", "provider": "Horizon Voyages", "country": None, "duration": "7 days",
+                "price_raw": "900", "src_itineraries": "Day 1 — Leh"}]
+    with patch.object(jev_gates, "assess_rows", new=guess):
+        result = await TestAA490DryRunInFileDedup()._run(monkeypatch, records)
+
+    assert result["ready_count"] == 0 and result["blocked_count"] == 1
+    blocked = result["blocked_tours"][0]
+    assert blocked["country"] is None
+    assert blocked["reason"] == "missing_fields" and "country" in blocked["missing_fields"]
+    assert any("Jev suggests India" in n and "not written" in n for n in blocked["jev_notes"])
+    assert records[0]["country"] is None

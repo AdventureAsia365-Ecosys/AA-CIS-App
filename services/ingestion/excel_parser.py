@@ -208,33 +208,3 @@ class ExcelParser:
             return None
         cleaned = str(value).strip()
         return cleaned if cleaned and cleaned.lower() != "nan" else None
-
-# Country keyword map — dùng cho auto-detect từ filename
-_COUNTRY_KEYWORDS = {
-    "srilanka": "Sri Lanka", "sri_lanka": "Sri Lanka", "lanka": "Sri Lanka",
-    "vietnam": "Vietnam", "viet_nam": "Vietnam",
-    "thailand": "Thailand", "thai": "Thailand",
-    "indonesia": "Indonesia", "bali": "Indonesia",
-    "japan": "Japan",
-    "korea": "South Korea", "south_korea": "South Korea",
-    "nepal": "Nepal",
-    "india": "India",
-    "cambodia": "Cambodia",
-    "myanmar": "Myanmar",
-    "malaysia": "Malaysia",
-    "singapore": "Singapore",
-    "philippines": "Philippines",
-    "laos": "Laos",
-}
-
-def detect_country_from_filename(filename: str) -> str | None:
-    """Extract country từ filename nếu khớp keyword — fallback khi Excel thiếu country column."""
-    if not filename:
-        return None
-    name = filename.split("/")[-1].lower().replace("-", "_").replace(" ", "_")
-    # Remove extension
-    name = name.rsplit(".", 1)[0]
-    for keyword, country in _COUNTRY_KEYWORDS.items():
-        if keyword in name:
-            return country
-    return None

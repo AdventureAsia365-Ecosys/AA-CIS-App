@@ -1624,8 +1624,10 @@ async def ingest_s3(
                 src_name = r.get("src_name") or "(no name)"
                 jev = jev_by_row.get(idx)
                 if jev is not None and jev.country and not r.get("country"):
-                    r["country"] = jev.country
-                    jev.notes.append(f"Country filled by Jev: {jev.country}")
+                    # AA-990 (AA-490 parity): Commit never writes Jev's guess (services/ingestion/handler.py), so the
+                    # preview does not either; the row reports its missing country as Commit would store it.
+                    jev.notes.append(f"Jev suggests {jev.country}; not written: the source row and file name state "
+                                     "no country")
                 missing = [f for f in ["src_name", "country", "duration", "price_raw"] if not r.get(f)]
                 nname, nprov = _normalize_group_key(src_name, r.get("provider"))
                 if (nname, nprov) in seen_keys:
@@ -1656,6 +1658,7 @@ async def ingest_s3(
                         "src_name": src_name, "country": r.get("country"),
                         "reason": "missing_fields", "missing_fields": missing,
                         "message": f"Missing fields: {', '.join(missing)}",
+                        "jev_notes": list(jev.notes) if jev is not None else [],
                     })
                 elif not (r.get("src_itineraries") or "").strip():
                     # AA-604: a row with no itinerary body cannot be rewritten by S1
@@ -3930,15 +3933,26 @@ async def update_tour_country(
     x_admin_secret: str = Header(None),
 ):
     verify_admin_secret(x_admin_secret)
+    country = _tour_country(body.country)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         updated = await conn.fetchval(
             "UPDATE silver_aa_internal.raw_tours SET country = $1 WHERE tour_id = $2::uuid RETURNING tour_id",
-            body.country.strip(), tour_id,
+            country, tour_id,
         )
     if not updated:
         raise HTTPException(status_code=404, detail=f"Tour {tour_id} not found")
-    return {"tour_id": tour_id, "country": body.country.strip()}
+    return {"tour_id": tour_id, "country": country}
+
+
+def _tour_country(value) -> str:
+    """AA-990: raw_tours.country is a shared.countries name (CIS 288 FK): any ISO 3166-1 country, written in its
+    canonical spelling ('india' / 'IN' / 'Viet Nam' -> India / India / Vietnam); anything else is a 422, not a 500."""
+    from shared import countries
+    c = countries.resolve(value if isinstance(value, str) else None)
+    if c is None:
+        raise HTTPException(status_code=422, detail=f"{value!r} is not an ISO 3166-1 country (shared.countries)")
+    return c.name
 
 
 # ── PATCH /admin/tours/{tour_id}/raw ─────────────────────────────────────────
@@ -3966,6 +3980,8 @@ async def update_raw_tour_fields(
         raise HTTPException(status_code=400, detail="No fields provided")
 
     import json as _j_raw
+    if "country" in body and body["country"] is not None:
+        body["country"] = _tour_country(body["country"])
     fields = list(body.keys())
     values = []
     for f in fields:
