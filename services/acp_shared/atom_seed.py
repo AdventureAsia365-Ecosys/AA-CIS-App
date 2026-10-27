@@ -50,7 +50,8 @@ import structlog
 
 from services.acp_content_writing.hygiene import fold, phrase_tokens, proper_nouns
 from services.acp_shared.offered import OFFERED, evidence_status, single_status_line, status_line
-from services.acp_shared.place_cards import clean_identity, core_key, is_generic_name, place_key, unverifiable_claim
+from services.acp_shared.place_cards import (clean_identity, core_key, is_generic_name, place_key, strip_life_dates,
+                                            unverifiable_claim)
 from services.acp_shared.place_cards import fold as place_fold
 from services.acp_shared.seed_canon import canonical_facts, overnight_card_off_route
 
@@ -143,10 +144,12 @@ def writer_facts(card: Optional[dict]) -> list[str]:
     """AA-774 — the card facts rendered for the writer: `WRITER_FACT_KINDS` only (a missing kind
     counts as what_it_is). AA-784 (S253): minus present-tense status / administrative-role and authorship claims
     (`place_cards.unverifiable_claim`) — the rule new cards are built with, applied to cards built before it — unless
-    an admin verified the card (its facts were read by a person)."""
+    an admin verified the card (its facts were read by a person). Round 3: a person's parenthesised life dates are
+    dropped from the sentence (`place_cards.strip_life_dates`), likewise unless verified."""
     keep_all = (card or {}).get("status") == "verified"
     country = (card or {}).get("country")
-    return [f["text"] for f in _card_fact_dicts(card) if (f.get("kind") or "what_it_is") in WRITER_FACT_KINDS
+    return [f["text"] if keep_all else strip_life_dates(f["text"])
+            for f in _card_fact_dicts(card) if (f.get("kind") or "what_it_is") in WRITER_FACT_KINDS
             and (keep_all or not unverifiable_claim(f["text"], country))]
 
 

@@ -93,15 +93,22 @@ Return ONLY JSON:
 
 - display_name: the place's usual English name (fix spelling variants, e.g. "Pawangka" -> the \
 common spelling, mentioning the variant in naming_note).
-- locality: the town, city or village the place is IN (its municipality). Empty string when the \
-place is outside any settlement (in a national park or nature reserve, on a mountain, at a trek camp \
-or hut, a pass, a glacier, a lake or in a desert), when the place is itself a town or village, or when \
-you are not sure. Never the nearest town, trailhead or a neighbouring village instead.
+- locality: the town, city, district or village the place is IN (its municipality). A park, garden, \
+cave, monument, statue, temple, market or street in a city or district has that city or district as \
+its locality. Empty string only when the place is outside any settlement (a national park, nature \
+reserve, conservation area or wildlife sanctuary; a summit, peak, mountain, pass, trek camp, base camp \
+or glacier; a lake outside any town; a trek trail in wild terrain), when the place is itself a town or \
+village, or when you are not sure. Never the nearest town, trailhead or a neighbouring village instead.
 - region: the first-level administrative division the place is in TODAY (a state, province, \
 administrative region, or a city with province status), using its current name after any merger or \
 reform. Never a geographic, trekking or marketing area: not "Northern Mongolia", "Central Vietnam", \
-"Khumbu", "Everest Region" or "North Malé Atoll". Empty string when the place is itself a \
-first-level division or you are not sure. Short names only.
+"Khumbu", "Everest Region" or "North Malé Atoll". A city that is itself a first-level unit (e.g. \
+Almaty, Bishkek, Tashkent, Seoul, Busan, Hanoi, Huế, Da Nang, Bangkok, Phnom Penh, Ulaanbaatar, \
+Beijing) is the region of every place in it and of itself: fill it, even when it equals the locality \
+or the display name. Empty string when the place is itself a province or state, or you are not sure. \
+Short names only.
+- A place that spans a border (a border, a boundary river, an international bridge or crossing): \
+locality and region empty, or both sides written as "A / B".
 - country: the one country it is in today (a route may cross a border, so this can differ from \
 the country the tour is sold as).
 - naming_note: one sentence on how to name the location for an international travel audience \
@@ -118,7 +125,10 @@ stop / base / standard inclusion". Write such content not at all; a fact that is
 reaching or visiting the place is omitted.
 - Only facts you are confident are widely documented. No prices, fees, opening hours, \
 visitor numbers, rankings or superlatives, and nothing about the tour or trip itself. \
-Write a number only if it is a well-established fact (e.g. a founding century).
+Write a number only if it is a well-established fact (e.g. a founding century). An exact number \
+(a year, date, elevation, height, length, area or count) only when it is well known and you are \
+certain of it; otherwise round it (a decade, a century, "over 3,000 metres") or leave it out. Do not \
+add a person's birth and death years.
 - No claims about the place's CURRENT status or administrative role (what it is the capital or seat \
 of, what a building is used for now, whether it still operates or continues to serve): such claims go \
 out of date after reforms, closures and restorations. Write them in the past tense with a date, or not \
@@ -136,13 +146,21 @@ may cross a border: do not reject only because the card's country is a neighbour
 the tour is sold as.
 - locality_ok: false when the locality is not the town, city or village the place is IN — for example \
 the nearest town of a place inside a national park, on a mountain, at a trek camp, pass, glacier or \
-lake, or a neighbouring village. true when it is right or empty.
+lake, or a neighbouring village. true when it is right or empty. A park, garden, cave, monument, \
+statue, temple, market or street inside a city or district is IN that city or district (true).
 - region_ok: false when the region is not the first-level administrative division (state, province, \
 administrative region, city with province status) the place is in today — for example a geographic, \
 trekking or marketing area ("Northern Mongolia", "Central Vietnam", "Khumbu", "North Malé Atoll") or a \
-name replaced by an administrative reform. true when it is right or empty.
+name replaced by an administrative reform. true when it is right or empty. A city that is itself a \
+first-level unit (Almaty, Busan, Huế, Bangkok …) is a right region, also when it equals the locality \
+or the display name.
+- A place that spans a border (a border, a boundary river, an international bridge or crossing): a \
+single locality or region on one side is false; empty or both sides as "A / B" is true.
 - One verdict per numbered fact, same order. "supported" only when you are confident the fact \
 is correct and widely documented; "unsure" when you cannot confirm it; "wrong" when it is false.
+- Check every exact number in a fact on its own (years, dates, elevations, heights, lengths, areas, \
+counts): "supported" only when you are confident that each number is exactly right; one number you \
+cannot confirm makes the fact "unsure", one you know is off makes it "wrong".
 - Answer "unsure" for any claim about the place's CURRENT status or administrative role (is the \
 capital or seat of something, currently, still, continues to, now serves as, remains): reforms, \
 closures and restorations make such claims go out of date and you have no source. Answer "unsure" \
@@ -155,6 +173,8 @@ for who designed it ("designed by", an architect's name): the card carries no so
 # AA-808 added the traveller-clause bullet (hash changes with it; existing cards are not re-drafted).
 # AA-784 (S253) added the locality / region / current-status rules and the check's locality_ok / region_ok: the hash
 # change retries stored misses once; existing cards change only through rebuild_place_cards().
+# AA-784 (S253 round 3) added urban localities, first-level cities as regions, border-spanning places and the exact
+# number rule (same effect: misses retried once, no card re-drafted).
 PROMPT_SHA = hashlib.sha256(f"{_CARD_SYSTEM}\n{_CHECK_SYSTEM}\nfacts={MAX_FACTS}".encode()).hexdigest()[:16]
 
 
@@ -412,12 +432,29 @@ def traveller_clause(text: str) -> Optional[tuple[str, str]]:
     return None
 
 
+# AA-784 (S253 round 3): a person's life dates in parentheses after a name — 'Kruba Srivichai (1878–1938)', '(born
+# 1878)', '(d. 1939)', '(c. 1550 – 1612)'. The r2 spot check found 3 false kept facts, all small numeric slips; one
+# was such a death year (1938 for 1939). The dates are never what the sentence is about, so they are dropped and the
+# sentence is kept. A single year in parentheses ('completed (1927)') is left alone.
+_YEAR = r"(?:c\.\s*|ca\.\s*|circa\s+)?\d{3,4}(?:\s*(?:CE|AD|BCE|BC))?"
+_LIFE_DATES_RE = re.compile(
+    r"(\b\w[\w'’.-]*)\s*\("
+    rf"(?:{_YEAR}\s*(?:[–—-]|to)\s*{_YEAR}|(?:born|b\.|died|d\.)\s*{_YEAR})"
+    r"\)")
+
+
+def strip_life_dates(text: Optional[str]) -> str:
+    """`text` without parenthesised life dates right after a capitalised word — a name: 'Kruba Srivichai (1878–1938)
+    is remembered …' -> 'Kruba Srivichai is remembered …'. After a lowercase word ('the hall (1905–1908)') kept."""
+    return _LIFE_DATES_RE.sub(lambda m: m.group(1) if m.group(1)[0].isupper() else m.group(0), text or "")
+
+
 def _clean_facts(raw_facts, card_name: str = "") -> list[dict]:
     out = []
     for f in raw_facts if isinstance(raw_facts, list) else []:
         if isinstance(f, dict) and isinstance(f.get("text"), str) and f["text"].strip():
             kind = f.get("kind") if f.get("kind") in FACT_KINDS else "what_it_is"
-            text = " ".join(f["text"].split())
+            text = " ".join(strip_life_dates(f["text"]).split())
             hit = traveller_clause(text) if kind in _WRITER_KINDS else None
             if hit:
                 logger.info("place_card_fact_rekinded", card=card_name, pattern=hit[1],
@@ -482,13 +519,69 @@ _DIVISION_NAME_ENDS = frozenset({"province", "prefecture", "aimag", "aimak", "ob
                                  "state", "krai"})
 
 # Places outside any settlement: their locality is empty, never the nearest town (Barafu Camp -> Moshi).
+# Round 3 (S253 r2 spot check): ONLY protected areas, summits / peaks / mountains / passes, camps / huts, glaciers and
+# lakes. Valley / gorge / canyon / desert / plateau left the list: they hold settlements, and over-emptying a right
+# locality is the defect the r2 check found. A park, garden, cave, monument, statue, temple, market or street keeps
+# its locality (no rule here clears it).
 _REMOTE_WORDS = frozenset({
     "camp", "camps", "hut", "huts", "pass", "glacier", "glaciers", "icefall", "peak", "peaks", "summit", "mount", "mt",
-    "mountain", "mountains", "volcano", "crater", "ridge", "col", "lake", "lakes", "tso", "tsho", "nuur", "gorge",
-    "canyon", "desert", "plateau", "range", "valley"})
+    "mountain", "mountains", "volcano", "crater", "ridge", "col", "range", "lake", "lakes", "tso", "tsho", "nuur"})
 _REMOTE_PHRASES = ("national park", "nature reserve", "wildlife sanctuary", "conservation area", "protected area",
                    "biosphere reserve", "marine park")
 _REMOTE_LEADING = frozenset({"lake", "mount", "mt", "glacier"})
+_LAKE_WORDS = frozenset({"lake", "lakes", "tso", "tsho", "nuur"})
+# Cities that are themselves first-level units (round 3, S253 r2 spot check: D20 Panfilov Park in Almaty, D13 A Lưới
+# in Huế). Their name is a right region for every place in them AND for the city's own card, and a right locality
+# for a lake in them (Hoan Kiem Lake, Hanoi). Compared on _city_key() ('Busan Metropolitan City' -> 'busan').
+# Deliberately not Kathmandu (Bagmati), Colombo (Western Province), Manila (NCR), Yangon (Yangon Region).
+FIRST_LEVEL_CITIES = frozenset({
+    "almaty", "astana", "nur sultan", "shymkent", "bishkek", "osh", "tashkent",
+    "seoul", "busan", "incheon", "daegu", "daejeon", "gwangju", "ulsan", "sejong",
+    "hanoi", "ha noi", "ho chi minh", "hue", "da nang", "danang", "hai phong", "haiphong", "can tho",
+    "bangkok", "tokyo", "vientiane", "phnom penh", "ulaanbaatar", "ulan bator",
+    "delhi", "beijing", "shanghai", "chongqing", "tianjin", "hong kong", "macau", "macao", "singapore",
+    "kuala lumpur", "putrajaya", "labuan", "jakarta", "taipei", "new taipei", "taichung", "tainan", "kaohsiung",
+    "taoyuan", "naypyidaw", "nay pyi taw", "islamabad"})
+# Status words around a first-level city's name ('Seoul Special City', 'Vientiane Prefecture', 'Delhi NCT').
+_CITY_STATUS_WORDS = frozenset({
+    "city", "special", "metropolitan", "metropolis", "capital", "municipality", "prefecture", "territory",
+    "national", "federal", "union", "sar", "nct", "administrative", "of", "the"})
+
+
+def _city_key(text: Optional[str]) -> str:
+    return " ".join(w for w in fold(text).split() if w not in _CITY_STATUS_WORDS)
+
+
+def first_level_city(text: Optional[str]) -> bool:
+    """True when `text` names a city that is itself a first-level administrative unit (FIRST_LEVEL_CITIES)."""
+    key = _city_key(text)
+    return bool(key) and key in FIRST_LEVEL_CITIES
+
+
+# A place spanning two countries or regions (a border, a boundary river, an international bridge): its locality and
+# region are empty or written as both sides 'A / B' (D19 'Huay Xai / Chiang Khong'), never one side (D03
+# 'Myanmar–Thailand border' -> 'Mae Fa Luang', 'Chiang Rai').
+_BORDER_WORDS = frozenset({"border", "borders", "boundary", "frontier", "tripoint"})
+
+
+def _compound_country(text: Optional[str]) -> bool:
+    """'Thailand and Myanmar' / 'Nepal / Tibet' / 'Pakistan, India, China': two or more countries
+    (shared.countries.resolve_parts). Not one country with 'and' in its name ('Bosnia and Herzegovina')."""
+    return len(_countries.resolve_parts(text)) >= 2
+
+
+def cross_border(name: Optional[str], *countries: Optional[str]) -> bool:
+    """The card names a border (its display name has 'border' / 'boundary' …) or one of `countries` is a compound
+    ('Thailand and Myanmar': legacy cards and raw drafts; new cards store one ISO country, AA-990)."""
+    if any(w in _BORDER_WORDS for w in _words(name)):
+        return True
+    return any(_compound_country(c) for c in countries)
+
+
+def _both_sides(value: str) -> bool:
+    """'Huay Xai / Chiang Khong', 'Ladakh, Gilgit-Baltistan, Xinjiang' (a range over three countries): every side."""
+    parts = re.split(r"[/,]", value)
+    return len(parts) > 1 and all(p.strip() for p in parts)
 _PASS_SUFFIX = "la"  # Tibetan / Ladakhi "pass" as the LAST word ("Khardung La", "Thorong La"), never "La Paz"
 # A village is its own locality: a different settlement there is a neighbouring one (Thado Koshi -> Lukla).
 # Nepali "-gaon" / "-gaun" (village) only on a Nepal card: "Goregaon" is a Mumbai suburb.
@@ -536,7 +629,8 @@ def region_problem(region: Optional[str], *, name: Optional[str] = None,
         return "country" if card_country is None or whole == card_country.name else None
     name_words = _words(name)
     # exact name only: 'Khövsgöl Lake' sits in 'Khövsgöl Province', a town 'Bulgan' in 'Bulgan Province'
-    if name_words and (words == name_words or name_words[-1] in _DIVISION_NAME_ENDS
+    # round 3: a first-level city is its own region ('Busan' on the Busan card, 'Hue' on the Huế card)
+    if name_words and ((words == name_words and not first_level_city(region)) or name_words[-1] in _DIVISION_NAME_ENDS
                        or name_words[-2:] == ["autonomous", "region"]):
         return "is_place"
     if words[-1] in _ROUTE_WORDS:
@@ -558,17 +652,20 @@ def region_problem(region: Optional[str], *, name: Optional[str] = None,
     return None
 
 
-def _remote_name(name: str) -> bool:
-    """The name's HEAD is a remote kind: its last word ('Barafu Camp', 'Nam Ou Valley', 'Thorong La'), a leading
+def _remote_name(name: str, *, lakes: bool = True) -> bool:
+    """The name's HEAD is a remote kind: its last word ('Barafu Camp', 'Ghurchi Lagna Pass', 'Thorong La'), a leading
     'Lake' / 'Mount' ('Mount Everest'), or a park phrase at its end ('Kilimanjaro National Park'). A building named
     after one is not remote: 'Sagarmatha National Park Visitor Centre' is in Namche Bazaar, 'Lake Palace' in Udaipur.
-    Each form of the name counts ('Tonle Sap (Tonle Sap Lake)')."""
+    Each form of the name counts ('Tonle Sap (Tonle Sap Lake)'). `lakes=False`: a lake head does not count (a lake
+    in a first-level city: 'Hoan Kiem Lake', Hanoi)."""
     for form in name_forms(name):
         words = form.split()
         if not words:
             continue
-        if (words[-1] in _REMOTE_WORDS or words[0] in _REMOTE_LEADING
-                or any(form.endswith(p) for p in _REMOTE_PHRASES) or (len(words) > 1 and words[-1] == _PASS_SUFFIX)):
+        head = words[-1] in _REMOTE_WORDS and (lakes or words[-1] not in _LAKE_WORDS)
+        lead = words[0] in _REMOTE_LEADING and (lakes or words[0] not in _LAKE_WORDS)
+        if (head or lead or any(form.endswith(p) for p in _REMOTE_PHRASES)
+                or (len(words) > 1 and words[-1] == _PASS_SUFFIX)):
             return True
     return False
 
@@ -583,19 +680,22 @@ def locality_problem(locality: Optional[str], *, name: Optional[str], region: Op
                      country: Optional[str] = None, place_names: tuple = ()) -> Optional[str]:
     """Why `locality` is not the settlement the place is IN, or None to keep it.
 
-    'is_place' — the locality is the place itself (a town's card); 'same_as_region' — it repeats the region (the
-    region stays); 'remote_place' — the place (its display name or an itinerary name) is outside any settlement: a
-    camp, hut, pass, glacier, peak, lake, valley, national park … ; 'village' — the place is a village and the
-    locality is another settlement. A generic name ('City Palace') keeps its locality: its card key needs it."""
+    'is_place' — the locality is the place itself (a town's card); 'remote_place' — the place (its display name or
+    an itinerary name) is outside any settlement: a camp, hut, pass, glacier, peak, mountain, lake, national park … ;
+    'village' — the place is a village and the locality is another settlement. A generic name ('City Palace') keeps
+    its locality: its card key needs it.
+
+    Round 3 (S253 r2 spot check): a locality equal to the region is KEPT. The S253 r1 'same_as_region' clear emptied
+    right localities: a city named like its province (D04 Kruba Srivichai Monument, Chiang Mai / Chiang Mai), a
+    first-level city (Busan / Busan, Almaty / Almaty). A park, garden, cave, monument, temple, market or street is
+    never remote; a lake in a first-level city keeps that city."""
     if not _words(locality) or is_generic_name(name):
         return None
     if _bare(locality) == _bare(name):
         return "is_place"
-    # whole words only: the town 'Luang Prabang' is in 'Luang Prabang Province' (both are right)
-    if _words(region) and core_key(locality) == core_key(region):
-        return "same_as_region"
     names = [n for n in (name, *place_names) if n]
-    if any(_remote_name(n) for n in names):
+    lakes = not first_level_city(locality)
+    if any(_remote_name(n, lakes=lakes) for n in names):
         return "remote_place"
     if any(_village_name(n, country) for n in names):
         return "village"
@@ -603,13 +703,17 @@ def locality_problem(locality: Optional[str], *, name: Optional[str], region: Op
 
 
 def clean_identity(card: dict, *, place_names: tuple = (), country: Optional[str] = None) -> list[dict]:
-    """Clear a drafted card's region / locality that break the AA-784 rules (in place). Region first: a cleared region
-    no longer makes the locality redundant. Returns one {"field", "reason", "value"} per cleared field."""
+    """Clear a drafted card's region / locality that break the AA-784 rules (in place). Region first. A place spanning
+    a border (cross_border: a border name, or `country` / the card's own country a compound) keeps a field only as
+    both sides 'A / B' ('cross_border' otherwise). Returns one {"field", "reason", "value"} per cleared field."""
     out = []
     name = card.get("display_name") if isinstance(card.get("display_name"), str) else ""
+    spans = cross_border(name, country, card.get("country") if isinstance(card.get("country"), str) else None)
     for field in ("region", "locality"):
         value = card.get(field) if isinstance(card.get(field), str) else ""
-        if field == "region":
+        if spans:
+            why = "cross_border" if value.strip() and not _both_sides(value) else None
+        elif field == "region":
             why = region_problem(value, name=name, country=country)
         else:
             why = locality_problem(value, name=name, region=card.get("region") or "", country=country,

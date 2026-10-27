@@ -78,7 +78,8 @@ def test_clean_identity_reports_what_it_cleared():
     ("North East India", "Kaziranga", "India", "geographic"),
     ("Vietnam", "Hoi An", "Vietnam", "country"),
     ("Viet Nam", "Hoi An", "Vietnam", "country"),
-    ("Hue", "Hue", "Vietnam", "is_place"),
+    ("Pleiku", "Pleiku", "Vietnam", "is_place"),       # round 3: Hue / Hue is kept (a first-level city)
+    ("Chiang Mai", "Chiang Mai", "Thailand", "is_place"),   # a city named like its province: not on the allow-list
 ])
 def test_region_that_is_not_a_first_level_division_is_cleared(region, name, country, why):
     assert pc.region_problem(region, name=name, country=country) == why
@@ -124,7 +125,9 @@ def test_first_level_divisions_are_kept(region, name, country):
     ("Arusha", "Kilimanjaro National Park", "Kilimanjaro", "Tanzania", (), "remote_place"),
     ("Lukla", "Mount Everest", "Koshi Province", "Nepal", (), "remote_place"),
     ("Leh", "Khardung La", "Ladakh", "India", (), "remote_place"),
-    ("Hanoi", "Ban Lac", "Hanoi", "Vietnam", (), "same_as_region"),
+    ("Busan", "Busan", "Busan", "South Korea", (), "is_place"),          # a first-level city's own card
+    ("Cho Ra", "Ba Be Lake", "Thai Nguyen", "Vietnam", (), "remote_place"),
+    ("Pokhara", "Phewa Lake", "Gandaki Province", "Nepal", (), "remote_place"),  # not a first-level city
     ("Siem Reap", "Tonle Sap (Tonle Sap Lake)", "", "Cambodia", (), "remote_place"),
     ("Pokhara", "Dhampus", "Gandaki Province", "Nepal", ("Dhampus village",), "village"),
 ])
