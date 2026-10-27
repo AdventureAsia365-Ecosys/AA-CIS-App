@@ -41,7 +41,7 @@ CI_CMD[quality_lint]="python -m services.quality.lint --report   (ci.yml Lint > 
 CI_CMD[unit]="COVERAGE_CORE=sysmon pytest tests/unit/ -v --tb=short --cov=services --cov=shared --cov-report=term-missing --cov-report=xml:coverage.xml && pytest tests/acp/ -v --tb=short && python3 .github/scripts/coverage_ratchet.py coverage.xml --base <base>   (ci.yml Unit Tests; CI installs: uv pip install --system -r requirements.txt -r requirements-dev.txt)"
 UNIT_INSTALL="pip install -r requirements.txt -r requirements-dev.txt"
 CI_CMD[frontend_tsc]="cd frontend && npx tsc --noEmit -p .   (ci.yml Frontend Build > Type-check; next build stays CI-only)"
-CI_CMD[frontend_kit]="cd frontend && node app/_kit/core/check-kit-copy.mjs --self && node app/_kit/core/check-kit-copy.mjs --css . && node app/_kit/core/check-kit-copy.mjs --suppressions <base eslint-suppressions.json> eslint-suppressions.json   (ci.yml Frontend Build > Kit core self-check; Frontend Lint > Suppressions do not grow)"
+CI_CMD[frontend_kit]="cd frontend && node app/_kit/core/check-kit-copy.mjs --self && node app/_kit/core/check-kit-copy.mjs --css . && node app/_kit/core/check-kit-copy.mjs --suppressions <base eslint-suppressions.json> eslint-suppressions.json --base-files <git ls-tree -r --name-only <base> -- frontend/> && node app/_kit/core/check-kit-copy.mjs --no-kit-disable app --ignore _kit   (ci.yml Frontend Build > Kit core self-check; Frontend Lint > Suppressions do not grow, No inline disable of a kit rule)"
 CI_CMD[frontend_lint]="cd frontend && npx eslint --prune-suppressions && git diff --exit-code eslint-suppressions.json   (ci.yml Frontend Lint; locally only the changed files, or all of frontend/ when the lint config, the kit rules or the suppressions file changed; fix, or after fixing old violations: npx eslint --prune-suppressions <files>)"
 CI_CMD[portal_tsc]="cd portal && npx tsc --noEmit -p .   (ci.yml Portal Build > Type-check; next build stays CI-only)"
 CI_CMD[portal_lint]="cd portal && npm run lint   (ci.yml Portal Lint; continue-on-error in CI, so report-only here)"
@@ -433,18 +433,21 @@ do_unit() {
 }
 
 # do_frontend_kit: the dependency-free kit checks (no node_modules needed): core self-check, no --aa-* definition
-# outside core/tokens.css, and the ESLint suppressions file does not grow against the diff base (CI: Frontend Build
-# "Kit core self-check" + Frontend Lint "Suppressions do not grow").
+# outside core/tokens.css, no inline disable of a kit rule in page code, and the ESLint suppressions file does not
+# grow against the diff base (new entries only in files the base did not have) (CI: Frontend Build "Kit core
+# self-check" + Frontend Lint "Suppressions do not grow" and "No inline disable of a kit rule").
 do_frontend_kit() {
   if ! command -v node >/dev/null 2>&1; then fail_check frontend_kit "node is not installed" "install Node 22 (CI: setup-node 22)"; return; fi
-  local base_file=$LOG_DIR/base-eslint-suppressions.json supp=(true)
-  if git show "$BASE:frontend/eslint-suppressions.json" >"$base_file" 2>/dev/null; then
-    supp=(node app/_kit/core/check-kit-copy.mjs --suppressions "$base_file" eslint-suppressions.json)
+  local base_file=$LOG_DIR/base-eslint-suppressions.json base_list=$LOG_DIR/base-frontend-files.txt supp=(true)
+  if git show "$BASE:frontend/eslint-suppressions.json" >"$base_file" 2>/dev/null \
+    && git ls-tree -r --name-only "$BASE" -- frontend/ | sed 's#^frontend/##' >"$base_list"; then
+    supp=(node app/_kit/core/check-kit-copy.mjs --suppressions "$base_file" eslint-suppressions.json --base-files "$base_list")
   fi
-  run_check frontend_kit "kit core self-check + --css + suppressions growth vs $BASE (frontend/)" bash -c '
+  run_check frontend_kit "kit core self-check + --css + no kit disable + suppressions growth vs $BASE (frontend/)" bash -c '
     cd frontend || exit 2
     node app/_kit/core/check-kit-copy.mjs --self || exit $?
     node app/_kit/core/check-kit-copy.mjs --css . || exit $?
+    node app/_kit/core/check-kit-copy.mjs --no-kit-disable app --ignore _kit || exit $?
     "$@"' _ "${supp[@]}"
 }
 

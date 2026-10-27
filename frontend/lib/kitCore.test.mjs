@@ -13,8 +13,8 @@ import { fileURLToPath } from "node:url";
 
 import {
   HEADER, MANIFEST, aaDefinitions, buildManifest, closureProblems, copyProblems, cssDefinitionProblems, headerProblems,
-  importProblem, importSpecifiers, main, manifestText, readSuppressions, selfProblems, sha256, suppressionProblems,
-  suppressionTotals,
+  importProblem, importSpecifiers, kitDisableDirectives, kitDisableProblems, main, manifestText, readFileList,
+  readSuppressions, selfProblems, sha256, suppressionProblems, suppressionTotals,
 } from "../app/_kit/core/check-kit-copy.mjs";
 import { createThemeStore, themeRestoreScript } from "../app/_kit/core/theme.ts";
 
@@ -290,6 +290,85 @@ test("suppressions: fewer, equal or moved entries pass; a grown entry, a grown r
   assert.throws(() => readSuppressions(JSON.stringify({ "a.tsx": { R: { count: -1 } } })), /integer count/);
 });
 
+test("suppressions: fixing an old violation never buys a new entry; only a deleted/renamed file's entries move", (t) => {
+  const d = scratch(t);
+  mkdirSync(join(d, "app"));
+  for (const f of ["a2.tsx", "b.tsx", "c.tsx"]) writeFileSync(join(d, "app", f), "x");
+  const base = readSuppressions(JSON.stringify(supp({ "app/a.tsx": { R: 2 }, "app/b.tsx": { R: 2 } })));
+  const check = (head, opts = {}) =>
+    suppressionProblems(base, readSuppressions(JSON.stringify(supp(head))), { root: d, ...opts });
+  // Trade: b.tsx (still there) drops one, c.tsx gains a new entry; the R total stays 4.
+  const trade = check({ "app/a.tsx": { R: 2 }, "app/b.tsx": { R: 1 }, "app/c.tsx": { R: 1 } });
+  writeFileSync(join(d, "app", "a.tsx"), "x");
+  const tradeWithA = check({ "app/a.tsx": { R: 2 }, "app/b.tsx": { R: 1 }, "app/c.tsx": { R: 1 } });
+  assert.match(tradeWithA.join("\n"), /R: 1 new suppressed entries but only 0 came from deleted\/renamed files/);
+  assert.equal(tradeWithA.length, 1, tradeWithA.join("\n"));
+  rmSync(join(d, "app", "a.tsx"));
+  assert.ok(trade.some((p) => /app\/a\.tsx: listed but the file no longer exists/.test(p)), "a.tsx entry is stale");
+  // A new rule key on an existing file's entry is a new entry too.
+  writeFileSync(join(d, "app", "a.tsx"), "x");
+  const base2 = readSuppressions(JSON.stringify(supp({ "app/b.tsx": { R: 2, S: 1 } })));
+  const newKey = suppressionProblems(base2, readSuppressions(JSON.stringify(supp({ "app/b.tsx": { R: 2 }, "app/a.tsx": { S: 1 } }))),
+    { root: d });
+  assert.match(newKey.join("\n"), /S: 1 new suppressed entries but only 0/);
+  rmSync(join(d, "app", "a.tsx"));
+  // Rename: a.tsx is gone, a2.tsx carries its entries (same or fewer) -> OK; more than a.tsx had -> total grows.
+  assert.deepEqual(check({ "app/a2.tsx": { R: 2 }, "app/b.tsx": { R: 2 } }), [], "a.tsx renamed to a2.tsx");
+  assert.deepEqual(check({ "app/a2.tsx": { R: 1 }, "app/c.tsx": { R: 1 }, "app/b.tsx": { R: 2 } }), [], "a.tsx split");
+  // --base-files: a new entry must be in a file the base commit did not have.
+  const baseFiles = readFileList("frontend/app/a.tsx\nfrontend/app/b.tsx\nfrontend/app/c.tsx\n", "frontend/");
+  assert.deepEqual([...baseFiles].sort(), ["app/a.tsx", "app/b.tsx", "app/c.tsx"]);
+  assert.deepEqual(check({ "app/a2.tsx": { R: 2 }, "app/b.tsx": { R: 2 } }, { baseFiles }), [], "rename to a new path");
+  const intoOld = check({ "app/c.tsx": { R: 2 }, "app/b.tsx": { R: 2 } }, { baseFiles });
+  assert.match(intoOld.join("\n"), /app\/c\.tsx: new R suppression in a file that already existed at the base/,
+    "deleting a.tsx does not buy a new violation in the old c.tsx");
+});
+
+test("--no-kit-disable: inline switches of kit rules fail, other rules' disables pass", (t) => {
+  const ok = [
+    "// eslint-disable-next-line react-hooks/exhaustive-deps -- mentions aa-kit/ in the reason only",
+    "/* eslint-disable react-hooks/set-state-in-effect -- fetch on mount */",
+    "/** eslint-disable */", "/* eslint-enable */", "/* eslint-env browser */",
+    "const s = \"Order #1\"; // a comment about eslint",
+  ];
+  for (const src of ok) assert.deepEqual(kitDisableDirectives(src), [], src);
+  const bad = [
+    ["{/* eslint-disable-next-line aa-kit/no-raw-main */}", /names an aa-kit\/ rule/],
+    ["x(); // eslint-disable-line aa-kit/no-hex-colour", /names an aa-kit\/ rule/],
+    ["// eslint-disable-line react-hooks/x, aa-kit/no-raw-table", /names an aa-kit\/ rule/],
+    ["/* eslint-disable */", /bare eslint-disable switches every rule off/],
+    ["// eslint-disable-next-line -- no rule named", /bare eslint-disable-next-line/],
+    ["/*\n  eslint-disable\n  aa-kit/no-raw-table\n*/", /names an aa-kit\/ rule/],
+    ["/* eslint aa-kit/no-raw-main: off */", /inline config comment/],
+  ];
+  for (const [src, re] of bad) {
+    const got = kitDisableDirectives(src);
+    assert.equal(got.length, 1, src);
+    assert.match(got[0][1], re, src);
+  }
+  const d = scratch(t);
+  mkdirSync(join(d, "admin"), { recursive: true });
+  mkdirSync(join(d, "_kit"), { recursive: true });
+  writeFileSync(join(d, "admin", "page.tsx"), "const a = 1;\n{/* eslint-disable-next-line aa-kit/no-raw-main */}\n");
+  writeFileSync(join(d, "admin", "ok.tsx"), "// eslint-disable-next-line react-hooks/exhaustive-deps\n");
+  writeFileSync(join(d, "_kit", "Shell.tsx"), "/* eslint-disable */\n");
+  writeFileSync(join(d, "admin", "notes.css"), "/* eslint-disable */\n");
+  assert.deepEqual(kitDisableProblems(d, { ignore: ["_kit"] }),
+    ["admin/page.tsx:2: eslint-disable-next-line names an aa-kit/ rule"]);
+  assert.equal(kitDisableProblems(d).length, 2, "without --ignore the kit folder is scanned too");
+  const quiet = (fn) => {
+    const [log, err] = [console.log, console.error];
+    console.log = console.error = () => {};
+    try { return fn(); } finally { [console.log, console.error] = [log, err]; }
+  };
+  assert.equal(quiet(() => main(["--no-kit-disable", d, "--ignore", "_kit"])), 1);
+  rmSync(join(d, "admin", "page.tsx"));
+  assert.equal(quiet(() => main(["--no-kit-disable", d, "--ignore", "_kit"])), 0);
+  assert.equal(quiet(() => main(["--no-kit-disable", join(d, "nope")])), 2);
+  assert.deepEqual(kitDisableProblems(join(FRONTEND, "app"), { ignore: ["_kit"] }), [],
+    "CIS page code switches no kit rule off inline");
+});
+
 test("--suppressions CLI: exit 0 when it shrinks, 1 when it grows, 2 without a base file", (t) => {
   const d = scratch(t);
   writeFileSync(join(d, "page.tsx"), "x");
@@ -307,6 +386,12 @@ test("--suppressions CLI: exit 0 when it shrinks, 1 when it grows, 2 without a b
   assert.equal(quiet(() => main(["--suppressions", base, head])), 1);
   assert.equal(quiet(() => main(["--suppressions", join(d, "nope.json"), head])), 2);
   assert.equal(quiet(() => main(["--suppressions", base])), 2);
+  const list = join(d, "base-files.txt");
+  writeFileSync(list, "page.tsx\nother.tsx\n");
+  writeFileSync(join(d, "other.tsx"), "x");
+  writeFileSync(head, JSON.stringify(supp({ "page.tsx": { R: 1 }, "other.tsx": { R: 1 } })));
+  assert.equal(quiet(() => main(["--suppressions", base, head, "--base-files", list])), 1, "new entry in an old file");
+  assert.equal(quiet(() => main(["--suppressions", base, head, "--base-files", join(d, "nope.txt")])), 2);
 });
 
 test("eslint-kit.mjs is core, in the tokens profile, and the committed suppressions file parses", () => {

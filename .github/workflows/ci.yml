@@ -333,8 +333,11 @@ jobs:
   #      violations that still exist;
   #   3. the committed file must equal the pruned one (a fix that did not prune its entries fails here);
   #   4. no entry and no rule total may grow against the base branch's file (a `--suppress-all` that hides new
-  #      violations fails here), and no entry may name a deleted file.
-  # Steps 3 and 4 run even when step 2 fails, so one run shows every reason.
+  #      violations fails here), a new entry may only carry a deleted/renamed file's violations into a file the base
+  #      did not have, and no entry may name a deleted file;
+  #   5. no inline `eslint-disable` of a kit rule (or bare `eslint-disable`) in page code: the suppressions file is the
+  #      only baseline.
+  # Steps 3-5 run even when step 2 fails, so one run shows every reason.
   frontend-lint:
     name: Frontend Lint
     runs-on: ubuntu-latest
@@ -398,7 +401,13 @@ jobs:
             echo "::notice::The base commit has no frontend/eslint-suppressions.json (this change creates the baseline): growth check skipped."
             exit 0
           fi
-          node app/_kit/core/check-kit-copy.mjs --suppressions "$BASE_FILE" eslint-suppressions.json
+          BASE_LIST="$RUNNER_TEMP/base-frontend-files.txt"
+          git ls-tree -r --name-only "$BASE_SHA" -- . > "$BASE_LIST"  # paths relative to frontend/ (the cwd)
+          node app/_kit/core/check-kit-copy.mjs --suppressions "$BASE_FILE" eslint-suppressions.json --base-files "$BASE_LIST"
+
+      - name: No inline disable of a kit rule
+        if: ${{ !cancelled() }}
+        run: node app/_kit/core/check-kit-copy.mjs --no-kit-disable app --ignore _kit
 
   # AA-885 — ESLint for the tenant portal app (portal/, same UI-kit rules as the admin). NON-required,
   # AA-979: lints the frozen copy only; the portal is developed in AA-Partner now.

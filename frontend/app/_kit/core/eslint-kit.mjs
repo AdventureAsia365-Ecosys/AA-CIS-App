@@ -106,8 +106,13 @@ const CSS_WORDS = /\b(?:solid|dashed|dotted|double|inset|(?:linear|radial|conic)
 const STYLE_ATTRS = new Set([
   "style", "className", "class", "fill", "stroke", "color", "stopColor", "floodColor", "lightingColor", "background",
 ]);
-/** JSX attributes whose values are never colours (anchors, ids, routes). */
-const NON_COLOUR_ATTRS = new Set(["href", "to", "id", "htmlFor", "key", "name", "src", "target", "rel", "type"]);
+/** JSX attributes whose values are never colours (anchors, ids, routes, visible or spoken text). */
+const NON_COLOUR_ATTRS = new Set([
+  "href", "to", "id", "htmlFor", "key", "name", "src", "target", "rel", "type", "placeholder", "title", "alt", "label",
+]);
+/** An all-digit hex that reads as a number ("#123", "#1024"), not a colour: 3 or 4 digits that are not one repeated
+ *  digit ("#000" and "#3333" stay colours). Only outside a style attribute or a colour-ish key. */
+const NUMBER_LIKE_HEX = /^\s*#(?!(\d)\1+\s*$)\d{3,4}\s*$/;
 /** Object keys whose values are colours. */
 const COLOUR_KEY = /colou?r|background|border|outline|fill|stroke|shadow|caret|decoration|gradient/i;
 
@@ -129,11 +134,11 @@ function colourProblem(context, node, text) {
   if (attr && (NON_COLOUR_ATTRS.has(attr) || attr.startsWith("aria-") || attr.startsWith("data-"))) return null;
   if (COLOUR_FN.test(text)) return "an rgb()/hsl() colour";
   if (HEX_IN_BRACKETS.test(text) && (attr === "className" || attr === "class")) return "a Tailwind arbitrary colour";
-  if (HEX_ALONE.test(text)) return "a hex colour";
-  if (!HEX_IN_TEXT.test(text)) return null;
   const parent = node.parent;
   const inStyle = attr != null && STYLE_ATTRS.has(attr);
   const colourKey = parent && parent.type === "Property" && parent.value === node && COLOUR_KEY.test(keyName(parent));
+  if (HEX_ALONE.test(text)) return inStyle || colourKey || !NUMBER_LIKE_HEX.test(text) ? "a hex colour" : null;
+  if (!HEX_IN_TEXT.test(text)) return null;
   return inStyle || colourKey || CSS_WORDS.test(text) ? "a hex colour" : null;
 }
 

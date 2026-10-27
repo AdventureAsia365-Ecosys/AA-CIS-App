@@ -13,9 +13,17 @@
 //   node <core>/check-kit-copy.mjs --suppressions <base.json> <head.json>
 //                                             the ESLint bulk-suppressions file only shrinks (ADR 0016 decision 7,
 //                                             AA-994 S1c, plan guard G11): no entry (file + rule) grows against the
-//                                             base branch's file, no rule's total grows (an entry may move to a new
-//                                             path with a rename), and no entry names a file that no longer exists
-//                                             (paths are relative to <head.json>'s folder)
+//                                             base branch's file, no rule's total grows, a new entry only carries
+//                                             violations of a deleted/renamed file (per rule: new entries <= entries
+//                                             of files that are gone), and no entry names a file that no longer exists
+//                                             (paths are relative to <head.json>'s folder). With --base-files <list>
+//                                             (the base commit's paths, one per line, relative to the same folder) a
+//                                             new entry must also be in a file the base did not have.
+//   node <core>/check-kit-copy.mjs --no-kit-disable <dir> [--ignore <path>]...
+//                                             no code file under <dir> (minus the --ignore paths, relative to <dir>)
+//                                             switches a kit rule off inline: no bare eslint-disable[-line|-next-line]
+//                                             (it disables every rule) and no directive or config comment naming an
+//                                             aa-kit/ rule; the suppressions file is the only baseline (ADR 0016 d7)
 //   options: --dir <path> (default: this script's folder), --profile full|tokens (default: kit.lock.json's, else full),
 //            --lock <path> (default: the nearest kit.lock.json in up to 4 parent folders)
 // Exit codes: 0 fine, 1 problems found (listed on stderr), 2 usage error.
@@ -348,13 +356,30 @@ export function suppressionTotals(supp) {
 const FIX_SUPP = "fix the new violation instead of suppressing it (never `eslint --suppress-all` for new code); " +
   "after fixing old ones run `npx eslint --prune-suppressions` and commit eslint-suppressions.json";
 
-/** Plan guard G11: what grew in head against base, plus entries for files that are gone (root = head's folder). */
-export function suppressionProblems(base, head, { root } = {}) {
+/** Plan guard G11: what grew in head against base, plus entries for files that are gone (root = head's folder).
+ *  A new entry (file + rule the base did not list) is a move: per rule, new entries may carry at most what the files
+ *  that are gone carried (gone = missing under root; without root, absent from head), and with `baseFiles` (the base
+ *  commit's paths) a new entry must be in a file the base did not have. So fixing one old violation never buys a
+ *  new one elsewhere. */
+export function suppressionProblems(base, head, { root, baseFiles } = {}) {
   const out = [];
+  const gone = (file) => (root ? !existsSync(join(root, file)) : !(file in head));
+  const added = {};
+  const vanished = {};
+  for (const [file, rules] of Object.entries(base)) {
+    if (!gone(file)) continue;
+    for (const [rule, n] of Object.entries(rules)) vanished[rule] = (vanished[rule] || 0) + n;
+  }
   for (const [file, rules] of Object.entries(head)) {
     for (const [rule, n] of Object.entries(rules)) {
       const was = base[file] && base[file][rule];
       if (was !== undefined && n > was) out.push(`${file}: ${rule} suppressed ${was} -> ${n}`);
+      if (was === undefined) {
+        added[rule] = (added[rule] || 0) + n;
+        if (baseFiles && baseFiles.has(file)) {
+          out.push(`${file}: new ${rule} suppression in a file that already existed at the base (fix it instead)`);
+        }
+      }
     }
     if (root && !existsSync(join(root, file))) {
       out.push(`${file}: listed but the file no longer exists (eslint --prune-suppressions only sees linted files; ` +
@@ -365,14 +390,84 @@ export function suppressionProblems(base, head, { root } = {}) {
   const ht = suppressionTotals(head);
   for (const rule of Object.keys(ht).sort()) {
     if (ht[rule] > (bt[rule] || 0)) out.push(`${rule}: ${bt[rule] || 0} -> ${ht[rule]} suppressed in total`);
+    else if ((added[rule] || 0) > (vanished[rule] || 0)) {
+      out.push(`${rule}: ${added[rule]} new suppressed entries but only ${vanished[rule] || 0} came from ` +
+        "deleted/renamed files");
+    }
   }
   return out;
 }
 
-function suppressionMain(basePath, headPath) {
-  if (!existsSync(basePath)) {
-    console.error(`check-kit-copy: --suppressions base file ${basePath} does not exist`);
-    return 2;
+/** A base file list (`git ls-tree -r --name-only`, one path per line) as a Set; `prefix` is stripped. */
+export function readFileList(text, prefix = "") {
+  const out = new Set();
+  for (const line of text.split("\n")) {
+    const p = line.trim();
+    if (p) out.add(prefix && p.startsWith(prefix) ? p.slice(prefix.length) : p);
+  }
+  return out;
+}
+
+// ---- inline disables of kit rules (ADR 0016 decision 7: the suppressions file is the only baseline) ---------------
+
+/** An ESLint directive or inline-config comment, as ESLint reads them (the comment text, trimmed, starts with the
+ *  keyword; so `/** eslint-disable *\/` is no directive): `// eslint-disable-next-line …` (to the end of the line),
+ *  `/* eslint-disable … *\/` or `/* eslint aa-kit/x: off *\/` (to the end of the comment, over lines). Groups 1-2 are
+ *  the keyword and the rest of a line comment, groups 3-4 the same for a block comment. */
+const KW = "(eslint-disable(?:-next-line|-line)?|eslint)";
+const ESLINT_DIRECTIVE = new RegExp(`\\/\\/[ \\t]*${KW}(?=\\s|$)([^\\n]*)|\\/\\*\\s*${KW}(?=\\s|\\*\\/)([\\s\\S]*?)(?:\\*\\/|$)`, "g");
+const FIX_DISABLE = "do not switch kit rules off inline: use the kit component or token; a violation that existed " +
+  "before is already in eslint-suppressions.json (bulk suppressions are the only baseline, root ADR 0016 decision 7)";
+
+/** The comments in a source text that can switch an aa-kit rule off, as [line, why] pairs: a bare
+ *  eslint-disable[-line|-next-line] (every rule, kit rules included), or a directive / `/* eslint … *\/` config
+ *  comment that names an aa-kit/ rule. A text match: a directive written inside a string counts too. */
+export function kitDisableDirectives(src) {
+  const out = [];
+  for (const m of src.matchAll(ESLINT_DIRECTIVE)) {
+    const keyword = m[1] || m[3];
+    const rest = m[1] ? m[2] : m[4];
+    const rules = rest.split(/\s--\s|^--\s/)[0].trim();
+    const line = src.slice(0, m.index).split("\n").length;
+    if (keyword === "eslint") {
+      if (/aa-kit\//.test(rules)) out.push([line, "an inline config comment sets an aa-kit/ rule"]);
+    } else if (!rules) {
+      out.push([line, `a bare ${keyword} switches every rule off, the kit rules too (name the rule)`]);
+    } else if (/(?:^|[\s,])aa-kit\//.test(rules)) {
+      out.push([line, `${keyword} names an aa-kit/ rule`]);
+    }
+  }
+  return out;
+}
+
+/** Every code file under root (minus `ignore`, paths relative to root) with a kit-disabling comment, as
+ *  "path:line: why". */
+export function kitDisableProblems(root, { ignore = [] } = {}) {
+  const top = resolve(root);
+  const skip = new Set(ignore.map((p) => resolve(top, p)));
+  const out = [];
+  const walk = (d) => {
+    for (const ent of readdirSync(d, { withFileTypes: true })) {
+      const p = join(d, ent.name);
+      if (skip.has(resolve(p))) continue;
+      if (ent.isDirectory()) {
+        if (!CSS_SKIP_DIRS.has(ent.name)) walk(p);
+      } else if (CODE_EXT.test(ent.name)) {
+        const rel = relative(top, p).split(sep).join("/");
+        for (const [line, why] of kitDisableDirectives(readFileSync(p, "utf8"))) out.push(`${rel}:${line}: ${why}`);
+      }
+    }
+  };
+  walk(top);
+  return out;
+}
+
+function suppressionMain(basePath, headPath, baseFilesPath) {
+  for (const [what, p] of [["base file", basePath], ["--base-files list", baseFilesPath]]) {
+    if (p && !existsSync(p)) {
+      console.error(`check-kit-copy: --suppressions ${what} ${p} does not exist`);
+      return 2;
+    }
   }
   let base, head;
   try {
@@ -382,8 +477,9 @@ function suppressionMain(basePath, headPath) {
     console.error(`check-kit-copy: ${e.message}`);
     return 1;
   }
+  const baseFiles = baseFilesPath ? readFileList(readFileSync(baseFilesPath, "utf8")) : undefined;
   const sum = (s) => Object.values(suppressionTotals(s)).reduce((a, b) => a + b, 0);
-  const problems = suppressionProblems(base, head, { root: dirname(resolve(headPath)) });
+  const problems = suppressionProblems(base, head, { root: dirname(resolve(headPath)), baseFiles });
   if (problems.length) {
     console.error(`check-kit-copy: ESLint suppressions grew or are stale (${headPath} vs ${basePath}): ` +
       `${problems.length} problem(s)`);
@@ -396,9 +492,26 @@ function suppressionMain(basePath, headPath) {
   return 0;
 }
 
+function noKitDisableMain(root, ignore) {
+  if (!existsSync(root) || !statSync(root).isDirectory()) {
+    console.error(`check-kit-copy: --no-kit-disable ${root} is not a folder`);
+    return 2;
+  }
+  const problems = kitDisableProblems(root, { ignore });
+  if (problems.length) {
+    console.error(`check-kit-copy: inline switches of kit rules under ${root}: ${problems.length}`);
+    for (const p of problems) console.error(`  - ${p}`);
+    console.error(`  fix: ${FIX_DISABLE}`);
+    return 1;
+  }
+  console.log(`check-kit-copy: no inline disable of a kit rule under ${root}: OK`);
+  return 0;
+}
+
 function parseArgs(argv) {
   const opts = {
-    supp: null, self: false, css: null, dir: dirname(fileURLToPath(import.meta.url)), profile: null, lock: undefined,
+    supp: null, baseFiles: null, noDisable: null, ignore: [], self: false, css: null,
+    dir: dirname(fileURLToPath(import.meta.url)), profile: null, lock: undefined,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -409,6 +522,9 @@ function parseArgs(argv) {
     if (a === "--self") opts.self = true;
     else if (a === "--css") opts.css = resolve(val());
     else if (a === "--suppressions") opts.supp = [resolve(val()), resolve(val())];
+    else if (a === "--base-files") opts.baseFiles = resolve(val());
+    else if (a === "--no-kit-disable") opts.noDisable = resolve(val());
+    else if (a === "--ignore") opts.ignore.push(val());
     else if (a === "--dir") opts.dir = resolve(val());
     else if (a === "--profile") opts.profile = val();
     else if (a === "--lock") opts.lock = resolve(val());
@@ -423,7 +539,8 @@ export function main(argv) {
     console.error(`check-kit-copy: ${e.message}`);
     return 2;
   }
-  if (opts.supp) return suppressionMain(...opts.supp);
+  if (opts.supp) return suppressionMain(...opts.supp, opts.baseFiles);
+  if (opts.noDisable) return noKitDisableMain(opts.noDisable, opts.ignore);
   if (opts.css) {
     if (!existsSync(opts.css) || !statSync(opts.css).isDirectory()) {
       console.error(`check-kit-copy: --css ${opts.css} is not a folder`);

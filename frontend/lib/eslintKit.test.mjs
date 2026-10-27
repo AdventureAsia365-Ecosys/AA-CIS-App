@@ -73,6 +73,8 @@ tester.run("aa-kit/no-hex-colour", RULES["no-hex-colour"], {
     page(`const t = "Issue #12 and #abc in text";`),
     page(`const v = "rgb(var(--x))";`),
     page(`import x from "#abc"; type T = "#fff";`),
+    page(`const P = () => <input placeholder="#1234" title="#abc" alt="#fed" />;`),
+    page(`const ref = "#1024"; const issue = "#123";`),
   ],
   invalid: [
     bad(`const RED = "#ff0000";`),
@@ -85,6 +87,9 @@ tester.run("aa-kit/no-hex-colour", RULES["no-hex-colour"], {
     bad(`const P = () => <div className="bg-[#1F2933] p-2" />;`),
     bad(`const P = () => <svg><path fill="#DB9628" /></svg>;`),
     bad(`const P = () => <input type="color" value="#123456" />;`),
+    bad(`const BLACK = "#000"; `),
+    bad(`const P = () => <div style={{ color: "#123" }} />;`),
+    bad(`const C = { borderColor: "#1234" };`),
   ],
 });
 

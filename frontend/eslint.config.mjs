@@ -14,8 +14,10 @@ import { kitConfig } from "./app/_kit/core/eslint-kit.mjs";
 // Existing violations (of these and of the Next rules) are frozen in eslint-suppressions.json (ESLint bulk
 // suppressions). The file may only shrink: CI ("Frontend Lint") runs `eslint --prune-suppressions`, fails when
 // the committed file differs from the pruned one, and fails when an entry grows against the base branch
-// (app/_kit/core/check-kit-copy.mjs --suppressions). After fixing violations: npx eslint --prune-suppressions.
-// Never run --suppress-all to hide a new violation.
+// (app/_kit/core/check-kit-copy.mjs --suppressions; a new entry only for a deleted/renamed file's violations).
+// After fixing violations: npx eslint --prune-suppressions. Never run --suppress-all to hide a new violation, and
+// never switch a kit rule off inline (`eslint-disable… aa-kit/…` or a bare `eslint-disable`): CI fails on it
+// (check-kit-copy.mjs --no-kit-disable). Disables that name other rules (react-hooks/…) stay allowed.
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,

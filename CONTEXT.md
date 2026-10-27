@@ -212,11 +212,17 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     on 27/10/2026 are frozen in `frontend/eslint-suppressions.json` (ESLint bulk suppressions); the file only shrinks.
     **Frontend Lint** (a gate, no `continue-on-error`; to be made required) runs the rules' RuleTester suite
     (`lib/eslintKit.test.mjs`), `eslint --prune-suppressions`, fails when the committed file differs from the pruned
-    one, and fails when an entry or a rule total grows against the base branch (`check-kit-copy.mjs --suppressions`).
+    one, and fails when an entry or a rule total grows against the base branch (`check-kit-copy.mjs --suppressions`);
+    a new entry may only carry the violations of a deleted / renamed file into a file the base did not have, so fixing
+    one old violation never buys a new one elsewhere. Inline disables of kit rules are not allowed: CI
+    (`check-kit-copy.mjs --no-kit-disable app --ignore _kit`) fails on an `eslint-disable…` that names an `aa-kit/`
+    rule, on a bare `eslint-disable` / `-line` / `-next-line` (it switches every rule off) and on a
+    `/* eslint aa-kit/…: off */` comment in page code; the suppressions file is the only baseline. Disables that name
+    other rules (`react-hooks/…`, `@next/next/no-img-element`) stay allowed.
     After fixing old violations: `npx eslint --prune-suppressions` in `frontend/` and commit the file; never
     `--suppress-all` to hide a new one. The pre-push hook (`scripts/pre-push.sh`, check `frontend_kit` + `frontend_lint`)
-    runs the kit self-check, the CSS check, the suppressions growth check and ESLint on the changed frontend files (all
-    of `frontend/` when the config, the rules or the suppressions changed).
+    runs the kit self-check, the CSS check, the no-kit-disable check, the suppressions growth check and ESLint on the
+    changed frontend files (all of `frontend/` when the config, the rules or the suppressions changed).
   - **UI kit (AA-662, `frontend/app/_kit/`)**: the shared component library for UI v2, built on
     TanStack Table (`@tanstack/react-table`) and brand tokens (inline styles, no Tailwind
     classNames). Exports `DataTable` (per-column filter, multi-sort, column show/hide, pagination,
