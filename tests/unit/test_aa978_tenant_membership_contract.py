@@ -39,7 +39,10 @@ DOC = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
 # Update the root file first, copy it here byte for byte, then set this to `sha256sum` of the root file.
 ROOT_CONTRACT_SHA256 = "1a2d5fc97bfae930fc92ff6e2fa44ae921a396b18325458aeaef9b9fd9807145"
 
-TENANT = str(uuid.uuid4())
+# AA-993: fixed UUIDs. TENANT and UNKNOWN_TENANT appear in parametrize IDs; a uuid4() there gives a different test ID
+# on every collection, and pytest-xdist refuses to run when its workers collect different IDs.
+TENANT = "978a0000-0000-4000-8000-000000000001"
+UNKNOWN_TENANT = "978a0000-0000-4000-8000-0000000000ff"
 ISS = "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_zz978partner"
 T0 = datetime(2026, 10, 24, 10, 0, 0, 123456, tzinfo=timezone.utc)
 FORBIDDEN_KEYS = {"crm_role", "role", "email", "display_name"}
@@ -291,7 +294,7 @@ def test_snapshot_tenant_state(client, issuer, conn, is_active, cancelled, state
     _valid("TenantMembers", body)
 
 
-@pytest.mark.parametrize("tenant", [str(uuid.uuid4()), "not-a-uuid"])
+@pytest.mark.parametrize("tenant", [UNKNOWN_TENANT, "not-a-uuid"])
 def test_unknown_tenant_is_404(client, issuer, tenant):
     r = client.get(f"/tenant/membership/v1/tenants/{tenant}/members", headers=_auth(issuer))
     assert r.status_code == 404 and r.json()["error"] == "not_found"
