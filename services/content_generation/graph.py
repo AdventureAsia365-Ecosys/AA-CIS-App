@@ -284,7 +284,7 @@ def final_day_guard(state: dict) -> dict:
     try:
         gap = itinerary_day_gap(state.get("tour") or {}, generated.get("itineraries") or "")
     except Exception as exc:  # never break the rewrite on a detector bug
-        logger.warning("final_day_guard_failed", error=str(exc)[:200])
+        logger.warning("final_day_guard_failed", tour_id=state.get("tour_id"), error=str(exc)[:200])
         return state
     codes = list(state.get("failure_codes") or [])
     out = state
@@ -294,7 +294,7 @@ def final_day_guard(state: dict) -> dict:
             codes.append(DAY_COUNT_CODE)
             out["failure_codes"] = codes
             out["feedback"] = "; ".join(x for x in (state.get("feedback") or "", day_gap_issue(gap)) if x)
-            logger.warning("final_day_guard_mismatch", missing=gap["missing"],
+            logger.warning("final_day_guard_mismatch", tour_id=state.get("tour_id"), missing=gap["missing"],
                            source_days=len(gap["source_day_words"]), output_days=len(gap["generated_day_words"]))
     if DAY_COUNT_CODE in codes and DAY_COUNT_CODE in hard_block_codes(state) and out.get("revalidate_ran"):
         out = {**out, "revalidate_passed": False}

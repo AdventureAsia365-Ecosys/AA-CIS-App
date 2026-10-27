@@ -5,7 +5,7 @@ which the "Day N" marker regex did not accept. The source read as Days 1-4 (Day 
 the writer v2 day plan asked for 4 days, validate compared 4 with 4, and the day oracle filed "12 DAYS vs 4 markers"
 as a source contradiction (shadow). No step after the gate dropped a day.
 
-1. The marker parser reads quoted / bracketed "Day N" lines: 12 source days, a 12-day plan.
+1. The marker parser reads quoted "Day N" lines (not bracketed ones): 12 source days, a 12-day plan.
 2. validate fires ITINERARY_DAY_COUNT_MISMATCH on the 4-day page and the publish gate holds it (v2 draft).
 3. A fix pass that returns 4 of the 12 days is reverted (repair contract ``days_kept``).
 4. The final day guard re-checks the persisted text after every edit: an edit after the last validate that drops
@@ -59,18 +59,35 @@ def test_quoted_day_lines_are_markers_and_the_plan_has_12_days():
     from services.content_generation.s1_writer_v2 import day_plan
     plan = day_plan(JAPAN_TOUR)
     assert plan["mode"] == "source_days" and [d["day"] for d in plan["days"]] == list(range(1, 13))
-    # the quote is stripped with the marker: the day's source block starts at its own text
-    assert plan["days"][4]["source"].startswith("Stage 4- Kaminoyama") or "Kaminoyama" in plan["days"][4]["source"]
+    # day 5's block holds its own stage text, and its opening quote went with the marker
+    src5 = plan["days"][4]["source"]
+    assert not src5.lstrip().startswith('"') and "Kaminoyama Onsen to Hijiori Onsen" in src5
+    assert '"' not in plan["days"][3]["source"].rstrip()[-2:]   # day 4's block no longer ends with the next quote
 
 
 @pytest.mark.parametrize("text,expected", [
     ('"Day 1: a\n"Day 2: b', [(1, 1, 0), (2, 2, 1)]),
     ("“Day 1: a\n‘Day 2 b", [(1, 1, 0), (2, 2, 1)]),
-    ("(Day 1) a\n[Day 2] b", [(1, 1, 0), (2, 2, 1)]),
+    ("(Day 1) a\n[Day 2] b", []),                             # a bracket is not a marker lead (source notes)
     ('Easy "Day 82" ride\nDay 1: a', [(1, 1, 1)]),            # still line-anchored: a mid-line quote is not one
 ])
-def test_leading_quotes_and_brackets(text, expected):
+def test_leading_quotes_not_brackets(text, expected):
     assert source_day_markers(text) == expected
+
+
+def test_a_bracketed_source_note_is_not_a_phantom_day():
+    """Review S252: with "(" in the lead class, "(Day 14 optional extension available)" became day 14, the v2 plan
+    asked for a Day 14 and a correct 2-day page got ITINERARY_DAY_COUNT_MISMATCH (a v2 hard block)."""
+    from services.content_generation.s1_writer_v2 import day_plan
+
+    tour = {"name": "Two days", "duration": "2 days",
+            "itineraries": "Day 1: Arrive\nx\n(Day 14 optional extension available)\nDay 2: Ride\ny"}
+    assert [first for first, _last, _i in source_day_markers(tour["itineraries"])] == [1, 2]
+    assert [d["day"] for d in day_plan(tour)["days"]] == [1, 2]
+    assert g.itinerary_day_gap(tour, _page([1, 2]))["missing"] == []
+    state = _after_revalidate([1, 2], tour=tour)
+    out = g.final_day_guard(state)
+    assert CODE not in (out.get("failure_codes") or []) and out["revalidate_passed"] is True
 
 
 def test_the_day_oracle_no_longer_calls_the_quoted_source_a_contradiction():
