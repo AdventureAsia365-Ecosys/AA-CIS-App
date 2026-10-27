@@ -131,6 +131,7 @@ async def test_one_name_batch_is_not_split():
     ("India, Pakistan", "India", "India"),
     ("India, Pakistan", "Pakistan", "Pakistan"),       # every ISO country counts, not an "AA list"
     ("Myanmar (Burma)", "Thailand", "Myanmar"),
+    ("Nepal and China (Tibet)", "China", "China"),     # a parenthetical on one part never hides that part's country
     ("Laos / Thailand", "Thailand", "Thailand"),
     ("thailand", "Laos", "Thailand"),                  # a plain country is canonical, never the tour's
     ("Tanzania", "India", "Tanzania"),                 # cross-border: the place's own country
@@ -144,7 +145,7 @@ def test_canonical_card_country(card_country, tour_country, want):
 
 @pytest.mark.parametrize("card_country, tour_country", [
     ("Nepal and China", "China"), ("Nepal and China", "Thailand"), ("Myanmar (Burma)", "Thailand"),
-    ("Tanzania", "India"), ("Viet Nam", "Laos"),
+    ("Tanzania", "India"), ("Viet Nam", "Laos"), ("Nepal and China (Tibet)", "China"),
 ])
 def test_component_key_and_new_card_country_follow_one_rule(card_country, tour_country):
     """pipeline.canonical (the place-name key) and place_cards.normalise_card_country (a new card's country) agree
