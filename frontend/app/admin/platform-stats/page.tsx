@@ -29,7 +29,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import SocialContentSubNav from "../_components/SocialContentSubNav";
 import { A, serif, mono, sans, Card, Badge, LoadingScreen } from "../_components/adminUi";
-import { PageHeader, formatDateTime } from "../../_kit";
+import { AdminMain, AdminPaneBody, AdminPaneHeader, PageHeader, formatDateTime } from "../../_kit";
 import { fetchJson, EmptyState, ErrorState } from "../_components/auditPanels";
 
 // ── Types — match GET /admin/a4/review-log, /admin/a4/platform-stats ───────────────────────────
@@ -627,15 +627,15 @@ function FilterPill({ label, active, onClick }: { label: string; active: boolean
 
 export default function PlatformStatsPage() {
   return (
-    <div className="aa-admin-main" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflowY: "auto" }}>
-        <div style={{ flexShrink: 0, background: A.bg, padding: "28px 32px 16px", borderBottom: `1px solid ${A.line}` }}>
+    <AdminMain variant="split">
+        <AdminPaneHeader>
           <PageHeader
             title="07 · A4 Quality"
             description="Post-hoc, cross-tenant monitoring — AA does not gate tenant content at any T0-T11 step. Review Log is read-only pattern review; the aggregate below is a real platform-wide backend rollup, not a per-page-load client-side count."
           />
-        </div>
+        </AdminPaneHeader>
 
-        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "auto", padding: "20px 32px 32px" }}>
+        <AdminPaneBody scroll style={{ overflowX: "auto" }}>
           <div className="a527-dash-body" style={{ display: "flex", gap: 20, alignItems: "flex-start" }}>
             <SocialContentSubNav active="platform_stats" />
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -644,7 +644,7 @@ export default function PlatformStatsPage() {
               <GateTelemetrySection />
             </div>
           </div>
-        </div>
-      </div>
+        </AdminPaneBody>
+    </AdminMain>
   );
 }

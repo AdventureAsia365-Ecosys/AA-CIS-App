@@ -28,7 +28,7 @@ import {
   formatDateTime,
   useAdminIdentity,
   useToast,
-  type ColumnDef,
+  type ColumnDef, AdminMain,
 } from "../../_kit";
 import { can } from "@/lib/rbac";
 import {
@@ -142,7 +142,7 @@ export default function AaContentConsole() {
   );
 
   return (
-    <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "28px 36px 56px" }}>
+    <AdminMain>
       <PageHeader
         title="AA content (CRM)"
         breadcrumbs={[{ label: "CIS Content" }, { label: "Assets" }, { label: "AA content (CRM)" }]}
@@ -192,7 +192,7 @@ export default function AaContentConsole() {
         <CreateModal open={creating} onClose={() => setCreating(false)}
           onCreated={(item) => { setCreating(false); refresh(); setOpenGroup(item.group_key); }} />
       )}
-    </main>
+    </AdminMain>
   );
 }
 

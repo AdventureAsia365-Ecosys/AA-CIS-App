@@ -28,7 +28,7 @@ import {
   apiGet,
   mono,
   sans,
-  useIsPhone,
+  AdminMain,
   type Tone,
 } from "../../_kit";
 import {
@@ -357,7 +357,6 @@ function GroupCard({
 // ── page ────────────────────────────────────────────────────────────────────────────────────────
 
 export default function ApiDocsPage() {
-  const isPhone = useIsPhone();
   const { data: spec, error, isLoading, isFetching, refetch } = useQuery({
     queryKey: ["admin", "openapi"],
     queryFn: () => apiGet<OpenApiSpec>(SPEC_PATH, { admin: true }),
@@ -389,16 +388,7 @@ export default function ApiDocsPage() {
     : "Read-only view of the backend OpenAPI schema. Nothing here calls the API.";
 
   return (
-    <main
-      style={{
-        flex: 1,
-        minWidth: 0,
-        minHeight: 0,
-        overflowY: "auto",
-        padding: isPhone ? "16px 16px 84px" : "32px 36px 56px",
-        fontFamily: sans,
-      }}
-    >
+    <AdminMain style={{ fontFamily: sans }}>
       <SkeletonStyle />
       <PageHeader
         title="API Docs"
@@ -538,6 +528,6 @@ export default function ApiDocsPage() {
           )}
         </>
       )}
-    </main>
+    </AdminMain>
   );
 }

@@ -13,7 +13,7 @@ import {
   A, serif, sans, mono, Card, SLabel, Badge, Btn, LoadingScreen, StatCard, TabBar, TH, TD,
   CHART_TOOLTIP,
 } from "../_components/adminUi";
-import { PageHeader, formatDate, formatDateTime } from "../../_kit";
+import { ScrollX, AdminMain, PageHeader, formatDate, formatDateTime } from "../../_kit";
 import { useChartColors } from "../../_kit/useTheme";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -207,6 +207,7 @@ function TenantSpendTable({ branches, onFallbackClick }: {
   const accountsPresent = useMemo(() => ACCOUNTS.filter(a => branches.some(b => acctKey(b) === a)), [branches]);
   if (rows.length === 0) return <div style={{ color: A.muted2, fontSize: 13, padding: "8px 0" }}>No LLM calls in range.</div>;
   return (
+    <ScrollX>
     <table style={{ width: "100%", borderCollapse: "collapse" }}>
       <thead><tr>
         <th style={TH}>Tenant</th>
@@ -251,6 +252,7 @@ function TenantSpendTable({ branches, onFallbackClick }: {
         ))}
       </tbody>
     </table>
+    </ScrollX>
   );
 }
 
@@ -662,7 +664,7 @@ export default function ExternalSpendPage() {
   const filterActive = tenantFilter || acctFilter;
 
   return (
-      <main className="aa-admin-main" style={{ flex: 1, padding: "32px 36px", minWidth: 0, minHeight: 0, overflowY: "auto" }}>
+      <AdminMain>
         <PageHeader
           title="External Spend"
           description="Real LLM + DataForSEO cost — by tenant, account, model, stage"
@@ -752,7 +754,7 @@ export default function ExternalSpendPage() {
             {/* ═══════════ OVERVIEW ═══════════ */}
             {tab === "overview" && (
               <>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 20 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))", gap: 14, marginBottom: 20 }}>
                   <StatCard label="Total external spend" value={fmtUsd2(totalSpend)} sub={`${rangeLabel} · LLM + DFS${filterActive ? " · filtered" : ""}`} icon={<Wallet size={16} />} />
                   <StatCard label="LLM cost" value={fmtUsd2(llmCost)} sub={`${fmtInt(llmCalls)} calls · ${fmtInt(llmTokens)} tok`} accent={A.gold} icon={<Cpu size={16} />} />
                   <StatCard label="DataForSEO cost" value={fmtUsd2(dfsCost)} sub={`${fmtInt(dfsCalls)} calls · ${pct(dfsCacheRate)} cache`} accent={A.green} icon={<Search size={16} />} />
@@ -779,7 +781,7 @@ export default function ExternalSpendPage() {
                   <div style={{ fontSize: 11, color: A.muted2, marginTop: 6 }}>Note: trend is platform-wide (not filtered).</div>
                 </Card>
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))", gap: 20, marginBottom: 20 }}>
                   <Card>
                     <SLabel>Spend by tenant</SLabel>
                     <Bar rows={spendByTenant} total={spendByTenant.reduce((s, r) => s + r.cost, 0)} colorOf={() => A.accent} />
@@ -911,7 +913,7 @@ export default function ExternalSpendPage() {
             {/* ═══════════ LLM ═══════════ */}
             {tab === "llm" && (
               <>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 14, marginBottom: 18 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 160px), 1fr))", gap: 14, marginBottom: 18 }}>
                   <StatCard label="LLM cost" value={fmtUsd2(llmCost)} sub={filterActive ? "filtered" : rangeLabel} accent={A.gold} />
                   <StatCard label="Calls" value={fmtInt(llmCalls)} sub={`${fmtInt(llmTokens)} tokens`} />
                   <StatCard label="Pass rate" value={okElig > 0 ? pct(okCount / okElig) : "—"} sub={okElig > 0 ? `${okCount}/${okElig}` : "no signal"} />
@@ -952,7 +954,7 @@ export default function ExternalSpendPage() {
 
                 <Card style={{ marginTop: 20 }}>
                   <SLabel>Current model config (Settings → LLM Models)</SLabel>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "6px 24px" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", gap: "6px 24px" }}>
                     {(configs ?? []).map(c => (
                       <div key={c.stage} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, padding: "5px 0", borderBottom: `1px solid ${A.line2}` }}>
                         <span style={{ fontFamily: mono, color: A.ink2, minWidth: 150 }}>{c.stage}</span>
@@ -968,7 +970,7 @@ export default function ExternalSpendPage() {
             {/* ═══════════ DFS ═══════════ */}
             {tab === "dfs" && (
               <>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 14, marginBottom: 18 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 150px), 1fr))", gap: 14, marginBottom: 18 }}>
                   {/* AA-627 — account balance (remaining), distinct from cost (spent). Latest daily snapshot. */}
                   <StatCard
                     label="Account balance"
@@ -990,6 +992,7 @@ export default function ExternalSpendPage() {
                   {dfsByTenant.length === 0 ? (
                     <div style={{ color: A.muted2, fontSize: 13, padding: "0 18px 24px" }}>No DataForSEO calls match the filter.</div>
                   ) : (
+                    <ScrollX>
                     <table style={{ width: "100%", borderCollapse: "collapse" }}>
                       <thead><tr>
                         <th style={TH}>Tenant</th>
@@ -1016,6 +1019,7 @@ export default function ExternalSpendPage() {
                         ))}
                       </tbody>
                     </table>
+                    </ScrollX>
                   )}
                 </Card>
 
@@ -1024,6 +1028,7 @@ export default function ExternalSpendPage() {
                   {dfsRows.length === 0 ? (
                     <div style={{ color: A.muted2, fontSize: 13, padding: "0 18px 24px" }}>No DataForSEO calls match the filter.</div>
                   ) : (
+                    <ScrollX>
                     <table style={{ width: "100%", borderCollapse: "collapse" }}>
                       <thead><tr>
                         <th style={TH}>Endpoint</th><th style={TH}>Tenant</th>
@@ -1047,6 +1052,7 @@ export default function ExternalSpendPage() {
                         ))}
                       </tbody>
                     </table>
+                    </ScrollX>
                   )}
                 </Card>
 
@@ -1055,6 +1061,7 @@ export default function ExternalSpendPage() {
                   {(countries?.length ?? 0) === 0 ? (
                     <div style={{ color: A.muted2, fontSize: 13, padding: "0 18px 24px" }}>No market data yet.</div>
                   ) : (
+                    <ScrollX>
                     <table style={{ width: "100%", borderCollapse: "collapse" }}>
                       <thead><tr>
                         <th style={TH}>Market</th>
@@ -1077,6 +1084,7 @@ export default function ExternalSpendPage() {
                         ))}
                       </tbody>
                     </table>
+                    </ScrollX>
                   )}
                   <div style={{ fontSize: 11, color: A.muted2, padding: "0 18px 14px" }}>Note: target market is platform-wide (not tenant-filtered — DFS keyword research is shared).</div>
                 </Card>
@@ -1088,6 +1096,6 @@ export default function ExternalSpendPage() {
         {fbModal && (
           <FallbackModal tenantId={fbModal.tenantId} tenantLabel={fbModal.label} rangeQs={rangeQs} rangeLabel={rangeLabel} onClose={() => setFbModal(null)} />
         )}
-      </main>
+      </AdminMain>
   );
 }

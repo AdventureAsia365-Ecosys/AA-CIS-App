@@ -161,15 +161,18 @@ jobs:
           LANGFUSE_SECRET_KEY: test
           LANGFUSE_PUBLIC_KEY: test
           LANGFUSE_HOST: http://localhost:3000
+        # AA-993 (CIS-2): one invocation on 4 pytest-xdist workers (pinned in requirements-dev.txt). `--dist loadfile`
+        # keeps each test file on one worker (module fixtures and module state stay per file); -n 4, not auto. The
+        # coverage targets and reports are unchanged; tests/acp is now measured too (it was a separate run without
+        # --cov), so the ratchet total can only go up.
         run: |
-          pytest tests/unit/ -v \
+          pytest tests/unit/ tests/acp/ -v \
+            -n 4 --dist loadfile \
             --tb=short \
             --cov=services \
             --cov=shared \
             --cov-report=term-missing \
             --cov-report=xml:coverage.xml
-          pytest tests/acp/ -v \
-            --tb=short
 
       # AA-879: coverage ratchet (replaces --cov-fail-under=30; the real total was ~86%). Fails below the
       # floor in .github/coverage-ratchet.json, or when a PR lowers that floor against the base tip (HEAD^1

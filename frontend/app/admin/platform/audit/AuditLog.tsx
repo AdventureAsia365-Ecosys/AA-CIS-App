@@ -37,7 +37,7 @@ import {
   sans,
   useIsPhone,
   type ColumnDef,
-  type Tone,
+  type Tone, AdminMain,
 } from "../../../_kit";
 import { BOOKING_AUDIT_LOG_URL } from "@/lib/apps";
 import {
@@ -178,7 +178,7 @@ export default function AuditLog() {
   };
 
   return (
-    <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "28px 36px 56px" }}>
+    <AdminMain>
       <PageHeader
         title="Audit log"
         description={
@@ -251,7 +251,7 @@ export default function AuditLog() {
       )}
 
       <AuditDrawer row={open} onClose={() => setOpenId(null)} />
-    </main>
+    </AdminMain>
   );
 }
 

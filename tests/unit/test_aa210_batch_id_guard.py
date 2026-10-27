@@ -4,15 +4,15 @@ Pure truth-table tests — no DB, no network. Confirms non-UUID batch_ids (e.g. 
 verification labels) are rejected so the `WHERE batch_id = $N::uuid` cast cannot crash.
 """
 
-import uuid
-
 import pytest
 
 from api.routers.admin_pipeline import _is_uuid
 
 
+# AA-993: fixed values only. A uuid4() in the parameter list gives a different test ID on every collection, and
+# pytest-xdist refuses to run when its workers collect different IDs.
 @pytest.mark.parametrize("value", [
-    str(uuid.uuid4()),
+    "2f6c1d5e-8a3b-4c7d-9e0f-1a2b3c4d5e6f",
     "ca893afe-27e2-431b-9596-b92514e7f98c",
 ])
 def test_is_uuid_accepts_valid_uuid(value):

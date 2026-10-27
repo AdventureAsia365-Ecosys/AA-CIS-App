@@ -37,7 +37,7 @@ import {
   formatDateTime,
   mono,
   sans,
-  type Tone,
+  type Tone, AdminMain, ScrollX,
 } from "../../../_kit";
 import { APP_REGISTRY, PLATFORM_APP_IDS, isPlatformAppId } from "@/lib/apps";
 import {
@@ -77,7 +77,7 @@ export default function AppsBoard() {
   const error = (refresh.error as Error | null) ?? (apps.error as Error | null);
 
   return (
-    <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "28px 36px 56px" }}>
+    <AdminMain>
       <SkeletonStyle />
       <PageHeader
         title="Apps"
@@ -110,7 +110,7 @@ export default function AppsBoard() {
           </div>
         </>
       )}
-    </main>
+    </AdminMain>
   );
 }
 
@@ -427,6 +427,7 @@ function CrmJobs() {
       )}
       {data && data.status === "ok" && data.kinds.length === 0 && <div style={noteStyle}>No queued, running or recently failed job.</div>}
       {data && data.status === "ok" && data.kinds.length > 0 && (
+        <ScrollX>
         <table style={{ borderCollapse: "collapse", fontSize: 12.5, fontFamily: sans }}>
           <thead>
             <tr style={{ color: K.muted, textAlign: "left" }}>
@@ -449,6 +450,7 @@ function CrmJobs() {
             ))}
           </tbody>
         </table>
+        </ScrollX>
       )}
     </div>
   );
