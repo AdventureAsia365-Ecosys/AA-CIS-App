@@ -128,8 +128,11 @@ def test_spellings_and_compounds_are_refused(cur):
     insert = """INSERT INTO silver_aa_internal.raw_tours (tour_id, tenant_id, batch_id, src_name, country,
                     source_group_id, source_status) VALUES (gen_random_uuid(), %s, %s, 'zz288 x', %s,
                     gen_random_uuid(), 'active')"""
+    # A spelling the trigger can map to a code still fails the name FK; a name it cannot map (compound, unknown)
+    # leaves country_iso2 NULL, and the iso2-set CHECK fires before the FK (checks run before FK triggers).
+    refused = (psycopg2.errors.ForeignKeyViolation, psycopg2.errors.CheckViolation)
     for bad in ("INDIA", "india", "Viet Nam", "India and Pakistan", "Tibet", "Atlantis"):
-        _refused(cur, psycopg2.errors.ForeignKeyViolation, insert, (t228.MASTER_TENANT, t228.BATCH_ID, bad))
+        _refused(cur, refused, insert, (t228.MASTER_TENANT, t228.BATCH_ID, bad))
     # a code with no country is refused too (the trigger never invents a country)
     _refused(cur, psycopg2.errors.CheckViolation,
              "UPDATE silver_aa_internal.raw_tours SET country_iso2 = 'IN' WHERE tour_id = %s", (cur.seeded["none"],))
