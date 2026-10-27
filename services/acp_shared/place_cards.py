@@ -253,18 +253,16 @@ def place_key(display_name: str, country: str, locality: Optional[str] = None) -
 def normalise_card_country(raw: Optional[str], tour_country: Optional[str]) -> str:
     """AA-990 — the ONE ISO country a new card is stored under (its canonical shared.countries name); a compound is
     never stored as a country. The model's free text ('Viet Nam', 'India and Pakistan', 'Pakistan, India, China')
-    resolves whole first; else its parts do (split on , / & ; and or — never on '-': Timor-Leste), and when several
-    parts resolve the tour's country wins if it is one of them, else the first part. Nothing resolves -> the tour's
+    goes through shared.countries.one_country — the same rule services/places/pipeline.canonical keys place names on:
+    whole first; else its parts (split on , / & ; and or — never on '-': Timor-Leste), the tour's country when it is
+    one of them, else the first part. Nothing resolves -> the tour's
     country (today's fallback), canonical when it resolves. The place may be in another country than the tour
     (cross-border): a 'Tanzania' card on a tour sold as India stays Tanzania. Code only: the prompts are unchanged
     (a prompt change rotates PROMPT_SHA and pays for re-drafts)."""
+    one = _countries.one_country(raw, tour_country)
+    if one:
+        return one.name
     tour = _countries.resolve(tour_country)
-    whole = _countries.resolve(raw)
-    if whole:
-        return whole.name
-    parts = _countries.resolve_parts(raw)
-    if parts:
-        return tour.name if tour in parts else parts[0].name
     if tour:
         return tour.name
     return (raw or tour_country or "").strip()

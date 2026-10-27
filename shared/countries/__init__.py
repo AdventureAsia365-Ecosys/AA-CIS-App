@@ -125,6 +125,27 @@ def resolve_parts(text: Optional[str]) -> list[Country]:
     return out
 
 
+
+_PARENTHETICAL = re.compile(r"\([^()]*\)")
+
+
+def one_country(text: Optional[str], prefer: Optional[str] = None) -> Optional[Country]:
+    """AA-990 — the ONE ISO country a free-text PLACE country stands for (a place card's model answer: 'Viet Nam',
+    'Nepal and China', 'Myanmar (Burma)'). The whole text first; else its parts (resolve_parts; a parenthetical
+    qualifier is dropped when nothing resolves with it): `prefer` (the tour's country) when it is literally one of
+    the named countries, else the first named one. None when the text names no country: the caller decides (a
+    compound is never stored as a country, and a place is never forced into the tour's country it does not name)."""
+    whole = resolve(text)
+    if whole:
+        return whole
+    parts = resolve_parts(text)
+    if not parts and isinstance(text, str) and "(" in text:
+        parts = resolve_parts(_PARENTHETICAL.sub(" ", text))
+    if not parts:
+        return None
+    pref = resolve(prefer)
+    return pref if pref in parts else parts[0]
+
 @lru_cache(maxsize=1)
 def _prose_pattern() -> tuple[re.Pattern, dict[str, Country]]:
     words: dict[str, Country] = {}

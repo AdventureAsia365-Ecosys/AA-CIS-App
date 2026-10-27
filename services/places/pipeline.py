@@ -19,6 +19,7 @@ from services.places import days as days_mod
 from services.places import graph as graph_mod
 from services.places import guards, locate, store
 from services.places.names import country_norm, locality_key, name_norm
+from shared import countries as _countries
 
 logger = structlog.get_logger()
 
@@ -29,8 +30,16 @@ class _NotLive(Exception):
     """Raised inside the persist transaction to roll it back when the version is no longer live."""
 
 
-def canonical(country: Optional[str]) -> str:
-    return guards.canonical_country(country) or (country or "").strip()
+def canonical(country: Optional[str], tour_country: Optional[str] = None) -> str:
+    """The canonical ISO country name (shared/countries) a place / component is keyed on. AA-990: one rule with new
+    place cards (shared.countries.one_country, as place_cards.normalise_card_country): a known name or alias ->
+    its canonical name ('tanzania' -> 'Tanzania', cross-border kept); a free-text compound ("Nepal and China", a
+    border peak) -> the tour's country when it is literally one of the named countries, else the FIRST named one —
+    never the tour's country when the text does not name it. So the name key reuses the destination other tours
+    resolved instead of a dirty "nepal and china" key; the located destination still carries the place's real
+    country (locate accepts any ISO country). Text that names no country ('Himalayas') is kept as written."""
+    one = _countries.one_country(country, tour_country)
+    return one.name if one else (country or "").strip()
 
 
 @dataclass
@@ -108,7 +117,7 @@ async def extract_tour_places(pool, tour: dict, deps: ExtractDeps, *, force: boo
     # ── components ──
     comps, c_counts = comp_mod.build_components(source_id, country, atoms, day_towns)
     for c in comps:
-        c.country = canonical(c.country)
+        c.country = canonical(c.country, country)
         c.country_norm = country_norm(c.country)
     counts.update(components=c_counts["components"], skipped=c_counts["skipped"],
                   generic_without_locality=c_counts["generic_without_locality"],

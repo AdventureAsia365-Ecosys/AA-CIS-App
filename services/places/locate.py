@@ -18,18 +18,25 @@ Madhya Pradesh. The model knows these places. So:
      box and polygon (10 km border buffer); a confirming result in another country than the model's is ignored.
 
 A failed model batch or a geocoder error leaves the names pending (retried later), never a guess.
+AA-990: the answer is read leniently (code fences, prose around it, a one-key wrapper object, keys re-spelt within
+`name_norm` or answered without the " (Locality)" part of a label); an unreadable answer is asked again once as two
+halves before its names count a try; and each name that does not get a point carries its own reason
+(`unknown_to_model` = the model said null, `missing_in_answer`, `malformed_answer`, `unknown_country:<text>` = the
+model's country names no ISO 3166-1 country; any ISO country is taken, subject to guards.point_ok).
 The geocoder's daily credit guard, and a setup / auth failure (no key, secret unreadable, HTTP 401/403),
 defer the rest of the run: no try consumed, no further paid model call.
 """
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Optional
 
 import structlog
 
 from services.places import geomatch, guards
+from services.places.names import name_norm
 from services.places.geocoder import (CONFIRMED_BY, Confirmed, CreditLimitReached, GeocoderUnavailable,
                                       Unconfirmed)
 
@@ -46,6 +53,14 @@ REVIEW_UNCONFIRMED_HARD = "unconfirmed_hard_type"
 REVIEW_LINEAR_FEATURE = "linear_feature"
 DEFER_CREDIT_LIMIT = "credit_limit"
 DEFER_UNAVAILABLE = "geocoder_unavailable"
+# AA-990: why a name got no point although the batch answered (geo.place_name.last_error). `unknown_to_model` used to
+# cover all four; a try is still counted for each (bounded at store.mark_name max_tries), only the reason is honest.
+REASON_NULL = "unknown_to_model"          # the model said null: it does not know the place
+REASON_MISSING = "missing_in_answer"      # the answer has no key for this name (dropped or re-spelt beyond name_norm)
+REASON_MALFORMED = "malformed_answer"     # the value is not [lat, lng, country, ...]
+# f"{UNKNOWN_COUNTRY}:<the model's text>": the text names no ISO 3166-1 country ('Siberia', 'India and Pakistan');
+# any ISO country is accepted here (shared/countries) and then checked by guards.point_ok (bbox + polygon).
+UNKNOWN_COUNTRY = "unknown_country"
 
 SYSTEM_PROMPT = (
     "You are a geographer for Adventure Asia. For each place named on a tour itinerary you give "
@@ -130,30 +145,97 @@ Example: {{"Paro": [27.43, 89.41, "Bhutan"], "Taroko Gorge": [24.16, 121.62, "Ta
 "Unknown Lodge": null}}"""
 
 
+class AnswerUnreadable(ValueError):
+    """The model's answer holds no JSON object (empty, a refusal, or cut at max_tokens)."""
+
+
+_FENCE = re.compile(r"```[a-zA-Z]*")
+_MAX_OBJECT_STARTS = 50
+
+
+def json_object(raw: Optional[str]) -> dict:
+    """The first JSON object in a model answer: code fences and prose before / after it are ignored (AA-990: the old
+    first-"{"-to-last-"}" slice failed a whole batch on trailing prose holding a brace). Raises AnswerUnreadable."""
+    s = _FENCE.sub("", raw or "")
+    decoder = json.JSONDecoder()
+    pos, err = s.find("{"), "no '{'"
+    for _ in range(_MAX_OBJECT_STARTS):
+        if pos < 0:
+            break
+        try:
+            obj, _end = decoder.raw_decode(s, pos)
+        except json.JSONDecodeError as e:
+            err = str(e)
+        else:
+            if isinstance(obj, dict):
+                return obj
+        pos = s.find("{", pos + 1)
+    raise AnswerUnreadable(f"no JSON object in the locate answer: {err[:80]}")
+
+
+def _proposal(v) -> "Proposal | str":
+    try:
+        lat, lng, raw_country = float(v[0]), float(v[1]), v[2]
+    except (TypeError, ValueError, IndexError, KeyError):
+        return REASON_MALFORMED
+    if not isinstance(raw_country, str) or not raw_country.strip():
+        return REASON_MALFORMED
+    country = guards.canonical_country(raw_country)
+    if not country:
+        return f"{UNKNOWN_COUNTRY}:{raw_country.strip()[:40]}"
+    native = v[3] if len(v) > 3 and isinstance(v[3], str) else None
+    if not (country in NATIVE_NAME_COUNTRIES and geomatch.has_native_script(native)):
+        native = None
+    return Proposal(lat, lng, country, native.strip() if native else None)
+
+
+def read_answer(raw: str, labels: list[str], plain: Optional[dict[str, str]] = None) -> dict[str, "Proposal | str"]:
+    """Model JSON -> {label: Proposal | reason}. A key matches a label exactly (case / outer spaces), else by
+    `name_norm`, else — when `plain` gives the label's plain name ("Night Market" for "Night Market (Hoi An)") and no
+    other label of the batch shares it — by that plain name. A one-key object wrapping the map ({"places": {...}})
+    is unwrapped. Raises AnswerUnreadable when there is no JSON object at all (the batch is asked again / retried)."""
+    data = json_object(raw)
+    label_norms = {name_norm(n) for n in labels} | {n.strip().lower() for n in labels}
+    if len(data) == 1:
+        (k, inner), = data.items()
+        is_label = str(k).strip().lower() in label_norms or name_norm(str(k)) in label_norms
+        if isinstance(inner, dict) and not is_label:
+            data = inner
+    exact = {str(k).strip().lower(): v for k, v in data.items()}
+    normed: dict[str, object] = {}
+    for k, v in data.items():
+        normed.setdefault(name_norm(str(k)), v)
+    plain = plain or {}
+    plain_count: dict[str, int] = {}
+    for n in labels:
+        pn = name_norm(plain.get(n) or "")
+        if pn:
+            plain_count[pn] = plain_count.get(pn, 0) + 1
+    missing = object()
+    out: dict[str, Proposal | str] = {}
+    for n in labels:
+        v = exact.get(n.strip().lower(), missing)
+        if v is missing and name_norm(n):
+            v = normed.get(name_norm(n), missing)
+        pn = name_norm(plain.get(n) or "")
+        if v is missing and pn and plain_count.get(pn) == 1:
+            v = normed.get(pn, missing)
+        if v is missing:
+            out[n] = REASON_MISSING
+        elif v is None:
+            out[n] = REASON_NULL
+        else:
+            out[n] = _proposal(v)
+    return out
+
+
 def parse_answer(raw: str, labels: list[str]) -> dict[str, Optional[Proposal]]:
     """Model JSON -> {label: Proposal(lat, lng, canonical country, native name?) | None}; anything
     malformed, or a country that names no ISO country, -> None; a native name is kept only in native script for
     Taiwan / South Korea. The country is the model's (where the place really is), not the tour's (AA-990).
-    Raises ValueError when the answer has no JSON object at all (the batch is retried)."""
-    try:
-        start, end = raw.index("{"), raw.rindex("}") + 1
-        data = json.loads(raw[start:end])
-    except (ValueError, json.JSONDecodeError) as e:
-        raise ValueError(f"no JSON object in the locate answer: {str(e)[:80]}") from e
-    lower = {str(k).strip().lower(): v for k, v in data.items()} if isinstance(data, dict) else {}
-    out: dict[str, Optional[Proposal]] = {}
-    for n in labels:
-        v = lower.get(n.lower())
-        try:
-            lat, lng, country = float(v[0]), float(v[1]), guards.canonical_country(v[2])
-        except (TypeError, ValueError, IndexError, KeyError):
-            out[n] = None
-            continue
-        native = v[3] if len(v) > 3 and isinstance(v[3], str) else None
-        if not (country in NATIVE_NAME_COUNTRIES and geomatch.has_native_script(native)):
-            native = None
-        out[n] = Proposal(lat, lng, country, native.strip() if native else None) if country else None
-    return out
+    Raises ValueError (AnswerUnreadable) when the answer has no JSON object at all (the batch is retried).
+    :func:`read_answer` says why a label got None."""
+    return {k: (v if isinstance(v, Proposal) else None) for k, v in read_answer(raw, labels).items()}
 
 
 def batches(items: list[Item], size: int = BATCH) -> list[list[Item]]:
@@ -191,9 +273,8 @@ async def locate_many(items: list[Item], generate: GenerateFn, geocoder) -> dict
             for i in batch:
                 out[i.key] = Outcome(None, reason=stopped, deferred=True)
             continue
-        labels = [i.label for i in batch]
         try:
-            answer = parse_answer(await generate(SYSTEM_PROMPT, build_prompt(batch)), labels)
+            answer, errors = await _ask_batch(batch, generate)
         except BudgetExceeded:
             raise
         except Exception as e:  # noqa: BLE001 — a failed batch stays pending
@@ -202,9 +283,12 @@ async def locate_many(items: list[Item], generate: GenerateFn, geocoder) -> dict
                 out[i.key] = Outcome(None, error=f"locate: {str(e)[:200]}")
             continue
         for i in batch:
-            point = answer.get(i.label)
-            if point is None:
-                out[i.key] = Outcome(None, reason="unknown_to_model")
+            if i.label in errors:
+                out[i.key] = Outcome(None, error=errors[i.label])
+                continue
+            point = answer.get(i.label, REASON_MISSING)
+            if not isinstance(point, Proposal):
+                out[i.key] = Outcome(None, reason=point)
                 continue
             lat, lng, country = point.lat, point.lng, point.country
             bad = guards.point_ok(lat, lng, country)
@@ -231,6 +315,33 @@ async def locate_many(items: list[Item], generate: GenerateFn, geocoder) -> dict
                 continue
             out[i.key] = Outcome(_located(i, lat, lng, country, res))
     return out
+
+
+async def _ask(batch: list[Item], generate: GenerateFn) -> dict[str, "Proposal | str"]:
+    return read_answer(await generate(SYSTEM_PROMPT, build_prompt(batch)), [i.label for i in batch],
+                       {i.label: i.name for i in batch if i.locality})
+
+
+async def _ask_batch(batch: list[Item], generate: GenerateFn) -> tuple[dict[str, "Proposal | str"], dict[str, str]]:
+    """(answers by label, errors by label). AA-990: an unreadable answer (empty, refusal, cut at max_tokens — a big
+    batch is the likely one to be cut) is asked again ONCE as two halves (≤ 2 more calls) before its names count a
+    try; a half that is still unreadable gives its names a `locate: …` error. A model call that raises (throttled,
+    budget) propagates: nothing to split."""
+    try:
+        return await _ask(batch, generate), {}
+    except AnswerUnreadable as e:
+        if len(batch) < 2:
+            return {}, {i.label: f"locate: {str(e)[:200]}" for i in batch}
+        logger.warning("place_locate_answer_unreadable_split", names=len(batch), error=str(e)[:200])
+    answers: dict[str, Proposal | str] = {}
+    errors: dict[str, str] = {}
+    mid = len(batch) // 2
+    for half in (batch[:mid], batch[mid:]):
+        try:
+            answers.update(await _ask(half, generate))
+        except AnswerUnreadable as e:
+            errors.update({i.label: f"locate: {str(e)[:200]}" for i in half})
+    return answers, errors
 
 
 def _located(item: Item, lat: float, lng: float, country: str, res) -> Located:

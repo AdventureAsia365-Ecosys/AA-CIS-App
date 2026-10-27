@@ -135,11 +135,16 @@ async def test_model_only_kilimanjaro_keeps_the_model_point_in_tanzania():
     assert out[item.key].point.country == "Tanzania" and out[item.key].point.located_by == "llm"
 
 
-def test_pipeline_canonical_keeps_compounds_as_identity():
-    """A compound card country stays as written in the identity keys (TripPlanner pins, AA-989); a known name is
-    canonical. The located destination carries the place's real country."""
+def test_pipeline_canonical_keys_a_compound_on_a_named_country():
+    """A known name is canonical (cross-border kept); a compound card country keys on one of the countries it names
+    (the tour's when named, else the first: #1050 RC5, one rule with new cards) — never on a country it does not
+    name. Text naming no country is kept as written. The located destination carries the place's real country."""
     assert pipeline.canonical("tanzania") == "Tanzania"
-    assert pipeline.canonical("India and Pakistan") == "India and Pakistan"
+    assert pipeline.canonical("tanzania", "India") == "Tanzania"
+    assert pipeline.canonical("India and Pakistan") == "India"
+    assert pipeline.canonical("India and Pakistan", "Pakistan") == "Pakistan"
+    assert pipeline.canonical("India and Pakistan", "Nepal") == "India"
+    assert pipeline.canonical("Karakoram", "Pakistan") == "Karakoram"
 
 
 # ── compounds never become a country (new place cards) ───────────────────────────────────────────────────────────
