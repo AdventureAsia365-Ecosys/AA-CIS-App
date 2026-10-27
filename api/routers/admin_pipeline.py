@@ -28,6 +28,7 @@ from api.routers.auth import verify_tenant_jwt
 from api.middleware import tenant_role as _tenant_role  # AA-979 csr check in the dependency
 from api.routers.v1_pipeline import _rewrite_tour
 from services.content_generation.pipeline_lessons import load_s1_lessons_block
+from services.content_generation import s1_checkpoint as _ckpt  # AA-993 G2
 from shared.aws_client.bronze import bronze_bucket
 from shared.tour_liveness import (
     SOURCE_NOT_LIVE, SourceNotLiveError, live_source_exists_sql, live_source_sql, source_not_live_message,
@@ -527,6 +528,28 @@ async def _resolve_brand_rule(conn, tenant_uuid, brand_identity_id, brand_name):
     )
 
 
+async def _version_of_job(conn, tour_id: str, job_id: str) -> Optional[str]:
+    """AA-993 G2: the version an s1_rewrite job already wrote for this tour (its metadata.s1_job_id marker), or None.
+    The tour_id filter uses the tour index; the containment test can use the metadata GIN index."""
+    vid = await conn.fetchval(
+        "SELECT id FROM silver_aa_internal.generated_content"
+        " WHERE tour_id = $1::uuid AND metadata @> jsonb_build_object($2::text, $3::text)"
+        " ORDER BY version_num DESC LIMIT 1",
+        tour_id, _ckpt.JOB_MARKER_KEY, str(job_id),
+    )
+    return str(vid) if vid else None
+
+
+# AA-993 G2 review: version INSERT errors that come from the content itself (class 22 data errors such as
+# StringDataRightTruncation, NOT NULL / CHECK violations). The same saved rewrite would fail every time, so it is
+# dropped; other errors (connection lost, a version_num race on the unique key) keep it for the next attempt.
+_CONTENT_INSERT_ERRORS = (
+    asyncpg.exceptions.DataError,
+    asyncpg.exceptions.NotNullViolationError,
+    asyncpg.exceptions.CheckViolationError,
+)
+
+
 async def _execute_run_tour(
     req: TourRunRequest,
     job_id: str | None = None,
@@ -535,8 +558,15 @@ async def _execute_run_tour(
     batch_model_used: str | None = None,
     batch_account: str | None = None,
     stage_cb: "Callable[[str], Awaitable[None]] | None" = None,  # AA-723
+    checkpoint: "_ckpt.S1Checkpoint | None" = None,  # AA-993 G2: resumable persist stages (s1_rewrite job only)
 ) -> dict:
     """Core tour rewrite — called by HTTP endpoint and background retry task.
+
+    AA-993 G2: `checkpoint` (the s1_rewrite job passes it) records each finished step in the job's progress and,
+    when a released job is re-claimed, resumes from the last one: no new writer call after the writer finished, no
+    rewrite at all after the rewrite finished, one generated_content row (found again by its metadata.s1_job_id
+    marker), one quality_scores row, one review entry. Without it (sync /admin/run-tour, Bedrock Batch ingest) the
+    behaviour is unchanged. Stage list: services/content_generation/s1_checkpoint.py.
 
     AA-606: when batch_text is set, the writer's attempt-1 came from a Bedrock Batch job, so
     _rewrite_tour seeds it (build_graph_from_generated) instead of calling the writer live. All
@@ -647,116 +677,137 @@ async def _execute_run_tour(
         dataforseo_used: bool = False
         _SEO_MODE_MAP = {"standard": "dataforseo", "aggressive": "dataforseo", "minimal": "disabled"}
         effective_seo_mode = _SEO_MODE_MAP.get(req.seo_mode, req.seo_mode)
-        try:
-            from services.seo_intelligence.handler import process_seo
-            from services.seo_intelligence.seed_builder import activity_terms, build_seed, idea_seeds, title_place_terms
-            # AA-197: build a complete seed (no double-"tours"); fall back to src_name.
-            # AA-251 (ADR-2026-021): pass src_name through so the seed falls back to
-            # tour-specific text instead of the generic "{country} tours" phrase.
-            seed = build_seed(
-                row.get("country"), row.get("activities"), row.get("src_name"),
-            ) or row.get("src_name", "")
-            if seed:
-                # AA-249: no cache= passed — process_seo() defaults to its own
-                # module-level Redis singleton (services/seo_intelligence/handler.py),
-                # shared across same-country tours. Kept out of this call because this
-                # function also runs from the background 3-worker job queue (AA-223)
-                # with no Request in scope, so request.app.state.redis isn't reachable
-                # here anyway.
-                # AA-702: extra seeds + the title's place words go into the same paid
-                # keyword-ideas task so S1 gets keywords with real search volume.
-                seo_result = await process_seo(
-                    tour_id=req.tour_id, destination=seed, seed=seed,
-                    tenant_id=tenant_uuid, seo_mode=effective_seo_mode,
-                    extra_seeds=idea_seeds(row.get("country"), row.get("activities"), row.get("src_name"))[1:],
-                    place_terms=title_place_terms(row.get("src_name"), row.get("country")),
-                    activity_words=activity_terms(row.get("activities")),
-                    country=row.get("country") or "",
+        # AA-993 G2: a run resumed past the rewrite needs no SEO data (the saved result already used it).
+        _resume_rewritten = _ckpt.done(checkpoint, "rewritten")
+        if _resume_rewritten:
+            dataforseo_used = checkpoint.dataforseo_used
+        else:
+            try:
+                from services.seo_intelligence.handler import process_seo
+                from services.seo_intelligence.seed_builder import (
+                    activity_terms, build_seed, idea_seeds, title_place_terms,
                 )
-                seo_data = seo_result.get("data", {})
-                dataforseo_used = seo_result.get("status") == "fetched"
-                # B2: Normalize seo schema — ensure both flat and nested keys exist
-                if "keywords" in seo_data and "top_keywords" not in seo_data:
-                    seo_data["top_keywords"] = seo_data["keywords"].get("top_keywords", [])
-                elif "top_keywords" in seo_data and "keywords" not in seo_data:
-                    seo_data["keywords"] = {"top_keywords": seo_data["top_keywords"]}
-                seo_data.setdefault("top_keywords", [])
-                seo_data.setdefault("people_also_ask", [])
-        except Exception as _seo_err:
-            logger.warning("seo_step_failed", tour_id=req.tour_id, error=str(_seo_err))
+                # AA-197: build a complete seed (no double-"tours"); fall back to src_name.
+                # AA-251 (ADR-2026-021): pass src_name through so the seed falls back to
+                # tour-specific text instead of the generic "{country} tours" phrase.
+                seed = build_seed(
+                    row.get("country"), row.get("activities"), row.get("src_name"),
+                ) or row.get("src_name", "")
+                if seed:
+                    # AA-249: no cache= passed — process_seo() defaults to its own
+                    # module-level Redis singleton (services/seo_intelligence/handler.py),
+                    # shared across same-country tours. Kept out of this call because this
+                    # function also runs from the background 3-worker job queue (AA-223)
+                    # with no Request in scope, so request.app.state.redis isn't reachable
+                    # here anyway.
+                    # AA-702: extra seeds + the title's place words go into the same paid
+                    # keyword-ideas task so S1 gets keywords with real search volume.
+                    seo_result = await process_seo(
+                        tour_id=req.tour_id, destination=seed, seed=seed,
+                        tenant_id=tenant_uuid, seo_mode=effective_seo_mode,
+                        extra_seeds=idea_seeds(row.get("country"), row.get("activities"), row.get("src_name"))[1:],
+                        place_terms=title_place_terms(row.get("src_name"), row.get("country")),
+                        activity_words=activity_terms(row.get("activities")),
+                        country=row.get("country") or "",
+                    )
+                    seo_data = seo_result.get("data", {})
+                    dataforseo_used = seo_result.get("status") == "fetched"
+                    # B2: Normalize seo schema — ensure both flat and nested keys exist
+                    if "keywords" in seo_data and "top_keywords" not in seo_data:
+                        seo_data["top_keywords"] = seo_data["keywords"].get("top_keywords", [])
+                    elif "top_keywords" in seo_data and "keywords" not in seo_data:
+                        seo_data["keywords"] = {"top_keywords": seo_data["top_keywords"]}
+                    seo_data.setdefault("top_keywords", [])
+                    seo_data.setdefault("people_also_ask", [])
+            except Exception as _seo_err:
+                logger.warning("seo_step_failed", tour_id=req.tour_id, error=str(_seo_err))
 
-        # AA-645 step 0: the agency fields only the S1 writer v2's fact sheet reads (A1, flag S1_WRITER_V2).
-        tour_agency = {"group_size": row.get("group_size"), "best_time_to_go": row.get("best_time_to_go")}
-        # AA-919 (WM-18 / WM-20): the A1 writing-memory release (platform only; None = memory off, fails open). Only
-        # the v2 writer consumes it and stamps the version (metadata.writing_release); release 0 changes no byte.
-        from services.writing_memory.insertion import resolve as _wm_resolve
-        writing_memory = await _wm_resolve(conn, "a1")
-        result = await _rewrite_tour(
-            tour, idx=0, total=1,
-            brand_rules=brand_rules,
-            seo=seo_data,
-            model_tier=req.model_tier,
-            subtitle_focus=req.subtitle_focus,
-            seo_mode=effective_seo_mode,
-            on_stage=on_stage,
-            tour_agency=tour_agency,
-            writing_memory=writing_memory,       # AA-919
-            batch_text=batch_text,               # AA-606
-            batch_model_used=batch_model_used,   # AA-606
-            batch_account=batch_account,         # AA-606
-        )
-
-        _UPGRADE_THRESHOLD = float(os.environ.get("AUTO_UPGRADE_THRESHOLD", "8.5"))
-        _score = result.get("quality_score", 0.0)
-        _model = result.get("model_used", "")
-        _auto_upgraded = False  # AA-237/AA-736: did a sonnet re-run replace the haiku result?
-
-        # AA-736: a rewrite-class hard code (FORBIDDEN_WORD / BRAND_SEO_META_VIOLATION /
-        # MISSING_FIELD) that survived haiku's flag_fix forces a one-shot sonnet rewrite, since
-        # these block Master now (_is_publishable). This is independent of AA-237's opt-in and of
-        # the 8.5 score threshold — a tour can score >=7 and still carry a forbidden word.
-        # AA-237 keeps its original opt-in "low score, lift it" behaviour as the other trigger.
-        _surviving_rewrite = _surviving_hard_codes(result) & _REWRITE_CLASS_HARD_CODES
-        _on_haiku = result.get("status") == "success" and "haiku" in _model.lower()
-        _trigger_hard = bool(_surviving_rewrite) and _on_haiku
-        _trigger_optin = (
-            req.allow_auto_upgrade and result.get("status") == "success"
-            and 0 < _score < _UPGRADE_THRESHOLD and "haiku" in _model.lower()
-        )
-        if _trigger_hard or _trigger_optin:
-            logger.info("sonnet_upgrade_triggered", tour_id=req.tour_id,
-                        reason="hard_codes" if _trigger_hard else "low_score_optin",
-                        surviving_hard=sorted(_surviving_rewrite), score=_score)
-            _upgraded = await _rewrite_tour(
+        if _resume_rewritten:
+            # AA-993 G2: the rewrite (writer, judge, fix pass, any sonnet upgrade) finished before the release.
+            result = dict(checkpoint.result)
+            _auto_upgraded = checkpoint.auto_upgraded
+            logger.info("s1_rewrite_resumed", tour_id=req.tour_id, job_id=checkpoint.job_id,
+                        resumed_from=checkpoint.resumed_from)
+        else:
+            # AA-645 step 0: the agency fields only the S1 writer v2's fact sheet reads (A1, flag S1_WRITER_V2).
+            tour_agency = {"group_size": row.get("group_size"), "best_time_to_go": row.get("best_time_to_go")}
+            # AA-919 (WM-18 / WM-20): the A1 writing-memory release (platform only; None = memory off, fails open). Only
+            # the v2 writer consumes it and stamps the version (metadata.writing_release); release 0 changes no byte.
+            from services.writing_memory.insertion import resolve as _wm_resolve
+            writing_memory = await _wm_resolve(conn, "a1")
+            # AA-993 G2: the primary rewrite saves each writer's state and, on a resume, re-enters after the writer.
+            # Only passed with a checkpoint, so the other callers' _rewrite_tour call is unchanged.
+            _resume_kw = ({"resume_state": checkpoint.resume_writer_state,
+                           "on_writer_state": checkpoint.save_writer_state} if checkpoint is not None else {})
+            result = await _rewrite_tour(
                 tour, idx=0, total=1,
                 brand_rules=brand_rules,
                 seo=seo_data,
-                model_tier="sonnet",
+                model_tier=req.model_tier,
                 subtitle_focus=req.subtitle_focus,
                 seo_mode=effective_seo_mode,
                 on_stage=on_stage,
                 tour_agency=tour_agency,
-                writing_memory=writing_memory,   # AA-919
+                writing_memory=writing_memory,       # AA-919
+                batch_text=batch_text,               # AA-606
+                batch_model_used=batch_model_used,   # AA-606
+                batch_account=batch_account,         # AA-606
+                **_resume_kw,                        # AA-993 G2
             )
-            # Keep sonnet when it is strictly better: for a hard-code trigger that means fewer
-            # surviving hard codes (clearing the blocker is the goal, not a higher score); for the
-            # AA-237 opt-in trigger it keeps the original "higher score wins" rule.
-            if _trigger_hard:
-                _keep = len(_surviving_hard_codes(_upgraded)) < len(_surviving_hard_codes(result))
-            else:
-                _keep = _upgraded.get("quality_score", 0.0) > _score
-            if _keep:
-                result = _upgraded
-                _auto_upgraded = True
-            # AA-736: mark that a sonnet retry happened so the review-queue summary can say so,
-            # whichever run we kept. Only meaningful for the hard-code trigger.
-            if _trigger_hard:
-                result["_sonnet_retried"] = True
-            logger.info("sonnet_upgrade_result", tour_id=req.tour_id, kept=_keep,
-                        surviving_hard_after=sorted(_surviving_hard_codes(result)))
 
-        # AA-738: the review-queue reason scans the brand's own forbidden words too.
-        result["_brand_forbidden_words"] = brand_rules.get("forbidden_words") or []
+            _UPGRADE_THRESHOLD = float(os.environ.get("AUTO_UPGRADE_THRESHOLD", "8.5"))
+            _score = result.get("quality_score", 0.0)
+            _model = result.get("model_used", "")
+            _auto_upgraded = False  # AA-237/AA-736: did a sonnet re-run replace the haiku result?
+
+            # AA-736: a rewrite-class hard code (FORBIDDEN_WORD / BRAND_SEO_META_VIOLATION /
+            # MISSING_FIELD) that survived haiku's flag_fix forces a one-shot sonnet rewrite, since
+            # these block Master now (_is_publishable). This is independent of AA-237's opt-in and of
+            # the 8.5 score threshold — a tour can score >=7 and still carry a forbidden word.
+            # AA-237 keeps its original opt-in "low score, lift it" behaviour as the other trigger.
+            _surviving_rewrite = _surviving_hard_codes(result) & _REWRITE_CLASS_HARD_CODES
+            _on_haiku = result.get("status") == "success" and "haiku" in _model.lower()
+            _trigger_hard = bool(_surviving_rewrite) and _on_haiku
+            _trigger_optin = (
+                req.allow_auto_upgrade and result.get("status") == "success"
+                and 0 < _score < _UPGRADE_THRESHOLD and "haiku" in _model.lower()
+            )
+            if _trigger_hard or _trigger_optin:
+                logger.info("sonnet_upgrade_triggered", tour_id=req.tour_id,
+                            reason="hard_codes" if _trigger_hard else "low_score_optin",
+                            surviving_hard=sorted(_surviving_rewrite), score=_score)
+                _upgraded = await _rewrite_tour(
+                    tour, idx=0, total=1,
+                    brand_rules=brand_rules,
+                    seo=seo_data,
+                    model_tier="sonnet",
+                    subtitle_focus=req.subtitle_focus,
+                    seo_mode=effective_seo_mode,
+                    on_stage=on_stage,
+                    tour_agency=tour_agency,
+                    writing_memory=writing_memory,   # AA-919
+                )
+                # Keep sonnet when it is strictly better: for a hard-code trigger that means fewer
+                # surviving hard codes (clearing the blocker is the goal, not a higher score); for the
+                # AA-237 opt-in trigger it keeps the original "higher score wins" rule.
+                if _trigger_hard:
+                    _keep = len(_surviving_hard_codes(_upgraded)) < len(_surviving_hard_codes(result))
+                else:
+                    _keep = _upgraded.get("quality_score", 0.0) > _score
+                if _keep:
+                    result = _upgraded
+                    _auto_upgraded = True
+                # AA-736: mark that a sonnet retry happened so the review-queue summary can say so,
+                # whichever run we kept. Only meaningful for the hard-code trigger.
+                if _trigger_hard:
+                    result["_sonnet_retried"] = True
+                logger.info("sonnet_upgrade_result", tour_id=req.tour_id, kept=_keep,
+                            surviving_hard_after=sorted(_surviving_hard_codes(result)))
+
+            # AA-738: the review-queue reason scans the brand's own forbidden words too.
+            result["_brand_forbidden_words"] = brand_rules.get("forbidden_words") or []
+            if checkpoint is not None and result.get("generated"):
+                await checkpoint.save_rewrite(result, auto_upgraded=_auto_upgraded, dataforseo_used=dataforseo_used)
 
         version_id = None
         _m_final = None
@@ -769,19 +820,21 @@ async def _execute_run_tour(
             status = "approved" if _is_publishable(result) else "hitl"
             is_branded = result.get("is_branded", True)
             og_tags_val = json.dumps({} if is_branded else {"unbranded": True})
-            metadata_val = json.dumps(
-                _build_generated_metadata(
-                    result,
-                    brand_rule_id=brand_rule_id,
-                    brand_name=brand_name_val,
-                    seo_mode=req.seo_mode,
-                    model_used=result.get("model_used", ""),
-                    llm_cost_usd=float(result.get("cost_usd") or 0.0),
-                    dataforseo_used=dataforseo_used,
-                    batch_id=getattr(req, "batch_id", None),
-                ),
-                default=str,
+            _metadata = _build_generated_metadata(
+                result,
+                brand_rule_id=brand_rule_id,
+                brand_name=brand_name_val,
+                seo_mode=req.seo_mode,
+                model_used=result.get("model_used", ""),
+                llm_cost_usd=float(result.get("cost_usd") or 0.0),
+                dataforseo_used=dataforseo_used,
+                batch_id=getattr(req, "batch_id", None),
             )
+            if checkpoint is not None:
+                # AA-993 G2: ties the version to its job, so a resume finds it even when the release fell between the
+                # INSERT and its checkpoint write.
+                _metadata[_ckpt.JOB_MARKER_KEY] = checkpoint.job_id
+            metadata_val = json.dumps(_metadata, default=str)
             _itin = generated.get("itineraries", "")
             if not isinstance(_itin, str):
                 _itin = str(_itin)
@@ -790,8 +843,14 @@ async def _execute_run_tour(
             # in-band meta under SEO_META_TOO_LONG. The length fit now runs in the graph
             # (fit_seo_meta_final) and approved rows are in band by the gate; columns are unbounded.
             _m_final = generated.get("seo_meta") or ""
+            if _resume_rewritten:
+                # AA-993 G2: the same result as the released run, so its version (if the INSERT committed) is this one
+                version_id = checkpoint.version_id or await _version_of_job(conn, req.tour_id, checkpoint.job_id)
+                if version_id:
+                    logger.info("s1_version_reused", tour_id=req.tour_id, version_id=str(version_id),
+                                job_id=checkpoint.job_id)
             try:
-                version_id = await conn.fetchval("""
+                version_id = version_id or await conn.fetchval("""
                     INSERT INTO silver_aa_internal.generated_content (
                         tour_id, tenant_id, version_num,
                         aa_name, aa_subtitle, aa_summary,
@@ -840,9 +899,18 @@ async def _execute_run_tour(
                     logger.error("version_insert_returned_null", tour_id=req.tour_id)
             except Exception as _ins_err:
                 logger.error("version_insert_failed", tour_id=req.tour_id, error=str(_ins_err))
+                if (checkpoint is not None and isinstance(_ins_err, _CONTENT_INSERT_ERRORS)
+                        and checkpoint.reached("rewritten")):
+                    # AA-993 G2 review: the saved content itself does not fit (e.g. a title longer than
+                    # seo_title varchar(70)); replaying it would fail every attempt, so the next one rewrites.
+                    await checkpoint.forget_rewrite(f"{type(_ins_err).__name__}: {_ins_err}")
                 raise
+            if version_id:
+                await _ckpt.mark(checkpoint, "content_inserted", version_id=str(version_id))
 
-        if version_id and result.get("quality_score") is not None:
+        # AA-993 G2: one score row per version — quality_scores has no unique key on generated_content_id (the old
+        # ON CONFLICT DO NOTHING never fired), so the insert skips a version that already has its row.
+        if version_id and result.get("quality_score") is not None and not _ckpt.done(checkpoint, "scored"):
             _sub = result.get("sub_scores", {})
             _fc  = result.get("failure_codes", [])
             await conn.execute("""
@@ -852,10 +920,12 @@ async def _execute_run_tour(
                     score_structure, score_quality,
                     passed_count, failed_count, failure_codes,
                     validator_fn_version, evaluated_at
-                ) VALUES (
-                    $1::uuid, $2::uuid, $3::uuid,
-                    $4, $5, $6, $7, $8, $9, $10, $11::jsonb, 'v2', NOW()
-                ) ON CONFLICT DO NOTHING
+                )
+                SELECT $1::uuid, $2::uuid, $3::uuid,
+                       $4, $5, $6, $7, $8, $9, $10, $11::jsonb, 'v2', NOW()
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM silver_aa_internal.quality_scores WHERE generated_content_id = $1::uuid
+                )
             """,
                 version_id, req.tour_id,
                 "00000000-0000-0000-0000-000000000001",
@@ -870,7 +940,7 @@ async def _execute_run_tour(
             )
 
         # BƯỚC 7: Persist brand_audit results to quality_scores
-        if version_id and result.get("brand_audit_status"):
+        if version_id and result.get("brand_audit_status") and not _ckpt.done(checkpoint, "scored"):
             try:
                 await conn.execute("""
                     UPDATE silver_aa_internal.quality_scores
@@ -890,9 +960,11 @@ async def _execute_run_tour(
                 )
             except Exception as _audit_err:
                 logger.warning("brand_audit_persist_failed", error=str(_audit_err))
+        if version_id:
+            await _ckpt.mark(checkpoint, "scored")
 
         # BƯỚC 7: Persist fix_pass results to generated_content
-        if version_id and result.get("fix_pass_applied"):
+        if version_id and result.get("fix_pass_applied") and not _ckpt.done(checkpoint, "fix_pass_saved"):
             try:
                 await conn.execute("""
                     UPDATE silver_aa_internal.generated_content
@@ -905,10 +977,13 @@ async def _execute_run_tour(
                 )
             except Exception as _fix_err:
                 logger.warning("fix_pass_persist_failed", error=str(_fix_err))
+        if version_id:
+            await _ckpt.mark(checkpoint, "fix_pass_saved")
 
         # AA-211: audit-aware publish gate (see _is_publishable).
         status = "approved" if _is_publishable(result) else "pending"
-        if version_id and status == "approved":
+        _route = bool(version_id) and not _ckpt.done(checkpoint, "routed")   # AA-993 G2: not routed before a release
+        if _route and status == "approved":
             from services.export.handler import process_export
             try:
                 await process_export(str(version_id))
@@ -924,12 +999,14 @@ async def _execute_run_tour(
                     logger.warning("review_queue_enqueue_failed", tour_id=req.tour_id, error=str(_rq_err))
             except Exception as _exp_err:
                 logger.error("export_failed", tour_id=req.tour_id, error=str(_exp_err))
-        elif version_id and status == "pending":
+        elif _route and status == "pending":
             # AA-212: route blocked / low-quality tour to HITL review_queue (idempotent enqueue).
             try:
                 await _enqueue_review(conn, req.tour_id, version_id, result)
             except Exception as _rq_err:
                 logger.warning("review_queue_enqueue_failed", tour_id=req.tour_id, error=str(_rq_err))
+        if _route:
+            await _ckpt.mark(checkpoint, "routed")
 
         cost_usd    = float(result.get("cost_usd") or 0.0)
         tokens_in   = int(result.get("input_tokens") or 0)
@@ -939,7 +1016,8 @@ async def _execute_run_tour(
         if isinstance(model_name, str) and not model_name:
             model_name = None
         actual_provider = "openai" if model_name and "gpt" in model_name.lower() else "bedrock"
-        if (cost_usd > 0 or tokens_in > 0) and _is_uuid(req.batch_id):
+        _account = not _ckpt.done(checkpoint, "accounted")   # AA-993 G2: not added before a release
+        if _account and (cost_usd > 0 or tokens_in > 0) and _is_uuid(req.batch_id):
             await conn.execute("""
                 UPDATE shared.pipeline_runs
                 SET cost_usd      = COALESCE(cost_usd, 0)      + $1,
@@ -955,12 +1033,14 @@ async def _execute_run_tour(
                 0 if tour_passed else 1,
                 req.batch_id, model_name, actual_provider,
             )
-        elif (cost_usd > 0 or tokens_in > 0) and not _is_uuid(req.batch_id):
+        elif _account and (cost_usd > 0 or tokens_in > 0) and not _is_uuid(req.batch_id):
             # AA-210: non-UUID batch_id (e.g. ad-hoc verification run) — skip accounting
             # UPDATE so the uuid cast cannot crash the post-export path. No matching
             # pipeline_runs row exists for such runs anyway.
             logger.info("pipeline_runs_accounting_skipped",
                         batch_id=req.batch_id, reason="batch_id is not a valid uuid")
+        if version_id and _account:
+            await _ckpt.mark(checkpoint, "accounted")
 
         return {
             "tour_id":            req.tour_id,
@@ -990,7 +1070,11 @@ async def _execute_run_tour(
 
 
 async def _run_tour_safe(tour_req: TourRunRequest, job_id: str | None = None,
-                         stage_cb: "Callable[[str], Awaitable[None]] | None" = None) -> dict | None:
+                         stage_cb: "Callable[[str], Awaitable[None]] | None" = None,
+                         checkpoint: "_ckpt.S1Checkpoint | None" = None) -> dict | None:
+    # AA-993 G2: `checkpoint` is shared by the three attempts below, so an attempt after a failed persist step
+    # resumes from the last finished step too (no second rewrite, no second version).
+    ckpt_kw = {"checkpoint": checkpoint} if checkpoint is not None else {}
     async with _pipeline_semaphore:
         last_exc: Exception | None = None
         for attempt in range(3):
@@ -999,7 +1083,7 @@ async def _run_tour_safe(tour_req: TourRunRequest, job_id: str | None = None,
             try:
                 # AA-223: surface the executor result so _run_tour_job can read
                 # version_id. Final-fail path below still swallows and returns None.
-                return await _execute_run_tour(tour_req, job_id=job_id, stage_cb=stage_cb)
+                return await _execute_run_tour(tour_req, job_id=job_id, stage_cb=stage_cb, **ckpt_kw)
             except Exception as exc:
                 last_exc = exc
                 logger.warning("run_tour_attempt_failed", tour_id=tour_req.tour_id,

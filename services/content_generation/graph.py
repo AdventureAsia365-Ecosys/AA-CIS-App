@@ -426,6 +426,10 @@ class ContentState(TypedDict):
     draft_scores:           list
     previous_draft:         Optional[dict]
     best_draft_restored:    bool
+    # AA-993 G2: the graph-state keys a writer node changed, saved by an s1_rewrite job (s1_checkpoint) and merged
+    # back by resume_writer_node (build_graph_resumed) when a released job is re-claimed. Declared so LangGraph keeps it
+    # until the entry node reads it.
+    resume_state:           Optional[dict]
     # AA-925 (Quality System v1): validate_node's shadow findings (day oracle, S2 cut signature) — recorded
     # in generated_content.metadata, no score or verdict change — and the fail-open paths that ran
     # (services/quality/degraded.py). Declared so LangGraph keeps them (AA-209 gotcha).
@@ -1474,6 +1478,53 @@ def build_graph(t2_drafts: bool = False) -> StateGraph:
             "retry": "increment_retry",
             "hitl":  END,
         })
+    graph.add_edge("brand_audit", "grounding")
+    graph.add_edge("grounding", "flag_fix")
+    graph.add_edge("flag_fix", "revalidate")
+    graph.add_edge("revalidate", END)
+    graph.add_edge("increment_retry", "generate")
+
+    return graph.compile()
+
+
+def resume_writer_node(state: ContentState) -> ContentState:
+    """AA-993 G2: entry node of build_graph_resumed — puts back the state the last writer node of a released
+    s1_rewrite job produced (its draft, cost, model, writer_version stamp, retry_count, feedback ...), so the graph
+    goes on at validate without a new writer call. No LLM call here."""
+    saved = state.get("resume_state") or {}
+    logger.info("s1_writer_state_resumed", retry_count=saved.get("retry_count", state.get("retry_count", 0)),
+                writer_version=saved.get("writer_version"))
+    return {**state, **saved, "resume_state": None}
+
+
+def build_graph_resumed() -> StateGraph:
+    """AA-993 G2: the A1 graph of build_graph(), entered after the writer. Every node and edge downstream is the same
+    (validate → judge → gate → brand_audit → grounding → flag_fix → revalidate, and the retry loop back to the live
+    generate_node), so a resumed run decides exactly as the run that was released would have. initial_state must
+    carry ``resume_state`` (s1_checkpoint.writer_state_delta of the last writer node). Unlike the Bedrock Batch seed
+    (build_graph_from_generated), the draft keeps its writer stamp (writer_version), so a v2 draft stays v2 in
+    validate, the judge and the retries."""
+    graph = StateGraph(ContentState)
+
+    graph.add_node("resume_writer", resume_writer_node)
+    graph.add_node("generate", generate_node)  # only reached via the retry loop
+    graph.add_node("validate", validate_node)
+    graph.add_node("llm_judge", judge_node)
+    graph.add_node("increment_retry", increment_retry)
+    graph.add_node("brand_audit", brand_audit_node)
+    graph.add_node("grounding", grounding_node)
+    graph.add_node("flag_fix", flag_fix_node)
+    graph.add_node("revalidate", revalidate_node)
+
+    graph.set_entry_point("resume_writer")
+    graph.add_edge("resume_writer", "validate")
+    graph.add_edge("generate", "validate")
+    graph.add_edge("validate", "llm_judge")
+    graph.add_conditional_edges("llm_judge", should_retry, {
+        "done":  "brand_audit",
+        "retry": "increment_retry",
+        "hitl":  END,
+    })
     graph.add_edge("brand_audit", "grounding")
     graph.add_edge("grounding", "flag_fix")
     graph.add_edge("flag_fix", "revalidate")

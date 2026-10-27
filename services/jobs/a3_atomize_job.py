@@ -22,7 +22,19 @@ compute_embedding() straight from async code, and that function paces Cohere cal
 blocking time.sleep(3.5). Run on the API's loop (the worker lives in the API process), those
 sleeps starved /health and ECS replaced the task (S201 incident, 29/09/2026). The chain opens its
 own DB connection, so nothing is shared with the worker's loop. Trade-off: an admin cancel or a
-shutdown cannot interrupt the thread; the job is released and the thread ends with the process.
+shutdown cannot interrupt the thread mid-day; the job is released and the thread ends with the process.
+
+AA-993 G3 (ADR 0016 D1) — drain-safe on a deploy, so a released job never runs twice side by side:
+* a `threading.Event`, set when the handler is cancelled (shutdown release, admin cancel, lost lease); the thread
+  checks it at every day boundary and between the later steps and stops (AtomizeStopped). The day being read
+  finishes first, so its atoms + fingerprint stay consistent; the re-claimed attempt skips the days already read
+  (fingerprint match; for a `force` job also `atomized_at >= progress.force_since`, the first attempt's start, so a
+  forced re-claim does not pay again for the days the stopped thread re-read).
+  Late progress writes from a stopped thread are dropped, so they never land on the attempt that re-claimed the row;
+* the whole chain runs under a session advisory lock on the tour (handler.a3_tour_lock, one dedicated connection),
+  so a re-claimed attempt waits until the old thread let go (or its process, and so its connection, ended);
+* `release_delay_seconds = 120` (the worker's ECS stopTimeout): the released row is due again only after the old
+  task is gone, so the lock wait above is the exception, not the rule.
 Concurrency 1: the Segment/Score/Route recompute is platform-wide, and one tour at a time is what
 the admin trigger already did.
 
@@ -33,6 +45,8 @@ progress write never fails or blocks the atomize run.
 from __future__ import annotations
 
 import asyncio
+import threading
+from datetime import datetime, timezone
 from typing import Optional
 
 import structlog
@@ -62,8 +76,27 @@ async def enqueue_a3_atomize(db, *, tour_id: str, version_id: str, country: str,
     return job_id
 
 
+def _force_since(progress: Optional[dict]) -> datetime:
+    """The first attempt's start, read back from progress (set once), else now (UTC). Compared with
+    `atomize_day_fingerprint.atomized_at` (DB `now()`); ECS clocks are NTP-synced, and a skew only costs a day read
+    twice or (by the size of the skew) skips a day re-read just before the job started, never a wrong atom."""
+    raw = (progress or {}).get("force_since")
+    if isinstance(raw, str):
+        try:
+            parsed = datetime.fromisoformat(raw)
+            if parsed.tzinfo is not None:
+                return parsed
+        except ValueError:
+            pass
+    return datetime.now(timezone.utc)
+
+
+# AA-993 G3: = the worker container's ECS stopTimeout (AA-CIS-Infra modules/ecs), see the module docstring.
+RELEASE_DELAY_SECONDS = 120
+
+
 # Platform-wide recompute ≈ 5 min after AA-688 (first run after a reset embeds more).
-@job_kind(KIND, concurrency=1, max_attempts=2, expected_seconds=1800)
+@job_kind(KIND, concurrency=1, max_attempts=2, expected_seconds=1800, release_delay_seconds=RELEASE_DELAY_SECONDS)
 async def run(ctx: JobContext) -> Optional[dict]:
     from services.acp_contract.a3_atomize import AtomizeIncomplete
     from services.export.handler import _run_a3_atomize_background
@@ -71,9 +104,15 @@ async def run(ctx: JobContext) -> Optional[dict]:
     p = ctx.payload
     if not (p.get("tour_id") and p.get("version_id") and isinstance(p.get("rewritten"), dict)):
         raise NonRetryable("payload needs tour_id, version_id and rewritten")
-    await ctx.progress(phase="atomizing", tour_id=p["tour_id"])
+    force = bool(p.get("force"))
+    # AA-993 G3 review: a forced job remembers when its first attempt started, so a later attempt (deploy release,
+    # AtomizeIncomplete, Retry) skips the days this job already re-read instead of re-reading every day again.
+    force_since = _force_since(ctx.job.progress) if force else None
+    await ctx.progress(phase="atomizing", tour_id=p["tour_id"],
+                       **({"force_since": force_since.isoformat()} if force_since else {}))
     final_attempt = ctx.job.attempt >= ctx.job.max_attempts
     worker_loop = asyncio.get_running_loop()
+    stop = threading.Event()   # AA-993 G3: set when this handler is cancelled
 
     def _log_failure(future) -> None:
         if not future.cancelled() and future.exception() is not None:
@@ -81,17 +120,27 @@ async def run(ctx: JobContext) -> Optional[dict]:
 
     def _report(fields: dict) -> None:
         # Sub-steps use the "step" key, never "phase", so a late write cannot overwrite the
-        # final phase="done" below.
+        # final phase="done" below. AA-993 G3: nothing once the handler was cancelled (the row may
+        # already belong to the attempt that re-claimed it).
+        if stop.is_set():
+            return
         asyncio.run_coroutine_threadsafe(ctx.progress(**fields), worker_loop).add_done_callback(_log_failure)
 
     def _in_own_loop() -> dict:
         return asyncio.run(_run_a3_atomize_background(
             tour_id=p["tour_id"], rewritten=p["rewritten"], country=p.get("country") or "",
-            version_id=p["version_id"], reraise=True, progress=_report, force=bool(p.get("force")),
-            retry_failed_days=not final_attempt,
+            version_id=p["version_id"], reraise=True, progress=_report, force=force,
+            retry_failed_days=not final_attempt, should_stop=stop.is_set, tour_lock=True,
+            **({"force_since": force_since} if force_since else {}),
         ))
 
-    outcome = await asyncio.to_thread(_in_own_loop) or {}
+    try:
+        outcome = await asyncio.to_thread(_in_own_loop) or {}
+    except asyncio.CancelledError:
+        # The thread cannot be cancelled; tell it to stop at its next day boundary / step.
+        stop.set()
+        logger.warning("a3_atomize_thread_stop_requested", job_id=ctx.job_id, tour_id=p["tour_id"])
+        raise
     result = {"tour_id": p["tour_id"], "version_id": p["version_id"], **outcome}
     atomize = outcome.get("atomize") or {}
     if atomize.get("status") == "failed":

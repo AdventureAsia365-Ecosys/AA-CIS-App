@@ -6,6 +6,7 @@
 * T13: an atomize that changed atoms drops the T7 brand-fit cache rows of the tour's Segments / Routes.
 """
 import json
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -205,6 +206,42 @@ async def test_force_rereads_every_day_even_with_matching_fingerprints():
         out = await a3_atomize.run_a3_atomize(TOUR_ID, {"name": "T", "itineraries": TWO_DAYS}, _pool(conn),
                                               version_id=VERSION_ID, force=True)
     assert gen.call_count == 2 and out["days_read"] == 2 and out["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_force_skips_days_this_job_already_reread():
+    """AA-993 G3 review: a forced job re-claimed after a release (or retried) skips a day whose fingerprint matches and
+    was written since the job's first attempt started; a day read before that is still re-read."""
+    since = datetime(2026, 10, 27, 10, 0, tzinfo=timezone.utc)
+    conn = AsyncMock()
+    conn.fetch.return_value = [
+        {"day_number": 1, "fingerprint_hash": day_fingerprint("Arrival in Hanoi", "Walk through the Old Quarter.",
+                                                              FP_MODEL),
+         "atomized_at": since + timedelta(minutes=2)},     # read by the released attempt of this job
+        {"day_number": 2, "fingerprint_hash": day_fingerprint("Halong Bay Cruise", "Kayak through limestone caves.",
+                                                              FP_MODEL),
+         "atomized_at": since - timedelta(days=3)}]        # the promoted version's old read
+    cm, gen = _gateway(_atoms("Halong Bay", "kayak"))
+    with cm, patch.object(a3_atomize, "ground_day_atoms", AsyncMock(side_effect=lambda atoms, *a, **k: atoms)):
+        out = await a3_atomize.run_a3_atomize(TOUR_ID, {"name": "T", "itineraries": TWO_DAYS}, _pool(conn),
+                                              version_id=VERSION_ID, force=True, force_since=since)
+    assert gen.call_count == 1 and out["days_read"] == 1
+    assert "Halong Bay Cruise" in gen.call_args.kwargs.get("prompt", "") + json.dumps(
+        [str(a) for a in gen.call_args.args] + [str(v) for v in gen.call_args.kwargs.values()])
+
+
+@pytest.mark.asyncio
+async def test_force_since_never_skips_a_changed_day():
+    since = datetime(2026, 10, 27, 10, 0, tzinfo=timezone.utc)
+    conn = AsyncMock()
+    conn.fetch.return_value = [
+        {"day_number": 1, "fingerprint_hash": "stale", "atomized_at": since + timedelta(minutes=2)},
+        {"day_number": 2, "fingerprint_hash": "stale", "atomized_at": since + timedelta(minutes=3)}]
+    cm, gen = _gateway(_atoms("Old Quarter", "walk"), _atoms("Halong Bay", "kayak"))
+    with cm, patch.object(a3_atomize, "ground_day_atoms", AsyncMock(side_effect=lambda atoms, *a, **k: atoms)):
+        out = await a3_atomize.run_a3_atomize(TOUR_ID, {"name": "T", "itineraries": TWO_DAYS}, _pool(conn),
+                                              version_id=VERSION_ID, force=True, force_since=since)
+    assert gen.call_count == 2 and out["days_read"] == 2
 
 
 @pytest.mark.asyncio
