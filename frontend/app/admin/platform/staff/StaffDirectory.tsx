@@ -34,7 +34,7 @@ import {
   mono,
   sans,
   type ColumnDef,
-  type Tone,
+  type Tone, AdminMain,
 } from "../../../_kit";
 import { ROLE_LABEL, canWriteStaff, isStaffRole, type StaffViewer } from "@/lib/rbac";
 import { BOOKING_ADMIN_URL, bookingStaffUrl } from "@/lib/apps";
@@ -169,7 +169,7 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
   const counts = list.data;
 
   return (
-    <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "28px 36px 56px" }}>
+    <AdminMain>
       <PageHeader
         title="Staff"
         description={
@@ -261,7 +261,7 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
 
       <StaffDrawer id={openId} fallback={staff.find((s) => s.id === openId) ?? null} onClose={close}
         canWrite={canWrite} selfId={viewer?.admin_id ?? null} />
-    </main>
+    </AdminMain>
   );
 }
 

@@ -201,7 +201,8 @@ export default function DataErasure() {
     } else {
       update({ job: j.id, apply: null });
     }
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    // AdminMain is the scroll region, not the window: scroll the panel into view in whichever ancestor scrolls.
+    document.querySelector('[data-testid="data-erasure-ready"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   const s = settings.data;

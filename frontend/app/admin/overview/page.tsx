@@ -48,7 +48,7 @@ import {
   SkeletonStyle,
   Spinner,
   StatusBadge,
-  type Tone,
+  type Tone, AdminMain,
 } from "../../_kit";
 
 // ── types ───────────────────────────────────────────────────────────────────
@@ -309,7 +309,7 @@ export default function OverviewPage() {
   return (
     <>
       <SkeletonStyle />
-      <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "28px 36px 56px" }}>
+      <AdminMain>
           <PageHeader
             title="Overview"
             description="How the business is doing: apps health, TripPlanner customers, the Booking funnel and cost, then the content pipeline in detail."
@@ -483,6 +483,7 @@ export default function OverviewPage() {
                   <Stat label="Published (7d)" value={data.tenants.published_pieces_7d} source={TENANT_SRC.published} />
                 </div>
                 {data.tenants.quota_outliers.length > 0 && (
+                  <ScrollX>
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
                     <thead>
                       <tr>
@@ -513,6 +514,7 @@ export default function OverviewPage() {
                       ))}
                     </tbody>
                   </table>
+                  </ScrollX>
                 )}
               </Section>
 
@@ -692,7 +694,7 @@ export default function OverviewPage() {
               </div>
             </div>
           )}
-        </main>
+        </AdminMain>
     </>
   );
 }

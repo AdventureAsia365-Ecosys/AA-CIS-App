@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { RefreshCw, HardDrive, Map as MapIcon, Images, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { A, sans, mono, Card, SLabel, Badge, Btn, LoadingScreen, TH, TD, StatCard, TabBar } from "../_components/adminUi";
-import { PageHeader, formatDateTime } from "../../_kit";
+import { AdminMain, PageHeader, formatDateTime } from "../../_kit";
 
 type CountryRow = {
   country: string; photos: number; with_file: number; with_tour: number; with_destination: number;
@@ -197,12 +197,12 @@ export default function PhotosPage() {
     } finally { setBusy(null); }
   }
 
-  if (!countries || !totals) return <LoadingScreen msg="Loading photos..." />;
+  if (!countries || !totals) return <AdminMain><LoadingScreen msg="Loading photos..." /></AdminMain>;
   const jobRunning = lastJob && ["queued", "running"].includes(lastJob.status);
   const shownFolders = folders.filter(f => folderFilter === "all" || (folderFilter === "unmatched" ? !f.tour_id : !!f.tour_id));
 
   return (
-      <main className="aa-admin-main" style={{ flex: 1, padding: "32px 36px", minWidth: 0, minHeight: 0, overflowY: "auto" }}>
+      <AdminMain>
         <PageHeader
           title="Photos"
           description="AA marketing photos for the whole system — Contents board (Google Drive) → S3, matched to tours and places. Read by the TripPlanner, portal and AA-Booking through the photo views."
@@ -434,6 +434,6 @@ export default function PhotosPage() {
             {photos.length === 0 && <div style={{ color: A.muted, fontSize: 13 }}>No photos for this filter.</div>}
           </>
         )}
-      </main>
+      </AdminMain>
   );
 }

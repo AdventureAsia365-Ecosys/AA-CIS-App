@@ -51,7 +51,7 @@ import {
 import SocialContentSubNav, { type SectionKey } from "../_components/SocialContentSubNav";
 import { A, mono, sans, Card, Badge, Btn, LoadingScreen, TH, TD } from "../_components/adminUi";
 import { fetchJson, EmptyState, ErrorState, AuditTable, Col } from "../_components/auditPanels";
-import { PageHeader, formatDateTime, useIsPhone } from "../../_kit";
+import { AdminMain, AdminPaneBody, AdminPaneHeader, PageHeader, formatDateTime } from "../../_kit";
 import { SeedLine, type SeedInfo } from "../_components/SeedLine";
 
 const MARKETS = ["US", "UK", "AU", "DE", "FR", "NL"];
@@ -1263,10 +1263,8 @@ export default function AtomCurationDashboardPage() {
 
 function AtomCurationDashboard() {
   const searchParams = useSearchParams();
-  // S241 UI verify (AA-863) — on a phone `.aa-admin-main` already pads 16px (globals.css), so the
-  // header / body's own 32px side padding stacked to 48px and left a 294px column at 390.
-  const phone = useIsPhone();
-  const padX = phone ? 0 : 32;
+  // S241 UI verify (AA-863) / S252 — the header band and body are the kit AdminPaneHeader / AdminPaneBody inside a
+  // split AdminMain: 36px side inset on desktop, 16px on a phone (globals.css), never stacked.
   const sectionParam = searchParams.get("section");
   const initialSection: SectionKey =
     sectionParam && VALID_SECTIONS.has(sectionParam) ? (sectionParam as SectionKey) : "atomize";
@@ -1316,8 +1314,8 @@ function AtomCurationDashboard() {
   const selectedTourMeta = summary?.by_tour.find(t => t.tour_id === selectedTour) ?? null;
 
   return (
-      <div className="aa-admin-main" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflowY: "auto" }}>
-        <div style={{ flexShrink: 0, background: A.bg, padding: `24px ${padX}px 16px`, borderBottom: `1px solid ${A.line}` }}>
+      <AdminMain variant="split">
+        <AdminPaneHeader>
           <PageHeader
             title="Social Content"
             description={
@@ -1380,7 +1378,7 @@ function AtomCurationDashboard() {
               </div>
             ))}
           </div>
-        </div>
+        </AdminPaneHeader>
 
         {/* AA-564 1.1 — `minHeight: 0` is required here: a flex column's default `min-height:auto`
             makes this item grow to its content's min-content size (which exceeds the viewport once
@@ -1388,7 +1386,7 @@ function AtomCurationDashboard() {
             internally, which pushed the overflow up to the document — dragging the header (which
             relies on being outside this scroll region, not on `position:sticky`) off-screen on a
             real full-page scroll. This is the actual root cause AA-554/AA-557 both missed. */}
-        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: `20px ${padX}px 32px` }}>
+        <AdminPaneBody scroll>
           <div className="a527-dash-body" style={{ display: "flex", gap: 20, alignItems: "flex-start" }}>
             {/* AA-575 — inner-sidebar extracted into a shared component (was JSX embedded only
                 in this page, which is exactly why Content Trace (06) had no sub-nav at all: it's
@@ -1429,7 +1427,7 @@ function AtomCurationDashboard() {
               {activeSection === "slate" && <SlateSection />}
             </div>
           </div>
-        </div>
-      </div>
+        </AdminPaneBody>
+      </AdminMain>
   );
 }

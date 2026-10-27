@@ -400,6 +400,24 @@ body {
   .aa-admin-main {
     padding: 16px 16px 84px !important;
   }
+  /* S252 — the kit AdminMain "split" frame (sticky header band + body) has no padding of its own; only the
+     BottomNav gap. Its AdminPaneHeader / AdminPaneBody (and any `.aa-admin-pane-x` band) take the 16px phone
+     inset, so a split page never stacks 16 + 32px on each side. */
+  .aa-admin-split {
+    padding: 0 0 84px !important;
+  }
+  .aa-admin-pane,
+  .aa-admin-pane-x {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+  .aa-admin-pane-head {
+    padding-top: 16px !important;
+  }
+  .aa-admin-pane-body {
+    padding-top: 16px !important;
+    padding-bottom: 24px !important;
+  }
 
   /* AA-752 — the drawer is always the full expanded width on phones, even when the desktop rail is
      collapsed (the collapsed 68px inline width would make a useless drawer). */

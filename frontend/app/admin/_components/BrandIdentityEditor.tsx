@@ -652,7 +652,7 @@ export default function BrandIdentityEditor() {
                 </div>
 
                 <Card style={{ marginBottom: 20 }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 24px" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: "0 24px" }}>
                     <Field label="Brand Name *">
                       <input
                         value={form.brand_name}
@@ -693,7 +693,7 @@ export default function BrandIdentityEditor() {
                     />
                   </Field>
 
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 24px" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: "0 24px" }}>
                     <Field label="Customer Segment">
                       <textarea
                         value={form.customer_segment}

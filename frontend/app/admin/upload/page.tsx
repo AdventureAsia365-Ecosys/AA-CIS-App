@@ -11,7 +11,7 @@ import {
   Card, SLabel, Btn, TH, TD, Badge,
 } from "../_components/adminUi";
 import { Pagination } from "../_components/Pagination";
-import { PageHeader, formatDate } from "../../_kit";
+import { ScrollX, AdminMain, PageHeader, formatDate } from "../../_kit";
 
 const TENANT_ID = "00000000-0000-0000-0000-000000000001";
 
@@ -256,7 +256,7 @@ function TourRow({ tour, idx, isExpanded, onToggle }: {
         <tr>
           <td colSpan={10} style={{ padding: 0, background: A.bg }}>
             <div style={{ padding: "16px 20px 18px", borderBottom: `1px solid ${A.line}` }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 32px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: "0 32px" }}>
                 <div>
                   <DetailField label="Subtitle"        value={tour.src_subtitle} />
                   <DetailField label="Summary"         value={tour.src_summary} />
@@ -515,6 +515,7 @@ function ToursReadySection({ tours, loading, onRefresh }: {
           ) : trashedTours.length === 0 ? (
             <div style={{ padding: 20, textAlign: "center", color: A.muted, fontSize: 13 }}>No trashed source tours.</div>
           ) : (
+            <ScrollX>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
                 <tr>
@@ -546,6 +547,7 @@ function ToursReadySection({ tours, loading, onRefresh }: {
                 ))}
               </tbody>
             </table>
+            </ScrollX>
           )}
         </div>
       )}
@@ -863,7 +865,7 @@ function DuplicateReviewStep({
               )}
 
               {/* Side-by-side */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
                 {/* Incoming */}
                 <div style={{ padding: "12px 16px", borderRight: `1px solid ${A.line}` }}>
                   <div style={{
@@ -1361,7 +1363,7 @@ function TourContentTab() {
       {step === 3 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
           {/* Summary cards */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 200px), 1fr))", gap: 14 }}>
             {[
               { label: "Tours Ready",   value: totalReady,   color: A.green },
               { label: "Tours Blocked", value: totalBlocked, color: totalBlocked > 0 ? A.red : A.muted2 },
@@ -1641,7 +1643,7 @@ function TourContentTab() {
 
 export default function UploadPage() {
   return (
-        <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, minHeight: 0, padding: "28px 36px 56px", overflowY: "auto" }}>
+        <AdminMain>
           <PageHeader
             title="Upload (S0)"
             description={
@@ -1657,6 +1659,6 @@ export default function UploadPage() {
             }
           />
           <TourContentTab />
-        </main>
+        </AdminMain>
   );
 }
