@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# AA-993 H1: git pre-push hook -> scripts/pre-push.sh (fast mode; AA_PREPUSH=full for the full CI unit run).
+# Installed by scripts/install-hooks.sh (core.hooksPath=.githooks). Bypass once: git push --no-verify
+#
+# The checks read the working tree, so every pushed branch must be the checked-out commit: a push of another branch
+# (`git push origin other-branch`, or `git push origin a b` with b elsewhere) is blocked instead of checking the wrong
+# code. Tags and branch deletions carry no new code and are not checked.
+set -uo pipefail
+root=$(git rev-parse --show-toplevel) || exit 1
+here=$(git rev-parse -q --verify HEAD) || here=""
+zero=0000000000000000000000000000000000000000
+pushed=0 other=()
+# stdin: <local ref> <local sha> <remote ref> <remote sha>, one line per pushed ref.
+while read -r lref lsha _rref _rsha; do
+  [[ -z ${lsha:-} || $lsha == "$zero" ]] && continue # a branch deletion: nothing to check
+  [[ $lref == refs/tags/* ]] && continue             # a tag: no code of its own to check
+  sha=$(git rev-parse -q --verify "$lsha^{commit}") || sha=$lsha
+  pushed=1
+  [[ $sha != "$here" ]] && other+=("$lref (${sha:0:12})")
+done
+((pushed)) || exit 0
+if ((${#other[@]})); then
+  echo "pre-push hook: the checks read the working tree (at ${here:0:12}), but these refs push other commits:" >&2
+  printf '  %s\n' "${other[@]}" >&2
+  echo "Check out that branch and push it from there, or bypass this hook once with: git push --no-verify" >&2
+  exit 1
+fi
+if [[ ! -f $root/scripts/pre-push.sh ]]; then
+  echo "pre-push hook: scripts/pre-push.sh is missing on this branch; not checking." >&2
+  exit 0
+fi
+exec bash "$root/scripts/pre-push.sh" --head "$here" </dev/null
