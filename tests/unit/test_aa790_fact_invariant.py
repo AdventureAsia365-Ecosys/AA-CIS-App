@@ -799,26 +799,28 @@ def _invariant_pass(s: str) -> float:
     return min(_timed(lambda: (hygiene.fact_tokens(s, seed), hygiene.missing_facts([s], s[: len(s) // 2],
                                                                                     hygiene.word_forms(s), seed),
                                 hygiene._keeps_facts(s, s, seed), ai_tells._fact_losers([], s, seed)))
-               for _ in range(2))
+               for _ in range(3))
 
 
 def _repeat_pass(s: str) -> float:
     seed = hygiene.source_forms(s)
     counts = hygiene._word_keys(s)
     return min(_timed(lambda: (hygiene.added_words(s, s), hygiene._repeat_delete_ok(counts, s, s, seed, frozenset())))
-               for _ in range(2))
+               for _ in range(3))
 
 
 # Growth ratio, not a wall-clock budget: CI runners are 2-3x slower than a laptop, so an absolute 50 ms line failed
-# there on linear code (S252, CIS #1024). 4x the input must cost < 8x the time (+20 ms of timer noise); a quadratic
-# path costs ~16x. The absolute ceiling only catches a pathological case.
+# there on linear code (S252, CIS #1024). 8x the input must cost < 24x the time (+50 ms of timer noise); a quadratic
+# path costs ~64x. S253: the old 4x / 8x margin (quadratic ~16x) flaked on a loaded merge-queue runner, so the gap
+# between the linear bound and the quadratic cost is now wide; each side is the best of 3 runs. The absolute
+# ceiling only catches a pathological case.
 @pytest.mark.parametrize("label", list(_INPUTS))
 def test_the_invariant_check_is_linear(label):
     s = _INPUTS[label]
     for timed in (_invariant_pass, _repeat_pass):
-        small, big = timed(s), timed(s * 4)
-        assert big < 8 * small + 0.02, f"{label} {timed.__name__}: {small * 1000:.0f} ms -> {big * 1000:.0f} ms at 4x"
-        assert big < 2.0, f"{label} {timed.__name__}: {big * 1000:.0f} ms at 32000 characters"
+        small, big = timed(s), timed(s * 8)
+        assert big < 24 * small + 0.05, f"{label} {timed.__name__}: {small * 1000:.0f} ms -> {big * 1000:.0f} ms at 8x"
+        assert big < 4.0, f"{label} {timed.__name__}: {big * 1000:.0f} ms at 64000 characters"
 
 
 def test_the_invariant_check_scales_linearly():
