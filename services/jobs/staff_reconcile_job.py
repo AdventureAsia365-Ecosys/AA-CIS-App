@@ -60,7 +60,7 @@ async def run(ctx: JobContext) -> dict:
     await ctx.progress(phase="directory")
     rows, grants = await sr.load_directory(ctx.pool)
     report = sr.reconcile(pool_data["users"], pool_data["groups"], rows, grants,
-                          issuer=issuer, breakglass=sr.breakglass_email())
+                          issuer=issuer, breakglass=sr.breakglass_email(), known_e2e=sr.known_e2e_enabled())
     report.update(kind=KIND, trigger=(ctx.payload or {}).get("trigger", "manual"), pool_id=pool_id,
                   checked_at=sr.now_iso())
     await ctx.progress(phase="done", drift_total=report["drift_total"], ready=report["readiness"]["ready"])
