@@ -777,6 +777,10 @@ def _write_lessons_safe(lessons: list, state: dict) -> None:
     if not pipeline_lessons_enabled():
         logger.info("lessons_writeback_frozen", n=len(lessons))
         return
+    from shared.llm_client.call_log import eval_label
+    if eval_label() is not None:          # AA-919: an eval run (R2 / shadow) never writes lessons
+        logger.info("lessons_writeback_skipped_eval", n=len(lessons))
+        return
     try:
         batch = state.get("tour", {}).get("batch_name", "")
         country = state.get("tour", {}).get("country", "")

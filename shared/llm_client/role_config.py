@@ -169,6 +169,11 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
     # route (writers stay Anthropic, rules are drafted by another vendor); WM-13 may reorder it after its check.
     "writing_memory_mine": StageConfig("writing_memory_mine", "judge", "openai", "gpt-5.6-luna", "acc3",
                                        fallback_model_ids=_JUDGE_ROUTE_DEFAULT),
+    # AA-919 WM-19 (migration 291): the writing-memory eval judge of the R2 runner
+    # (services/writing_memory/eval_judge.py), on the judge route (another vendor than the Anthropic writers it scores,
+    # ADR 0010 decision 5); no shadow (cost-cuts K2: an eval stage is seeded with shadow_sample_pct = 0).
+    "writing_memory_eval": StageConfig("writing_memory_eval", "judge", "openai", "gpt-5.6-luna", "acc3",
+                                       fallback_model_ids=_JUDGE_ROUTE_DEFAULT),
 }
 
 _GENERIC_FALLBACK = StageConfig("unknown", "writer", "claude", "haiku", "acc3")

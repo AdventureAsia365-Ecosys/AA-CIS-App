@@ -50,7 +50,8 @@ def _run(stage, catalog_get, fail=()):
 
 def test_every_judge_stage_is_covered():
     assert set(JUDGES) == {"s1_judge", "s1_brand_audit", "t2_judge", "t2_brand_audit",
-                           "t7_debate_judge", "t10_judge", "writing_memory_mine"}   # AA-917
+                           "t7_debate_judge", "t10_judge", "writing_memory_mine",   # AA-917
+                           "writing_memory_eval"}   # AA-919 WM-19
 
 
 @pytest.mark.parametrize("stage", JUDGES)

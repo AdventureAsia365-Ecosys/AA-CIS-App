@@ -52,7 +52,7 @@ class JobKind:
     # AA-993 G1/G5: a kind that a deploy must not interrupt (not safe to re-run after a release). The deploy gate
     # (worker.deploy_gate_status) is unsafe while a row of such a kind is RUNNING or QUEUED and due within 15 min (the
     # old task would claim it before its SIGTERM); a queued row due later does not block.
-    # Today: data_erasure, s1_batch_ingest.
+    # Today: data_erasure, s1_batch_ingest, writing_memory_r2, writing_memory_shadow (AA-919).
     deploy_blocking: bool = False
 
 

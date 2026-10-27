@@ -42,6 +42,31 @@ RUN_CAP_USD = 1.0                # one mining run (also the spend_budget row of 
 # Every learning-loop stage counts against the month (mine now; eval / shadow with AA-919; the WM-13 one-off).
 MEMORY_STAGES = ("writing_memory_mine", "writing_memory_eval", "writing_memory_shadow", "adhoc_wm13")
 
+# ── eval: the R2 runner (AA-919 WM-19) and the targeted shadow (WM-21) ─────────────────────────────────────────────
+EVAL_STAGE = "writing_memory_eval"     # the R2 judge stage (CIS 291) and the llm_call_log label of every R2 call
+EVAL_ROLE = "judge"
+SHADOW_STAGE = "writing_memory_shadow"  # the llm_call_log label of every shadow call (no judge, no route of its own)
+R2_RUN_CAP_USD = 10.0            # E4 / D3: <= $10 per R2 run; a run may be given a LOWER cap, never a higher one
+SHADOW_RUN_CAP_USD = 7.0         # qlint: allow a dollar cap (cost-cuts K3: T2 50 x $0.10 + 20 x $0.10), not a score
+R2_PROBE_SIZE = 3                # WM-19 scope 1: a 3-item probe first
+MIN_KAPPA = 0.6                  # WM-19 scope 4: the judge counts toward stops only at kappa >= 0.6 ...
+MIN_KAPPA_PAIRS = 10             # ... measured on >= 10 labelled controls (fewer: informative only)
+NOISE_K = 1                      # quality-system design 4.2: one shared noise_k = 1 until a tier has >= 20 items
+MAX_ERROR_SHARE = 0.2            # more than 20% of the attempted items in error: the run is invalid
+# Pre-call reservation per item (the cap check reserves this before each item; actuals come from llm_call_log).
+# AA-729 actuals: regenerate ~$0.05 a sample (full writer path); judge GPT-5.6 Luna ~ $0.002 a call. Deliberately high.
+R2_ITEM_ESTIMATE_USD = {"a1": 0.15, "t2": 0.15, "t9_blog": 0.08, "t9_social": 0.05}
+JUDGE_CALL_ESTIMATE_USD = 0.01
+SHADOW_INPUT_ESTIMATE_USD = {"a1": 0.15, "t2": 0.15, "t9_blog": 0.06, "t9_social": 0.03}
+# R2 always runs these tiers when the release touches S1 or T2 (WM-19 scope 7)
+R2_FORCED_TIERS = {"a1": ("fact_dense", "long_9d"), "t2": ("fact_dense", "long_9d")}
+# WM-21 scope 1 (cost-cuts K4 E2): the targeted shadow sizes
+SHADOW_SIZE_DEFAULT = 20         # A1, T9 blog, LinkedIn (and the other social channels)
+SHADOW_SIZE_WIDE = 50            # T2 and Facebook: the golden set cannot gate them (holdout T2 = 3 items, no Facebook)
+SHADOW_SIZE_REPAIR_HINT = 10     # repair_hint-only release: <= 10 inputs where its gate fired
+SHADOW_PROBE_INPUTS = 2          # a tenant release: + 1-2 inputs of another tenant (the isolation probe)
+SHADOW_WINDOW_DAYS = 90          # "most recent" real inputs
+
 # ── the rule store (CIS 280; the DB enforces the same numbers) ─────────────────────────────────────────────────────
 RULE_TTL_DAYS = 60
 RULE_MAX_WORDS = 25

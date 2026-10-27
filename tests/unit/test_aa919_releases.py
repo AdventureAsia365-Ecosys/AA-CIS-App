@@ -18,14 +18,18 @@ NOW = datetime(2026, 10, 26, tzinfo=timezone.utc)
 ADMIN = "11111111-1111-1111-1111-111111111111"
 
 
-def _run(kind, verdict="pass", writer="t9_social", finished=True, details=None):
+REL_ID = "5e1e0000-0000-4000-8000-000000000919"
+
+
+def _run(kind, verdict="pass", writer="t9_social", finished=True, details=None, release_id=REL_ID):
     return {"pipeline": "writing_memory", "writer": writer, "run_kind": kind, "verdict": verdict,
-            "finished_at": NOW if finished else None, "details": details or {}}
+            "finished_at": NOW if finished else None, "details": details or {},
+            "release_id": None if kind in ("baseline_import", "r0_replay") else release_id}
 
 
 def _release(cls="empty", status="approved", **kw):
-    r = {"writer": "t9_social", "scope": "platform", "tenant_id": None, "content_class": cls, "status": status,
-         "train_kind": rel.train_kind_for(cls, None), "approved_by": ADMIN, "approved_at": NOW,
+    r = {"release_id": REL_ID, "writer": "t9_social", "scope": "platform", "tenant_id": None, "content_class": cls,
+         "status": status, "train_kind": rel.train_kind_for(cls, None), "approved_by": ADMIN, "approved_at": NOW,
          "r0_run_id": "r0", "eval_run_id": "ev", "shadow_run_id": "sh", "rule_ids": [], "retired_reason": None}
     r.update(kw)
     return r
@@ -122,6 +126,26 @@ def test_a_rolled_back_release_is_never_reactivated():
     assert _p(back, first_activation=False) == "rolled_back"
     assert rel.transition_problem("active", "draft")[0] == "bad_transition"
     assert rel.transition_problem("retired", "active", "superseded") is None
+
+
+def test_eval_and_shadow_runs_must_belong_to_the_release():
+    rules = [_rule()]
+    ok = _release("rules", rule_ids=[rules[0]["rule_id"]])
+    other = "5e1e0000-0000-4000-8000-000000000001"
+    assert _p(ok, {"eval": R2, "shadow": SHADOW}, rules) is None
+    # a code-train run (no release), another release's run, a seeded-fault run: never evidence
+    assert _p(ok, {"eval": _run("r2", release_id=None, details={"candidate": "current"}), "shadow": SHADOW},
+              rules) == "eval_wrong_release"
+    assert _p(ok, {"eval": _run("r2", release_id=other), "shadow": SHADOW}, rules) == "eval_wrong_release"
+    assert _p(ok, {"eval": _run("r2", details={"seeded_fault": "unsourced_claim"}), "shadow": SHADOW},
+              rules) == "eval_seeded_fault"
+    assert _p(ok, {"eval": _run("r2", details={"candidate": "current"}), "shadow": SHADOW},
+              rules) == "eval_wrong_release"
+    assert _p(ok, {"eval": R2, "shadow": _run("shadow", release_id=None)}, rules) == "shadow_wrong_release"
+    assert _p(ok, {"eval": R2, "shadow": _run("shadow", release_id=other)}, rules) == "shadow_wrong_release"
+    # release 0's baseline import names no release: still its eval
+    assert _p(_release()) is None
+    assert rel.release_link_problem(BASE, _release(), "eval") is None
 
 
 def test_unapproved_or_closed_month_is_refused():

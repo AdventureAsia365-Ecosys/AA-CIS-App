@@ -2408,6 +2408,20 @@ The writers resolve their view once per write (`services/writing_memory/insertio
 the tenant's, explicit `tenant_id` filter, fail open, nothing when `memory_enabled` is off) and record a stamp: A1
 `generated_content.metadata.writing_release` (S1 writer v2 only), T2 `shared.job.result.writing_release`, T9
 `content_piece.writer_input.writing_release`. Routes `/admin/writing-memory/releases*` and `/writers*` (admin only).
+**R2** (AA-919 WM-19, `services/writing_memory/r2.py`, job `writing_memory_r2`, CLI DRY RUN + `--enqueue`): a
+candidate release (or today's writers) against the golden set: the judge calibrated on the frozen labelled items
+(every run) and the stored controls re-judged by the current judge (stage `writing_memory_eval`, CIS 291; regenerated
+only in a `reverify` run), then probe (<= 3, traps first) -> tune ->
+holdout of the affected tiers, each candidate written through the real writer path (`eval_writers.py`; T9 = the first
+write only) and checked for a new hard fact class (counts only when the judge's kappa vs the labels >= 0.6), a QA
+trace and another tenant's text (`eval_checks.py`); fail-only early stop; hard cap <= $10 a run from llm_call_log.
+**Shadow** (WM-21, `services/writing_memory/shadow.py`, job `writing_memory_shadow`): the candidate on recent real
+inputs (20; T2 / Facebook 50; a social release for every channel 50 Facebook + 20 others; repair-hint-only <= 10; a
+tenant release + 2 inputs of another tenant; golden tours excluded), QA-trace and
+isolation checks, rows in `writing_memory_shadow`, cap <= $7. Every model call of both runs is written to
+`shared.llm_call_log` under the eval stage with `quality_signal.eval_run` and tenant NULL (`call_log.bind_eval_stage`);
+the run row is what the Releases tab attaches as `eval_run_id` / `shadow_run_id`, accepted only when the run names that
+release (`release_id`; no code-train or seeded-fault run: API + CIS 292 trigger).
 _Avoid_: fine-tune, model update, deploy (a Release is data, not code).
 
 **Golden Set**:

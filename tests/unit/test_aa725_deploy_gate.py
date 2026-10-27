@@ -171,13 +171,14 @@ async def test_deploy_gate_safe_when_idle():
 
 def test_the_deploy_blocking_kinds_are_the_ones_not_safe_to_rerun():
     """AA-993 G5: the registry flags exactly the kinds a release cannot safely re-run. s1_rewrite and a3_atomize are
-    drain-safe since G2/G3; noop_sleep is exempt."""
+    drain-safe since G2/G3; noop_sleep is exempt. AA-919 WM-19/WM-21: a released R2 / shadow run would start over
+    and pay again (max_attempts 1, a release is not an attempt), so both block a deploy too."""
     from shared.jobs import registry
     from shared.jobs.worker import load_kinds
 
     load_kinds()
-    assert sorted(k.name for k in registry.kinds().values() if k.deploy_blocking) == ["data_erasure",
-                                                                                     "s1_batch_ingest"]
+    assert sorted(k.name for k in registry.kinds().values() if k.deploy_blocking) == [
+        "data_erasure", "s1_batch_ingest", "writing_memory_r2", "writing_memory_shadow"]
 
 
 @pytest.mark.asyncio
