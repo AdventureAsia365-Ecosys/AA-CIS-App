@@ -440,7 +440,8 @@ async def deploy_gate_status(pool) -> dict:
       - a rerun wave is open (`shared.rerun_wave.status = 'open'`, count in `open_waves`): a wave's expected set must
         not be split across two images (C6.3a), or
       - a job of a `deploy_blocking` kind is RUNNING (`blocking_running`, per kind): such a job is not safe to re-run
-        after a release.
+        after a release, or QUEUED and due within `queue.DEPLOY_BLOCKING_HORIZON_S` (`blocking_due`): the guard runs
+        before the image build and the old task would claim it before its SIGTERM.
     Queued and running rows of every other kind no longer block: the worker drains on SIGTERM and releases a job still
     running after its grace window (G1-G4), and a queued row is claimed by whichever image is live. They stay in the
     answer as information (`active`, `by_status`, `scheduled_later`; `deploy_gate_exempt` kinds not counted there).
@@ -451,14 +452,17 @@ async def deploy_gate_status(pool) -> dict:
     blocking = sorted(k.name for k in kinds().values() if k.deploy_blocking)
     counts = await queue.active_count(pool, exempt_kinds=exempt)
     blockers = await queue.deploy_blockers(pool, blocking_kinds=blocking)
-    open_waves, running = blockers["open_waves"], blockers["blocking_running"]
+    open_waves, running, due = blockers["open_waves"], blockers["blocking_running"], blockers["blocking_due"]
     blocked_by = []
     if open_waves:
         blocked_by.append(f"{open_waves} rerun wave(s) open")
     for kind, n in running.items():
         blocked_by.append(f"{n} {kind} job(s) running (deploy-blocking kind)")
+    for kind, n in due.items():
+        blocked_by.append(f"{n} {kind} job(s) due (deploy-blocking kind, queued to start within 15 min)")
     return {**counts, "exempt_kinds": exempt, "open_waves": open_waves, "blocking_kinds": blocking,
-            "blocking_running": running, "blocked_by": blocked_by, "safe_to_deploy": not blocked_by}
+            "blocking_running": running, "blocking_due": due, "blocked_by": blocked_by,
+            "safe_to_deploy": not blocked_by}
 
 
 async def _main() -> None:

@@ -50,7 +50,8 @@ class JobKind:
     # worker re-claims. 0 = due at once (the default).
     release_delay_seconds: int = 0
     # AA-993 G1/G5: a kind that a deploy must not interrupt (not safe to re-run after a release). The deploy gate
-    # (worker.deploy_gate_status) is unsafe while a row of such a kind is RUNNING; a queued row does not block.
+    # (worker.deploy_gate_status) is unsafe while a row of such a kind is RUNNING or QUEUED and due within 15 min (the
+    # old task would claim it before its SIGTERM); a queued row due later does not block.
     # Today: data_erasure, s1_batch_ingest.
     deploy_blocking: bool = False
 

@@ -38,7 +38,8 @@ env:
 jobs:
   # AA-725 part 1 — pre-deploy guard; meaning changed by AA-993 G5 (design D1.4). CI has no RDS
   # access (private subnet), so it asks the LIVE api. The guard blocks the roll only while a rerun
-  # wave is open (shared.rerun_wave) or a job of a `deploy_blocking` kind is running; any other
+  # wave is open (shared.rerun_wave) or a job of a `deploy_blocking` kind is running (or queued, due
+  # within 15 min: this guard runs before the build, and the old task would claim it); any other
   # running job is drained and released by the worker on SIGTERM and re-claimed by the new revision
   # (G1-G4), and queued jobs are claimed by whichever image is live. A workflow_dispatch run with an
   # `override_running_jobs` reason (Nghiệp only) passes anyway (logged below). The response still

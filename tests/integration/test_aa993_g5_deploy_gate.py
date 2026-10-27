@@ -1,6 +1,7 @@
 """AA-993 G5 (design D1.4) — the deploy gate's blocker query against a real shared.job / shared.rerun_wave (CI
 Postgres). The unit tests (tests/unit/test_aa725_deploy_gate.py) check the gate logic with faked pools; here the SQL
-of queue.deploy_blockers runs: only an OPEN wave and RUNNING rows of the given kinds count.
+of queue.deploy_blockers runs: only an OPEN wave, RUNNING rows of the given kinds and QUEUED rows of them due within
+DEPLOY_BLOCKING_HORIZON_S count.
 """
 import os
 import sys
@@ -30,8 +31,11 @@ async def pool():
     await p.close()
 
 
-async def _job(pool, kind: str, status: str) -> None:
+async def _job(pool, kind: str, status: str, run_after_s: int = 0) -> None:
     job_id, _ = await queue.enqueue(pool, kind, {})
+    if run_after_s:
+        await pool.execute("UPDATE shared.job SET run_after = now() + make_interval(secs => $2) WHERE id = $1::uuid",
+                           job_id, run_after_s)
     if status == "running":
         await pool.execute("UPDATE shared.job SET status = 'running', started_at = now(), locked_by = 'w-g5', "
                            "locked_until = now() + interval '5 min' WHERE id = $1::uuid", job_id)
@@ -52,10 +56,22 @@ async def test_queued_and_running_ordinary_jobs_do_not_block(pool):
     waves = await _open_waves_elsewhere(pool)
     await _job(pool, "aa993_plain", "queued")
     await _job(pool, "aa993_plain", "running")
-    await _job(pool, "aa993_blocking", "queued")  # a queued row of a blocking kind has not started: no block
+    # a queued row of a blocking kind due after the horizon: whichever image is live then claims it, no block
+    await _job(pool, "aa993_blocking", "queued", run_after_s=queue.DEPLOY_BLOCKING_HORIZON_S + 600)
     out = await queue.deploy_blockers(pool, blocking_kinds=["aa993_blocking"])
-    assert out == {"open_waves": waves, "blocking_running": {}}
+    assert out == {"open_waves": waves, "blocking_running": {}, "blocking_due": {}}
     assert (await queue.active_count(pool))["active"] == 3  # still reported as information
+
+
+@pytest.mark.asyncio
+async def test_a_due_queued_blocking_kind_blocks(pool):
+    """The old task would claim it before its SIGTERM and be cut mid-run."""
+    waves = await _open_waves_elsewhere(pool)
+    await _job(pool, "aa993_blocking", "queued")
+    await _job(pool, "aa993_blocking", "queued", run_after_s=60)
+    await _job(pool, "aa993_plain", "queued")
+    out = await queue.deploy_blockers(pool, blocking_kinds=["aa993_blocking"])
+    assert out == {"open_waves": waves, "blocking_running": {}, "blocking_due": {"aa993_blocking": 2}}
 
 
 @pytest.mark.asyncio
@@ -64,8 +80,9 @@ async def test_a_running_blocking_kind_blocks(pool):
     await _job(pool, "aa993_blocking", "running")
     await _job(pool, "aa993_plain", "running")
     out = await queue.deploy_blockers(pool, blocking_kinds=["aa993_blocking"])
-    assert out == {"open_waves": waves, "blocking_running": {"aa993_blocking": 1}}
-    assert await queue.deploy_blockers(pool, blocking_kinds=[]) == {"open_waves": waves, "blocking_running": {}}
+    assert out == {"open_waves": waves, "blocking_running": {"aa993_blocking": 1}, "blocking_due": {}}
+    assert await queue.deploy_blockers(pool, blocking_kinds=[]) == {"open_waves": waves, "blocking_running": {},
+                                                                    "blocking_due": {}}
 
 
 @pytest.mark.asyncio
@@ -75,4 +92,4 @@ async def test_only_an_open_wave_blocks(pool):
     await _wave(pool, "complete")
     assert (await queue.deploy_blockers(pool))["open_waves"] == waves
     await _wave(pool, "open")
-    assert await queue.deploy_blockers(pool) == {"open_waves": waves + 1, "blocking_running": {}}
+    assert await queue.deploy_blockers(pool) == {"open_waves": waves + 1, "blocking_running": {}, "blocking_due": {}}

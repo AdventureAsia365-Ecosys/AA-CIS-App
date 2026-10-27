@@ -444,7 +444,8 @@ def test_app_ci_smoke_gets_stay_open(client, monkeypatch, role):
     from shared.jobs import queue
 
     monkeypatch.setattr(queue, "active_count", AsyncMock(return_value={"active": 0, "queued": 0, "running": 0}))
-    monkeypatch.setattr(queue, "deploy_blockers", AsyncMock(return_value={"open_waves": 0, "blocking_running": {}}))
+    monkeypatch.setattr(queue, "deploy_blockers", AsyncMock(return_value={"open_waves": 0, "blocking_running": {},
+                                                                               "blocking_due": {}}))
     monkeypatch.setattr(queue, "worker_health", AsyncMock(
         return_value={"workers": [], "running": [], "queued": [], "alive_seconds": 90}))
     gate = client.get("/admin/job-runner/deploy-gate", headers=_headers(role))

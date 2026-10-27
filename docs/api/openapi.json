@@ -14334,7 +14334,7 @@
     },
     "/admin/job-runner/deploy-gate": {
       "get": {
-        "description": "Pre-deploy guard (AA-725 part 1; meaning changed by AA-993 G5, design D1.4). CI has no RDS access (private\nsubnet), so it asks the live API instead of querying the database. CI blocks the roll when `safe_to_deploy` is\nfalse, which is only while a rerun wave is open (`open_waves`) or a job of a `deploy_blocking` kind is running\n(`blocking_running`); `blocked_by` says why in words. Queued/running jobs of other kinds no longer block (the\nworker drains and releases them, G1-G4); they are still reported in `active` / `by_status` /\n`scheduled_later` (kinds registered with `deploy_gate_exempt` left out, listed in `exempt_kinds`). Gated by the\nadmin secret so it is not a public queue-size probe.",
+        "description": "Pre-deploy guard (AA-725 part 1; meaning changed by AA-993 G5, design D1.4). CI has no RDS access (private\nsubnet), so it asks the live API instead of querying the database. CI blocks the roll when `safe_to_deploy` is\nfalse, which is only while a rerun wave is open (`open_waves`) or a job of a `deploy_blocking` kind is running\n(`blocking_running`) or queued due within 15 min (`blocking_due`); `blocked_by` says why in words. Queued/running\njobs of other kinds no longer block (the worker drains and releases them, G1-G4); they are still reported in\n`active` / `by_status` / `scheduled_later` (kinds registered with `deploy_gate_exempt` left out, listed in\n`exempt_kinds`). Gated by the admin secret so it is not a public queue-size probe.",
         "operationId": "deploy_gate_admin_job_runner_deploy_gate_get",
         "parameters": [
           {

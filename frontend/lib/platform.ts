@@ -88,6 +88,8 @@ export interface DeployGate {
   open_waves?: number;
   blocking_kinds?: string[];
   blocking_running?: Record<string, number>;
+  /** Queued rows of a deploy-blocking kind due within 15 min (they also block). */
+  blocking_due?: Record<string, number>;
   blocked_by?: string[];
 }
 
