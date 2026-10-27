@@ -23,10 +23,11 @@ from typing import Optional
 
 from services.places.guards import country_spellings, iso2
 
-# Neighbours a multi-country AA tour may stop in that are not AA sales countries (not in guards.COUNTRY_ISO2).
+# Neighbours a multi-country AA tour may stop in that are not AA sales countries. Never an AA country: those come
+# from guards.COUNTRY_ISO2 only (Pakistan and the Philippines moved there, AA-990; test_aa990_country_lists.py).
 _EXTRA_ISO2 = {
-    "philippines": "PH", "singapore": "SG", "hong kong": "HK", "macau": "MO", "bangladesh": "BD",
-    "pakistan": "PK", "maldives": "MV", "brunei": "BN", "timor-leste": "TL", "east timor": "TL",
+    "singapore": "SG", "hong kong": "HK", "macau": "MO", "bangladesh": "BD",
+    "maldives": "MV", "brunei": "BN", "timor-leste": "TL", "east timor": "TL",
     "kazakhstan": "KZ", "tajikistan": "TJ", "turkmenistan": "TM",
 }
 
@@ -36,9 +37,9 @@ _ZONE = {
     "ID": "Asia/Jakarta", "JP": "Asia/Tokyo", "KG": "Asia/Bishkek", "LA": "Asia/Vientiane",
     "MY": "Asia/Kuala_Lumpur", "MN": "Asia/Ulaanbaatar", "MM": "Asia/Yangon", "NP": "Asia/Kathmandu",
     "KR": "Asia/Seoul", "LK": "Asia/Colombo", "TW": "Asia/Taipei", "TH": "Asia/Bangkok",
-    "UZ": "Asia/Tashkent", "VN": "Asia/Ho_Chi_Minh",
-    "PH": "Asia/Manila", "SG": "Asia/Singapore", "HK": "Asia/Hong_Kong", "MO": "Asia/Macau",
-    "BD": "Asia/Dhaka", "PK": "Asia/Karachi", "MV": "Indian/Maldives", "BN": "Asia/Brunei",
+    "UZ": "Asia/Tashkent", "VN": "Asia/Ho_Chi_Minh", "PK": "Asia/Karachi", "PH": "Asia/Manila",
+    "SG": "Asia/Singapore", "HK": "Asia/Hong_Kong", "MO": "Asia/Macau",
+    "BD": "Asia/Dhaka", "MV": "Indian/Maldives", "BN": "Asia/Brunei",
     "TL": "Asia/Dili", "KZ": "Asia/Almaty", "TJ": "Asia/Dushanbe", "TM": "Asia/Ashgabat",
 }
 

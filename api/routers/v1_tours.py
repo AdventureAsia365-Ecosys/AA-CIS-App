@@ -31,6 +31,16 @@ quota_router = APIRouter(prefix="/v1", tags=["Quota"])
 security = HTTPBearer()
 
 
+# The tour length in days, read the way the catalog views do (mig 273 `duration_days`): the number before
+# "day(s)", at most 4 digits. The old filter concatenated EVERY digit of rt.duration ("7 days 6 nights" -> 76) and
+# a long string ("3 hours\n9:30am-12:30pm") overflowed INTEGER -> HTTP 500 on any duration_min / duration_max request
+# (S252, AA-990 sweep). Hour-based and half/full-day products count as 1 day (they were "3 days" for "3 hours").
+_DURATION_DAYS_SQL = (
+    r"COALESCE(substring(lower(COALESCE(rt.duration, '')) FROM '(\d{1,4})\s*-?\s*days?')::int,"
+    r" CASE WHEN lower(COALESCE(rt.duration, '')) ~ '(hour|half[ -]day|day trip|same day|full day)' THEN 1 END)"
+)
+
+
 def get_tenant(credentials: HTTPAuthorizationCredentials = Depends(security), request: Request = None):
     try:
         payload = verify_tenant_jwt(credentials.credentials)
@@ -186,12 +196,12 @@ async def browse_pool(
     if duration_min is not None:
         params.append(duration_min)
         conditions.append(
-            f"CAST(NULLIF(REGEXP_REPLACE(COALESCE(rt.duration,''),'[^0-9]','','g'),'') AS INTEGER) >= ${len(params)}"
+            f"{_DURATION_DAYS_SQL} >= ${len(params)}"
         )
     if duration_max is not None:
         params.append(duration_max)
         conditions.append(
-            f"CAST(NULLIF(REGEXP_REPLACE(COALESCE(rt.duration,''),'[^0-9]','','g'),'') AS INTEGER) <= ${len(params)}"
+            f"{_DURATION_DAYS_SQL} <= ${len(params)}"
         )
 
     order_by = "pt.published_at DESC"  # AA-796 — the only tenant sort; `sort` kept for old clients
