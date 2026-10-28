@@ -86,6 +86,7 @@ from services.writing_memory import l0 as wm_l0  # AA-918
 from services.writing_memory import insertion as wm_insertion  # AA-919 (WM-18 / WM-20)
 from services.writing_memory import signals as wm_signals  # AA-916
 from services.acp_content_writing.prompts import SYSTEM_PROMPT  # AA-916 WM-08 (writer_prompt_version)
+from services.acp_content_writing import brief_grounding  # AA-790 round 9 (writer_input marker)
 from services.content_generation.batch_prompt import prompt_version_of
 from services.quality.registry import threshold
 
@@ -2550,6 +2551,9 @@ def writer_input_snapshot(context: dict) -> dict:
         # when memory is off for the writer. The rollback drill reads it: the next piece names the previous release.
         **({"writing_release": wm_insertion.stamp(context["writing_memory"])}
            if context.get("writing_memory") else {}),
+        # AA-790 round 9 — the brief-grounding mode the writer prompt was built with; absent when it is off.
+        **({"brief_grounding": brief_grounding.MODE_R9}
+           if brief_grounding.brief_grounding_mode() == brief_grounding.MODE_R9 else {}),
     }
 
 

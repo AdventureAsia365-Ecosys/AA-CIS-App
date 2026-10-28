@@ -47,6 +47,7 @@ from services.acp_shared.signature_vocabulary import t9_words_line
 from services.acp_angle_gate.channel_style import ChannelStyle
 from services.acp_angle_gate.goals import Goal
 from services.acp_shared.channel_spec import apply_spec, channel_spec, sanitize_best_final_style
+from services.acp_content_writing.brief_grounding import ground_angle
 
 _BLOG_FORMAT_INSTRUCTIONS = """
 
@@ -279,6 +280,7 @@ def build_user_prompt(
     search_questions: list[str] | None = None,
     lead_focus: str | None = None,
     memory_lines: list[str] | None = None,
+    brief_grounding: str | None = None,
 ) -> str:
     """`angle` is the chosen `angle_gate_option` row (name/why_it_works/formula_fit/
     best_final_style). `revision_feedback` (AA-450 Phase 1's confirmed retry shape — specific,
@@ -324,7 +326,12 @@ def build_user_prompt(
     right after the PACE / RESTRAINT line (ai_tells.brand_texture_rule; the FAQ lines on a blog only).
 
     `memory_lines` (AA-919): the writing-memory lines of the tenant slot (services/writing_memory/insertion
-    t9_tenant_lines), placed right after the brand's words line; None / [] adds nothing."""
+    t9_tenant_lines), placed right after the brand's words line; None / [] adds nothing.
+
+    `brief_grounding` (AA-790 round 9): the mode of brief_grounding.ground_angle; None reads the env switch
+    `T9_BRIEF_GROUNDING_MODE` (the live path), the A/B harness passes it. In mode 'r9' the ANGLE'S BEST FINAL STYLE
+    line carries only the brief clauses the CONTENT SEED (+ FACTS) supports; 'off' (default) is the round-6 prompt
+    byte for byte."""
     # AA-771 (S233) — the full brand pack (render_brand_block) replaces the AUDIENCE / MINDSET /
     # BRAND NAME lines; the invented "discerning travellers" fallback audience is gone.
 
@@ -367,6 +374,8 @@ def build_user_prompt(
         channel_style = apply_spec(channel_style, spec)
         angle = {**angle, "best_final_style": sanitize_best_final_style(angle["best_final_style"],
                                                                         brand_audience)[0]}
+    # AA-790 round 9 — the brief the writer reads keeps only what the seed supports (off: the same angle object).
+    angle = ground_angle(angle, f"{seed_text}\n\n{content_seed}", brief_grounding)
     if spec is not None:
         voice = ", ".join(brand_audience.get("voice") or []) or "the voice of the BRAND block below"
         style_line = f"VOICE (from the brand; the channel and the angle never override it): {voice}"

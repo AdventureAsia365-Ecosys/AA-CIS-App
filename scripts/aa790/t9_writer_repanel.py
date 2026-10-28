@@ -26,7 +26,8 @@ Output rows have the pilot row shape (``id``, ``piece_id``, ``tenant``, ``channe
 private root ``.tmp-session/``, never in this repo.
 
   python3 /tmp/s.py --ids <id,id,...> [--dry-run] [--max-usd 2.0] [--out /tmp/aa790-repanel.json] [--s3 s3://b/k]
-                    [--arm r8] [--angles stored|regen] [--t8-mode off|r8]
+                    [--arm r8] [--angles stored|regen] [--t8-mode off|r8] [--angles-file <out>.angles.json]
+                    [--brief-grounding off|r9]
 
 ``--dry-run`` builds every prompt and prints its size, the lead fact and the stored text's census; no model call, $0.
 
@@ -45,6 +46,15 @@ the round-8 brief census (``r8_brief_problems``), the T8 seed hash and the T8 co
 (+ ``<s3>.angles.json``). ``--arm`` is stored on every row and in the ``shared.llm_call_log`` quality signal of every
 call (T8 and T9), so cost per arm is ``quality_signal->>'arm'``. With ``--dry-run`` the T8 step builds the angle
 prompts only and prints their size and ``seed_match`` ($0).
+
+AA-790 round 9 (S256): ``--brief-grounding r9`` builds the writer prompt with the round-9 brief grounding
+(``services.acp_content_writing.brief_grounding``: the brief clauses the seed does not support are dropped before the
+writer reads them); ``off`` (default) is the live round-6 prompt byte for byte. ``--angles-file`` reuses the angles of
+an earlier ``--angles regen`` run (its ``<out>.angles.json``) without any T8 call, so the control and the round-9 arm
+write from the SAME live T8 briefs (a fresh regen per arm would change the brief between arms). Every row carries
+``brief_grounding`` and ``brief_seen`` (the ANGLE'S BEST FINAL STYLE line the writer actually got, read from the built
+prompt) and ``brief_changed`` (whether it differs from the brief the 'off' prompt shows); the call's quality signal
+carries the mode.
 """
 from __future__ import annotations
 
@@ -116,7 +126,7 @@ def write_indexes(rows: list[dict]) -> dict[str, int]:
     return out
 
 
-def writer_args(row: dict, index: int, angle_override: Optional[dict] = None) -> dict:
+def writer_args(row: dict, index: int, angle_override: Optional[dict] = None, brief_grounding: str = "off") -> dict:
     """build_user_prompt's arguments from the stored writer_input (pure). ``angle_override`` (round 8, ``--angles
     regen``): the regenerated T8 angle used in place of the stored one."""
     from services.acp_angle_gate.channel_style import get_channel_style
@@ -136,7 +146,7 @@ def writer_args(row: dict, index: int, angle_override: Optional[dict] = None) ->
         "cta": wi.get("cta") or "", "destination": wi.get("destination"),
         "trip_name": wi.get("writer_trip") or wi.get("trip"), "atom_id": row.get("atom_id"),
         "route_segments": route or None, "keyword": wi.get("keyword"), "facts_text": wi.get("facts") or None,
-        "scope": wi.get("scope"),
+        "scope": wi.get("scope"), "brief_grounding": brief_grounding,
     }
     if search:
         args["search_questions"] = search
@@ -197,7 +207,8 @@ def call_writer(row: dict, args: dict, model_tier: Optional[str], run_id: str, a
     channel = args["channel_style"]["channel"]
     user = build_user_prompt(**args)
     signal = {"aa790_run": run_id, "piece": row["piece_id"], "channel": channel, "mode": "repanel_write",
-              "lead_focus": bool(args.get("lead_focus")), "arm": arm}
+              "lead_focus": bool(args.get("lead_focus")), "arm": arm,
+              "brief_grounding": args.get("brief_grounding") or "off"}
     resp = LLMClient().generate(LLMRequest(system_prompt=SYSTEM_PROMPT, user_prompt=user, stage=STAGE,
                                            model_tier=model_tier, max_tokens=generate.max_tokens_for(channel)))
     try:
@@ -245,6 +256,28 @@ def brief_census(angles: list[dict]) -> list[dict]:
         brief = a.get("best_final_style") or ""
         out.append({"words": brief_words(brief), "problems": r8_brief_problems(brief)})
     return out
+
+
+BRIEF_LINE = "ANGLE'S BEST FINAL STYLE: "
+
+
+def brief_seen(prompt: str) -> str:
+    """The brief line the writer got, read from the built user prompt (pure): after the round-9 grounding when it
+    is on, so the row shows exactly what the writer read."""
+    start = prompt.find(BRIEF_LINE)
+    if start < 0:
+        return ""
+    rest = prompt[start + len(BRIEF_LINE):]
+    return rest.split("\n\n", 1)[0]  # a brief may span lines (labelled parts); a blank line ends it
+
+
+def load_angles_file(path: str) -> dict[str, dict]:
+    """{request_id: result} from an earlier run's ``<out>.angles.json`` (round 9): the requests that have a chosen
+    angle; a request that failed there is left out, so its pieces are skipped as in a regen run."""
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    requests = data.get("requests") or {}
+    return {rid: got for rid, got in requests.items() if isinstance(got, dict) and got.get("chosen")}
 
 
 def seed_sha(text: Optional[str]) -> str:
@@ -342,9 +375,15 @@ def main() -> int:
                     help="stored = the piece's stored T8 angle (rounds 1-7); regen = run T8 again per request")
     ap.add_argument("--t8-mode", choices=("off", "r8"), default="off",
                     help="T8 brief mode for --angles regen: off = live round-6 brief, r8 = round-8 brief contract")
+    ap.add_argument("--angles-file", help="reuse the angles of an earlier --angles regen run (<out>.angles.json); "
+                                          "no T8 call (round 9: every arm writes from the same briefs)")
+    ap.add_argument("--brief-grounding", choices=("off", "r9"), default="off",
+                    help="T9 brief grounding: off = live round-6 prompt, r9 = round-9 grounded brief")
     a = ap.parse_args()
     if a.angles == "stored" and a.t8_mode != "off":
         ap.error("--t8-mode needs --angles regen")
+    if a.angles_file and a.angles == "regen":
+        ap.error("--angles-file replaces --angles regen; use one of them")
 
     from services.acp_content_writing import ai_tells
     from services.acp_content_writing.service import WRITER_PROMPT_VERSION
@@ -355,7 +394,7 @@ def main() -> int:
     print(f"AA790 rows={len(rows)} missing={missing} writer_prompt_version={WRITER_PROMPT_VERSION}", flush=True)
     model_tier = None if a.dry_run else stage_model()
     print(f"AA790 model_tier={model_tier} stage={STAGE} cap=${a.max_usd} arm={a.arm or '-'} angles={a.angles} "
-          f"t8_mode={a.t8_mode}", flush=True)
+          f"t8_mode={a.t8_mode} angles_file={a.angles_file or '-'} brief_grounding={a.brief_grounding}", flush=True)
     index = write_indexes(rows)
     run_id = uuid.uuid4().hex[:12]
     print(f"AA790 run={run_id} (quality_signal aa790_run; the eval run id to record, D-23)", flush=True)
@@ -366,9 +405,14 @@ def main() -> int:
         print(f"AA790 t8_model_tier={t8_tier} requests={len(request_keys(rows))}", flush=True)
         regen, spent = asyncio.run(regen_angles(rows, mode=a.t8_mode, dry_run=a.dry_run, model_tier=t8_tier,
                                                 run_id=run_id, arm=a.arm, max_usd=a.max_usd))
+    reused = bool(a.angles_file)
+    if reused:
+        regen = load_angles_file(a.angles_file)
+        print(f"AA790 angles_file requests={len(regen)} (no T8 call)", flush=True)
+    fresh = a.angles == "regen" or reused
     for r in rows:
         got = regen.get(r["request_id"]) or {}
-        if a.angles == "regen" and not a.dry_run and not got.get("chosen"):
+        if fresh and (reused or not a.dry_run) and not got.get("chosen"):
             # No regenerated angle for this request: writing it from the stored angle would mix old briefs into the
             # arm (and spend on it), so the piece is reported and skipped.
             err = got.get("error") or "no_regen_result"
@@ -377,7 +421,7 @@ def main() -> int:
                         "error": f"t8_regen: {err}"})
             continue
         try:
-            args = writer_args(r, index[r["piece_id"]], got.get("chosen"))
+            args = writer_args(r, index[r["piece_id"]], got.get("chosen"), a.brief_grounding)
             if args["goal"] is None or args["channel_style"] is None:
                 raise ValueError("writer_input has an unknown goal or channel")
         except Exception as e:  # noqa: BLE001 — a piece without a usable writer_input is reported, not fatal
@@ -391,14 +435,19 @@ def main() -> int:
                "label": None, "source": STAGE, "before_text": r["content_text"],
                "ai_tells_before": ai_tells.census(r["content_text"] or "", tell),
                "lead_focus": args.get("lead_focus"), "writer_prompt_version": WRITER_PROMPT_VERSION, "arm": a.arm,
-               "angle_source": "regen" if got.get("chosen") else "stored", "t8_mode": a.t8_mode, "aa790_run": run_id,
+               "angle_source": ("file" if reused else "regen") if got.get("chosen") else "stored",
+               "t8_mode": got.get("mode") or a.t8_mode, "aa790_run": run_id,
                "angle_used": {k: args["angle"].get(k) for k in ANGLE_FIELDS},
                "seed_match": (seed_sha(stored_t8_seed(r["writer_input"])) == got["t8_seed_sha"]
                               if got.get("t8_seed_sha") else None)}
+        from services.acp_content_writing.prompts import build_user_prompt
+        seen = brief_seen(build_user_prompt(**args))
+        rec.update(brief_grounding=a.brief_grounding, brief_seen=seen,
+                   brief_changed=seen != brief_seen(build_user_prompt(**{**args, "brief_grounding": "off"})))
         if a.dry_run:
-            from services.acp_content_writing.prompts import build_user_prompt
             rec["prompt_chars"] = len(build_user_prompt(**args))
             print(f"AA790 dry {rec['id']} {channel} prompt_chars={rec['prompt_chars']} seed_match={rec['seed_match']} "
+                  f"brief_changed={rec['brief_changed']} "
                   f"lead={bool(rec['lead_focus'])} before={rec['ai_tells_before']['fixable_total']}"
                   f"+{rec['ai_tells_before']['residue']}", flush=True)
             out.append(rec)
@@ -431,7 +480,7 @@ def main() -> int:
         out.append(rec)
     with open(a.out, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=1, default=str)
-    if regen:
+    if regen and not reused:
         with open(a.out + ".angles.json", "w", encoding="utf-8") as f:
             json.dump({"arm": a.arm, "t8_mode": a.t8_mode, "run": run_id, "requests": regen}, f, ensure_ascii=False,
                       indent=1, default=str)
@@ -448,7 +497,7 @@ def main() -> int:
         import boto3
         bucket, _, key = a.s3[len("s3://"):].partition("/")
         boto3.client("s3").upload_file(a.out, bucket, key)
-        if regen:
+        if regen and not reused:
             boto3.client("s3").upload_file(a.out + ".angles.json", bucket, key + ".angles.json")
         print(f"AA790 uploaded {a.s3}", flush=True)
     print(f"AA790 wrote {a.out} rows={len(out)} spent=${spent:.3f}", flush=True)
