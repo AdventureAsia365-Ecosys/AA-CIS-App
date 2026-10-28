@@ -35,6 +35,7 @@ import openpyxl
 import structlog
 
 from shared.aws_client.bronze import bronze_bucket
+from shared.secrets import get_database_url  # AA-838 D9: default application_name
 
 logger = structlog.get_logger()
 
@@ -282,7 +283,7 @@ async def _write_eval_run(conn, result: dict, baseline, regression: bool, trigge
 
 async def run_eval(pipeline: str, triggered_by: str = "manual",
                     capture_itinerary_baseline: bool = False) -> dict:
-    pool = await asyncpg.create_pool(os.environ["DATABASE_URL"], min_size=1, max_size=2)
+    pool = await asyncpg.create_pool(get_database_url(), min_size=1, max_size=2)
     try:
         if pipeline == "s1_old":
             result = await run_s1_old_eval()

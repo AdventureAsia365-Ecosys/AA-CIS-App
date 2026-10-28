@@ -7,13 +7,13 @@ so nothing writes to `shared.pipeline_jobs` any more — every writer (`create_j
 retired here. Only the read helpers remain so job ids created before AA-723 still resolve: the S1
 page's poll falls back to `get_job()` when the shared.job row is absent (admin_pipeline.py).
 
-Each function opens/closes its own asyncpg.connect(os.environ["DATABASE_URL"]).
+Each function opens/closes its own asyncpg.connect(get_database_url()) (AA-838 D9: named `cis-direct`).
 PK + result_version_id + pipeline_run_id are all UUID (see migration 071).
 """
 
-import os
-
 import asyncpg
+
+from shared.secrets import get_database_url
 
 
 async def get_job(job_id: str) -> dict | None:
@@ -23,7 +23,7 @@ async def get_job(job_id: str) -> dict | None:
     path (before AA-723) still resolves through here when GET /admin/jobs/{id} finds no shared.job
     row.
     """
-    conn = await asyncpg.connect(os.environ["DATABASE_URL"])
+    conn = await asyncpg.connect(get_database_url())
     try:
         row = await conn.fetchrow(
             "SELECT id, job_type, status, result_version_id, pipeline_run_id, error, "
@@ -67,7 +67,7 @@ async def find_active_duplicate(request: dict) -> str | None:
     idempotency key (admin_pipeline.run_tour_async), so this never finds a current in-flight row —
     kept read-only for history/compatibility.
     """
-    conn = await asyncpg.connect(os.environ["DATABASE_URL"])
+    conn = await asyncpg.connect(get_database_url())
     try:
         dup_id = await conn.fetchval(
             "SELECT id FROM shared.pipeline_jobs "

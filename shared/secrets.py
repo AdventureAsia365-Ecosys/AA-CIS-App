@@ -8,6 +8,7 @@ import os
 import time
 from functools import lru_cache
 from typing import Optional
+from urllib.parse import parse_qsl, quote, urlsplit
 
 import structlog
 
@@ -35,12 +36,40 @@ def _get_cached(key: str, fetch_fn) -> str:
     return _cache[key]
 
 
+# AA-838 D9 (data standards C1.1a): every CIS connection names itself in pg_stat_activity / Performance
+# Insights. The named pools pass server_settings={"application_name": ...} (cis-api, cis-tenant, cis-worker,
+# cis-job), which wins over the DSN. Every other connection built from get_database_url() — the one-off
+# asyncpg.connect() calls in routers, job handlers and the call-log writers — showed up with an empty name
+# (the first capacity review saw them as "(empty)", ~3rd by load). They now carry this default.
+DEFAULT_DB_APPLICATION_NAME = "cis-direct"
+
+
+def with_application_name(dsn: str, name: Optional[str] = None) -> str:
+    """Return `dsn` with an `application_name` query parameter (asyncpg and libpq both read it).
+
+    Pure. Leaves the DSN untouched when it already names one, or when it is not a postgres URL (a libpq
+    key=value string). Only appends to the query, so the user/password/host part is never re-encoded.
+    `name` defaults to env CIS_DB_APPLICATION_NAME, then DEFAULT_DB_APPLICATION_NAME."""
+    s = dsn.strip()
+    if not s.startswith(("postgres://", "postgresql://")):
+        return dsn
+    base, _, fragment = s.partition("#")
+    query = urlsplit(base).query
+    if any(k == "application_name" for k, _ in parse_qsl(query, keep_blank_values=True)):
+        return s
+    name = name or os.environ.get("CIS_DB_APPLICATION_NAME") or DEFAULT_DB_APPLICATION_NAME
+    sep = "&" if query else ("" if base.endswith("?") else "?")
+    out = f"{base}{sep}application_name={quote(name, safe='')}"
+    return f"{out}#{fragment}" if fragment else out
+
+
 def get_database_url() -> str:
-    """Get DATABASE_URL — Secrets Manager if ARN set, else env var (ECS/local)."""
+    """Get DATABASE_URL — Secrets Manager if ARN set, else env var (ECS/local) — with a default
+    application_name (AA-838 D9, `with_application_name`)."""
     arn = os.environ.get("SECRET_DB_ARN")
     if not arn:
-        return os.environ["DATABASE_URL"]
-    return _get_cached("db_url", lambda: _fetch_secret_sdk(arn))
+        return with_application_name(os.environ["DATABASE_URL"])
+    return with_application_name(_get_cached("db_url", lambda: _fetch_secret_sdk(arn)))
 
 
 def get_dataforseo_creds() -> tuple[str, str]:
