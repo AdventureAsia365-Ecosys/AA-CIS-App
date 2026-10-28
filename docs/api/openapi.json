@@ -3055,6 +3055,39 @@
         "title": "ManualShapeRequest",
         "type": "object"
       },
+      "MediumBackfillRequest": {
+        "properties": {
+          "country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit"
+          }
+        },
+        "title": "MediumBackfillRequest",
+        "type": "object"
+      },
       "MemberInvite": {
         "additionalProperties": false,
         "description": "POST body: the address (relayed once to the CRM, never stored in CIS), the Content studio role CIS decides,\nand the language of the AA system mail. No CRM role: CIS never grants one (ADR 0010 §7).",
@@ -18511,6 +18544,96 @@
           }
         },
         "summary": "Drive folders with their match and sample photos",
+        "tags": [
+          "admin-photos"
+        ]
+      }
+    },
+    "/admin/photos/medium-backfill": {
+      "post": {
+        "description": "AA-995: renders the 960 w WebP of the photos stored before it existed, from the files already in S3 (no Drive\ndownload, no model call). One queued or running backfill at a time: a second call returns that job.",
+        "operationId": "medium_backfill_admin_photos_medium_backfill_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MediumBackfillRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Enqueue a photo_medium_backfill job (960 w renditions)",
         "tags": [
           "admin-photos"
         ]

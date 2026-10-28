@@ -911,6 +911,10 @@
     "capability": "ops.write",
     "module": "api.routers.admin_job_runner"
   },
+  "POST /admin/photos/medium-backfill": {
+    "capability": "photos.write",
+    "module": "api.routers.admin_photos"
+  },
   "POST /admin/photos/sync": {
     "capability": "photos.write",
     "module": "api.routers.admin_photos"

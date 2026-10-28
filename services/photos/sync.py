@@ -23,7 +23,12 @@ from services.photos.match import match_destination, match_tour, place_label
 
 logger = structlog.get_logger()
 
-SIZES = {"large": 1600, "small": 600}
+# AA-995: "medium" (960 w) is the phone hero size (a ~850 CSS px hero takes the 1600 w file otherwise). Files stored
+# before it existed get it from services/jobs/photo_medium_backfill_job.py (rendered from the stored original).
+SIZES = {"large": 1600, "medium": 960, "small": 600}
+# GET /content/photos/{id}?size=: the files tried in order. A 960 w request falls back to the 1600 w file until the
+# backfill has rendered it; never to the original (up to 14 MB, not a web image).
+SIZE_FALLBACK = {"small": ("small",), "medium": ("medium", "large"), "large": ("large",), "original": ("original",)}
 MAX_CONSECUTIVE_ERRORS = 10   # Drive quota reached: stop the job, the next sync resumes
 
 
@@ -94,25 +99,26 @@ def original_ext(file_name: str, mime_type: str) -> str:
     return {"image/png": "png", "image/webp": "webp", "image/gif": "gif"}.get(mime_type, "jpg")
 
 
-def make_sizes(data: bytes) -> tuple[dict[str, bytes], int, int]:
-    """WebP renditions (1600w, 600w) of one image, EXIF rotation applied. Returns (sizes, w, h) — w/h
-    of the ORIGINAL.
+def make_sizes(data: bytes, sizes: Optional[dict[str, int]] = None) -> tuple[dict[str, bytes], int, int]:
+    """WebP renditions (``sizes``: name -> width, default SIZES) of one image, EXIF rotation applied. Returns
+    (renditions, w, h) — w/h of the ORIGINAL.
 
     S207: decoding a full 8256x5504 original (45 MP, ~136 MB RGB, plus copies) inside the 1 GB API
     task OOM-killed it. JPEGs are decoded at a reduced scale (`draft`, ≥ the largest rendition)
     so memory stays ~30 MB per image; the original file itself is stored as raw bytes."""
     from PIL import Image, ImageOps
+    widths = sizes or SIZES
     with Image.open(io.BytesIO(data)) as im:
         w, h = im.size
         if im.format == "JPEG":
             # draft() only scales down while BOTH sides stay ≥ the request — ask in the image's ratio.
-            target = max(SIZES.values())
+            target = max(widths.values())
             im.draft("RGB", (target, max(1, target * h // w)) if w >= h else (max(1, target * w // h), target))
         im = ImageOps.exif_transpose(im).convert("RGB")
         if (im.size[0] > im.size[1]) != (w > h):   # EXIF rotated: report the displayed orientation
             w, h = h, w
         out: dict[str, bytes] = {}
-        for name, width in SIZES.items():
+        for name, width in widths.items():
             copy = im.copy()
             copy.thumbnail((width, width * 4))
             buf = io.BytesIO()
@@ -205,6 +211,8 @@ async def sync_folder(conn, client: DriveClient, s3, *, country: str, root_id: s
         old = existing.get(f.id)
         modified = _ts(f.modified_time)
         # A row without the original (synced before migration 202) is downloaded once more.
+        # A row without the 960 w file (synced before migration 301) is NOT: photo_medium_backfill renders it from the
+        # stored original, without a Drive download (AA-995).
         fresh = bool(old and old["s3_key_small"] and old.get("s3_key_original")
                      and old["drive_modified_at"] == modified)
         sizes_meta: dict = {}
@@ -225,7 +233,7 @@ async def sync_folder(conn, client: DriveClient, s3, *, country: str, root_id: s
                 await asyncio.to_thread(s3.put_object, Bucket=bucket, Key=orig_key, Body=data,
                                         ContentType=f.mime_type or "image/jpeg",
                                         CacheControl="public, max-age=31536000")
-                sizes_meta = {"s3_key_original": orig_key,
+                sizes_meta = {"s3_key_original": orig_key, "s3_key_medium": keys["medium"],
                               "s3_key_large": keys["large"], "s3_key_small": keys["small"], "width": w,
                               "height": h, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
                 del data, sizes
@@ -243,10 +251,10 @@ async def sync_folder(conn, client: DriveClient, s3, *, country: str, root_id: s
             """
             INSERT INTO shared.place_photo (drive_file_id, drive_root_id, folder_path, country, tour_folder,
                 file_name, place_label, tour_id, destination_id, status, s3_key_large, s3_key_small, width,
-                height, bytes, sha256, drive_modified_at, error, synced_at, s3_key_original)
+                height, bytes, sha256, drive_modified_at, error, synced_at, s3_key_original, s3_key_medium)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8::uuid, $9::uuid,
                     CASE WHEN $18::text IS NOT NULL AND $11::text IS NULL THEN 'error' ELSE $10 END,
-                    $11, $12, $13, $14, $15, $16, $17, $18, now(), $21)
+                    $11, $12, $13, $14, $15, $16, $17, $18, now(), $21, $22)
             ON CONFLICT (drive_file_id) DO UPDATE SET
                 folder_path = EXCLUDED.folder_path, tour_folder = EXCLUDED.tour_folder,
                 file_name = EXCLUDED.file_name, place_label = EXCLUDED.place_label,
@@ -262,6 +270,7 @@ async def sync_folder(conn, client: DriveClient, s3, *, country: str, root_id: s
                 s3_key_large = coalesce($11, place_photo.s3_key_large),
                 s3_key_small = coalesce($12, place_photo.s3_key_small),
                 s3_key_original = coalesce($21, place_photo.s3_key_original),
+                s3_key_medium = coalesce($22, place_photo.s3_key_medium),
                 width = coalesce($13, place_photo.width), height = coalesce($14, place_photo.height),
                 bytes = coalesce($15, place_photo.bytes), sha256 = coalesce($16, place_photo.sha256),
                 drive_modified_at = CASE WHEN $18::text IS NULL THEN EXCLUDED.drive_modified_at
@@ -271,7 +280,8 @@ async def sync_folder(conn, client: DriveClient, s3, *, country: str, root_id: s
             f.id, root_id, " › ".join(path), country, tour_folder, f.name, label, tour_id, dest_id, status,
             sizes_meta.get("s3_key_large"), sizes_meta.get("s3_key_small"), sizes_meta.get("width"),
             sizes_meta.get("height"), sizes_meta.get("bytes"), sizes_meta.get("sha256"),
-            modified, error, keep_match, match_destinations, sizes_meta.get("s3_key_original"))
+            modified, error, keep_match, match_destinations, sizes_meta.get("s3_key_original"),
+            sizes_meta.get("s3_key_medium"))
         if progress and (n % 10 == 0 or n == len(images)):
             await progress(step=country, done=n, total=len(images))
         if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:

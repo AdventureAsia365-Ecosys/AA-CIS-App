@@ -81,7 +81,14 @@ def test_make_sizes_webp_widths():
     assert (w, h) == (2400, 1600)
     assert Image.open(io.BytesIO(sizes["large"])).size[0] == 1600
     assert Image.open(io.BytesIO(sizes["small"])).size[0] == 600
+    assert Image.open(io.BytesIO(sizes["medium"])).size[0] == 960          # AA-995
     assert S.s3_key("South Korea", "abc", "small") == "photos/south-korea/abc-600.webp"
+    assert S.s3_key("South Korea", "abc", "medium") == "photos/south-korea/abc-960.webp"
+
+
+def test_make_sizes_only_the_asked_widths():
+    sizes, _, _ = S.make_sizes(_jpeg(), {"medium": 960})
+    assert list(sizes) == ["medium"]
 
 
 class _Conn:
@@ -126,19 +133,21 @@ class _S3:
 
 
 @pytest.mark.asyncio
-async def test_sync_matches_tour_only_by_default_and_uploads_two_sizes():
+async def test_sync_matches_tour_only_by_default_and_uploads_three_sizes():
     tree = {"root": [DriveFile("sup", "Wangchuk Tour&Trek", FOLDER_MIME, None, None)],
             "sup": [DriveFile("f1", "The Druk Path - 8 days", FOLDER_MIME, None, None)],
             "f1": [_img("i1", "Tango Monastery1.jpg")]}
     conn, s3 = _Conn(), _S3()
     res = await S.sync_folder(conn, _FakeDrive(tree, {"i1": _jpeg()}), s3, country="Bhutan", root_id="root")
     assert res["matched_tour"] == 1 and res["matched_destination"] == 0 and res["downloaded"] == 1
-    assert sorted(s3.keys) == ["photos/bhutan/i1-1600.webp", "photos/bhutan/i1-600.webp", "photos/bhutan/i1-orig.jpg"]
+    assert sorted(s3.keys) == ["photos/bhutan/i1-1600.webp", "photos/bhutan/i1-600.webp", "photos/bhutan/i1-960.webp",
+                               "photos/bhutan/i1-orig.jpg"]
     a = conn.writes[0]
     assert a[4] == "The Druk Path - 8 days" and a[2] == "Wangchuk Tour&Trek › The Druk Path - 8 days"
     assert a[7] == "11111111-1111-1111-1111-111111111111" and a[8] is None and a[9] == "matched"
-    assert a[-2] is False                                   # match_destinations off
-    assert a[-1] == "photos/bhutan/i1-orig.jpg"             # original kept (migration 202)
+    assert a[-3] is False                                   # match_destinations off
+    assert a[-2] == "photos/bhutan/i1-orig.jpg"             # original kept (migration 202)
+    assert a[-1] == "photos/bhutan/i1-960.webp"             # 960 w kept (migration 301, AA-995)
 
 
 @pytest.mark.asyncio
