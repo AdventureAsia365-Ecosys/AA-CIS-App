@@ -1064,7 +1064,10 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   `GET /health/ready` (public, 5 s in-process cache) returns 200 only when the DB answers and the newest numeric CIS
   migration in `shared.schema_versions` is ≥ `api/core/readiness.py` `REQUIRED_CIS_SCHEMA` (bump it in the PR whose
   code needs a newer migration). A needed number applied after a higher one (a reserved number, e.g. 297 after 299)
-  goes into `OUT_OF_ORDER_CIS`: while it is not registered the reported version is capped just below it. Deploy Dev's
+  goes into `OUT_OF_ORDER_CIS`: while it is not registered the reported version is capped just below it. Since AA-993
+  M4a it also requires every key of `REQUIRED_CIS_KEYS` (each number from `LEGACY_CIS_BASELINE` + 1 = 264 up to
+  `REQUIRED_CIS_SCHEMA`; a gap is `schema_behind` with `missing_schema_versions`) and lists `registered_keys` (every
+  numeric key above the baseline, for the coming Deploy Dev `schema-gate`; omitted if that read fails). Deploy Dev's
   smoke asserts both, and that a live worker reports the same SHA (`shared.job_worker.git_sha`, written at worker
   start).
 - **Release version (AA-891)**: release-please (manifest mode, `release-please-config.json`,
