@@ -215,6 +215,14 @@
     "capability": "spend.read",
     "module": "api.routers.admin_llm_ops"
   },
+  "GET /admin/docs/manifest": {
+    "capability": "ops.read",
+    "module": "api.routers.admin_docs"
+  },
+  "GET /admin/docs/page": {
+    "capability": "ops.read",
+    "module": "api.routers.admin_docs"
+  },
   "GET /admin/export-audit": {
     "capability": null,
     "module": "api.routers.admin_pipeline"

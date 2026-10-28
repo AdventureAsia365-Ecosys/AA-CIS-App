@@ -435,6 +435,11 @@ POLICY: dict[tuple[str, str], str] = {
     # (every schema of the shared RDS, PII tags included), admin only.
     ("GET", "/admin/data-model"): OPS_READ,
 
+    # ── admin_docs (AA-898) — Developer › Docs: the docs catalog reader synced from the root repo by CI, admin only;
+    # owner-only pages (N-3) are filtered in the route by the verified owner flag.
+    ("GET", "/admin/docs/manifest"): OPS_READ,
+    ("GET", "/admin/docs/page"): OPS_READ,
+
     # ── admin_supply_content (AA-835) — the review of the customer content of Booking hotels / services. An edit or
     # a (paid) regenerate is content work; publish, reject and unpublish are review actions. Reads: every staff role.
     ("POST", "/admin/supply-content/{entity_id}/versions"): CONTENT_WRITE,

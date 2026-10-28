@@ -27,7 +27,7 @@ import { growViewportToContent } from '../smoke/smoke-helpers';
 
 const CIS_PROD_ORIGIN = 'https://aa-cis.lumiguides.it.com';
 const SHOTS_DIR = 'tests/e2e/results/admin-evidence';
-const PAGES = ['/admin/content-quality', '/admin/writing-memory'] as const;
+const PAGES = ['/admin/content-quality', '/admin/writing-memory', '/admin/docs'] as const;  // AA-898: + docs reader
 // Ids that do not exist: nothing is ever written by this spec.
 const MISSING_CARD = '00000000-0000-4000-8000-00000000a10b';
 const MISSING_PIECE = '00000000-0000-4000-8000-00000000a10c';

@@ -14240,6 +14240,169 @@
         ]
       }
     },
+    "/admin/docs/manifest": {
+      "get": {
+        "operationId": "get_manifest_admin_docs_manifest_get",
+        "parameters": [
+          {
+            "description": "re-read storage (at most every 30 s)",
+            "in": "query",
+            "name": "refresh",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "re-read storage (at most every 30 s)",
+              "title": "Refresh",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "AA-898 — the published docs catalog (owner-only pages for owners only)",
+        "tags": [
+          "admin-docs"
+        ]
+      }
+    },
+    "/admin/docs/page": {
+      "get": {
+        "operationId": "get_page_admin_docs_page_get",
+        "parameters": [
+          {
+            "description": "repo-relative path, e.g. docs/ops/README.md",
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "description": "repo-relative path, e.g. docs/ops/README.md",
+              "maxLength": 300,
+              "minLength": 4,
+              "title": "Path",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "repo",
+            "required": false,
+            "schema": {
+              "default": "AA-Ecosys",
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "AA-898 — one published page (redacted Markdown) by repo and path",
+        "tags": [
+          "admin-docs"
+        ]
+      }
+    },
     "/admin/export-audit": {
       "get": {
         "operationId": "export_audit_admin_export_audit_get",

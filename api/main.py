@@ -45,6 +45,7 @@ from api.routers.v1_social import router as v1_social_router
 from api.routers.admin import router as admin_router
 from api.routers.admin_api_docs import router as admin_api_docs_router  # AA-577 — /admin/openapi.json
 from api.routers.admin_data_model import router as admin_data_model_router  # AA-894 — /admin/data-model
+from api.routers.admin_docs import router as admin_docs_router  # AA-898 — /admin/docs/*
 from api.routers.admin import verify_admin_secret  # AA-577 — reused to gate Swagger/ReDoc/openapi.json
 from api.routers.admin_pipeline import router as admin_pipeline_router
 from api.routers.admin_settings import router as admin_settings_router
@@ -281,6 +282,8 @@ async def get_redoc_docs(_: None = Depends(require_admin_secret_for_docs)):
 app.include_router(admin_api_docs_router)
 # AA-894 scope 2 — GET /admin/data-model (admin page /admin/data-model), early for the same reason.
 app.include_router(admin_data_model_router)
+# AA-898 — GET /admin/docs/{manifest,page} (admin page /admin/docs), early for the same reason.
+app.include_router(admin_docs_router)
 
 
 app.include_router(v1_tours_router)
