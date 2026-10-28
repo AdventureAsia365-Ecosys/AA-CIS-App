@@ -70,7 +70,9 @@ def _t9_context(inp: dict) -> dict:
 
 
 def source_text(writer: str, inp: dict, shared_inputs: Optional[dict] = None) -> str:
-    """What the writer was given, as the judge reads it (and the isolation probe's allowed text, with the brand)."""
+    """What the writer was given, short form: the isolation probe's allowed text (with the brand; R2, the shadow and the
+    live post-activation check) and the A1 / T2 judge source. The R2 judge reads T9 through
+    `eval_judge.judge_source_text` (S256 source parity: the whole writer input); this text is kept as it was."""
     if writer in ("a1", "t2"):
         br = _brand_rules(inp, shared_inputs)
         brand = {k: br.get(k) for k in ("brand_name", "default_cta") if br.get(k)}
