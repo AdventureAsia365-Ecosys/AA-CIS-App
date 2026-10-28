@@ -29,7 +29,7 @@ def _owner(principal: StaffPrincipal) -> bool:
     return bool(principal.is_owner and principal.auth == "cognito")
 
 
-@router.get("/manifest", summary="AA-898 — the published docs catalog (owner-only pages for owners only)")
+@router.get("/manifest", summary="The published docs catalog (owner-only pages for owners only)")
 async def get_manifest(
     refresh: bool = Query(False, description="re-read storage (at most every 30 s)"),
     principal: StaffPrincipal = Depends(staff_policy),
@@ -43,7 +43,7 @@ async def get_manifest(
     return JSONResponse(view, headers=_NO_STORE)
 
 
-@router.get("/page", summary="AA-898 — one published page (redacted Markdown) by repo and path")
+@router.get("/page", summary="One published page (redacted Markdown) by repo and path")
 async def get_page(
     path: str = Query(..., min_length=4, max_length=300, description="repo-relative path, e.g. docs/ops/README.md"),
     repo: str = Query("AA-Ecosys", min_length=1, max_length=64),

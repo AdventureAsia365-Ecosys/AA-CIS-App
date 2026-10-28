@@ -14373,7 +14373,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-898 — the published docs catalog (owner-only pages for owners only)",
+        "summary": "The published docs catalog (owner-only pages for owners only)",
         "tags": [
           "admin-docs"
         ]
@@ -14461,7 +14461,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-898 — one published page (redacted Markdown) by repo and path",
+        "summary": "One published page (redacted Markdown) by repo and path",
         "tags": [
           "admin-docs"
         ]
