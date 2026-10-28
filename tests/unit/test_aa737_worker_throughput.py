@@ -71,7 +71,9 @@ def test_background_kind_never_claimed_with_two_or_fewer_free_slots(free):
                           "writing_signal_backfill", "writing_signal_fact_filter", "writing_memory_mine",
                           "writing_memory_r0",
                           # AA-919 WM-19 / WM-21: the R2 runner and the targeted shadow (paid, cap 1 each)
-                          "writing_memory_r2", "writing_memory_shadow"}
+                          "writing_memory_r2", "writing_memory_shadow",
+                          # AA-920 WM-26: the post-activation check ($0, hourly while a release with content is active)
+                          "writing_memory_post_activation"}
     assert bool(background & set(w.claim_caps(free))) == (free > worker.BACKGROUND_RESERVE)
 
 

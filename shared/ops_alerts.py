@@ -40,6 +40,8 @@ TEMPLATE_TEST = "test"           # AA-913: "Send test e-mail" on Platform › Al
 TEMPLATE_PLACE_DEDUPE_HELD = "place_dedupe_held"   # AA-847: the duplicate merge held a country (circuit breaker)
 TEMPLATE_JEV_CREDIT_LOW = "jev_credit_low"                 # AA-845: estimated Jev credit below the threshold
 TEMPLATE_JEV_CREDIT_EXHAUSTED = "jev_credit_exhausted"     # AA-845: Jev returned 402 billing_error
+TEMPLATE_WRITING_MEMORY_ROLLBACK = "writing_memory_rollback"  # AA-920: a release failed its post-activation check
+WRITING_MEMORY_PAGE_PATH = "/admin/writing-memory"
 JEV_TEMPLATES = (TEMPLATE_JEV_CREDIT_LOW, TEMPLATE_JEV_CREDIT_EXHAUSTED)
 JEV_CREDIT_PAGE_PATH = "/admin/settings?tab=jev-credit"
 PLACES_PAGE_PATH = "/admin/places"
@@ -221,6 +223,55 @@ def render_place_dedupe_held(payload: dict, *, to: Recipients, base_url: Optiona
             "country (circuit breaker).</p>"
             f"<table style=\"border-collapse:collapse\">{cells}</table>"
             f"<p><a href=\"{html.escape(link)}\">Open Places / Merges</a></p></div>")
+    return Message(to=to, subject=subject, text=text, html=body)
+
+
+# ── AA-920 — writing memory: a release failed its post-activation check (rolled back automatically) ──────────
+
+async def enqueue_writing_memory_rollback_email(conn, *, details: dict, now: Optional[datetime] = None
+                                                ) -> Optional[str]:
+    """AA-920 WM-26: queue the operator e-mail for a release the post-activation check moved back. One per release
+    per UTC day (idempotency key). `details` holds ids, codes and counts only (never text). None when e-mail is not
+    configured or today's e-mail for the release was queued already."""
+    rid = str(details.get("release_id") or "?")
+    if sender_config() is None:
+        logger.info("ops_alert_email_not_configured", template=TEMPLATE_WRITING_MEMORY_ROLLBACK, release_id=rid)
+        return None
+    from shared.jobs import queue  # lazy: shared.jobs.worker imports shared.cost_guard
+
+    day = utc_day(now)
+    payload = {"template": TEMPLATE_WRITING_MEMORY_ROLLBACK, "period": day, **details}
+    job, created = await queue.enqueue(conn, KIND, payload, max_attempts=MAX_ATTEMPTS,
+                                       idempotency_key=f"{KIND}:{TEMPLATE_WRITING_MEMORY_ROLLBACK}:{rid}:{day}",
+                                       created_by="writing_memory_post_activation")
+    return job if created else None
+
+
+def render_writing_memory_rollback(payload: dict, *, to: Recipients, base_url: Optional[str] = None,
+                                   environment: Optional[str] = None) -> Message:
+    """AA-920: a writing-memory release failed its post-activation check and the writer's pointer was moved back."""
+    env = environment or os.environ.get("ENVIRONMENT", "dev")
+    link = f"{base_url or admin_base_url()}{WRITING_MEMORY_PAGE_PATH}"
+    writer = str(payload.get("writer") or "?")
+    codes = payload.get("codes") or {}
+    subject = f"[AA-CIS {env}] Writing memory {writer}: release {payload.get('release_no')} rolled back"
+    rows = [("Writer", writer), ("Scope", str(payload.get("scope") or "?")),
+            ("Release", f"{payload.get('release_no')} ({payload.get('release_id')})"),
+            ("Action", str(payload.get("action") or "-")),
+            ("Problems", ", ".join(f"{k}: {v}" for k, v in sorted(codes.items())) or "-"),
+            ("Writes checked under the release", str(payload.get("carried"))),
+            ("Day", f"{payload.get('period')} (UTC)")]
+    text = "\n".join(["A writing-memory release failed its post-activation check (a QA trace, another tenant's text "
+                      "or a wrong fingerprint in a new write). The writer's pointer was moved back automatically.", ""]
+                     + [f"{k}: {v}" for k, v in rows]
+                     + ["", f"Review the release and the writes it names: {link} (Releases)"])
+    cells = "".join(
+        f"<tr><td style=\"padding:4px 12px 4px 0;color:#555\">{html.escape(k)}</td>"
+        f"<td style=\"padding:4px 0\">{html.escape(v)}</td></tr>" for k, v in rows)
+    body = ("<div style=\"font-family:Arial,sans-serif;font-size:14px;color:#222\">"
+            "<p><strong>Writing memory release rolled back</strong>: it failed its post-activation check.</p>"
+            f"<table style=\"border-collapse:collapse\">{cells}</table>"
+            f"<p><a href=\"{html.escape(link)}\">Open Writing memory / Releases</a></p></div>")
     return Message(to=to, subject=subject, text=text, html=body)
 
 

@@ -3770,6 +3770,25 @@
         "title": "PlaceCardVerdict",
         "type": "object"
       },
+      "PostActivationBody": {
+        "additionalProperties": false,
+        "properties": {
+          "apply": {
+            "default": false,
+            "title": "Apply",
+            "type": "boolean"
+          },
+          "n": {
+            "default": 20,
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "N",
+            "type": "integer"
+          }
+        },
+        "title": "PostActivationBody",
+        "type": "object"
+      },
       "QuestionUpdate": {
         "properties": {
           "accept_floor": {
@@ -31890,6 +31909,112 @@
           }
         },
         "summary": "Release Evidence",
+        "tags": [
+          "admin-writing-memory"
+        ]
+      }
+    },
+    "/admin/writing-memory/releases/{release_id}/post-activation-check": {
+      "post": {
+        "description": "AA-920 WM-26: read back the writes made since the release went active ($0, no model call) and check that they\ncarry its fingerprint and hold no QA trace and no other tenant's text. DRY RUN by default; `apply: true` rolls the\nwriter's pointer back on a violation (as the hourly job does) and alerts. Counts, codes and ids only.",
+        "operationId": "post_activation_check_admin_writing_memory_releases__release_id__post_activation_check_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "release_id",
+            "required": true,
+            "schema": {
+              "title": "Release Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PostActivationBody"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Activation Check",
         "tags": [
           "admin-writing-memory"
         ]

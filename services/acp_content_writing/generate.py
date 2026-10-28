@@ -202,10 +202,10 @@ def write_content(
         destination=destination, trip_name=trip_name, atom_id=atom_id,
         route_segments=route_segments, keyword=keyword, facts_text=facts_text, scope=scope,
         sibling_openers=sibling_openers, search_questions=search_questions, lead_focus=lead_focus,
-        memory_lines=t9_tenant_lines(memory),
+        memory_lines=t9_tenant_lines(memory, channel_style["channel"]),
     )
     channel = channel_style["channel"]
-    request = LLMRequest(system_prompt=SYSTEM_PROMPT + t9_platform_block(memory), user_prompt=user_prompt,
+    request = LLMRequest(system_prompt=SYSTEM_PROMPT + t9_platform_block(memory, channel), user_prompt=user_prompt,
                           stage="t9_write", max_tokens=max_tokens_for(channel))
     resp, cost = _generate_full(request, channel, attempt=1,
                                 tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id)
@@ -268,10 +268,10 @@ def rewrite_with_feedback(
         destination=destination, trip_name=trip_name, revision_feedback=revision_feedback,
         atom_id=atom_id, route_segments=route_segments, keyword=keyword, facts_text=facts_text, scope=scope,
         sibling_openers=sibling_openers, search_questions=search_questions, lead_focus=lead_focus,
-        memory_lines=t9_tenant_lines(memory),
+        memory_lines=t9_tenant_lines(memory, channel_style["channel"]),
     )
     channel = channel_style["channel"]
-    request = LLMRequest(system_prompt=SYSTEM_PROMPT + t9_platform_block(memory), user_prompt=user_prompt,
+    request = LLMRequest(system_prompt=SYSTEM_PROMPT + t9_platform_block(memory, channel), user_prompt=user_prompt,
                           stage="t9_write", max_tokens=max_tokens_for(channel))
     resp, cost = _generate_full(request, channel, attempt=2,
                                 tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id)

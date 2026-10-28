@@ -171,9 +171,16 @@ def test_content_classes_and_items_hash():
     assert len(rel.items_sha256([])) == 64
 
 
-def test_only_empty_releases_are_wired_until_wm23():
-    assert rel.wiring_problem(_release()) is None
-    assert rel.wiring_problem(_release("rules"))[0] == "content_not_wired"
+def test_wiring_per_writer_after_aa920():
+    """AA-920: A1 (WM-23) and T9 (WM-24) render rules and repair hints; T2 waits for WM-25; lexicon_only for no one."""
+    for writer in ("a1", "t9_blog", "t9_social"):
+        for cls in ("empty", "rules", "repair_hint_only"):
+            assert rel.wiring_problem(_release(cls, writer=writer)) is None, (writer, cls)
+        assert rel.wiring_problem(_release("lexicon_only", writer=writer))[0] == "content_not_wired"
+    assert rel.wiring_problem(_release(writer="t2")) is None
+    for cls in ("rules", "repair_hint_only", "lexicon_only"):
+        code, detail = rel.wiring_problem(_release(cls, writer="t2"))
+        assert code == "content_not_wired" and "WM-25" in detail
 
 
 def test_approval_is_a_humans():

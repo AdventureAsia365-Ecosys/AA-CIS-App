@@ -38,6 +38,7 @@ _RENDERERS = {
     ops_alerts.TEMPLATE_PLACE_DEDUPE_HELD: ops_alerts.render_place_dedupe_held,   # AA-847
     ops_alerts.TEMPLATE_JEV_CREDIT_LOW: ops_alerts.render_jev_credit,              # AA-845
     ops_alerts.TEMPLATE_JEV_CREDIT_EXHAUSTED: ops_alerts.render_jev_credit,        # AA-845
+    ops_alerts.TEMPLATE_WRITING_MEMORY_ROLLBACK: ops_alerts.render_writing_memory_rollback,   # AA-920
 }
 WORKER_ACTOR = f"job:{ops_alerts.KIND}"
 

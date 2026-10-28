@@ -576,6 +576,11 @@ def flag_fix_node(state: dict) -> dict:
             }
 
         issues_text = "\n".join(state.get("brand_audit_issues", []))
+        # AA-920 (WM-23 scope 2): only the repair hints of the flagged codes, never the HOUSE RULES block; "" without
+        # memory, for release 0 and when no hint matches (the prompt is unchanged).
+        from services.writing_memory.insertion import repair_hint_block
+        _hint_codes = set(state.get("brand_audit_codes") or []) | set(state.get("failure_codes") or [])
+        issues_text += repair_hint_block(state.get("writing_memory"), sorted(_hint_codes))
         fields_display = "\n".join(
             f"- {k}: {json.dumps(current_content.get(k))}"
             for k in fix_keys if k in current_content

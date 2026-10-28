@@ -230,7 +230,7 @@ async def test_db_refusal_is_reported_as_db_refused_when_the_mirror_passes(conn,
 
 
 @pytest.mark.asyncio
-async def test_a_rules_release_is_not_wired_yet_and_needs_shadow(conn):
+async def test_a_rules_release_needs_shadow_and_activates_once_wired(conn):
     await _release0(conn, "t9_blog")
     rule = await conn.fetchval(
         "INSERT INTO shared.writing_rule (kind, scope, writer, cluster_key, rule_text, status, approved_by, "
@@ -244,11 +244,8 @@ async def test_a_rules_release_is_not_wired_yet_and_needs_shadow(conn):
     sh = await _run(conn, "t9_blog", "shadow", release=d["release_id"])
     await rel.attach_evidence(conn, d["release_id"], shadow_run_id=sh, actor=f"admin:{ADMIN}")
     await rel.approve(conn, d["release_id"], approved_by=ADMIN)
-    with pytest.raises(rel.ReleaseError) as e:
-        await rel.activate(conn, d["release_id"], actor=f"admin:{ADMIN}")
-    assert e.value.code == "content_not_wired"
-    # the evidence itself is complete: without the wiring policy it activates and takes the month's train slot
-    out = await rel.activate(conn, d["release_id"], actor=f"admin:{ADMIN}", enforce_wiring=False)
+    # AA-920: T9 renders rules releases now (WM-24), so the wiring policy lets it through; it takes the month's slot
+    out = await rel.activate(conn, d["release_id"], actor=f"admin:{ADMIN}")
     assert out["status"] == "active" and out["train_month"] is not None
 
 

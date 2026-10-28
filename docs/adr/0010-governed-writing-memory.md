@@ -87,6 +87,14 @@ tenant. It reaches a writer only through a versioned **release**. Dated invarian
    - At most 10 inputs (where the gate fired before) for a release that holds only `repair_hint`
      rules.
    - Every tenant release adds 1–2 inputs from another tenant as a cross-tenant isolation probe.
+   - *Net after activation (28/10/2026, AA-920 WM-26):* because shadow is small, every write made
+     under an active release with rules is read back ($0, no model call, hourly job + admin route,
+     the newest 200 writes per run):
+     it must carry the release's fingerprint (`items_sha256`) and hold no QA trace and no other
+     tenant's text. The isolation probe is n-gram only (brand name and 6-word runs of the brand
+     pack), not the embedding check, so that the net adds no paid call. A violation rolls the
+     writer's pointer back at once (no human step: moving back is always allowed, decision 1 is
+     about moving forward) and alerts.
 8. **Where memory is inserted (E3).** S1 gets rules only, never examples. T2 and T9 get two pinned
    examples per release. Entities are masked (`[PLACE]`, `[N]`…) and the examples are labelled
    "voice only, reuse no fact". There is no nearest-neighbour retrieval in v1.

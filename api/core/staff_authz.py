@@ -426,6 +426,7 @@ POLICY: dict[tuple[str, str], str] = {
     ("POST", "/admin/writing-memory/releases/{release_id}/approve"): AI_ADMIN,
     ("POST", "/admin/writing-memory/releases/{release_id}/activate"): AI_ADMIN,
     ("POST", "/admin/writing-memory/releases/{release_id}/rollback"): AI_ADMIN,
+    ("POST", "/admin/writing-memory/releases/{release_id}/post-activation-check"): AI_ADMIN,   # AA-920
     ("POST", "/admin/writing-memory/releases/{release_id}/reject"): AI_ADMIN,
     ("GET", "/admin/writing-memory/writers"): TENANT_READ,
     ("PATCH", "/admin/writing-memory/writers/{writer}"): AI_ADMIN,

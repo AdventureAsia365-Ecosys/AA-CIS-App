@@ -182,8 +182,9 @@ export const WRITING_MEMORY_GUIDE: GuideContent = {
           "Approve (drawer, evaluated): your one click, as the signed-in admin. The approval reference is optional: "
             + "a link to the decision.",
           "Activate (drawer, approved): greyed out, with 'Not activatable yet: …', while the evidence does not hold "
-            + "or the release has rules (the writers do not read rules yet). After the confirm, the release before "
-            + "it retires and this one serves the next write.",
+            + "or the writer cannot read that kind of release yet (T2 reads only empty releases until its stamp "
+            + "column lands; no writer reads a lexicon-only release, which goes live through Activate (L0)). After "
+            + "the confirm, the release before it retires and this one serves the next write.",
           "Roll back (drawer, active, with a previous release) and Reject (draft, evaluated or approved): type a "
             + "reason of at least 3 characters first. A rolled-back release never comes back: a fix is a new release.",
         ] },
@@ -209,6 +210,10 @@ export const WRITING_MEMORY_GUIDE: GuideContent = {
             + "rollbacks do not wait for it.",
           "A live release is flagged 'reverify' when the golden set, a model route or the gates changed since its "
             + "evidence. It keeps serving until it is checked again.",
+          "A live release with rules is checked every hour after it goes live: the new texts must carry the "
+            + "release and hold no quality-check trace and no other tenant's text. A text that fails rolls the "
+            + "writer back to the release before at once, with an alert in the bell and by e-mail. This check "
+            + "costs nothing (no model call).",
           "A tenant release holds only that tenant's rules. A platform rule built from tenant signals needs at least "
             + "3 tenants. Every platform-scope rule, in a release or through Activate (L0), needs the program owner's "
             + "OK first (ADR 0010 decision 10). The page does not enforce this.",

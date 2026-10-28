@@ -425,7 +425,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     `place_cards_build`, `t7_slate`, `t8_angles`, and the place pipeline `place_extract`,
     `place_geocode`, `tour_graph_build` — AA-712, `place_shape`, `place_dedupe` — AA-847, `place_relocate` — AA-997, the five `retention_*` kinds — AA-825,
     `ops_alert_email` — AA-828, `data_erasure` — AA-839, the writing-memory kinds `writing_signal_backfill`,
-    `writing_signal_fact_filter`, `writing_memory_mine` — AA-917). Every claim merges `progress.attempt_started_at` (AA-751, F18):
+    `writing_signal_fact_filter`, `writing_memory_mine` — AA-917, `writing_memory_r0` — AA-918, `writing_memory_r2`,
+    `writing_memory_shadow` — AA-919, `writing_memory_post_activation` — AA-920). Every claim merges `progress.attempt_started_at` (AA-751, F18):
     `started_at` keeps the first attempt's start, so per-attempt age reads the progress key.
   - **Background kinds (AA-712)**: `@job_kind(..., background=True)` kinds never take the worker's
     last `BACKGROUND_RESERVE` (2) free slots (`Worker.claim_caps`), so a place-pipeline backlog cannot
@@ -2432,11 +2433,30 @@ superseded → `active`; no deploy. One regular release per writer and owner per
 on `shared.writing_memory_writer` closes it); lexicon, emergency (an open hard stop) and rollbacks never wait for it.
 **Release 0** (`release_no` 0, class `empty`) renders nothing: the writers' prompts stay byte-identical (WM-20,
 proved by `scripts/writing_memory/wm20_release0_replay.py` on Dev and `tests/unit/test_aa919_release0_replay.py` in
-CI). Until WM-23 / 24 / 25 wire the slots, the API activates `empty` releases only (`content_not_wired`).
+CI, and by `tests/unit/test_aa920_injection.py` through the DB resolve path).
 The writers resolve their view once per write (`services/writing_memory/insertion.resolve`: the platform pointer +
-the tenant's, explicit `tenant_id` filter, fail open, nothing when `memory_enabled` is off) and record a stamp: A1
+the tenant's, explicit `tenant_id` filter, fail open, nothing when `memory_enabled` is off). The view carries the
+release's rule items, loaded and checked once (`load_items`: every rule exists, belongs to the writer and owner, and
+the items hash equals the release's `items_sha256`; otherwise the part renders nothing). **One builder** in
+`insertion.py` renders every slot (AA-920): A1 HOUSE RULES after the forbidden-words line of the S1 writer v2
+(platform rules only, no examples; the v1 / batch path stays frozen); T2 platform then tenant blocks at the end of
+the system prompt; T9 platform rules appended to `SYSTEM_PROMPT` (cached across tenants) and tenant rules after the
+brand words line, both filtered by the rule's `applies_to` channels; a `repair_hint` rule only in the repair pass of
+a failed gate of its `gate_class` (A1 flag-fix, T9 `rewrite_with_feedback`), never in a writing slot. Activation by
+writer (`releases.WIRED_CLASSES`): A1 and T9 take `rules` and `repair_hint_only`; T2 takes `empty` only until WM-25
+(the `generation_meta` column with the tenant projection denylist); no writer takes `lexicon_only` (R0-only
+evidence; lexicon reaches T9 through L0 or inside a `rules` release) — anything else is 409 `content_not_wired`.
+Each write records a stamp (ids, numbers and the release fingerprint `items_sha256`, never text): A1
 `generated_content.metadata.writing_release` (S1 writer v2 only), T2 `shared.job.result.writing_release`, T9
-`content_piece.writer_input.writing_release`. Routes `/admin/writing-memory/releases*` and `/writers*` (admin only).
+`content_piece.writer_input.writing_release`. **Post-activation check** (AA-920 WM-26,
+`services/writing_memory/post_activation.py`, job `writing_memory_post_activation`, $0, queued hourly by the api ops
+sampler while a release with content is active; or POST `/admin/writing-memory/releases/{id}/post-activation-check`,
+DRY RUN unless `apply`): the writes since the activation (the newest 200 per run) must carry the release's
+fingerprint and hold no QA trace (`eval_checks.qa_artefacts`, the rule texts included) and no other tenant's text
+(`isolation_probe`); `pass` after 20 carried writes. A violation rolls the pointer back at once (a tenant release
+with no previous is retired alone; a platform one without a previous, or any refused rollback, turns the writer's
+memory off), writes one audit row (ids, codes) and alerts (admin bell + `ops_alert_email` template
+`writing_memory_rollback`). Routes `/admin/writing-memory/releases*` and `/writers*` (admin only).
 **R2** (AA-919 WM-19, `services/writing_memory/r2.py`, job `writing_memory_r2`, CLI DRY RUN + `--enqueue`): a
 candidate release (or today's writers) against the golden set: the judge calibrated on the frozen labelled items
 (every run) and the stored controls re-judged by the current judge (stage `writing_memory_eval`, CIS 291; regenerated

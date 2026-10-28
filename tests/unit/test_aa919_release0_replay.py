@@ -83,50 +83,58 @@ def test_replay_one_reports_zero_diffs_and_the_a1_stamp():
                     "ignored": False, "writer_version": "v2"}
 
 
-SENTINEL = "⟦WM-SENTINEL⟧"
+SENTINEL = "WM-SENTINEL"
 
 
-def _sentinel(monkeypatch):
-    """A test-only renderer: every slot renders the sentinel (the real one renders "" until WM-23 / 24 / 25)."""
-    from services.writing_memory import insertion
-    monkeypatch.setattr(insertion, "_content", lambda view, slot: f"{SENTINEL}:{slot}" if view else "")
+def _content_view(writer: str) -> dict:
+    """AA-920: a view whose platform and tenant parts carry one checked writer_instruction each (the real builder
+    renders them; the AA-919 sentinel monkeypatch of `_content` is gone with the stub)."""
+    def part(scope, rid):
+        return {"release_id": rid, "release_no": 1, "content_class": "rules", "rule_ids": [rid],
+                "items": [{"rule_id": rid, "kind": "writer_instruction", "applies_to": [], "gate_class": None,
+                           "rule_text": f"{SENTINEL} {scope} rule", "replacement": None}]}
+    return {"writer": writer, "platform": part("platform", "p-1"),
+            "tenant": None if writer == "a1" else part("tenant", "t-1")}
 
 
-def test_positive_control_a1_slot_after_the_forbidden_line(monkeypatch):
-    _sentinel(monkeypatch)
+def test_positive_control_a1_slot_after_the_forbidden_line():
+    from services.writing_memory.insertion import PLATFORM_HEADING
     inp = fakes.a1_inputs(1)[0]
     off = replay.capture_a1(inp)
-    on = replay.capture_a1(inp, replay.release0_view("a1"))
+    on = replay.capture_a1(inp, _content_view("a1"))
     assert SENTINEL not in off["system"]
     assert on["user"] == off["user"]
-    # exactly one inserted line, right after the forbidden-words line and before "Output ONLY" (w_system_prompt's
-    # filter(None) also drops its "" spacer, so the two are adjacent)
-    assert on["system"] == off["system"].replace(
-        "\nOutput ONLY valid JSON", f"\n{SENTINEL}:a1_house_rules\nOutput ONLY valid JSON", 1)
+    # the HOUSE RULES lines right after the forbidden-words line and before "Output ONLY" (w_system_prompt's
+    # filter(None) also drops its "" spacer, so the two are adjacent); the tenant part never reaches A1
+    block = f"{PLATFORM_HEADING}\n- {SENTINEL} platform rule"
+    assert on["system"] == off["system"].replace("\nOutput ONLY valid JSON", f"\n{block}\nOutput ONLY valid JSON", 1)
     lines = on["system"].split("\n")
-    i = lines.index(f"{SENTINEL}:a1_house_rules")
-    assert lines[i - 1].startswith("Never use these words or phrases") and lines[i + 1].startswith("Output ONLY")
+    i = lines.index(PLATFORM_HEADING)
+    assert lines[i - 1].startswith("Never use these words or phrases") and lines[i + 2].startswith("Output ONLY")
 
 
-def test_positive_control_t2_slot_at_the_end_of_the_system_prompt(monkeypatch):
-    _sentinel(monkeypatch)
+def test_positive_control_t2_slot_at_the_end_of_the_system_prompt():
+    from services.writing_memory.insertion import PLATFORM_HEADING, TENANT_HEADING
     inp = fakes.t2_inputs(1)[0]
     off = replay.capture_t2(inp)
-    on = replay.capture_t2(inp, replay.release0_view("t2"))
-    assert on["system"] == off["system"] + f"{SENTINEL}:t2_block" and on["user"] == off["user"]
+    on = replay.capture_t2(inp, _content_view("t2"))
+    assert on["system"] == off["system"] + (f"\n\n{PLATFORM_HEADING}\n- {SENTINEL} platform rule"
+                                            f"\n\n{TENANT_HEADING}\n- {SENTINEL} tenant rule")
+    assert on["user"] == off["user"]
 
 
-def test_positive_control_t9_platform_and_tenant_slots(monkeypatch):
+def test_positive_control_t9_platform_and_tenant_slots():
     from services.acp_content_writing.prompts import SYSTEM_PROMPT, t9_words_line
+    from services.writing_memory.insertion import PLATFORM_HEADING, TENANT_HEADING
 
-    _sentinel(monkeypatch)
     for inp in (fakes.t9_inputs(1, blog=True)[0], fakes.t9_inputs(1, blog=False)[0]):
         off = replay.capture_t9(inp)
-        on = replay.capture_t9(inp, replay.release0_view("t9_blog"))
+        on = replay.capture_t9(inp, _content_view("t9_blog"))
         assert off["system"] == SYSTEM_PROMPT
-        assert on["system"] == SYSTEM_PROMPT + f"{SENTINEL}:t9_platform"
+        assert on["system"] == SYSTEM_PROMPT + f"\n\n{PLATFORM_HEADING}\n- {SENTINEL} platform rule"
         words = t9_words_line(inp["writer_input"]["brand_pack"])
-        assert on["user"] == off["user"].replace(words + "\n", words + f"\n{SENTINEL}:t9_tenant\n", 1)
+        assert on["user"] == off["user"].replace(
+            words + "\n", words + f"\n{TENANT_HEADING}\n- {SENTINEL} tenant rule\n", 1)
 
 
 def test_mirror_state_equals_the_live_state_builder():
