@@ -239,9 +239,13 @@ def test_tune_decision():
 
 # ── the judge reply ────────────────────────────────────────────────────────────────────────────────────────────────
 
-def test_parse_verdict_drops_unknown_classes_and_forces_fail_on_a_fact_class():
+def test_parse_verdict_drops_unknown_classes_and_keeps_the_judges_verdict():
+    # S255: a class no longer forces fail. The label rubric passes a text a light edit fixes, and a class on it is
+    # still reported (hard stop 1 reads the classes, not the verdict).
     v = parse_verdict(json.dumps({"verdict": "pass", "score": 12, "failure_classes": ["fact.number", "zz.made_up"]}))
-    assert v == {"verdict": "fail", "score": 10.0, "failure_classes": ["fact.number"]}
+    assert v == {"verdict": "pass", "score": 10.0, "failure_classes": ["fact.number"]}
+    v = parse_verdict(json.dumps({"verdict": "fail", "score": 3, "failure_classes": ["fact.embellish"]}))
+    assert v == {"verdict": "fail", "score": 3.0, "failure_classes": ["fact.embellish"]}
     with pytest.raises(ValueError):
         parse_verdict(json.dumps({"verdict": "maybe", "score": 1, "failure_classes": []}))
     with pytest.raises(ValueError):
@@ -252,3 +256,16 @@ def test_judge_prompt_names_every_class_and_is_versioned():
     sp = system_prompt()
     assert all(c in sp for c in JUDGE_CLASSES)
     assert len(judge_version()) == 12
+
+
+def test_judge_verdict_rubric_is_the_golden_label_rubric():
+    """S255 (AA-919 kappa -0.073): the judge is calibrated against labels made with scripts/aa729/labels.RUBRIC, so it
+    must ask the same question. Every pass label of the golden set is grade `light`; a judge that fails every text
+    'not publishable as is' disagrees with all of them by construction."""
+    from scripts.aa729.labels import RUBRIC
+    from services.writing_memory.eval_judge import LABEL_RUBRIC
+    assert LABEL_RUBRIC == {"pass": RUBRIC["pass"], "fail": RUBRIC["fail"]}
+    sp = system_prompt()
+    assert RUBRIC["pass"] in sp and RUBRIC["fail"] in sp
+    assert "would not be publishable as is" not in sp and "forces" not in sp
+    assert "also when the verdict is pass" in sp

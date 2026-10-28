@@ -26,6 +26,8 @@ from typing import Any, Optional
 from services.writing_memory.eval_checks import flatten_text, tenant_fingerprint
 
 T9_WRITERS = ("t9_blog", "t9_social")
+# The angle fields of a T9 writer context that brief the writer (T8's chosen angle), shown to the judge as BRIEF.
+T9_BRIEF_KEYS = ("name", "formula_fit", "best_final_style")
 
 
 class WriterFailed(RuntimeError):
@@ -84,6 +86,16 @@ def source_text(writer: str, inp: dict, shared_inputs: Optional[dict] = None) ->
     for k in ("facts_text", "trip_name", "destination", "cta", "keyword"):
         if ctx.get(k):
             parts.append(f"{k.upper()}: {flatten_text(ctx.get(k))}")
+    # The scope line and the angle brief the writer was told to follow (S255, AA-919 kappa diagnosis): the golden
+    # labels were made on the full writer input, which includes them; without them the judge flags brief wording and
+    # cannot check scope.
+    if ctx.get("scope"):
+        parts.append(f"SCOPE: {flatten_text(ctx.get('scope'))}")
+    angle = ctx.get("chosen")
+    if isinstance(angle, dict):
+        brief = [flatten_text(angle.get(k)) for k in T9_BRIEF_KEYS if angle.get(k)]
+        if brief:
+            parts.append("BRIEF: " + "\n".join(brief))
     ba = ctx.get("brand_audience") or {}
     if ba.get("brand_name"):
         parts.append(f"BRAND: {ba['brand_name']}")

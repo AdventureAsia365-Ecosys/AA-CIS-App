@@ -318,6 +318,23 @@ def test_t9_writer_input_shape_builds_the_write_kwargs():
         ew._t9_context({})
 
 
+def test_t9_judge_source_holds_the_scope_and_the_angle_brief():
+    """S255 (AA-919): the golden labels were made on the full writer input; the judge's SOURCE carries the scope line
+    and the angle brief the writer was told to follow, for both stored shapes."""
+    from services.writing_memory import eval_writers as ew
+    angle = {"name": "Zz invented angle", "formula_fit": "Problem then proof.", "best_final_style": "Calm; the narrow "
+             "invented peninsula.", "answers": ["not shown"], "option_id": "x"}
+    golden = {"context": {"channel": "linkedin", "atom_text": "Invented seed.", "scope": "SCOPE: day 4 only.",
+                          "chosen": angle}}
+    live = {"writer_input": {"channel": "linkedin", "seed": "Invented seed.", "scope": "SCOPE: day 4 only.",
+                             "angle": angle}}
+    for inp in (golden, live):
+        src = ew.source_text("t9_social", inp)
+        assert "day 4 only." in src and "Zz invented angle" in src and "narrow invented peninsula" in src
+        assert "not shown" not in src and "option_id" not in src
+    assert "BRIEF" not in ew.source_text("t9_social", {"context": {"atom_text": "Seed only."}})
+
+
 def test_job_kinds_are_registered_paid_and_background():
     from services.jobs import writing_memory_job as j
     from shared.jobs.registry import get_kind
