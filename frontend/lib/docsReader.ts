@@ -22,7 +22,13 @@ export type DocEntry = {
   generated: boolean;
   access: DocAccess;
   bytes: number | null;
+  // Translations (backend docs_reader "Translations"). Optional so an older API answer still type-checks.
+  lang?: string;                          // "en" unless the page is a translation
+  translation_of?: string | null;         // the English page's path when this page is a translation
+  translations?: DocTranslation[];        // on an English page: its copies this caller may read, by lang
 };
+
+export type DocTranslation = { lang: string; path: string; title: string | null };
 
 export type DocsManifestResp = {
   generated_at: string | null;
@@ -31,6 +37,7 @@ export type DocsManifestResp = {
   pages: DocEntry[];
   counts: { shown: number; owner_only_shown: number; hidden_owner_only: number };
   is_owner: boolean;
+  owner_read?: boolean;   // owner-only pages are listed for this caller (an owner, or the Dev-only E2E admin)
   loaded_at: string;
   cache_ttl_s: number;
 };
@@ -236,4 +243,47 @@ export function tableOfContents(markdown: string): TocItem[] {
 /** "a1b2c3d4e5f6…" -> first 12 characters, "" when unknown. */
 export function shortSha(sha: string | null | undefined): string {
   return sha ? sha.slice(0, 12) : "";
+}
+
+// ── languages ───────────────────────────────────────────────────────────────────────────────────
+
+export type DocLang = "en" | "vi";
+export const DOC_LANGS: DocLang[] = ["en", "vi"];
+export const DEFAULT_DOC_LANG: DocLang = "en";
+export const DOC_LANG_LABEL: Record<DocLang, { short: string; name: string }> = {
+  en: { short: "EN", name: "English" },
+  vi: { short: "VI", name: "Vietnamese" },
+};
+export const DOC_LANG_STORAGE_KEY = "aa_docs_lang";
+
+export function parseDocLang(v: unknown): DocLang {
+  return v === "vi" ? "vi" : DEFAULT_DOC_LANG;
+}
+
+/** The pages the list shows: English pages only (a translation is reached through its page's language switch). An
+ * older API answer without `lang` lists everything. */
+export function listedPages(pages: DocEntry[]): DocEntry[] {
+  return pages.filter((p) => (p.lang ?? DEFAULT_DOC_LANG) === DEFAULT_DOC_LANG);
+}
+
+/** The original a path belongs to: itself, or the page it translates when that original is listed. */
+export function originalOf(path: string, byPath: Map<string, DocEntry>): DocEntry | undefined {
+  const e = byPath.get(path);
+  if (!e) return undefined;
+  if (e.translation_of && byPath.has(e.translation_of)) return byPath.get(e.translation_of);
+  return e;
+}
+
+export type LangChoice = { path: string; lang: DocLang; available: DocLang[]; missing: boolean };
+
+/** Which file to read for an original in the wanted language. `missing` = the wanted language has no copy (English is
+ * shown instead). */
+export function pickLanguage(original: DocEntry, wanted: DocLang): LangChoice {
+  const byLang = new Map((original.translations ?? []).map((t) => [t.lang, t.path] as const));
+  const own = parseDocLang(original.lang);
+  const available = DOC_LANGS.filter((l) => l === own || byLang.has(l));
+  if (wanted === own) return { path: original.path, lang: own, available, missing: false };
+  const path = byLang.get(wanted);
+  if (path) return { path, lang: wanted, available, missing: false };
+  return { path: original.path, lang: own, available, missing: true };
 }

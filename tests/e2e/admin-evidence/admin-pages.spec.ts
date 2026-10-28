@@ -8,7 +8,9 @@
 //
 // Steps: /login → "Sign in with company email" → managed login → the admin address → code from inbound-admin/ →
 // back under /admin (cis_admin_token cookie, Account menu) → /admin/content-quality and /admin/writing-memory at
-// 1440x900 (grown to the inner scroll region) and 390x844, light and dark → API checks through the BFF that write
+// 1440x900 (grown to the inner scroll region) and 390x844, light and dark → AA-898: the docs manifest says owner_read
+// true / is_owner false, then docs/glossary.md in EN and VI (the switch), the owner-only docs/legal/register.md, and a
+// Mermaid page + a callout page when published, at the same sizes and themes → API checks through the BFF that write
 // nothing: a refused write (403 e2e_read_only), the allow-listed sentence apply on a missing piece (404, so it passed
 // every auth layer), the same route with mode rewrite (403) → the Booking staff admin refuses the same WORKFORCE user
 // (/login?reason=no_booking_role) → sign out.
@@ -32,6 +34,12 @@ const PAGES = ['/admin/content-quality', '/admin/writing-memory', '/admin/docs']
 const MISSING_CARD = '00000000-0000-4000-8000-00000000a10b';
 const MISSING_PIECE = '00000000-0000-4000-8000-00000000a10c';
 const BOOKING_ORIGIN = 'https://booking.lumiguides.it.com';
+// AA-898 docs reader pages (root repo docs catalog): one with a Vietnamese copy, one owner-only (privacy / legal), and
+// two optional ones (shot only when published): a Mermaid diagram and GitHub callouts.
+const DOCS_TRANSLATED = 'docs/glossary.md';
+const DOCS_OWNER_PAGE = 'docs/legal/register.md';
+const DOCS_MERMAID = 'docs/ecosystem-architecture.md';
+const DOCS_CALLOUT = 'docs/guides/ceo.md';
 
 /** A same-origin request through the BFF from the page (sends the session cookie and the Origin header). */
 async function bff(page: Page, method: string, apiPath: string, body: unknown) {
@@ -126,6 +134,56 @@ test.describe('AA-816 A10b — admin evidence as the Dev-only E2E CIS admin', ()
       }
       await page.emulateMedia({ colorScheme: 'light' });
     }
+
+    // ── 7b. AA-898 docs reader: the EN / VI switch on a translated page, an owner-only page (docs.owner_read: Dev
+    //        only, is_owner stays false), and a Mermaid diagram + callouts when such pages are published ──
+    const manifestRes = await page.context().request.get(`${CIS_PROD_ORIGIN}/api/admin/docs/manifest`, { timeout: 30000 });
+    expect(manifestRes.status()).toBe(200);
+    const manifest = await manifestRes.json();
+    expect(manifest.owner_read, 'the Dev-only E2E admin reads owner-only docs').toBe(true);
+    expect(manifest.is_owner, 'it is still not an owner').toBe(false);
+    type Doc = { path: string; access: string; lang?: string; translations?: { lang: string; path: string }[] };
+    const docs = new Map((manifest.pages as Doc[]).map((d) => [d.path, d]));
+    expect(docs.get(DOCS_TRANSLATED)?.translations?.some((t) => t.lang === 'vi'), `${DOCS_TRANSLATED} has a VI copy`)
+      .toBe(true);
+    expect(docs.get(DOCS_OWNER_PAGE)?.access, `${DOCS_OWNER_PAGE} is listed as owner-only`).toBe('owner');
+    const docShots: { slug: string; path: string; lang: 'en' | 'vi'; testId?: string }[] = [
+      { slug: 'docs-translated-en', path: DOCS_TRANSLATED, lang: 'en' },
+      { slug: 'docs-translated-vi', path: DOCS_TRANSLATED, lang: 'vi' },
+      { slug: 'docs-owner-page', path: DOCS_OWNER_PAGE, lang: 'en' },
+      ...(docs.has(DOCS_MERMAID) ? [{ slug: 'docs-mermaid', path: DOCS_MERMAID, lang: 'en' as const, testId: 'mermaid-diagram' }] : []),
+      ...(docs.has(DOCS_CALLOUT) ? [{ slug: 'docs-callout', path: DOCS_CALLOUT, lang: 'en' as const, testId: 'md-callout' }] : []),
+    ];
+    for (const extra of [DOCS_MERMAID, DOCS_CALLOUT]) {
+      if (!docs.has(extra)) test.info().annotations.push({ type: 'note', description: `${extra} is not published` });
+    }
+    for (const d of docShots) {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.goto(`/admin/docs?path=${encodeURIComponent(d.path)}`, { waitUntil: 'domcontentloaded' });
+      await expect(page.locator('article').first()).toBeVisible({ timeout: 30000 });
+      const sw = page.getByTestId('docs-lang-switch');
+      if (d.path === DOCS_TRANSLATED) {
+        await expect(sw).toBeVisible({ timeout: 15000 });
+        await sw.getByRole('button', { name: d.lang === 'vi' ? /^Vietnamese/ : /^English/ }).click();
+      } else if (await sw.isVisible().catch(() => false)) {
+        await sw.getByRole('button', { name: /^English/ }).click();
+      }
+      await expect(page.locator(`article[lang="${d.lang}"]`)).toBeVisible({ timeout: 30000 });
+      if (d.testId) await expect(page.getByTestId(d.testId).first()).toBeVisible({ timeout: 30000 });
+      for (const scheme of ['light', 'dark'] as const) {
+        await page.emulateMedia({ colorScheme: scheme });
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.waitForTimeout(d.testId === 'mermaid-diagram' ? 1500 : 300);   // the diagram redraws for the theme
+        await growViewportToContent(page, 1440, 900);
+        await shot(page, `${d.slug}-desktop-${scheme}`, true);
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.waitForTimeout(300);
+        await shot(page, `${d.slug}-mobile-${scheme}`);
+      }
+      await page.emulateMedia({ colorScheme: 'light' });
+    }
+    // The language choice is remembered per browser: leave English for the next run of this profile.
+    await page.evaluate(() => { try { window.localStorage.setItem('aa_docs_lang', 'en'); } catch { /* ignore */ } });
 
     // ── API checks through the BFF; none of them writes anything ──
     await page.setViewportSize({ width: 1440, height: 900 });

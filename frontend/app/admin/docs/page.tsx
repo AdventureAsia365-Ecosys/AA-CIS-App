@@ -11,11 +11,14 @@
 // access); the selected page (?path=…, so a link can be shared) is rendered as Markdown with a table of contents, its
 // catalog facts and the commit it came from. Links to other published pages open in the reader; anything not
 // published is plain text. No editing here: docs change by PR in git. This repo is public: no page content lives here.
+// Languages: English by default; a page with a published Vietnamese copy (<page>.vi.md, lang: vi, translation_of) gets
+// an EN / VI switch, remembered in this browser (localStorage "aa_docs_lang"). The list shows originals only; a page
+// without the chosen language shows English with a note. ```mermaid blocks are drawn as diagrams (MarkdownView).
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, BookMarked, Lock, RefreshCw, Search, X } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import {
   AdminMain,
   ApiError,
@@ -38,17 +41,27 @@ import {
 } from "../../_kit";
 import { MarkdownView, scrollToHeading, type MarkdownLink } from "../../_kit/MarkdownView";
 import {
+  type LangChoice,
   ALL,
+  DOC_LANG_LABEL,
+  DOC_LANG_STORAGE_KEY,
+  DOC_LANGS,
+  DEFAULT_DOC_LANG,
   audienceLabel,
   audienceOptions,
   groupBySection,
+  listedPages,
   matchesFilter,
+  originalOf,
+  parseDocLang,
+  pickLanguage,
   outline,
   resolveLink,
   shortSha,
   typeLabel,
   typeOptions,
   type DocEntry,
+  type DocLang,
   type DocPageResp,
   type DocsManifestResp,
 } from "@/lib/docsReader";
@@ -165,19 +178,53 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 // ── reader ──────────────────────────────────────────────────────────────────────────────────────
 
+function LangSwitch({ choice, onLang }: { choice: LangChoice; onLang: (l: DocLang) => void }) {
+  return (
+    <div role="group" aria-label="Page language" style={{ display: "inline-flex", gap: 4 }} data-testid="docs-lang-switch">
+      {DOC_LANGS.map((l) => {
+        const has = choice.available.includes(l);
+        const active = choice.lang === l;
+        return (
+          <Button
+            key={l}
+            size="sm"
+            variant={active ? "primary" : "secondary"}
+            disabled={!has && !active}
+            onClick={() => onLang(l)}
+            ariaLabel={`${DOC_LANG_LABEL[l].name}${active ? " (shown)" : ""}`}
+            title={has ? DOC_LANG_LABEL[l].name : `No ${DOC_LANG_LABEL[l].name} version of this page yet`}
+          >
+            {DOC_LANG_LABEL[l].short}
+          </Button>
+        );
+      })}
+    </div>
+  );
+}
+
 function Reader({
   repo,
-  path,
+  original,
+  fallbackPath,
+  lang,
+  onLang,
   published,
   onOpen,
   pendingHash,
 }: {
   repo: string;
-  path: string;
+  original: DocEntry | undefined;
+  fallbackPath: string;
+  lang: DocLang;
+  onLang: (l: DocLang) => void;
   published: Set<string>;
   onOpen: (path: string, hash: string) => void;
   pendingHash: string;
 }) {
+  const choice: LangChoice = original
+    ? pickLanguage(original, lang)
+    : { path: fallbackPath, lang: DEFAULT_DOC_LANG, available: [DEFAULT_DOC_LANG], missing: false };
+  const path = choice.path;
   const { data, error, isLoading, refetch } = useQuery({
     queryKey: ["admin", "docs", "page", repo, path],
     queryFn: () =>
@@ -232,7 +279,18 @@ function Reader({
 
   const p = data.page;
   return (
-    <article style={{ minWidth: 0 }}>
+    <article style={{ minWidth: 0 }} lang={choice.lang}>
+      {(choice.available.length > 1 || choice.missing) && (
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 8,
+                      marginBottom: 10 }} lang="en">
+          <LangSwitch choice={choice} onLang={onLang} />
+          {choice.missing && (
+            <span style={{ fontSize: 12, color: K.muted }} data-testid="docs-lang-missing">
+              No {DOC_LANG_LABEL[lang].name} version of this page yet; showing {DOC_LANG_LABEL[choice.lang].name}.
+            </span>
+          )}
+        </div>
+      )}
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginBottom: 6 }}>
         <Badge tone="info">{typeLabel(p.type)}</Badge>
         {p.status && <Badge tone={STATUS_TONE[p.status] ?? "neutral"}>{p.status}</Badge>}
@@ -292,6 +350,40 @@ function Reader({
   );
 }
 
+// ── page language (this browser) ────────────────────────────────────────────────────────────────
+
+// localStorage when it works (it can throw or be empty in a private window); the in-memory value otherwise.
+let memoryDocLang: DocLang = DEFAULT_DOC_LANG;
+const docLangListeners = new Set<() => void>();
+
+function readDocLang(): DocLang {
+  try {
+    const stored = window.localStorage.getItem(DOC_LANG_STORAGE_KEY);
+    return stored === null ? memoryDocLang : parseDocLang(stored);
+  } catch {
+    return memoryDocLang;
+  }
+}
+
+function writeDocLang(l: DocLang): void {
+  memoryDocLang = l;
+  try {
+    window.localStorage.setItem(DOC_LANG_STORAGE_KEY, l);
+  } catch {
+    /* storage blocked: the choice lasts for this visit */
+  }
+  docLangListeners.forEach((f) => f());
+}
+
+function subscribeDocLang(onChange: () => void): () => void {
+  docLangListeners.add(onChange);
+  window.addEventListener("storage", onChange);
+  return () => {
+    docLangListeners.delete(onChange);
+    window.removeEventListener("storage", onChange);
+  };
+}
+
 // ── page ────────────────────────────────────────────────────────────────────────────────────────
 
 function DocsReaderPage() {
@@ -321,12 +413,18 @@ function DocsReaderPage() {
   const [type, setType] = useState(ALL);
   const [audience, setAudience] = useState(ALL);
   const [pendingHash, setPendingHash] = useState("");
+  // Page language: English by default, the viewer's last choice remembered in this browser (best effort).
+  const lang = useSyncExternalStore(subscribeDocLang, readDocLang, () => DEFAULT_DOC_LANG);
+  const setLang = writeDocLang;
 
-  const pages = useMemo(() => data?.pages ?? [], [data]);
-  const published = useMemo(
-    () => new Set(pages.filter((p) => p.repo === selectedRepo).map((p) => p.path)),
-    [pages, selectedRepo],
+  const allPages = useMemo(() => data?.pages ?? [], [data]);
+  const pages = useMemo(() => listedPages(allPages), [allPages]);
+  const byPath = useMemo(
+    () => new Map(allPages.filter((p) => p.repo === selectedRepo).map((p) => [p.path, p] as const)),
+    [allPages, selectedRepo],
   );
+  const published = useMemo(() => new Set(byPath.keys()), [byPath]);
+  const selected = selectedPath ? originalOf(selectedPath, byPath) : undefined;
   const shown = useMemo(() => pages.filter((p) => matchesFilter(p, { query, type, audience })), [pages, query, type, audience]);
   const groups = useMemo(() => groupBySection(shown), [shown]);
 
@@ -337,15 +435,29 @@ function DocsReaderPage() {
       qs.set("path", path);
       router.push(`${pathname}?${qs.toString()}`, { scroll: false });
     },
-    [router, pathname],
+    [router, pathname, setPendingHash],
   );
   const back = () => router.push(pathname, { scroll: false });
+
+  // A link straight to a translation (?path=x.vi.md): show it through its original with that language chosen, so the
+  // switch and the list highlight work and a shared link keeps one address per page.
+  useEffect(() => {
+    if (!selectedPath || !selected || selected.path === selectedPath) return;
+    const target = byPath.get(selectedPath);
+    if (target?.lang) writeDocLang(parseDocLang(target.lang));
+    const qs = new URLSearchParams();
+    qs.set("path", selected.path);
+    if (selectedRepo !== DEFAULT_REPO) qs.set("repo", selectedRepo);
+    router.replace(`${pathname}?${qs.toString()}${typeof window !== "undefined" ? window.location.hash : ""}`, {
+      scroll: false,
+    });
+  }, [selectedPath, selected, byPath, selectedRepo, router, pathname]);
 
   const busy = isFetching || reload.isPending;
   const loadError = (reload.error as Error | null) ?? (error as Error | null);
   const notPublished = error instanceof ApiError && error.status === 404;
   const description = data
-    ? `The ecosystem docs catalog, read only. ${data.counts.shown} pages from ${data.source.repo ?? "the root repo"}@${shortSha(
+    ? `The ecosystem docs catalog, read only. ${pages.length} pages from ${data.source.repo ?? "the root repo"}@${shortSha(
         data.source.sha,
       )}${data.generated_at ? `, published ${formatDateTime(data.generated_at)}` : ""}.${
         data.counts.hidden_owner_only ? ` ${data.counts.hidden_owner_only} owner-only pages are not shown to you.` : ""
@@ -427,7 +539,7 @@ function DocsReaderPage() {
                 <DocRow
                   key={`${d.repo}/${d.path}`}
                   doc={d}
-                  selected={d.path === selectedPath && d.repo === selectedRepo}
+                  selected={d.path === (selected?.path ?? selectedPath) && d.repo === selectedRepo}
                   onSelect={() => open(d.path)}
                 />
               ))}
@@ -441,7 +553,16 @@ function DocsReaderPage() {
   );
 
   const reader = selectedPath ? (
-    <Reader repo={selectedRepo} path={selectedPath} published={published} onOpen={open} pendingHash={pendingHash} />
+    <Reader
+      repo={selectedRepo}
+      original={selected}
+      fallbackPath={selectedPath}
+      lang={lang}
+      onLang={setLang}
+      published={published}
+      onOpen={open}
+      pendingHash={pendingHash}
+    />
   ) : (
     <EmptyState
       icon={<BookMarked size={30} />}

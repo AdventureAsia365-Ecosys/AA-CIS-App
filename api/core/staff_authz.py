@@ -115,6 +115,11 @@ OWNER_PERMS: frozenset[str] = frozenset({STAFF_WRITE})
 
 CAPABILITIES: frozenset[str] = frozenset().union(*ROLE_PERMS.values(), OWNER_PERMS)
 
+# AA-898 — read the owner-only docs pages of /admin/docs (access "owner": privacy / legal, infrastructure maps). Not a
+# role capability and not a POLICY entry: the docs routes need ops.read and then filter their entries by
+# can_read_owner_docs(). Kept out of CAPABILITIES so no route can be keyed on it by mistake.
+DOCS_OWNER_READ = "docs.owner_read"
+
 STAFF_ROLES: tuple[str, ...] = tuple(ROLE_PERMS)
 
 # ── Route policy ─────────────────────────────────────────────────────────────────────────────────
@@ -524,6 +529,34 @@ def principal_from_role(role_header: Optional[str], identity: Any = None) -> Sta
 
 def has_perm(role: Optional[str], capability: str) -> bool:
     return capability in ROLE_PERMS.get(role or "", frozenset())
+
+
+def docs_owner_read_via(principal: StaffPrincipal) -> Optional[str]:
+    """Why this principal holds DOCS_OWNER_READ: "owner" (a verified Cognito session whose staff row is an owner),
+    "e2e_dev" (see below) or None (it does not).
+
+    "e2e_dev" — TEMPORARY, Dev only, removed with A10 / A10b (root ADR 0006a A10b removal list, AA-816): the Dev-only
+    E2E CIS admin (e2e-cis-admin@, ``e2e_read_only`` on its verified identity) may READ owner-only docs pages so the
+    agent's admin-evidence run can screenshot one (AA-898 Done-when). All of these must hold: a verified Cognito
+    session (``auth == "cognito"``; the identity resolver flags it only on Dev, and the WORKFORCE pre token trigger
+    issues its tokens only while E2E_DEV_ONLY_STAFF_ENABLED is exactly "true"), the admin role (the only scope the
+    trigger grants it, and the one that holds ops.read), and ``ENVIRONMENT`` exactly "dev", re-read on every call.
+    It grants nothing else: ``is_owner`` stays False (so staff.write and every owner-only write stay refused), the
+    session stays read-only (bearer middleware + denial_reason), and no other route reads this capability.
+    """
+    if principal.is_machine or principal.auth != "cognito":
+        return None
+    if principal.is_owner:
+        return "owner"
+    if (principal.e2e_read_only and principal.role == e2e_staff.E2E_CIS_ADMIN_TEST_STAFF_ROLE
+            and OPS_READ in principal.perms and e2e_staff.dev_only_e2e_environment()):
+        return "e2e_dev"
+    return None
+
+
+def can_read_owner_docs(principal: StaffPrincipal) -> bool:
+    """DOCS_OWNER_READ: see docs_owner_read_via()."""
+    return docs_owner_read_via(principal) is not None
 
 
 def denial_reason(principal: StaffPrincipal, method: str, route: str) -> Optional[str]:
