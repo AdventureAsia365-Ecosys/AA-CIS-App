@@ -33,6 +33,7 @@ import {
   type ErasureJob, type ErasureSettings, type JobsPage, type TenantOption,
 } from "@/lib/dataErasure";
 import { TENANTS_API, TENANTS_QUERY_KEY } from "@/lib/tenants";
+import { TenantName } from "../_components/TenantSelect";
 import ApplyPanel, { type SendResult } from "./ApplyPanel";
 import ErasurePlan from "./ErasurePlan";
 import SubjectForm from "./SubjectForm";
@@ -220,7 +221,7 @@ export default function DataErasure() {
       cell: (c) => {
         const j = c.row.original;
         return jobSubject(j) === "tenant"
-          ? <span style={{ fontSize: 12.5, overflowWrap: "anywhere" }}>{tenantName(jobTenant(j)) ?? "tenant"}</span>
+          ? <TenantName id={jobTenant(j)} style={{ fontSize: 12.5 }} />
           : <span style={{ fontSize: 12.5 }}>Traveller</span>;
       },
     },
@@ -280,9 +281,9 @@ export default function DataErasure() {
         </div>
       ),
     },
-    // openFromHistory only calls update (stable setState); tenant names change with the tenants query
+    // openFromHistory only calls update (stable setState); TenantName follows the shared tenants query itself
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [tenantName]);
+  ], []);
 
   if (settings.isLoading) {
     return (

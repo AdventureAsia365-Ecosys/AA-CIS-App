@@ -11,6 +11,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { A, serif, mono, SLabel, Btn, TH, TD } from "../_components/adminUi";
 import { Drawer, StatusBadge, apiGet } from "../../_kit";
+import { TenantName } from "../_components/TenantSelect";
 import { fmtTime, fmtSeconds, releases, runSeconds, stepProgress, usd, type Job } from "./jobsShared";
 
 interface LlmCall {
@@ -24,6 +25,9 @@ interface LlmCalls {
   by_stage: { stage: string; model: string; calls: number; cost_usd: number }[];
   truncated: boolean;
 }
+
+// AA-919 S254: a tenant is printed by name (full id on hover) and links to its Tenant 360 row (AA-752 deep link).
+const tenantHref = (id: string) => `/admin/tenants?tenant=${encodeURIComponent(id)}`;
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -205,13 +209,13 @@ export default function JobDrawer({ jobId, refetchMs, expectedSeconds, maxReleas
               {links.tour_versions.map(v => (
                 <Row key={v.version_id} label="Tenant version">
                   <span style={{ fontFamily: mono }}>v{v.version_number} · {v.version_id.slice(0, 8)}</span> · {v.status}
-                  <span style={{ color: A.muted }}> · tenant <a href="/admin/tenants" style={{ color: A.accent, fontFamily: mono }}>{v.tenant_id.slice(0, 8)}</a></span>
+                  <span style={{ color: A.muted }}> · tenant <a href={tenantHref(v.tenant_id)} style={{ color: A.accent }}><TenantName id={v.tenant_id} /></a></span>
                 </Row>
               ))}
               {links.content_pieces.map(p => (
                 <Row key={p.piece_id} label="Content piece">
                   <span style={{ fontFamily: mono }}>{p.piece_id.slice(0, 8)}</span> · {p.status}
-                  <span style={{ color: A.muted }}> · tenant <a href="/admin/tenants" style={{ color: A.accent, fontFamily: mono }}>{p.tenant_id.slice(0, 8)}</a></span>
+                  <span style={{ color: A.muted }}> · tenant <a href={tenantHref(p.tenant_id)} style={{ color: A.accent }}><TenantName id={p.tenant_id} /></a></span>
                 </Row>
               ))}
             </div>

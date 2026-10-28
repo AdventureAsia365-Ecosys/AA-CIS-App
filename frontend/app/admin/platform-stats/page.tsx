@@ -28,6 +28,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import SocialContentSubNav from "../_components/SocialContentSubNav";
+import { TenantSelect } from "../_components/TenantSelect";
 import { A, serif, mono, sans, Card, Badge, LoadingScreen } from "../_components/adminUi";
 import { AdminMain, AdminPaneBody, AdminPaneHeader, PageHeader, formatDateTime } from "../../_kit";
 import { fetchJson, EmptyState, ErrorState } from "../_components/auditPanels";
@@ -183,7 +184,7 @@ function ReviewLogSection() {
   const fetchData = useCallback(() => {
     setLoading(true);
     const params = new URLSearchParams({ limit: "200" });
-    if (tenantFilter.trim()) params.set("tenant_id", tenantFilter.trim());
+    if (tenantFilter) params.set("tenant_id", tenantFilter);
     fetch(`/api/admin/a4/review-log?${params}`)
       .then(r => (r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`)))
       .then(d => { setRows(d.data || []); setError(null); })
@@ -210,8 +211,8 @@ function ReviewLogSection() {
 
   return (
     <Card style={{ marginBottom: 24 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
-        <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
+        <div style={{ flex: "1 1 320px", minWidth: 0 }}>
           <h2 style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: A.ink, margin: "0 0 4px" }}>
             Review Log — T3 / A3 atomize Escalations
           </h2>
@@ -222,15 +223,9 @@ function ReviewLogSection() {
             review.
           </div>
         </div>
-        <input
-          value={tenantFilter}
-          onChange={e => setTenantFilter(e.target.value)}
-          placeholder="Filter by tenant_id…"
-          style={{
-            padding: "6px 10px", borderRadius: 6, border: `1px solid ${A.line}`,
-            fontSize: 12, fontFamily: mono, width: 280, outline: "none",
-          }}
-        />
+        {/* AA-919 S254: pick the tenant by name (shared admin picker) instead of typing its id. Inactive tenants
+            stay offered: their old escalations are still in the log. */}
+        <TenantSelect inline includeInactive value={tenantFilter} onChange={setTenantFilter} placeholder="All tenants" />
       </div>
 
       {checkIdCounts.length > 0 && (
@@ -287,7 +282,7 @@ function RowLine({ row, expanded, onToggle }: {
       <tr onClick={onToggle} style={{ cursor: "pointer" }}>
         <td style={td}>
           <div style={{ fontWeight: 600 }}>{row.tenant_name || "—"}</div>
-          <div style={{ fontFamily: mono, fontSize: 10.5, color: A.muted2 }}>{row.tenant_slug || row.tenant_id.slice(0, 8)}</div>
+          <div title={row.tenant_id} style={{ fontFamily: mono, fontSize: 10.5, color: A.muted2 }}>{row.tenant_slug || row.tenant_id.slice(0, 8)}</div>
         </td>
         <td style={td}>{row.failure_summary || "—"}</td>
         <td style={td}>
@@ -563,7 +558,7 @@ function GateTelemetrySection() {
                   <tr key={`${r.tenant_id}:${r.channel ?? ""}`}>
                     <td style={td}>
                       <div style={{ fontWeight: 600 }}>{r.tenant_name || "—"}</div>
-                      <div style={{ fontFamily: mono, fontSize: 10.5, color: A.muted2 }}>{r.tenant_id.slice(0, 8)}</div>
+                      <div title={r.tenant_id} style={{ fontFamily: mono, fontSize: 10.5, color: A.muted2 }}>{r.tenant_id.slice(0, 8)}</div>
                     </td>
                     <td style={td}><Badge color="gray">{r.channel || "—"}</Badge></td>
                     <td style={num}>{r.total}</td>

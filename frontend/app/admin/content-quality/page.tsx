@@ -18,9 +18,11 @@
 // API: /admin/content-quality/* via the BFF.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import type { SortingState } from "@tanstack/react-table";
 import { SeedLine } from "../_components/SeedLine";
+import { TenantSelect } from "../_components/TenantSelect";
+import type { TenantRef } from "@/lib/tenants";
 import SocialContentSubNav from "../_components/SocialContentSubNav";
 import { A, mono, Btn } from "../_components/adminUi";
 import {
@@ -171,10 +173,7 @@ function PiecesTab({ view, update, tenants }: { view: View; update: (p: Partial<
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <input value={view.q} onChange={(e) => update({ q: e.target.value, page: 0 })} placeholder="Search title / text…"
                  aria-label="Search pieces" style={{ ...inputStyle, minWidth: 180 }} />
-          <select value={view.tenant} onChange={(e) => update({ tenant: e.target.value, page: 0 })} aria-label="Tenant" style={inputStyle}>
-            <option value="">All tenants</option>
-            {tenants.map((t) => <option key={t.tenant_id} value={t.tenant_id}>{t.tenant_name}</option>)}
-          </select>
+          <TenantFilter value={view.tenant} onChange={(tenant) => update({ tenant, page: 0 })} tenants={tenants} />
           <select value={view.channel} onChange={(e) => update({ channel: e.target.value, page: 0 })} aria-label="Channel" style={inputStyle}>
             <option value="">All channels</option>
             {["blog", "linkedin", "facebook", "instagram", "tiktok", "email", "landing_page", "ads"].map((c) => <option key={c} value={c}>{c}</option>)}
@@ -202,6 +201,14 @@ function PiecesTab({ view, update, tenants }: { view: View; update: (p: Partial<
       }
     />
   );
+}
+
+// AA-919 S254: the shared admin tenant picker (by name, searchable when there are many). It still offers only the
+// tenants of the 30-day stats, as the hand-rolled select did; the tenant in the URL stays picked either way.
+function TenantFilter({ value, onChange, tenants }: { value: string; onChange: (id: string) => void; tenants: TenantStat[] }) {
+  const ids = useMemo(() => new Set(tenants.map((t) => t.tenant_id)), [tenants]);
+  const offer = useCallback((t: TenantRef) => ids.has(t.tenant_id), [ids]);
+  return <TenantSelect inline hideLabel includeInactive offer={offer} value={value} onChange={onChange} placeholder="All tenants" />;
 }
 
 // ── T2 tour versions ── (drawer: TourVersionDrawer.tsx, AA-802 silent correction)
@@ -234,10 +241,7 @@ function VersionsTab({ view, update, tenants }: { view: View; update: (p: Partia
       toolbarExtra={
         <div style={{ display: "flex", gap: 8 }}>
           <input value={view.q} onChange={(e) => update({ q: e.target.value, page: 0 })} placeholder="Search tour…" aria-label="Search tours" style={inputStyle} />
-          <select value={view.tenant} onChange={(e) => update({ tenant: e.target.value, page: 0 })} aria-label="Tenant" style={inputStyle}>
-            <option value="">All tenants</option>
-            {tenants.map((t) => <option key={t.tenant_id} value={t.tenant_id}>{t.tenant_name}</option>)}
-          </select>
+          <TenantFilter value={view.tenant} onChange={(tenant) => update({ tenant, page: 0 })} tenants={tenants} />
         </div>
       }
     />

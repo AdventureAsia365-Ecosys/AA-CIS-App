@@ -62,6 +62,7 @@ import { ChevronDown, ChevronRight, ChevronUp, Radio } from "lucide-react";
 import SocialContentSubNav from "../_components/SocialContentSubNav";
 import { A, mono, sans, Card, Badge, LoadingScreen } from "../_components/adminUi";
 import { fetchJson, EmptyState, ErrorState } from "../_components/auditPanels";
+import { TenantSelect } from "../_components/TenantSelect";
 import { AdminMain, AdminPaneBody, AdminPaneHeader, PageHeader, formatDateTime } from "../../_kit";
 
 // ── Types — match GET /api/admin/a4/content-log's response (AA-568 extension) ──────────────────
@@ -95,8 +96,6 @@ interface ContentLogRow {
   job_id: string | null;
   created_at: string;
 }
-
-interface Tenant { tenant_id: string; name: string; slug: string; }
 
 const STATUS_COLOR: Record<string, "green" | "amber" | "red" | "gray"> = {
   approved: "green", held: "amber", processing: "gray", failed: "red",
@@ -173,7 +172,6 @@ function sortValue(r: ContentLogRow, key: SortKey): string | number {
 }
 
 export default function ContentTracePage() {
-  const [tenants, setTenants] = useState<Tenant[]>([]);
   const [tenantId, setTenantId] = useState("");
   const [channel, setChannel] = useState("");
   const [status, setStatus] = useState("");
@@ -189,12 +187,6 @@ export default function ContentTracePage() {
   // AA-560 — Force unpublish state, same shape a4-oversight/page.tsx's own PublishLogSection used.
   const [unpublishingId, setUnpublishingId] = useState<string | null>(null);
   const [unpublishError, setUnpublishError] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetchJson<{ tenants: Tenant[] }>("/api/admin/tenants")
-      .then(d => setTenants(d.tenants))
-      .catch(() => {});
-  }, []);
 
   const query = useMemo(() => {
     const p = new URLSearchParams();
@@ -301,12 +293,8 @@ export default function ContentTracePage() {
           {/* Filter bar — Tenant is the primary lens ("All" is a real, always-valid choice, never
               a placeholder that must be replaced before the table shows anything). */}
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 16 }}>
-            <FilterField label="Tenant">
-              <select value={tenantId} onChange={e => setTenantId(e.target.value)} style={{ ...selectStyle, minWidth: 180, fontWeight: 600 }}>
-                <option value="">All tenants</option>
-                {tenants.map(t => <option key={t.tenant_id} value={t.tenant_id}>{t.name}</option>)}
-              </select>
-            </FilterField>
+            {/* AA-919 S254: the shared admin tenant picker (active tenants, by name; "" = All tenants). */}
+            <TenantSelect inline value={tenantId} onChange={setTenantId} placeholder="All tenants" />
             <FilterField label="Channel">
               <select value={channel} onChange={e => setChannel(e.target.value)} style={{ ...selectStyle, minWidth: 140 }}>
                 {CHANNEL_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -481,7 +469,7 @@ function ContentTraceTable({ rows, expandedId, sort, onSort, onToggle, onForceUn
                 }}>
                   <td style={rowTd}>{expanded ? <ChevronDown size={14} color={A.gold} /> : <ChevronRight size={14} color={A.muted2} />}</td>
                   <td style={{ ...rowTd, maxWidth: 260, whiteSpace: "normal" }}>{r.topic}</td>
-                  <td style={rowTd}>{r.tenant_name ?? "—"}</td>
+                  <td style={rowTd} title={r.tenant_id}>{r.tenant_name ?? "—"}</td>
                   <td style={rowTd}>{r.tour?.name ?? "—"}</td>
                   <td style={rowTd}><Badge color="gray">{r.channel}</Badge></td>
                   <td style={{ ...rowTd, maxWidth: 200, whiteSpace: "normal" }}>{chosenAngle?.name ?? "—"}</td>
