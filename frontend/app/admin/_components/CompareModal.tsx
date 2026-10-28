@@ -5,6 +5,8 @@ import { X } from "lucide-react";
 import { A, serif, sans, mono, Badge } from "./adminUi";
 import { scoreColor } from "./TourDetailPanelV2";
 import { SCORE_BANDS } from "@/lib/quality-registry.generated";
+import { useT } from "../../_kit";
+import { M } from "./tour.messages";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -92,6 +94,7 @@ export function CompareModal({ tourIds, onClose }: {
   tourIds: string[];
   onClose: () => void;
 }) {
+  const t = useT(M);
   const [details, setDetails] = useState<(TourDetailCompare | null)[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<ContentTab>("summary");
@@ -123,10 +126,10 @@ export function CompareModal({ tourIds, onClose }: {
   }
 
   const TAB_LABELS: { key: ContentTab; label: string }[] = [
-    { key: "summary", label: "Summary" },
-    { key: "highlights", label: "Highlights" },
-    { key: "itineraries", label: "Itineraries" },
-    { key: "seo", label: "SEO" },
+    { key: "summary", label: t("tabSummary") },
+    { key: "highlights", label: t("tabHighlights") },
+    { key: "itineraries", label: t("tabItineraries") },
+    { key: "seo", label: t("tabSeoShort") },
   ];
 
   return (
@@ -141,10 +144,11 @@ export function CompareModal({ tourIds, onClose }: {
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
           <div style={{ fontFamily: serif, fontSize: 20, fontWeight: 500, color: A.ink }}>
-            Comparing {n} Tours
+            {t("comparing", n)}
           </div>
           <button
             onClick={onClose}
+            aria-label={t("close")}
             style={{ background: "none", border: "none", cursor: "pointer", color: A.muted, padding: 6 }}
           >
             <X size={20} />
@@ -173,7 +177,7 @@ export function CompareModal({ tourIds, onClose }: {
 
       {loading ? (
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: A.muted, fontSize: 14 }}>
-          Loading tours…
+          {t("loadingTours")}
         </div>
       ) : (
         <div style={{
@@ -215,37 +219,37 @@ export function CompareModal({ tourIds, onClose }: {
                   </div>
                   {/* Config */}
                   <div style={{ fontSize: 11, color: A.muted, marginBottom: 10 }}>
-                    <span style={{ marginRight: 10 }}>Model: <strong>{modelShort(gen?.model_editorial)}</strong></span>
+                    <span style={{ marginRight: 10 }}>{t("model")}: <strong>{modelShort(gen?.model_editorial)}</strong></span>
                     <span>v{gen?.version_num ?? "—"}</span>
                   </div>
                   {/* Quality scores */}
-                  <ScoreRow label="Overall" score={gen?.score_overall ?? null} />
+                  <ScoreRow label={t("sOverall")} score={gen?.score_overall ?? null} />
                   {judgeCapped && (
                     <div style={{ marginTop: -3, marginBottom: 7 }}>
-                      <Badge color="amber">⚠ judge-capped (avg {fmtScore(vAvg)})</Badge>
+                      <Badge color="amber">{t("judgeCapped", fmtScore(vAvg))}</Badge>
                     </div>
                   )}
-                  <ScoreRow label="Brand" score={gen?.score_brand ?? null} />
-                  <ScoreRow label="SEO" score={gen?.score_seo ?? null} />
-                  <ScoreRow label="Structure" score={gen?.score_structure ?? null} />
-                  <ScoreRow label="Quality" score={gen?.score_quality ?? null} />
+                  <ScoreRow label={t("sBrand")} score={gen?.score_brand ?? null} />
+                  <ScoreRow label={t("sSeo")} score={gen?.score_seo ?? null} />
+                  <ScoreRow label={t("sStructure")} score={gen?.score_structure ?? null} />
+                  <ScoreRow label={t("sQuality")} score={gen?.score_quality ?? null} />
 
                   {/* AA-209: brand judge (GPT-4.1) — guarded for older versions with no judge metadata */}
                   <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${A.line}` }}>
                     <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: A.muted2, marginBottom: 6 }}>
-                      Brand Judge
+                      {t("brandJudge")}
                     </div>
                     <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
                       {gen?.judge ? (
                         <>
-                          <Badge color="gold">fit {fmtScore(gen.judge.brand_fit)}</Badge>
-                          <Badge color="gold">distinct {fmtScore(gen.judge.distinct)}</Badge>
+                          <Badge color="gold">{t("fit", fmtScore(gen.judge.brand_fit))}</Badge>
+                          <Badge color="gold">{t("distinct", fmtScore(gen.judge.distinct))}</Badge>
                           <Badge color={gen.judge.mission_present ? "green" : "red"}>
-                            mission {gen.judge.mission_present ? "✓" : "✗"}
+                            {t("mission", !!gen.judge.mission_present)}
                           </Badge>
                         </>
                       ) : (
-                        <span style={{ fontSize: 11, color: A.muted2 }}>not run</span>
+                        <span style={{ fontSize: 11, color: A.muted2 }}>{t("notRun")}</span>
                       )}
                       {gen?.brand_audit_status && (
                         <Badge color={gen.brand_audit_status === "pass" ? "green" : "amber"}>
@@ -294,7 +298,7 @@ export function CompareModal({ tourIds, onClose }: {
                       {gen?.seo_title && (
                         <div>
                           <div style={{ fontSize: 11, color: A.muted, marginBottom: 3 }}>
-                            Title <span style={{ color: (gen.seo_title.length > 60 ? A.amber : A.muted2) }}>({gen.seo_title.length}/70)</span>
+                            {t("title")} <span style={{ color: (gen.seo_title.length > 60 ? A.amber : A.muted2) }}>({gen.seo_title.length}/70)</span>
                           </div>
                           <div style={{ fontSize: 13, color: A.ink }}>{gen.seo_title}</div>
                         </div>
@@ -302,14 +306,14 @@ export function CompareModal({ tourIds, onClose }: {
                       {gen?.seo_meta && (
                         <div>
                           <div style={{ fontSize: 11, color: A.muted, marginBottom: 3 }}>
-                            Meta <span style={{ color: (gen.seo_meta.length > 155 ? A.amber : A.muted2) }}>({gen.seo_meta.length}/170)</span>
+                            {t("meta")} <span style={{ color: (gen.seo_meta.length > 155 ? A.amber : A.muted2) }}>({gen.seo_meta.length}/170)</span>
                           </div>
                           <div style={{ fontSize: 13, color: A.body }}>{gen.seo_meta}</div>
                         </div>
                       )}
                       {(gen?.seo_keywords_used?.length ?? 0) > 0 && (
                         <div>
-                          <div style={{ fontSize: 11, color: A.muted, marginBottom: 6 }}>Keywords</div>
+                          <div style={{ fontSize: 11, color: A.muted, marginBottom: 6 }}>{t("keywords")}</div>
                           <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
                             {(gen?.seo_keywords_used || []).map((kw, i) => (
                               <span key={i} style={{
@@ -321,7 +325,7 @@ export function CompareModal({ tourIds, onClose }: {
                         </div>
                       )}
                       {!gen?.seo_title && !gen?.seo_meta && (
-                        <span style={{ color: A.muted, fontSize: 13 }}>No SEO data</span>
+                        <span style={{ color: A.muted, fontSize: 13 }}>{t("noSeo")}</span>
                       )}
                     </div>
                   )}

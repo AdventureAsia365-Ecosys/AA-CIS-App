@@ -18,14 +18,15 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, usePathname } from "next/navigation";
 import { Search, Bell, Sun, Moon, Monitor, Settings, LogOut, ChevronDown, Menu as MenuIcon } from "lucide-react";
-import { K, sans, serif, alpha, formatDateTime } from "./core/tokens";
+import { K, sans, serif, alpha } from "./core/tokens";
+import { RBAC_MESSAGES } from "@/lib/rbac.messages";
 import { useThemeChoice } from "./useTheme";
 import type { ThemeChoice } from "./theme";
-import { ROLE_LABEL, isReadOnlyRole, isStaffRole } from "@/lib/rbac";
+import { isReadOnlyRole, isStaffRole } from "@/lib/rbac";
 import { useAdminIdentity } from "./useAdminIdentity";
-import { pageSection, pageTitle } from "./adminNav";
+import { pageSection, pageTitle, useNavLabel } from "./adminNav";
 import { LOGIN_PATH, logoutNavigationTarget } from "@/lib/staffLogout";
-import { useT } from "./core/useI18n";
+import { useFormat, useT } from "./core/useI18n";
 import { LangSwitch } from "./core/LangSwitch";
 import { SHELL_MESSAGES } from "./shell.messages";
 
@@ -37,8 +38,10 @@ interface Notif {
 export function Topbar({ onOpenSearch, onOpenMenu }: { onOpenSearch: () => void; onOpenMenu: () => void }) {
   const t = useT(SHELL_MESSAGES);
   const pathname = usePathname();
-  const title = pageTitle(pathname);
-  const section = pageSection(pathname) ?? t("admin");
+  const navLabel = useNavLabel();
+  const title = navLabel(pageTitle(pathname));
+  const sectionLabel = pageSection(pathname);
+  const section = sectionLabel ? navLabel(sectionLabel) : t("admin");
   const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
   return (
@@ -164,6 +167,7 @@ async function fetchUnreadCount(): Promise<number> {
 
 function Notifications() {
   const t = useT(SHELL_MESSAGES);
+  const { formatDateTime } = useFormat();
   const qc = useQueryClient();
   // AA-878 — the read-only viewer reads the bell but never clears it (the BFF and the backend refuse the PUT).
   const canMarkRead = !isReadOnlyRole(useAdminIdentity().role);
@@ -268,6 +272,7 @@ function Notifications() {
 // ── Account menu (avatar → Settings, Sign out) ──────────────────────────────
 function AccountMenu() {
   const t = useT(SHELL_MESSAGES);
+  const roleLabel = useT(RBAC_MESSAGES);
   const router = useRouter();
   const { userName, role } = useAdminIdentity();
   const [open, setOpen] = useState(false);
@@ -326,7 +331,7 @@ function AccountMenu() {
         }}>
           <div style={{ padding: "10px 14px", borderBottom: `1px solid ${K.line}` }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: K.ink, fontFamily: serif }}>{userName}</div>
-            <div style={{ fontSize: 11, color: K.muted }}>{isStaffRole(role) ? ROLE_LABEL[role] : ""}</div>
+            <div style={{ fontSize: 11, color: K.muted }}>{isStaffRole(role) ? roleLabel(role) : ""}</div>
           </div>
           <MenuRow icon={<Settings size={15} />} label={t("settings")} onClick={() => { setOpen(false); router.push("/admin/settings"); }} />
           <MenuRow icon={<LogOut size={15} />} label={t("signOut")} onClick={logout} />

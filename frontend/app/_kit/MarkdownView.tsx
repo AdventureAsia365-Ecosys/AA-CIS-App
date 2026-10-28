@@ -21,7 +21,10 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { K, RADIUS, mono, sans } from "./core/tokens";
 import { MermaidDiagram } from "./MermaidDiagram";
-import { CALLOUT_LABEL, calloutKindOf, remarkCallouts, type CalloutKind } from "@/lib/markdownCallouts";
+import { calloutKindOf, remarkCallouts, type CalloutKind } from "@/lib/markdownCallouts";
+import { CALLOUT_MESSAGES } from "@/lib/markdownCallouts.messages";
+import { useT } from "./core/useI18n";
+import { SHELL_MESSAGES } from "./shell.messages";
 
 export type MarkdownLink =
   | { kind: "internal"; href: string; onNavigate: () => void }
@@ -130,6 +133,8 @@ export function scrollToHeading(slug: string): boolean {
 }
 
 export function MarkdownView({ markdown, resolveHref, slugForLine, resolveImage }: Props) {
+  const t = useT(SHELL_MESSAGES);
+  const callout = useT(CALLOUT_MESSAGES);
   const components = React.useMemo<Components>(() => {
     const heading = (Tag: "h1" | "h2" | "h3" | "h4" | "h5" | "h6") =>
       function Heading({ node, children }: { node?: unknown; children?: React.ReactNode }) {
@@ -179,7 +184,7 @@ export function MarkdownView({ markdown, resolveHref, slugForLine, resolveImage 
           );
         }
         return (
-          <span className="aa-md-deadlink" title="Not published in the docs reader">
+          <span className="aa-md-deadlink" title={t("notPublished")}>
             {children}
           </span>
         );
@@ -188,13 +193,13 @@ export function MarkdownView({ markdown, resolveHref, slugForLine, resolveImage 
         const url = resolveImage?.(typeof src === "string" ? src : undefined) ?? null;
         if (url) {
           return (
-            <a className="aa-md-figure" href={url} target="_blank" rel="noopener noreferrer" title="Open full size">
+            <a className="aa-md-figure" href={url} target="_blank" rel="noopener noreferrer" title={t("openFullSize")}>
               {/* eslint-disable-next-line @next/next/no-img-element -- a same-origin SVG from the BFF, not an optimisable photo */}
               <img src={url} alt={alt ?? ""} loading="lazy" decoding="async" />
             </a>
           );
         }
-        return <span className="aa-md-img">[image{alt ? `: ${alt}` : ""}]</span>;
+        return <span className="aa-md-img">{t("imagePlaceholder", alt ?? "")}</span>;
       },
       table({ children }) {
         return (
@@ -207,8 +212,8 @@ export function MarkdownView({ markdown, resolveHref, slugForLine, resolveImage 
         const kind: CalloutKind | null = calloutKindOf(node);
         if (!kind) return <blockquote>{children}</blockquote>;
         return (
-          <blockquote data-callout={kind} data-testid="md-callout" role="note" aria-label={CALLOUT_LABEL[kind]}>
-            <span className="aa-md-callout-title">{CALLOUT_LABEL[kind]}</span>
+          <blockquote data-callout={kind} data-testid="md-callout" role="note" aria-label={callout(kind)}>
+            <span className="aa-md-callout-title">{callout(kind)}</span>
             {children}
           </blockquote>
         );
@@ -219,7 +224,7 @@ export function MarkdownView({ markdown, resolveHref, slugForLine, resolveImage 
         return <pre>{children}</pre>;
       },
     };
-  }, [resolveHref, slugForLine, resolveImage]);
+  }, [resolveHref, slugForLine, resolveImage, t, callout]);
 
   return (
     <div className="aa-md">

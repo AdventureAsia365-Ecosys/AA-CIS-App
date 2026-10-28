@@ -1,4 +1,5 @@
 // UI kit core (root ADR 0016). Canonical: AA-CIS-App frontend/app/_kit/core. Edit only there; copies are checked byte for byte (kit.lock.json).
+"use client";
 // app/_kit/core/GuidePanel.tsx — AA-919: renders a page's Guide tab from a GuideContent (core/guide.ts).
 //
 // The content is a prop: the page keeps its guide as data (CIS: a GuideContent in app/admin/<page>/guide.ts) and
@@ -11,10 +12,15 @@
 import { AlertTriangle, ArrowRight, Info } from "lucide-react";
 import { K, RADIUS, alpha, sans } from "./tokens";
 import { TONE } from "./primitives";
+import { KIT_MESSAGES } from "./kit.messages";
+import { useT } from "./useI18n";
 import {
-  GUIDE_CONTROL_CAPTIONS, GUIDE_GLOSSARY_HEADING, GUIDE_GLOSSARY_ID, GUIDE_TOC_MIN_SECTIONS, guideAnchor, guideOutline,
+  GUIDE_GLOSSARY_ID, GUIDE_TOC_MIN_SECTIONS, guideAnchor, guideOutline,
   type GuideBlock, type GuideContent, type GuideTerm,
 } from "./guide";
+
+/** The kit's control-card captions (core/guide.ts GUIDE_CONTROL_CAPTIONS), in the UI language. */
+const CONTROL_CAPTION = { does: "ctlDoes", cost: "ctlCost", when: "ctlWhen", avoid: "ctlAvoid" } as const;
 
 const PROSE: React.CSSProperties = { margin: "8px 0", color: K.body };
 
@@ -50,6 +56,7 @@ function Terms({ items, uiLabels }: { items: GuideTerm[]; uiLabels?: boolean }) 
 }
 
 function Callout({ tone, title, text }: { tone: "note" | "warning"; title?: string; text: string }) {
+  const tk = useT(KIT_MESSAGES);
   const warn = tone === "warning";
   const line = warn ? K.amber : K.info;
   const Icon = warn ? AlertTriangle : Info;
@@ -59,7 +66,7 @@ function Callout({ tone, title, text }: { tone: "note" | "warning"; title?: stri
       background: warn ? K.amberSoft : K.infoSoft }}>
       <Icon size={16} color={line} aria-hidden style={{ flexShrink: 0, marginTop: 3 }} />
       <div style={{ minWidth: 0 }}>
-        <div style={{ fontWeight: 600, color: K.ink }}>{title ?? (warn ? "Watch out" : "Good to know")}</div>
+        <div style={{ fontWeight: 600, color: K.ink }}>{title ?? (warn ? tk("watchOut") : tk("goodToKnow"))}</div>
         <div style={{ color: K.body }}>{text}</div>
       </div>
     </div>
@@ -67,8 +74,9 @@ function Callout({ tone, title, text }: { tone: "note" | "warning"; title?: stri
 }
 
 function Flow({ steps }: { steps: string[] }) {
+  const tk = useT(KIT_MESSAGES);
   return (
-    <ol aria-label="Steps, in order" style={{ listStyle: "none", padding: 0, margin: "12px 0", display: "flex",
+    <ol aria-label={tk("stepsInOrder")} style={{ listStyle: "none", padding: 0, margin: "12px 0", display: "flex",
       flexWrap: "wrap", alignItems: "center", gap: 6 }}>
       {steps.map((s, i) => (
         <li key={`${i}-${s}`} style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0 }}>
@@ -82,6 +90,7 @@ function Flow({ steps }: { steps: string[] }) {
 }
 
 function Control({ b }: { b: Extract<GuideBlock, { kind: "control" }> }) {
+  const tk = useT(KIT_MESSAGES);
   const rows = (["does", "cost", "when", "avoid"] as const).filter((k) => b[k]);
   return (
     <div style={{ margin: "12px 0", padding: "12px 14px", borderRadius: RADIUS.lg, border: `1px solid ${K.line}`,
@@ -92,7 +101,7 @@ function Control({ b }: { b: Extract<GuideBlock, { kind: "control" }> }) {
         {rows.map((k) => (
           <div key={k}>
             <dt style={{ fontSize: 11.5, fontWeight: 600, color: k === "avoid" ? K.danger : K.muted }}>
-              {GUIDE_CONTROL_CAPTIONS[k]}</dt>
+              {tk(CONTROL_CAPTION[k])}</dt>
             <dd style={{ margin: "2px 0 0", color: K.body }}>{b[k]}</dd>
           </div>
         ))}
@@ -144,7 +153,8 @@ function Section({ id, n, heading, children }: { id: string; n: number; heading:
 
 /** A page's Guide tab: renders the GuideContent it is given (the page owns the content; core/guide.ts). */
 export function GuidePanel({ content, testId = "guide-panel" }: { content: GuideContent; testId?: string }) {
-  const outline = guideOutline(content);
+  const tk = useT(KIT_MESSAGES);
+  const outline = guideOutline(content).map((o) => (o.id === GUIDE_GLOSSARY_ID ? { ...o, heading: tk("glossary") } : o));
   const n = new Map(outline.map((o) => [o.id, o.n]));
   return (
     <article data-testid={testId} aria-labelledby={`${testId}-title`}
@@ -157,9 +167,9 @@ export function GuidePanel({ content, testId = "guide-panel" }: { content: Guide
       {content.intro && <p style={{ margin: "6px 0 0", color: K.muted }}>{content.intro}</p>}
       <div className={outline.length >= GUIDE_TOC_MIN_SECTIONS ? "aa-guide-layout aa-guide-layout--toc" : "aa-guide-layout"}>
       {outline.length >= GUIDE_TOC_MIN_SECTIONS && (
-        <nav aria-label="On this page" className="aa-guide-toc" style={{ marginTop: 16, padding: "12px 14px",
+        <nav aria-label={tk("onThisPage")} className="aa-guide-toc" style={{ marginTop: 16, padding: "12px 14px",
           borderRadius: RADIUS.lg, border: `1px solid ${K.line}`, background: K.bg }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: K.muted, marginBottom: 6 }}>On this page</div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: K.muted, marginBottom: 6 }}>{tk("onThisPage")}</div>
           <ol className="aa-guide-toc-list" style={{ listStyle: "none", margin: 0, padding: 0, display: "grid",
             gap: "4px 16px" }}>
             {outline.map((o) => (
@@ -180,7 +190,7 @@ export function GuidePanel({ content, testId = "guide-panel" }: { content: Guide
         </Section>
       ))}
       {content.glossary && content.glossary.length > 0 && (
-        <Section id={GUIDE_GLOSSARY_ID} n={n.get(GUIDE_GLOSSARY_ID) ?? 0} heading={GUIDE_GLOSSARY_HEADING}>
+        <Section id={GUIDE_GLOSSARY_ID} n={n.get(GUIDE_GLOSSARY_ID) ?? 0} heading={tk("glossary")}>
           <Terms items={content.glossary} />
         </Section>
       )}

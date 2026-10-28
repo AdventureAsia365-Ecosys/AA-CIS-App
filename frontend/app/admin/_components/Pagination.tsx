@@ -3,6 +3,8 @@
 import React from "react";
 import { A, sans } from "./adminUi";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { useT } from "../../_kit/core/useI18n";
+import { M } from "./components.messages";
 
 interface PaginationProps {
   page: number;
@@ -12,6 +14,7 @@ interface PaginationProps {
 }
 
 export function Pagination({ page, total, pageSize, onPage }: PaginationProps) {
+  const t = useT(M);
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   if (totalPages <= 1) return null;
 
@@ -42,6 +45,7 @@ export function Pagination({ page, total, pageSize, onPage }: PaginationProps) {
       <button
         style={btnStyle(false, page === 1)}
         disabled={page === 1}
+        aria-label={t("previousPage")}
         onClick={() => onPage(page - 1)}
       >
         <ChevronLeft size={13} />
@@ -62,12 +66,13 @@ export function Pagination({ page, total, pageSize, onPage }: PaginationProps) {
       <button
         style={btnStyle(false, page === totalPages)}
         disabled={page === totalPages}
+        aria-label={t("nextPage")}
         onClick={() => onPage(page + 1)}
       >
         <ChevronRight size={13} />
       </button>
       <span style={{ fontSize: 11, color: A.muted, marginLeft: 6 }}>
-        {((page - 1) * pageSize) + 1}–{Math.min(page * pageSize, total)} of {total}
+        {t("rangeOf", ((page - 1) * pageSize) + 1, Math.min(page * pageSize, total), total)}
       </span>
     </div>
   );

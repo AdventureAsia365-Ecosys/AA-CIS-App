@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
 export default function Home() {
-  // Default redirect — middleware sẽ handle auth
+  // Default redirect; the middleware handles auth.
   redirect("/admin/upload");
 }

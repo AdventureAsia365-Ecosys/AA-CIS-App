@@ -1,0 +1,82 @@
+// app/admin/_components/components.messages.ts — AA-994: the small shared admin components (FilterBar, Pagination,
+// SocialContentSubNav, TenantSelect, WritingReasonChips), English and Vietnamese.
+
+import { defineMessages } from "../../_kit/core/i18n";
+
+export const M = defineMessages(
+  {
+    // FilterBar
+    search: "Search…",
+    clearSearch: "Clear search",
+    all: "All",
+    // Pagination
+    previousPage: "Previous page",
+    nextPage: "Next page",
+    rangeOf: (from: number, to: number, total: number) => `${from}–${to} of ${total}`,
+    // SocialContentSubNav
+    navAtomize: "01 · Atomize",
+    navSegment: "02 · Segment",
+    navScore: "03 · Score",
+    navRouteHub: "04 · Route/Hub",
+    navSlate: "05 · Slate",
+    navContentTrace: "06 · Content Trace",
+    navA4Quality: "07 · A4 Quality",
+    navContentQuality: "08 · Content Quality",
+    // TenantSelect
+    tenant: "Tenant",
+    pickTenant: "Pick a tenant…",
+    searchTenants: "Search by name, slug or id",
+    searchLabel: (label: string) => `Search ${label.toLowerCase()}`,
+    loadingTenants: "Loading tenants…",
+    tenantListFailed: (err: string) => `The tenant list did not load (${err}).`,
+    retry: "Retry",
+    noTenantYet: "No tenant yet.",
+    noActiveTenantYet: "No active tenant yet.",
+    noTenantMatches: (q: string) => `No tenant matches “${q}”.`,
+    // WritingReasonChips
+    why: "Why",
+    reasonGroup: (label: string) => `${label}: reason for this action`,
+    suggested: " (suggested)",
+    // auditPanels
+    panelFailed: "Could not load this panel",
+    filter: "Filter…",
+    noRowsMatch: "No rows match the current column filter(s).",
+    // AdminLiveWriter
+    rewriting: "Rewriting",
+    starting: "Starting…",
+  },
+  {
+    search: "Tìm kiếm…",
+    clearSearch: "Xoá tìm kiếm",
+    all: "Tất cả",
+    previousPage: "Trang trước",
+    nextPage: "Trang sau",
+    rangeOf: (from: number, to: number, total: number) => `${from}–${to} trên ${total}`,
+    navAtomize: "01 · Tách atom",
+    navSegment: "02 · Segment",
+    navScore: "03 · Chấm điểm",
+    navRouteHub: "04 · Route/Hub",
+    navSlate: "05 · Slate",
+    navContentTrace: "06 · Truy vết nội dung",
+    navA4Quality: "07 · Chất lượng A4",
+    navContentQuality: "08 · Chất lượng nội dung",
+    tenant: "Tenant",
+    pickTenant: "Chọn một tenant…",
+    searchTenants: "Tìm theo tên, slug hoặc id",
+    searchLabel: (label: string) => `Tìm ${label.toLowerCase()}`,
+    loadingTenants: "Đang tải danh sách tenant…",
+    tenantListFailed: (err: string) => `Không tải được danh sách tenant (${err}).`,
+    retry: "Thử lại",
+    noTenantYet: "Chưa có tenant nào.",
+    noActiveTenantYet: "Chưa có tenant nào đang hoạt động.",
+    noTenantMatches: (q: string) => `Không có tenant nào khớp “${q}”.`,
+    why: "Lý do",
+    reasonGroup: (label: string) => `${label}: lý do của thao tác này`,
+    suggested: " (gợi ý)",
+    panelFailed: "Không tải được bảng này",
+    filter: "Lọc…",
+    noRowsMatch: "Không có dòng nào khớp bộ lọc cột hiện tại.",
+    rewriting: "Đang viết lại",
+    starting: "Đang bắt đầu…",
+  },
+);

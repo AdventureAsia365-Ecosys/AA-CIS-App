@@ -12,8 +12,10 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { ConfirmModal, K, apiGet, ApiError } from "../../_kit";
+import { ConfirmModal, K, apiGet, ApiError, useT } from "../../_kit";
 import { staffErrorMessage } from "@/lib/rbac";
+import { RBAC_MESSAGES } from "@/lib/rbac.messages";
+import { M } from "./RetireTourDialog.messages";
 
 export type RetireAction = "retire_source" | "trash_master";
 
@@ -47,9 +49,9 @@ const ENDPOINT: Record<RetireAction, (id: string) => string> = {
   trash_master: (id) => `/api/admin/master/${id}/trash`,
 };
 
-const TITLE: Record<RetireAction, string> = {
-  retire_source: "Retire this tour",
-  trash_master: "Trash this Master",
+const TITLE: Record<RetireAction, "titleRetire" | "titleTrash"> = {
+  retire_source: "titleRetire",
+  trash_master: "titleTrash",
 };
 
 function Row({ label, value, note }: { label: string; value: React.ReactNode; note?: string }) {
@@ -78,6 +80,8 @@ export function RetireTourDialog({
   onClose: () => void;
   onDone: (message: string) => void;
 }) {
+  const t = useT(M);
+  const adminOnly = useT(RBAC_MESSAGES)("adminOnly");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const preview = useQuery({
@@ -97,12 +101,12 @@ export function RetireTourDialog({
       const r = await fetch(ENDPOINT[action](tourId), { method: "PATCH" });
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));
-        setError(staffErrorMessage(r.status, body.detail, "Failed to retire the tour"));
+        setError(staffErrorMessage(r.status, body.detail, t("retireFailed"), adminOnly));
         return;
       }
       onDone(action === "retire_source"
-        ? `"${tourName}" retired — tenants with a copy were warned`
-        : `"${tourName}" moved to trash — tenants with a copy were warned`);
+        ? t("doneRetire", tourName)
+        : t("doneTrash", tourName));
     } finally {
       setBusy(false);
     }
@@ -110,11 +114,11 @@ export function RetireTourDialog({
 
   let body: React.ReactNode;
   if (preview.isLoading) {
-    body = <div style={{ color: K.muted }}>Counting what this affects…</div>;
+    body = <div style={{ color: K.muted }}>{t("counting")}</div>;
   } else if (preview.error) {
     const e = preview.error;
     body = <div style={{ color: K.danger }}>
-      {e instanceof ApiError ? staffErrorMessage(e.status, e.message, "Could not count the effects") : String(e)}
+      {e instanceof ApiError ? staffErrorMessage(e.status, e.message, t("countFailed"), adminOnly) : String(e)}
     </div>;
   } else if (p && !p.allowed) {
     body = <div style={{ color: K.danger }}>{p.refused}</div>;
@@ -123,20 +127,18 @@ export function RetireTourDialog({
     body = (
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <div>
-          <strong>{tourName}</strong> stops being served by AA everywhere: Master Content, A3 (atoms, ranking,
-          routes), the tenant pool and the catalog that TripPlanner and Booking read. Tenants keep their own copies
-          and are warned. You can restore it later.
+          <strong>{tourName}</strong>{t("stopsServed")}
         </div>
         <div>
-          <Row label="Tenants warned" value={p.notifies_tenants ?? d.tenants} />
-          <Row label="Their T2 copies (kept)" value={d.t2_copies} />
-          <Row label="Slate subjects" value={d.subjects} />
-          <Row label="Angle requests / pieces (kept)" value={`${d.angle_requests} / ${d.pieces}`} />
-          <Row label="Live posts on tenant sites" value={d.live_posts}
-               note="Stay online (the tenant's site); the warning tells the tenant." />
-          <Row label="Queued tenant jobs cancelled" value={p.jobs_cancelled ?? p.queued_jobs} />
-          <Row label="Pending reviews dismissed" value={p.reviews_dismissed ?? 0} />
-          <Row label="Bookings" value="—" note={p.bookings_note} />
+          <Row label={t("tenantsWarned")} value={p.notifies_tenants ?? d.tenants} />
+          <Row label={t("t2Copies")} value={d.t2_copies} />
+          <Row label={t("slateSubjects")} value={d.subjects} />
+          <Row label={t("anglesPieces")} value={`${d.angle_requests} / ${d.pieces}`} />
+          <Row label={t("livePosts")} value={d.live_posts}
+               note={t("livePostsNote")} />
+          <Row label={t("jobsCancelled")} value={p.jobs_cancelled ?? p.queued_jobs} />
+          <Row label={t("reviewsDismissed")} value={p.reviews_dismissed ?? 0} />
+          <Row label={t("bookings")} value="—" note={p.bookings_note} />
         </div>
       </div>
     );
@@ -147,10 +149,10 @@ export function RetireTourDialog({
       open
       onClose={onClose}
       onConfirm={() => { if (!blocked) void confirm(); }}
-      title={TITLE[action]}
+      title={t(TITLE[action])}
       destructive
       busy={busy || blocked}
-      confirmLabel={action === "retire_source" ? "Retire tour" : "Move to trash"}
+      confirmLabel={action === "retire_source" ? t("confirmRetire") : t("confirmTrash")}
       body={
         <>
           {body}

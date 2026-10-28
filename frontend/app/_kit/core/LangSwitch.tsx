@@ -7,15 +7,17 @@
 
 import { K, alpha, sans } from "./tokens";
 import { LANGS, LANG_LABEL, type Lang } from "./i18n";
-import { useLang, useSetLang } from "./useI18n";
+import { useLang, useSetLang, useT } from "./useI18n";
+import { KIT_MESSAGES } from "./kit.messages";
 
-export function LangSwitch({ ariaLabel = "Language" }: { ariaLabel?: string }) {
+export function LangSwitch({ ariaLabel }: { ariaLabel?: string }) {
+  const t = useT(KIT_MESSAGES);
   const lang = useLang();
   const setLang = useSetLang();
   return (
     <div
       role="group"
-      aria-label={ariaLabel}
+      aria-label={ariaLabel ?? t("language")}
       data-testid="lang-switch"
       style={{
         display: "inline-flex", alignItems: "center", gap: 2, padding: 2, borderRadius: 8,

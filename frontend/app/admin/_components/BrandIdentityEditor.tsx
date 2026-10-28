@@ -14,6 +14,8 @@ import { Plus, Trash2, ChevronDown, ChevronUp, RefreshCw, Upload } from "lucide-
 import { A, alpha, serif, sans, Card, SLabel, Btn } from "./adminUi";
 import { useAdminIdentity } from "../../_kit/useAdminIdentity";
 import { can } from "@/lib/rbac";
+import { useT } from "../../_kit/core/useI18n";
+import { M } from "./BrandIdentityEditor.messages";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -69,6 +71,7 @@ function TagsInput({ value, onChange, placeholder, readOnly }: {
   placeholder?: string;
   readOnly?: boolean;
 }) {
+  const t = useT(M);
   const [input, setInput] = useState("");
   function add() {
     const trimmed = input.trim();
@@ -78,15 +81,15 @@ function TagsInput({ value, onChange, placeholder, readOnly }: {
   return (
     <div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 6 }}>
-        {value.map(t => (
-          <span key={t} style={{
+        {value.map(tag => (
+          <span key={tag} style={{
             display: "inline-flex", alignItems: "center", gap: 4,
             padding: "2px 8px", borderRadius: 20, fontSize: 12,
             background: A.goldTint, color: A.gold, fontWeight: 600,
           }}>
-            {t}
+            {tag}
             {!readOnly && (
-              <button onClick={() => onChange(value.filter(x => x !== t))} style={{
+              <button onClick={() => onChange(value.filter(x => x !== tag))} aria-label={t("remove", tag)} style={{
                 background: "none", border: "none", cursor: "pointer", padding: 0,
                 color: A.gold, lineHeight: 1, fontSize: 13,
               }}>×</button>
@@ -100,14 +103,14 @@ function TagsInput({ value, onChange, placeholder, readOnly }: {
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); add(); } }}
-            placeholder={placeholder || "Type and press Enter…"}
+            placeholder={placeholder || t("typeAndEnter")}
             style={{
               flex: 1, padding: "7px 10px", border: `1px solid ${A.line}`,
               borderRadius: 6, fontSize: 13, fontFamily: sans,
               background: A.card, color: A.ink, outline: "none",
             }}
           />
-          <Btn variant="secondary" onClick={add} style={{ padding: "7px 12px" }}>Add</Btn>
+          <Btn variant="secondary" onClick={add} style={{ padding: "7px 12px" }}>{t("add")}</Btn>
         </div>
       )}
     </div>
@@ -362,6 +365,7 @@ function parseBrandText(paragraphs: string[]): Partial<BrandForm> {
 export default function BrandIdentityEditor() {
   // AA-882 — brand writes are content.settings.write (admin) on the backend; other roles read only.
   const canEdit = can(useAdminIdentity().role, "content.settings.write");
+  const t = useT(M);
   const [brands, setBrands]           = useState<BrandSummary[]>([]);
   const [selected, setSelected]       = useState<string | null>(null);
   const [detail, setDetail]           = useState<BrandDetail | null>(null);
@@ -423,7 +427,7 @@ export default function BrandIdentityEditor() {
 
   async function activateVersion(version: number) {
     if (!selected) return;
-    if (!confirm(`Set v${version} as the active version for "${selected}"?`)) return;
+    if (!confirm(t("activateConfirm", version, selected))) return;
     setActivating(true); setMsg(null);
     try {
       const r = await fetch(`/api/admin/brands/${encodeURIComponent(selected)}/activate`, {
@@ -435,10 +439,10 @@ export default function BrandIdentityEditor() {
         await loadBrands();
         await selectBrand(selected);
         setViewingVersion(null);
-        setMsg({ text: `v${version} activated ✓`, ok: true });
+        setMsg({ text: t("activated", version), ok: true });
       } else {
         const e = await r.json().catch(() => ({}));
-        setMsg({ text: e.detail || "Activate failed", ok: false });
+        setMsg({ text: e.detail || t("activateFailed"), ok: false });
       }
     } finally { setActivating(false); }
   }
@@ -457,20 +461,20 @@ export default function BrandIdentityEditor() {
         body: JSON.stringify(payload),
       });
       if (r.ok) {
-        setMsg({ text: isNew ? "Brand created ✓" : "Updated ✓ (new version saved)", ok: true });
+        setMsg({ text: isNew ? t("created") : t("updated"), ok: true });
         await loadBrands();
         if (isNew) { setIsNew(false); setSelected(form.brand_name); }
         await selectBrand(isNew ? form.brand_name : selected!);
       } else {
         const e = await r.json().catch(() => ({}));
-        setMsg({ text: e.detail || "Save failed", ok: false });
+        setMsg({ text: e.detail || t("saveFailed"), ok: false });
       }
     } finally { setSaving(false); }
   }
 
   async function deleteBrand() {
     if (!selected) return;
-    if (!confirm(`Delete brand "${selected}"? This will permanently remove all versions.`)) return;
+    if (!confirm(t("deleteConfirm", selected))) return;
     setDeleting(true); setMsg(null);
     try {
       const r = await fetch(`/api/admin/brands/${encodeURIComponent(selected)}`, { method: "DELETE" });
@@ -480,7 +484,7 @@ export default function BrandIdentityEditor() {
         await loadBrands();
       } else {
         const e = await r.json().catch(() => ({}));
-        setMsg({ text: e.detail || "Delete failed", ok: false });
+        setMsg({ text: e.detail || t("deleteFailed"), ok: false });
       }
     } finally { setDeleting(false); }
   }
@@ -511,9 +515,9 @@ export default function BrandIdentityEditor() {
         ...(parsed.forbidden_words?.length ? { forbidden_words: parsed.forbidden_words } : {}),
       }));
       setIsNew(true);
-      setMsg({ text: `DOCX parsed — ${fieldCount} field(s) filled. Review and save.`, ok: true });
+      setMsg({ text: t("docxParsed", fieldCount), ok: true });
     } catch {
-      setMsg({ text: "DOCX parse failed", ok: false });
+      setMsg({ text: t("docxFailed"), ok: false });
     } finally {
       setParsing(false);
       if (docxRef.current) docxRef.current.value = "";
@@ -533,16 +537,16 @@ export default function BrandIdentityEditor() {
           {/* Left panel — brand list */}
           <div style={{ width: 260, borderRight: `1px solid ${A.line}`, background: A.card, display: "flex", flexDirection: "column" }}>
             <div style={{ padding: "16px 16px 10px", borderBottom: `1px solid ${A.line}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.08em" }}>Brands</span>
+              <span style={{ fontSize: 12, fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.08em" }}>{t("brands")}</span>
               <div style={{ display: "flex", gap: 4 }}>
-                <button onClick={loadBrands} style={{ background: "none", border: "none", cursor: "pointer", color: A.muted, padding: 4 }}>
+                <button onClick={loadBrands} aria-label={t("reload")} style={{ background: "none", border: "none", cursor: "pointer", color: A.muted, padding: 4 }}>
                   <RefreshCw size={13} />
                 </button>
                 {canEdit && (<>
                 <button
                   onClick={() => { startNew(); docxRef.current?.click(); }}
                   disabled={parsing}
-                  title="Upload DOCX brand brief"
+                  title={t("uploadDocx")}
                   style={{
                     background: "var(--aa-purple-bg)", border: "none", borderRadius: 5, color: "var(--aa-purple-deep)",
                     cursor: "pointer", padding: "4px 8px", fontSize: 12, fontWeight: 600,
@@ -557,7 +561,7 @@ export default function BrandIdentityEditor() {
                   cursor: "pointer", padding: "4px 8px", fontSize: 12, fontWeight: 600,
                   display: "flex", alignItems: "center", gap: 3,
                 }}>
-                  <Plus size={11} /> New
+                  <Plus size={11} /> {t("new")}
                 </button>
                 </>)}
               </div>
@@ -565,9 +569,9 @@ export default function BrandIdentityEditor() {
 
             <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
               {loading ? (
-                <div style={{ padding: 20, fontSize: 12, color: A.muted }}>Loading…</div>
+                <div style={{ padding: 20, fontSize: 12, color: A.muted }}>{t("loading")}</div>
               ) : brands.length === 0 ? (
-                <div style={{ padding: 20, fontSize: 12, color: A.muted }}>No brands yet. Create one →</div>
+                <div style={{ padding: 20, fontSize: 12, color: A.muted }}>{t("noBrands")}</div>
               ) : brands.map(b => (
                 <div
                   key={b.brand_name}
@@ -583,7 +587,7 @@ export default function BrandIdentityEditor() {
                   <div style={{ fontSize: 11, color: A.muted, marginTop: 3, display: "flex", gap: 8 }}>
                     <span>v{b.version}</span>
                     {b.brand_type && <span>{b.brand_type}</span>}
-                    {!b.is_active && <span style={{ color: A.red }}>inactive</span>}
+                    {!b.is_active && <span style={{ color: A.red }}>{t("inactive")}</span>}
                   </div>
                 </div>
               ))}
@@ -594,7 +598,7 @@ export default function BrandIdentityEditor() {
           <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "28px 36px 56px" }}>
             {!isNew && !selected ? (
               <div style={{ paddingTop: 60, textAlign: "center", color: A.muted, fontSize: 14 }}>
-                Select a brand from the left, or click <strong>New</strong> to create one.
+                {t("selectBefore")}<strong>{t("new")}</strong>{t("selectAfter")}
               </div>
             ) : (
               <>
@@ -603,7 +607,7 @@ export default function BrandIdentityEditor() {
                     marginBottom: 16, padding: "10px 16px", borderRadius: 8,
                     background: A.goldTint, border: `1px solid ${A.line}`, fontSize: 13, color: A.body,
                   }}>
-                    Read-only for your role. Brand identity changes are made by an admin.
+                    {t("readOnlyRole")}
                   </div>
                 )}
 
@@ -615,13 +619,13 @@ export default function BrandIdentityEditor() {
                     display: "flex", justifyContent: "space-between", alignItems: "center",
                   }}>
                     <span style={{ fontSize: 13, color: "var(--aa-amber-orange)", fontWeight: 500 }}>
-                      Read-only — version {viewingVersion}
+                      {t("readOnlyVersion", viewingVersion ?? 0)}
                     </span>
                     <button onClick={exitVersionView} style={{
                       background: "none", border: "none", cursor: "pointer",
                       fontSize: 12, color: "var(--aa-amber-orange)", fontWeight: 600, textDecoration: "underline",
                     }}>
-                      Back to current
+                      {t("backToCurrent")}
                     </button>
                   </div>
                 )}
@@ -629,14 +633,14 @@ export default function BrandIdentityEditor() {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
                   <div>
                     <div style={{ fontFamily: serif, fontSize: 24, fontWeight: 500, color: A.ink, letterSpacing: "-0.01em" }}>
-                      {isNew ? "New Brand" : selected}
+                      {isNew ? t("newBrand") : selected}
                     </div>
                     {!isNew && detail && (
                       <div style={{ fontSize: 12, color: A.muted, marginTop: 4 }}>
                         v{viewedEntry ? viewedEntry.version : detail.version} · {(viewedEntry ? viewedEntry.updated_at : detail.updated_at)?.slice(0, 10) || "—"}
                         {(viewedEntry ? viewedEntry.is_active : detail.is_active)
-                          ? <span style={{ color: A.green, marginLeft: 8 }}>● active</span>
-                          : <span style={{ color: A.red, marginLeft: 8 }}>● inactive</span>}
+                          ? <span style={{ color: A.green, marginLeft: 8 }}>{t("activeDot")}</span>
+                          : <span style={{ color: A.red, marginLeft: 8 }}>{t("inactiveDot")}</span>}
                       </div>
                     )}
                   </div>
@@ -646,123 +650,123 @@ export default function BrandIdentityEditor() {
                       cursor: "pointer", color: A.red, padding: "6px 10px",
                       display: "flex", alignItems: "center", gap: 4, fontSize: 12,
                     }}>
-                      <Trash2 size={12} /> {deleting ? "Deleting…" : "Delete"}
+                      <Trash2 size={12} /> {deleting ? t("deleting") : t("delete")}
                     </button>
                   )}
                 </div>
 
                 <Card style={{ marginBottom: 20 }}>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: "0 24px" }}>
-                    <Field label="Brand Name *">
+                    <Field label={t("fBrandName")}>
                       <input
                         value={form.brand_name}
                         onChange={e => upd("brand_name", e.target.value)}
                         disabled={!isNew || isReadOnly}
-                        placeholder="e.g. Adventure Asia"
+                        placeholder={t("phBrandName")}
                         style={{ ...inputStyle, opacity: (isNew && !isReadOnly) ? 1 : 0.6 }}
                       />
                     </Field>
-                    <Field label="Brand Type">
+                    <Field label={t("fBrandType")}>
                       <input
                         value={form.brand_type}
                         onChange={e => upd("brand_type", e.target.value)}
-                        placeholder="e.g. luxury adventure, family, budget"
+                        placeholder={t("phBrandType")}
                         style={{ ...inputStyle, opacity: isReadOnly ? 0.7 : 1 }}
                         readOnly={isReadOnly}
                       />
                     </Field>
                   </div>
 
-                  <Field label="Core Idea">
+                  <Field label={t("fCoreIdea")}>
                     <textarea
                       value={form.core_idea}
                       onChange={e => upd("core_idea", e.target.value)}
                       rows={2}
-                      placeholder="1-2 sentences describing the brand's core positioning"
+                      placeholder={t("phCoreIdea")}
                       style={{ ...textareaStyle, opacity: isReadOnly ? 0.7 : 1 }}
                       readOnly={isReadOnly}
                     />
                   </Field>
 
-                  <Field label="Target Markets">
+                  <Field label={t("fTargetMarkets")}>
                     <TagsInput
                       value={form.target_markets}
                       onChange={v => upd("target_markets", v)}
-                      placeholder="Country or region, press Enter…"
+                      placeholder={t("phTargetMarkets")}
                       readOnly={isReadOnly}
                     />
                   </Field>
 
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: "0 24px" }}>
-                    <Field label="Customer Segment">
+                    <Field label={t("fSegment")}>
                       <textarea
                         value={form.customer_segment}
                         onChange={e => upd("customer_segment", e.target.value)}
                         rows={3}
-                        placeholder="Demographics: age, income, profession…"
+                        placeholder={t("phSegment")}
                         style={{ ...textareaStyle, opacity: isReadOnly ? 0.7 : 1 }}
                         readOnly={isReadOnly}
                       />
                     </Field>
-                    <Field label="Customer Mindset">
+                    <Field label={t("fMindset")}>
                       <textarea
                         value={form.customer_mindset}
                         onChange={e => upd("customer_mindset", e.target.value)}
                         rows={3}
-                        placeholder="Psychographics: values, motivations, fears…"
+                        placeholder={t("phMindset")}
                         style={{ ...textareaStyle, opacity: isReadOnly ? 0.7 : 1 }}
                         readOnly={isReadOnly}
                       />
                     </Field>
                   </div>
 
-                  <Field label="Tone of Voice">
+                  <Field label={t("fTone")}>
                     <TagsInput
                       value={form.tone_of_voice}
                       onChange={v => upd("tone_of_voice", v)}
-                      placeholder="Trait, press Enter… (e.g. calm, refined)"
+                      placeholder={t("phTone")}
                       readOnly={isReadOnly}
                     />
                   </Field>
 
-                  <Field label="Writing Style">
+                  <Field label={t("fStyle")}>
                     <textarea
                       value={form.writing_style}
                       onChange={e => upd("writing_style", e.target.value)}
                       rows={3}
-                      placeholder="e.g. Active verbs. No superlatives. Present tense…"
+                      placeholder={t("phStyle")}
                       style={{ ...textareaStyle, opacity: isReadOnly ? 0.7 : 1 }}
                       readOnly={isReadOnly}
                     />
                   </Field>
 
-                  <Field label="Good Examples">
+                  <Field label={t("fExamples")}>
                     <textarea
                       value={form.good_examples}
                       onChange={e => upd("good_examples", e.target.value)}
                       rows={4}
-                      placeholder="Paste example paragraphs that match the brand voice…"
+                      placeholder={t("phExamples")}
                       style={{ ...textareaStyle, opacity: isReadOnly ? 0.7 : 1 }}
                       readOnly={isReadOnly}
                     />
                   </Field>
 
-                  <Field label="Should Write (System Prompt)">
+                  <Field label={t("fShouldWrite")}>
                     <textarea
                       value={form.should_write}
                       onChange={e => upd("should_write", e.target.value)}
                       rows={5}
-                      placeholder="Instructions for the AI: e.g. You are a travel editor for Adventure Asia…"
+                      placeholder={t("phShouldWrite")}
                       style={{ ...textareaStyle, opacity: isReadOnly ? 0.7 : 1 }}
                       readOnly={isReadOnly}
                     />
                   </Field>
 
-                  <Field label="Forbidden Words">
+                  <Field label={t("fForbidden")}>
                     <TagsInput
                       value={form.forbidden_words}
                       onChange={v => upd("forbidden_words", v)}
-                      placeholder="Word, press Enter… (e.g. cheap, stunning, curated)"
+                      placeholder={t("phForbidden")}
                       readOnly={isReadOnly}
                     />
                   </Field>
@@ -775,7 +779,7 @@ export default function BrandIdentityEditor() {
                         variant="primary"
                         style={{ background: A.gold, border: `1px solid ${A.gold}` }}
                       >
-                        {saving ? "Saving…" : isNew ? "Create Brand" : "Save (new version)"}
+                        {saving ? t("saving") : isNew ? t("createBrand") : t("saveNewVersion")}
                       </Btn>
                       {msg && (
                         <span style={{ fontSize: 12, color: msg.ok ? A.green : A.red }}>{msg.text}</span>
@@ -791,9 +795,9 @@ export default function BrandIdentityEditor() {
                         variant="primary"
                         style={{ background: A.gold, border: `1px solid ${A.gold}` }}
                       >
-                        {activating ? "Activating…" : `Set v${viewingVersion} as Active`}
+                        {activating ? t("activating") : t("setActiveV", viewingVersion ?? 0)}
                       </Btn>}
-                      <Btn variant="secondary" onClick={exitVersionView}>Cancel</Btn>
+                      <Btn variant="secondary" onClick={exitVersionView}>{t("cancel")}</Btn>
                       {msg && (
                         <span style={{ fontSize: 12, color: msg.ok ? A.green : A.red }}>{msg.text}</span>
                       )}
@@ -812,7 +816,7 @@ export default function BrandIdentityEditor() {
                         padding: 0, fontFamily: sans,
                       }}
                     >
-                      <span style={{ fontSize: 11, fontWeight: 600, color: A.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>Version History ({detail.history.length})</span>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: A.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>{t("history", detail.history.length)}</span>
                       {historyOpen ? <ChevronUp size={14} color={A.muted} /> : <ChevronDown size={14} color={A.muted} />}
                     </button>
                     {historyOpen && (
@@ -826,7 +830,7 @@ export default function BrandIdentityEditor() {
                               <span style={{ fontSize: 13, fontWeight: 500 }}>v{v.version}</span>
                               <span style={{ fontSize: 11, color: A.muted }}>{v.updated_at?.slice(0, 10) || "—"}</span>
                               {v.is_active && (
-                                <span style={{ fontSize: 10, background: A.gold, color: "var(--aa-on-solid)", borderRadius: 4, padding: "1px 6px" }}>active</span>
+                                <span style={{ fontSize: 10, background: A.gold, color: "var(--aa-on-solid)", borderRadius: 4, padding: "1px 6px" }}>{t("active")}</span>
                               )}
                             </div>
                             <div style={{ display: "flex", gap: 6 }}>
@@ -838,7 +842,7 @@ export default function BrandIdentityEditor() {
                                   fontSize: 12, fontWeight: 600,
                                 }}
                               >
-                                View
+                                {t("view")}
                               </button>
                               {canEdit && !v.is_active && (
                                 <button
@@ -851,7 +855,7 @@ export default function BrandIdentityEditor() {
                                     opacity: activating ? 0.6 : 1,
                                   }}
                                 >
-                                  Set Active
+                                  {t("setActive")}
                                 </button>
                               )}
                             </div>

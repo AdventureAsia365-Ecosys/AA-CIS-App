@@ -440,6 +440,8 @@ def check_schema(res: Result, tracked: set[str]) -> None:
             res.errors.append(f"gate {n}: kind must be gate, flag or telemetry")
         if g.get("kind") == "gate" and not g.get("label"):
             res.errors.append(f"gate {n}: a gate needs a label")
+        if g.get("label") and not g.get("label_vi"):  # AA-994: the admin UI shows the label in EN or VI
+            res.errors.append(f"gate {n}: a labelled gate needs label_vi (its Vietnamese admin name)")
         _mapped(g, f"gate {n}", class_ids, res)
     for n in RETIRED_REQUIRED:  # (h)
         g = gates.get(n)

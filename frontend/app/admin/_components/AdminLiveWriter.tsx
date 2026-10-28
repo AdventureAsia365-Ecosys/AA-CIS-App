@@ -9,7 +9,8 @@
 
 import { Check, Loader2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { K, sans } from "../../_kit";
+import { K, sans, useT } from "../../_kit";
+import { M } from "./components.messages";
 
 type Step = { key: string; label: string; state: "pending" | "active" | "done" | "skipped" | "failed" };
 type Section = { key: string; label: string; text: string };
@@ -32,9 +33,11 @@ function usePrefersReducedMotion(): boolean {
   return reduce;
 }
 
-export default function AdminLiveWriter({ jobId, active = true, title = "Rewriting", compact = false }: {
+export default function AdminLiveWriter({ jobId, active = true, title: titleProp, compact = false }: {
   jobId: string; active?: boolean; title?: string; compact?: boolean;
 }) {
+  const t = useT(M);
+  const title = titleProp ?? t("rewriting");
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [shown, setShown] = useState<Record<string, string>>({});
   const targetRef = useRef<Section[]>([]);
@@ -114,7 +117,7 @@ export default function AdminLiveWriter({ jobId, active = true, title = "Rewriti
           {title}
         </div>
         {steps.length === 0 ? (
-          <StepRow state="active" label="Starting…" />
+          <StepRow state="active" label={t("starting")} />
         ) : (
           steps.map((s) => <StepRow key={s.key} state={s.state} label={s.label} />)
         )}

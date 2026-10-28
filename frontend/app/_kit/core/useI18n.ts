@@ -9,6 +9,7 @@
 //   const t = useT(M);              // M = defineMessages(en, vi) of the area
 //   const lang = useLang();         // "en" | "vi"
 //   const guide = useLocalized({ en: GUIDE_EN, vi: GUIDE_VI });
+//   const { formatDate, formatDateTime } = useFormat();   // dates in the UI language (core/tokens.ts)
 // Outside a provider everything is English (a page that has not opted in never shows a mixed language).
 //
 // Server-render safe: on the server and during hydration the language is `initialLang` (default English), so the
@@ -20,6 +21,7 @@ import { createContext, createElement, useContext, useMemo, useSyncExternalStore
 import {
   DEFAULT_LANG, localized, translator, type Catalog, type Lang, type LangStore, type Messages, type Translator,
 } from "./i18n";
+import { formatDate, formatDateTime } from "./tokens";
 
 interface LangState {
   lang: Lang;
@@ -56,4 +58,15 @@ export function useT<E extends Catalog>(messages: Messages<E>): Translator<E> {
 /** The current language's value of a per-language pair (structured content such as a Guide). */
 export function useLocalized<T>(byLang: Readonly<Record<Lang, T>>): T {
   return localized(byLang, useLang());
+}
+
+type DateInput = string | number | Date | null | undefined;
+
+/** The kit date formatters (core/tokens.ts) bound to the current UI language: "9 Oct 2026" / "9 thg 10, 2026". */
+export function useFormat(): { formatDate: (d: DateInput) => string; formatDateTime: (d: DateInput) => string } {
+  const lang = useLang();
+  return useMemo(() => ({
+    formatDate: (d: DateInput) => formatDate(d, lang),
+    formatDateTime: (d: DateInput) => formatDateTime(d, lang),
+  }), [lang]);
 }

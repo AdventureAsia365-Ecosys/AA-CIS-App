@@ -15,7 +15,8 @@
 import { Loader2, RotateCcw } from "lucide-react";
 import { useState } from "react";
 import { A, mono, sans, Btn } from "../_components/adminUi";
-import { Modal } from "../../_kit";
+import { Modal, useT } from "../../_kit";
+import { M } from "./messages";
 import { startRegenerate } from "./reviewApi";
 import { WritingReasonChips } from "../_components/WritingReasonChips";
 import { commonReason, type ReasonCode } from "@/lib/writingReasons";
@@ -33,6 +34,7 @@ export function RegenerateModal({
   // their rows "regenerating" and begin polling).
   onEnqueued: (tourIds: string[], reviewIds: string[]) => void;
 }) {
+  const t = useT(M);
   const bulk = items.length > 1;
   // A tour's recorded tier, if any. For bulk we only need a chosen tier when some tour lacks one.
   const anyMissingTier = items.some((it) => !it.raw?.requested_tier);
@@ -56,15 +58,18 @@ export function RegenerateModal({
     for (const it of items) {
       const effectiveTier = (it.raw?.requested_tier as string) || tier;
       if (!effectiveTier) {
-        errors.push(`${it.name}: no model tier`);
+        errors.push(t("noTier", it.name));
         continue;
       }
       try {
-        await startRegenerate({ tourId: it.raw.tour_id, modelTier: effectiveTier, reviewId: it.id, reasonCode: reason });
+        await startRegenerate({
+          tourId: it.raw.tour_id, modelTier: effectiveTier, reviewId: it.id, reasonCode: reason,
+          failMessage: (s) => t("regenStartFailed", s),
+        });
         startedTours.push(String(it.raw.tour_id));
         startedReviews.push(it.id);
       } catch (err) {
-        errors.push(`${it.name}: ${err instanceof Error ? err.message : "failed"}`);
+        errors.push(`${it.name}: ${err instanceof Error ? err.message : t("failed")}`);
       }
     }
     setRunning(false);
@@ -79,7 +84,7 @@ export function RegenerateModal({
     }
   }
 
-  const title = bulk ? `Regenerate ${items.length} tours?` : "Regenerate this version?";
+  const title = bulk ? t("regenMany", items.length) : t("regenOne");
 
   return (
     <Modal
@@ -91,22 +96,19 @@ export function RegenerateModal({
       footer={
         <>
           <Btn variant="ghost" size="sm" onClick={onClose} disabled={running}>
-            Cancel
+            {t("cancel")}
           </Btn>
           <Btn variant="primary" size="sm" onClick={run} disabled={!canRun}>
-            {running ? <Loader2 size={12} className="spin" /> : <RotateCcw size={12} />} Regenerate
+            {running ? <Loader2 size={12} className="spin" /> : <RotateCcw size={12} />} {t("regenerate")}
           </Btn>
         </>
       }
     >
       <p style={{ fontSize: 13, color: A.body, lineHeight: 1.6, margin: "0 0 8px" }}>
-        This re-runs the <strong>full pipeline</strong> on real models — it costs actual Bedrock
-        spend.
+        {t("costBefore")}<strong>{t("fullPipeline")}</strong>{t("costAfter")}
       </p>
       <p style={{ fontSize: 12, color: A.muted, lineHeight: 1.6, margin: "0 0 14px" }}>
-        Each job is queued and runs in the background; the queue updates on its own as jobs finish. A
-        version that passes publishes to Master Content and leaves this queue; one that fails
-        replaces the current row.
+        {t("regenExplain")}
       </p>
 
       {bulk ? (
@@ -124,21 +126,21 @@ export function RegenerateModal({
 
       <div style={{ marginBottom: 14 }}>
         <WritingReasonChips value={reason} suggested={suggested} disabled={running} onChange={setReasonPick}
-                            label={bulk ? "Why (all rows)" : "Why"} />
+                            label={bulk ? t("whyAll") : t("why")} />
       </div>
 
       {anyMissingTier ? (
         <div style={{ marginBottom: 6 }}>
           <div style={{ fontSize: 12, color: A.body, marginBottom: 6 }}>
             {bulk
-              ? "Some tours have no recorded model tier — pick one for them:"
-              : "No model tier was recorded for this tour — choose one:"}
+              ? t("pickTierMany")
+              : t("pickTierOne")}
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            {(["haiku", "sonnet"] as const).map((t) => (
+            {(["haiku", "sonnet"] as const).map((opt) => (
               <button
-                key={t}
-                onClick={() => setTier(t)}
+                key={opt}
+                onClick={() => setTier(opt)}
                 disabled={running}
                 style={{
                   flex: 1,
@@ -148,12 +150,12 @@ export function RegenerateModal({
                   fontSize: 13,
                   fontFamily: sans,
                   textTransform: "capitalize",
-                  border: `1px solid ${tier === t ? A.gold : A.line}`,
-                  background: tier === t ? A.gold : A.card,
-                  color: tier === t ? "var(--aa-on-solid)" : A.body,
+                  border: `1px solid ${tier === opt ? A.gold : A.line}`,
+                  background: tier === opt ? A.gold : A.card,
+                  color: tier === opt ? "var(--aa-on-solid)" : A.body,
                 }}
               >
-                {t}
+                {opt}
               </button>
             ))}
           </div>

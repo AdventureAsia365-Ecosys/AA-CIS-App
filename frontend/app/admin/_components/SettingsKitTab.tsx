@@ -7,7 +7,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Trash2, Wand2 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { A, sans, Card, SLabel } from "./adminUi";
 import {
   Badge,
@@ -18,7 +18,6 @@ import {
   EmptyState,
   ErrorState,
   GuidePanel,
-  type GuideContent,
   InfoTip,
   Modal,
   SkeletonBar,
@@ -28,8 +27,14 @@ import {
   TONE,
   type Tone,
   ToastProvider,
+  useLocalized,
+  useT,
   useToast,
+  type Translator,
 } from "../../_kit";
+import { M } from "./SettingsKitTab.messages";
+import { DEMO_GUIDE } from "./kitDemoGuide";
+import { DEMO_GUIDE_VI } from "./kitDemoGuide.vi";
 
 type DemoTour = {
   id: string;
@@ -51,45 +56,24 @@ const DEMO_ROWS: DemoTour[] = [
   { id: "t-008", name: "Great Wall Wild Sections", country: "China", status: "regenerating", quality: 0, atoms: 0 },
 ];
 
-const COLUMNS: ColumnDef<DemoTour, unknown>[] = [
-  { accessorKey: "name", header: "Tour", cell: (c) => <strong>{c.getValue<string>()}</strong> },
-  { accessorKey: "country", header: "Country" },
-  { accessorKey: "status", header: "Status", cell: (c) => <StatusBadge status={c.getValue<string>()} /> },
-  {
-    accessorKey: "quality",
-    header: "Quality",
-    cell: (c) => {
-      const q = c.getValue<number>();
-      return q > 0 ? q.toFixed(1) : "—";
+function demoColumns(t: Translator<typeof M.en>): ColumnDef<DemoTour, unknown>[] {
+  return [
+    { accessorKey: "name", header: t("colTour"), cell: (c) => <strong>{c.getValue<string>()}</strong> },
+    { accessorKey: "country", header: t("colCountry") },
+    { accessorKey: "status", header: t("colStatus"), cell: (c) => <StatusBadge status={c.getValue<string>()} /> },
+    {
+      accessorKey: "quality",
+      header: t("colQuality"),
+      cell: (c) => {
+        const q = c.getValue<number>();
+        return q > 0 ? q.toFixed(1) : "—";
+      },
     },
-  },
-  { accessorKey: "atoms", header: "Atoms" },
-];
+    { accessorKey: "atoms", header: t("colAtoms") },
+  ];
+}
 
 // AA-919 — a static guide showing every GuideContent block; real guides live next to their page (guide.ts).
-const DEMO_GUIDE: GuideContent = {
-  title: "How to use the demo page",
-  intro: "Every admin page with a Guide tab renders its GuideContent with GuidePanel: same look everywhere.",
-  sections: [
-    { id: "purpose", heading: "What this page is for", blocks: [
-      { kind: "paragraph", text: "A paragraph in plain words." },
-      { kind: "flow", steps: ["Draft", "Check", "Approve", "Live"] },
-      { kind: "callout", tone: "note", text: "A note: useful to know." },
-    ] },
-    { id: "buttons", heading: "Buttons", blocks: [
-      { kind: "control", label: "Run check", does: "What the button does.", cost: "$0. About a minute.",
-        when: "When to use it.", avoid: "When not to." },
-      { kind: "callout", tone: "warning", title: "A trap", text: "A warning: a cost, a trap, a known gap." },
-    ] },
-    { id: "labels", heading: "Reading the labels", blocks: [
-      { kind: "subheading", text: "Status" },
-      { kind: "terms", uiLabels: true, items: [{ term: "active / paused", text: "Labels the page prints, as chips." }] },
-      { kind: "list", ordered: true, items: ["A numbered step.", "Another step."] },
-    ] },
-  ],
-  glossary: [{ term: "Term", text: "What it means." }],
-};
-
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <Card style={{ marginBottom: 20 }}>
@@ -104,20 +88,24 @@ function fakeFetchCount(): Promise<number> {
 }
 
 function ReactQueryDemo() {
+  const t = useT(M);
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["kit-demo-count"],
     queryFn: fakeFetchCount,
   });
   if (isLoading) return <SkeletonBar w={120} h={16} />;
-  if (isError) return <ErrorState message="demo query failed" onRetry={() => refetch()} />;
+  if (isError) return <ErrorState message={t("demoQueryFailed")} onRetry={() => refetch()} />;
   return (
     <span style={{ fontSize: 13, color: A.ink }}>
-      react-query resolved: <strong>{data}</strong> demo rows (via app-wide QueryClientProvider)
+      {t("rqResolved")}<strong>{data}</strong>{t("rqRows")}
     </span>
   );
 }
 
 function KitTabInner() {
+  const t = useT(M);
+  const guide = useLocalized({ en: DEMO_GUIDE, vi: DEMO_GUIDE_VI });
+  const columns = useMemo(() => demoColumns(t), [t]);
   const toast = useToast();
   const [tab, setTab] = useState("primitives");
   const [modal, setModal] = useState(false);
@@ -132,10 +120,10 @@ function KitTabInner() {
       <div style={{ marginBottom: 20 }}>
         <Tabs
           tabs={[
-            { key: "primitives", label: "Primitives" },
-            { key: "table", label: "DataTable" },
-            { key: "overlays", label: "Overlays" },
-            { key: "guide", label: "Guide" },
+            { key: "primitives", label: t("tabPrimitives") },
+            { key: "table", label: t("tabTable") },
+            { key: "overlays", label: t("tabOverlays") },
+            { key: "guide", label: t("tabGuide") },
           ]}
           active={tab}
           onChange={setTab}
@@ -143,22 +131,22 @@ function KitTabInner() {
       </div>
 
       {tab === "guide" && (
-        <Section title="GuidePanel — the Guide tab of an admin page (GuideContent in <page>/guide.ts)">
-          <GuidePanel content={DEMO_GUIDE} testId="kit-guide-demo" />
+        <Section title={t("secGuide")}>
+          <GuidePanel content={guide} testId="kit-guide-demo" />
         </Section>
       )}
 
       {tab === "primitives" && (
         <>
-          <Section title="Badges (tones)">
+          <Section title={t("secBadges")}>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {tones.map((t) => (
-                <Badge key={t} tone={t}>{t}</Badge>
+              {tones.map((tone) => (
+                <Badge key={tone} tone={tone}>{tone}</Badge>
               ))}
             </div>
           </Section>
 
-          <Section title="StatusBadge (job status driven)">
+          <Section title={t("secStatus")}>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {["queued", "running", "completed", "failed", "held", "approved", "rejected", "regenerating"].map((s) => (
                 <StatusBadge key={s} status={s} />
@@ -166,21 +154,21 @@ function KitTabInner() {
             </div>
           </Section>
 
-          <Section title="react-query">
+          <Section title={t("secRq")}>
             <ReactQueryDemo />
           </Section>
 
-          <Section title="Toasts">
+          <Section title={t("secToasts")}>
             <div style={{ display: "flex", gap: 8 }}>
-              <KitBtn onClick={() => toast.success("Saved successfully")}>Success</KitBtn>
-              <KitBtn onClick={() => toast.error("Something went wrong")}>Error</KitBtn>
-              <KitBtn onClick={() => toast.info("Just so you know")}>Info</KitBtn>
+              <KitBtn onClick={() => toast.success(t("toastSaved"))}>{t("success")}</KitBtn>
+              <KitBtn onClick={() => toast.error(t("toastError"))}>{t("error")}</KitBtn>
+              <KitBtn onClick={() => toast.info(t("toastInfo"))}>{t("info")}</KitBtn>
             </div>
           </Section>
 
-          <Section title="Skeleton">
+          <Section title={t("secSkeleton")}>
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-              <KitBtn onClick={() => setShowSkeleton((v) => !v)}>Toggle</KitBtn>
+              <KitBtn onClick={() => setShowSkeleton((v) => !v)}>{t("toggle")}</KitBtn>
               {showSkeleton && (
                 <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
                   <SkeletonBar w="60%" />
@@ -191,24 +179,24 @@ function KitTabInner() {
             </div>
           </Section>
 
-          <Section title="EmptyState">
+          <Section title={t("secEmpty")}>
             <EmptyState
-              title="No tours in the queue"
-              description="When a rewrite fails a gate it lands here for review."
-              action={<KitBtn onClick={() => toast.info("refresh")}>Refresh</KitBtn>}
+              title={t("emptyTitle")}
+              description={t("emptyBody")}
+              action={<KitBtn onClick={() => toast.info(t("refreshing"))}>{t("refresh")}</KitBtn>}
             />
           </Section>
 
-          <Section title="ErrorState">
-            <ErrorState message="Could not reach the backend (503)." onRetry={() => toast.info("retrying")} />
+          <Section title={t("secError")}>
+            <ErrorState message={t("errorBody")} onRetry={() => toast.info(t("retrying"))} />
           </Section>
 
-          <Section title="InfoTip (hover, focus or tap to open; Escape or a tap elsewhere closes)">
+          <Section title={t("secInfoTip")}>
             <div style={{ fontSize: 13, color: A.body, fontFamily: sans }}>
-              Tours published this week: <b>12</b>
+              {t("toursThisWeek")}<b>12</b>
               <InfoTip
-                text="Source: CIS database, tours published to Master Content in the last 7 days"
-                label="Where this number comes from"
+                text={t("infoTipText")}
+                label={t("infoTipLabel")}
               />
             </div>
           </Section>
@@ -216,10 +204,10 @@ function KitTabInner() {
       )}
 
       {tab === "table" && (
-        <Section title="DataTable — filter, multi-sort, columns, pagination, selection, saved views, CSV">
+        <Section title={t("secTable")}>
           <DataTable<DemoTour>
             data={DEMO_ROWS}
-            columns={COLUMNS}
+            columns={columns}
             tableId="kit-demo"
             getRowId={(r) => r.id}
             userId="demo"
@@ -229,14 +217,14 @@ function KitTabInner() {
             enableCsv
             csvFilename="kit-demo-tours"
             pageSize={10}
-            emptyTitle="No tours"
+            emptyTitle={t("noTours")}
             bulkActions={({ selectedRows, clearSelection }) => (
               <>
-                <KitBtn onClick={() => { toast.success(`Regenerating ${selectedRows.length} tour(s)`); clearSelection(); }}>
-                  <Wand2 size={13} /> Regenerate selected
+                <KitBtn onClick={() => { toast.success(t("regenerating", selectedRows.length)); clearSelection(); }}>
+                  <Wand2 size={13} /> {t("regenerateSelected")}
                 </KitBtn>
-                <KitBtn onClick={() => { toast.error(`Deleting ${selectedRows.length}`); clearSelection(); }}>
-                  <Trash2 size={13} /> Delete
+                <KitBtn onClick={() => { toast.error(t("deleting", selectedRows.length)); clearSelection(); }}>
+                  <Trash2 size={13} /> {t("delete")}
                 </KitBtn>
               </>
             )}
@@ -245,30 +233,30 @@ function KitTabInner() {
       )}
 
       {tab === "overlays" && (
-        <Section title="Modal · ConfirmModal · Drawer">
+        <Section title={t("secOverlays")}>
           <div style={{ display: "flex", gap: 8 }}>
-            <KitBtn onClick={() => setModal(true)}>Open Modal</KitBtn>
-            <KitBtn onClick={() => setConfirm(true)}>Confirm (destructive)</KitBtn>
-            <KitBtn onClick={() => setDrawer(true)}>Open Drawer</KitBtn>
+            <KitBtn onClick={() => setModal(true)}>{t("openModal")}</KitBtn>
+            <KitBtn onClick={() => setConfirm(true)}>{t("confirmDestructive")}</KitBtn>
+            <KitBtn onClick={() => setDrawer(true)}>{t("openDrawer")}</KitBtn>
           </div>
 
-          <Modal open={modal} onClose={() => setModal(false)} title="Example modal" footer={<KitBtn onClick={() => setModal(false)}>Close</KitBtn>}>
-            A centered modal for forms and confirmations. Escape or backdrop closes it.
+          <Modal open={modal} onClose={() => setModal(false)} title={t("exampleModal")} footer={<KitBtn onClick={() => setModal(false)}>{t("close")}</KitBtn>}>
+            {t("modalBody")}
           </Modal>
 
           <ConfirmModal
             open={confirm}
             onClose={() => setConfirm(false)}
-            onConfirm={() => { setConfirm(false); toast.success("Deleted"); }}
-            title="Delete this tour?"
-            body="This cannot be undone. The tour and its atoms will be removed."
-            confirmLabel="Delete"
+            onConfirm={() => { setConfirm(false); toast.success(t("deleted")); }}
+            title={t("deleteTitle")}
+            body={t("deleteBody")}
+            confirmLabel={t("delete")}
             destructive
           />
 
-          <Drawer open={drawer} onClose={() => setDrawer(false)} title="Tour detail" footer={<KitBtn onClick={() => setDrawer(false)}>Close</KitBtn>}>
-            <p>Right-side slide-over for detail / edit views.</p>
-            <p style={{ color: A.muted }}>Nakasendo Way: Kiso Valley — Japan — 24 atoms.</p>
+          <Drawer open={drawer} onClose={() => setDrawer(false)} title={t("tourDetail")} footer={<KitBtn onClick={() => setDrawer(false)}>{t("close")}</KitBtn>}>
+            <p>{t("drawerBody")}</p>
+            <p style={{ color: A.muted }}>{t("drawerExample")}</p>
           </Drawer>
         </Section>
       )}

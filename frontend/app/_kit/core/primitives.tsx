@@ -19,6 +19,8 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { K, RADIUS, sans, BTN_RADIUS, BTN_PRIMARY_TEXT } from "./tokens";
+import { KIT_MESSAGES } from "./kit.messages";
+import { useT } from "./useI18n";
 
 // ── Breadcrumb (AA-831) ───────────────────────────────────────────────────────
 // One-line "<root> / <title>" crumb for a shell top bar. The root and separator never shrink; the
@@ -202,25 +204,27 @@ export function Badge({
 // ── StatusBadge ───────────────────────────────────────────────────────────────
 // Driven by a job/row status string (AA-662: "driven by job status, see the job runner issue").
 // Maps the known job-runner states to a tone + label; unknown values fall back to neutral.
-const STATUS_TONE: Record<string, { tone: Tone; label: string }> = {
-  queued: { tone: "neutral", label: "Queued" },
-  running: { tone: "info", label: "Running" },
-  succeeded: { tone: "success", label: "Succeeded" },
-  completed: { tone: "success", label: "Completed" },
-  done: { tone: "success", label: "Done" },
-  failed: { tone: "danger", label: "Failed" },
-  stopped_budget: { tone: "warning", label: "Stopped (budget)" },
-  cancelled: { tone: "neutral", label: "Cancelled" },
-  canceled: { tone: "neutral", label: "Cancelled" },
-  retrying: { tone: "warning", label: "Retrying" },
-  pending: { tone: "warning", label: "Pending" },
-  held: { tone: "warning", label: "Held" },
-  stalled: { tone: "warning", label: "Stalled" },
-  ingested: { tone: "neutral", label: "Ingested" },
-  approved: { tone: "success", label: "Approved" },
-  rejected: { tone: "danger", label: "Rejected" },
-  dismissed: { tone: "neutral", label: "Dismissed" },
-  regenerating: { tone: "info", label: "Regenerating" },
+// AA-994: the label is a key of KIT_MESSAGES (kit.messages.ts), shown in the UI language.
+type StatusLabelKey = keyof typeof KIT_MESSAGES.en & `st${string}`;
+const STATUS_TONE: Record<string, { tone: Tone; label: StatusLabelKey }> = {
+  queued: { tone: "neutral", label: "stQueued" },
+  running: { tone: "info", label: "stRunning" },
+  succeeded: { tone: "success", label: "stSucceeded" },
+  completed: { tone: "success", label: "stCompleted" },
+  done: { tone: "success", label: "stDone" },
+  failed: { tone: "danger", label: "stFailed" },
+  stopped_budget: { tone: "warning", label: "stStoppedBudget" },
+  cancelled: { tone: "neutral", label: "stCancelled" },
+  canceled: { tone: "neutral", label: "stCancelled" },
+  retrying: { tone: "warning", label: "stRetrying" },
+  pending: { tone: "warning", label: "stPending" },
+  held: { tone: "warning", label: "stHeld" },
+  stalled: { tone: "warning", label: "stStalled" },
+  ingested: { tone: "neutral", label: "stIngested" },
+  approved: { tone: "success", label: "stApproved" },
+  rejected: { tone: "danger", label: "stRejected" },
+  dismissed: { tone: "neutral", label: "stDismissed" },
+  regenerating: { tone: "info", label: "stRegenerating" },
 };
 
 export function StatusBadge({
@@ -230,8 +234,10 @@ export function StatusBadge({
   status: string;
   label?: string;
 }) {
+  const t = useT(KIT_MESSAGES);
   const key = (status || "").toLowerCase();
-  const m = STATUS_TONE[key] ?? { tone: "neutral" as Tone, label: status };
+  const known = STATUS_TONE[key];
+  const m = known ? { tone: known.tone, label: t(known.label) } : { tone: "neutral" as Tone, label: status };
   const spin = key === "running" || key === "regenerating" || key === "retrying";
   return (
     <Badge tone={m.tone} dot={!spin}>
@@ -256,7 +262,8 @@ export function Spinner({ size = 16, color = K.accent }: { size?: number; color?
   );
 }
 
-export function LoadingScreen({ message = "Loading..." }: { message?: string }) {
+export function LoadingScreen({ message }: { message?: string }) {
+  const t = useT(KIT_MESSAGES);
   return (
     <div
       style={{
@@ -269,7 +276,7 @@ export function LoadingScreen({ message = "Loading..." }: { message?: string }) 
       }}
     >
       <Spinner size={22} />
-      <span style={{ fontSize: 13, color: K.muted, fontFamily: sans }}>{message}</span>
+      <span style={{ fontSize: 13, color: K.muted, fontFamily: sans }}>{message ?? t("loadingScreen")}</span>
     </div>
   );
 }
@@ -374,6 +381,7 @@ export function ErrorState({
   message: string;
   onRetry?: () => void;
 }) {
+  const t = useT(KIT_MESSAGES);
   return (
     <div
       style={{
@@ -407,7 +415,7 @@ export function ErrorState({
             fontFamily: sans,
           }}
         >
-          <RefreshCw size={13} /> Retry
+          <RefreshCw size={13} /> {t("retry")}
         </button>
       )}
     </div>
@@ -567,12 +575,14 @@ export function Tabs({
 export function ScrollX({
   children,
   testId,
-  hint = "Scroll sideways to see every column",
+  hint: hintProp,
 }: {
   children: React.ReactNode;
   testId?: string;
   hint?: string;
 }) {
+  const t = useT(KIT_MESSAGES);
+  const hint = hintProp ?? t("scrollHint");
   const ref = useRef<HTMLDivElement>(null);
   const [overflows, setOverflows] = useState(false);
   useEffect(() => {
@@ -630,7 +640,7 @@ export function ScrollX({
 // never clipped by a scrolling table and never widens the page (lesson S221/S239); it follows its button on scroll.
 export function InfoTip({
   text,
-  label = "More information",
+  label: labelProp,
   size = 12,
   testId = "info-tip",
 }: {
@@ -640,6 +650,8 @@ export function InfoTip({
   size?: number;
   testId?: string;
 }) {
+  const tk = useT(KIT_MESSAGES);
+  const label = labelProp ?? tk("moreInfo");
   const tipId = useId();
   const btnRef = useRef<HTMLButtonElement>(null);
   const tipRef = useRef<HTMLSpanElement>(null);

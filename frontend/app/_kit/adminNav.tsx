@@ -18,7 +18,10 @@ import {
   Puzzle, ListChecks, Scale, Search, Image as ImageIcon, BookOpen, BarChart3, ShieldCheck,
   Boxes, ScrollText, ChartPie, BellRing, MapPin, Network, Eraser, Building2, FileText, Hotel, Table2, BookMarked,
 } from "lucide-react";
+import { useCallback } from "react";
 import { canSeePage } from "@/lib/rbac";
+import { useLang } from "./core/useI18n";
+import { NAV_MESSAGES } from "./nav.messages";
 
 export interface NavEntry {
   href: string;
@@ -160,4 +163,16 @@ export function pageTitle(pathname: string): string {
   const slug = pathname.replace(/^\/admin\/?/, "").split("/")[0] || "";
   if (!slug) return "Admin";
   return slug.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/**
+ * AA-994 — a nav label (section, group, entry, as this module carries them in English) in the UI language
+ * (nav.messages.ts). A label without a translation is returned as is.
+ */
+export function useNavLabel(): (label: string) => string {
+  const lang = useLang();
+  return useCallback((label: string) => {
+    const table = NAV_MESSAGES[lang] as Readonly<Record<string, string>>;
+    return table[label] ?? label;
+  }, [lang]);
 }

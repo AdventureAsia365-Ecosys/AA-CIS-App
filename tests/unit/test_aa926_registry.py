@@ -137,6 +137,15 @@ def test_generated_frontend_file_is_fresh():
     assert "  top: 9,\n  pass: 7,\n  low: 5," in gen_frontend.render()
 
 
+def test_vietnamese_gate_labels_twin_is_fresh_with_the_same_keys():
+    """AA-994: every labelled gate has label_vi; the .vi.ts twin carries the GATE_LABELS keys in the same order."""
+    assert gen_frontend.OUT_VI.read_text(encoding="utf-8") == gen_frontend.render_vi()
+    labelled = [n for n, g in registry.gates().items() if g.get("label")]
+    assert [n for n in labelled if not registry.gates()[n].get("label_vi")] == []
+    body = re.search(r"GATE_LABELS_VI[^=]*= \{(.*?)\n\};", gen_frontend.render_vi(), re.S).group(1)
+    assert re.findall(r"^\s+([A-Za-z0-9_]+):", body, re.M) == labelled
+
+
 def test_defect_classes_set_and_order_frozen():
     from api.routers import admin_content_quality as acq
     assert acq.DEFECT_CLASSES == ("fact", "voice", "format", "ai_phrasing")

@@ -31,15 +31,18 @@ export { useMediaQuery, useIsPhone, PHONE_QUERY } from "./core/useMediaQuery";
 export { useSidebarCollapsed } from "./core/useSidebar";
 // AA-994 — UI language (EN default, VI second): one typed catalogue per area (`messages.ts`), `useT(M)` in components.
 export {
-  defineMessages, localized, missingTranslations, parseLang, DEFAULT_LANG, LANGS, LANG_LABEL,
+  defineMessages, localized, missingTranslations, parseLang, translator, DEFAULT_LANG, LANGS, LANG_LABEL,
   type Lang, type Messages, type Translator,
 } from "./core/i18n";
-export { I18nProvider, useLang, useSetLang, useT, useLocalized } from "./core/useI18n";
+export { I18nProvider, useLang, useSetLang, useT, useLocalized, useFormat } from "./core/useI18n";
+export { KIT_MESSAGES } from "./core/kit.messages";
 export { LangSwitch } from "./core/LangSwitch";
 
 // ── CIS-local ──────────────────────────────────────────────────────────────────────────────────────────────
 export * from "./api";
 export { langStore, LANG_COOKIE } from "./i18n";
+export { SHELL_MESSAGES } from "./shell.messages";
+export { NAV_MESSAGES } from "./nav.messages";
 
 // AA-752 — admin shell (collapsible sidebar, topbar, ⌘K command palette, phone bottom nav).
 export { AdminShell } from "./AdminShell";

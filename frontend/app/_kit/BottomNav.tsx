@@ -9,7 +9,9 @@
 import { useRouter, usePathname } from "next/navigation";
 import { Gauge, ClipboardList, Library, ListChecks, Menu } from "lucide-react";
 import { K } from "./core/tokens";
-import { navActive } from "./adminNav";
+import { navActive, useNavLabel } from "./adminNav";
+import { useT } from "./core/useI18n";
+import { SHELL_MESSAGES } from "./shell.messages";
 import { useReviewPendingCount } from "./useReviewPendingCount";
 import { useAdminIdentity } from "./useAdminIdentity";
 import { canSeePage } from "@/lib/rbac";
@@ -29,9 +31,11 @@ export function BottomNav({ onOpenMore }: { onOpenMore: () => void }) {
 
   // Same query (key + request) as the Sidebar badge — see useReviewPendingCount.
   const pending = useReviewPendingCount();
+  const t = useT(SHELL_MESSAGES);
+  const navLabel = useNavLabel();
 
   return (
-    <nav className="aa-bottom-nav" data-testid="admin-bottom-nav" aria-label="Primary (mobile)">
+    <nav className="aa-bottom-nav" data-testid="admin-bottom-nav" aria-label={t("primaryMobile")}>
       {items.map((it) => {
         const Icon = it.icon;
         const active = navActive({ href: it.href }, pathname);
@@ -41,7 +45,7 @@ export function BottomNav({ onOpenMore }: { onOpenMore: () => void }) {
             key={it.href}
             onClick={() => router.push(it.href)}
             aria-current={active ? "page" : undefined}
-            aria-label={it.label}
+            aria-label={navLabel(it.label)}
             style={bnBtn(active)}
           >
             <span style={{ position: "relative", display: "flex" }}>
@@ -50,13 +54,13 @@ export function BottomNav({ onOpenMore }: { onOpenMore: () => void }) {
                 <span style={bnBadge}>{pending! > 99 ? "99+" : pending}</span>
               ) : null}
             </span>
-            <span style={{ fontSize: 10.5, fontWeight: active ? 600 : 500 }}>{it.label}</span>
+            <span style={{ fontSize: 10.5, fontWeight: active ? 600 : 500 }}>{navLabel(it.label)}</span>
           </button>
         );
       })}
-      <button onClick={onOpenMore} aria-label="More navigation" style={bnBtn(false)}>
+      <button onClick={onOpenMore} aria-label={t("moreNavigation")} style={bnBtn(false)}>
         <Menu size={20} />
-        <span style={{ fontSize: 10.5, fontWeight: 500 }}>More</span>
+        <span style={{ fontSize: 10.5, fontWeight: 500 }}>{t("more")}</span>
       </button>
     </nav>
   );

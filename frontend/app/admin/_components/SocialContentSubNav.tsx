@@ -25,22 +25,25 @@
 import Link from "next/link";
 import { Puzzle, Layers, TrendingUp, GitBranch, FileStack, Radio, BarChart3, ShieldCheck } from "lucide-react";
 import { A, sans } from "./adminUi";
+import { useT } from "../../_kit/core/useI18n";
+import { M } from "./components.messages";
 
 export type SectionKey = "atomize" | "segment" | "score" | "route_hub" | "slate";
 export type SubNavKey = SectionKey | "content_trace" | "platform_stats" | "content_quality";
 
-const SECTIONS: { key: SectionKey; label: string; icon: React.ReactNode }[] = [
-  { key: "atomize",    label: "01 · Atomize",   icon: <Puzzle size={15} /> },
-  { key: "segment",    label: "02 · Segment",   icon: <Layers size={15} /> },
-  { key: "score",      label: "03 · Score",     icon: <TrendingUp size={15} /> },
-  { key: "route_hub",  label: "04 · Route/Hub", icon: <GitBranch size={15} /> },
-  { key: "slate",      label: "05 · Slate",     icon: <FileStack size={15} /> },
+const SECTIONS: { key: SectionKey; label: keyof typeof M.en; icon: React.ReactNode }[] = [
+  { key: "atomize",    label: "navAtomize",   icon: <Puzzle size={15} /> },
+  { key: "segment",    label: "navSegment",   icon: <Layers size={15} /> },
+  { key: "score",      label: "navScore",     icon: <TrendingUp size={15} /> },
+  { key: "route_hub",  label: "navRouteHub", icon: <GitBranch size={15} /> },
+  { key: "slate",      label: "navSlate",     icon: <FileStack size={15} /> },
 ];
 
 export default function SocialContentSubNav({ active, onSelectSection }: {
   active: SubNavKey;
   onSelectSection?: (key: SectionKey) => void;
 }) {
+  const t = useT(M);
   return (
     <>
       {/* Media query shared across every page that mounts this component — <style> tags are
@@ -74,12 +77,12 @@ export default function SocialContentSubNav({ active, onSelectSection }: {
           return onSelectSection ? (
             <button key={s.key} onClick={() => onSelectSection(s.key)} style={itemStyle}>
               {s.icon}
-              <span style={{ flex: 1 }}>{s.label}</span>
+              <span style={{ flex: 1 }}>{t(s.label)}</span>
             </button>
           ) : (
             <Link key={s.key} href={`/admin/atom-curation?section=${s.key}`} style={itemStyle}>
               {s.icon}
-              <span style={{ flex: 1 }}>{s.label}</span>
+              <span style={{ flex: 1 }}>{t(s.label)}</span>
             </Link>
           );
         })}
@@ -90,7 +93,7 @@ export default function SocialContentSubNav({ active, onSelectSection }: {
           textDecoration: "none", fontSize: 12.5, fontWeight: active === "content_trace" ? 700 : 500,
         }}>
           <Radio size={15} />
-          <span style={{ flex: 1 }}>06 · Content Trace</span>
+          <span style={{ flex: 1 }}>{t("navContentTrace")}</span>
         </Link>
         <Link href="/admin/platform-stats" style={{
           display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 7,
@@ -99,7 +102,7 @@ export default function SocialContentSubNav({ active, onSelectSection }: {
           textDecoration: "none", fontSize: 12.5, fontWeight: active === "platform_stats" ? 700 : 500,
         }}>
           <BarChart3 size={15} />
-          <span style={{ flex: 1 }}>07 · A4 Quality</span>
+          <span style={{ flex: 1 }}>{t("navA4Quality")}</span>
         </Link>
         {/* AA-769 — every quality signal tenants no longer see (AA-770), for every tenant. */}
         <Link href="/admin/content-quality" style={{
@@ -109,7 +112,7 @@ export default function SocialContentSubNav({ active, onSelectSection }: {
           textDecoration: "none", fontSize: 12.5, fontWeight: active === "content_quality" ? 700 : 500,
         }}>
           <ShieldCheck size={15} />
-          <span style={{ flex: 1 }}>08 · Content Quality</span>
+          <span style={{ flex: 1 }}>{t("navContentQuality")}</span>
         </Link>
       </div>
     </>

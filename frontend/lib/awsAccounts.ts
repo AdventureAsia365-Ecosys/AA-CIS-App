@@ -31,26 +31,45 @@ export interface AwsAccountsResp {
   accounts: AwsAccounts;
 }
 
-const ROLE: Record<string, string> = {
-  [MAIN_ACCOUNT]: "main infrastructure",
-  [LLM_ACCOUNT]: "LLM",
+/** The words accountName() / accountLabel() use. English by default; AA-994: a page passes the UI language's set
+ *  (lib/awsAccounts.messages.ts AWS_ACCOUNT_MESSAGES[lang], same keys). */
+export interface AccountText {
+  retired: string;
+  unresolved: string;
+  main: string;
+  llm: string;
+}
+
+export const ACCOUNT_TEXT: AccountText = {
+  retired: RETIRED_ACCOUNT_LABEL,
+  unresolved: UNRESOLVED_ACCOUNT_LABEL,
+  main: "main infrastructure",
+  llm: "LLM",
 };
+
+function roleOf(key: string, text: AccountText): string {
+  return key === MAIN_ACCOUNT ? text.main : key === LLM_ACCOUNT ? text.llm : "";
+}
 
 export const isLiveAccount = (key: string | null | undefined): boolean => !!key && LIVE_ACCOUNTS.includes(key);
 
 /** What a page shows for an account key: the account ID of a live account ("AWS account" until the directory has
  *  loaded or when the API could not read the ID), "Retired account" for any other stored key, "" for no account. */
-export function accountName(key: string | null | undefined, dir?: AwsAccounts | null): string {
+export function accountName(
+  key: string | null | undefined, dir?: AwsAccounts | null, text: AccountText = ACCOUNT_TEXT,
+): string {
   if (!key || key === "unknown" || key === "none") return "";
-  if (!isLiveAccount(key)) return RETIRED_ACCOUNT_LABEL;
-  return dir?.[key]?.account_id ?? UNRESOLVED_ACCOUNT_LABEL;
+  if (!isLiveAccount(key)) return text.retired;
+  return dir?.[key]?.account_id ?? text.unresolved;
 }
 
 /** accountName() with the account's role, e.g. "111122223333 (LLM)"; "Retired account" alone. */
-export function accountLabel(key: string | null | undefined, dir?: AwsAccounts | null): string {
-  const name = accountName(key, dir);
+export function accountLabel(
+  key: string | null | undefined, dir?: AwsAccounts | null, text: AccountText = ACCOUNT_TEXT,
+): string {
+  const name = accountName(key, dir, text);
   if (!name || !key || !isLiveAccount(key)) return name;
-  return `${name} (${ROLE[key]})`;
+  return `${name} (${roleOf(key, text)})`;
 }
 
 const ACCOUNT_FIELDS = new Set(["account", "account_route", "satellite_account"]);
@@ -58,14 +77,14 @@ const ACCOUNT_KEY_RE = /^acc[0-9]+$/;
 
 /** A copy of a JSON value (a job payload or result) with every account-key value of an account field replaced by
  *  accountName(), so a raw JSON view never prints a key either. Any other value is kept as it is. */
-export function withAccountNames(value: unknown, dir?: AwsAccounts | null): unknown {
-  if (Array.isArray(value)) return value.map((v) => withAccountNames(v, dir));
+export function withAccountNames(value: unknown, dir?: AwsAccounts | null, text: AccountText = ACCOUNT_TEXT): unknown {
+  if (Array.isArray(value)) return value.map((v) => withAccountNames(v, dir, text));
   if (value && typeof value === "object") {
     return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [
       k,
       ACCOUNT_FIELDS.has(k) && typeof v === "string" && ACCOUNT_KEY_RE.test(v)
-        ? accountName(v, dir)
-        : withAccountNames(v, dir),
+        ? accountName(v, dir, text)
+        : withAccountNames(v, dir, text),
     ]));
   }
   return value;

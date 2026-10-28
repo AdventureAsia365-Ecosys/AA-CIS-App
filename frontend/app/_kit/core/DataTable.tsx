@@ -56,6 +56,8 @@ import { downloadCsv, toCsv } from "./csv";
 import { K, RADIUS, sans } from "./tokens";
 import { EmptyState, SkeletonBar, SkeletonStyle, TableSkeleton } from "./primitives";
 import { useIsPhone } from "./useMediaQuery";
+import { KIT_MESSAGES } from "./kit.messages";
+import { useT } from "./useI18n";
 import {
   deleteView,
   listViews,
@@ -173,7 +175,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
     error = null,
     onRetry,
     searchable = true,
-    searchPlaceholder = "Search…",
+    searchPlaceholder: searchPlaceholderProp,
     enableSelection = false,
     bulkActions,
     pageSize = 25,
@@ -183,7 +185,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
     userId = "anon",
     enableCsv = false,
     csvFilename = "export",
-    emptyTitle = "Nothing here yet",
+    emptyTitle: emptyTitleProp,
     emptyDescription,
     emptyAction,
     toolbarExtra,
@@ -197,6 +199,9 @@ export function DataTable<T>(props: DataTableProps<T>) {
     onSortingChange: controlledOnSortingChange,
     manualSorting = false,
   } = props;
+  const t = useT(KIT_MESSAGES);
+  const searchPlaceholder = searchPlaceholderProp ?? t("search");
+  const emptyTitle = emptyTitleProp ?? t("emptyTitle");
 
   const [internalSorting, setInternalSorting] = useState<SortingState>([]);
   // AA-755 — when the caller controls sorting (server-side), use its state + handler; otherwise the
@@ -234,7 +239,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
       header: ({ table }: { table: RTable<T> }) => (
         <input
           type="checkbox"
-          aria-label="Select all"
+          aria-label={t("selectAll")}
           checked={table.getIsAllRowsSelected()}
           ref={(el) => {
             if (el) el.indeterminate = table.getIsSomeRowsSelected();
@@ -246,7 +251,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
       cell: ({ row }) => (
         <input
           type="checkbox"
-          aria-label="Select row"
+          aria-label={t("selectRow")}
           checked={row.getIsSelected()}
           onChange={row.getToggleSelectedHandler()}
           onClick={(e) => e.stopPropagation()}
@@ -254,7 +259,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
         />
       ),
     };
-  }, [enableSelection]);
+  }, [enableSelection, t]);
 
   const allColumns = useMemo(
     () => (selectCol ? [selectCol, ...columns] : columns),
@@ -320,7 +325,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
     setShowViews(false);
   };
   const handleSaveView = () => {
-    const name = typeof window !== "undefined" ? window.prompt("Save view as:") : null;
+    const name = typeof window !== "undefined" ? window.prompt(t("saveViewPrompt")) : null;
     if (!name) return;
     const next = saveView<PersistedState>(tableId, userId, name, {
       sorting,
@@ -426,16 +431,16 @@ export function DataTable<T>(props: DataTableProps<T>) {
         {enableSavedViews && (
           <div ref={hideMenuRef} style={{ position: "relative" }}>
             <button style={toolbarBtn} onClick={() => { setShowViews((v) => !v); setShowCols(false); }}>
-              <Save size={13} /> Views
+              <Save size={13} /> {t("views")}
             </button>
             {showViews && (
               <div style={menuBox}>
                 <button style={menuItem} onClick={handleSaveView}>
-                  + Save current view…
+                  {t("saveCurrentView")}
                 </button>
                 {views.length === 0 && (
                   <div style={{ ...menuItem, color: K.muted2, cursor: "default" }}>
-                    No saved views
+                    {t("noSavedViews")}
                   </div>
                 )}
                 {views.map((v) => (
@@ -449,7 +454,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                     <button
                       style={{ ...menuItem, color: K.danger, width: "auto" }}
                       onClick={() => handleDeleteView(v.id)}
-                      aria-label={`Delete ${v.name}`}
+                      aria-label={t("deleteView", v.name)}
                     >
                       ×
                     </button>
@@ -462,7 +467,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
 
         <div style={{ position: "relative" }}>
           <button style={toolbarBtn} onClick={() => { setShowCols((v) => !v); setShowViews(false); }}>
-            <Columns3 size={13} /> Columns
+            <Columns3 size={13} /> {t("columns")}
           </button>
           {showCols && (
             <div style={menuBox}>
@@ -505,7 +510,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
           }}
         >
           <span style={{ fontSize: 13, fontWeight: 600, color: K.accentDeep }}>
-            {selectedRows.length} selected
+            {t("selected", selectedRows.length)}
           </span>
           <div style={{ display: "flex", gap: 8, flex: 1 }}>
             {bulkActions?.({ selectedRows, clearSelection })}
@@ -514,7 +519,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
             style={{ ...toolbarBtn, border: "none", background: "transparent", color: K.accentDeep }}
             onClick={clearSelection}
           >
-            Clear
+            {t("clear")}
           </button>
         </div>
       )}
@@ -523,12 +528,12 @@ export function DataTable<T>(props: DataTableProps<T>) {
       {error ? (
         <div style={{ padding: 24 }}>
           <EmptyState
-            title="Could not load"
+            title={t("couldNotLoad")}
             description={error}
             action={
               onRetry && (
                 <button style={toolbarBtn} onClick={onRetry}>
-                  Retry
+                  {t("retry")}
                 </button>
               )
             }
@@ -537,7 +542,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
       ) : loading ? (
         isPhone ? (
           // AA-760 — card-shaped on a phone, like the loaded view (a table grid made the layout jump).
-          <div aria-busy="true" aria-label="Loading" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div aria-busy="true" aria-label={t("loading")} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <SkeletonStyle />
             {[0, 1, 2, 3].map((i) => (
               <div key={i} style={{ border: `1px solid ${K.line}`, borderRadius: RADIUS.lg, background: K.card, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
@@ -548,7 +553,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
             ))}
           </div>
         ) : (
-          <div aria-busy="true" aria-label="Loading" style={{ padding: 16 }}>
+          <div aria-busy="true" aria-label={t("loading")} style={{ padding: 16 }}>
             <TableSkeleton rows={6} cols={Math.min(allColumns.length, 5)} />
           </div>
         )
@@ -738,9 +743,12 @@ export function DataTable<T>(props: DataTableProps<T>) {
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: K.muted }}>
             <span>
-              {(pageIndex * effPageSize + 1).toLocaleString()}–
-              {Math.min((pageIndex + 1) * effPageSize, totalFiltered).toLocaleString()} of{" "}
-              {totalFiltered.toLocaleString()}
+              {t(
+                "rangeOf",
+                (pageIndex * effPageSize + 1).toLocaleString(),
+                Math.min((pageIndex + 1) * effPageSize, totalFiltered).toLocaleString(),
+                totalFiltered.toLocaleString(),
+              )}
             </span>
             <select
               value={effPageSize}
@@ -759,7 +767,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
             >
               {pageSizeOptions.map((n) => (
                 <option key={n} value={n}>
-                  {n} / page
+                  {t("perPage", n)}
                 </option>
               ))}
             </select>
@@ -769,16 +777,18 @@ export function DataTable<T>(props: DataTableProps<T>) {
               style={{ ...toolbarBtn, padding: "6px 10px", opacity: table.getCanPreviousPage() ? 1 : 0.4 }}
               onClick={() => table.previousPage()}
               disabled={!table.getCanPreviousPage()}
+              aria-label={t("previousPage")}
             >
               <ChevronLeft size={14} />
             </button>
             <span style={{ fontSize: 12, color: K.muted, minWidth: 70, textAlign: "center" }}>
-              Page {pageIndex + 1} / {Math.max(pageCount, 1)}
+              {t("pageOf", pageIndex + 1, Math.max(pageCount, 1))}
             </span>
             <button
               style={{ ...toolbarBtn, padding: "6px 10px", opacity: table.getCanNextPage() ? 1 : 0.4 }}
               onClick={() => table.nextPage()}
               disabled={!table.getCanNextPage()}
+              aria-label={t("nextPage")}
             >
               <ChevronRight size={14} />
             </button>

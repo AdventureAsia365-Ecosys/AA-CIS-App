@@ -9,6 +9,8 @@
 import { useEffect } from "react";
 import { X } from "lucide-react";
 import { K, sans, serif } from "./tokens";
+import { KIT_MESSAGES } from "./kit.messages";
+import { useT } from "./useI18n";
 
 export function Drawer({
   open,
@@ -25,6 +27,7 @@ export function Drawer({
   footer?: React.ReactNode;
   width?: number;
 }) {
+  const t = useT(KIT_MESSAGES);
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -100,7 +103,7 @@ export function Drawer({
           </div>
           <button
             onClick={onClose}
-            aria-label="Close"
+            aria-label={t("close")}
             style={{
               border: "none",
               background: "transparent",

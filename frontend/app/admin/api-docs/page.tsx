@@ -30,8 +30,10 @@ import {
   mono,
   sans,
   AdminMain,
+  useT,
   type Tone,
 } from "../../_kit";
+import { M } from "./messages";
 import {
   buildOps,
   groupOps,
@@ -143,14 +145,15 @@ function Muted({ children }: { children: React.ReactNode }) {
 }
 
 function ParamRow({ p }: { p: ParamObj }) {
+  const t = useT(M);
   const name = p.name ?? (p.$ref ? p.$ref.split("/").pop() : "?");
   return (
     <Row>
       <Code>{name}</Code>
-      {p.in && <Muted>in {p.in}</Muted>}
+      {p.in && <Muted>{t("paramIn", p.in)}</Muted>}
       <Muted>{schemaLabel(p.schema)}</Muted>
-      {p.required && <Badge tone="danger" dot={false}>required</Badge>}
-      {p.deprecated && <Badge tone="neutral" dot={false}>deprecated</Badge>}
+      {p.required && <Badge tone="danger" dot={false}>{t("required")}</Badge>}
+      {p.deprecated && <Badge tone="neutral" dot={false}>{t("deprecated")}</Badge>}
       {p.description && (
         <div style={{ flexBasis: "100%", fontSize: 12, color: K.body, whiteSpace: "pre-wrap" }}>{p.description}</div>
       )}
@@ -160,6 +163,7 @@ function ParamRow({ p }: { p: ParamObj }) {
 
 /** Top-level fields of a request-body object schema (one level: field name, type, required). */
 function SchemaFields({ spec, schema }: { spec: OpenApiSpec; schema: SchemaObj | undefined }) {
+  const t = useT(M);
   const resolved = resolveSchema(spec, schema);
   const props = resolved?.properties;
   if (!props || !Object.keys(props).length) return null;
@@ -170,7 +174,7 @@ function SchemaFields({ spec, schema }: { spec: OpenApiSpec; schema: SchemaObj |
         <Row key={name}>
           <Code>{name}</Code>
           <Muted>{schemaLabel(s)}</Muted>
-          {required.has(name) && <Badge tone="danger" dot={false}>required</Badge>}
+          {required.has(name) && <Badge tone="danger" dot={false}>{t("required")}</Badge>}
           {s.description && (
             <div style={{ flexBasis: "100%", fontSize: 12, color: K.body, whiteSpace: "pre-wrap" }}>{s.description}</div>
           )}
@@ -181,6 +185,7 @@ function SchemaFields({ spec, schema }: { spec: OpenApiSpec; schema: SchemaObj |
 }
 
 function OpDetails({ op, spec }: { op: Op; spec: OpenApiSpec }) {
+  const t = useT(M);
   return (
     <div style={{ padding: "4px 14px 14px", fontSize: 13, color: K.body, minWidth: 0 }}>
       {op.description && (
@@ -193,10 +198,10 @@ function OpDetails({ op, spec }: { op: Op; spec: OpenApiSpec }) {
         </div>
       )}
 
-      <SectionLabel>Parameters</SectionLabel>
-      {op.params.length ? op.params.map((p) => <ParamRow key={`${p.in}:${p.name ?? p.$ref}`} p={p} />) : <Muted>None</Muted>}
+      <SectionLabel>{t("parameters")}</SectionLabel>
+      {op.params.length ? op.params.map((p) => <ParamRow key={`${p.in}:${p.name ?? p.$ref}`} p={p} />) : <Muted>{t("none")}</Muted>}
 
-      <SectionLabel>Request body</SectionLabel>
+      <SectionLabel>{t("requestBody")}</SectionLabel>
       {op.body ? (
         <>
           <Row>
@@ -204,7 +209,7 @@ function OpDetails({ op, spec }: { op: Op; spec: OpenApiSpec }) {
             {op.body.contentTypes.map((ct) => (
               <Muted key={ct}>{ct}</Muted>
             ))}
-            {op.body.required && <Badge tone="danger" dot={false}>required</Badge>}
+            {op.body.required && <Badge tone="danger" dot={false}>{t("required")}</Badge>}
             {op.body.description && (
               <div style={{ flexBasis: "100%", fontSize: 12, color: K.body }}>{op.body.description}</div>
             )}
@@ -212,10 +217,10 @@ function OpDetails({ op, spec }: { op: Op; spec: OpenApiSpec }) {
           <SchemaFields spec={spec} schema={op.body.schema} />
         </>
       ) : (
-        <Muted>None</Muted>
+        <Muted>{t("none")}</Muted>
       )}
 
-      <SectionLabel>Responses</SectionLabel>
+      <SectionLabel>{t("responses")}</SectionLabel>
       {op.responses.length ? (
         op.responses.map((r) => (
           <Row key={r.code}>
@@ -225,7 +230,7 @@ function OpDetails({ op, spec }: { op: Op; spec: OpenApiSpec }) {
           </Row>
         ))
       ) : (
-        <Muted>None declared</Muted>
+        <Muted>{t("noneDeclared")}</Muted>
       )}
     </div>
   );
@@ -242,6 +247,7 @@ function OpRow({
   open: boolean;
   onToggle: () => void;
 }) {
+  const t = useT(M);
   return (
     <div style={{ borderTop: `1px solid ${K.line}` }}>
       <button
@@ -282,7 +288,7 @@ function OpRow({
           {op.path}
         </span>
         {/* The strike-through alone is not announced and not self-explaining; say it in words too. */}
-        {op.deprecated && <Badge tone="neutral" dot={false}>deprecated</Badge>}
+        {op.deprecated && <Badge tone="neutral" dot={false}>{t("deprecated")}</Badge>}
         {op.summary && (
           <span style={{ fontSize: 12, color: K.muted, minWidth: 0, flex: "1 1 200px", overflowWrap: "anywhere" }}>
             {op.summary}
@@ -358,6 +364,7 @@ function GroupCard({
 // ── page ────────────────────────────────────────────────────────────────────────────────────────
 
 export default function ApiDocsPage() {
+  const t = useT(M);
   const { data: spec, error, isLoading, isFetching, refetch } = useQuery({
     queryKey: ["admin", "openapi"],
     // AA-994: the route docstrings keep their issue references as code docs; the page shows the text without them.
@@ -386,18 +393,18 @@ export default function ApiDocsPage() {
 
   const info = spec?.info;
   const description = spec
-    ? `${info?.title ?? "API"} ${info?.version ? `v${info.version}` : ""} · OpenAPI ${spec.openapi ?? "?"} · ${ops.length} endpoints. Read-only — nothing here calls the API.`
-    : "Read-only view of the backend OpenAPI schema. Nothing here calls the API.";
+    ? t("descriptionLoaded", info?.title ?? "API", info?.version ?? "", spec.openapi ?? "?", ops.length)
+    : t("descriptionEmpty");
 
   return (
     <AdminMain style={{ fontFamily: sans }}>
       <SkeletonStyle />
       <PageHeader
-        title="API Docs"
+        title={t("title")}
         description={description}
         actions={
-          <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={isFetching} ariaLabel="Reload the schema">
-            {isFetching ? <Spinner size={13} /> : <RefreshCw size={13} />} Reload
+          <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={isFetching} ariaLabel={t("reloadSchema")}>
+            {isFetching ? <Spinner size={13} /> : <RefreshCw size={13} />} {t("reload")}
           </Button>
         }
       />
@@ -409,13 +416,13 @@ export default function ApiDocsPage() {
       ) : error ? (
         <div style={{ background: K.card, border: `1px solid ${K.line}`, borderRadius: RADIUS.lg }}>
           <ErrorState
-            message={`Could not load the API schema: ${error instanceof Error ? error.message : String(error)}`}
+            message={t("loadFailed", error instanceof Error ? error.message : String(error))}
             onRetry={() => refetch()}
           />
         </div>
       ) : !ops.length ? (
         <div style={{ background: K.card, border: `1px solid ${K.line}`, borderRadius: RADIUS.lg }}>
-          <EmptyState title="No endpoints in the schema" description="The backend returned an OpenAPI schema with no paths." />
+          <EmptyState title={t("noEndpointsTitle")} description={t("noEndpointsBody")} />
         </div>
       ) : (
         <>
@@ -450,8 +457,8 @@ export default function ApiDocsPage() {
                 onKeyDown={(e) => {
                   if (e.key === "Escape") setQuery("");
                 }}
-                placeholder="Search path, summary, tag…"
-                aria-label="Search endpoints"
+                placeholder={t("searchPlaceholder")}
+                aria-label={t("searchEndpoints")}
                 style={{
                   flex: 1,
                   minWidth: 0,
@@ -467,7 +474,7 @@ export default function ApiDocsPage() {
                 <button
                   type="button"
                   onClick={() => setQuery("")}
-                  aria-label="Clear search"
+                  aria-label={t("clearSearch")}
                   style={{ display: "inline-flex", background: "none", border: "none", padding: 0, cursor: "pointer", color: K.muted }}
                 >
                   <X size={14} />
@@ -475,12 +482,12 @@ export default function ApiDocsPage() {
               )}
             </label>
             <span style={{ fontSize: 12, color: K.muted }}>
-              {searching ? `${shown} of ${ops.length} endpoints` : `${groups.length} groups`}
+              {searching ? t("shownOf", shown, ops.length) : t("groups", groups.length)}
             </span>
             {!searching && (
               <span style={{ display: "inline-flex", gap: 6 }}>
                 <Button variant="ghost" size="sm" onClick={() => setOpenTags(new Set(groups.map((g) => g.tag)))}>
-                  Expand all
+                  {t("expandAll")}
                 </Button>
                 <Button
                   variant="ghost"
@@ -490,7 +497,7 @@ export default function ApiDocsPage() {
                     setOpenOps(new Set());
                   }}
                 >
-                  Collapse all
+                  {t("collapseAll")}
                 </Button>
               </span>
             )}
@@ -500,11 +507,11 @@ export default function ApiDocsPage() {
             <div style={{ background: K.card, border: `1px solid ${K.line}`, borderRadius: RADIUS.lg }}>
               <EmptyState
                 icon={<Search size={28} />}
-                title="No endpoint matches"
-                description={`Nothing matches “${query.trim()}”. Search looks at the method, path, summary, operationId and tag.`}
+                title={t("noMatchTitle")}
+                description={t("noMatchBody", query.trim())}
                 action={
                   <Button variant="ghost" size="sm" onClick={() => setQuery("")}>
-                    Clear search
+                    {t("clearSearch")}
                   </Button>
                 }
               />

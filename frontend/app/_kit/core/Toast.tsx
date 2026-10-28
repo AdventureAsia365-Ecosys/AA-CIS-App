@@ -10,6 +10,8 @@
 import { CheckCircle2, Info, X, XCircle } from "lucide-react";
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import { K, RADIUS, sans } from "./tokens";
+import { KIT_MESSAGES } from "./kit.messages";
+import { useT } from "./useI18n";
 
 type ToastTone = "success" | "error" | "info";
 type ToastItem = { id: number; tone: ToastTone; message: string };
@@ -53,6 +55,7 @@ const TONE_STYLE: Record<
 let nextId = 1;
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
+  const tk = useT(KIT_MESSAGES);
   const [items, setItems] = useState<ToastItem[]>([]);
 
   const dismiss = useCallback((id: number) => {
@@ -122,7 +125,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
               <span style={{ flex: 1, lineHeight: 1.4 }}>{t.message}</span>
               <button
                 onClick={() => dismiss(t.id)}
-                aria-label="Dismiss"
+                aria-label={tk("dismiss")}
                 style={{
                   border: "none",
                   background: "transparent",

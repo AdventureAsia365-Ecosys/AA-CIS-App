@@ -12,19 +12,7 @@ export const TEXT_FIELDS = ["aa_name", "aa_subtitle", "seo_title"] as const; // 
 export const AREA_FIELDS = ["aa_summary", "aa_description", "mobile_card_text", "seo_meta"] as const; // textarea
 export const LIST_FIELDS = ["aa_highlights", "seo_keywords_used"] as const; // newline = item
 
-export const FIELD_LABEL: Record<string, string> = {
-  aa_name: "Name",
-  aa_subtitle: "Subtitle",
-  aa_summary: "Summary",
-  aa_description: "Description",
-  aa_highlights: "Highlights",
-  aa_itineraries: "Itinerary",
-  mobile_card_text: "Mobile card text",
-  seo_title: "SEO title",
-  seo_meta: "SEO meta",
-  seo_keywords_used: "SEO keywords",
-  og_tags: "OG tags",
-};
+// The field labels (English and Vietnamese) are the FIELD catalogue in messages.ts (AA-994): `useT(FIELD)`.
 
 export const SEO_META_MIN = 140;
 export const SEO_META_MAX = 155;
@@ -183,8 +171,12 @@ export const BLOCK_STYLE: Record<ReviewBlock["kind"], { bg: string; color: strin
   other: SEV_STYLE.gray,
 };
 
+/** The UI-language fallbacks mapRow needs (AA-994): English unless the page passes its translation. */
+export type RowText = { untitledTour: string; unknownCountry: string; lang?: "en" | "vi" };
+const ROW_TEXT_EN: RowText = { untitledTour: "Untitled tour", unknownCountry: "Unknown" };
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function mapRow(r: any): ReviewItem {
+export function mapRow(r: any, text: RowText = ROW_TEXT_EN): ReviewItem {
   const fieldCodes = [
     ...new Set(((r.failures || []) as any[]).map((f) => f?.code).filter(Boolean)), // eslint-disable-line @typescript-eslint/no-explicit-any
   ] as string[];
@@ -192,10 +184,10 @@ export function mapRow(r: any): ReviewItem {
   return {
     id: String(r.id),
     raw: r,
-    name: r.aa_name || r.src_name || "Untitled tour",
-    country: r.country || "Unknown",
+    name: r.aa_name || r.src_name || text.untitledTour,
+    country: r.country || text.unknownCountry,
     score: typeof r.score_overall === "number" ? r.score_overall : parseFloat(r.score_overall || "0"),
-    date: r.created_at ? formatDate(r.created_at) : "",
+    date: r.created_at ? formatDate(r.created_at, text.lang) : "",
     created_at_ms: r.created_at ? new Date(r.created_at).getTime() : 0,
     human_edited: !!r.human_edited,
     edited_at: r.edited_at || null,
