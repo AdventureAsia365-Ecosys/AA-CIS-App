@@ -224,13 +224,13 @@ async def list_atoms(
     include_deleted: bool = Query(False),
     owner_scope_class: Optional[str] = Query(
         None, pattern="^(platform|legacy)$",
-        description="AA-527 (bổ sung) — admin-only coarse filter: 'platform' (owner_scope='platform', "
-                    "post-AA-526 shared pool) vs 'legacy' (any other owner_scope — a real tenant_id, "
-                    "pre-AA-526 row not yet cleaned up).",
+        description="admin-only coarse filter: 'platform' (owner_scope='platform', "
+                    "the shared pool) vs 'legacy' (any other owner_scope — a real tenant_id, "
+                    "an older row not yet cleaned up).",
     ),
     lifecycle_stage: Optional[str] = Query(
         None, pattern="^(active|phasing_out|retired)$",
-        description="AA-527 (bổ sung, kiểm tra điểm 2) — filter by the tour's own "
+        description="filter by the tour's own "
                     "silver_aa_internal.raw_tours.lifecycle_stage (migration 086), so AA can find "
                     "atoms sitting on a phasing_out/retired tour, not just active ones.",
     ),

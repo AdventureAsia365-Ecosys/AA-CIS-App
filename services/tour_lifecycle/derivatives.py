@@ -90,7 +90,7 @@ QUEUED_TENANT_JOBS_WHERE = f"""
 CANCEL_QUEUED_JOBS_SQL = f"""
 UPDATE shared.job j SET
     status = 'cancelled', finished_at = now(), cancel_requested = true, updated_at = now(),
-    error = 'cancelled: the tour is no longer served by AA (AA-986, ' || $2 || ')'
+    error = 'cancelled: the tour is no longer served by AA (' || $2 || ')'
  WHERE {QUEUED_TENANT_JOBS_WHERE}
 RETURNING j.id::text AS id, j.kind
 """

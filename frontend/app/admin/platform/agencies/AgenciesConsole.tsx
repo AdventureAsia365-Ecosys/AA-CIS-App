@@ -316,10 +316,10 @@ function CreateAgencyModal({ open, forceSynthetic, onClose, onCreated }: {
           Synthetic (test) agency
         </label>
         <Field label="Ticket reference" htmlFor="crm-create-ticket"
-          hint={ticket && !ticketOk ? "Use a project key, a dash and a number, for example AA-941."
+          hint={ticket && !ticketOk ? "Use a project key, a dash and a number, for example SUP-1024."
             : "The support or Jira ticket this agency belongs to. It goes into the agency's access log."}>
           <input id="crm-create-ticket" data-testid="crm-create-ticket" type="text" autoComplete="off" value={ticket}
-            maxLength={27} placeholder="AA-941" onChange={(e) => setTicket(e.target.value)} style={fieldStyle}
+            maxLength={27} placeholder="SUP-1024" onChange={(e) => setTicket(e.target.value)} style={fieldStyle}
             aria-invalid={!!ticket && !ticketOk} />
         </Field>
         <div style={noteStyle}>

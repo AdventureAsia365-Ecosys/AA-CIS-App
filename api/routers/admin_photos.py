@@ -81,7 +81,7 @@ def _photo(row) -> dict:
     return d
 
 
-@router.get("/summary", summary="AA-708 — photo coverage per country + last sync")
+@router.get("/summary", summary="Photo coverage per country + last sync")
 async def summary(request: Request):
     pool = request.app.state.pool
     async with pool.acquire() as conn:
@@ -138,7 +138,7 @@ async def summary(request: Request):
     return {"countries": countries, "totals": totals, "last_job": last_job, "last_scheduled": scheduled}
 
 
-@router.get("", summary="AA-708 — list synced photos")
+@router.get("", summary="List synced photos")
 async def list_photos(request: Request, country: Optional[str] = None, status: Optional[str] = None,
                       folder_path: Optional[str] = None, limit: int = Query(120, ge=1, le=500),
                       offset: int = Query(0, ge=0)):
@@ -168,7 +168,7 @@ def _url(photo_id, size: str = "small") -> str:
     return f"{public_base()}/content/photos/{photo_id}?size={size}"
 
 
-@router.get("/folders", summary="AA-708 — Drive folders with their match and sample photos")
+@router.get("/folders", summary="Drive folders with their match and sample photos")
 async def folders(request: Request, country: Optional[str] = None):
     rows = await request.app.state.pool.fetch(
         """SELECT p.country, p.folder_path, max(p.tour_folder) AS tour_folder, count(*) AS photos,
@@ -192,7 +192,7 @@ async def folders(request: Request, country: Optional[str] = None):
     return {"folders": out}
 
 
-@router.get("/tour-coverage", summary="AA-708 — photos per active tour (gaps first)")
+@router.get("/tour-coverage", summary="Photos per active tour (gaps first)")
 async def tour_coverage(request: Request, country: Optional[str] = None, only_missing: bool = False):
     rows = await request.app.state.pool.fetch(
         """SELECT rt.tour_id::text AS tour_id, rt.src_name, rt.country, rt.duration,
@@ -216,14 +216,14 @@ async def tour_coverage(request: Request, country: Optional[str] = None, only_mi
     return {"tours": out, "with_photos": sum(1 for d in out if d["photos"]), "total": len(out)}
 
 
-@router.get("/destinations", summary="AA-708 — destinations of a country (assign picker)")
+@router.get("/destinations", summary="Destinations of a country (assign picker)")
 async def destinations(request: Request, country: str):
     pool = request.app.state.pool
     rows = await pool.fetch("SELECT id, name FROM shared.destinations WHERE country = $1 ORDER BY name", country)
     return {"destinations": [{"id": str(r["id"]), "name": r["name"]} for r in rows]}
 
 
-@router.get("/tours", summary="AA-708 — active tours of a country (assign picker)")
+@router.get("/tours", summary="Active tours of a country (assign picker)")
 async def tours(request: Request, country: str):
     pool = request.app.state.pool
     rows = await pool.fetch(
@@ -240,7 +240,7 @@ class SyncRequest(BaseModel):
     match_destinations: bool = False        # off until destinations are re-extracted after the rerun
 
 
-@router.post("/sync", summary="AA-708 — enqueue a photo_sync job")
+@router.post("/sync", summary="Enqueue a photo_sync job")
 async def sync(body: SyncRequest, request: Request, x_admin_secret: str = Header(None),
                x_admin_user_id: Optional[str] = Header(None)):
     verify_admin_secret(x_admin_secret)
@@ -257,7 +257,7 @@ async def sync(body: SyncRequest, request: Request, x_admin_secret: str = Header
     return {"job_id": job_id, "created": created, "folders": [f["country"] for f in folders]}
 
 
-@router.post("/sync/schedule", summary="AA-844 — daily: enqueue one photo_sync job per country (scheduler)")
+@router.post("/sync/schedule", summary="Daily: enqueue one photo_sync job per country (scheduler)")
 async def sync_schedule(request: Request, x_admin_secret: str = Header(None)):
     """Driven once a day by the ops-probe Lambda (AA-CIS-Infra lambda_src/dfs_balance_check, schedule
     photo_sync_daily, 21:00 UTC). Incremental: unchanged Drive files are not downloaded again."""
@@ -278,7 +278,7 @@ class AssignRequest(BaseModel):
     whole_folder: bool = True   # a tour assignment applies to every photo in the same Drive folder
 
 
-@router.post("/{photo_id}/assign", summary="AA-708 — manual tour/destination assignment or reject")
+@router.post("/{photo_id}/assign", summary="Manual tour/destination assignment or reject")
 async def assign(photo_id: str, body: AssignRequest, request: Request, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
     pid = _uuid(photo_id, "photo_id")
@@ -321,7 +321,7 @@ async def assign(photo_id: str, body: AssignRequest, request: Request, x_admin_s
             "photos_updated": folder_count if not body.reject else 1, "covers_set": covers}
 
 
-@public_router.get("/{photo_id}", summary="AA-708 — photo image (redirect to S3)", include_in_schema=False)
+@public_router.get("/{photo_id}", summary="Photo image (redirect to S3)", include_in_schema=False)
 async def photo_image(photo_id: str, request: Request,
                       size: str = Query("large", pattern="^(large|small|original)$")):
     pid = _uuid(photo_id, "photo_id")

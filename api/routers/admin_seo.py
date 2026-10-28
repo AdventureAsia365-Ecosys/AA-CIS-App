@@ -180,7 +180,7 @@ def _paa_items(raw) -> list[str]:
     return out
 
 
-@router.get("", summary="AA-705 — SEO Intelligence (all tabs)")
+@router.get("", summary="SEO Intelligence (all tabs)")
 async def get_seo_intelligence(
     request: Request,
     days: int = Query(30, ge=1, le=365),

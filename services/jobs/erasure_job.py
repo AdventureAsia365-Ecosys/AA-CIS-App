@@ -161,7 +161,7 @@ def apply_refusals(payload: dict, dry_job: Optional[dict], tenant_row: Optional[
         if finished is None or now - finished > dry_run_max_age(env):
             out.append(f"the DRY RUN is older than {dry_run_max_age(env)}; run a new one and approve it")
         if res.get("fingerprint_version") != pl.FINGERPRINT_VERSION:
-            out.append("the DRY RUN predates the subject-bound fingerprint (AA-839); run a new DRY RUN and "
+            out.append("the DRY RUN predates the subject-bound fingerprint; run a new DRY RUN and "
                        "approve it")
         elif payload.get("subject") == "traveller" and not SALT_RE.match(str(res.get("subject_salt") or "")):
             out.append("the DRY RUN holds no subject salt (stripped or not a DRY RUN); run a new DRY RUN")

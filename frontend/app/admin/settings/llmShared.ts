@@ -108,7 +108,7 @@ export const STAGE_GROUPS: { key: string; label: string; stages: string[] }[] = 
   },
   {
     key: "t2",
-    label: "T2 tenant rewrite — writer, judge and repair (AA-620, AA-763)",
+    label: "T2 tenant rewrite — writer, judge and repair",
     stages: ["t2_generate", "t2_judge", "t2_brand_audit", "t2_flag_fix", "t2_itinerary_nudge"],
   },
   { key: "t7", label: "T7 — Slate Debate brand-fit judge", stages: ["t7_debate_judge"] },

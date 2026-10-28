@@ -14,6 +14,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, RefreshCw, Search, X } from "lucide-react";
 import { useMemo, useState } from "react";
+import { stripIssueIdsDeep } from "@/lib/issueIds";
 import {
   Badge,
   Button,
@@ -359,7 +360,8 @@ function GroupCard({
 export default function ApiDocsPage() {
   const { data: spec, error, isLoading, isFetching, refetch } = useQuery({
     queryKey: ["admin", "openapi"],
-    queryFn: () => apiGet<OpenApiSpec>(SPEC_PATH, { admin: true }),
+    // AA-994: the route docstrings keep their issue references as code docs; the page shows the text without them.
+    queryFn: () => apiGet<OpenApiSpec>(SPEC_PATH, { admin: true }).then(stripIssueIdsDeep),
     staleTime: 5 * 60_000,
   });
 

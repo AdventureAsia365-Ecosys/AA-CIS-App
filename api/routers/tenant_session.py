@@ -131,7 +131,7 @@ def _access_token_expiry(principal_token: str) -> Optional[datetime]:
 
 
 @router.post("/tenant-session", responses={200: {"model": PartnerTenantSession}},
-             summary="AA-979 — partner-pool access token -> short Content studio tenant JWT")
+             summary="Partner-pool access token -> short Content studio tenant JWT")
 async def tenant_session(request: Request) -> JSONResponse:
     principal, refused = await _verified(request)
     if refused is not None:
@@ -196,7 +196,7 @@ async def tenant_session(request: Request) -> JSONResponse:
 
 
 @router.get("/tenant-memberships", responses={200: {"model": PartnerTenantMemberships}},
-            summary="AA-979 — the agencies a partner-pool person may open in the studio")
+            summary="The agencies a partner-pool person may open in the studio")
 async def tenant_memberships(request: Request) -> JSONResponse:
     principal, refused = await _verified(request)
     if refused is not None:

@@ -60,7 +60,7 @@ export function InlineError({ message }: { message: string }) {
 /** The confirm dialog of every L1 write: what will happen, the action's own fields, the ticket reference. */
 export function WriteModal<T>({
   open, onClose, title, children, confirmLabel, destructive = false, canSubmit = true, ticketLabel = "Ticket reference",
-  ticketHint = "The support or Jira ticket this action belongs to, for example AA-941. It goes into the agency's access log.",
+  ticketHint = "The support or Jira ticket this action belongs to, for example SUP-1024. It goes into the agency's access log.",
   submit, onDone,
 }: {
   open: boolean;
@@ -121,9 +121,9 @@ export function WriteModal<T>({
         style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         {children}
         <Field label={ticketLabel} htmlFor="crm-write-ticket"
-          hint={ticket && !ticketOk ? "Use a project key, a dash and a number, for example AA-941." : ticketHint}>
+          hint={ticket && !ticketOk ? "Use a project key, a dash and a number, for example SUP-1024." : ticketHint}>
           <input id="crm-write-ticket" data-testid="crm-write-ticket" type="text" autoComplete="off" value={ticket}
-            maxLength={27} placeholder="AA-941" onChange={(e) => setTicket(e.target.value)} style={fieldStyle}
+            maxLength={27} placeholder="SUP-1024" onChange={(e) => setTicket(e.target.value)} style={fieldStyle}
             aria-invalid={!!ticket && !ticketOk} />
         </Field>
         {error && <InlineError message={error} />}

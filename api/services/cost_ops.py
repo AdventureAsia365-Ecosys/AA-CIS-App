@@ -481,7 +481,8 @@ async def cost_forecast(pool: Any, month: Optional[str] = None, *, now: Optional
                        days_present_in_rate_window=sum(
                            1 for d in days
                            if ce_complete_until - timedelta(days=RUN_RATE_DAYS) <= d < ce_complete_until))
-        _with_budget(row, aws_budget.get(acc), DEFAULT_ALERT_PCT, "AWS Budgets (mirrored in code until AA-665 C5)")
+        _with_budget(row, aws_budget.get(acc), DEFAULT_ALERT_PCT,
+                     "AWS Budgets (mirrored in code until the live budgets are read)")
         aws.append(row)
 
     totals = {k: round(sum(p[k] for p in providers), 4) for k in ("mtd_usd", "forecast_usd")}

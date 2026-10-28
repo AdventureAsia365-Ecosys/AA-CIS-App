@@ -684,7 +684,7 @@ function SocialContentTabContent({ tenantId }: { tenantId: string }) {
       </div>
       <div style={{ fontSize: 11.5, color: A.muted2, fontStyle: "italic" }}>
         Detailed per-piece Atom/Segment/Route/Slate usage breakdown is pending the 06/07/08 merge
-        decision (see AA-558) — this tab will grow once that&apos;s resolved. In the meantime, see{" "}
+        decision — this tab will grow once that&apos;s resolved. In the meantime, see{" "}
         <a href="/admin/tenant-activity" style={{ color: A.gold }}>Content Trace</a> for the
         full Write/Gate → Review → Publish detail (filterable by Tour, not yet by this Tenant
         directly from there).

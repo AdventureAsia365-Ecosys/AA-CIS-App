@@ -2917,7 +2917,7 @@ def _claim_label(outcome: Optional[dict]) -> Optional[dict]:
 
 
 @router.get("/review-queue/{review_id}/claims",
-            summary="AA-845 — the review's grounded sentences, each with its Jev verdict and label")
+            summary="The review's grounded sentences, each with its Jev verdict and label")
 async def admin_review_claims(review_id: str, request: Request, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
     from services.content_generation import grounding as gr
@@ -2958,7 +2958,7 @@ class ClaimLabelBody(BaseModel):
 
 
 @router.post("/review-queue/{review_id}/claims/label",
-             summary="AA-845 — mark (or unmark) one sentence as not supported by the source")
+             summary="Mark (or unmark) one sentence as not supported by the source")
 async def admin_label_review_claim(review_id: str, body: ClaimLabelBody, request: Request,
                                    x_admin_secret: str = Header(None),
                                    x_admin_user_id: Optional[str] = Header(None)):

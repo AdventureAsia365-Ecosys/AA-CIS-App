@@ -45,7 +45,7 @@ class WaveCreate(BaseModel):
     notes: Optional[str] = Field(None, max_length=2000)
 
 
-@router.post("", summary="AA-727 — create a rerun wave (expected tour set)")
+@router.post("", summary="Create a rerun wave (expected tour set)")
 async def create_wave(body: WaveCreate, request: Request, x_admin_secret: str = Header(None),
                       x_admin_user_id: str = Header(None)):
     verify_admin_secret(x_admin_secret)
@@ -77,7 +77,7 @@ async def create_wave(body: WaveCreate, request: Request, x_admin_secret: str = 
     return wave_report._wave_dict(row)
 
 
-@router.get("", summary="AA-727 — list rerun waves")
+@router.get("", summary="List rerun waves")
 async def list_waves(request: Request, status: Optional[str] = Query(None, description="|".join(_STATUSES)),
                      limit: int = Query(50, ge=1, le=200), x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
@@ -89,7 +89,7 @@ async def list_waves(request: Request, status: Optional[str] = Query(None, descr
     return {"data": [wave_report._wave_dict(r) for r in rows]}
 
 
-@router.post("/check", summary="AA-727 — evaluate open waves; bell when one ends incomplete")
+@router.post("/check", summary="Evaluate open waves; bell when one ends incomplete")
 async def check_waves(request: Request, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
@@ -106,7 +106,7 @@ async def check_waves(request: Request, x_admin_secret: str = Header(None)):
     return {"checked": len(out), "waves": out}
 
 
-@router.get("/{wave_id}/report", summary="AA-727 — wave report (4 columns, states, Jev coverage, cost)")
+@router.get("/{wave_id}/report", summary="Wave report (4 columns, states, Jev coverage, cost)")
 async def wave_report_endpoint(wave_id: str, request: Request, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
     async with request.app.state.pool.acquire() as conn:
@@ -116,7 +116,7 @@ async def wave_report_endpoint(wave_id: str, request: Request, x_admin_secret: s
     return rep
 
 
-@router.post("/{wave_id}/close", summary="AA-727 — close a wave (ends its job window)")
+@router.post("/{wave_id}/close", summary="Close a wave (ends its job window)")
 async def close_wave(wave_id: str, request: Request, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
     row = await request.app.state.pool.fetchrow(

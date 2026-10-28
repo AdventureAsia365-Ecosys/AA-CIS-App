@@ -312,7 +312,7 @@ async def _publish_limit_overrides(conn) -> dict:
 async def list_tenants(
     request: Request,
     x_admin_secret: str = Header(None),
-    include_inactive: bool = Query(False, description="AA-797: also list suspended and offboarded tenants"),
+    include_inactive: bool = Query(False, description="also list suspended and offboarded tenants"),
 ):
     """AA-473: Gate A removed -- every tenant is `is_active=true` from creation, so this endpoint
     is back to a plain active-tenant list (`pending_tenants`/`gate_a_status` concept removed
@@ -744,7 +744,7 @@ def _derive_run_display_status(
 # ── GET /admin/tenants/{id}/audit — AA-666 Tenant 360 Audit tab ─────────────
 
 
-@router.get("/tenants/{tenant_id}/audit", summary="AA-666 — a tenant's action timeline")
+@router.get("/tenants/{tenant_id}/audit", summary="A tenant's action timeline")
 async def get_tenant_audit(
     tenant_id: str,
     request: Request,
@@ -1455,7 +1455,7 @@ class RestoreTenantResponse(BaseModel):
 
 
 @router.post("/tenants/{tenant_id}/restore", response_model=RestoreTenantResponse,
-             summary="AA-797 — restore an offboarded tenant with its data and settings")
+             summary="Restore an offboarded tenant with its data and settings")
 async def restore_tenant(
     tenant_id: UUID,
     request: Request,
@@ -1572,7 +1572,7 @@ _VALID_CHANNELS = {
 }
 
 
-@router.get("/tenants/{tenant_id}/config", summary="AA-323 — N4-N6 markets/channels/capacity for one tenant")
+@router.get("/tenants/{tenant_id}/config", summary="N4-N6 markets/channels/capacity for one tenant")
 async def get_tenant_config(
     tenant_id: UUID,
     request: Request,
@@ -1592,7 +1592,7 @@ async def get_tenant_config(
     }
 
 
-@router.put("/tenants/{tenant_id}/config", summary="AA-323 — set N4-N6 markets/channels/capacity for one tenant")
+@router.put("/tenants/{tenant_id}/config", summary="Set N4-N6 markets/channels/capacity for one tenant")
 async def update_tenant_config(
     tenant_id: UUID,
     body: TenantConfigRequest,
@@ -1672,7 +1672,7 @@ async def toggle_master_status(
 # response shape, so frontend/app/(internal)/catalog/page.tsx needs only a URL change.
 
 
-@router.get("/catalog", summary="AA-580 — staff content review: published_tours list")
+@router.get("/catalog", summary="Staff content review: published_tours list")
 async def list_catalog_tours(
     request: Request,
     page: int = Query(1, ge=1),

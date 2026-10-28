@@ -333,7 +333,7 @@ async def _require_tenant(conn, tenant_id: UUID) -> dict:
 
 # ── routes ────────────────────────────────────────────────────────────────────────────────────
 
-@router.get("/{tenant_id}/cost", summary="AA-766 — tenant month-to-date LLM cost, $/piece, $/tour, margin")
+@router.get("/{tenant_id}/cost", summary="Tenant month-to-date LLM cost, $/piece, $/tour, margin")
 async def get_tenant_cost(tenant_id: UUID, request: Request, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
@@ -366,11 +366,11 @@ async def get_tenant_cost(tenant_id: UUID, request: Request, x_admin_secret: str
                      "cost_per_tour_usd": _ratio(t2_cost, tours)},
         "margin": margin_block(usage, total),
         "definition": ("shared.llm_call_log.cost_usd, this calendar month, Jev included, shadow rows "
-                       "excluded (AA-798). LLM cost only: infra and DataForSEO are not in it."),
+                       "excluded. LLM cost only: infra and DataForSEO are not in it."),
     }
 
 
-@router.get("/{tenant_id}/quality", summary="AA-766 — tenant T10 gate verdicts, held reasons, edit rate")
+@router.get("/{tenant_id}/quality", summary="Tenant T10 gate verdicts, held reasons, edit rate")
 async def get_tenant_quality(
     tenant_id: UUID, request: Request,
     days: int = Query(30, ge=1, le=365),
@@ -407,7 +407,7 @@ async def get_tenant_quality(
     }
 
 
-@router.get("/{tenant_id}/markets", summary="AA-766 — tenant markets, research coverage, unmapped requests")
+@router.get("/{tenant_id}/markets", summary="Tenant markets, research coverage, unmapped requests")
 async def get_tenant_markets(tenant_id: UUID, request: Request, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
@@ -461,7 +461,7 @@ def _members_unavailable(exc: Exception) -> HTTPException:
     return HTTPException(status_code=503, detail="Memberships need migration 276 (shared.tenant_members).")
 
 
-@router.get("/{tenant_id}/members", summary="AA-978 — the tenant's CIS memberships (Content studio roles)")
+@router.get("/{tenant_id}/members", summary="The tenant's CIS memberships (Content studio roles)")
 async def get_tenant_members(tenant_id: UUID, request: Request, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
@@ -495,7 +495,7 @@ async def _member_write(request: Request, tenant_id: UUID, op) -> dict:
 
 
 @router.patch("/{tenant_id}/members/{membership_id}",
-              summary="AA-978 — change a member's Content studio role (owner / editor / viewer)")
+              summary="Change a member's Content studio role (owner / editor / viewer)")
 async def patch_tenant_member(
     tenant_id: UUID, membership_id: UUID, body: MemberRoleChange, request: Request,
     x_admin_secret: str = Header(None), x_admin_user_id: str = Header(None),
@@ -510,7 +510,7 @@ async def patch_tenant_member(
 
 
 @router.post("/{tenant_id}/members/{membership_id}/remove",
-             summary="AA-978 — remove a member (final; the partner CRM signs them out within a minute)")
+             summary="Remove a member (final; the partner CRM signs them out within a minute)")
 async def remove_tenant_member(
     tenant_id: UUID, membership_id: UUID, request: Request,
     x_admin_secret: str = Header(None), x_admin_user_id: str = Header(None),
@@ -598,7 +598,7 @@ async def _deliver(request: Request, tenant_id: UUID, invitation_id: str, email:
 
 
 @router.post("/{tenant_id}/members/invitations", status_code=201,
-             summary="AA-979 — invite a Content studio member (CIS row + CRM-delivered AA system mail)")
+             summary="Invite a Content studio member (CIS row + CRM-delivered AA system mail)")
 async def invite_tenant_member(
     tenant_id: UUID, body: MemberInvite, request: Request,
     x_admin_secret: str = Header(None), x_admin_user_id: str = Header(None),
@@ -623,7 +623,7 @@ async def invite_tenant_member(
 
 
 @router.post("/{tenant_id}/members/{membership_id}/invitation/send",
-             summary="AA-979 — send a Content studio invitation again (invited members only)")
+             summary="Send a Content studio invitation again (invited members only)")
 async def resend_tenant_member_invitation(
     tenant_id: UUID, membership_id: UUID, body: MemberInviteResend, request: Request,
     x_admin_secret: str = Header(None),

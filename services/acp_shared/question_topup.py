@@ -232,7 +232,7 @@ async def run_topup(pool, *, dry_run: bool = True, cap_usd: float = TOPUP_CAP_US
     SERP per planned place under a hard budget of min(cap_usd, $3 − what earlier runs spent) and
     stores what comes back (an empty marker row for a place with no question)."""
     if cap_usd > TOPUP_CAP_USD:
-        raise ValueError(f"cap_usd {cap_usd} is above the AA-779 hard cap ${TOPUP_CAP_USD:.2f}")
+        raise ValueError(f"cap_usd {cap_usd} is above the top-up hard cap ${TOPUP_CAP_USD:.2f}")
     prior = await prior_spend(pool)
     left = round(TOPUP_CAP_USD - prior, 4)
     run_cap = min(float(cap_usd), left)
@@ -241,7 +241,7 @@ async def run_topup(pool, *, dry_run: bool = True, cap_usd: float = TOPUP_CAP_US
     result.update({"dry_run": dry_run, "prior_spent_usd": prior, "left_usd": max(left, 0.0)})
     if run_cap <= 0:
         result.update({"planned_calls": 0, "targets": [], "estimated_cost_usd": 0.0,
-                       "refused": f"the AA-779 top-up already spent ${prior:.4f} of its ${TOPUP_CAP_USD:.2f} cap"})
+                       "refused": f"the question top-up already spent ${prior:.4f} of its ${TOPUP_CAP_USD:.2f} cap"})
         return result
     if dry_run:
         return result

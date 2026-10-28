@@ -280,7 +280,7 @@ class LlmRoutePatch(BaseModel):
 
 
 @router.patch("/llm-config/{stage}/route",
-              summary="AA-686 — change one stage's fallback chain + shadow (admin-only)")
+              summary="Change one stage's fallback chain + shadow (admin-only)")
 async def patch_llm_route(
     stage: str,
     body: LlmRoutePatch,
@@ -372,13 +372,13 @@ class LlmCatalogPatch(BaseModel):
     enabled: Optional[bool] = None
 
 
-@router.get("/llm-catalog", summary="AA-686 — every catalog row (prices, provenance, enabled)")
+@router.get("/llm-catalog", summary="Every catalog row (prices, provenance, enabled)")
 async def get_llm_catalog():
     return {"models": await list_catalog_rows()}
 
 
 @router.patch("/llm-catalog/{model_key}",
-              summary="AA-686 — edit a catalog row's price / enabled (admin-only)")
+              summary="Edit a catalog row's price / enabled (admin-only)")
 async def patch_llm_catalog(
     model_key: str,
     body: LlmCatalogPatch,
@@ -570,7 +570,7 @@ def _summarize_shadow_group(stage: str, rows: list[dict]) -> dict:
 
 
 @router.get("/llm-shadow/report",
-            summary="AA-686 — shadow A/B comparison (agreement, score delta, cost, variance)")
+            summary="Shadow A/B comparison (agreement, score delta, cost, variance)")
 async def get_llm_shadow_report(request: Request, days: int = Query(30, ge=1, le=365)):
     pool = request.app.state.pool
     async with pool.acquire() as conn:
@@ -675,7 +675,7 @@ _TREE_SQL = """
 """
 
 
-@router.get("/llm-usage/tree", summary="AA-505 — Tenant -> Model -> Stage cost/quality rollup")
+@router.get("/llm-usage/tree", summary="Tenant -> Model -> Stage cost/quality rollup")
 async def get_llm_usage_tree(
     request: Request, days: int = Query(30, ge=1, le=365),
     start: Optional[date] = None, end: Optional[date] = None,
@@ -698,7 +698,7 @@ async def get_llm_usage_tree(
 
 @router.get(
     "/llm-usage/calls",
-    summary="AA-505 flat recent-calls list, filterable; reused by AA-501/A4 + AA-622 fallback drill-down",
+    summary="Flat recent-calls list, filterable; used by the piece view and the fallback drill-down",
 )
 async def get_llm_usage_calls(
     request: Request,
@@ -794,7 +794,7 @@ _DFS_SUMMARY_SQL = """
 """
 
 
-@router.get("/dfs-usage", summary="AA-618 — DataForSEO cost/cache-hit rollup by endpoint+tenant")
+@router.get("/dfs-usage", summary="DataForSEO cost/cache-hit rollup by endpoint+tenant")
 async def get_dfs_usage(
     request: Request, days: int = Query(30, ge=1, le=365),
     start: Optional[date] = None, end: Optional[date] = None,
@@ -824,7 +824,7 @@ async def get_dfs_usage(
 # without a job to the jobs running at the time (api/services/cost_ops.py), windows of at most 31 days.
 
 
-@router.get("/dfs-usage/runs", summary="AA-665 — DataForSEO spend grouped by the job that made the calls")
+@router.get("/dfs-usage/runs", summary="DataForSEO spend grouped by the job that made the calls")
 async def get_dfs_usage_runs(
     request: Request, days: int = Query(30, ge=1, le=365),
     start: Optional[date] = None, end: Optional[date] = None,
@@ -870,7 +870,7 @@ _DFS_COUNTRY_SQL = """
 """
 
 
-@router.get("/dfs-usage/by-country", summary="AA-622 — DataForSEO spend grouped by target market (location_code)")
+@router.get("/dfs-usage/by-country", summary="DataForSEO spend grouped by target market (location_code)")
 async def get_dfs_usage_by_country(
     request: Request, days: int = Query(30, ge=1, le=365),
     start: Optional[date] = None, end: Optional[date] = None,
@@ -913,7 +913,7 @@ _DAILY_SPEND_SQL = """
 """
 
 
-@router.get("/spend/daily", summary="AA-622 — daily LLM + DFS spend time-series for the trend chart")
+@router.get("/spend/daily", summary="Daily LLM + DFS spend time-series for the trend chart")
 async def get_spend_daily(
     request: Request, days: int = Query(30, ge=1, le=365),
     start: Optional[date] = None, end: Optional[date] = None,
@@ -978,7 +978,7 @@ async def _maybe_alert_low_balance(conn, balance_usd: float, threshold: float) -
         return False
 
 
-@router.post("/dfs-balance/check", summary="AA-627 — daily DataForSEO balance read + low-balance alert")
+@router.post("/dfs-balance/check", summary="Daily DataForSEO balance read + low-balance alert")
 async def check_dfs_balance(request: Request, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
     from services.seo_intelligence.dataforseo_client import DataForSEOClient
@@ -1019,7 +1019,7 @@ async def check_dfs_balance(request: Request, x_admin_secret: str = Header(None)
     }
 
 
-@router.get("/dfs-balance", summary="AA-627 — latest stored DataForSEO balance (no live DFS call)")
+@router.get("/dfs-balance", summary="Latest stored DataForSEO balance (no live DFS call)")
 async def get_dfs_balance(request: Request):
     pool = request.app.state.pool
     latest = await read_latest_balance(pool)
@@ -1062,7 +1062,7 @@ def _ce_days(since: datetime, until: datetime) -> tuple[date, date]:
     return since.date(), end_d
 
 
-@router.post("/cost-explorer/check", summary="AA-623 — fetch AWS Cost Explorer actual spend for a window")
+@router.post("/cost-explorer/check", summary="Fetch AWS Cost Explorer actual spend for a window")
 async def check_cost_explorer(
     request: Request, x_admin_secret: str = Header(None),
     days: int = Query(7, ge=1, le=365), start: Optional[date] = None, end: Optional[date] = None,
@@ -1132,7 +1132,7 @@ async def get_cost_explorer(
 # ── AA-665 C3 — Cost Operations › Overview: month-end forecast vs budget (DB only, no live CE call) ────────────────
 
 
-@router.get("/cost-ops/forecast", summary="AA-665 — month-end spend forecast vs budget per provider and AWS account")
+@router.get("/cost-ops/forecast", summary="Month-end spend forecast vs budget per provider and AWS account")
 async def get_cost_ops_forecast(request: Request, month: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}$")):
     from api.services.cost_ops import cost_forecast
 
@@ -1144,7 +1144,7 @@ async def get_cost_ops_forecast(request: Request, month: Optional[str] = Query(N
 
 @router.get(
     "/unmapped-market-requests",
-    summary="AA-629 Tier 2 — tenants waiting on a market outside DFS_LOCATION_MAP, grouped by country",
+    summary="Tenants waiting on a market outside DFS_LOCATION_MAP, grouped by country",
 )
 async def get_unmapped_market_requests(request: Request):
     """Read-only admin visibility (no admin-secret gate, same convention as GET /dfs-balance
@@ -1201,7 +1201,7 @@ _JEV_402_SWEEP_SQL = """
 _last_canary_ok_at: Optional[datetime] = None
 
 
-@router.post("/jev-canary/check", summary="AA-720 — daily Jev canary: one real decide-endpoint probe")
+@router.post("/jev-canary/check", summary="Daily Jev canary: one real decide-endpoint probe")
 async def check_jev_canary(request: Request, x_admin_secret: str = Header(None)):
     global _last_canary_ok_at
     verify_admin_secret(x_admin_secret)
@@ -1215,7 +1215,7 @@ async def check_jev_canary(request: Request, x_admin_secret: str = Header(None))
     ok, billing_error, detail = True, False, None
     started = datetime.now(timezone.utc)
     try:
-        await decide_mod._call_jev("Jev credit canary probe (AA-720).", probe_questions)
+        await decide_mod._call_jev("Jev credit canary probe.", probe_questions)
         decide_mod.reset_jev_breaker()        # a billable call proves credit is back
     except decide_mod.JevBillingError:
         ok, billing_error = False, True
@@ -1243,7 +1243,7 @@ async def check_jev_canary(request: Request, x_admin_secret: str = Header(None))
     }
 
 
-@router.post("/jev/402-sweep", summary="AA-720 — daily sweep of decision_log for 402 billing errors")
+@router.post("/jev/402-sweep", summary="Daily sweep of decision_log for 402 billing errors")
 async def sweep_jev_402(request: Request, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
     from shared.llm_client import decide as decide_mod

@@ -37,19 +37,19 @@ def _redis(request: Request):
     return getattr(request.app.state, "redis", None)
 
 
-@router.get("/apps", summary="AA-884 — health and version of every app (cached 60 s)")
+@router.get("/apps", summary="Health and version of every app (cached 60 s)")
 async def get_apps(request: Request, refresh: bool = Query(False)):
     return await platform_apps.collect_apps(request.app.state.pool, _redis(request), refresh=refresh)
 
 
 # Literal /apps/crm/jobs before /apps/{app_id}/… (FastAPI matches in order; {app_id} takes one segment anyway).
-@router.get("/apps/crm/jobs", summary="AA-936 — the partner CRM's job backlog per kind (crm.ops.v1)")
+@router.get("/apps/crm/jobs", summary="The partner CRM's job backlog per kind (crm.ops.v1)")
 async def get_crm_jobs(request: Request):
     # The CRM accepts only a WORKFORCE cis-admin token on /crm/ops/v1: the staff member's own Bearer is relayed.
     return await platform_apps.crm_jobs(platform_apps.relay_authorization(request))
 
 
-@router.get("/apps/{app_id}", summary="AA-884 — one app's health and version card")
+@router.get("/apps/{app_id}", summary="One app's health and version card")
 async def get_app(request: Request, app_id: str, refresh: bool = Query(False)):
     card = await platform_apps.collect_app(request.app.state.pool, _redis(request), app_id, refresh=refresh)
     if card is None:
@@ -58,12 +58,12 @@ async def get_app(request: Request, app_id: str, refresh: bool = Query(False)):
 
 
 # Literal /audit/verify before any /audit/{...} route (none today; keep the order if one is added).
-@router.get("/audit/verify", summary="AA-884 — verify the audit_log hash chain (CIS 248)")
+@router.get("/audit/verify", summary="Verify the audit_log hash chain (CIS 248)")
 async def verify_audit(request: Request, from_seq: Optional[int] = Query(None, ge=1)):
     return await platform_audit.verify_chain_cached(request.app.state.pool, _redis(request), from_seq=from_seq)
 
 
-@router.get("/audit", summary="AA-884 — staff action trail (acp_shared.audit_log)")
+@router.get("/audit", summary="Staff action trail (acp_shared.audit_log)")
 async def list_audit(
     request: Request,
     scope: str = Query("staff", pattern="^(staff|all)$"),
@@ -85,7 +85,7 @@ async def list_audit(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.get("/cost", summary="AA-884 — cost per app for a month (AWS by App tag + LLM spend by app)")
+@router.get("/cost", summary="Cost per app for a month (AWS by App tag + LLM spend by app)")
 async def get_cost(request: Request, month: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}$"),
                    refresh_if_stale: bool = Query(True)):
     try:

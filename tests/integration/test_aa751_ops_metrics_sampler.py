@@ -197,7 +197,8 @@ async def test_retired_kind_rows_cancelled_on_a_tick(pool):
     assert out["retired_cancelled"] == 2 and "retired_error" not in out, out
     rows = {str(x["id"]): x for x in await pool.fetch("SELECT id, status, error, locked_by, finished_at FROM shared.job")}
     for jid in (q, r):
-        assert rows[jid]["status"] == "cancelled" and rows[jid]["error"] == "kind removed (AA-751)"
+        assert rows[jid]["status"] == "cancelled"
+        assert rows[jid]["error"] == "kind removed (replaced by the ops metrics sampler)"
         assert rows[jid]["locked_by"] is None and rows[jid]["finished_at"] is not None
     assert rows[other]["status"] == "queued"
     # the old worker finishing its row afterwards cannot overwrite the cancel

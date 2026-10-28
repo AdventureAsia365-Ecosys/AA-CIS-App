@@ -99,20 +99,20 @@ def _parse_dt(value: Optional[str], field: str) -> Optional[datetime]:
         raise HTTPException(status_code=422, detail=f"{field} must be an ISO-8601 datetime")
 
 
-@router.get("/jobs", summary="AA-650 — list jobs")
+@router.get("/jobs", summary="List jobs")
 async def list_jobs(request: Request, kind: Optional[str] = None,
                     status: Optional[str] = Query(None, description="|".join(_STATUSES)),
                     limit: int = Query(50, ge=1, le=200),
-                    page: int = Query(1, ge=1, description="AA-755: 1-based page (with page_size)"),
+                    page: int = Query(1, ge=1, description="1-based page (with page_size)"),
                     page_size: Optional[int] = Query(None, ge=1, le=200,
-                                                     description="AA-755: rows per page; overrides limit"),
-                    sort: str = Query("created_at", description="AA-755: " + "|".join(queue.JOB_SORTS)),
+                                                     description="rows per page; overrides limit"),
+                    sort: str = Query("created_at", description="sort: " + "|".join(queue.JOB_SORTS)),
                     sort_dir: str = Query("desc", description="asc|desc"),
-                    tour_id: Optional[str] = Query(None, description="AA-687: jobs whose payload names this tour"),
-                    since: Optional[str] = Query(None, description="AA-755: created_at >= this ISO datetime"),
-                    until: Optional[str] = Query(None, description="AA-755: created_at < this ISO datetime"),
-                    created_by: Optional[str] = Query(None, description="AA-755: exact created_by match"),
-                    q: Optional[str] = Query(None, description="AA-755: id prefix / kind / created_by search"),
+                    tour_id: Optional[str] = Query(None, description="jobs whose payload names this tour"),
+                    since: Optional[str] = Query(None, description="created_at >= this ISO datetime"),
+                    until: Optional[str] = Query(None, description="created_at < this ISO datetime"),
+                    created_by: Optional[str] = Query(None, description="exact created_by match"),
+                    q: Optional[str] = Query(None, description="id prefix / kind / created_by search"),
                     fields: Optional[str] = Query(None, description="S241: full (default) | summary — summary "
                                                   "returns payload/result as null (read them from /jobs/{id})")):
     # `fields` is compared as a str: a direct call (unit tests) gets the Query default object.
@@ -143,7 +143,7 @@ async def list_jobs(request: Request, kind: Optional[str] = None,
     }
 
 
-@router.get("/summary", summary="AA-650 — counts per kind/status + registered kinds")
+@router.get("/summary", summary="Counts per kind/status + registered kinds")
 async def summary(request: Request):
     rows = await request.app.state.pool.fetch(
         "SELECT kind, status, count(*)::int AS n, "
@@ -162,7 +162,7 @@ async def summary(request: Request):
     }
 
 
-@router.get("/deploy-gate", summary="AA-993 G5 — open waves and running deploy-blocking jobs, for the CI guard")
+@router.get("/deploy-gate", summary="Open waves and running deploy-blocking jobs, for the CI guard")
 async def deploy_gate(request: Request, x_admin_secret: str = Header(None)):
     """Pre-deploy guard (AA-725 part 1; meaning changed by AA-993 G5, design D1.4). CI has no RDS access (private
     subnet), so it asks the live API instead of querying the database. CI blocks the roll when `safe_to_deploy` is
@@ -176,7 +176,7 @@ async def deploy_gate(request: Request, x_admin_secret: str = Header(None)):
     return await deploy_gate_status(request.app.state.pool)
 
 
-@router.get("/workers", summary="AA-687 — worker liveness, running jobs per worker, queue depth")
+@router.get("/workers", summary="Worker liveness, running jobs per worker, queue depth")
 async def workers(request: Request):
     health = await queue.worker_health(request.app.state.pool)
     return {
@@ -190,7 +190,7 @@ async def workers(request: Request):
 RELEASED_DEFAULT_WINDOW = timedelta(hours=24)
 
 
-@router.get("/released", summary="AA-993 — jobs released on worker shutdown since a time")
+@router.get("/released", summary="Jobs released on worker shutdown since a time")
 async def released(request: Request,
                    since: Optional[str] = Query(None, description="ISO-8601 datetime; default: 24 h ago")):
     """AA-993 G1 (ADR 0016 D1.6) — how many running jobs the workers released on shutdown (SIGTERM, drain window
@@ -206,7 +206,7 @@ async def released(request: Request,
     return {"since": since_dt.isoformat(), **out, "max_releases": queue.MAX_RELEASES}
 
 
-@router.get("/jobs/{job_id}", summary="AA-650 — one job")
+@router.get("/jobs/{job_id}", summary="One job")
 async def get_job(job_id: str, request: Request):
     pool = request.app.state.pool
     row = await queue.get(pool, job_id)
@@ -221,7 +221,7 @@ async def get_job(job_id: str, request: Request):
     return _redact_for_caller(request, [_iso(row)])[0]
 
 
-@router.get("/jobs/{job_id}/llm-calls", summary="AA-687 — LLM calls made by one job")
+@router.get("/jobs/{job_id}/llm-calls", summary="LLM calls made by one job")
 async def job_llm_calls(job_id: str, request: Request, limit: int = Query(500, ge=1, le=2000)):
     pool = request.app.state.pool
     if await queue.get(pool, job_id) is None:
@@ -232,7 +232,7 @@ async def job_llm_calls(job_id: str, request: Request, limit: int = Query(500, g
     return out
 
 
-@router.post("/jobs/{job_id}/cancel", summary="AA-650 — cancel a queued or running job")
+@router.post("/jobs/{job_id}/cancel", summary="Cancel a queued or running job")
 async def cancel_job(job_id: str, request: Request, x_admin_secret: str = Header(None),
                      x_admin_user_id: Optional[str] = Header(None)):
     verify_admin_secret(x_admin_secret)
@@ -246,7 +246,7 @@ async def cancel_job(job_id: str, request: Request, x_admin_secret: str = Header
             "note": "running jobs stop at their next heartbeat" if status == "running" else None}
 
 
-@router.post("/jobs/{job_id}/retry", summary="AA-650 — re-queue a failed/stopped/cancelled job")
+@router.post("/jobs/{job_id}/retry", summary="Re-queue a failed/stopped/cancelled job")
 async def retry_job(job_id: str, request: Request, x_admin_secret: str = Header(None),
                     x_admin_user_id: Optional[str] = Header(None)):
     verify_admin_secret(x_admin_secret)
@@ -267,7 +267,7 @@ async def retry_job(job_id: str, request: Request, x_admin_secret: str = Header(
 # ── AA-825 — retention kinds (services/jobs/retention_job.py) ─────────────────────────────────
 
 
-@router.get("/retention", summary="AA-825 — retention kinds: policy, table size, last runs")
+@router.get("/retention", summary="Retention kinds: policy, table size, last runs")
 async def retention_status(request: Request):
     from services.jobs import retention_job
     return await retention_job.status(request.app.state.pool)
@@ -286,7 +286,7 @@ class RetentionRunRequest(BaseModel):
     older_than: Optional[str] = None
 
 
-@router.post("/retention/run", summary="AA-825 — enqueue one retention kind (DRY RUN by default)")
+@router.post("/retention/run", summary="Enqueue one retention kind (DRY RUN by default)")
 async def retention_run(body: RetentionRunRequest, request: Request, x_admin_secret: str = Header(None),
                         x_admin_user_id: Optional[str] = Header(None)):
     verify_admin_secret(x_admin_secret)
@@ -337,7 +337,7 @@ async def _retention_override(body: RetentionRunRequest, request: Request, x_adm
             "older_than": body.older_than, "dry_run": body.dry_run, "max_rows": body.max_rows}
 
 
-@router.post("/retention/schedule", summary="AA-825 — daily: enqueue every retention kind (scheduler)")
+@router.post("/retention/schedule", summary="Daily: enqueue every retention kind (scheduler)")
 async def retention_schedule(request: Request, x_admin_secret: str = Header(None)):
     """Driven once a day by the ops-probe Lambda (AA-CIS-Infra lambda_src/dfs_balance_check, one more
     path in _PATHS). Each kind decides at run time whether it is a DRY RUN, live or held."""
@@ -350,7 +350,7 @@ async def retention_schedule(request: Request, x_admin_secret: str = Header(None
     return {"day": day, **out}
 
 
-@router.post("/staff-reconcile/schedule", summary="AA-816 — daily: enqueue the staff directory reconcile (scheduler)")
+@router.post("/staff-reconcile/schedule", summary="Daily: enqueue the staff directory reconcile (scheduler)")
 async def staff_reconcile_schedule(request: Request, x_admin_secret: str = Header(None)):
     """Driven once a day by the ops-probe Lambda (AA-CIS-Infra lambda_src/dfs_balance_check, one more path in
     _PATHS). One `staff_directory_reconcile` job per UTC day (idempotency key), report only: it lists the
@@ -370,7 +370,7 @@ async def staff_reconcile_schedule(request: Request, x_admin_secret: str = Heade
 ERASURE_APPLY_NEEDS_COGNITO = "An erasure apply needs a company sign-in (Cognito); password sessions cannot"
 
 
-@router.get("/erasure", summary="AA-839 — erasure inventory and apply settings")
+@router.get("/erasure", summary="Erasure inventory and apply settings")
 async def erasure_status():
     """What a tenant / traveller erasure covers in the CIS schemas, and whether an apply is possible here."""
     from services.erasure import inventory as inv
@@ -404,7 +404,7 @@ class ErasureRunRequest(BaseModel):
     snapshot_id: Optional[str] = Field(None, max_length=255)
 
 
-@router.post("/erasure/run", summary="AA-839 — enqueue a data erasure DRY RUN (default) or an approved apply")
+@router.post("/erasure/run", summary="Enqueue a data erasure DRY RUN (default) or an approved apply")
 async def erasure_run(body: ErasureRunRequest, request: Request, x_admin_secret: str = Header(None),
                       x_admin_user_id: Optional[str] = Header(None)):
     """DRY RUN by default: counts per CIS table, blockers, the per-app checklist and a fingerprint. An apply needs

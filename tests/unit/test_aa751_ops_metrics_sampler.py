@@ -463,7 +463,7 @@ def test_part_timeout_bounds_a_tick_below_the_interval():
 # ── retired kinds (rolling-deploy leftovers) ───────────────────────────────────────────────────
 
 def test_ops_rds_role_connections_is_retired():
-    assert registry.RETIRED_KINDS == {"ops_rds_role_connections": "AA-751"}
+    assert registry.RETIRED_KINDS == {"ops_rds_role_connections": "replaced by the ops metrics sampler"}
 
 
 @pytest.mark.asyncio
@@ -474,7 +474,7 @@ async def test_retired_rows_are_cancelled_before_the_backlog_sample():
     pool.execute.assert_awaited_once()
     sql, kinds_arg, reasons = pool.execute.call_args[0]
     assert "status IN ('queued', 'running')" in sql and "locked_by = NULL" in sql
-    assert kinds_arg == ["ops_rds_role_connections"] and '"AA-751"' in reasons
+    assert kinds_arg == ["ops_rds_role_connections"] and '"replaced by the ops metrics sampler"' in reasons
     assert out["retired_cancelled"] == 2 and "retired_error" not in out
 
 

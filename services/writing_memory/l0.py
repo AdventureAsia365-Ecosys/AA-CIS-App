@@ -249,7 +249,7 @@ def activation_problem(rule: dict) -> Optional[tuple[str, str]]:
     from services.writing_memory.replay import rule_sha
 
     if rule.get("kind") != "lexicon":
-        return "not_lexicon", "Only a lexicon rule takes the L0 path; other rules wait for a release (AA-919)"
+        return "not_lexicon", "Only a lexicon rule takes the L0 path; other rules wait for a release"
     if rule.get("writer") not in L0_WRITERS:
         return "no_l0_reader", f"No L0 reader for writer {rule.get('writer')} yet (T9 blog and social only)"
     if rule.get("status") not in ("candidate", "approved"):

@@ -79,7 +79,7 @@ async def _active_job(pool) -> Optional[dict]:
     return await job_queue.latest(pool, JOB_KIND, ("queued", "running"))
 
 
-@router.post("/preview", summary="AA-646 — scope + stale count + spend ceiling (no LLM/DFS spend)")
+@router.post("/preview", summary="Scope + stale count + spend ceiling (no LLM/DFS spend)")
 async def preview_research(scope: ResearchScope, request: Request):
     from services.acp_contract.segment_research import run_segment_research
 
@@ -97,7 +97,7 @@ async def preview_research(scope: ResearchScope, request: Request):
     }
 
 
-@router.post("/run", status_code=202, summary="AA-646/650 — enqueue one admin-triggered research run")
+@router.post("/run", status_code=202, summary="Enqueue one admin-triggered research run")
 async def run_research(scope: ResearchScope, request: Request, x_admin_secret: str = Header(None),
                        x_admin_user_id: str = Header(None)):
     verify_admin_secret(x_admin_secret)
@@ -138,7 +138,7 @@ async def run_research(scope: ResearchScope, request: Request, x_admin_secret: s
             "max_spend_usd": {"dfs": needed, "bedrock": llm_budget.remaining_usd()}}
 
 
-@router.get("/status", summary="AA-646/650 — the active run (if any) and the last finished run")
+@router.get("/status", summary="The active run (if any) and the last finished run")
 async def research_status(request: Request):
     pool = request.app.state.pool
     active = await _active_job(pool)

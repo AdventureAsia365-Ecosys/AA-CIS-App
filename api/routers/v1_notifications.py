@@ -94,7 +94,7 @@ def _item(r) -> dict:
     }
 
 
-@router.get("", summary="AA-986 — the tenant's own notifications (tour no longer served / served again)")
+@router.get("", summary="The tenant's own notifications (tour no longer served / served again)")
 async def list_notifications(
     request: Request,
     tenant=Depends(get_tenant),
@@ -109,7 +109,7 @@ async def list_notifications(
     return {"items": [_item(r) for r in rows], "unread": int(unread or 0)}
 
 
-@router.post("/read-all", summary="AA-986 — mark all of the tenant's notifications read")
+@router.post("/read-all", summary="Mark all of the tenant's notifications read")
 async def mark_all_read(request: Request, tenant=Depends(get_tenant)):
     tenant_id = tenant["sub"]
     async with acquire_scoped_conn(request, tenant_id, TENANT_NOTIFICATIONS_FLAG, fail_closed=True) as (conn, _u):
@@ -117,7 +117,7 @@ async def mark_all_read(request: Request, tenant=Depends(get_tenant)):
     return {"cleared": _count(result)}
 
 
-@router.post("/{notif_id}/read", summary="AA-986 — mark one of the tenant's notifications read")
+@router.post("/{notif_id}/read", summary="Mark one of the tenant's notifications read")
 async def mark_read(notif_id: int, request: Request, tenant=Depends(get_tenant)):
     tenant_id = tenant["sub"]
     async with acquire_scoped_conn(request, tenant_id, TENANT_NOTIFICATIONS_FLAG, fail_closed=True) as (conn, _u):

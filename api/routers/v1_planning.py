@@ -87,7 +87,7 @@ def _refresh_state(job: dict | None) -> dict:
     }
 
 
-@slate_router.get("/slate", summary="AA-511 — this tenant's Slate: every Subject that has cleared a Channel's Bar")
+@slate_router.get("/slate", summary="This tenant's Slate: every Subject that has cleared a Channel's Bar")
 async def get_slate(request: Request, tenant=Depends(get_tenant)):
     """AA-764 — read-only. Proposing (T7 + Debate: Jev and LLM calls, minutes) runs in a
     `t7_slate` job; this call enqueues one only when the tenant has no proposal yet or the last
@@ -121,14 +121,14 @@ async def get_slate(request: Request, tenant=Depends(get_tenant)):
 
 
 @slate_router.post("/slate/refresh", status_code=202,
-                   summary="AA-764 — re-propose this tenant's Slate in the background (t7_slate job)")
+                   summary="Re-propose this tenant's Slate in the background (t7_slate job)")
 async def post_slate_refresh(request: Request, tenant=Depends(get_tenant)):
     tenant_id = UUID(tenant["sub"])
     job = await request_slate_proposal(tenant_id, request.app.state.pool, only_if_stale=False)
     return {"refresh": _refresh_state(job)}
 
 
-@slate_router.post("/subjects/{subject_id}/pick", summary="AA-511 — pick a Subject, create its T8 angle_gate_request")
+@slate_router.post("/subjects/{subject_id}/pick", summary="Pick a Subject, create its T8 angle_gate_request")
 async def post_pick_subject(
     subject_id: UUID, request: Request, tenant=Depends(get_tenant),
 ):
@@ -169,8 +169,8 @@ async def post_pick_subject(
 
 @slate_router.post(
     "/subjects/{subject_id}/cut",
-    summary="AA-554 mục H.2 — mark a Subject 'cut'; wired to the tenant-facing \"Cut\" button in "
-            "AA-556 (SlateTab.tsx's SubjectRow)",
+    summary="Mark a Subject 'cut'; wired to the tenant-facing \"Cut\" button "
+            "(SlateTab.tsx's SubjectRow)",
 )
 async def post_cut_subject(
     subject_id: UUID, request: Request, tenant=Depends(get_tenant),

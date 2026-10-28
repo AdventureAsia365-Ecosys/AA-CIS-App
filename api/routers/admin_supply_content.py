@@ -61,7 +61,7 @@ def _raise(e: review.ReviewError):
     raise HTTPException(status_code=e.status, detail=e.detail())
 
 
-@router.get("", summary="AA-835 — supply content entities")
+@router.get("", summary="Supply content entities")
 async def list_supply_content(request: Request,
                               status: Optional[str] = Query(None, pattern="^(" + "|".join(STATUSES) + ")$"),
                               entity_type: Optional[str] = Query(None, pattern="^(hotel|service)$"),
@@ -70,12 +70,12 @@ async def list_supply_content(request: Request,
                                       offset=offset)
 
 
-@router.get("/status", summary="AA-835 — the Booking supply feed: cursor, lag, last error, draft jobs, cost today")
+@router.get("/status", summary="The Booking supply feed: cursor, lag, last error, draft jobs, cost today")
 async def supply_feed_status(request: Request):
     return await review.feed_status(request.app.state.pool)
 
 
-@router.get("/{entity_id}", summary="AA-835 — one entity: facts, versions, open draft and its diff, photos")
+@router.get("/{entity_id}", summary="One entity: facts, versions, open draft and its diff, photos")
 async def get_supply_content(entity_id: UUID, request: Request):
     try:
         return await review.get_detail(request.app.state.pool, str(entity_id))
@@ -83,7 +83,7 @@ async def get_supply_content(entity_id: UUID, request: Request):
         _raise(e)
 
 
-@router.post("/{entity_id}/versions", status_code=201, summary="AA-835 — an edit (a new human draft)")
+@router.post("/{entity_id}/versions", status_code=201, summary="An edit (a new human draft)")
 async def create_supply_content_version(entity_id: UUID, body: SupplyContentVersionIn, request: Request,
                                         x_admin_user_id: Optional[str] = Header(None),
                                         x_admin_role: Optional[str] = Header(None)):
@@ -98,7 +98,7 @@ async def create_supply_content_version(entity_id: UUID, body: SupplyContentVers
             _raise(e)
 
 
-@router.post("/{entity_id}/versions/{version_id}/publish", summary="AA-835 — approve and publish a version")
+@router.post("/{entity_id}/versions/{version_id}/publish", summary="Approve and publish a version")
 async def publish_supply_content(entity_id: UUID, version_id: UUID, request: Request,
                                  body: Optional[SupplyReviewNote] = None,
                                  x_admin_user_id: Optional[str] = Header(None),
@@ -111,7 +111,7 @@ async def publish_supply_content(entity_id: UUID, version_id: UUID, request: Req
             _raise(e)
 
 
-@router.post("/{entity_id}/versions/{version_id}/reject", summary="AA-835 — reject a draft")
+@router.post("/{entity_id}/versions/{version_id}/reject", summary="Reject a draft")
 async def reject_supply_content(entity_id: UUID, version_id: UUID, request: Request,
                                 body: Optional[SupplyReviewNote] = None,
                                 x_admin_user_id: Optional[str] = Header(None),
@@ -124,7 +124,7 @@ async def reject_supply_content(entity_id: UUID, version_id: UUID, request: Requ
             _raise(e)
 
 
-@router.post("/{entity_id}/unpublish", summary="AA-835 — hide the content from Booking (rows kept)")
+@router.post("/{entity_id}/unpublish", summary="Hide the content from Booking (rows kept)")
 async def unpublish_supply_content(entity_id: UUID, request: Request, x_admin_user_id: Optional[str] = Header(None),
                                    x_admin_role: Optional[str] = Header(None)):
     async with request.app.state.pool.acquire() as conn:
@@ -134,7 +134,7 @@ async def unpublish_supply_content(entity_id: UUID, request: Request, x_admin_us
             _raise(e)
 
 
-@router.post("/{entity_id}/draft", status_code=202, summary="AA-835 — queue a new LLM draft (paid, capped)")
+@router.post("/{entity_id}/draft", status_code=202, summary="Queue a new LLM draft (paid, capped)")
 async def request_supply_content_draft(entity_id: UUID, request: Request,
                                        x_admin_user_id: Optional[str] = Header(None),
                                        x_admin_role: Optional[str] = Header(None)):

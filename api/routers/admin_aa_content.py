@@ -137,7 +137,7 @@ _REFUSALS = (ContentInvalid, ContentConflict, ContentNotFound, asyncpg.Undefined
 
 # Literal paths (groups/…) before the /{content_id} routes of the same method.
 
-@router.get("", summary="AA-977 — AA-authored content, one page (filters kind, locale, status, country)")
+@router.get("", summary="AA-authored content, one page (filters kind, locale, status, country)")
 async def list_aa_content(request: Request, kind: Optional[str] = None, locale: Optional[str] = None,
                           status: Optional[str] = None, country: Optional[str] = None, limit: int = 25,
                           offset: int = 0):
@@ -159,7 +159,7 @@ async def list_aa_content(request: Request, kind: Optional[str] = None, locale: 
         return _refused(exc)
 
 
-@router.post("", status_code=201, summary="AA-977 — create an item (draft v1)")
+@router.post("", status_code=201, summary="Create an item (draft v1)")
 async def create_aa_content(body: CreateBody, request: Request):
     try:
         async with request.app.state.pool.acquire() as conn:
@@ -170,7 +170,7 @@ async def create_aa_content(body: CreateBody, request: Request):
         return _refused(exc)
 
 
-@router.get("/groups/{group_key}", summary="AA-977 — every locale of one group (EN and VI side by side)")
+@router.get("/groups/{group_key}", summary="Every locale of one group (EN and VI side by side)")
 async def get_aa_content_group(group_key: str, request: Request):
     try:
         validate.group_key(group_key)
@@ -186,7 +186,7 @@ async def get_aa_content_group(group_key: str, request: Request):
     return {"group_key": group_key, "items": items}
 
 
-@router.get("/{content_id}", summary="AA-977 — one item with every version")
+@router.get("/{content_id}", summary="One item with every version")
 async def get_aa_content(content_id: str, request: Request):
     try:
         async with request.app.state.pool.acquire() as conn:
@@ -195,7 +195,7 @@ async def get_aa_content(content_id: str, request: Request):
         return _refused(exc)
 
 
-@router.get("/{content_id}/versions/{version}", summary="AA-977 — one version (draft or published), preview")
+@router.get("/{content_id}/versions/{version}", summary="One version (draft or published), preview")
 async def get_aa_content_version(content_id: str, version: int, request: Request):
     if not 1 <= version <= 2_147_483_647:
         raise HTTPException(status_code=404, detail="No such version")
@@ -206,7 +206,7 @@ async def get_aa_content_version(content_id: str, version: int, request: Request
         return _refused(exc)
 
 
-@router.put("/{content_id}/draft", summary="AA-977 — save the draft (starts the next version after a publish)")
+@router.put("/{content_id}/draft", summary="Save the draft (starts the next version after a publish)")
 async def save_aa_content_draft(content_id: str, body: DraftBody, request: Request):
     key, expected = _content_id(content_id), _expected(body.expected_updated_at)
     try:
@@ -218,7 +218,7 @@ async def save_aa_content_draft(content_id: str, body: DraftBody, request: Reque
         return _refused(exc)
 
 
-@router.delete("/{content_id}/draft", summary="AA-977 — discard the draft")
+@router.delete("/{content_id}/draft", summary="Discard the draft")
 async def discard_aa_content_draft(content_id: str, expected_updated_at: str, request: Request):
     key, expected = _content_id(content_id), _expected(expected_updated_at)
     try:
@@ -228,7 +228,7 @@ async def discard_aa_content_draft(content_id: str, expected_updated_at: str, re
         return _refused(exc)
 
 
-@router.post("/{content_id}/publish", summary="AA-977 — publish the draft (admin)")
+@router.post("/{content_id}/publish", summary="Publish the draft (admin)")
 async def publish_aa_content(content_id: str, body: ExpectedBody, request: Request):
     key, expected = _content_id(content_id), _expected(body.expected_updated_at)
     try:
@@ -238,7 +238,7 @@ async def publish_aa_content(content_id: str, body: ExpectedBody, request: Reque
         return _refused(exc)
 
 
-@router.post("/{content_id}/retire", summary="AA-977 — hide the item from the served list (admin)")
+@router.post("/{content_id}/retire", summary="Hide the item from the served list (admin)")
 async def retire_aa_content(content_id: str, body: ExpectedBody, request: Request):
     key, expected = _content_id(content_id), _expected(body.expected_updated_at)
     try:
@@ -248,7 +248,7 @@ async def retire_aa_content(content_id: str, body: ExpectedBody, request: Reques
         return _refused(exc)
 
 
-@router.post("/{content_id}/restore", summary="AA-977 — show a retired item again (admin)")
+@router.post("/{content_id}/restore", summary="Show a retired item again (admin)")
 async def restore_aa_content(content_id: str, body: ExpectedBody, request: Request):
     key, expected = _content_id(content_id), _expected(body.expected_updated_at)
     try:

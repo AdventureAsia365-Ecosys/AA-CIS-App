@@ -116,21 +116,21 @@ async def _page(request: Request, sns: Any, *, refresh: bool, actor: str) -> dic
 
 # Literal paths (refresh, test-email) before the /{recipient_id} routes of the same method.
 
-@router.get("/alert-recipients", summary="AA-913 — platform alert recipients (reconciled with SNS)")
+@router.get("/alert-recipients", summary="Platform alert recipients (reconciled with SNS)")
 async def list_alert_recipients(request: Request, refresh: bool = False, sns: Any = Depends(get_sns)):
     identity = _identity(request)
     actor = f"admin:{identity.admin_id}" if identity is not None else ar.ACTOR_RECONCILE
     return await _page(request, sns, refresh=refresh, actor=actor)
 
 
-@router.post("/alert-recipients/refresh", summary="AA-913 — reconcile with SNS now")
+@router.post("/alert-recipients/refresh", summary="Reconcile with SNS now")
 async def refresh_alert_recipients(request: Request, sns: Any = Depends(get_sns)):
     identity = _identity(request)
     actor = f"admin:{identity.admin_id}" if identity is not None else ar.ACTOR_RECONCILE
     return await _page(request, sns, refresh=True, actor=actor)
 
 
-@router.post("/alert-recipients/test-email", status_code=202, summary="AA-913 — queue a test ops e-mail")
+@router.post("/alert-recipients/test-email", status_code=202, summary="Queue a test ops e-mail")
 async def queue_test_alert_email(request: Request):
     actor = _actor(request)
     try:
@@ -139,7 +139,7 @@ async def queue_test_alert_email(request: Request):
         return _refused(exc)
 
 
-@router.post("/alert-recipients", status_code=201, summary="AA-913 — add a recipient (AWS sends a confirmation)")
+@router.post("/alert-recipients", status_code=201, summary="Add a recipient (AWS sends a confirmation)")
 async def add_alert_recipient(body: AddRecipientBody, request: Request, sns: Any = Depends(get_sns)):
     actor = _actor(request)
     try:
@@ -149,7 +149,7 @@ async def add_alert_recipient(body: AddRecipientBody, request: Request, sns: Any
         return _refused(exc)
 
 
-@router.delete("/alert-recipients/{recipient_id}", summary="AA-913 — remove a recipient (unsubscribe)")
+@router.delete("/alert-recipients/{recipient_id}", summary="Remove a recipient (unsubscribe)")
 async def remove_alert_recipient(recipient_id: str, request: Request, sns: Any = Depends(get_sns)):
     actor = _actor(request)
     rid = _uuid_or_404(recipient_id)
@@ -159,7 +159,7 @@ async def remove_alert_recipient(recipient_id: str, request: Request, sns: Any =
         return _refused(exc)
 
 
-@router.post("/alert-recipients/{recipient_id}/resend", summary="AA-913 — send the AWS confirmation again")
+@router.post("/alert-recipients/{recipient_id}/resend", summary="Send the AWS confirmation again")
 async def resend_alert_confirmation(recipient_id: str, request: Request, sns: Any = Depends(get_sns)):
     actor = _actor(request)
     rid = _uuid_or_404(recipient_id)

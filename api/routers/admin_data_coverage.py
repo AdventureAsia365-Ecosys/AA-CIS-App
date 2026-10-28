@@ -22,7 +22,7 @@ router = APIRouter(prefix="/admin/data-coverage", tags=["admin-data-coverage"],
 
 
 @router.get("", response_model=DataCoverageResponse,
-            summary="AA-992 — data coverage: live counts from raw upload to TripPlanner, Booking and CRM")
+            summary="Data coverage: live counts from raw upload to TripPlanner, Booking and CRM")
 async def get_data_coverage(request: Request, refresh: bool = Query(False)) -> dict:
     state = request.app.state
     return await data_coverage.build_data_coverage(

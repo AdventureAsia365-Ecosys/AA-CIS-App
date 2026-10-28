@@ -6922,7 +6922,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-977 — AA-authored content, one page (filters kind, locale, status, country)",
+        "summary": "AA-authored content, one page (filters kind, locale, status, country)",
         "tags": [
           "admin-aa-content"
         ]
@@ -6993,7 +6993,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-977 — create an item (draft v1)",
+        "summary": "Create an item (draft v1)",
         "tags": [
           "admin-aa-content"
         ]
@@ -7065,7 +7065,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-977 — every locale of one group (EN and VI side by side)",
+        "summary": "Every locale of one group (EN and VI side by side)",
         "tags": [
           "admin-aa-content"
         ]
@@ -7137,7 +7137,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-977 — one item with every version",
+        "summary": "One item with every version",
         "tags": [
           "admin-aa-content"
         ]
@@ -7218,7 +7218,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-977 — discard the draft",
+        "summary": "Discard the draft",
         "tags": [
           "admin-aa-content"
         ]
@@ -7298,7 +7298,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-977 — save the draft (starts the next version after a publish)",
+        "summary": "Save the draft (starts the next version after a publish)",
         "tags": [
           "admin-aa-content"
         ]
@@ -7380,7 +7380,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-977 — publish the draft (admin)",
+        "summary": "Publish the draft (admin)",
         "tags": [
           "admin-aa-content"
         ]
@@ -7462,7 +7462,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-977 — show a retired item again (admin)",
+        "summary": "Show a retired item again (admin)",
         "tags": [
           "admin-aa-content"
         ]
@@ -7544,7 +7544,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-977 — hide the item from the served list (admin)",
+        "summary": "Hide the item from the served list (admin)",
         "tags": [
           "admin-aa-content"
         ]
@@ -7625,7 +7625,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-977 — one version (draft or published), preview",
+        "summary": "One version (draft or published), preview",
         "tags": [
           "admin-aa-content"
         ]
@@ -7715,7 +7715,7 @@
             }
           },
           {
-            "description": "AA-527 (bổ sung) — admin-only coarse filter: 'platform' (owner_scope='platform', post-AA-526 shared pool) vs 'legacy' (any other owner_scope — a real tenant_id, pre-AA-526 row not yet cleaned up).",
+            "description": "admin-only coarse filter: 'platform' (owner_scope='platform', the shared pool) vs 'legacy' (any other owner_scope — a real tenant_id, an older row not yet cleaned up).",
             "in": "query",
             "name": "owner_scope_class",
             "required": false,
@@ -7729,12 +7729,12 @@
                   "type": "null"
                 }
               ],
-              "description": "AA-527 (bổ sung) — admin-only coarse filter: 'platform' (owner_scope='platform', post-AA-526 shared pool) vs 'legacy' (any other owner_scope — a real tenant_id, pre-AA-526 row not yet cleaned up).",
+              "description": "admin-only coarse filter: 'platform' (owner_scope='platform', the shared pool) vs 'legacy' (any other owner_scope — a real tenant_id, an older row not yet cleaned up).",
               "title": "Owner Scope Class"
             }
           },
           {
-            "description": "AA-527 (bổ sung, kiểm tra điểm 2) — filter by the tour's own silver_aa_internal.raw_tours.lifecycle_stage (migration 086), so AA can find atoms sitting on a phasing_out/retired tour, not just active ones.",
+            "description": "filter by the tour's own silver_aa_internal.raw_tours.lifecycle_stage (migration 086), so AA can find atoms sitting on a phasing_out/retired tour, not just active ones.",
             "in": "query",
             "name": "lifecycle_stage",
             "required": false,
@@ -7748,7 +7748,7 @@
                   "type": "null"
                 }
               ],
-              "description": "AA-527 (bổ sung, kiểm tra điểm 2) — filter by the tour's own silver_aa_internal.raw_tours.lifecycle_stage (migration 086), so AA can find atoms sitting on a phasing_out/retired tour, not just active ones.",
+              "description": "filter by the tour's own silver_aa_internal.raw_tours.lifecycle_stage (migration 086), so AA can find atoms sitting on a phasing_out/retired tour, not just active ones.",
               "title": "Lifecycle Stage"
             }
           },
@@ -9146,7 +9146,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-649 — spend budgets + today's spend per provider",
+        "summary": "Spend budgets + today's spend per provider",
         "tags": [
           "admin-budgets"
         ]
@@ -9246,7 +9246,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-649 — create or update one spend budget",
+        "summary": "Create or update one spend budget",
         "tags": [
           "admin-budgets"
         ]
@@ -9350,7 +9350,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-580 — staff content review: published_tours list",
+        "summary": "Staff content review: published_tours list",
         "tags": [
           "admin"
         ]
@@ -11746,7 +11746,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-623 — fetch AWS Cost Explorer actual spend for a window",
+        "summary": "Fetch AWS Cost Explorer actual spend for a window",
         "tags": [
           "admin-llm-ops"
         ]
@@ -11826,7 +11826,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-665 — month-end spend forecast vs budget per provider and AWS account",
+        "summary": "Month-end spend forecast vs budget per provider and AWS account",
         "tags": [
           "admin-llm-ops"
         ]
@@ -12766,7 +12766,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-992 — data coverage: live counts from raw upload to TripPlanner, Booking and CRM",
+        "summary": "Data coverage: live counts from raw upload to TripPlanner, Booking and CRM",
         "tags": [
           "admin-data-coverage"
         ]
@@ -12841,7 +12841,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-894 — live data model (ERD) from the nightly schema dump, with a diff",
+        "summary": "Live data model (ERD) from the nightly schema dump, with a diff",
         "tags": [
           "admin-data-model"
         ]
@@ -13004,7 +13004,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-845 — stratified a1_claim_supported sentences (+ source) for a labelling panel",
+        "summary": "Stratified a1_claim_supported sentences (+ source) for a labelling panel",
         "tags": [
           "admin-decisions"
         ]
@@ -13067,7 +13067,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-756 — Jev credit top-ups + estimated balance",
+        "summary": "Jev credit top-ups + estimated balance",
         "tags": [
           "admin-decisions"
         ]
@@ -13163,7 +13163,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-845 — Jev low-credit check (bell + e-mail below the threshold)",
+        "summary": "Jev low-credit check (bell + e-mail below the threshold)",
         "tags": [
           "admin-decisions"
         ]
@@ -13252,7 +13252,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-756 — record a Jev credit top-up",
+        "summary": "Record a Jev credit top-up",
         "tags": [
           "admin-decisions"
         ]
@@ -13340,7 +13340,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-756 — delete a Jev credit top-up",
+        "summary": "Delete a Jev credit top-up",
         "tags": [
           "admin-decisions"
         ]
@@ -13575,7 +13575,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-660 — Jev verdicts: filter, sort, page",
+        "summary": "Jev verdicts: filter, sort, page",
         "tags": [
           "admin-decisions"
         ]
@@ -13650,7 +13650,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-756 — per question, Jev zone vs. human-established truth",
+        "summary": "Per question, Jev zone vs. human-established truth",
         "tags": [
           "admin-decisions"
         ]
@@ -13748,7 +13748,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-660 — set a question's mode / floors",
+        "summary": "Set a question's mode / floors",
         "tags": [
           "admin-decisions"
         ]
@@ -13823,7 +13823,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-660 — Jev questions per stage: mode, floors, verdicts, cost",
+        "summary": "Jev questions per stage: mode, floors, verdicts, cost",
         "tags": [
           "admin-decisions"
         ]
@@ -13886,7 +13886,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-627 — latest stored DataForSEO balance (no live DFS call)",
+        "summary": "Latest stored DataForSEO balance (no live DFS call)",
         "tags": [
           "admin-llm-ops"
         ]
@@ -13949,7 +13949,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-627 — daily DataForSEO balance read + low-balance alert",
+        "summary": "Daily DataForSEO balance read + low-balance alert",
         "tags": [
           "admin-llm-ops"
         ]
@@ -14058,7 +14058,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-618 — DataForSEO cost/cache-hit rollup by endpoint+tenant",
+        "summary": "DataForSEO cost/cache-hit rollup by endpoint+tenant",
         "tags": [
           "admin-llm-ops"
         ]
@@ -14167,7 +14167,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-622 — DataForSEO spend grouped by target market (location_code)",
+        "summary": "DataForSEO spend grouped by target market (location_code)",
         "tags": [
           "admin-llm-ops"
         ]
@@ -14298,7 +14298,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-665 — DataForSEO spend grouped by the job that made the calls",
+        "summary": "DataForSEO spend grouped by the job that made the calls",
         "tags": [
           "admin-llm-ops"
         ]
@@ -14765,7 +14765,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-720 — daily Jev canary: one real decide-endpoint probe",
+        "summary": "Daily Jev canary: one real decide-endpoint probe",
         "tags": [
           "admin-llm-ops"
         ]
@@ -14828,7 +14828,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-720 — daily sweep of decision_log for 402 billing errors",
+        "summary": "Daily sweep of decision_log for 402 billing errors",
         "tags": [
           "admin-llm-ops"
         ]
@@ -14892,7 +14892,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-993 G5 — open waves and running deploy-blocking jobs, for the CI guard",
+        "summary": "Open waves and running deploy-blocking jobs, for the CI guard",
         "tags": [
           "admin-job-runner"
         ]
@@ -14956,7 +14956,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-839 — erasure inventory and apply settings",
+        "summary": "Erasure inventory and apply settings",
         "tags": [
           "admin-job-runner"
         ]
@@ -15046,7 +15046,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-839 — enqueue a data erasure DRY RUN (default) or an approved apply",
+        "summary": "Enqueue a data erasure DRY RUN (default) or an approved apply",
         "tags": [
           "admin-job-runner"
         ]
@@ -15103,20 +15103,20 @@
             }
           },
           {
-            "description": "AA-755: 1-based page (with page_size)",
+            "description": "1-based page (with page_size)",
             "in": "query",
             "name": "page",
             "required": false,
             "schema": {
               "default": 1,
-              "description": "AA-755: 1-based page (with page_size)",
+              "description": "1-based page (with page_size)",
               "minimum": 1,
               "title": "Page",
               "type": "integer"
             }
           },
           {
-            "description": "AA-755: rows per page; overrides limit",
+            "description": "rows per page; overrides limit",
             "in": "query",
             "name": "page_size",
             "required": false,
@@ -15131,18 +15131,18 @@
                   "type": "null"
                 }
               ],
-              "description": "AA-755: rows per page; overrides limit",
+              "description": "rows per page; overrides limit",
               "title": "Page Size"
             }
           },
           {
-            "description": "AA-755: created_at|started_at|finished_at|kind|status|attempt|created_by|cost_usd|duration",
+            "description": "sort: created_at|started_at|finished_at|kind|status|attempt|created_by|cost_usd|duration",
             "in": "query",
             "name": "sort",
             "required": false,
             "schema": {
               "default": "created_at",
-              "description": "AA-755: created_at|started_at|finished_at|kind|status|attempt|created_by|cost_usd|duration",
+              "description": "sort: created_at|started_at|finished_at|kind|status|attempt|created_by|cost_usd|duration",
               "title": "Sort",
               "type": "string"
             }
@@ -15160,7 +15160,7 @@
             }
           },
           {
-            "description": "AA-687: jobs whose payload names this tour",
+            "description": "jobs whose payload names this tour",
             "in": "query",
             "name": "tour_id",
             "required": false,
@@ -15173,12 +15173,12 @@
                   "type": "null"
                 }
               ],
-              "description": "AA-687: jobs whose payload names this tour",
+              "description": "jobs whose payload names this tour",
               "title": "Tour Id"
             }
           },
           {
-            "description": "AA-755: created_at >= this ISO datetime",
+            "description": "created_at >= this ISO datetime",
             "in": "query",
             "name": "since",
             "required": false,
@@ -15191,12 +15191,12 @@
                   "type": "null"
                 }
               ],
-              "description": "AA-755: created_at >= this ISO datetime",
+              "description": "created_at >= this ISO datetime",
               "title": "Since"
             }
           },
           {
-            "description": "AA-755: created_at < this ISO datetime",
+            "description": "created_at < this ISO datetime",
             "in": "query",
             "name": "until",
             "required": false,
@@ -15209,12 +15209,12 @@
                   "type": "null"
                 }
               ],
-              "description": "AA-755: created_at < this ISO datetime",
+              "description": "created_at < this ISO datetime",
               "title": "Until"
             }
           },
           {
-            "description": "AA-755: exact created_by match",
+            "description": "exact created_by match",
             "in": "query",
             "name": "created_by",
             "required": false,
@@ -15227,12 +15227,12 @@
                   "type": "null"
                 }
               ],
-              "description": "AA-755: exact created_by match",
+              "description": "exact created_by match",
               "title": "Created By"
             }
           },
           {
-            "description": "AA-755: id prefix / kind / created_by search",
+            "description": "id prefix / kind / created_by search",
             "in": "query",
             "name": "q",
             "required": false,
@@ -15245,7 +15245,7 @@
                   "type": "null"
                 }
               ],
-              "description": "AA-755: id prefix / kind / created_by search",
+              "description": "id prefix / kind / created_by search",
               "title": "Q"
             }
           },
@@ -15320,7 +15320,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-650 — list jobs",
+        "summary": "List jobs",
         "tags": [
           "admin-job-runner"
         ]
@@ -15392,7 +15392,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-650 — one job",
+        "summary": "One job",
         "tags": [
           "admin-job-runner"
         ]
@@ -15480,7 +15480,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-650 — cancel a queued or running job",
+        "summary": "Cancel a queued or running job",
         "tags": [
           "admin-job-runner"
         ]
@@ -15564,7 +15564,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-687 — LLM calls made by one job",
+        "summary": "LLM calls made by one job",
         "tags": [
           "admin-job-runner"
         ]
@@ -15652,7 +15652,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-650 — re-queue a failed/stopped/cancelled job",
+        "summary": "Re-queue a failed/stopped/cancelled job",
         "tags": [
           "admin-job-runner"
         ]
@@ -15734,7 +15734,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-993 — jobs released on worker shutdown since a time",
+        "summary": "Jobs released on worker shutdown since a time",
         "tags": [
           "admin-job-runner"
         ]
@@ -15797,7 +15797,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-825 — retention kinds: policy, table size, last runs",
+        "summary": "Retention kinds: policy, table size, last runs",
         "tags": [
           "admin-job-runner"
         ]
@@ -15886,7 +15886,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-825 — enqueue one retention kind (DRY RUN by default)",
+        "summary": "Enqueue one retention kind (DRY RUN by default)",
         "tags": [
           "admin-job-runner"
         ]
@@ -15950,7 +15950,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-825 — daily: enqueue every retention kind (scheduler)",
+        "summary": "Daily: enqueue every retention kind (scheduler)",
         "tags": [
           "admin-job-runner"
         ]
@@ -16014,7 +16014,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-816 — daily: enqueue the staff directory reconcile (scheduler)",
+        "summary": "Daily: enqueue the staff directory reconcile (scheduler)",
         "tags": [
           "admin-job-runner"
         ]
@@ -16077,7 +16077,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-650 — counts per kind/status + registered kinds",
+        "summary": "Counts per kind/status + registered kinds",
         "tags": [
           "admin-job-runner"
         ]
@@ -16140,7 +16140,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-687 — worker liveness, running jobs per worker, queue depth",
+        "summary": "Worker liveness, running jobs per worker, queue depth",
         "tags": [
           "admin-job-runner"
         ]
@@ -16276,7 +16276,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-686 — every catalog row (prices, provenance, enabled)",
+        "summary": "Every catalog row (prices, provenance, enabled)",
         "tags": [
           "admin-llm-ops"
         ]
@@ -16374,7 +16374,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-686 — edit a catalog row's price / enabled (admin-only)",
+        "summary": "Edit a catalog row's price / enabled (admin-only)",
         "tags": [
           "admin-llm-ops"
         ]
@@ -16633,7 +16633,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-686 — change one stage's fallback chain + shadow (admin-only)",
+        "summary": "Change one stage's fallback chain + shadow (admin-only)",
         "tags": [
           "admin-llm-ops"
         ]
@@ -16708,7 +16708,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-686 — shadow A/B comparison (agreement, score delta, cost, variance)",
+        "summary": "Shadow A/B comparison (agreement, score delta, cost, variance)",
         "tags": [
           "admin-llm-ops"
         ]
@@ -16931,7 +16931,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-505 flat recent-calls list, filterable; reused by AA-501/A4 + AA-622 fallback drill-down",
+        "summary": "Flat recent-calls list, filterable; used by the piece view and the fallback drill-down",
         "tags": [
           "admin-llm-ops"
         ]
@@ -17040,7 +17040,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-505 — Tenant -> Model -> Stage cost/quality rollup",
+        "summary": "Tenant -> Model -> Stage cost/quality rollup",
         "tags": [
           "admin-llm-ops"
         ]
@@ -18098,7 +18098,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-664 — whole-system overview (cached 60s)",
+        "summary": "Whole-system overview (cached 60s)",
         "tags": [
           "admin-overview"
         ]
@@ -18162,7 +18162,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-858 — ops overview: app health, TripPlanner, Booking funnel, cost per app",
+        "summary": "Ops overview: app health, TripPlanner, Booking funnel, cost per app",
         "tags": [
           "admin-overview"
         ]
@@ -18296,7 +18296,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-708 — list synced photos",
+        "summary": "List synced photos",
         "tags": [
           "admin-photos"
         ]
@@ -18368,7 +18368,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-708 — destinations of a country (assign picker)",
+        "summary": "Destinations of a country (assign picker)",
         "tags": [
           "admin-photos"
         ]
@@ -18447,7 +18447,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-708 — Drive folders with their match and sample photos",
+        "summary": "Drive folders with their match and sample photos",
         "tags": [
           "admin-photos"
         ]
@@ -18510,7 +18510,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-708 — photo coverage per country + last sync",
+        "summary": "Photo coverage per country + last sync",
         "tags": [
           "admin-photos"
         ]
@@ -18599,7 +18599,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-708 — enqueue a photo_sync job",
+        "summary": "Enqueue a photo_sync job",
         "tags": [
           "admin-photos"
         ]
@@ -18663,7 +18663,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-844 — daily: enqueue one photo_sync job per country (scheduler)",
+        "summary": "Daily: enqueue one photo_sync job per country (scheduler)",
         "tags": [
           "admin-photos"
         ]
@@ -18752,7 +18752,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-708 — photos per active tour (gaps first)",
+        "summary": "Photos per active tour (gaps first)",
         "tags": [
           "admin-photos"
         ]
@@ -18824,7 +18824,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-708 — active tours of a country (assign picker)",
+        "summary": "Active tours of a country (assign picker)",
         "tags": [
           "admin-photos"
         ]
@@ -18906,7 +18906,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-708 — manual tour/destination assignment or reject",
+        "summary": "Manual tour/destination assignment or reject",
         "tags": [
           "admin-photos"
         ]
@@ -18995,7 +18995,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-712 — backfill place_extract for ≤ 50 live tours or ≤ 100 listed tours (dry run by default)",
+        "summary": "Backfill place_extract for ≤ 50 live tours or ≤ 100 listed tours (dry run by default)",
         "tags": [
           "admin-places"
         ]
@@ -19058,7 +19058,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-847 — place pipeline coverage per country (live / built / graph / stop per day)",
+        "summary": "Place pipeline coverage per country (live / built / graph / stop per day)",
         "tags": [
           "admin-places"
         ]
@@ -19121,7 +19121,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-847 — allow-list and the last place_dedupe run per country",
+        "summary": "Allow-list and the last place_dedupe run per country",
         "tags": [
           "admin-places"
         ]
@@ -19210,7 +19210,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-847 — put a country on / off the place_dedupe allow-list, approve a dry run",
+        "summary": "Put a country on / off the place_dedupe allow-list, approve a dry run",
         "tags": [
           "admin-places"
         ]
@@ -19299,7 +19299,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-847 — queue one place_dedupe run (dry_run by default)",
+        "summary": "Queue one place_dedupe run (dry_run by default)",
         "tags": [
           "admin-places"
         ]
@@ -19394,7 +19394,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-847 — line places (rivers, roads, trails) and the state of their geometry",
+        "summary": "Line places (rivers, roads, trails) and the state of their geometry",
         "tags": [
           "admin-places"
         ]
@@ -19509,7 +19509,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-847 — the duplicate-place merge log (job and admin merges, with undo state)",
+        "summary": "The duplicate-place merge log (job and admin merges, with undo state)",
         "tags": [
           "admin-places"
         ]
@@ -19572,7 +19572,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-847 — undone merges as labelled keep pairs for the CI pair set",
+        "summary": "Undone merges as labelled keep pairs for the CI pair set",
         "tags": [
           "admin-places"
         ]
@@ -19670,7 +19670,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-847 — undo one duplicate-place merge (dry run by default)",
+        "summary": "Undo one duplicate-place merge (dry run by default)",
         "tags": [
           "admin-places"
         ]
@@ -19759,7 +19759,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-997 — queue one place_relocate run (dry_run by default; apply after a dry run)",
+        "summary": "Queue one place_relocate run (dry_run by default; apply after a dry run)",
         "tags": [
           "admin-places"
         ]
@@ -19848,7 +19848,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-847 — fetch the geometry of ≤ 50 line places (dry run by default)",
+        "summary": "Fetch the geometry of ≤ 50 line places (dry run by default)",
         "tags": [
           "admin-places"
         ]
@@ -19979,7 +19979,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-847 — content-validity report of the live catalog's places (no model call)",
+        "summary": "Content-validity report of the live catalog's places (no model call)",
         "tags": [
           "admin-places"
         ]
@@ -20068,7 +20068,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-847 — fix content-validity findings (dry run by default; audit + undo)",
+        "summary": "Fix content-validity findings (dry run by default; audit + undo)",
         "tags": [
           "admin-places"
         ]
@@ -20140,7 +20140,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-847 — drop a manual geometry; the job fetches it again",
+        "summary": "Drop a manual geometry; the job fetches it again",
         "tags": [
           "admin-places"
         ]
@@ -20236,7 +20236,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-847 — set a line place's geometry by hand (an exception path)",
+        "summary": "Set a line place's geometry by hand (an exception path)",
         "tags": [
           "admin-places"
         ]
@@ -20309,7 +20309,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-913 — platform alert recipients (reconciled with SNS)",
+        "summary": "Platform alert recipients (reconciled with SNS)",
         "tags": [
           "admin-alert-recipients"
         ]
@@ -20380,7 +20380,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-913 — add a recipient (AWS sends a confirmation)",
+        "summary": "Add a recipient (AWS sends a confirmation)",
         "tags": [
           "admin-alert-recipients"
         ]
@@ -20443,7 +20443,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-913 — reconcile with SNS now",
+        "summary": "Reconcile with SNS now",
         "tags": [
           "admin-alert-recipients"
         ]
@@ -20506,7 +20506,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-913 — queue a test ops e-mail",
+        "summary": "Queue a test ops e-mail",
         "tags": [
           "admin-alert-recipients"
         ]
@@ -20578,7 +20578,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-913 — remove a recipient (unsubscribe)",
+        "summary": "Remove a recipient (unsubscribe)",
         "tags": [
           "admin-alert-recipients"
         ]
@@ -20650,7 +20650,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-913 — send the AWS confirmation again",
+        "summary": "Send the AWS confirmation again",
         "tags": [
           "admin-alert-recipients"
         ]
@@ -20723,7 +20723,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-884 — health and version of every app (cached 60 s)",
+        "summary": "Health and version of every app (cached 60 s)",
         "tags": [
           "admin-platform-ops"
         ]
@@ -20786,7 +20786,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-936 — the partner CRM's job backlog per kind (crm.ops.v1)",
+        "summary": "The partner CRM's job backlog per kind (crm.ops.v1)",
         "tags": [
           "admin-platform-ops"
         ]
@@ -20868,7 +20868,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-884 — one app's health and version card",
+        "summary": "One app's health and version card",
         "tags": [
           "admin-platform-ops"
         ]
@@ -21092,7 +21092,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-884 — staff action trail (acp_shared.audit_log)",
+        "summary": "Staff action trail (acp_shared.audit_log)",
         "tags": [
           "admin-platform-ops"
         ]
@@ -21172,7 +21172,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-884 — verify the audit_log hash chain (CIS 248)",
+        "summary": "Verify the audit_log hash chain (CIS 248)",
         "tags": [
           "admin-platform-ops"
         ]
@@ -21262,7 +21262,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-884 — cost per app for a month (AWS by App tag + LLM spend by app)",
+        "summary": "Cost per app for a month (AWS by App tag + LLM spend by app)",
         "tags": [
           "admin-platform-ops"
         ]
@@ -21354,7 +21354,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-941 — the CRM agencies (keyset page)",
+        "summary": "The CRM agencies (keyset page)",
         "tags": [
           "admin-crm-console"
         ]
@@ -21427,7 +21427,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-941 — create a CRM agency (201; an existing id is 409 tenant_exists)",
+        "summary": "Create a CRM agency (201; an existing id is 409 tenant_exists)",
         "tags": [
           "admin-crm-console"
         ]
@@ -21500,7 +21500,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-941 — one CRM agency",
+        "summary": "One CRM agency",
         "tags": [
           "admin-crm-console"
         ]
@@ -21573,7 +21573,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-941 — agency export / deletion requests",
+        "summary": "Agency export / deletion requests",
         "tags": [
           "admin-crm-console"
         ]
@@ -21656,7 +21656,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-941 — raise an export / deletion request",
+        "summary": "Raise an export / deletion request",
         "tags": [
           "admin-crm-console"
         ]
@@ -21729,7 +21729,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-941 — plan, seats, allowed features, insights opt-out",
+        "summary": "Plan, seats, allowed features, insights opt-out",
         "tags": [
           "admin-crm-console"
         ]
@@ -21814,7 +21814,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-941 — allow features (the owner switches on)",
+        "summary": "Allow features (the owner switches on)",
         "tags": [
           "admin-crm-console"
         ]
@@ -21899,7 +21899,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-941 — insights opt-out on the owner's request",
+        "summary": "Insights opt-out on the owner's request",
         "tags": [
           "admin-crm-console"
         ]
@@ -21972,7 +21972,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-941 — failed jobs of one agency (last 7 days)",
+        "summary": "Failed jobs of one agency (last 7 days)",
         "tags": [
           "admin-crm-console"
         ]
@@ -22067,7 +22067,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-941 — re-queue one failed job",
+        "summary": "Re-queue one failed job",
         "tags": [
           "admin-crm-console"
         ]
@@ -22152,7 +22152,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-941 — lock an agency",
+        "summary": "Lock an agency",
         "tags": [
           "admin-crm-console"
         ]
@@ -22225,7 +22225,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-941 — member ids, roles, statuses, pending owner recovery",
+        "summary": "Member ids, roles, statuses, pending owner recovery",
         "tags": [
           "admin-crm-console"
         ]
@@ -22326,7 +22326,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-941 — disable a member",
+        "summary": "Disable a member",
         "tags": [
           "admin-crm-console"
         ]
@@ -22411,7 +22411,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-941 — invite the first owner (empty agency only)",
+        "summary": "Invite the first owner (empty agency only)",
         "tags": [
           "admin-crm-console"
         ]
@@ -22496,7 +22496,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-941 — start an owner recovery (14 days)",
+        "summary": "Start an owner recovery (14 days)",
         "tags": [
           "admin-crm-console"
         ]
@@ -22597,7 +22597,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-941 — complete a due owner recovery",
+        "summary": "Complete a due owner recovery",
         "tags": [
           "admin-crm-console"
         ]
@@ -22682,7 +22682,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-941 — unlock an agency",
+        "summary": "Unlock an agency",
         "tags": [
           "admin-crm-console"
         ]
@@ -22755,7 +22755,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-941 — usage meters of one agency",
+        "summary": "Usage meters of one agency",
         "tags": [
           "admin-crm-console"
         ]
@@ -22818,7 +22818,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-941 — what the S-01 page may show (can_write) for this staff member",
+        "summary": "What the S-01 page may show (can_write) for this staff member",
         "tags": [
           "admin-crm-console"
         ]
@@ -22881,7 +22881,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-883 — CIS staff accounts",
+        "summary": "CIS staff accounts",
         "tags": [
           "admin-platform"
         ]
@@ -22952,7 +22952,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-816 C6 — create a staff account (DB, then Cognito)",
+        "summary": "Create a staff account (DB, then Cognito)",
         "tags": [
           "admin-platform"
         ]
@@ -23015,7 +23015,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-816 — latest staff directory reconcile report (read-only)",
+        "summary": "Latest staff directory reconcile report (read-only)",
         "tags": [
           "admin-platform"
         ]
@@ -23078,7 +23078,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-816 — run the staff directory reconcile now (report only)",
+        "summary": "Run the staff directory reconcile now (report only)",
         "tags": [
           "admin-platform"
         ]
@@ -23150,7 +23150,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-883 — one CIS staff account",
+        "summary": "One CIS staff account",
         "tags": [
           "admin-platform"
         ]
@@ -23222,7 +23222,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-816 C6 — disable (DB, AdminDisableUser, global sign-out)",
+        "summary": "Disable (DB, AdminDisableUser, global sign-out)",
         "tags": [
           "admin-platform"
         ]
@@ -23294,7 +23294,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-816 C6 — enable (DB, AdminEnableUser)",
+        "summary": "Enable (DB, AdminEnableUser)",
         "tags": [
           "admin-platform"
         ]
@@ -23448,7 +23448,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-816 C6 — change the CIS role and/or the Booking grant",
+        "summary": "Change the CIS role and/or the Booking grant",
         "tags": [
           "admin-platform"
         ]
@@ -23520,7 +23520,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-816 C6 — reset: end every session, re-enable if disabled",
+        "summary": "Reset: end every session, re-enable if disabled",
         "tags": [
           "admin-platform"
         ]
@@ -23592,7 +23592,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-816 C6 — retry: make Cognito match the directory row",
+        "summary": "Retry: make Cognito match the directory row",
         "tags": [
           "admin-platform"
         ]
@@ -24139,7 +24139,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-845 — the review's grounded sentences, each with its Jev verdict and label",
+        "summary": "The review's grounded sentences, each with its Jev verdict and label",
         "tags": [
           "admin-pipeline"
         ]
@@ -24237,7 +24237,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-845 — mark (or unmark) one sentence as not supported by the source",
+        "summary": "Mark (or unmark) one sentence as not supported by the source",
         "tags": [
           "admin-pipeline"
         ]
@@ -25010,7 +25010,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-752 — global admin search (tours/tenants/jobs) for the ⌘K palette",
+        "summary": "Global admin search (tours/tenants/jobs) for the ⌘K palette",
         "tags": [
           "admin"
         ]
@@ -25083,7 +25083,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-646 — scope + stale count + spend ceiling (no LLM/DFS spend)",
+        "summary": "Scope + stale count + spend ceiling (no LLM/DFS spend)",
         "tags": [
           "admin-segment-research"
         ]
@@ -25165,7 +25165,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-646/650 — enqueue one admin-triggered research run",
+        "summary": "Enqueue one admin-triggered research run",
         "tags": [
           "admin-segment-research"
         ]
@@ -25228,7 +25228,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-646/650 — the active run (if any) and the last finished run",
+        "summary": "The active run (if any) and the last finished run",
         "tags": [
           "admin-segment-research"
         ]
@@ -25303,7 +25303,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-705 — SEO Intelligence (all tabs)",
+        "summary": "SEO Intelligence (all tabs)",
         "tags": [
           "admin-seo"
         ]
@@ -25548,7 +25548,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-622 — daily LLM + DFS spend time-series for the trend chart",
+        "summary": "Daily LLM + DFS spend time-series for the trend chart",
         "tags": [
           "admin-llm-ops"
         ]
@@ -25668,7 +25668,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-835 — supply content entities",
+        "summary": "Supply content entities",
         "tags": [
           "admin-supply-content"
         ]
@@ -25731,7 +25731,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-835 — the Booking supply feed: cursor, lag, last error, draft jobs, cost today",
+        "summary": "The Booking supply feed: cursor, lag, last error, draft jobs, cost today",
         "tags": [
           "admin-supply-content"
         ]
@@ -25804,7 +25804,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-835 — one entity: facts, versions, open draft and its diff, photos",
+        "summary": "One entity: facts, versions, open draft and its diff, photos",
         "tags": [
           "admin-supply-content"
         ]
@@ -25893,7 +25893,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-835 — queue a new LLM draft (paid, capped)",
+        "summary": "Queue a new LLM draft (paid, capped)",
         "tags": [
           "admin-supply-content"
         ]
@@ -25982,7 +25982,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-835 — hide the content from Booking (rows kept)",
+        "summary": "Hide the content from Booking (rows kept)",
         "tags": [
           "admin-supply-content"
         ]
@@ -26081,7 +26081,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-835 — an edit (a new human draft)",
+        "summary": "An edit (a new human draft)",
         "tags": [
           "admin-supply-content"
         ]
@@ -26197,7 +26197,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-835 — approve and publish a version",
+        "summary": "Approve and publish a version",
         "tags": [
           "admin-supply-content"
         ]
@@ -26313,7 +26313,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-835 — reject a draft",
+        "summary": "Reject a draft",
         "tags": [
           "admin-supply-content"
         ]
@@ -26325,13 +26325,13 @@
         "operationId": "list_tenants_admin_tenants_get",
         "parameters": [
           {
-            "description": "AA-797: also list suspended and offboarded tenants",
+            "description": "also list suspended and offboarded tenants",
             "in": "query",
             "name": "include_inactive",
             "required": false,
             "schema": {
               "default": false,
-              "description": "AA-797: also list suspended and offboarded tenants",
+              "description": "also list suspended and offboarded tenants",
               "title": "Include Inactive",
               "type": "boolean"
             }
@@ -26664,7 +26664,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-666 — a tenant's action timeline",
+        "summary": "A tenant's action timeline",
         "tags": [
           "admin"
         ]
@@ -26837,7 +26837,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-323 — N4-N6 markets/channels/capacity for one tenant",
+        "summary": "N4-N6 markets/channels/capacity for one tenant",
         "tags": [
           "admin"
         ]
@@ -26934,7 +26934,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-323 — set N4-N6 markets/channels/capacity for one tenant",
+        "summary": "Set N4-N6 markets/channels/capacity for one tenant",
         "tags": [
           "admin"
         ]
@@ -27007,7 +27007,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-766 — tenant month-to-date LLM cost, $/piece, $/tour, margin",
+        "summary": "Tenant month-to-date LLM cost, $/piece, $/tour, margin",
         "tags": [
           "admin-tenant360"
         ]
@@ -27367,7 +27367,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-766 — tenant markets, research coverage, unmapped requests",
+        "summary": "Tenant markets, research coverage, unmapped requests",
         "tags": [
           "admin-tenant360"
         ]
@@ -27440,7 +27440,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-978 — the tenant's CIS memberships (Content studio roles)",
+        "summary": "The tenant's CIS memberships (Content studio roles)",
         "tags": [
           "admin-tenant360"
         ]
@@ -27532,7 +27532,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-979 — invite a Content studio member (CIS row + CRM-delivered AA system mail)",
+        "summary": "Invite a Content studio member (CIS row + CRM-delivered AA system mail)",
         "tags": [
           "admin-tenant360"
         ]
@@ -27634,7 +27634,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-978 — change a member's Content studio role (owner / editor / viewer)",
+        "summary": "Change a member's Content studio role (owner / editor / viewer)",
         "tags": [
           "admin-tenant360"
         ]
@@ -27727,7 +27727,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-979 — send a Content studio invitation again (invited members only)",
+        "summary": "Send a Content studio invitation again (invited members only)",
         "tags": [
           "admin-tenant360"
         ]
@@ -27819,7 +27819,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-978 — remove a member (final; the partner CRM signs them out within a minute)",
+        "summary": "Remove a member (final; the partner CRM signs them out within a minute)",
         "tags": [
           "admin-tenant360"
         ]
@@ -28003,7 +28003,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-766 — tenant T10 gate verdicts, held reasons, edit rate",
+        "summary": "Tenant T10 gate verdicts, held reasons, edit rate",
         "tags": [
           "admin-tenant360"
         ]
@@ -28095,7 +28095,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-797 — restore an offboarded tenant with its data and settings",
+        "summary": "Restore an offboarded tenant with its data and settings",
         "tags": [
           "admin"
         ]
@@ -30007,7 +30007,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-629 Tier 2 — tenants waiting on a market outside DFS_LOCATION_MAP, grouped by country",
+        "summary": "Tenants waiting on a market outside DFS_LOCATION_MAP, grouped by country",
         "tags": [
           "admin-llm-ops"
         ]
@@ -30410,7 +30410,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-727 — list rerun waves",
+        "summary": "List rerun waves",
         "tags": [
           "admin-waves"
         ]
@@ -30490,7 +30490,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-727 — create a rerun wave (expected tour set)",
+        "summary": "Create a rerun wave (expected tour set)",
         "tags": [
           "admin-waves"
         ]
@@ -30553,7 +30553,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-727 — evaluate open waves; bell when one ends incomplete",
+        "summary": "Evaluate open waves; bell when one ends incomplete",
         "tags": [
           "admin-waves"
         ]
@@ -30625,7 +30625,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-727 — close a wave (ends its job window)",
+        "summary": "Close a wave (ends its job window)",
         "tags": [
           "admin-waves"
         ]
@@ -30697,7 +30697,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-727 — wave report (4 columns, states, Jev coverage, cost)",
+        "summary": "Wave report (4 columns, states, Jev coverage, cost)",
         "tags": [
           "admin-waves"
         ]
@@ -33316,7 +33316,7 @@
             "description": "Successful Response"
           }
         },
-        "summary": "AA-979 — the agencies a partner-pool person may open in the studio",
+        "summary": "The agencies a partner-pool person may open in the studio",
         "tags": [
           "auth"
         ]
@@ -33337,7 +33337,7 @@
             "description": "Successful Response"
           }
         },
-        "summary": "AA-979 — partner-pool access token -> short Content studio tenant JWT",
+        "summary": "Partner-pool access token -> short Content studio tenant JWT",
         "tags": [
           "auth"
         ]
@@ -34117,7 +34117,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "AA-761 — the tenant's activity trail, newest first, server paging",
+        "summary": "The tenant's activity trail, newest first, server paging",
         "tags": [
           "tenant-account"
         ]
@@ -34227,7 +34227,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "AA-761 — the tenant's activity trail as CSV (current filters)",
+        "summary": "The tenant's activity trail as CSV (current filters)",
         "tags": [
           "tenant-account"
         ]
@@ -34253,7 +34253,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "AA-761 — masked API key, issue date and last use",
+        "summary": "Masked API key, issue date and last use",
         "tags": [
           "tenant-account"
         ]
@@ -34279,7 +34279,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "AA-978 — the agency's Content studio members (invited and active), read only",
+        "summary": "The agency's Content studio members (invited and active), read only",
         "tags": [
           "tenant-account"
         ]
@@ -34503,7 +34503,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Reopen an approved request to re-select a different already-generated angle (AA-497 / AA-494 Decision 3) — no new LLM call",
+        "summary": "Reopen an approved request to re-select a different already-generated angle — no new LLM call",
         "tags": [
           "tenant-angle-gate"
         ]
@@ -34672,7 +34672,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "AA-569 — tenant hand-edit of a piece's content_text (My Content). Only the owning tenant, only while status is approved/held (a piece with real content to edit).",
+        "summary": "Tenant hand-edit of a piece's content_text (My Content). Only the owning tenant, only while status is approved/held (a piece with real content to edit).",
         "tags": [
           "tenant-content-writing"
         ]
@@ -34740,7 +34740,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "AA-569/AA-613 — download a piece's content. format=text (every channel) or format=html (Blog only). For html, mode=document (full standalone HTML file, default) or mode=fragment (bare <article> to embed in a CMS). Every export is audit-logged (AA-613) so admin can count exports per tenant/channel.",
+        "summary": "Download a piece's content. format=text (every channel) or format=html (Blog only). For html, mode=document (full standalone HTML file, default) or mode=fragment (bare <article> to embed in a CMS). Every export is audit-logged so admin can count exports per tenant/channel.",
         "tags": [
           "tenant-content-writing"
         ]
@@ -34786,7 +34786,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "AA-522 — resume support: the latest content_piece for this request's currently chosen angle, or {piece: null} if T9 hasn't written anything for it yet. Lets the FE restore the write step's real state after a reload (in-flight/finished piece, or 'still needs a CTA') instead of relying on client-only React state — see AngleGateTab.tsx's own header comment for the bug this closes.",
+        "summary": "Resume support: the latest content_piece for this request's currently chosen angle, or {piece: null} if T9 hasn't written anything for it yet. Lets the FE restore the write step's real state after a reload (in-flight/finished piece, or 'still needs a CTA') instead of relying on client-only React state — see AngleGateTab.tsx's own header comment for the bug this closes.",
         "tags": [
           "tenant-content-writing"
         ]
@@ -34832,7 +34832,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "AA-501 — tenant-facing pre-T11 review: full write context (atom/tour/goal/angle/DFS-PAA/channel) + the latest content_piece, WITHOUT gate/retry/error detail",
+        "summary": "Tenant-facing pre-T11 review: full write context (atom/tour/goal/angle/DFS-PAA/channel) + the latest content_piece, WITHOUT gate/retry/error detail",
         "tags": [
           "tenant-content-writing"
         ]
@@ -34912,7 +34912,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "AA-501 — /portal/t10-review's list: one row per request (latest content_piece), full write context embedded, WITHOUT gate/retry/error detail",
+        "summary": "/portal/t10-review's list: one row per request (latest content_piece), full write context embedded, WITHOUT gate/retry/error detail",
         "tags": [
           "tenant-content-writing"
         ]
@@ -35224,7 +35224,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "AA-986 — the tenant's own notifications (tour no longer served / served again)",
+        "summary": "The tenant's own notifications (tour no longer served / served again)",
         "tags": [
           "tenant-notifications"
         ]
@@ -35248,7 +35248,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "AA-986 — mark all of the tenant's notifications read",
+        "summary": "Mark all of the tenant's notifications read",
         "tags": [
           "tenant-notifications"
         ]
@@ -35293,7 +35293,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "AA-986 — mark one of the tenant's notifications read",
+        "summary": "Mark one of the tenant's notifications read",
         "tags": [
           "tenant-notifications"
         ]
@@ -36348,7 +36348,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "AA-511 — this tenant's Slate: every Subject that has cleared a Channel's Bar",
+        "summary": "This tenant's Slate: every Subject that has cleared a Channel's Bar",
         "tags": [
           "slate"
         ]
@@ -36372,7 +36372,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "AA-764 — re-propose this tenant's Slate in the background (t7_slate job)",
+        "summary": "Re-propose this tenant's Slate in the background (t7_slate job)",
         "tags": [
           "slate"
         ]
@@ -36780,7 +36780,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "AA-554 mục H.2 — mark a Subject 'cut'; wired to the tenant-facing \"Cut\" button in AA-556 (SlateTab.tsx's SubjectRow)",
+        "summary": "Mark a Subject 'cut'; wired to the tenant-facing \"Cut\" button (SlateTab.tsx's SubjectRow)",
         "tags": [
           "slate"
         ]
@@ -36827,7 +36827,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "AA-511 — pick a Subject, create its T8 angle_gate_request",
+        "summary": "Pick a Subject, create its T8 angle_gate_request",
         "tags": [
           "slate"
         ]

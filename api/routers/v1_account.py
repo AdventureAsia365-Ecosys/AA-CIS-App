@@ -51,7 +51,7 @@ class CsvResponse(Response):
     media_type = "text/csv"
 
 
-@router.get("/activity/export", summary="AA-761 — the tenant's activity trail as CSV (current filters)",
+@router.get("/activity/export", summary="The tenant's activity trail as CSV (current filters)",
             response_class=CsvResponse, responses={200: {"content": {"text/csv": {}}}})
 async def export_activity(
     request: Request,
@@ -73,7 +73,7 @@ async def export_activity(
     )
 
 
-@router.get("/activity", summary="AA-761 — the tenant's activity trail, newest first, server paging",
+@router.get("/activity", summary="The tenant's activity trail, newest first, server paging",
             response_model=AccountActivityPage)
 async def list_activity(
     request: Request,
@@ -90,6 +90,6 @@ async def list_activity(
     return await tenant_account.list_activity(request.app.state.pool, tenant_id, f, page=page, page_size=page_size)
 
 
-@router.get("/api-key", summary="AA-761 — masked API key, issue date and last use", response_model=AccountApiKey)
+@router.get("/api-key", summary="Masked API key, issue date and last use", response_model=AccountApiKey)
 async def get_api_key(request: Request, tenant=Depends(get_tenant)):
     return await tenant_account.api_key_facts(request.app.state.pool, _tenant_id(tenant))
