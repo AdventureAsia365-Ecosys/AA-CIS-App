@@ -1,91 +1,35 @@
 """
-shared/llm_client/bedrock_satellite.py — AA-296 Satellite Bedrock client
-ADDITIVE: Bedrock satellite là primary writer, GPT-4.1 giữ nguyên làm fallback.
-KHÔNG xoá/sửa code GPT-4.1 hiện tại — chỉ thêm nhánh mới trước nó, caller quyết định fallback.
+shared/llm_client/bedrock_satellite.py — Bedrock satellite client (acc3).
 
-STATUS: VERIFIED THẬT qua terminal độc lập 16/07/2026 — cả Sonnet 4.6 lẫn Haiku 4.5
-invoke thành công qua satellite chain. Đã dọn trust policy (bỏ statement debug tạm).
+The api/worker task role on acc2 assumes `AA3-Bedrock-Invoker` on acc3 (ExternalId
+`aa296-satellite-bedrock-acc3`) and invokes Claude through a `global.` inference profile.
+acc3 is the ONLY satellite account: the former cross-account fallback account left the
+ecosystem in AA-998 (S255). When acc3 fails there is no cross-account retry; the caller
+falls back to another model on the same account (client.py legacy chain, route
+fallback_model_ids) or the job retries.
 
 ═══════════════════════════════════════════════════════════════════════════
-⚠️ BUG QUAN TRỌNG ĐÃ PHÁT HIỆN (16/07/2026) — ĐỌC TRƯỚC KHI SỬA FILE NÀY:
+IAM NOTE (found 16/07/2026, AA-296) — READ BEFORE CHANGING MODELS HERE:
 
-Khi gọi bedrock:InvokeModel qua một ASSUMED-ROLE session (STS AssumeRole,
-chính là cơ chế satellite này dùng), Bedrock IAM evaluation dùng dạng ARN
-foundation-model KHÔNG CÓ REGION:
+When bedrock:InvokeModel runs on an ASSUMED-ROLE session (this module's STS
+AssumeRole), Bedrock IAM evaluation also uses the foundation-model ARN WITHOUT
+a region:
     arn:aws:bedrock:::foundation-model/anthropic.claude-sonnet-4-6
-                     ^^ region rỗng, 3 dấu : liền nhau
-
-...KHÁC với dạng CÓ region mà CloudTrail/Console luôn hiển thị:
+...besides the regional form CloudTrail/Console show:
     arn:aws:bedrock:us-west-1::foundation-model/anthropic.claude-sonnet-4-6
 
-Không có tài liệu AWS chính thức nào mô tả rõ hành vi này. Phát hiện được
-bằng thực nghiệm: gọi trực tiếp từ terminal (ngoài ECS/container), test cả
-2 dạng ARN riêng lẻ rồi cùng lúc — chỉ khi policy có ĐỦ CẢ 2 dạng thì
-invoke mới thành công nhất quán.
+⇒ The invoker role's permission policy must list BOTH forms for every model.
+  When adding a model, add both ARNs, not only the regional one.
 
-⇒ IAM permission policy trên role AA-Bedrock-Invoker (acc1) PHẢI có cả 2
-  dạng ARN cho mỗi model, không chỉ 1. Nếu sau này thêm model mới (không
-  chỉ Sonnet 4.6/Haiku 4.5), nhớ thêm CẢ 2 dạng ARN vào policy, không chỉ
-  dạng có region như trực giác thường làm.
-
-⚠️ Đừng tin errorMessage (free text) khi debug AccessDeniedException từ
-  Bedrock qua assumed-role — nó có thể hiển thị SAI dạng ARN đang thực sự
-  được đánh giá (đã quan sát: cùng policy, cùng request, error text đổi
-  qua lại giữa 2 dạng không theo quy luật). Tin resources[].ARN trong
-  CloudTrail (structured field) nếu cần đối chiếu, không tin câu chữ.
+⚠️ Do not trust the free-text errorMessage of an AccessDeniedException through
+  an assumed role; read resources[].ARN in CloudTrail instead.
 ═══════════════════════════════════════════════════════════════════════════
 
-STEP 0 verified (16/07/2026):
-- Role acc1: AA-Bedrock-Invoker (ARN built from ACC1_ACCOUNT_ID below)
-  trust: CHỈ acc2's role aa-cis-dev-ecs-task-role,
-         Condition StringEquals sts:ExternalId=aa296-satellite-bedrock
-  permission (policy InvokeApprovedClaudeModelsOnly): bedrock:InvokeModel +
-  InvokeModelWithResponseStream, scoped 6 Resource ARN (2 model × 3 dạng:
-  inference-profile, foundation-model+region, foundation-model region-rỗng)
-- Role acc2: aa-cis-dev-ecs-task-role có inline policy RIÊNG
-  (aa-cis-dev-ecs-assume-bedrock-invoker, KHÔNG đụng policy cũ
-  aa-cis-dev-ecs-task-policy) cho phép sts:AssumeRole đúng role acc1 trên.
-- Inference profile prefix Claude = "global." (KHÔNG phải "us." như ghi cũ
-  trong skill/memory trước AA-296 — đã xác nhận qua Console, tài liệu skill
-  cần update).
-- Response schema Anthropic-on-Bedrock: content[0].text, KHÔNG phải
-  choices[].message.content như Writer/Palmyra (OpenAI-compatible) — nếu
-  sau này thêm Palmyra vào cùng client, cần parser riêng theo provider.
-
-TODO còn lại trước khi coi AA-296 hoàn tất production-ready:
-[x] AssumeRole chain verify thật (qua S3, qua terminal độc lập)
-[x] Invoke Sonnet 4.6 + Haiku 4.5 thành công (terminal độc lập)
-[x] Cache SessionToken theo TTL trong code thật (không AssumeRole mỗi request)
-[ ] CloudWatch metric t3_fallback_used khi rơi về GPT-4.1
-[ ] Unit test: mock STS + Bedrock, verify fallback path khi satellite lỗi
-[x] Tích hợp vào S1 rewrite node thật (services/content_generation/ hoặc
-    tương đương) — file này mới chỉ là client, chưa gọi từ pipeline
-[ ] Update skill aa-ecosys-repos / ai-nghiep với bài học "2-dạng ARN" này
-
-═══════════════════════════════════════════════════════════════════════════
-AA-397/AA-398 — acc3 thêm vào làm satellite chính, acc1 lùi
-xuống fallback (2026-08-12):
-
-- Cả session cache VÀ hàm public đều nhận tham số `account: str` ("acc1" |
-  "acc3", mặc định "acc1" — giữ nguyên hành vi cũ cho caller chưa cập nhật,
-  vd api/routers/v1_atoms.py's Batch control-plane client, xem dưới).
-- acc3's role `AA3-Bedrock-Invoker` CHỈ có `bedrock:InvokeModel` +
-  `InvokeModelWithResponseStream` (accounts/aa365/bedrock_satellite_assume.tf
-  + accounts/acc3-bedrock/main.tf, AA-CIS-Infra, cả 2 đã apply thật) — KHÔNG
-  có Batch permissions (CreateModelInvocationJob/PassRole), quyết định rõ
-  trong AA-CIS-Infra's docs/implementation-notes/AA-397.md Bước 1 Decisions.
-  ⇒ get_satellite_client("bedrock", account="acc3") cho Batch control-plane
-  (AA-302, api/routers/v1_atoms.py) SẼ AccessDenied — cố ý KHÔNG đổi call đó
-  sang acc3, giữ default account="acc1".
-- Invoke-model test thật (qua ECS exec, đúng chain production) xác nhận cả 2
-  model pass trên acc3 sau khi Nghiep enable AWS Marketplace subscription cho
-  Haiku 4.5 (Sonnet 4.6 đã có access từ trước) — xem AA-CIS-App's
-  docs/implementation-notes/AA-397.md.
-- Thêm log phân loại AccessDeniedException riêng trong invoke_claude() (không
-  đổi luồng try/except gốc) — để phân biệt "model access chưa enable trên
-  account này" (transient, có thể tự khắc phục qua Marketplace) khỏi lỗi khác
-  (network, IAM sai, model id sai...) khi đọc CloudWatch log sau này.
-═══════════════════════════════════════════════════════════════════════════
+- acc3's role has InvokeModel + InvokeModelWithResponseStream; Bedrock Batch
+  (CreateModelInvocationJob/PassRole) is granted separately (bedrock_batch.py).
+- Response schema Anthropic-on-Bedrock: content[0].text (not OpenAI choices[]).
+- invoke_claude() logs AccessDeniedException separately (satellite_access_denied)
+  so a missing Marketplace subscription is told apart from IAM/network errors.
 """
 from __future__ import annotations
 
@@ -102,39 +46,29 @@ from botocore.exceptions import ClientError
 logger = structlog.get_logger()
 
 # ---------------------------------------------------------------- config
-# AA-902 — the satellite account IDs come from the task environment (AA-CIS-Infra sets them on the api and
-# worker task definitions; this repo is public and carries no account ID). Same names as TripPlanner:
-# BEDROCK_ACCT_PRIMARY = acc3, BEDROCK_ACCT_FALLBACK = acc1. Every other module builds its ARNs from these
-# two names (cost_explorer.py, bedrock_batch.py import them). Unset → "" and the satellite path fails
-# loudly at call time (AccessDenied on a malformed ARN) instead of silently using a stale account.
-ACC1_ACCOUNT_ID = os.environ.get("BEDROCK_ACCT_FALLBACK", "")
+# AA-902 — the satellite account ID comes from the task environment (AA-CIS-Infra sets it on the api and
+# worker task definitions; this repo is public and carries no account ID). Same name as TripPlanner:
+# BEDROCK_ACCT_PRIMARY = acc3. Every other module builds its ARNs from it (cost_explorer.py,
+# bedrock_batch.py import it). Unset → "" and the satellite path fails loudly at call time
+# (AccessDenied on a malformed ARN) instead of silently using a stale account.
+# AA-998: acc3 is the only satellite account (the fallback account was removed).
 ACC3_ACCOUNT_ID = os.environ.get("BEDROCK_ACCT_PRIMARY", "")
-
-ACC1_ROLE_ARN = f"arn:aws:iam::{ACC1_ACCOUNT_ID}:role/AA-Bedrock-Invoker"
-ACC1_EXTERNAL_ID = "aa296-satellite-bedrock"
-ACC1_REGION = "us-west-1"
 
 ACC3_ROLE_ARN = f"arn:aws:iam::{ACC3_ACCOUNT_ID}:role/AA3-Bedrock-Invoker"
 ACC3_EXTERNAL_ID = "aa296-satellite-bedrock-acc3"
 ACC3_REGION = "us-west-1"
 
-# AA-397 — 1 entry per satellite account, session cache + invoke_claude() đều
-# tra cứu qua dict này (thêm account mới chỉ cần thêm 1 entry, không sửa logic).
+# The only satellite account. The session cache and invoke_claude() look accounts up here, so an
+# unknown account (e.g. the retired fallback account) raises ValueError instead of reaching AWS.
+DEFAULT_SATELLITE_ACCOUNT = "acc3"
 _SATELLITE_ACCOUNTS = {
-    "acc1": {"role_arn": ACC1_ROLE_ARN, "external_id": ACC1_EXTERNAL_ID, "region": ACC1_REGION},
     "acc3": {"role_arn": ACC3_ROLE_ARN, "external_id": ACC3_EXTERNAL_ID, "region": ACC3_REGION},
 }
 
-# Giữ tên cũ (không xoá — vẫn export, phòng import khác trong repo) trỏ về acc1,
-# đồng thời thêm bảng tra cứu account-aware cho account mới.
-#
-# AA-348 — cả 2 satellite account đều invoke Sonnet 4-6 (`claude-sonnet-4-6`), KHÁC với
-# shared/llm_client/pricing.py's BEDROCK_SONNET constant (4-5-20250929) — constant đó chỉ đặt tên
-# đúng cho nhánh acc2-native (T1); nhánh satellite (T1.5a/b, file này) CỐ Ý invoke version mới hơn
-# (verified thật 16/07/2026, xem STATUS ở đầu file) — không phải lỗi copy-paste, đã xác nhận lại
-# qua investigation của AA-348. Đừng "sửa cho khớp" version ở đây nếu chỉ dựa vào tên hằng số ở
-# pricing.py — đổi model thật invoke ở đây là một thay đổi hành vi/infra thật (IAM ARN scoping +
-# availability check trên cả 2 satellite account), ngoài phạm vi 1 việc đổi tên/comment.
+# AA-348 — the satellite invokes Sonnet 4-6 (`claude-sonnet-4-6`), unlike
+# shared/llm_client/pricing.py's BEDROCK_SONNET constant (4-5-20250929), which names the
+# acc2-native branch (T1) only. Deliberate, verified 16/07/2026 — do not "align" the version
+# here from the pricing constant name: changing the invoked model is an IAM/availability change.
 _PROFILE_ID_SONNET = "global.anthropic.claude-sonnet-4-6"
 _PROFILE_ID_HAIKU = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
 
@@ -143,22 +77,17 @@ def _inference_profile_arn(account_id: str, region: str, profile_id: str) -> str
     return f"arn:aws:bedrock:{region}:{account_id}:inference-profile/{profile_id}"
 
 
-INFERENCE_PROFILE_SONNET = _inference_profile_arn(ACC1_ACCOUNT_ID, ACC1_REGION, _PROFILE_ID_SONNET)
-INFERENCE_PROFILE_HAIKU = _inference_profile_arn(ACC1_ACCOUNT_ID, ACC1_REGION, _PROFILE_ID_HAIKU)
+INFERENCE_PROFILE_SONNET = _inference_profile_arn(ACC3_ACCOUNT_ID, ACC3_REGION, _PROFILE_ID_SONNET)
+INFERENCE_PROFILE_HAIKU = _inference_profile_arn(ACC3_ACCOUNT_ID, ACC3_REGION, _PROFILE_ID_HAIKU)
 
 _INFERENCE_PROFILES = {
-    "acc1": {"sonnet": INFERENCE_PROFILE_SONNET, "haiku": INFERENCE_PROFILE_HAIKU},
-    "acc3": {
-        "sonnet": _inference_profile_arn(ACC3_ACCOUNT_ID, ACC3_REGION, _PROFILE_ID_SONNET),
-        "haiku": _inference_profile_arn(ACC3_ACCOUNT_ID, ACC3_REGION, _PROFILE_ID_HAIKU),
-    },
+    "acc3": {"sonnet": INFERENCE_PROFILE_SONNET, "haiku": INFERENCE_PROFILE_HAIKU},
 }
 
 ANTHROPIC_VERSION = "bedrock-2023-05-31"
 
-# session cache — tránh gọi AssumeRole mỗi request (STS session mặc định 1h,
-# nhưng role có MaxSessionDuration=3600s — xem Console AA-Bedrock-Invoker).
-# AA-397: keyed theo account, mỗi account giữ session/expiry riêng.
+# session cache — avoid AssumeRole on every request (role MaxSessionDuration=3600s).
+# Keyed by account (AA-397), each account keeps its own session/expiry.
 _cached_sessions: dict[str, boto3.Session] = {}
 _cached_session_expiry: dict[str, float] = {}
 _SESSION_REFRESH_MARGIN_SECONDS = 300  # refresh 5 phút trước khi hết hạn thật
@@ -183,7 +112,7 @@ class BedrockInvokeResult:
     stop_reason: Optional[str] = None
 
 
-def _get_satellite_session(account: str = "acc1") -> boto3.Session:
+def _get_satellite_session(account: str = DEFAULT_SATELLITE_ACCOUNT) -> boto3.Session:
     """STS AssumeRole vào satellite account chỉ định, cache theo TTL (AA-397:
     cache riêng từng account, không dùng chung 1 session global nữa)."""
     if account not in _SATELLITE_ACCOUNTS:
@@ -218,15 +147,12 @@ def _get_satellite_session(account: str = "acc1") -> boto3.Session:
     return session
 
 
-def get_satellite_client(service_name: str = "bedrock-runtime", account: str = "acc1"):
+def get_satellite_client(service_name: str = "bedrock-runtime", account: str = DEFAULT_SATELLITE_ACCOUNT):
     """Client boto3 bất kỳ (satellite, account chỉ định qua tham số `account`)
     qua session AssumeRole dùng chung (cache TTL) — service_name mặc định
     "bedrock-runtime" (InvokeModel, như invoke_claude() đang dùng) hoặc
     "bedrock" (control-plane, vd CreateModelInvocationJob cho Batch API,
-    AA-302). `account` mặc định "acc1" — GIỮ NGUYÊN hành vi cũ cho caller
-    chưa cập nhật. AA-397: acc3's role KHÔNG có Batch permissions (chỉ
-    InvokeModel/InvokeModelWithResponseStream) — KHÔNG gọi account="acc3" cho
-    service_name="bedrock" (control-plane), sẽ AccessDenied."""
+    AA-302). `account` defaults to acc3, the only satellite account (AA-998)."""
     session = _get_satellite_session(account)
     region = _SATELLITE_ACCOUNTS[account]["region"]
     return session.client(service_name, region_name=region)
@@ -270,14 +196,13 @@ def invoke_claude(
     model: str = "sonnet",
     max_tokens: int = 4096,
     system: Optional[str] = None,
-    account: str = "acc1",
+    account: str = DEFAULT_SATELLITE_ACCOUNT,
     on_delta: Optional[Callable[[str], None]] = None,
     temperature: Optional[float] = None,
 ) -> BedrockInvokeResult:
     """
     model: "sonnet" (editorial, S1 rewrite) | "haiku" (schema/fast tasks)
-    account: "acc1" | "acc3" (AA-397, mặc định "acc1" — GIỮ NGUYÊN hành vi cũ
-      cho caller chưa cập nhật tham số này).
+    account: "acc3" — the only satellite account (AA-998); anything else raises ValueError.
     system: system prompt riêng (brand rules, JSON-schema instructions...).
       QUAN TRỌNG — AA-296 review (16/07/2026): field này BẮT BUỘC phải truyền
       khi gọi từ pipeline S1 rewrite thật. _call_bedrock (acc2, T1) gửi
@@ -331,8 +256,8 @@ def invoke_claude(
             body_dict["system"] = build_cached_system_prompt(system)
         body = json.dumps(body_dict)
         if on_delta is not None:
-            # AA-637 — live-progress path: same request, streamed. The acc1/acc3 roles already
-            # allow InvokeModelWithResponseStream (see get_satellite_client docstring).
+            # AA-637 — live-progress path: same request, streamed. The acc3 role allows
+            # InvokeModelWithResponseStream.
             return _invoke_streaming(bedrock_rt, inference_profile, body, model_label, t0, on_delta)
         resp = bedrock_rt.invoke_model(
             modelId=inference_profile,

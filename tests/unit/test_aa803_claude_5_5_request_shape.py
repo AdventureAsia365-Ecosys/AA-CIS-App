@@ -18,7 +18,7 @@ from shared.llm_client.models import LLMRequest
 
 
 def _row(key, **kw):
-    """The catalog row as migration 259 seeds it."""
+    """The catalog row as migration 259 seeds it (the acc1 profile stays until migration 295 removes it)."""
     profile = f"global.anthropic.claude-{key}"
     base = dict(model_key=key, label=key, vendor="anthropic", provider="bedrock", api_style="converse",
                 bedrock_profile_ids={"acc3": profile, "acc1": profile}, callable_via=("llm_client",),
@@ -115,7 +115,8 @@ def test_max_tokens_capped_by_catalog(model):
 
 
 @pytest.mark.parametrize("model", NEW_MODELS, ids=lambda m: m.model_key)
-def test_routes_to_acc1_when_the_stage_prefers_it(model):
+def test_a_stage_preferring_acc1_still_runs_on_acc3(model):
+    # AA-998: the stale acc1 profile is never chosen, even when asked for.
     rt = MagicMock()
     rt.converse.return_value = _text_reply()
     c = _client()
@@ -124,8 +125,8 @@ def test_routes_to_acc1_when_the_stage_prefers_it(model):
             patch("shared.llm_client.pricing._catalog_rates", return_value=None), \
             patch("shared.llm_client.client.stream_sink.delta_callback", return_value=None):
         resp = c._call_catalog_model(_req(model), model.model_key, "acc1")
-    gsc.assert_called_once_with("bedrock-runtime", account="acc1")
-    assert resp.satellite_account == "acc1"
+    gsc.assert_called_once_with("bedrock-runtime", account="acc3")
+    assert resp.satellite_account == "acc3"
 
 
 @pytest.mark.parametrize("model", NO_FORCED_TOOL, ids=lambda m: m.model_key)

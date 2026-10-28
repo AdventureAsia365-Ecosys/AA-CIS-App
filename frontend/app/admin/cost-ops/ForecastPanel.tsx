@@ -80,7 +80,7 @@ function useColumns() {
             <div style={{ fontWeight: 600 }}>{r.label}</div>
             {r.accounts && r.accounts.length > 0 && (
               <div style={{ fontSize: 11.5, color: K.muted }}>
-                {r.accounts.map((a) => `${a.account} ${usd(a.forecast_usd)}`).join(" · ")}
+                {r.accounts.map((a) => `${a.label} ${usd(a.forecast_usd)}`).join(" · ")}
               </div>
             )}
           </div>

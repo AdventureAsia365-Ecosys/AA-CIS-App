@@ -399,7 +399,7 @@ def texts_of(piece: dict, signals_by_piece: dict[str, list[dict]]) -> list[tuple
 def l0_verdict(rule: dict, *, before: int, after: int, new_hard_stops: dict) -> tuple[bool, Optional[str]]:
     """(l0_ok, why not) of a rule. Only a lexicon rule of a T9 writer has an L0 path."""
     if rule.get("kind") != "lexicon":
-        return False, "not a lexicon rule (it waits for a release: AA-919)"
+        return False, "not a lexicon rule (it waits for a release)"
     if rule.get("writer") not in l0.L0_WRITERS:
         return False, f"no L0 reader for writer {rule.get('writer')} yet (T9 only)"
     phrase = l0.phrase_of(rule)

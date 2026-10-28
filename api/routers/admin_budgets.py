@@ -42,7 +42,7 @@ def _valid(provider: str, scope: str) -> None:
         raise HTTPException(status_code=422, detail="scope must be 'global' or 'job:<kind>'")
 
 
-@router.get("", summary="AA-649 — spend budgets + today's spend per provider")
+@router.get("", summary="Spend budgets + today's spend per provider")
 async def list_budgets(request: Request):
     pool = request.app.state.pool
     async with pool.acquire() as conn:
@@ -60,7 +60,7 @@ async def list_budgets(request: Request):
     return {"budgets": budgets, "spent_today_usd": spent}
 
 
-@router.put("/{provider}/{scope}", summary="AA-649 — create or update one spend budget")
+@router.put("/{provider}/{scope}", summary="Create or update one spend budget")
 async def upsert_budget(provider: str, scope: str, body: BudgetUpdate, request: Request,
                         x_admin_secret: str = Header(None), x_admin_user_id: str = Header(None)):
     verify_admin_secret(x_admin_secret)

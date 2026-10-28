@@ -303,7 +303,7 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
               <div style={{ fontSize: 13, color: A.body, marginBottom: 10 }}>
                 ⚠ <strong>{unatomizedTours.length} tour{unatomizedTours.length === 1 ? "" : "s"}</strong> in
                 Master Content {unatomizedTours.length === 1 ? "has" : "have"} never been atomized — atomize
-                only runs automatically the moment a tour is freshly published (AA-526); anything published
+                only runs automatically the moment a tour is freshly published; anything published
                 before that, or another way, needs a manual run.
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -1085,7 +1085,7 @@ const SLATE_STATE_TOOLTIP: Record<string, string> = {
   proposed: "System-proposed — this Segment/Route cleared the channel's Bar; the tenant hasn't acted on it yet.",
   picked: "The tenant chose to write this proposal (created its T8 Angle Gate request).",
   used: "A content_piece was successfully created from this proposal — it genuinely became content.",
-  cut: "The tenant declined this proposal via the \"Cut\" button in their own Slate (AA-556).",
+  cut: "The tenant declined this proposal via the \"Cut\" button in their own Slate.",
 };
 
 const SLATE_STATE_ORDER = ["proposed", "picked", "used", "cut"] as const;

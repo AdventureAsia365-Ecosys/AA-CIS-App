@@ -3,7 +3,9 @@ profile) against real Postgres.
 
 conftest applies every migration (169 seeds 'sonnet' with the Sonnet 4.5 acc2 profile, 259 adds the rows
 and removes it). These tests run the file again directly, errors NOT swallowed: from the pre-259 state,
-twice (idempotent), and each guard. Every test restores the post-259 state.
+twice (idempotent), and each guard. Every test restores the post-replay state: 259, then 295 (AA-998), which
+removes the acc1 profiles 259 writes — so a test that re-runs 259 first undoes it (the 259 guard would refuse the
+post-295 rows).
 """
 import os
 import sys
@@ -17,6 +19,7 @@ from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 
 MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
                          "259_llm_catalog_haiku_sonnet_5_5.sql")
+MIGRATION_295 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations", "295_llm_acc3_only.sql")
 NEW = ("haiku-5-5", "sonnet-5-5")
 SONNET45_ACC2 = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
 
@@ -31,7 +34,8 @@ def cur():
     finally:
         c.execute("ROLLBACK")
         _undo(c)
-        _run(c)                                 # back to the post-259 state for other tests
+        _run(c)                                 # back to the post-259 state ...
+        c.execute(open(MIGRATION_295, encoding="utf-8").read())   # ... and the post-295 one (AA-998)
         conn.close()
 
 
@@ -71,7 +75,8 @@ def test_new_rows_from_pre_259_state(cur, key, prices):
     _run(cur)
     r = _row(cur, key)
     profile = f"global.anthropic.claude-{key}"
-    assert r["profiles"] == {"acc3": profile, "acc1": profile}   # no acc2: it refuses Claude (AA-843)
+    # what 259 itself writes (no acc2: it refuses Claude, AA-843); 295 later removes acc1 (AA-998)
+    assert r["profiles"] == {"acc3": profile, "acc1": profile}
     assert (r["vendor"], r["provider"], r["api_style"]) == ("anthropic", "bedrock", "converse")
     assert r["callable_via"] == ["llm_client"]
     assert r["supports_temperature"] is False                   # 400 on a non-default temperature
@@ -84,6 +89,7 @@ def test_new_rows_from_pre_259_state(cur, key, prices):
 
 
 def test_new_rows_are_on_no_route(cur):
+    _undo(cur)
     _run(cur)
     cur.execute("SELECT stage FROM shared.llm_role_config WHERE model_id = ANY (%s) "
                 "OR shadow_model_id = ANY (%s) OR fallback_model_ids && %s::text[]",
@@ -100,7 +106,7 @@ def test_sonnet_drops_the_legacy_acc2_profile_only(cur):
     _run(cur)
     r = _row(cur, "sonnet")
     assert r["profiles"] == {k: v for k, v in before.items() if k != "acc2"}
-    assert "acc3" in r["profiles"] and "acc1" in r["profiles"]
+    assert "acc3" in r["profiles"]
     assert r["label"] == "Claude Sonnet 4.6"
     assert r["updated_by"] == "migration-259-aa803"
     cur.execute("SELECT 1 FROM shared.schema_versions WHERE version = '259'")
@@ -127,6 +133,7 @@ def test_guard_hand_edited_sonnet_acc2(cur):
 
 
 def test_guard_existing_row_with_other_profiles(cur):
+    _undo(cur)
     _run(cur)
     cur.execute("UPDATE shared.llm_model_catalog SET bedrock_profile_ids = "
                 "'{\"acc3\": \"global.anthropic.claude-haiku-5-5\"}'::jsonb WHERE model_key = 'haiku-5-5'")

@@ -369,7 +369,7 @@ const ERROR_TEXT: Record<string, string> = {
   synthetic_flag_mismatch: "The agency already exists with the other synthetic setting.",
   invalid_display_name: "The agency name is not valid.",
   invalid_locale: "The locale must be en-AU, en-GB, en-US or vi-VN.",
-  invalid_ticket_ref: "The ticket reference must look like AA-941.",
+  invalid_ticket_ref: "The ticket reference must look like SUP-1024.",
 };
 
 /** One readable line for a failed call: plain words + the code. `detail` may be a code string or FastAPI's 422

@@ -36,7 +36,7 @@ JWT_SECRET = os.environ.get("JWT_SECRET")
 if not JWT_SECRET:
     raise RuntimeError(
         "JWT_SECRET env var is not set. Refusing to start — see Secrets Manager "
-        "aa-cis/dev/jwt-secret (AA-506); no hardcoded fallback is permitted."
+        "aa-cis/dev/jwt-secret; no hardcoded fallback is permitted."
     )
 JWT_ALG      = "HS256"
 JWT_EXPIRY_H = 24

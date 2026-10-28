@@ -273,7 +273,7 @@ async def _build_overview(pool) -> dict:
     }
 
 
-@router.get("", summary="AA-664 — whole-system overview (cached 60s)")
+@router.get("", summary="Whole-system overview (cached 60s)")
 async def get_overview(request: Request, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
     redis = getattr(request.app.state, "redis", None)
@@ -297,7 +297,7 @@ async def get_overview(request: Request, x_admin_secret: str = Header(None)):
     return data
 
 
-@router.get("/ops", summary="AA-858 — ops overview: app health, TripPlanner, Booking funnel, cost per app")
+@router.get("/ops", summary="Ops overview: app health, TripPlanner, Booking funnel, cost per app")
 async def get_ops_overview(request: Request, x_admin_secret: str = Header(None)):
     """The business view on top of /admin/overview (admin-only, ops.read). Four sections, each cached on its own
     (health/TripPlanner/Booking 5 min, cost 15 min) and each degrading to ``status: unavailable`` with a plain

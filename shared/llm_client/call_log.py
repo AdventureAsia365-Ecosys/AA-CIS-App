@@ -198,7 +198,8 @@ async def record_call(
     been threaded through yet, so this stays backward compatible field-by-field.
 
     `account`/`fallback_used`/`provider` (AA-617): per-account LLM cost tracking. `account` is
-    "acc1"/"acc2"/"acc3" (or None for OpenAI); `fallback_used` is LLMResponse.fallback_used;
+    "acc2"/"acc3" (or None for OpenAI; rows before AA-998 may hold the retired fallback account);
+    `fallback_used` is LLMResponse.fallback_used;
     `provider` is derived from the model string when not passed. `model` is stored with the
     "satellite-" prefix stripped (see _normalize_model_provider). All optional — a caller that
     hasn't been threaded through yet writes NULL, staying backward compatible field-by-field."""

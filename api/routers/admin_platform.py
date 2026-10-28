@@ -96,7 +96,7 @@ def _viewer(request: Request) -> dict:
     }
 
 
-@router.get("/staff", summary="AA-883 — CIS staff accounts")
+@router.get("/staff", summary="CIS staff accounts")
 async def list_staff(request: Request):
     pool = request.app.state.pool
     async with pool.acquire() as conn:
@@ -128,7 +128,7 @@ async def _read_one(pool: Any, sid: uuid.UUID) -> Optional[dict]:
     return _staff_row(row) if row is not None else None
 
 
-@router.get("/staff/{staff_id}", summary="AA-883 — one CIS staff account")
+@router.get("/staff/{staff_id}", summary="One CIS staff account")
 async def get_staff(staff_id: str, request: Request):
     row = await _read_one(request.app.state.pool, _uuid_or_404(staff_id))
     if row is None:
@@ -194,7 +194,7 @@ def _refused(exc: StaffDirectoryError) -> HTTPException:
     return HTTPException(status_code=exc.status, detail=exc.detail, headers=exc.headers)
 
 
-@router.post("/staff", summary="AA-816 C6 — create a staff account (DB, then Cognito)")
+@router.post("/staff", summary="Create a staff account (DB, then Cognito)")
 async def create_staff(body: CreateStaffBody, request: Request,
                        cognito: CognitoDirectory = Depends(get_cognito)):
     try:
@@ -207,7 +207,7 @@ async def create_staff(body: CreateStaffBody, request: Request,
     return await _respond(request, result, ok_status=201 if result.created else 200)
 
 
-@router.patch("/staff/{staff_id}/roles", summary="AA-816 C6 — change the CIS role and/or the Booking grant")
+@router.patch("/staff/{staff_id}/roles", summary="Change the CIS role and/or the Booking grant")
 async def change_staff_roles(staff_id: str, body: ChangeRolesBody, request: Request,
                              cognito: CognitoDirectory = Depends(get_cognito)):
     sid = _uuid_or_404(staff_id)
@@ -236,22 +236,22 @@ async def _simple(request: Request, cognito: CognitoDirectory, staff_id: str, op
     return await _respond(request, result)
 
 
-@router.post("/staff/{staff_id}/disable", summary="AA-816 C6 — disable (DB, AdminDisableUser, global sign-out)")
+@router.post("/staff/{staff_id}/disable", summary="Disable (DB, AdminDisableUser, global sign-out)")
 async def disable_staff(staff_id: str, request: Request, cognito: CognitoDirectory = Depends(get_cognito)):
     return await _simple(request, cognito, staff_id, staff_directory.disable_staff)
 
 
-@router.post("/staff/{staff_id}/enable", summary="AA-816 C6 — enable (DB, AdminEnableUser)")
+@router.post("/staff/{staff_id}/enable", summary="Enable (DB, AdminEnableUser)")
 async def enable_staff(staff_id: str, request: Request, cognito: CognitoDirectory = Depends(get_cognito)):
     return await _simple(request, cognito, staff_id, staff_directory.enable_staff)
 
 
-@router.post("/staff/{staff_id}/sign-out", summary="AA-816 C6 — reset: end every session, re-enable if disabled")
+@router.post("/staff/{staff_id}/sign-out", summary="Reset: end every session, re-enable if disabled")
 async def sign_out_staff(staff_id: str, request: Request, cognito: CognitoDirectory = Depends(get_cognito)):
     return await _simple(request, cognito, staff_id, staff_directory.sign_out_staff)
 
 
-@router.post("/staff/{staff_id}/sync", summary="AA-816 C6 — retry: make Cognito match the directory row")
+@router.post("/staff/{staff_id}/sync", summary="Retry: make Cognito match the directory row")
 async def sync_staff(staff_id: str, request: Request, cognito: CognitoDirectory = Depends(get_cognito)):
     return await _simple(request, cognito, staff_id, staff_directory.sync_staff)
 
@@ -272,14 +272,14 @@ async def resend_staff_invite(staff_id: str, request: Request):
 # Report only (services/staff_reconcile.py): WORKFORCE users vs these rows, group/role drift, cutover
 # readiness. A separate path segment (staff-directory), so no /staff/{staff_id} route can shadow it.
 
-@router.get("/staff-directory/health", summary="AA-816 — latest staff directory reconcile report (read-only)")
+@router.get("/staff-directory/health", summary="Latest staff directory reconcile report (read-only)")
 async def staff_directory_health(request: Request):
     from services.jobs import staff_reconcile_job
 
     return await staff_reconcile_job.health(request.app.state.pool)
 
 
-@router.post("/staff-directory/reconcile", summary="AA-816 — run the staff directory reconcile now (report only)")
+@router.post("/staff-directory/reconcile", summary="Run the staff directory reconcile now (report only)")
 async def staff_directory_reconcile(request: Request):
     from services.jobs import staff_reconcile_job
 

@@ -183,7 +183,7 @@ def _iso(row: dict, *keys: str) -> dict:
     return row
 
 
-@router.get("/summary", summary="AA-660 — Jev questions per stage: mode, floors, verdicts, cost")
+@router.get("/summary", summary="Jev questions per stage: mode, floors, verdicts, cost")
 async def summary(request: Request, days: int = Query(7, ge=1, le=90), x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
@@ -297,7 +297,7 @@ _OUTCOMES_ORPHAN_SQL = """
 """
 
 
-@router.get("/outcomes/summary", summary="AA-756 — per question, Jev zone vs. human-established truth")
+@router.get("/outcomes/summary", summary="Per question, Jev zone vs. human-established truth")
 async def outcomes_summary(request: Request, days: int = Query(90, ge=1, le=365),
                            x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
@@ -386,7 +386,7 @@ def build_claim_candidates(rows: list) -> list[dict]:
 
 
 @router.get("/claim-sample",
-            summary="AA-845 — stratified a1_claim_supported sentences (+ source) for a labelling panel")
+            summary="Stratified a1_claim_supported sentences (+ source) for a labelling panel")
 async def claim_sample(request: Request,
                        n: int = Query(100, ge=1, le=300),
                        low_share: float = Query(0.6, ge=0, le=1),
@@ -455,7 +455,7 @@ _LOG_WHERE = """
 """
 
 
-@router.get("/log", summary="AA-660 — Jev verdicts: filter, sort, page")
+@router.get("/log", summary="Jev verdicts: filter, sort, page")
 async def log(request: Request, stage: Optional[str] = None, question_key: Optional[str] = None,
               zone: Optional[str] = Query(None, description="|".join(_ZONES)),
               subject: Optional[str] = Query(None, description="substring of subject_key"),
@@ -511,12 +511,12 @@ def validate_update(body: QuestionUpdate) -> None:
     if body.mode == "enforce":
         if not body.calibration_ref:
             raise HTTPException(status_code=422,
-                                detail="enforce needs a calibration record (calibration_ref, AA-661)")
+                                detail="enforce needs a calibration record (calibration_ref)")
         if body.accept_floor is None and body.reject_ceiling is None:
             raise HTTPException(status_code=422, detail="enforce needs at least one floor")
 
 
-@router.put("/questions/{question_key}", summary="AA-660 — set a question's mode / floors")
+@router.put("/questions/{question_key}", summary="Set a question's mode / floors")
 async def update_question(question_key: str, body: QuestionUpdate, request: Request,
                           x_admin_secret: str = Header(None), x_admin_user_id: Optional[str] = Header(None)):
     verify_admin_secret(x_admin_secret)
@@ -568,7 +568,7 @@ _LAST_EXHAUSTED_SQL = """
 """
 
 
-@router.get("/jev-credit", summary="AA-756 — Jev credit top-ups + estimated balance")
+@router.get("/jev-credit", summary="Jev credit top-ups + estimated balance")
 async def jev_credit(request: Request, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
@@ -610,7 +610,7 @@ class JevCreditCheck(BaseModel):
     test_exhausted_alert: bool = False
 
 
-@router.post("/jev-credit/check", summary="AA-845 — Jev low-credit check (bell + e-mail below the threshold)")
+@router.post("/jev-credit/check", summary="Jev low-credit check (bell + e-mail below the threshold)")
 async def check_jev_credit(request: Request, body: Optional[JevCreditCheck] = None,
                            x_admin_secret: str = Header(None), x_admin_user_id: Optional[str] = Header(None)):
     verify_admin_secret(x_admin_secret)
@@ -635,7 +635,7 @@ class TopupCreate(BaseModel):
     note: Optional[str] = Field(None, max_length=2000)
 
 
-@router.post("/jev-credit/topups", summary="AA-756 — record a Jev credit top-up")
+@router.post("/jev-credit/topups", summary="Record a Jev credit top-up")
 async def create_jev_topup(body: TopupCreate, request: Request, x_admin_secret: str = Header(None),
                            x_admin_user_id: Optional[str] = Header(None)):
     verify_admin_secret(x_admin_secret)
@@ -664,7 +664,7 @@ async def create_jev_topup(body: TopupCreate, request: Request, x_admin_secret: 
     return out
 
 
-@router.delete("/jev-credit/topups/{topup_id}", summary="AA-756 — delete a Jev credit top-up")
+@router.delete("/jev-credit/topups/{topup_id}", summary="Delete a Jev credit top-up")
 async def delete_jev_topup(topup_id: int, request: Request, x_admin_secret: str = Header(None),
                            x_admin_user_id: Optional[str] = Header(None)):
     verify_admin_secret(x_admin_secret)

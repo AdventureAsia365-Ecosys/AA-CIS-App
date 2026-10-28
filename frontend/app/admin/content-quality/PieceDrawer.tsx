@@ -246,7 +246,7 @@ export default function PieceDrawer({ pieceId, onClose }: { pieceId: string; onC
           )}
 
           <Section title="What the writer was given">
-            {!wi ? <div style={{ fontSize: 12, color: A.muted }}>Not recorded (piece written before AA-769).</div> : (
+            {!wi ? <div style={{ fontSize: 12, color: A.muted }}>Not recorded (this piece was written before writer inputs were stored).</div> : (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {thinBrand && <div style={{ fontSize: 12, background: A.amberSoft, padding: "6px 8px", borderRadius: 6 }}>This tenant&rsquo;s brand pack has no core idea or style guide — the writer had no brand to follow.</div>}
                 <div style={{ fontSize: 12, color: A.body }}>

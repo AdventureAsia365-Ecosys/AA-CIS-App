@@ -1,4 +1,4 @@
-"""AA-862 — scripts/aa856_global_profile_probe.py `preflight --invoke --account acc3|acc1`: the gate for
+"""AA-862 — scripts/aa856_global_profile_probe.py `preflight --invoke --account acc3`: the gate for
 migration 240 (satellite answered, 1536 floats, same model as acc2 by cosine). DB, STS and Bedrock
 are stubbed; the probe's real run is in the api container."""
 import asyncio

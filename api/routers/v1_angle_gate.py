@@ -176,7 +176,7 @@ async def choose(request_id: UUID, body: ChooseBody, request: Request, tenant=De
 @router.post(
     "/requests/{request_id}/reopen",
     summary="Reopen an approved request to re-select a different already-generated angle "
-            "(AA-497 / AA-494 Decision 3) — no new LLM call",
+            "— no new LLM call",
 )
 async def reopen(request_id: UUID, request: Request, tenant=Depends(get_tenant)):
     tenant_id = UUID(tenant["sub"])

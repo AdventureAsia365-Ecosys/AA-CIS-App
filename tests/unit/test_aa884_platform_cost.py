@@ -166,9 +166,34 @@ AI_ROWS = [
      "billed_in_acc2": False},
     {"app": "cis", "provider": "bedrock", "account": "acc2", "calls": 50, "cost_usd": 0.5, "billed_in_acc2": True},
     {"app": "cis", "provider": "typesafe", "account": None, "calls": 10, "cost_usd": 0.2, "billed_in_acc2": False},
+    # history: a call on the fallback account retired in AA-998 (llm_call_log keeps its 'acc1' rows)
     {"app": "tripplanner", "provider": "bedrock-satellite", "account": "acc1", "calls": 5, "cost_usd": 0.3,
      "billed_in_acc2": False},
 ]
+
+
+@pytest.mark.asyncio
+async def test_llm_satellites_is_acc3_only_without_retired_history(monkeypatch):
+    monkeypatch.setattr(ce, "read_app_cost_range", AsyncMock(return_value=STORED))
+    monkeypatch.setattr(ce, "read_cost_range", AsyncMock(return_value={
+        "accounts": [{"account_id": ce.ACC3_ACCOUNT_ID, "account_key": "acc3", "bedrock_usd": 4.2}],
+        "fetched_at": "x"}))
+    out = await pc.cost_by_app(_pool(AI_ROWS[:3]), None, redis=None, now=NOW)
+    assert set(out["llm_satellites"]) == {"acc3", "lines", "ce_fetched_at"}
+    assert [line["key"] for line in out["llm_satellites"]["lines"]] == ["acc3"]
+
+
+@pytest.mark.asyncio
+async def test_llm_satellites_retired_cost_explorer_history(monkeypatch):
+    monkeypatch.setattr(ce, "read_app_cost_range", AsyncMock(return_value=STORED))
+    monkeypatch.setattr(ce, "read_cost_range", AsyncMock(return_value={
+        "accounts": [{"account_id": ce.ACC3_ACCOUNT_ID, "account_key": "acc3", "bedrock_usd": 4.2},
+                     {"account_id": "1" * 12, "account_key": ce.RETIRED_ACCOUNT_KEY, "bedrock_usd": 0.97}],
+        "fetched_at": "x"}))
+    out = await pc.cost_by_app(_pool(AI_ROWS[:3]), None, redis=None, now=NOW)
+    assert out["llm_satellites"]["retired"] == {"account_id": None, "ce_bedrock_usd": 0.97,
+                                                "llm_log_estimate_usd": 0.0}
+    assert "1" * 12 not in str(out["llm_satellites"])
 
 
 def _pool(ai_rows=AI_ROWS):
@@ -197,7 +222,9 @@ async def test_cost_by_app_aggregates_without_double_counting(monkeypatch):
     assert out["aws"]["total_usd"] == 101.06 and out["aws"]["untagged_usd"] == 83.72
     assert out["llm_satellites"]["acc3"] == {"account_id": ce.ACC3_ACCOUNT_ID, "ce_bedrock_usd": 4.2,
                                              "llm_log_estimate_usd": 4.0}
-    assert out["llm_satellites"]["acc1"]["ce_bedrock_usd"] is None
+    # AA-998: the tripplanner row of the retired fallback account (history) shows as "retired", no account ID.
+    assert out["llm_satellites"]["retired"] == {"account_id": None, "ce_bedrock_usd": None,
+                                                "llm_log_estimate_usd": 0.3}
     assert out["refresh"]["attempted"] is False and out["refresh"]["stale"] is False
     # AI spend reads [month start, end) as dates; rolled days from llm_call_daily, the rest raw.
     sql, start, end = pool.fetch.await_args.args

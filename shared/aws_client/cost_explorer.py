@@ -10,11 +10,15 @@ Two concerns in one module, mirroring shared/dfs_client/balance.py's split (AA-6
 
 Cross-account AssumeRole reuses the exact pattern shared/llm_client/bedrock_satellite.py already
 verified in production (AA-296/AA-397): acc2's own ECS task role can call ce:GetCostAndUsage
-directly (modules/ecs/main.tf's ecs_task_infra_status_readonly, AA-623 PR #68); acc1/acc3 need
-STS AssumeRole into their own AA-CostExplorer-Reader / AA3-CostExplorer-Reader roles (AA-CIS-Infra
-PR #69) because acc2 is a member account, not the AWS Organizations payer -- confirmed via
-`aws organizations describe-organization` (the payer is a separate account, none of acc1/acc2/acc3),
-so there is no single consolidated CE call across all three.
+directly (modules/ecs/main.tf's ecs_task_infra_status_readonly, AA-623 PR #68); acc3 needs
+STS AssumeRole into its AA3-CostExplorer-Reader role (AA-CIS-Infra PR #69) because acc2 is a
+member account, not the AWS Organizations payer -- confirmed via
+`aws organizations describe-organization` (the payer is a separate account), so there is no
+single consolidated CE call across both.
+
+AA-998: acc2 and acc3 are the only ecosystem accounts. The former LLM fallback account is no
+longer fetched; its historical snapshot rows stay in shared.cost_explorer_snapshot and are
+labelled RETIRED_ACCOUNT_KEY on read.
 
 Distinct session cache from bedrock_satellite.py's (different role, different ExternalId) --
 does NOT reuse or modify that module's cache dicts.
@@ -32,19 +36,21 @@ import structlog
 from botocore.exceptions import BotoCoreError, ClientError
 
 from shared.aws_client import bronze
-from shared.llm_client.bedrock_satellite import ACC1_ACCOUNT_ID, ACC3_ACCOUNT_ID
+from shared.llm_client.bedrock_satellite import ACC3_ACCOUNT_ID
 
 logger = structlog.get_logger()
 
 # ---------------------------------------------------------------- config
-# AA-902 — account IDs are not written here (public repo): acc1/acc3 come from bedrock_satellite.py,
-# the one place they are kept until the task definition carries them; acc2 is this task's own account.
-ACC1_ROLE_ARN = f"arn:aws:iam::{ACC1_ACCOUNT_ID}:role/AA-CostExplorer-Reader"
-ACC1_EXTERNAL_ID = "aa623-satellite-cost-explorer"
-
+# AA-902 — account IDs are not written here (public repo): acc3 comes from bedrock_satellite.py
+# (task env BEDROCK_ACCT_PRIMARY); acc2 is this task's own account.
 ACC3_ROLE_ARN = f"arn:aws:iam::{ACC3_ACCOUNT_ID}:role/AA3-CostExplorer-Reader"
 ACC3_EXTERNAL_ID = "aa623-satellite-cost-explorer-acc3"
 
+# The accounts a Cost Explorer check fetches (AA-998: acc2 + acc3 only).
+FETCH_ACCOUNTS = ("acc2", "acc3")
+# account_key() of a stored row whose account is neither acc2 nor acc3: the only such rows are the
+# history of the LLM fallback account retired in AA-998, still shown on the admin cost pages.
+RETIRED_ACCOUNT_KEY = "retired"
 
 
 def acc2_account_id() -> str:
@@ -53,14 +59,13 @@ def acc2_account_id() -> str:
 
 
 def account_key(account_id: str) -> Optional[str]:
-    """'acc1' | 'acc2' | 'acc3' for a stored account_id, None for any other account. The admin page
+    """'acc2' | 'acc3' for a stored account_id; RETIRED_ACCOUNT_KEY for any other stored account (only
+    the AA-998 retired fallback account's history); None when acc2 cannot be resolved. The admin page
     labels Cost Explorer rows with this key, so the frontend needs no account ID (AA-902)."""
-    if account_id == ACC1_ACCOUNT_ID:
-        return "acc1"
-    if account_id == ACC3_ACCOUNT_ID:
+    if ACC3_ACCOUNT_ID and account_id == ACC3_ACCOUNT_ID:
         return "acc3"
     try:
-        return "acc2" if account_id == acc2_account_id() else None
+        return "acc2" if account_id == acc2_account_id() else RETIRED_ACCOUNT_KEY
     except (BotoCoreError, ClientError) as e:  # a label must never fail the read
         logger.warning("cost_explorer_account_key_unresolved", error=str(e)[:200])
         return None
@@ -72,7 +77,6 @@ def account_key(account_id: str) -> Optional[str]:
 _CE_REGION = "us-east-1"
 
 _SATELLITE_ACCOUNTS = {
-    "acc1": {"role_arn": ACC1_ROLE_ARN, "external_id": ACC1_EXTERNAL_ID, "account_id": ACC1_ACCOUNT_ID},
     "acc3": {"role_arn": ACC3_ROLE_ARN, "external_id": ACC3_EXTERNAL_ID, "account_id": ACC3_ACCOUNT_ID},
 }
 
@@ -121,7 +125,7 @@ def _get_satellite_session(account: str) -> boto3.Session:
 
 
 def _get_ce_client(account: str):
-    """account: "acc1" | "acc2" | "acc3". acc2 uses the ECS task's own credentials directly
+    """account: "acc2" | "acc3". acc2 uses the ECS task's own credentials directly
     (no AssumeRole -- it already has ce:GetCostAndUsage on its own task role, AA-623 PR #68)."""
     if account == "acc2":
         return boto3.client("ce", region_name=_CE_REGION)
@@ -133,7 +137,9 @@ def _fetch_one_account_cost(account: str, start_date: str, end_date: str) -> lis
     """One ce:GetCostAndUsage call for one account, grouped by SERVICE. Returns a list of row
     dicts ready for record_snapshot(). Raises CostExplorerUnavailable on failure -- caller in
     fetch_all_accounts_cost() decides whether to skip this account or propagate."""
-    account_id = acc2_account_id() if account == "acc2" else {"acc1": ACC1_ACCOUNT_ID, "acc3": ACC3_ACCOUNT_ID}[account]
+    if account != "acc2" and account not in _SATELLITE_ACCOUNTS:
+        raise ValueError(f"Unknown Cost Explorer account: {account!r} (valid: {list(FETCH_ACCOUNTS)})")
+    account_id = acc2_account_id() if account == "acc2" else _SATELLITE_ACCOUNTS[account]["account_id"]
     # DAILY x GroupBy SERVICE paginates on longer ranges (NextPageToken) -- without the loop a
     # 30/90-day fetch silently drops every day after the first page.
     results_by_time: list[dict[str, Any]] = []
@@ -179,7 +185,7 @@ def _fetch_one_account_cost(account: str, start_date: str, end_date: str) -> lis
 
 
 def fetch_all_accounts_cost(start_date: str, end_date: str) -> dict[str, Any]:
-    """Fetch Cost Explorer data for acc1/acc2/acc3 independently (no single consolidated call --
+    """Fetch Cost Explorer data for acc2/acc3 independently (no single consolidated call --
     acc2 is not the Organizations payer, see module docstring). A failure on one satellite
     account (e.g. AssumeRole not yet applied) does NOT fail the whole check -- that account's
     rows are simply omitted and listed under "errors", same partial-result philosophy as
@@ -189,14 +195,14 @@ def fetch_all_accounts_cost(start_date: str, end_date: str) -> dict[str, Any]:
     """
     rows: list[dict[str, Any]] = []
     errors: dict[str, str] = {}
-    for account in ("acc1", "acc2", "acc3"):
+    for account in FETCH_ACCOUNTS:
         try:
             rows.extend(_fetch_one_account_cost(account, start_date, end_date))
         except CostExplorerUnavailable as e:
             logger.warning("cost_explorer_account_fetch_failed", account=account, error=str(e))
             errors[account] = str(e)
 
-    if len(errors) == 3:
+    if len(errors) == len(FETCH_ACCOUNTS):
         raise CostExplorerUnavailable(f"Cost Explorer fetch failed for all accounts: {errors}")
 
     return {"rows": rows, "errors": errors}
@@ -243,7 +249,7 @@ async def record_snapshot(pool: asyncpg.Pool, rows: list[dict[str, Any]]) -> int
     """Insert one batch of Cost Explorer rows (same fetched_at for the whole batch, via
     now() default -- inserted in one transaction so a partial-write batch cannot happen).
     Returns the number of rows written. Empty `rows` is a no-op (0 written), not an error --
-    e.g. all 3 accounts failed to fetch but the caller chose to record errors elsewhere."""
+    e.g. every account failed to fetch but the caller chose to record errors elsewhere."""
     if not rows:
         return 0
     async with pool.acquire() as conn:
@@ -305,8 +311,8 @@ async def read_cost_range(pool: asyncpg.Pool, start: date, end_exclusive: date) 
 
 
 # ---------------------------------------------------------------- AA-884: acc2 cost by App tag
-# One GetCostAndUsage call on acc2 (the only account whose resources carry the App cost-allocation tag; acc1/acc3
-# are LLM satellites, attributed from shared.llm_call_log instead), DAILY, grouped by TAG App and SERVICE. CE returns
+# One GetCostAndUsage call on acc2 (the only account whose resources carry the App cost-allocation tag; acc3
+# is the LLM satellite, attributed from shared.llm_call_log instead), DAILY, grouped by TAG App and SERVICE. CE returns
 # the tag group key as "App$<value>"; "App$" (empty value) is untagged spend. Same ~$0.01 per request as above
 # (pagination pages are further requests). Stored in shared.cost_explorer_app_snapshot (CIS 248).
 APP_TAG_KEY = "App"

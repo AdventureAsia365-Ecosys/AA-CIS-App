@@ -241,7 +241,7 @@ async def _rewrite_tour(
     on_stage=None,  # AA-250 B2: optional async callback(node_name: str), fired after each node completes
     batch_text: Optional[str] = None,  # AA-606: pre-generated writer text (Bedrock Batch attempt-1)
     batch_model_used: Optional[str] = None,  # AA-606: model label to record for the batch write
-    batch_account: Optional[str] = None,  # AA-606: satellite account the batch ran on (acc1/acc3)
+    batch_account: Optional[str] = None,  # AA-606: satellite account the batch ran on (acc3)
     tenant_id: Optional[str] = None,  # AA-620: real tenant UUID -> logged in llm_call_log (T2)
     generate_stage: str = "s1_generate",  # AA-620: "t2_generate" for tenant T2, "s1_generate" for A1
     feedback: str = "",  # AA-639: seeds generate_node's PREVIOUS ATTEMPT FEEDBACK (T3 repair rounds)

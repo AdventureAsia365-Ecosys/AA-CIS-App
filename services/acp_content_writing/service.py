@@ -631,8 +631,7 @@ def _cut_truth_items(content_text: str, gate_ledger: list, flags: list, *, chann
     all_cut = n_cut > 0 and not left and not too_short
     reason = (f"{n_cut} flagged sentence(s) cut on {channel}"
               + (f"; {len(left)} flagged sentence(s) left — held for admin review" if left else "")
-              + ("; the cut left the post under its length band — held for admin review" if too_short else "")
-              + " (AA-786)")
+              + ("; the cut left the post under its length band — held for admin review" if too_short else ""))
     marks = {"sentences_cut": n_cut, "sentences_left": left}
     new_f9 = ({**f9, **marks, "blocking": False, "waived": True, "waived_reason": reason} if all_cut
               else {**f9, **marks, "cut_reason": reason})
@@ -683,7 +682,7 @@ def _enforce_authenticity(content_text: str, gate_ledger: list, flags: list, sta
     left = authenticity.find_issues(cut_text, cta) + [v for v in f19["violations"]
                                                        if v.startswith(("title ", "meta "))]
     marks = {"sentences_cut": len(cut), "cut_sentences": [c[:200] for c in cut]}
-    reason = f"{len(cut)} sentence(s) cut in code after the repair (AA-819 AUP guard)"
+    reason = f"{len(cut)} sentence(s) cut in code after the repair (usage-policy guard)"
     if left:
         new_f19 = {**f19, **marks, "violations": left, "cut_reason": reason + "; still flagged — held for admin review"}
     else:
@@ -734,7 +733,7 @@ def _cut_stock_lines(content_text: str, gate_ledger: list, flags: list, *, chann
             refused = "the cut would leave the post under its length band"
     if refused:
         entry = {"gate_targeted": F15_STOCK_CUT_FLAG, "repair_mode": "stock_cut_refused", "sentences_cut": 0,
-                 "violations": [f"stock line(s) kept: {refused} (AA-780)"], "repairable": False}
+                 "violations": [f"stock line(s) kept: {refused}"], "repairable": False}
         return content_text, gate_ledger, flags, entry
     plain_after = _cut_key(cut)
     gone = [it for it in items if _cut_key(it["sentence"]) not in plain_after]
@@ -769,7 +768,7 @@ def _cut_stock_lines(content_text: str, gate_ledger: list, flags: list, *, chann
                       "violations": note})
     entry = {"gate_targeted": F15_STOCK_CUT_FLAG, "repair_mode": "stock_cut", "sentences_cut": len(gone),
              "cut_sentences": [it["sentence"][:200] for it in gone],
-             "violations": [f"{len(gone)} stock-line sentence(s) cut in code after the last attempt (AA-780)"],
+             "violations": [f"{len(gone)} stock-line sentence(s) cut in code after the last attempt"],
              "repairable": False}
     return cut, ledger, new_flags, entry
 

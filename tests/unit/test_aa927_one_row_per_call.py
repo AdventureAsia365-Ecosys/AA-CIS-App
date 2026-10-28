@@ -339,7 +339,7 @@ def test_m_route_fallback_writes_one_gateway_attempt_row(monkeypatch):
     with patch("shared.llm_client.client.get_model_sync", return_value=LUNA), \
             patch.object(c, "_call_key", side_effect=fake):
         resp = c._call_route(LLMRequest(system_prompt="s", user_prompt="u", stage="t10_judge"),
-                             ["gpt-5.6-luna", "gpt-6-luna"], "acc3", "acc1", role="judge")
+                             ["gpt-5.6-luna", "gpt-6-luna"], "acc3", role="judge")
     call_log.wait_for_pending_writes()
     assert resp is good and resp.fallback_used is True
     assert len(rows) == 1
@@ -363,7 +363,7 @@ def test_m2_legacy_chain_wrapped_billed_failure_is_found_through_the_cause(monke
         raise RuntimeError("All LLM providers failed") from inner
     with patch.object(c, "_call_key", side_effect=fake), pytest.raises(RuntimeError):
         c._call_key_logged(LLMRequest(system_prompt="s", user_prompt="u", stage="s1_generate"), "haiku",
-                           "acc3", "acc1", role="writer", position=0)
+                           "acc3", role="writer", position=0)
     call_log.wait_for_pending_writes()
     assert [r["cost_usd"] for r in rows] == [0.01]
 

@@ -462,7 +462,7 @@ function Page() {
   return (
     <AdminMain>
       <PageHeader title="Content Quality"
-        description="Every tenant's written content with the quality signals tenants never see: gate results, flagged sentences, what the writer was given, cost. Tenants always receive their content (AA-770)." />
+        description="Every tenant's written content with the quality signals tenants never see: gate results, flagged sentences, what the writer was given, cost. Tenants always receive their content." />
       <div className="a527-dash-body" style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
         <SocialContentSubNav active="content_quality" />
         {/* width/maxWidth 100%: in the phone column layout (.a527-dash-body) a flex-start child would

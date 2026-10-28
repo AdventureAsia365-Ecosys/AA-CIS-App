@@ -139,10 +139,10 @@ export const OPS_FIXTURE: OpsOverview = {
     ],
   },
   sources: {
-    health: "AWS CloudWatch (acc2, us-west-1)",
+    health: "AWS CloudWatch (main account, us-west-1)",
     tripplanner: "tripplanner.v_ops_traffic_daily (TripPlanner contract view, tp-015) and shared.llm_call_log stage tp_search_embed",
     booking: "booking.v_ops_funnel_daily and booking.v_ops_case_status (Booking contract views, bk-017)",
-    cost: "AWS Cost Explorer by App tag (acc2) and LLM gateway estimates, via the Platform cost module",
+    cost: "AWS Cost Explorer by App tag (main account) and LLM gateway estimates, via the Platform cost module",
   },
   _cached: false,
 };

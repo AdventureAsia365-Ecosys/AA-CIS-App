@@ -154,7 +154,7 @@ class UpdateContentBody(BaseModel):
 
 @router.patch(
     "/pieces/{piece_id}",
-    summary="AA-569 — tenant hand-edit of a piece's content_text (My Content). Only the owning "
+    summary="Tenant hand-edit of a piece's content_text (My Content). Only the owning "
             "tenant, only while status is approved/held (a piece with real content to edit).",
 )
 async def update_piece(
@@ -174,10 +174,10 @@ async def update_piece(
 
 @router.get(
     "/pieces/{piece_id}/export",
-    summary="AA-569/AA-613 — download a piece's content. format=text (every channel) or "
+    summary="Download a piece's content. format=text (every channel) or "
             "format=html (Blog only). For html, mode=document (full standalone HTML file, "
             "default) or mode=fragment (bare <article> to embed in a CMS). Every export is "
-            "audit-logged (AA-613) so admin can count exports per tenant/channel.",
+            "audit-logged so admin can count exports per tenant/channel.",
 )
 async def export_piece(
     piece_id: UUID, request: Request, tenant=Depends(get_tenant),
@@ -234,7 +234,7 @@ async def export_piece(
 
 @router.get(
     "/requests/{request_id}/latest-piece",
-    summary="AA-522 — resume support: the latest content_piece for this request's currently "
+    summary="Resume support: the latest content_piece for this request's currently "
             "chosen angle, or {piece: null} if T9 hasn't written anything for it yet. Lets the "
             "FE restore the write step's real state after a reload (in-flight/finished piece, or "
             "'still needs a CTA') instead of relying on client-only React state — see AngleGate"
@@ -250,7 +250,7 @@ async def get_latest_piece(request_id: UUID, request: Request, tenant=Depends(ge
 
 @router.get(
     "/reviews",
-    summary="AA-501 — /portal/t10-review's list: one row per request (latest content_piece), "
+    summary="/portal/t10-review's list: one row per request (latest content_piece), "
             "full write context embedded, WITHOUT gate/retry/error detail",
 )
 async def list_reviews(request: Request, tenant=Depends(get_tenant)):
@@ -264,7 +264,7 @@ async def list_reviews(request: Request, tenant=Depends(get_tenant)):
 
 @router.get(
     "/requests/{request_id}/review",
-    summary="AA-501 — tenant-facing pre-T11 review: full write context (atom/tour/goal/angle/"
+    summary="Tenant-facing pre-T11 review: full write context (atom/tour/goal/angle/"
             "DFS-PAA/channel) + the latest content_piece, WITHOUT gate/retry/error detail",
 )
 async def get_review(request_id: UUID, request: Request, tenant=Depends(get_tenant)):

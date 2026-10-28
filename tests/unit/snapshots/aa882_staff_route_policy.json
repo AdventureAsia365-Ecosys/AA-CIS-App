@@ -71,6 +71,10 @@
     "capability": "tenant.read",
     "module": "api.routers.admin_atoms"
   },
+  "GET /admin/aws-accounts": {
+    "capability": null,
+    "module": "api.routers.admin_llm_ops"
+  },
   "GET /admin/billing": {
     "capability": "tenant.read",
     "module": "api.routers.admin_pipeline"

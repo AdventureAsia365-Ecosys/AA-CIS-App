@@ -510,7 +510,7 @@ def _v2_report_only_voice(all_codes: list[str], pre_codes: list[str], model_stat
     voice = [c for c in all_codes if c not in hard]
     status = derive_status(hard, None, "manual_check" if model_status == "manual_check" else None)
     report = [{"code": c, "detector": V2_BRAND_AUDIT_DETECTOR, "mode": "report",
-               "detail": "AA voice rubric (report-only on a v2 draft, AA-645 d02)"} for c in voice]
+               "detail": "AA voice rubric (report-only on a v2 draft)"} for c in voice]
     if not voice and status == "pass" and (model_status == "flagged" or publish_ready is False):
         report.append({"code": "BRAND_AUDIT_FLAGGED", "detector": V2_BRAND_AUDIT_DETECTOR, "mode": "report",
                        "detail": "the audit model flagged the draft without a code (report-only on v2)"})

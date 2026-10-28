@@ -251,7 +251,7 @@ async def _dismiss_reviews(conn, out: Outcome, *, all_of_key: bool) -> None:
     status = await conn.execute(f"""
         UPDATE silver_aa_internal.review_queue rq
            SET review_status = 'dismissed'::review_status_enum, reviewed_at = NOW(),
-               reviewer_notes = 'AA-986: ' || $2
+               reviewer_notes = 'tour no longer served: ' || $2
           FROM silver_aa_internal.raw_tours rt
          WHERE rq.tour_id = rt.tour_id
            AND {KEY_EXPR} = $1

@@ -15,8 +15,10 @@ updated_at] contains the call: one candidate = "window" attribution, several = "
 listed), none = "none". started_at is the LAST attempt's start, and succeeded jobs are deleted after 30 days
 (retention_job), so this only explains recent rows; it is a hint, never a fact.
 
-Forecast (C3). Per provider family of the AI / third-party spend — Bedrock (with the acc3 / acc1 / acc2 split), OpenAI,
-Jev (TypeSafe), DataForSEO — and per AWS account bill (acc2, acc3, acc1):
+Forecast (C3). Per provider family of the AI / third-party spend — Bedrock (with the acc3 / acc2 split), OpenAI,
+Jev (TypeSafe), DataForSEO — and per AWS account bill (acc2, acc3). AA-998: the former LLM fallback account left the
+ecosystem; a month that still holds its spend (llm_call_log rows or stored Cost Explorer history) shows it as one
+``retired`` row (no account ID), after acc2 / acc3:
 
   * month to date = the month's spend so far (today's partial day included);
   * run rate = mean daily spend of the last ``RUN_RATE_DAYS`` complete days (may reach into the previous month);
@@ -45,6 +47,7 @@ import structlog
 
 from api.services.platform_cost import month_window, provider_family
 from shared.aws_client import cost_explorer as ce
+from shared.aws_client.accounts import account_label
 
 logger = structlog.get_logger()
 
@@ -63,11 +66,9 @@ PROVIDER_LABELS = {
     "dfs": "DataForSEO",
     "other": "Other LLM providers",
 }
-ACCOUNT_LABELS = {
-    "acc3": "acc3 (LLM satellite, primary)",
-    "acc1": "acc1 (LLM satellite, fallback)",
-    "acc2": "acc2 (main infra)",
-}
+# Display order of the Bedrock split and the AWS rows; the retired account only appears when it has data.
+_BEDROCK_ACCOUNT_ORDER = ("acc3", "acc2", ce.RETIRED_ACCOUNT_KEY)
+_AWS_ACCOUNTS = ("acc2", "acc3")
 
 # ── C2: DataForSEO spend by job ─────────────────────────────────────────────────────────────────────────────────────
 
@@ -380,7 +381,9 @@ def _with_budget(row: dict[str, Any], budget: Optional[float], alert_pct: Option
 
 def _account_of(provider: Optional[str], account: Optional[str]) -> str:
     if (provider or "").startswith("bedrock"):
-        return account or "acc2"          # an older Bedrock row without account ran on acc2 (platform_cost rule)
+        acc = account or "acc2"           # an older Bedrock row without account ran on acc2 (platform_cost rule)
+        # AA-998: any other account is the retired fallback account's history.
+        return acc if acc in ("acc2", "acc3") else ce.RETIRED_ACCOUNT_KEY
     return account or "none"
 
 
@@ -443,18 +446,20 @@ async def cost_forecast(pool: Any, month: Optional[str] = None, *, now: Optional
         _with_budget(row, monthly, alert_pct, f"Budgets tab: daily cap {per_day} USD x {n_days} days"
                      if per_day is not None else "")
         if key == "bedrock":
-            row["accounts"] = [{"account": acc, "label": ACCOUNT_LABELS.get(acc, acc),
+            row["accounts"] = [{"account": acc, "label": account_label(acc) or acc,
                                 **project(accounts[acc], start, month_end, complete_until)}
-                               for acc in sorted(accounts, key=lambda a: ("acc3", "acc1", "acc2").index(a)
-                                                 if a in ("acc3", "acc1", "acc2") else 9)]
+                               for acc in sorted(accounts, key=lambda a: _BEDROCK_ACCOUNT_ORDER.index(a)
+                                                 if a in _BEDROCK_ACCOUNT_ORDER else 9)]
         providers.append(row)
 
     aws_budget = aws_budgets()
     ce_series = _ce_series(ce_rows, ce_app_rows)
     aws = []
-    for acc in ("acc2", "acc3", "acc1"):
+    retired = ce.RETIRED_ACCOUNT_KEY
+    shown = _AWS_ACCOUNTS + ((retired,) if any(start <= d < month_end for d in ce_series.get(retired, {})) else ())
+    for acc in shown:
         days = {d: v for d, v in ce_series.get(acc, {}).items() if d < q_end}
-        row: dict[str, Any] = {"account": acc, "label": ACCOUNT_LABELS[acc], "covered_from": None,
+        row: dict[str, Any] = {"account": acc, "label": account_label(acc), "covered_from": None,
                                "covered_to": None, "fetched_at": None, "days_missing": None,
                                "days_present_in_rate_window": 0}
         in_month = [d for d in days if start <= d < month_end]
@@ -476,7 +481,8 @@ async def cost_forecast(pool: Any, month: Optional[str] = None, *, now: Optional
                        days_present_in_rate_window=sum(
                            1 for d in days
                            if ce_complete_until - timedelta(days=RUN_RATE_DAYS) <= d < ce_complete_until))
-        _with_budget(row, aws_budget.get(acc), DEFAULT_ALERT_PCT, "AWS Budgets (mirrored in code until AA-665 C5)")
+        _with_budget(row, aws_budget.get(acc), DEFAULT_ALERT_PCT,
+                     "AWS Budgets (mirrored in code until the live budgets are read)")
         aws.append(row)
 
     totals = {k: round(sum(p[k] for p in providers), 4) for k in ("mtd_usd", "forecast_usd")}
@@ -495,7 +501,7 @@ async def cost_forecast(pool: Any, month: Optional[str] = None, *, now: Optional
             "providers": "LLM gateway estimates (shared.llm_call_daily + shared.llm_call_log, as Cost per app) and "
                          "shared.dfs_call_log; the CRM's own gateway is not included",
             "aws_accounts": "stored Cost Explorer snapshots (no live call): shared.cost_explorer_snapshot, and for "
-                            "acc2 shared.cost_explorer_app_snapshot when fetched later",
+                            "the main account shared.cost_explorer_app_snapshot when fetched later",
             "budgets": "shared.spend_budget global daily cap x days in month; AWS from AWS_MONTHLY_BUDGET_USD",
             "forecast": f"month to date over complete days + mean of the last {RUN_RATE_DAYS} complete days x days "
                         "left",

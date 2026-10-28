@@ -174,7 +174,7 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
                 "daily LLM rollup; added into the NULL-tenant row of the same key, then deleted"),
     # ── kept
     TenantTable("acp_shared.audit_log", "keep",
-                "append-only hash chain (triggers refuse UPDATE/DELETE); AA-839 keeps the audit row"),
+                "append-only hash chain (triggers refuse UPDATE/DELETE); the erasure keeps the audit row"),
 )
 
 TENANT_TABLE_BY_NAME: dict[str, TenantTable] = {t.table: t for t in TENANT_TABLES}
@@ -240,11 +240,11 @@ TRAVELLER_TEXT: tuple[TravellerScan, ...] = (
                   "a bell notification that carries the address"),
     TravellerScan("shared.job", "id", "t.payload::text", "redact",
                   "a job payload must hold ids only (DM-6.3)",
-                  redact_set="payload = jsonb_build_object('redacted', 'AA-839')"),
+                  redact_set="payload = jsonb_build_object('redacted', 'erasure')"),
     TravellerScan("shared.job", "id", "t.result::text", "redact", "a job result with the address",
-                  redact_set="result = jsonb_build_object('redacted', 'AA-839')"),
+                  redact_set="result = jsonb_build_object('redacted', 'erasure')"),
     TravellerScan("shared.job", "id", "t.error", "redact", "a job error with the address",
-                  redact_set="error = 'redacted (AA-839)'"),
+                  redact_set="error = 'redacted'"),
     TravellerScan("acp_shared.audit_log", "id", "t.details::text", "manual",
                   "append-only audit chain: needs a reviewed migration to redact, never an UPDATE"),
     TravellerScan("acp_shared.publish_log", "publish_id", "t.last_error", "manual",
@@ -276,7 +276,7 @@ TRAVELLER_CHECKLIST: tuple[ChecklistItem, ...] = (
     ChecklistItem("AA-Partner (crm)", "a tenant's own CRM contacts (DM-6.8: the tenant is the controller)",
                   "forward the request to the tenant; AA erases on the tenant's instruction (AA-Partner runbook)"),
     ChecklistItem("Cognito", "the EXTERNAL pool user, if any", "runbook section 3 step 5 (address at a prompt only)"),
-    ChecklistItem("S3", "Booking inbox archives (archive/booking/), AA-825", "runbook section 3 step 6"),
+    ChecklistItem("S3", "Booking inbox archives (archive/booking/)", "runbook section 3 step 6"),
     ChecklistItem("Staff mailbox", "bk_notify_email copies and the request thread", "runbook section 3 step 9"),
     ChecklistItem("Sentry", "events holding the address (CIS project)", "runbook section 3 step 9"),
     ChecklistItem("RDS backups", "automated backups age out in 7 days; delete the manual pre-erasure snapshot",
@@ -291,18 +291,18 @@ TENANT_CHECKLIST: tuple[ChecklistItem, ...] = (
     ChecklistItem("AA-CIS (operator)", "S3 objects listed in s3_refs[].outside_keys (keys outside the two prefixes "
                   "whose DB rows the apply deletes)",
                   "runbook section 4: copy the list from the approved DRY RUN, remove each object after the apply"),
-    ChecklistItem("AA-CIS (operator)", "AA-825 retention archives s3://<bronze>/archive/{llm_call_log,"
+    ChecklistItem("AA-CIS (operator)", "retention archives s3://<bronze>/archive/{llm_call_log,"
                   "tenant_api_usage,job,decision_log}/ (gzipped JSONL rows that still carry the tenant id)",
                   "runbook section 4: scan for the tenant id (S3 Select), then rewrite or remove the object, or "
                   "record the decision to keep it until its lifecycle expiry"),
-    ChecklistItem("AA-CIS (operator)", "AA-729 / AA-919 golden-set fixture and score files under bronze "
+    ChecklistItem("AA-CIS (operator)", "golden-set fixture and score files under bronze "
                   "scripts/out/aa729/ (frozen tenant inputs and outputs; the DB rows go with the apply, these "
                   "objects do not), and any repo copy of that fixture",
                   "runbook section 4: cut a new fixture version without the tenant, import it, then delete the old "
                   "objects (WRITE); the importer refuses an offboarded tenant, so a stale fixture cannot come back"),
     ChecklistItem("AA-Partner (crm)", "the tenant's CRM rows (DM-6.8 hard delete on offboarding)",
                   "AA-Partner tenant erasure, owner crm; cis_app has no grant on crm.*"),
-    ChecklistItem("Cognito", "tenant portal users (AA-813, once built)", "runbook section 4"),
+    ChecklistItem("Cognito", "tenant portal users (once built)", "runbook section 4"),
     ChecklistItem("Sentry", "events tagged with the tenant id", "runbook section 4"),
     ChecklistItem("RDS backups", "automated backups age out in 7 days; delete the manual pre-erasure snapshot",
                   "runbook section 4"),

@@ -29,6 +29,7 @@ from api.core.error_ref import log_exception_ref, new_error_ref, public_error
 from api.core.staff_authz import staff_policy
 from services.quality.registry import threshold
 from api.routers.admin import verify_admin_secret
+from shared.aws_client import accounts as aws_accounts
 from shared.aws_client.cost_explorer import (
     CostExplorerUnavailable,
     fetch_all_accounts_cost,
@@ -38,6 +39,7 @@ from shared.aws_client.cost_explorer import (
 from shared.dfs_client.balance import read_latest_balance, record_balance_snapshot
 from shared.dfs_client.unmapped_market import list_unmapped_market_requests
 from shared.llm_client.catalog import (
+    SERVING_ACCOUNTS,
     CatalogPolicyBlocked,
     CatalogPriceRequired,
     list_catalog_rows,
@@ -86,10 +88,13 @@ _JUDGE_OPTIONS = [
     {"model_id": "gpt-4.1", "label": "GPT-4.1", "via": "OpenAI API", "available": False,
      "reason": "S235: retired; OpenAI API kept only as last-resort fallback via gpt-6-luna-openai"},
 ]
-_ACCOUNT_ROUTE_OPTIONS = [
-    {"value": "acc3", "label": "acc3 (satellite chính)"},
-    {"value": "acc1", "label": "acc1 (satellite fallback)"},
-]
+# AA-998: acc3 is the only satellite account (llm_role_config CHECK, migration 295). The admin shows its AWS
+# account ID, never the key (shared/aws_client/accounts.py), so the label is built per request.
+_ACCOUNT_ROUTE_VALUES = (aws_accounts.LLM_ACCOUNT_KEY,)
+
+
+def _account_route_options() -> list[dict]:
+    return [{"value": k, "label": aws_accounts.account_label(k)} for k in _ACCOUNT_ROUTE_VALUES]
 # Permanently rejected — never shown, not even as "blocked".
 # Palmyra X5: hard 1 req/min channel-program throttle, AA-334/AA-392 permanently rejected.
 
@@ -97,24 +102,32 @@ _ACCOUNT_ROUTE_OPTIONS = [
 _LEGACY_VIA = {"gpt-4.1": "OpenAI API"}
 
 
+def _bedrock_via(keys) -> str:
+    """"Bedrock <account ID> → <account ID>" for account keys in serving order (AA-998: IDs, never the keys)."""
+    names = [aws_accounts.account_name(k) for k in keys]
+    return "Bedrock " + " → ".join(n for n in names if n) if names else "Bedrock"
+
+
 def _legacy_claude_via() -> str:
-    """Legacy haiku/sonnet chain (LLMClient._legacy_chain): the satellites, acc3 first by default;
-    AA-843 — acc2-native leads only when LLM_LEGACY_ACC2_NATIVE is on."""
-    return "Bedrock acc2 → acc3 → acc1" if legacy_acc2_native_enabled() else "Bedrock acc3 → acc1"
+    """Legacy haiku/sonnet chain (LLMClient._legacy_chain): the acc3 satellite (AA-998: no
+    cross-account fallback); AA-843 — acc2-native leads only when LLM_LEGACY_ACC2_NATIVE is on."""
+    if legacy_acc2_native_enabled():
+        return _bedrock_via((aws_accounts.MAIN_ACCOUNT_KEY, aws_accounts.LLM_ACCOUNT_KEY))
+    return _bedrock_via((aws_accounts.LLM_ACCOUNT_KEY,))
 
 
 def model_via(m) -> str:
     """AA-714 — where a Model Key is really served, for the admin UI. GPT models run either on
-    Bedrock (acc3 only: the OpenAI-on-Bedrock agreement exists on acc3, not acc1/acc2) or on the
+    Bedrock (acc3 only: the OpenAI-on-Bedrock agreement exists on acc3, not acc2) or on the
     OpenAI platform API; the same model name can be both (gpt-6-luna vs gpt-6-luna-openai)."""
     if m.provider == "openai":
         return "OpenAI API"
     if m.model_key in ("haiku", "sonnet"):
         return _legacy_claude_via()
-    accts = [a for a in ("acc3", "acc1", "acc2") if a in (m.bedrock_profile_ids or {})]
+    accts = [a for a in SERVING_ACCOUNTS if a in (m.bedrock_profile_ids or {})]
     if m.api_style == "embed" and not accts:
-        return "Bedrock acc2"
-    return "Bedrock " + " → ".join(accts) if accts else "Bedrock"
+        return _bedrock_via((aws_accounts.MAIN_ACCOUNT_KEY,))
+    return _bedrock_via(accts)
 
 
 def _via_map(models: Optional[list]) -> dict[str, str]:
@@ -207,7 +220,7 @@ async def get_llm_config():
     for r in rows:
         r["updated_at"] = r["updated_at"].isoformat() if r["updated_at"] else None
         r["options"] = _options_for(r["role"], r["stage"], models)
-        r["account_route_options"] = _ACCOUNT_ROUTE_OPTIONS if r["provider"] == "claude" else []
+        r["account_route_options"] = _account_route_options() if r["provider"] == "claude" else []
         r["route"] = _route_view(r, models)
     return {"stages": rows}
 
@@ -234,6 +247,10 @@ async def patch_llm_config(
                             detail=f"model {body.model_id!r} is not selectable for stage {stage!r}")
     if body.model_id in _openai_api_keys(models):
         raise HTTPException(status_code=422, detail=_OPENAI_LAST_RESORT_ONLY)
+    # AA-998: only acc3 (or no value = acc3) — the retired fallback account is refused here, before the DB CHECK.
+    if body.account_route is not None and body.account_route not in _ACCOUNT_ROUTE_VALUES:
+        raise HTTPException(status_code=422,
+                            detail="This account route is not allowed: models run on the LLM account only")
     try:
         updated = await set_stage_config(
             stage, body.model_id, body.account_route, updated_by=f"admin:{admin_actor}",
@@ -263,7 +280,7 @@ class LlmRoutePatch(BaseModel):
 
 
 @router.patch("/llm-config/{stage}/route",
-              summary="AA-686 — change one stage's fallback chain + shadow (admin-only)")
+              summary="Change one stage's fallback chain + shadow (admin-only)")
 async def patch_llm_route(
     stage: str,
     body: LlmRoutePatch,
@@ -355,13 +372,13 @@ class LlmCatalogPatch(BaseModel):
     enabled: Optional[bool] = None
 
 
-@router.get("/llm-catalog", summary="AA-686 — every catalog row (prices, provenance, enabled)")
+@router.get("/llm-catalog", summary="Every catalog row (prices, provenance, enabled)")
 async def get_llm_catalog():
     return {"models": await list_catalog_rows()}
 
 
 @router.patch("/llm-catalog/{model_key}",
-              summary="AA-686 — edit a catalog row's price / enabled (admin-only)")
+              summary="Edit a catalog row's price / enabled (admin-only)")
 async def patch_llm_catalog(
     model_key: str,
     body: LlmCatalogPatch,
@@ -553,7 +570,7 @@ def _summarize_shadow_group(stage: str, rows: list[dict]) -> dict:
 
 
 @router.get("/llm-shadow/report",
-            summary="AA-686 — shadow A/B comparison (agreement, score delta, cost, variance)")
+            summary="Shadow A/B comparison (agreement, score delta, cost, variance)")
 async def get_llm_shadow_report(request: Request, days: int = Query(30, ge=1, le=365)):
     pool = request.app.state.pool
     async with pool.acquire() as conn:
@@ -605,8 +622,9 @@ _TREE_SQL = """
         NULLIF(l.tenant_id, '00000000-0000-0000-0000-000000000001'::uuid)::text AS tenant_id,
         COALESCE(t.slug, 'aa_internal') AS tenant_label,
         l.model, l.stage, l.role,
-        -- AA-617: account (acc1/acc2/acc3, NULL for OpenAI/legacy) + provider so the tree can
-        -- split acc3 vs acc1 satellite spend, which l.model alone can't (model no longer carries
+        -- AA-617: account (acc2/acc3, NULL for OpenAI/legacy; older rows may hold the AA-998
+        -- retired fallback account) + provider so the tree can split satellite spend per account,
+        -- which l.model alone can't (model no longer carries
         -- the "satellite-" prefix). COALESCE keeps legacy NULL rows grouped under a visible label.
         COALESCE(l.account, 'unknown') AS account,
         COALESCE(l.provider, 'unknown') AS provider,
@@ -657,7 +675,7 @@ _TREE_SQL = """
 """
 
 
-@router.get("/llm-usage/tree", summary="AA-505 — Tenant -> Model -> Stage cost/quality rollup")
+@router.get("/llm-usage/tree", summary="Tenant -> Model -> Stage cost/quality rollup")
 async def get_llm_usage_tree(
     request: Request, days: int = Query(30, ge=1, le=365),
     start: Optional[date] = None, end: Optional[date] = None,
@@ -680,7 +698,7 @@ async def get_llm_usage_tree(
 
 @router.get(
     "/llm-usage/calls",
-    summary="AA-505 flat recent-calls list, filterable; reused by AA-501/A4 + AA-622 fallback drill-down",
+    summary="Flat recent-calls list, filterable; used by the piece view and the fallback drill-down",
 )
 async def get_llm_usage_calls(
     request: Request,
@@ -689,7 +707,7 @@ async def get_llm_usage_calls(
     tenant_id: Optional[str] = None,
     stage: Optional[str] = None,
     account: Optional[str] = None,
-    fallback_used: Optional[bool] = None,   # AA-622: drill into which calls fell back acc3->acc1/GPT
+    fallback_used: Optional[bool] = None,   # AA-622: drill into which calls fell back (route/GPT)
     days: Optional[int] = Query(None, ge=1, le=365),
     limit: int = Query(50, ge=1, le=500),
     start: Optional[date] = None,
@@ -776,7 +794,7 @@ _DFS_SUMMARY_SQL = """
 """
 
 
-@router.get("/dfs-usage", summary="AA-618 — DataForSEO cost/cache-hit rollup by endpoint+tenant")
+@router.get("/dfs-usage", summary="DataForSEO cost/cache-hit rollup by endpoint+tenant")
 async def get_dfs_usage(
     request: Request, days: int = Query(30, ge=1, le=365),
     start: Optional[date] = None, end: Optional[date] = None,
@@ -806,7 +824,7 @@ async def get_dfs_usage(
 # without a job to the jobs running at the time (api/services/cost_ops.py), windows of at most 31 days.
 
 
-@router.get("/dfs-usage/runs", summary="AA-665 — DataForSEO spend grouped by the job that made the calls")
+@router.get("/dfs-usage/runs", summary="DataForSEO spend grouped by the job that made the calls")
 async def get_dfs_usage_runs(
     request: Request, days: int = Query(30, ge=1, le=365),
     start: Optional[date] = None, end: Optional[date] = None,
@@ -852,7 +870,7 @@ _DFS_COUNTRY_SQL = """
 """
 
 
-@router.get("/dfs-usage/by-country", summary="AA-622 — DataForSEO spend grouped by target market (location_code)")
+@router.get("/dfs-usage/by-country", summary="DataForSEO spend grouped by target market (location_code)")
 async def get_dfs_usage_by_country(
     request: Request, days: int = Query(30, ge=1, le=365),
     start: Optional[date] = None, end: Optional[date] = None,
@@ -895,7 +913,7 @@ _DAILY_SPEND_SQL = """
 """
 
 
-@router.get("/spend/daily", summary="AA-622 — daily LLM + DFS spend time-series for the trend chart")
+@router.get("/spend/daily", summary="Daily LLM + DFS spend time-series for the trend chart")
 async def get_spend_daily(
     request: Request, days: int = Query(30, ge=1, le=365),
     start: Optional[date] = None, end: Optional[date] = None,
@@ -960,7 +978,7 @@ async def _maybe_alert_low_balance(conn, balance_usd: float, threshold: float) -
         return False
 
 
-@router.post("/dfs-balance/check", summary="AA-627 — daily DataForSEO balance read + low-balance alert")
+@router.post("/dfs-balance/check", summary="Daily DataForSEO balance read + low-balance alert")
 async def check_dfs_balance(request: Request, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
     from services.seo_intelligence.dataforseo_client import DataForSEOClient
@@ -1001,7 +1019,7 @@ async def check_dfs_balance(request: Request, x_admin_secret: str = Header(None)
     }
 
 
-@router.get("/dfs-balance", summary="AA-627 — latest stored DataForSEO balance (no live DFS call)")
+@router.get("/dfs-balance", summary="Latest stored DataForSEO balance (no live DFS call)")
 async def get_dfs_balance(request: Request):
     pool = request.app.state.pool
     latest = await read_latest_balance(pool)
@@ -1026,12 +1044,12 @@ async def get_dfs_balance(request: Request):
 # Same job-then-read split as the DFS balance pair above (AA-627), for the same reason: Cost
 # Explorer's own pricing API costs ~$0.01/request, so the External Spend page must never call it
 # live per page view.
-#   POST /admin/cost-explorer/check — fetches acc1/acc2/acc3's own CE data for a window
-#       (acc2 directly, acc1/acc3 via STS AssumeRole satellite roles -- see
+#   POST /admin/cost-explorer/check — fetches acc2/acc3's own CE data for a window
+#       (acc2 directly, acc3 via the STS AssumeRole satellite role -- see
 #       shared/aws_client/cost_explorer.py's module docstring for why there is no single
 #       consolidated call) and stores one row per (account, service, day). Secret-gated.
 #       NOTE: no scheduler calls this yet (unlike /admin/dfs-balance/check) -- today it only runs
-#       from the page's "Refresh from AWS" button. 3 CE requests (~$0.03) per call, plus one acc2 request grouped
+#       from the page's "Refresh from AWS" button. 2 CE requests (~$0.02) per call, plus one acc2 request grouped
 #       by the App tag for Platform › Cost per app (AA-884, ~$0.01).
 #   GET  /admin/cost-explorer — reads stored days in the same window as the rest of the page
 #       (never calls CE live per request), Bedrock vs infra split per account.
@@ -1044,7 +1062,7 @@ def _ce_days(since: datetime, until: datetime) -> tuple[date, date]:
     return since.date(), end_d
 
 
-@router.post("/cost-explorer/check", summary="AA-623 — fetch AWS Cost Explorer actual spend for a window")
+@router.post("/cost-explorer/check", summary="Fetch AWS Cost Explorer actual spend for a window")
 async def check_cost_explorer(
     request: Request, x_admin_secret: str = Header(None),
     days: int = Query(7, ge=1, le=365), start: Optional[date] = None, end: Optional[date] = None,
@@ -1065,7 +1083,7 @@ async def check_cost_explorer(
     # AA-884 — the same window from acc2 grouped by the App cost-allocation tag (Platform › Cost per app): one more
     # CE request (~$0.01). Its failure is reported in `errors` and never fails the SERVICE check above.
     # AA-912: the per-account error text stays in the server log; the client gets a generic value per
-    # key (same keys: acc1/acc2/acc3/acc2_app_tag) with a ref to find it.
+    # key (same keys: acc2/acc3/acc2_app_tag) with a ref to find it.
     errors: dict[str, str] = {}
     if result["errors"]:
         ref = new_error_ref()
@@ -1089,7 +1107,14 @@ async def check_cost_explorer(
     }
 
 
-@router.get("/cost-explorer", summary="AA-623 — stored AWS Cost Explorer spend for a window (no live CE call)")
+# AA-998 — the admin names AWS accounts by their ID, never by the internal key. Every staff role may read it (no
+# POLICY entry): the pages that show an account (Settings › Models, Cost Operations, Cost per app, Jobs) differ.
+@router.get("/aws-accounts", summary="The AWS accounts the admin pages name, with their account IDs")
+async def get_aws_accounts():
+    return {"accounts": aws_accounts.account_directory()}
+
+
+@router.get("/cost-explorer", summary="Stored AWS Cost Explorer spend for a window (no live CE call)")
 async def get_cost_explorer(
     request: Request, days: int = Query(7, ge=1, le=365),
     start: Optional[date] = None, end: Optional[date] = None,
@@ -1107,7 +1132,7 @@ async def get_cost_explorer(
 # ── AA-665 C3 — Cost Operations › Overview: month-end forecast vs budget (DB only, no live CE call) ────────────────
 
 
-@router.get("/cost-ops/forecast", summary="AA-665 — month-end spend forecast vs budget per provider and AWS account")
+@router.get("/cost-ops/forecast", summary="Month-end spend forecast vs budget per provider and AWS account")
 async def get_cost_ops_forecast(request: Request, month: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}$")):
     from api.services.cost_ops import cost_forecast
 
@@ -1119,7 +1144,7 @@ async def get_cost_ops_forecast(request: Request, month: Optional[str] = Query(N
 
 @router.get(
     "/unmapped-market-requests",
-    summary="AA-629 Tier 2 — tenants waiting on a market outside DFS_LOCATION_MAP, grouped by country",
+    summary="Tenants waiting on a market outside DFS_LOCATION_MAP, grouped by country",
 )
 async def get_unmapped_market_requests(request: Request):
     """Read-only admin visibility (no admin-secret gate, same convention as GET /dfs-balance
@@ -1176,7 +1201,7 @@ _JEV_402_SWEEP_SQL = """
 _last_canary_ok_at: Optional[datetime] = None
 
 
-@router.post("/jev-canary/check", summary="AA-720 — daily Jev canary: one real decide-endpoint probe")
+@router.post("/jev-canary/check", summary="Daily Jev canary: one real decide-endpoint probe")
 async def check_jev_canary(request: Request, x_admin_secret: str = Header(None)):
     global _last_canary_ok_at
     verify_admin_secret(x_admin_secret)
@@ -1190,7 +1215,7 @@ async def check_jev_canary(request: Request, x_admin_secret: str = Header(None))
     ok, billing_error, detail = True, False, None
     started = datetime.now(timezone.utc)
     try:
-        await decide_mod._call_jev("Jev credit canary probe (AA-720).", probe_questions)
+        await decide_mod._call_jev("Jev credit canary probe.", probe_questions)
         decide_mod.reset_jev_breaker()        # a billable call proves credit is back
     except decide_mod.JevBillingError:
         ok, billing_error = False, True
@@ -1218,7 +1243,7 @@ async def check_jev_canary(request: Request, x_admin_secret: str = Header(None))
     }
 
 
-@router.post("/jev/402-sweep", summary="AA-720 — daily sweep of decision_log for 402 billing errors")
+@router.post("/jev/402-sweep", summary="Daily sweep of decision_log for 402 billing errors")
 async def sweep_jev_402(request: Request, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
     from shared.llm_client import decide as decide_mod

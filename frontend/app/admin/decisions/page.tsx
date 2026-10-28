@@ -9,6 +9,7 @@ import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAx
 import { A, sans, mono, Card, SLabel, Btn, LoadingScreen, TH, TD, CHART_TOOLTIP } from "../_components/adminUi";
 import { AdminMain, AdminPaneBody, AdminPaneHeader, PageHeader, formatDateTime } from "../../_kit";
 import { useChartColors } from "../../_kit/useTheme";
+import { stripIssueIds } from "@/lib/issueIds";
 
 // ── types ──────────────────────────────────────────────────────────────────────────────────────
 type Mode = "off" | "shadow" | "enforce";
@@ -504,7 +505,8 @@ export default function DecisionsPage() {
                                     </ul>
                                   </>
                                 )}
-                                {q.notes && <div style={{ fontSize: 12, color: A.muted, marginTop: 10 }}>{q.notes}</div>}
+                                {/* AA-994: the seeded notes (migrations 181-211) open with their issue reference; it is taken out here. */}
+                                {q.notes && <div style={{ fontSize: 12, color: A.muted, marginTop: 10 }}>{stripIssueIds(q.notes)}</div>}
                               </div>
                               <div>
                                 <SLabel>Verdicts ({data.days} days)</SLabel>

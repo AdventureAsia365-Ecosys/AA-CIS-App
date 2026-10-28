@@ -12,6 +12,8 @@ import { useQuery } from "@tanstack/react-query";
 import { A, serif, mono, SLabel, Btn, TH, TD } from "../_components/adminUi";
 import { Drawer, StatusBadge, apiGet } from "../../_kit";
 import { TenantName } from "../_components/TenantSelect";
+import { useAwsAccounts } from "../_components/useAwsAccounts";
+import { accountName, withAccountNames } from "@/lib/awsAccounts";
 import { fmtTime, fmtSeconds, releases, runSeconds, stepProgress, usd, type Job } from "./jobsShared";
 
 interface LlmCall {
@@ -60,6 +62,7 @@ export default function JobDrawer({ jobId, refetchMs, expectedSeconds, maxReleas
   onAct: (job: Job, action: "cancel" | "retry") => void;
   busy: boolean;
 }) {
+  const awsAccounts = useAwsAccounts();
   const { data: job, isError, error } = useQuery({
     queryKey: ["job", jobId],
     queryFn: () => apiGet<Job>(`/api/admin/job-runner/jobs/${jobId}`, { admin: true }),
@@ -184,7 +187,7 @@ export default function JobDrawer({ jobId, refetchMs, expectedSeconds, maxReleas
                         <tr key={i}>
                           <td style={{ ...TD, whiteSpace: "nowrap" }}>{fmtTime(c.created_at)}</td>
                           <td style={{ ...TD, fontFamily: mono }}>{c.stage}{c.texts && c.texts > 1 ? ` ×${c.texts}` : ""}</td>
-                          <td style={{ ...TD, fontFamily: mono }}>{c.model}{c.account ? ` · ${c.account}` : ""}{c.fallback_used ? " · fallback" : ""}</td>
+                          <td style={{ ...TD, fontFamily: mono }}>{c.model}{c.account ? ` · ${accountName(c.account, awsAccounts)}` : ""}{c.fallback_used ? " · fallback" : ""}</td>
                           <td style={{ ...TD, fontFamily: mono, textAlign: "right" }}>{c.tokens_in ?? 0}/{c.tokens_out ?? 0}</td>
                           <td style={{ ...TD, fontFamily: mono, textAlign: "right" }}>{usd(c.cost_usd, 6)}</td>
                         </tr>
@@ -221,9 +224,9 @@ export default function JobDrawer({ jobId, refetchMs, expectedSeconds, maxReleas
             </div>
           )}
 
-          <Json label="Payload" value={job.payload} />
+          <Json label="Payload" value={withAccountNames(job.payload, awsAccounts)} />
           <Json label="Progress" value={job.progress} />
-          <Json label="Result" value={job.result} />
+          <Json label="Result" value={withAccountNames(job.result, awsAccounts)} />
         </>
       )}
     </Drawer>

@@ -97,7 +97,7 @@ def _jobs_query(q: str, cap: int) -> tuple[str, list]:
     return sql, [prefix, kind_like, cap]
 
 
-@router.get("/search", summary="AA-752 — global admin search (tours/tenants/jobs) for the ⌘K palette")
+@router.get("/search", summary="Global admin search (tours/tenants/jobs) for the ⌘K palette")
 async def admin_search(
     request: Request,
     q: str = Query("", description="search term, >= 2 chars after trimming"),

@@ -13,6 +13,7 @@ from .models import LLMRequest, LLMResponse
 from .prompt_cache import build_cached_system_prompt, build_cached_messages
 from .pricing import BEDROCK_SONNET, BEDROCK_HAIKU, COST_TABLE, calc_cost
 from .role_config import get_stage_config_sync
+from .bedrock_satellite import DEFAULT_SATELLITE_ACCOUNT
 from .catalog import LEGACY_KEYS, CatalogModel, get_model_sync
 from .schema_check import SchemaMismatch, conform
 from . import stream_sink
@@ -297,15 +298,14 @@ def log_gateway_billed_failure(request: LLMRequest, *, role: str, billed: list[d
 
 class LLMClient:
     """
-    Legacy haiku/sonnet chain (AA-397/398 — acc3 is the primary satellite, acc1 the fallback;
-    a stage's account_route can swap them):
+    Legacy haiku/sonnet chain (acc3 is the only satellite account — AA-998 removed the
+    cross-account fallback tiers T1.5b/T2.5b; an acc3 failure degrades Sonnet to acc3 Haiku,
+    then raises, and the route's next model or the job retry takes over):
     T1:    Claude Sonnet 4.5 (Bedrock, acc2 native) + prompt caching — AA-843: only when
                                  LLM_LEGACY_ACC2_NATIVE is on (default off; acc2 always refuses)
-    T1.5a: Claude Sonnet     (Bedrock satellite, primary account, acc3 by default)
-    T1.5b: Claude Sonnet     (Bedrock satellite, the other account)
+    T1.5a: Claude Sonnet     (Bedrock satellite, acc3)
     T2:    Claude Haiku 4.5  (Bedrock, acc2 native) + prompt caching — AA-843: same flag as T1
-    T2.5a: Claude Haiku      (Bedrock satellite, primary account)
-    T2.5b: Claude Haiku      (Bedrock satellite, the other account)
+    T2.5a: Claude Haiku      (Bedrock satellite, acc3)
     T3:    GPT-4.1           (OpenAI platform API) — S235: retired; runs only if the gpt-4.1
                                  catalog row is enabled again (openai_platform_allowed)
     """
@@ -341,12 +341,12 @@ class LLMClient:
         # any other real per-request override), same relationship model_tier already had with
         # the DEFAULT_MODEL_TIER env var before this task.
         stage_cfg = get_stage_config_sync(request.stage) if request.stage else None
-        # Which satellite account is tried FIRST (AA-843: the first account the legacy chain tries
-        # unless LLM_LEGACY_ACC2_NATIVE puts acc2-native ahead of it) — 'acc3' unless the
-        # stage's admin config explicitly says 'acc1' (e.g. a real acc3 outage). Unknown/no-stage
-        # calls keep the pre-AA-518 hardcoded acc3-first order exactly.
-        primary_acct = stage_cfg.account_route if (stage_cfg and stage_cfg.account_route) else "acc3"
-        fallback_acct = "acc1" if primary_acct == "acc3" else "acc3"
+        # The satellite account. AA-998: acc3 is the only one (llm_role_config.account_route is CHECKed
+        # to acc3 / NULL by migration 295); any other stored value is ignored, never called.
+        primary_acct = DEFAULT_SATELLITE_ACCOUNT
+        if stage_cfg and stage_cfg.account_route and stage_cfg.account_route != primary_acct:
+            logger.warning("llm_account_route_ignored", stage=request.stage, account_route=stage_cfg.account_route,
+                           used=primary_acct)
 
         # AA-659 / ADR 0006 — the stage route is model_id + fallback_model_ids. An explicit
         # request.model_tier still wins and runs alone (no route, no shadow).
@@ -359,28 +359,28 @@ class LLMClient:
 
         role = (stage_cfg.role if stage_cfg and stage_cfg.role else "writer")
         if len(chain) == 1:
-            resp = self._call_key_logged(request, chain[0], primary_acct, fallback_acct, role=role, position=0)
+            resp = self._call_key_logged(request, chain[0], primary_acct, role=role, position=0)
         else:
-            resp = self._call_route(request, chain, primary_acct, fallback_acct, role=role)
+            resp = self._call_route(request, chain, primary_acct, role=role)
 
         # AA-919: no A/B shadow call inside a writing-memory eval run (call_log.bind_eval_stage): it would add spend
         # and llm_shadow_log rows for an eval, not production traffic (cost-cuts K2, "shadow_sample_pct = 0").
         if (stage_cfg and not request.model_tier and stage_cfg.shadow_model_id
                 and random.random() * 100 < stage_cfg.shadow_sample_pct and not _in_eval_run()):
-            self._start_shadow(request, stage_cfg, resp, primary_acct, fallback_acct)
+            self._start_shadow(request, stage_cfg, resp, primary_acct)
         return resp
 
-    def _call_key(self, request: LLMRequest, key: str, primary_acct: str, fallback_acct: str) -> LLMResponse:
+    def _call_key(self, request: LLMRequest, key: str, primary_acct: str) -> LLMResponse:
         # AA-658 / ADR 0005 — non-legacy Model Keys resolve through the catalog, with no hidden
         # fallback; a stage that wants one lists it in its route (AA-659).
         if key not in LEGACY_KEYS:
             return self._call_catalog_model(request, key, primary_acct)
         if request.json_schema and key != "gpt-4.1":
             # S251: never lose the schema on a legacy Claude key (gpt-4.1 enforces it through response_format).
-            return self._legacy_structured(request, key, primary_acct, fallback_acct)
-        return self._legacy_chain(request, key, primary_acct, fallback_acct)
+            return self._legacy_structured(request, key, primary_acct)
+        return self._legacy_chain(request, key, primary_acct)
 
-    def _legacy_structured(self, request: LLMRequest, key: str, primary_acct: str, fallback_acct: str) -> LLMResponse:
+    def _legacy_structured(self, request: LLMRequest, key: str, primary_acct: str) -> LLMResponse:
         """S251 (AA-835): a json_schema request on a legacy haiku/sonnet key. The Messages API path has no structured
         output, so (a) the system prompt gets an explicit "one JSON object matching this schema" instruction with the
         schema, and (b) the reply's JSON object is taken (a ``` fence is tolerated, prose is not) and conformed with
@@ -395,7 +395,7 @@ class LLMClient:
                            action="schema asked by prompt only; route this stage to a catalog (Converse) key")
         asked = request.model_copy(
             update={"system_prompt": f"{request.system_prompt}\n\n{_legacy_schema_instruction(schema)}"})
-        resp = self._legacy_chain(asked, key, primary_acct, fallback_acct)
+        resp = self._legacy_chain(asked, key, primary_acct)
         if not resp.content and not (resp.input_tokens or resp.output_tokens):
             # Nothing billed (same rule as the Converse path): a plain failure, no billed_unusable row.
             raise RuntimeError(f"{resp.model_used} returned empty content for schema {schema['name']!r}")
@@ -410,14 +410,14 @@ class LLMClient:
             raise _billed_unusable(str(e), [billed_record(resp)]) from e
         return resp
 
-    def _call_key_logged(self, request: LLMRequest, key: str, primary_acct: str, fallback_acct: str, *,
+    def _call_key_logged(self, request: LLMRequest, key: str, primary_acct: str, *,
                          role: str, position: int, extra: Optional[dict] = None) -> LLMResponse:
         """AA-927: `_call_key`, and when the attempt raised AFTER the provider billed it
         (BilledUnusableReply), write that attempt's llm_call_log row here before re-raising — the caller
         only ever sees the reply that came back, so no one else can. One row per billed attempt,
         `billed_unusable: true`, no ok-rate key (call_log.OK_RATE_KEYS)."""
         try:
-            return self._call_key(request, key, primary_acct, fallback_acct)
+            return self._call_key(request, key, primary_acct)
         except Exception as e:
             billed = _billed_usage_of(e)
             if billed:
@@ -425,7 +425,7 @@ class LLMClient:
                                            extra={"position": position, **(extra or {})})
             raise
 
-    def _call_route(self, request: LLMRequest, chain: list, primary_acct: str, fallback_acct: str,
+    def _call_route(self, request: LLMRequest, chain: list, primary_acct: str,
                     role: str = "writer") -> LLMResponse:
         errors = []
         # S251: the billed usage of attempts whose reply was unusable; an attempt that failed any other way (outage,
@@ -441,7 +441,7 @@ class LLMClient:
                     errors.append(f"{key}: skipped ({reason})")
                     continue
             try:
-                resp = self._call_key_logged(request, key, primary_acct, fallback_acct, role=role,
+                resp = self._call_key_logged(request, key, primary_acct, role=role,
                                              position=position)
             except Exception as e:
                 logger.warning("llm_route_attempt_failed", stage=request.stage, model=key,
@@ -472,7 +472,7 @@ class LLMClient:
         raise RuntimeError(message)
 
     def _start_shadow(self, request: LLMRequest, cfg, primary: LLMResponse,
-                      primary_acct: str, fallback_acct: str) -> None:
+                      primary_acct: str) -> None:
         # A plain thread does not inherit contextvars, so the shadow never writes to the
         # live-progress stream sink bound to the primary call. The job id and tenant ARE carried
         # over explicitly (AA-741 G1) so the shadow's llm_call_log row is attributed like the
@@ -480,25 +480,25 @@ class LLMClient:
         from .call_log import current_job_id, current_tenant_id
         threading.Thread(
             target=self._run_shadow,
-            args=(request.model_copy(), cfg, primary, primary_acct, fallback_acct,
+            args=(request.model_copy(), cfg, primary, primary_acct,
                   current_job_id(), current_tenant_id()),
             daemon=True,
         ).start()
 
     def _run_shadow(self, request: LLMRequest, cfg, primary: LLMResponse,
-                    primary_acct: str, fallback_acct: str,
+                    primary_acct: str,
                     job_id: Optional[str] = None, tenant_id: Optional[str] = None) -> None:
         from .call_log import bind_job, bind_tenant
         with bind_job(job_id), bind_tenant(tenant_id):
-            self._run_shadow_bound(request, cfg, primary, primary_acct, fallback_acct)
+            self._run_shadow_bound(request, cfg, primary, primary_acct)
 
     def _run_shadow_bound(self, request: LLMRequest, cfg, primary: LLMResponse,
-                          primary_acct: str, fallback_acct: str) -> None:
+                          primary_acct: str) -> None:
         from .shadow import record_shadow_sync
         t0 = time.monotonic()
         resp, error = None, None
         try:
-            resp = self._call_key_logged(request, cfg.shadow_model_id, primary_acct, fallback_acct,
+            resp = self._call_key_logged(request, cfg.shadow_model_id, primary_acct,
                                          role=cfg.role or "writer", position=0, extra={"shadow": True})
         except Exception as e:
             error = str(e)[:1000]
@@ -508,7 +508,7 @@ class LLMClient:
             latency_ms=int((time.monotonic() - t0) * 1000),
         )
 
-    def _legacy_chain(self, request: LLMRequest, tier: str, primary_acct: str, fallback_acct: str) -> LLMResponse:
+    def _legacy_chain(self, request: LLMRequest, tier: str, primary_acct: str) -> LLMResponse:
         # Direct GPT-4.1 — no Bedrock fallback (explicit choice)
         if tier == "gpt-4.1":
             try:
@@ -535,7 +535,7 @@ class LLMClient:
                     else:
                         logger.warning("t1_failed_trying_t2", model=BEDROCK_SONNET, error=str(e))
 
-            # T1.5a: Claude Sonnet qua satellite PRIMARY account (acc3 unless stage config says acc1)
+            # T1.5a: Claude Sonnet on the acc3 satellite
             try:
                 resp = self._call_bedrock_satellite(request, model=BEDROCK_SONNET, account=primary_acct)
                 resp.fallback_used = False    # KHÔNG phải fallback — vẫn đúng Sonnet, đúng ý định
@@ -544,20 +544,9 @@ class LLMClient:
                             reason="acc2 T1 failed" if acc2_native else "acc2 native off (AA-843)")
                 return resp
             except Exception as e:
-                logger.warning("t1_5a_satellite_failed_trying_t1_5b", model=BEDROCK_SONNET,
+                # AA-998: no cross-account retry; Sonnet degrades to Haiku on the same account.
+                logger.warning("t1_5a_satellite_failed_trying_t2", model=BEDROCK_SONNET,
                                account=primary_acct, error=str(e))
-
-            # T1.5b: Claude Sonnet qua satellite FALLBACK account
-            try:
-                resp = self._call_bedrock_satellite(request, model=BEDROCK_SONNET, account=fallback_acct)
-                resp.fallback_used = False
-                resp.satellite_account = fallback_acct
-                logger.info("t1_5b_satellite_used", model=BEDROCK_SONNET, account=fallback_acct,
-                            reason="acc2 T1 + T1.5a failed" if acc2_native else "T1.5a failed")
-                return resp
-            except Exception as e:
-                logger.warning("t1_5b_satellite_failed_trying_t2", model=BEDROCK_SONNET,
-                               account=fallback_acct, error=str(e))
 
         # T2: Claude Haiku — fast / default tier, or Sonnet fallback (acc2-native, off by default)
         if acc2_native:
@@ -568,7 +557,7 @@ class LLMClient:
             except Exception as e:
                 logger.warning("t2_failed_trying_t2_5a", model=BEDROCK_HAIKU, error=str(e))
 
-        # T2.5a: Claude Haiku qua satellite PRIMARY account
+        # T2.5a: Claude Haiku on the acc3 satellite
         try:
             resp = self._call_bedrock_satellite(request, model=BEDROCK_HAIKU, account=primary_acct)
             # giữ đúng logic gốc T2: chỉ coi là fallback nếu ý định ban đầu là sonnet
@@ -578,19 +567,8 @@ class LLMClient:
                         reason="acc2 T2 failed" if acc2_native else "acc2 native off (AA-843)")
             return resp
         except Exception as e:
-            logger.warning("t2_5a_satellite_failed_trying_t2_5b", model=BEDROCK_HAIKU,
+            logger.warning("t2_5a_satellite_failed_trying_t3", model=BEDROCK_HAIKU,
                            account=primary_acct, error=str(e))
-
-        # T2.5b: Claude Haiku qua satellite FALLBACK account
-        try:
-            resp = self._call_bedrock_satellite(request, model=BEDROCK_HAIKU, account=fallback_acct)
-            resp.fallback_used = tier == "sonnet"
-            resp.satellite_account = fallback_acct
-            logger.info("t2_5b_satellite_used", model=BEDROCK_HAIKU, account=fallback_acct,
-                        reason="acc2 T2 + T2.5a failed" if acc2_native else "T2.5a failed")
-            return resp
-        except Exception as e:
-            logger.warning("t2_5b_satellite_failed_trying_t3", model=BEDROCK_HAIKU, account=fallback_acct, error=str(e))
 
         # T3: GPT-4.1 — last resort for all tiers. S235: GPT-4.1 is retired (migration 224 disables
         # its catalog row), so a Bedrock outage on a Haiku/Sonnet writer raises here. Writers are
@@ -692,8 +670,9 @@ class LLMClient:
             stop_reason=stop_reason,
         )
 
-    def _call_bedrock_satellite(self, request: LLMRequest, model: str, account: str = "acc1") -> LLMResponse:
-        """AA-296/397 — gọi Claude qua satellite account chỉ định (acc1 hoặc acc3),
+    def _call_bedrock_satellite(self, request: LLMRequest, model: str,
+                                account: str = DEFAULT_SATELLITE_ACCOUNT) -> LLMResponse:
+        """AA-296/397 — gọi Claude qua satellite account (acc3, the only one since AA-998),
         dùng khi acc2 không có Anthropic model (TrueIDC channel-program org chặn).
         Xem shared/llm_client/bedrock_satellite.py cho chi tiết AssumeRole chain +
         bug 2-dạng-ARN đã fix trong IAM policy.

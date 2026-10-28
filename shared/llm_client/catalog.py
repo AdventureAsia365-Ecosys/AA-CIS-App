@@ -38,6 +38,11 @@ class CatalogPriceRequired(Exception):
 RETIRED_KEYS = frozenset({"gpt-4.1"})
 
 
+# AA-998 — the accounts a catalog profile may run on, in preference order: acc3 (satellite) then
+# acc2 (native, embed only today). The former fallback account left the ecosystem.
+SERVING_ACCOUNTS = ("acc3", "acc2")
+
+
 class CatalogPolicyBlocked(Exception):
     """S235 — an admin tried to enable a retired catalog row (RETIRED_KEYS). Router -> 422."""
 
@@ -62,11 +67,12 @@ class CatalogModel:
     blocked_reason: Optional[str] = None
 
     def account_for(self, preferred: Optional[str]) -> Optional[str]:
-        """The preferred satellite account if this model is served there, else the first account
-        that serves it (acc3 before acc1 before acc2)."""
-        if preferred and preferred in self.bedrock_profile_ids:
+        """The preferred account if this model is served there, else the first account that serves
+        it (acc3 before acc2). AA-998: only the ecosystem accounts count — a profile under any other
+        key (a stale row from before migration 295) is never chosen."""
+        if preferred in SERVING_ACCOUNTS and preferred in self.bedrock_profile_ids:
             return preferred
-        for acct in ("acc3", "acc1", "acc2"):
+        for acct in SERVING_ACCOUNTS:
             if acct in self.bedrock_profile_ids:
                 return acct
         return None

@@ -418,7 +418,7 @@ function InsightsSection({ q, canWrite, base, onDone }: { q: Q<AgencyEntitlement
       <WriteModal<{ opt_out?: boolean }> open={open} onClose={() => setOpen(false)}
         title={optedOut ? "Include the agency in AA insights again?" : "Opt the agency out of AA insights?"}
         confirmLabel={optedOut ? "Include" : "Opt out"} ticketLabel="Owner's request reference"
-        ticketHint="The ticket holding the owner's written request, for example AA-941."
+        ticketHint="The ticket holding the owner's written request, for example SUP-1024."
         submit={(ref) => crmWrite<InsightsOptOut>("PUT", `${path}/insights-opt-out`, { opt_out: !optedOut, owner_request_ref: ref } satisfies InsightsOptOutBody)}
         onDone={(r) => { setOpen(false); onDone(r.body?.opt_out ? "The agency is opted out of AA insights." : "The agency is included in AA insights."); }} />
     </Section>

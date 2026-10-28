@@ -100,7 +100,7 @@ class BackfillRequest(BaseModel):
         return self
 
 
-@router.post("/backfill", summary="AA-712 — backfill place_extract for ≤ 50 live tours or ≤ 100 listed tours "
+@router.post("/backfill", summary="Backfill place_extract for ≤ 50 live tours or ≤ 100 listed tours "
                                   "(dry run by default)")
 async def backfill(body: BackfillRequest, request: Request, x_admin_secret: str = Header(None),
                    x_admin_user_id: Optional[str] = Header(None)):
@@ -199,7 +199,7 @@ async def _validity(pool, country: Optional[str]):
     return summary, items
 
 
-@router.get("/validity", summary="AA-847 — content-validity report of the live catalog's places (no model call)")
+@router.get("/validity", summary="Content-validity report of the live catalog's places (no model call)")
 async def validity_report(request: Request, country: Optional[str] = None, check: Optional[str] = None,
                           reason: Optional[str] = None, page: int = 1, page_size: int = 50,
                           x_admin_secret: str = Header(None)):
@@ -221,7 +221,7 @@ async def validity_report(request: Request, country: Optional[str] = None, check
             **validity.page(items, check=check, reason=reason, page_no=page, page_size=page_size)}
 
 
-@router.get("/coverage", summary="AA-847 — place pipeline coverage per country (live / built / graph / stop per day)")
+@router.get("/coverage", summary="Place pipeline coverage per country (live / built / graph / stop per day)")
 async def coverage(request: Request, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
     from services.places.validity import MASTER_TENANT_ID
@@ -245,7 +245,7 @@ class ValidityFixRequest(BaseModel):
     fingerprint: Optional[str] = None     # the dry run's; apply refuses (409) when the plan changed since
 
 
-@router.post("/validity/fix", summary="AA-847 — fix content-validity findings (dry run by default; audit + undo)")
+@router.post("/validity/fix", summary="Fix content-validity findings (dry run by default; audit + undo)")
 async def validity_fix(body: ValidityFixRequest, request: Request, x_admin_secret: str = Header(None),
                        x_admin_user_id: Optional[str] = Header(None)):
     verify_admin_secret(x_admin_secret)
@@ -294,7 +294,7 @@ def _line_row(r: dict) -> dict:
     return out
 
 
-@router.get("/lines", summary="AA-847 — line places (rivers, roads, trails) and the state of their geometry")
+@router.get("/lines", summary="Line places (rivers, roads, trails) and the state of their geometry")
 async def lines(request: Request, country: Optional[str] = None, status: Optional[str] = None,
                 x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
@@ -328,7 +328,7 @@ class ShapeBackfillRequest(BaseModel):
     dry_run: bool = True
 
 
-@router.post("/shapes/backfill", summary="AA-847 — fetch the geometry of ≤ 50 line places (dry run by default)")
+@router.post("/shapes/backfill", summary="Fetch the geometry of ≤ 50 line places (dry run by default)")
 async def shapes_backfill(body: ShapeBackfillRequest, request: Request, x_admin_secret: str = Header(None),
                           x_admin_user_id: Optional[str] = Header(None)):
     verify_admin_secret(x_admin_secret)
@@ -390,7 +390,7 @@ class ManualShapeRequest(BaseModel):
     note: Optional[str] = None
 
 
-@router.put("/{destination_id}/shape", summary="AA-847 — set a line place's geometry by hand (an exception path)")
+@router.put("/{destination_id}/shape", summary="Set a line place's geometry by hand (an exception path)")
 async def put_manual_shape(destination_id: str, body: ManualShapeRequest, request: Request,
                            x_admin_secret: str = Header(None), x_admin_user_id: Optional[str] = Header(None)):
     verify_admin_secret(x_admin_secret)
@@ -424,7 +424,7 @@ async def put_manual_shape(destination_id: str, body: ManualShapeRequest, reques
             "vertices": shape.vertex_count(clipped), "attribution": ATTRIBUTION}
 
 
-@router.delete("/{destination_id}/shape", summary="AA-847 — drop a manual geometry; the job fetches it again")
+@router.delete("/{destination_id}/shape", summary="Drop a manual geometry; the job fetches it again")
 async def delete_manual_shape(destination_id: str, request: Request, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
     from services.places import store
@@ -479,7 +479,7 @@ def _country_view(v: dict) -> dict:
     return out
 
 
-@router.get("/merges", summary="AA-847 — the duplicate-place merge log (job and admin merges, with undo state)")
+@router.get("/merges", summary="The duplicate-place merge log (job and admin merges, with undo state)")
 async def list_merges(request: Request, country: Optional[str] = None, active: Optional[bool] = None,
                       page: int = 1, page_size: int = 50, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
@@ -489,7 +489,7 @@ async def list_merges(request: Request, country: Optional[str] = None, active: O
                                         page_size=page_size)
 
 
-@router.get("/merges/labels", summary="AA-847 — undone merges as labelled keep pairs for the CI pair set")
+@router.get("/merges/labels", summary="Undone merges as labelled keep pairs for the CI pair set")
 async def merge_labels(request: Request, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
     from services.places import merges
@@ -503,7 +503,7 @@ class UndoMergeRequest(BaseModel):
     reason: Optional[str] = Field(None, max_length=500)
 
 
-@router.post("/merges/{merge_id}/undo", summary="AA-847 — undo one duplicate-place merge (dry run by default)")
+@router.post("/merges/{merge_id}/undo", summary="Undo one duplicate-place merge (dry run by default)")
 async def undo_merge(merge_id: str, body: UndoMergeRequest, request: Request, x_admin_secret: str = Header(None),
                      x_admin_user_id: Optional[str] = Header(None)):
     verify_admin_secret(x_admin_secret)
@@ -532,7 +532,7 @@ async def undo_merge(merge_id: str, body: UndoMergeRequest, request: Request, x_
     return out
 
 
-@router.get("/dedupe", summary="AA-847 — allow-list and the last place_dedupe run per country")
+@router.get("/dedupe", summary="Allow-list and the last place_dedupe run per country")
 async def dedupe_status(request: Request, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
     from services.places import dedupe as dd
@@ -560,7 +560,7 @@ class DedupeCountryRequest(BaseModel):
     diff_hash: Optional[str] = None
 
 
-@router.post("/dedupe/countries", summary="AA-847 — put a country on / off the place_dedupe allow-list, approve a "
+@router.post("/dedupe/countries", summary="Put a country on / off the place_dedupe allow-list, approve a "
                                           "dry run")
 async def dedupe_country(body: DedupeCountryRequest, request: Request, x_admin_secret: str = Header(None),
                          x_admin_user_id: Optional[str] = Header(None)):
@@ -602,7 +602,7 @@ class DedupeRunRequest(BaseModel):
     country: Optional[str] = Field(None, max_length=80)
 
 
-@router.post("/dedupe/run", summary="AA-847 — queue one place_dedupe run (dry_run by default)")
+@router.post("/dedupe/run", summary="Queue one place_dedupe run (dry_run by default)")
 async def dedupe_run(body: DedupeRunRequest, request: Request, x_admin_secret: str = Header(None),
                      x_admin_user_id: Optional[str] = Header(None)):
     verify_admin_secret(x_admin_secret)
@@ -639,7 +639,7 @@ _LAST_RELOCATE_DRY_RUN_SQL = """
 """
 
 
-@router.post("/relocate", summary="AA-997 — queue one place_relocate run (dry_run by default; apply after a dry run)")
+@router.post("/relocate", summary="Queue one place_relocate run (dry_run by default; apply after a dry run)")
 async def relocate_run(body: RelocateRequest, request: Request, x_admin_secret: str = Header(None),
                        x_admin_user_id: Optional[str] = Header(None)):
     verify_admin_secret(x_admin_secret)

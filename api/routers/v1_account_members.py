@@ -56,7 +56,7 @@ def _tenant_id(tenant: dict) -> str:
 
 
 @router.get("/members", response_model=AccountMembers,
-            summary="AA-978 — the agency's Content studio members (invited and active), read only")
+            summary="The agency's Content studio members (invited and active), read only")
 async def list_members(request: Request, tenant=Depends(get_tenant)):
     tenant_id = _tenant_id(tenant)
     pool = request.app.state.pool

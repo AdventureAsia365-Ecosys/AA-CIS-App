@@ -4,7 +4,7 @@ Async, S3-mediated alternative to the synchronous per-tour invoke_model path (LL
 _call_bedrock_satellite) for rewriting many tours at once. Only the WRITER attempt-1 goes through
 Batch — the judge (GPT-4.1, different vendor) and the generate↔judge retry loop stay on-demand.
 
-Flow (all on the satellite account that owns the Batch permissions — AA-302/303 acc1, AA-399 acc3):
+Flow (all on the acc3 satellite account, which owns the Batch permissions — AA-399; the only one since AA-998):
   1. build_manifest_jsonl()  — one JSONL record per tour: {recordId: tour_id, modelInput: <body>}
   2. upload input to  s3://<bronze>/batch-input/s1-rewrite/<job>/input.jsonl   (acc2 bronze bucket,
      cross-account read granted to the batch service role — modules/s3/main.tf)
@@ -18,9 +18,9 @@ bedrock-2023-05-31, system as cached content-blocks) so a batch record and a liv
 behaviourally identical. The caller (services/content_generation/s1_batch.py) then runs each
 tour's decoded text through the same validate/judge/gate/persist path _execute_run_tour uses.
 
-IAM boundary (verified in AA-CIS-Infra, both applied): acc1 role AA-Bedrock-Invoker and acc3 role
-AA3-Bedrock-Invoker BOTH hold CreateModelInvocationJob + Get/ListModelInvocationJobs + PassRole on
-their batch service role (bedrock_invoker_import.tf / accounts/acc3-bedrock/main.tf). The S3 grant
+IAM boundary (verified in AA-CIS-Infra, applied): the acc3 role AA3-Bedrock-Invoker holds
+CreateModelInvocationJob + Get/ListModelInvocationJobs + PassRole on its batch service role
+(accounts/acc3-bedrock/main.tf). The S3 grant
 currently only covers the batch-input/batch-output ".../atom-decompose/*" prefixes — AA-606 adds
 ".../s1-rewrite/*" alongside (do NOT ship this module to prod before that Terraform applies, or the
 batch service role gets AccessDenied reading the manifest).
@@ -39,7 +39,6 @@ import structlog
 from shared.aws_client import bronze
 
 from .bedrock_satellite import (
-    ACC1_ACCOUNT_ID,
     ACC3_ACCOUNT_ID,
     ANTHROPIC_VERSION,
     _INFERENCE_PROFILES,
@@ -56,9 +55,8 @@ logger = structlog.get_logger()
 INPUT_PREFIX = "batch-input/s1-rewrite"
 OUTPUT_PREFIX = "batch-output/s1-rewrite"
 
-# Batch service role assumed by Bedrock (PassRole'd by the invoker role) — one per account.
+# Batch service role assumed by Bedrock (PassRole'd by the invoker role) — acc3 only (AA-998).
 _BATCH_SERVICE_ROLE_ARN = {
-    "acc1": f"arn:aws:iam::{ACC1_ACCOUNT_ID}:role/aa-bedrock-batch-inference-role",
     "acc3": f"arn:aws:iam::{ACC3_ACCOUNT_ID}:role/aa3-bedrock-batch-inference-role",
 }
 
@@ -124,10 +122,10 @@ def _s3_client(account: str):
 
     The bronze bucket (aa-cis-bronze-<acc2>) lives in acc2 — the SAME account the ECS task
     runs in. So WE read/write it with the task's own native identity (plain boto3, no AssumeRole),
-    not the satellite session: the satellite invoker roles (AA-Bedrock-Invoker / AA3-Bedrock-Invoker)
-    hold NO S3 permissions, only Bedrock ones. Cross-account access is only needed by the Batch
+    not the satellite session: the satellite invoker role (AA3-Bedrock-Invoker)
+    holds NO S3 permissions, only Bedrock ones. Cross-account access is only needed by the Batch
     SERVICE role that BEDROCK itself assumes at job time to read the input / write the output — that
-    grant is on the bucket policy + the batch service role (modules/s3 + accounts/*-bedrock),
+    grant is on the bucket policy + the batch service role (modules/s3 + accounts/acc3-bedrock),
     separate from this client. `account` is accepted for signature symmetry but unused here.
     """
     import boto3

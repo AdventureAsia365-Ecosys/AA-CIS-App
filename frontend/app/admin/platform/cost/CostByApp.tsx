@@ -135,7 +135,7 @@ export default function CostByApp() {
               />
             </label>
             <Button variant="secondary" size="sm" onClick={refreshFromAws} disabled={!data || check.isPending}
-              title="Fetch this month again from AWS Cost Explorer (acc1/acc2/acc3 by service + acc2 by App tag): 4 requests, about $0.04">
+              title="Fetch this month again from AWS Cost Explorer (both accounts by service + the main account by App tag): 3 requests, about $0.03">
               <CloudDownload size={13} /> {check.isPending ? "Fetching…" : "Refresh from AWS"}
             </Button>
           </div>
@@ -406,9 +406,9 @@ function Breakdown({ r }: { r: CostRow }) {
               <li key={`${s.provider}-${s.account}-${i}`} style={lineStyle}>
                 <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
                   <span style={{ fontFamily: mono, fontSize: 12 }}>{s.provider ?? "unknown"}</span>
-                  {s.account && <span style={{ color: K.muted }}> · {s.account}</span>}
+                  {s.account_name && <span style={{ color: K.muted, fontFamily: mono }}> · {s.account_name}</span>}
                   <span style={{ color: K.muted }}> · {s.calls.toLocaleString("en-US")} calls</span>
-                  {s.billed_in_aws_acc2 && <span style={{ color: K.muted }} title="Billed on acc2: already in the AWS column"> · on acc2 bill</span>}
+                  {s.billed_in_aws_acc2 && <span style={{ color: K.muted }} title="Billed on the main AWS account: already in the AWS column"> · on the AWS bill</span>}
                 </span>
                 <span style={num}>{usd(s.cost_usd)}</span>
               </li>
@@ -428,9 +428,7 @@ const lineStyle: React.CSSProperties = { display: "flex", flexWrap: "wrap", just
 function LlmByApp({ data }: { data: CostResp }) {
   const rows = data.apps.filter((r) => r.ai_usd > 0 || r.ai_calls > 0).sort((a, b) => b.ai_usd - a.ai_usd);
   const max = Math.max(0, ...rows.map((r) => r.ai_usd));
-  const sats = (["acc1", "acc3"] as const)
-    .map((k) => [k, data.llm_satellites[k]] as const)
-    .filter((x): x is readonly ["acc1" | "acc3", SatelliteLine] => !!x[1]);
+  const sats: SatelliteLine[] = data.llm_satellites.lines ?? [];
   return (
     <section data-testid="platform-cost-llm" style={{ ...panelStyle, display: "flex", flexDirection: "column", gap: 10 }}>
       <div style={{ fontWeight: 600, fontSize: 14 }}>AI spend by app</div>
@@ -463,9 +461,9 @@ function LlmByApp({ data }: { data: CostResp }) {
           <div style={{ ...noteStyle, display: "inline-flex", alignItems: "center", gap: 4 }} title={data.sources.llm_satellites}>
             Other AI accounts — the AWS bill of each vs our estimate (a cross-check; already counted above by app) <Info size={11} />
           </div>
-          {sats.map(([name, s]) => (
-            <div key={name} style={{ ...lineStyle, fontSize: 12.5 }}>
-              <span style={{ fontFamily: mono }}>{name} <span style={{ color: K.muted }}>({s.account_id})</span></span>
+          {sats.map((s, i) => (
+            <div key={s.key ?? i} style={{ ...lineStyle, fontSize: 12.5 }}>
+              <span style={{ fontFamily: mono }}>{s.label ?? s.account_id ?? "AWS account"}</span>
               <span style={num}>
                 AWS {s.ce_bedrock_usd == null ? "not fetched" : usd(s.ce_bedrock_usd)} · estimate {usd(s.llm_log_estimate_usd)}
               </span>

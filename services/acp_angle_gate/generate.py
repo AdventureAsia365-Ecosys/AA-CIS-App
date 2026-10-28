@@ -6,7 +6,7 @@ Model: Bedrock Sonnet 4.5 via shared.llm_client.client.LLMClient (model_tier="so
 same "exclusive LLM layer" services/content_generation/graph.py::generate_node() already uses
 for its one real content-strategy LLM call, per the build task's explicit instruction ("đúng
 exclusive LLM layer đã chốt"). This is deliberately NOT services/acp_produce/generation.py's
-Bedrock-satellite-acc1-Sonnet-only path (that module writes long-form draft CONTENT, a different
+Bedrock-satellite-Sonnet-only path (that module writes long-form draft CONTENT, a different
 job with its own separate AA-334 model decision) and NOT judge_client.py's Nova Pro path (that's
 a cross-vendor QUALITY judge, must never share a model with any writer per ADR-2026-014/027) —
 angle generation is a content-STRATEGY call, the same kind of job graph.py's generate_node()

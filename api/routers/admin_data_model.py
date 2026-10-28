@@ -21,7 +21,7 @@ from api.services import data_model
 router = APIRouter(prefix="/admin", tags=["admin-data-model"], dependencies=[Depends(staff_policy)])
 
 
-@router.get("/data-model", summary="AA-894 — live data model (ERD) from the nightly schema dump, with a diff")
+@router.get("/data-model", summary="Live data model (ERD) from the nightly schema dump, with a diff")
 async def get_data_model(refresh: bool = Query(False, description="re-read storage (at most every 30 s)")):
     try:
         view = await data_model.load_data_model(refresh=refresh)

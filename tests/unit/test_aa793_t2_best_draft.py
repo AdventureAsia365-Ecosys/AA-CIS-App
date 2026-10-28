@@ -121,7 +121,7 @@ def test_restore_best_also_restores_the_drafts_call_metadata():
             "fallback_used": False, "satellite_account": "acc3", "retry_count": 0}
     best_snap = t2_repair.snapshot(best)
     last = {"generated": {"name": "B"}, "quality_score": 5.0, "judge_tiebreak": None,
-            "fallback_used": True, "satellite_account": "acc1", "retry_count": 2, "best_draft": best_snap}
+            "fallback_used": True, "satellite_account": "acc3", "retry_count": 2, "best_draft": best_snap}
     out = t2_repair.restore_best_node(last)
     assert out["generated"] == {"name": "A"} and out["judge_tiebreak"] == {"before": 6.4}
     assert out["fallback_used"] is False and out["satellite_account"] == "acc3"

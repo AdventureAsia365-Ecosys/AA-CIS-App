@@ -493,8 +493,8 @@ async def suggest_sentence(piece_id: str, body: SentenceSuggestBody, request: Re
     wi = _j(row["writer_input"])
     if not isinstance(wi, dict) or not wi:
         raise HTTPException(status_code=409, detail="No writer input stored for this piece (written before "
-                                                    "AA-769), so there is no source to rewrite from. Cut or "
-                                                    "edit it by hand instead.")
+                                                    "writer inputs were stored), so there is no source to "
+                                                    "rewrite from. Cut or edit it by hand instead.")
     start, end = _resolve(row["content_text"] or "", body.start, body.end, body.text)
     sentence = _plain(row["content_text"][start:end])
     problem = body.problem.strip() or "The editor wants this sentence rewritten."

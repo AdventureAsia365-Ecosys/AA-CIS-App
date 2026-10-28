@@ -1,7 +1,7 @@
-"""AA-862 — Cohere Embed v4 falls through acc2 -> acc3 (-> acc1 once enabled) through the stage route
-that migration 240 writes: one catalog row per account, chained with fallback_model_ids. Routing
-code is unchanged (only the acc2 client now makes a single attempt); these tests pin the behaviour
-the migration relies on."""
+"""AA-862 — Cohere Embed v4 falls through acc2 -> acc3 through the stage route that migration 240
+writes: one catalog row per account, chained with fallback_model_ids. Routing code is unchanged (only
+the acc2 client now makes a single attempt); these tests pin the behaviour the migration relies on.
+AA-998: acc3 is the only satellite account; a profile under the retired fallback account is never used."""
 import io
 import json
 from unittest.mock import MagicMock, patch
@@ -15,7 +15,8 @@ from shared.llm_client.catalog import CatalogModel
 from shared.llm_client.role_config import StageConfig
 
 PROFILE = "global.cohere.embed-v4:0"
-BASE, ACC3, ACC1 = "cohere-embed-v4", "cohere-embed-v4-acc3", "cohere-embed-v4-acc1"
+BASE, ACC3 = "cohere-embed-v4", "cohere-embed-v4-acc3"
+STALE = "cohere-embed-v4-stale"  # a row whose only profile is on the retired fallback account
 
 
 def _row(key, account, **kw):
@@ -29,8 +30,6 @@ def _row(key, account, **kw):
 CATALOG = {
     BASE: _row(BASE, "acc2"),
     ACC3: _row(ACC3, "acc3"),
-    ACC1: _row(ACC1, "acc1", enabled=False,
-               blocked_reason="AA-862: acc1 quota, profile and invoker-role permission not verified yet"),
 }
 
 
@@ -86,24 +85,16 @@ class TestFallThrough:
         assert calls == ["acc2"]
         assert resp.account == "acc2" and resp.model_used == BASE and resp.fallback_used is False
 
-    def test_disabled_acc1_row_is_skipped_without_a_call(self):
+    def test_enabled_row_on_the_retired_account_is_never_called(self):
+        # AA-998: an enabled row whose only profile is on acc1 (stale data) gets no account.
+        catalog = {**CATALOG, STALE: _row(STALE, "acc1")}
         runtime_for, calls = _runtimes({"acc2": _throttled(), "acc3": _throttled()})
-        with patch.object(embed_mod, "get_stage_config_sync", return_value=_route(fallbacks=(ACC3, ACC1))), \
-             patch.object(embed_mod, "get_model_sync", side_effect=CATALOG.get), \
+        with patch.object(embed_mod, "get_stage_config_sync", return_value=_route(fallbacks=(ACC3, STALE))), \
+             patch.object(embed_mod, "get_model_sync", side_effect=catalog.get), \
              patch.object(embed_mod, "_runtime_for", side_effect=runtime_for), \
-             pytest.raises(RuntimeError, match="cohere-embed-v4-acc1: skipped \\(AA-862: acc1"):
+             pytest.raises(RuntimeError, match="cohere-embed-v4-stale: no Bedrock profile"):
             embed_mod.embed("f10_embed", ["t"])
         assert calls == ["acc2", "acc3"]
-
-    def test_enabled_acc1_row_is_the_third_account(self):
-        catalog = {**CATALOG, ACC1: _row(ACC1, "acc1")}
-        runtime_for, calls = _runtimes({"acc2": _throttled(), "acc3": _throttled(), "acc1": _ok([[0.2]])})
-        with patch.object(embed_mod, "get_stage_config_sync", return_value=_route(fallbacks=(ACC3, ACC1))), \
-             patch.object(embed_mod, "get_model_sync", side_effect=catalog.get), \
-             patch.object(embed_mod, "_runtime_for", side_effect=runtime_for):
-            resp = embed_mod.embed("f10_embed", ["t"])
-        assert calls == ["acc2", "acc3", "acc1"]
-        assert resp.account == "acc1" and resp.model_used == ACC1 and resp.fallback_used is True
 
     def test_satellite_runtime_comes_from_the_satellite_session(self):
         from shared.llm_client import bedrock_satellite

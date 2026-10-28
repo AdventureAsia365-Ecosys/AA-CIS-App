@@ -582,7 +582,7 @@ async def test_traveller_dry_run_then_apply(pool):
     assert await admin.fetchval("SELECT count(*) FROM shared.notifications WHERE id = $1", notif) == 0
     assert await admin.fetchval("SELECT count(*) FROM shared.notifications WHERE id = $1", other) == 1
     payload = await admin.fetchval("SELECT payload FROM shared.job WHERE id = $1::uuid", bad_job)
-    assert (json.loads(payload) if isinstance(payload, str) else payload) == {"redacted": "AA-839"}
+    assert (json.loads(payload) if isinstance(payload, str) else payload) == {"redacted": "erasure"}
     # the hash is gone from every erasure job row, the superseded DRY RUN included
     assert await admin.fetchval("SELECT count(*) FROM shared.job WHERE payload::text LIKE '%' || $1 || '%'", h) == 0
     stripped = await admin.fetchval("SELECT payload ->> 'email_sha256' FROM shared.job WHERE id = $1::uuid", first_id)
