@@ -424,6 +424,9 @@ def _km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     return km(lat1, lng1, lat2, lng2)
 
 
+DAY_TRIP = "day_trip"   # reference_km: a second-choice pass (see there)
+
+
 def reference_km(c_lat: float, c_lng: float, lat: Optional[float], lng: Optional[float], query: str,
                  routes=()) -> tuple[Optional[float], Optional[str]]:
     """(distance, reason) of a candidate against the reference (AA-997). With a tour route (guards.route_km: the
@@ -431,11 +434,20 @@ def reference_km(c_lat: float, c_lng: float, lat: Optional[float], lng: Optional
     candidate near a wrong hint but far off the route is rejected (`off_route`, the Beijing "City Wall" on a Xi'an
     tour); a right candidate far from a wrong hint passes (Kong Lor 70 km from the model's point). Without a route the
     model's point is the reference (the S236 bake-off rule, ACCEPT_KM / LONG_FEATURE_KM). With neither: `no_reference`
-    (nothing to check a geocoder answer against, so nothing is accepted)."""
+    (nothing to check a geocoder answer against, so nothing is accepted).
+    `day_trip` (a second choice, accept / _accept_native take it only when no candidate passes outright): off the
+    route's radius but within guards.DAY_TRIP_KM of it AND within the bake-off radius of the model's point — a day trip
+    from the base (Ayutthaya ~75 km from Bangkok, Mutianyu ~70 km from Beijing) where the geocoder and the model agree;
+    a homonym in another city (~900 km) stays `off_route`."""
     from services.places import guards
     d = guards.route_km(c_lat, c_lng, routes)
     if d is not None:
-        return d, (None if d <= guards.route_radius(query) else "off_route")
+        if d <= guards.route_radius(query):
+            return d, None
+        if (d <= guards.DAY_TRIP_KM and lat is not None and lng is not None
+                and _km(lat, lng, c_lat, c_lng) <= radius_km(query)):
+            return d, DAY_TRIP
+        return d, "off_route"
     if lat is None or lng is None:
         return None, "no_reference"
     d = _km(lat, lng, c_lat, c_lng)
@@ -452,6 +464,7 @@ def accept(query: str, cands: list[Candidate], lat: Optional[float], lng: Option
     settlement = is_settlement(query) if settlement is None else settlement
     codes = set(iso_codes or ()) | ({iso2} if iso2 else set())
     reasons = []
+    fallback: Optional[Verdict] = None      # the first `day_trip` candidate: taken only when none passes outright
     for i, c in enumerate(cands[:top_n]):
         sim = name_sim(query, c.name)
         if codes and c.iso2 and c.iso2 not in codes:
@@ -462,8 +475,17 @@ def accept(query: str, cands: list[Candidate], lat: Optional[float], lng: Option
             reasons.append(f"{i}:type")
         else:
             dist, why = reference_km(c.lat, c.lng, lat, lng, query, routes)
+            if why == DAY_TRIP and fallback is None:
+                fallback = Verdict(c, i, round(sim, 3), round(dist, 2))
             if why:
                 reasons.append(f"{i}:{why}")
             else:
                 return Verdict(c, i, round(sim, 3), round(dist, 2), reasons)
-    return Verdict(None, reasons=reasons)
+    return with_fallback(fallback, reasons)
+
+
+def with_fallback(fallback: Optional[Verdict], reasons: list[str]) -> Verdict:
+    """The `day_trip` second choice when there is one (its reasons list the scan), else no candidate."""
+    if fallback is None:
+        return Verdict(None, reasons=reasons)
+    return Verdict(fallback.accepted, fallback.rank, fallback.sim, fallback.km, reasons)

@@ -101,6 +101,10 @@ def point_ok(lat: Optional[float], lng: Optional[float], country: Optional[str])
 # is to the SEGMENTS, not only to the stops, so a site on a long transfer day (between two towns 300 km apart) passes.
 ROUTE_KM = 50.0          # a site / village
 ROUTE_LONG_KM = 100.0    # a long feature (lake, river, valley, park, trail, road, national ...)
+# A day trip from the base town: a geocoder answer off ROUTE_KM but within this of the route is still taken when it
+# also agrees with the model's point (geomatch.reference_km `day_trip`; Ayutthaya from Bangkok ~75 km, Mutianyu from
+# Beijing ~70 km, Kanchanaburi from Bangkok ~130 km). A homonym in another city (Beijing for Xi'an, ~900 km) is not.
+DAY_TRIP_KM = 150.0
 Route = tuple            # tuple[tuple[float, float], ...]: (lat, lng) stops in day order
 
 

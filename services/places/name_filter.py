@@ -172,8 +172,19 @@ def _is_activity(q: str) -> bool:
     return False
 
 
+def _is_water(q: str) -> bool:
+    """A sea / ocean / strait / gulf / the Himalayas named as such: the word in lower case ("the beach by the sea"),
+    last ("Arabian Sea") or before "of" ("Sea of Japan"). A Capitalised one inside a name is part of a place
+    ("Ocean Park" in Hong Kong, "Tanah Lot Sea Temple")."""
+    for m in _WATER.finditer(q):
+        rest = q[m.end():].strip(" .,)")
+        if m.group(0)[:1].islower() or not rest or rest.lower().startswith("of "):
+            return True
+    return False
+
+
 def _is_region(q: str) -> bool:
-    if _WATER.search(q):
+    if _is_water(q):
         return True
     m = _DIRECTION.match(q)
     if m and _countries.resolve(m.group(1)) is not None:

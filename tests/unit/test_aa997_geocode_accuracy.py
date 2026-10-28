@@ -127,6 +127,32 @@ def test_accept_uses_the_route_not_the_model_hint():
     assert geomatch.accept("Bell Tower", cands, None, None, "cn").reasons == ["0:no_reference", "1:no_reference"]
 
 
+def test_a_day_trip_off_the_route_is_taken_when_the_hint_agrees():
+    """Ayutthaya on a Bangkok-based day (~75 km off the one-stop route): the geocoder's answer next to the model's
+    point is a second choice within DAY_TRIP_KM; an on-route candidate still wins; a far homonym does not pass."""
+    bangkok = ((13.75, 100.50),)
+    ayutthaya = (14.36, 100.58)
+    cands = [_cand(*ayutthaya, "Ayutthaya", "th", "city")]
+    v = geomatch.accept("Ayutthaya", cands, *ayutthaya, "th", routes=[bangkok])
+    assert v.accepted is cands[0] and v.reasons == ["0:day_trip"]
+    # no hint agreement (the model put it elsewhere): off the route stays rejected
+    assert geomatch.accept("Ayutthaya", cands, 15.5, 101.5, "th", routes=[bangkok]).accepted is None
+    # an on-route candidate later in the list wins over the day-trip one
+    near = _cand(13.76, 100.51, "Ayutthaya", "th", "city")
+    v = geomatch.accept("Ayutthaya", [cands[0], near], *ayutthaya, "th", routes=[bangkok])
+    assert v.accepted is near and v.reasons == ["0:day_trip"]
+    # the Xi'an / Beijing homonym (~900 km) is not a day trip
+    bell = [_cand(*BEIJING_WALL, "Bell Tower")]
+    assert geomatch.accept("Bell Tower", bell, *BEIJING_WALL, "cn", routes=[(XIAN, PINGYAO)]).accepted is None
+
+
+def test_water_words_inside_a_name_keep_the_place():
+    for name in ("Ocean Park", "Tanah Lot Sea Temple"):
+        assert name_filter.classify(name).is_place, name
+    for name in ("Arabian Sea", "Sea of Japan", "Gulf of Thailand", "the beach by the sea", "the Himalayas"):
+        assert name_filter.classify(name).cause == name_filter.REGION, name
+
+
 def test_accept_takes_hong_kong_for_china():
     c = _cand(22.32, 114.17, "Hong Kong", iso="hk", rtype="city")
     assert geomatch.accept("Hong Kong", [c], 22.3, 114.2, "cn").accepted is None             # country
@@ -345,12 +371,16 @@ def test_classify_row_reports_without_a_call():
 
 
 class _RecConn(_Conn):
-    def __init__(self):
+    def __init__(self, current=None):
         self.sql = []
+        self.current = {"located_by": "llm", "geo_status": "ok", "merged": False} if current is None else current
 
     async def execute(self, sql, *args):
         self.sql.append((" ".join(sql.split())[:60], args))
         return "UPDATE 1"
+
+    async def fetchrow(self, sql, *args):
+        return self.current or None
 
 
 @pytest.mark.asyncio
@@ -388,6 +418,24 @@ async def test_relocate_row_flags_an_unconfirmed_point_and_hides_only_when_asked
     flag = [a for s, a in conn.sql if s.startswith("UPDATE shared.destinations SET review_reason")][0]
     assert flag == ("d-Phou Khoun", "unconfirmed_hard_type", True)          # the prior reason is kept; hidden
     assert [s for s, _ in conn.sql if "geo.place_name" in s]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("current", [{"located_by": "manual", "geo_status": "manual", "merged": False},
+                                     {"located_by": "llm", "geo_status": "ok", "merged": True}, {}])
+async def test_relocate_row_skips_a_row_fixed_or_merged_meanwhile(monkeypatch, current):
+    """An admin fix (or a merge) between the run's selection and the row's turn wins: no write, no stamp."""
+    from services.places import relocate, store
+    write_point = AsyncMock()
+    monkeypatch.setattr(store, "_write_point", write_point)
+    monkeypatch.setattr(store, "lock_destinations", AsyncMock())
+    conn = _RecConn(current)
+    r = await relocate.apply_row(conn, _row("Kong Lor Cave", 17.30, 105.40), (ROUTE,),
+                                 _Geo({"Kong Lor Cave": _ok(17.98, 104.81)}), hide_unconfirmed=False)
+    assert r == {"outcome": "skipped"} and not write_point.called and conn.sql == []
+    r = await relocate.apply_row(_RecConn(current), _row("hotel in Pakse", 15.1, 105.8), (), _Geo(),
+                                 hide_unconfirmed=False)
+    assert r == {"outcome": "skipped"}
 
 
 @pytest.mark.asyncio

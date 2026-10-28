@@ -20,6 +20,8 @@ lock), per row:
   - else the stored point stays and is flagged: review_reason `off_route` (far off every route of its tours) or
     `llm_point` (no geocoder confirmed it); with `hide_unconfirmed` the row is also `suspect` (hidden from the catalog
     and from new links, like the outlier rule) — off by default, the owner's call.
+Overnight towns are taken first (they geocode well and, once confirmed, give the later runs' sites their route). A
+row an admin fixed, or place_dedupe merged, after the run read its selection is `skipped` (re-read under the lock).
 Every processed row is stamped `geocoder_meta.relocate = {v, outcome, at}` so a rerun skips it. Nothing is deleted:
 component links and destination ids stay as they are (TripPlanner pins them).
 """
@@ -44,7 +46,7 @@ MAX_ROWS_PER_RUN = 400
 RESERVE_CREDITS = 1000
 SAMPLE = 25
 
-OUTCOMES = ("confirmed", "non_place", "off_route", "llm_point", "country_fixed")
+OUTCOMES = ("confirmed", "non_place", "off_route", "llm_point", "country_fixed", "skipped")
 
 _ROWS_SQL = """
     SELECT d.id::text AS id, d.name, d.country, d.lat, d.lng, d.located_by, d.geo_status, d.geo_precision,
@@ -53,7 +55,9 @@ _ROWS_SQL = """
      WHERE d.located_by = ANY($1::text[]) AND d.duplicate_of IS NULL AND d.geo_status <> 'manual'
        AND ($2::text IS NULL OR lower(btrim(d.country)) = lower(btrim($2)))
        AND (d.geocoder_meta -> 'relocate' ->> 'v') IS DISTINCT FROM $3
-     ORDER BY lower(btrim(d.country)), d.id
+     -- overnight towns first: once confirmed they are route anchors (store.route_anchors) for the sites of later runs
+     ORDER BY EXISTS (SELECT 1 FROM geo.tour_day td WHERE td.overnight_destination_id = d.id) DESC,
+              lower(btrim(d.country)), d.id
      LIMIT $4
 """
 _COUNT_SQL = """
@@ -81,6 +85,21 @@ _HIDE_NAMES_SQL = """
      WHERE destination_id = $1::uuid AND status = 'resolved'
 """
 _COUNTRY_SQL = "UPDATE shared.destinations SET country = $2 WHERE id = $1::uuid"
+# re-read under the destinations lock: an admin may fix the row, or place_dedupe merge it, while the run (≤ 400 rows,
+# minutes of geocoder calls) works from the selection it read at the start
+_CURRENT_SQL = """
+    SELECT located_by, geo_status, duplicate_of IS NOT NULL AS merged FROM shared.destinations
+     WHERE id = $1::uuid FOR UPDATE
+"""
+
+
+async def _still_due(conn, row: dict) -> Optional[dict]:
+    """The row's current located_by / geo_status when it may still be processed (not admin-fixed, not merged, still
+    one of the selected sources), else None."""
+    cur = await conn.fetchrow(_CURRENT_SQL, row["id"])
+    if cur is None or cur["merged"] or cur["geo_status"] == "manual" or cur["located_by"] != row["located_by"]:
+        return None
+    return dict(cur)
 
 
 def located_by_list(value) -> list[str]:
@@ -193,6 +212,8 @@ async def apply_row(conn, row: dict, routes: tuple, geocoder, *, hide_unconfirme
         reason = f"{name_filter.NON_PLACE_PREFIX}:{c['non_place']}"
         async with conn.transaction():
             await store.lock_destinations(conn)
+            if await _still_due(conn, row) is None:
+                return {"outcome": "skipped"}
             await conn.execute(_FLAG_SQL, row["id"], reason, hide_unconfirmed)
             if hide_unconfirmed:
                 await conn.execute(_HIDE_NAMES_SQL, row["id"])
@@ -205,8 +226,11 @@ async def apply_row(conn, row: dict, routes: tuple, geocoder, *, hide_unconfirme
     hit = locate._confirmed(item, res, row["country"])
     async with conn.transaction():
         await store.lock_destinations(conn)
+        cur = await _still_due(conn, row)
+        if cur is None:            # fixed by an admin / merged / re-located meanwhile: nothing to do, no stamp
+            return {"outcome": "skipped"}
         if hit is not None:
-            if guards.may_overwrite(row["located_by"], row["geo_status"], hit.located_by):
+            if guards.may_overwrite(cur["located_by"], cur["geo_status"], hit.located_by):
                 await store._write_point(conn, row["id"], hit, False)
             fixed = hit.country != row["country"] and await _fix_country(conn, row, hit.country)
             km = round(guards.km(lat, lng, hit.lat, hit.lng), 1)

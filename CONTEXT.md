@@ -716,8 +716,9 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   features; `rank.confidence` recorded, never a gate) → `located_by='geoapify'`, `geo_precision='point'`.
   **AA-997 (S254 geocode audit): coordinates come from the geocoder only.** With a tour route (the located overnight
   stops of days d-1..d+1 of the tours using the name, `store.route_anchors` / `guards.route_km`, ≤ 50 km for a site,
-  100 km for a long feature) the route is the distance reference instead of the model's point, which is only a hint
-  (Geoapify `bias`); unconfirmed → the town the model names, geocoded as a settlement (`area`,
+  100 km for a long feature; a day trip ≤ 150 km off the route passes only as a second choice when the answer also
+  agrees with the model's point) the route is the distance reference instead of the model's point, which is only a
+  hint (Geoapify `bias`); unconfirmed → the town the model names, geocoded as a settlement (`area`,
   `review_reason='centroid_fallback'`); else no point (`unconfirmed_by_geocoder`, `unknown` at once). A model null gets
   one geocoder-only search when a route exists, else it is final. China searches cover HK / MO and a point there is
   stored as Hong Kong / Macao. Only `GEOCODER_PROVIDER=model_only` still stores the model's point (`llm`, `area`,

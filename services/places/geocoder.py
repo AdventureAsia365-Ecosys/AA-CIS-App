@@ -348,6 +348,7 @@ def _accept_native(query: str, cands: list, lat: Optional[float], lng: Optional[
     settlement = (geomatch.is_settlement(ref_name) if ref_name else True) and not geomatch.native_feature(q)
     codes = set(iso_codes or ()) | ({iso2} if iso2 else set())
     reasons = []
+    fallback = None          # geomatch.accept's `day_trip` second choice
     for i, c in enumerate(cands[:geomatch.TOP_N]):
         nm = (c.name or "").replace(" ", "")
         if codes and c.iso2 and c.iso2 not in codes:
@@ -359,11 +360,13 @@ def _accept_native(query: str, cands: list, lat: Optional[float], lng: Optional[
         else:
             # the radius comes from the English name (`ref_name`)
             dist, why = geomatch.reference_km(c.lat, c.lng, lat, lng, ref_name or query, routes)
+            if why == geomatch.DAY_TRIP and fallback is None:
+                fallback = geomatch.Verdict(c, i, 1.0, round(dist, 2))
             if why:
                 reasons.append(f"{i}:{why}")
             else:
                 return geomatch.Verdict(c, i, 1.0, round(dist, 2), reasons)
-    return geomatch.Verdict(None, reasons=reasons)
+    return geomatch.with_fallback(fallback, reasons)
 
 
 class _Unsupported:
