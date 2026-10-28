@@ -119,6 +119,65 @@ def test_drops_all_ten_from_empty_tables(cur):
     assert "waived" in cur.fetchone()[0]
 
 
+_OUTSIDE_SQL = """
+SELECT 'rel ' || n.nspname || '.' || c.relname || ' ' || c.relkind::text
+  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+ WHERE n.nspname <> 'retired' AND n.nspname NOT LIKE 'pg_toast%' AND n.nspname NOT LIKE 'pg_temp%'
+UNION ALL
+SELECT 'con ' || c.conrelid::regclass::text || '.' || c.conname
+  FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace
+ WHERE n.nspname <> 'retired'
+UNION ALL
+SELECT 'fn ' || p.oid::regprocedure::text FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+ WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+UNION ALL
+SELECT 'type ' || t.oid::regtype::text FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+ WHERE n.nspname NOT IN ('retired', 'pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg_toast%'
+UNION ALL
+SELECT 'schema ' || nspname FROM pg_namespace
+"""
+
+
+def test_drops_nothing_outside_the_ten(cur):
+    """Every relation, constraint, function, type and schema outside the ten survives (the parents of the outbound
+    FKs, the views over them, `retired` itself), and an object quarantined in `retired` by a later wave stays."""
+    _pre_296(cur)
+    cur.execute("CREATE TABLE retired.zz850_next_wave (id int PRIMARY KEY)")
+    cur.execute(_OUTSIDE_SQL)
+    before = sorted(r[0] for r in cur.fetchall())
+    cur.execute(_body(_raw()))
+    cur.execute(_OUTSIDE_SQL)
+    after = sorted(r[0] for r in cur.fetchall())
+    assert set(before) - set(after) == set()
+    assert set(after) - set(before) == set()
+    assert _retired_relations(cur) == ["zz850_next_wave", "zz850_next_wave_pkey"]
+
+
+def test_never_drops_a_name_back_in_its_source_schema(cur):
+    """A wave-1 name that a restore migration moved back to its source schema is skipped, not dropped there."""
+    _pre_296(cur)
+    cur.execute("DROP TABLE retired.marketplace_portfolios")
+    wave1_standins(cur, ("marketplace_portfolios",))             # acp_shared.marketplace_portfolios
+    sql = "INSERT INTO acp_shared.marketplace_portfolios (portfolio_id, status) VALUES (%s, 'draft')"
+    cur.execute(sql, (str(uuid.uuid4()),))
+    cur.execute(_body(_raw()))
+    assert _existing(cur) == ["acp_shared.marketplace_portfolios"]
+
+
+def test_guard_refuses_a_wrong_kind(cur):
+    _pre_296(cur)
+    cur.execute("DROP VIEW retired.v_batch_stats")
+    cur.execute("CREATE TABLE retired.v_batch_stats (batch_id uuid)")
+    _refused(cur, _body(_raw()), "retired.v_batch_stats is not of kind v")
+
+
+@pytest.mark.parametrize("k", [10, 12])
+def test_guard_refuses_one_row_off_the_verified_count(cur, k):
+    _pre_296(cur)
+    _insert_portfolios(cur, k)
+    _refused(cur, _body(_raw()), f"retired.marketplace_portfolios has {k} rows, the verified count is 11")
+
+
 def test_drops_with_the_verified_counts(cur):
     _pre_296(cur)
     _insert_portfolios(cur, 11)                     # Dev's state after the 294 apply
@@ -177,3 +236,6 @@ def test_file_contract():
     assert "interval" not in code and "waived" in raw
     drops = re.findall(r"^DROP (?:VIEW|TABLE) +IF EXISTS retired\.(\w+);$", raw, re.M)
     assert sorted(drops) == sorted(WAVE1_850)
+    # the ten DROP lines are the file's only destructive statements (nothing else is dropped, truncated or deleted)
+    destructive = re.findall(r"\b(?:DROP|TRUNCATE|DELETE|ALTER)\b[^;]*;", code)   # the file's keywords are upper
+    assert len(destructive) == len(WAVE1_850), destructive
