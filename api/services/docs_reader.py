@@ -24,6 +24,15 @@ and the language is not English (one item per language). A translation is never 
 an owner original makes its translation owner too. A manifest without the fields (older builder) reads as English
 pages without translations.
 
+SVG assets (root build_docs_reader.py rule 9, AA-697): the manifest may list ``assets`` ([{repo, path, key, type,
+bytes, sha256, access}], stored under <prefix>/assets/<repo>/<path>.svg), the architecture diagrams a page shows with
+``![alt](relative.svg)``. The builder publishes an SVG only when it is safe; load_asset() checks it again on every
+read (same rule: no script, foreignObject, other active element, event handler, javascript: URL, CSS url() / @import,
+entity declaration; every href a fragment or an inline PNG; no 12-digit run outside the inline PNGs) and refuses the
+asset (503) instead of serving it. Assets are staff tier: an asset whose access is not "staff" is served to owner
+readers only. The route sends it as image/svg+xml with a sandbox CSP, and the page shows it through <img>, where an SVG
+can neither run script nor fetch anything.
+
 This repo is public: it ships the reader only, no page content.
 
 load_manifest() is cached in process for CACHE_TTL_S; load_page() caches each body for CACHE_TTL_S too (bounded).
@@ -37,6 +46,7 @@ import json
 import os
 import re
 import time
+import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
@@ -59,6 +69,12 @@ ACCESS_OWNER = "owner"
 # What a page key may look like: pages/<repo>/<relative path>.md, no climbing, no absolute or odd characters.
 _KEY = re.compile(r"^pages/[A-Za-z0-9._-]+/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.md$")
 _PATH = re.compile(r"^(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.md$")
+_ASSET_KEY = re.compile(r"^assets/[A-Za-z0-9._-]+/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.svg$")
+_ASSET_PATH = re.compile(r"^(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.svg$")
+ASSET_TYPE = "image/svg+xml"
+MAX_ASSET_BYTES = 2 * 1024 * 1024   # the builder skips SVGs over 1 MB
+MAX_ASSETS = 500
+ASSET_CACHE_MAX = 32
 
 # Defence in depth behind the builder's redaction + guard (root tools/docs/build_docs_reader.py): a 12-digit run (an
 # AWS account ID, also inside a bucket name or an ARN) is masked again when a page is served, and the event is logged,
@@ -69,6 +85,38 @@ ACCOUNT_ID_MARKER = "[redacted-account-id]"
 # Fields copied from a manifest entry into the API response (anything else in the object is dropped).
 _ENTRY_FIELDS = ("repo", "path", "id", "title", "description", "type", "status", "audience", "owner",
                  "last_reviewed", "generated", "access", "bytes", "lang", "translation_of", "translations")
+
+# Rule 9 re-check of an SVG asset (the builder's svg_problems, kept in step by tests on both sides).
+_INLINE_PNG = re.compile(r"data:image/png;base64,[A-Za-z0-9+/=\s]*")
+_SVG_FORBIDDEN = (
+    re.compile(r"<\s*script", re.I),
+    re.compile(r"<\s*foreignObject", re.I),
+    re.compile(r"<\s*(?:iframe|object|embed|audio|video|animate\w*|set|handler|listener)\b", re.I),
+    re.compile(r"\son[a-z]+\s*=", re.I),
+    re.compile(r"javascript\s*:", re.I),
+    re.compile(r"@import", re.I),
+    re.compile(r"url\(\s*['\"]?(?!#)", re.I),
+    re.compile(r"<!ENTITY|<!DOCTYPE[^>]*\[", re.I),
+)
+_SVG_REF = re.compile(r"\s(?:xlink:)?href\s*=\s*(?:\"([^\"]*)\"|'([^']*)')", re.I)
+# The prolog before <svg: an optional XML declaration, then comments and at most one internal-subset-free DOCTYPE.
+# Walked by _svg_starts_ok() instead of one regex: a repeated lazy comment group backtracks exponentially (ReDoS).
+_SVG_PROLOG_XML = re.compile(r"\s*<\?xml[^>]*>")
+_SVG_PROLOG_DOCTYPE = re.compile(r"<!DOCTYPE svg[^>\[]*>")
+_SVG_ROOT_OPEN = re.compile(r"<svg[\s>]")
+# Parsed re-check (root svg_tree_problems): a namespace prefix (<s:script>, x:href) or an XML character reference
+# (u&#114;l(...)) slips past the raw-text regexes, so the parsed document must hold only SVG-namespace elements from
+# _SVG_ELEMENTS, attributes without a namespace (plus xlink:href / xlink:title / xml:space), no on* attribute, every
+# href a fragment or an inline PNG, and no decoded value that could fetch or run anything; no processing instruction.
+_SVG_NS = "http://www.w3.org/2000/svg"
+_XLINK_NS = "http://www.w3.org/1999/xlink"
+_XML_NS = "http://www.w3.org/XML/1998/namespace"
+_SVG_ELEMENTS = frozenset({
+    "svg", "g", "title", "desc", "defs", "use", "a", "image", "text", "tspan", "path", "polygon", "polyline",
+    "ellipse", "circle", "rect", "line", "linearGradient", "radialGradient", "stop", "clipPath", "marker", "symbol"})
+_SVG_NS_ATTRS = frozenset({f"{{{_XLINK_NS}}}href", f"{{{_XLINK_NS}}}title", f"{{{_XML_NS}}}space"})
+_SVG_BAD_VALUE = re.compile(r"url\(\s*['\"]?(?!#)|javascript\s*:|@import|image-set|expression\s*\(|\\", re.I)
+_SVG_XML_DECL = re.compile(r"\s*<\?xml\s[^>]*\?>")
 
 DEFAULT_LANG = "en"
 _LANG = re.compile(r"^[a-z]{2}$")
@@ -129,6 +177,93 @@ def _valid_path(path: Any) -> bool:
 def _valid_key(key: Any, repo: str, path: str) -> bool:
     return (isinstance(key, str) and bool(_KEY.match(key)) and ".." not in key.split("/")
             and key == f"pages/{repo}/{path}")
+
+
+def _svg_starts_ok(text: str) -> bool:
+    """True when the text is an optional XML declaration, comments and at most one DOCTYPE, then <svg."""
+    m = _SVG_PROLOG_XML.match(text)
+    i = m.end() if m else 0
+    doctype_seen = False
+    while True:
+        while i < len(text) and text[i].isspace():
+            i += 1
+        if text.startswith("<!--", i):
+            end = text.find("-->", i + 4)
+            if end < 0:
+                return False
+            i = end + 3
+            continue
+        if not doctype_seen:
+            m = _SVG_PROLOG_DOCTYPE.match(text, i)
+            if m:
+                doctype_seen = True
+                i = m.end()
+                continue
+        return _SVG_ROOT_OPEN.match(text, i) is not None
+
+
+def svg_is_safe(text: str) -> bool:
+    """Rule 9: True when the SVG can be shown (see the module docstring)."""
+    if not _svg_starts_ok(text) or any(p.search(text) for p in _SVG_FORBIDDEN):
+        return False
+    for m in _SVG_REF.finditer(text):
+        ref = (m.group(1) if m.group(1) is not None else m.group(2)).strip()
+        if not (ref.startswith("#") or _INLINE_PNG.fullmatch(ref)):
+            return False
+    if _ACCOUNT_ID.search(_INLINE_PNG.sub("data:image/png;base64,", text)):
+        return False
+    return _svg_tree_is_safe(text)
+
+
+def _svg_tree_is_safe(text: str) -> bool:
+    """The parsed half of rule 9 (entity declarations are refused before this runs, so nothing expands)."""
+    decl = _SVG_XML_DECL.match(text)
+    if "<?" in text[decl.end() if decl else 0:]:
+        return False
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        return False
+    if root.tag != f"{{{_SVG_NS}}}svg":
+        return False
+    decoded: list[str] = []
+    for el in root.iter():
+        ns, _, name = el.tag[1:].partition("}") if el.tag.startswith("{") else ("", "", el.tag)
+        if ns != _SVG_NS or name not in _SVG_ELEMENTS:
+            return False
+        decoded += [el.text or "", el.tail or ""]
+        for attr, value in el.attrib.items():
+            local = attr.rpartition("}")[2]
+            if (attr.startswith("{") and attr not in _SVG_NS_ATTRS) or local.lower().startswith("on"):
+                return False
+            if local == "href":
+                v = value.strip()
+                if not (v.startswith("#") or _INLINE_PNG.fullmatch(v)):
+                    return False
+                continue
+            if _SVG_BAD_VALUE.search(value):
+                return False
+            decoded.append(value)
+    return not _ACCOUNT_ID.search(" ".join(decoded))
+
+
+def _clean_asset(raw: Any) -> Optional[dict]:
+    """A manifest asset reduced to what the API needs, or None when it is not usable."""
+    if not isinstance(raw, dict):
+        return None
+    repo, path, key = raw.get("repo"), raw.get("path"), raw.get("key")
+    if not (isinstance(repo, str) and re.fullmatch(r"[A-Za-z0-9._-]+", repo)):
+        return None
+    if not (isinstance(path, str) and _ASSET_PATH.match(path) and ".." not in path.split("/")):
+        return None
+    if not (isinstance(key, str) and _ASSET_KEY.match(key) and key == f"assets/{repo}/{path}"):
+        return None
+    if raw.get("type") != ASSET_TYPE:
+        return None
+    sha = raw.get("sha256")
+    return {"repo": repo, "path": path, "key": key,
+            "sha256": sha if isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{64}", sha) else None,
+            "access": ACCESS_STAFF if raw.get("access") == ACCESS_STAFF else ACCESS_OWNER}
 
 
 def _clean_entry(raw: Any) -> Optional[dict]:
@@ -213,12 +348,14 @@ def _link_translations(entries: list[dict]) -> None:
 _cache: dict[str, Any] = {"value": None, "at": 0.0}
 _lock = asyncio.Lock()
 _pages: "OrderedDict[tuple[str, Optional[str]], tuple[float, str]]" = OrderedDict()
+_assets: "OrderedDict[tuple[str, Optional[str]], tuple[float, bytes]]" = OrderedDict()
 
 
 def reset_cache() -> None:
     _cache["value"] = None
     _cache["at"] = 0.0
     _pages.clear()
+    _assets.clear()
 
 
 def _build_manifest(client_factory: Callable[[], Any]) -> dict:
@@ -249,12 +386,24 @@ def _build_manifest(client_factory: Callable[[], Any]) -> dict:
     if dropped:
         logger.warning("docs_reader_manifest_entries_dropped", dropped=dropped)
     _link_translations(entries)
+    assets: list[dict] = []
+    raw_assets = data.get("assets") if isinstance(data.get("assets"), list) else []   # absent before rule 9
+    seen_assets: set[tuple[str, str]] = set()
+    for raw_asset in raw_assets[:MAX_ASSETS]:
+        asset = _clean_asset(raw_asset)
+        if asset is None or (asset["repo"], asset["path"]) in seen_assets:
+            continue
+        seen_assets.add((asset["repo"], asset["path"]))
+        assets.append(asset)
+    if len(assets) != len(raw_assets):
+        logger.warning("docs_reader_manifest_assets_dropped", dropped=len(raw_assets) - len(assets))
     source = data.get("source") if isinstance(data.get("source"), dict) else {}
     return {
         "generated_at": data.get("generated_at"),
         "rule": data.get("rule"),
         "source": {k: source.get(k) for k in ("repo", "sha", "ref")},
         "entries": entries,
+        "assets": assets,
         "loaded_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -302,6 +451,7 @@ async def load_manifest(owner_read: bool, refresh: bool = False,
         "rule": m["rule"],
         "source": m["source"],
         "pages": pages,
+        "assets": [{"repo": a["repo"], "path": a["path"]} for a in _visible(m.get("assets", []), owner_read)],
         "counts": {"shown": len(pages), "owner_only_shown": sum(1 for p in pages if p["access"] == ACCESS_OWNER),
                    "hidden_owner_only": hidden},
         "is_owner": owner_read if is_owner is None else is_owner,
@@ -360,3 +510,49 @@ async def load_page(repo: str, path: str, owner_read: bool,
     paths = {(e["repo"], e["path"]) for e in visible}
     return {"page": _public(entry, paths), "markdown": markdown, "source": m["source"],
             "generated_at": m["generated_at"]}
+
+
+# ── assets (rule 9) ─────────────────────────────────────────────────────────────────────────────────
+
+def _read_asset(client_factory: Callable[[], Any], key: str, expected_sha: Optional[str]) -> bytes:
+    client = client_factory()
+    full_key = f"{s3_prefix()}/{key}"
+    try:
+        raw = _read_bytes(client, _bucket(), full_key, MAX_ASSET_BYTES)
+    except Exception as err:
+        logger.warning("docs_reader_asset_read_failed", key=full_key, error=type(err).__name__)
+        raise DocsUnavailable("The image could not be read from storage") from err
+    if raw is None:
+        raise DocsMissing("The image is listed but not stored yet; try again in a minute")
+    if expected_sha and hashlib.sha256(raw).hexdigest() != expected_sha:
+        logger.info("docs_reader_asset_sha_mismatch", key=full_key)
+    try:
+        safe = svg_is_safe(raw.decode("utf-8"))
+    except UnicodeDecodeError:
+        safe = False
+    if not safe:
+        # The builder refuses such a file, so this one did not come from Docs sync: never serve it.
+        logger.warning("docs_reader_asset_refused", key=full_key)
+        raise DocsUnavailable("The stored image failed the safety check")
+    return raw
+
+
+async def load_asset(repo: str, path: str, owner_read: bool,
+                     client_factory: Optional[Callable[[], Any]] = None) -> bytes:
+    """One SVG asset by (repo, path), only when the manifest lists it for this caller; 404 otherwise."""
+    m = await _manifest(False, client_factory)
+    asset = next((a for a in _visible(m.get("assets", []), owner_read) if a["repo"] == repo and a["path"] == path),
+                 None)
+    if asset is None:
+        raise DocsMissing("No such image")
+    cache_key = (asset["key"], asset["sha256"])
+    hit = _assets.get(cache_key)
+    if hit is not None and time.monotonic() - hit[0] < CACHE_TTL_S:
+        _assets.move_to_end(cache_key)
+        return hit[1]
+    data = await asyncio.to_thread(_read_asset, client_factory or _s3_client, asset["key"], asset["sha256"])
+    _assets[cache_key] = (time.monotonic(), data)
+    _assets.move_to_end(cache_key)
+    while len(_assets) > ASSET_CACHE_MAX:
+        _assets.popitem(last=False)
+    return data

@@ -14,6 +14,7 @@
 // Languages: English by default; a page with a published Vietnamese copy (<page>.vi.md, lang: vi, translation_of) gets
 // an EN / VI switch, remembered in this browser (localStorage "aa_docs_lang"). The list shows originals only; a page
 // without the chosen language shows English with a note. ```mermaid blocks are drawn as diagrams (MarkdownView).
+// AA-697: `![alt](x.svg)` shows an SVG of the bundle (GET /api/admin/docs/asset, checked server-side) through <img>.
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, BookMarked, Lock, RefreshCw, Search, X } from "lucide-react";
@@ -56,6 +57,7 @@ import {
   parseDocLang,
   pickLanguage,
   outline,
+  resolveImage,
   resolveLink,
   shortSha,
   typeLabel,
@@ -209,6 +211,7 @@ function Reader({
   lang,
   onLang,
   published,
+  assets,
   onOpen,
   pendingHash,
 }: {
@@ -218,6 +221,7 @@ function Reader({
   lang: DocLang;
   onLang: (l: DocLang) => void;
   published: Set<string>;
+  assets: Set<string>;
   onOpen: (path: string, hash: string) => void;
   pendingHash: string;
 }) {
@@ -256,6 +260,10 @@ function Reader({
       return { kind: "text" };
     },
     [path, published, onOpen],
+  );
+  const resolveImg = useCallback(
+    (src: string | undefined) => resolveImage(src, path, repo, assets),
+    [path, repo, assets],
   );
 
   // After the page renders, jump to the heading a link asked for (no state change, only a scroll).
@@ -330,7 +338,12 @@ function Reader({
         </details>
       )}
 
-      <MarkdownView markdown={markdown} resolveHref={resolveHref} slugForLine={slugForLine} />
+      <MarkdownView
+        markdown={markdown}
+        resolveHref={resolveHref}
+        slugForLine={slugForLine}
+        resolveImage={resolveImg}
+      />
 
       <footer
         style={{
@@ -424,6 +437,11 @@ function DocsReaderPage() {
     [allPages, selectedRepo],
   );
   const published = useMemo(() => new Set(byPath.keys()), [byPath]);
+  // AA-697: SVG images of the bundle (architecture diagrams) the pages may show.
+  const assets = useMemo(
+    () => new Set((data?.assets ?? []).filter((a) => a.repo === selectedRepo).map((a) => a.path)),
+    [data, selectedRepo],
+  );
   const selected = selectedPath ? originalOf(selectedPath, byPath) : undefined;
   const shown = useMemo(() => pages.filter((p) => matchesFilter(p, { query, type, audience })), [pages, query, type, audience]);
   const groups = useMemo(() => groupBySection(shown), [shown]);
@@ -560,6 +578,7 @@ function DocsReaderPage() {
       lang={lang}
       onLang={setLang}
       published={published}
+      assets={assets}
       onOpen={open}
       pendingHash={pendingHash}
     />

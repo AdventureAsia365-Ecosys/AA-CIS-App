@@ -443,6 +443,7 @@ POLICY: dict[tuple[str, str], str] = {
     # owner-only pages (N-3) are filtered in the route by the verified owner flag.
     ("GET", "/admin/docs/manifest"): OPS_READ,
     ("GET", "/admin/docs/page"): OPS_READ,
+    ("GET", "/admin/docs/asset"): OPS_READ,   # AA-697 — SVG diagrams of the docs bundle
 
     # ── admin_supply_content (AA-835) — the review of the customer content of Booking hotels / services. An edit or
     # a (paid) regenerate is content work; publish, reject and unpublish are review actions. Reads: every staff role.

@@ -30,11 +30,15 @@ export type DocEntry = {
 
 export type DocTranslation = { lang: string; path: string; title: string | null };
 
+// AA-697: an SVG image of the bundle (root build_docs_reader.py rule 9), e.g. an architecture diagram.
+export type DocAsset = { repo: string; path: string };
+
 export type DocsManifestResp = {
   generated_at: string | null;
   rule: string | null;
   source: { repo: string | null; sha: string | null; ref: string | null };
   pages: DocEntry[];
+  assets?: DocAsset[];    // AA-697: SVG images this caller may load (absent from an older API answer)
   counts: { shown: number; owner_only_shown: number; hidden_owner_only: number };
   is_owner: boolean;
   owner_read?: boolean;   // owner-only pages are listed for this caller (an owner, or the Dev-only E2E admin)
@@ -174,6 +178,26 @@ export function resolveLink(href: string | undefined, from: string, published: S
   const readme = normalizePath(`${target}/README.md`);
   if (readme && published.has(readme)) return { kind: "page", path: readme, hash };
   return { kind: "none" };
+}
+
+/** AA-697: the BFF URL of an image found on page `from` (`![alt](src)`), or null when it is not a published SVG of the
+ *  bundle. Only a relative path that resolves to a listed asset qualifies: remote (http, https, protocol-relative),
+ *  data: and other scheme URLs never load (a remote image would leak the viewer's IP), so the alt text shows instead. */
+export function resolveImage(src: string | undefined, from: string, repo: string, assets: Set<string>): string | null {
+  if (!src) return null;
+  const h = src.trim();
+  if (!h || h.startsWith("#") || h.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(h)) return null;
+  let decoded = h.split("#")[0].split("?")[0];
+  try {
+    decoded = decodeURIComponent(decoded);
+  } catch {
+    return null;
+  }
+  const base = from.includes("/") ? from.slice(0, from.lastIndexOf("/")) : "";
+  const joined = decoded.startsWith("/") ? decoded.slice(1) : base ? `${base}/${decoded}` : decoded;
+  const target = normalizePath(joined);
+  if (!target || !target.toLowerCase().endsWith(".svg") || !assets.has(target)) return null;
+  return `/api/admin/docs/asset?repo=${encodeURIComponent(repo)}&path=${encodeURIComponent(target)}`;
 }
 
 // ── headings ────────────────────────────────────────────────────────────────────────────────────
