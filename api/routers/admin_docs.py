@@ -2,6 +2,7 @@
 
   GET /admin/docs/manifest[?refresh=1]          the published docs catalog this caller may see     ops.read (admin)
   GET /admin/docs/page?repo=AA-Ecosys&path=...  one redacted page, only if listed for the caller   ops.read (admin)
+  GET /admin/docs/asset?repo=AA-Ecosys&path=... one checked SVG image (AA-697, rule 9)              ops.read (admin)
 
 Read only. The bundle comes from the root repo "Docs sync" workflow through S3 (api/services/docs_reader.py), cached
 in this process; nothing here touches the database. Admin only: POLICY = ops.read, and the BFF refuses every other
@@ -15,7 +16,7 @@ from __future__ import annotations
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from api.core.staff_authz import StaffPrincipal, docs_owner_read_via, staff_policy
 from api.services import docs_reader
@@ -27,6 +28,15 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/admin/docs", tags=["admin-docs"], dependencies=[Depends(staff_policy)])
 
 _NO_STORE = {"Cache-Control": "private, no-store"}
+# AA-697: an SVG opened on its own (not through <img>) is a document; this CSP keeps it inert even then: no script, no
+# fetch except inline images and styles, sandboxed (unique origin), never framed.
+_SVG_HEADERS = {
+    "Cache-Control": "private, max-age=300",
+    "Content-Security-Policy": ("default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox; "
+                                "frame-ancestors 'none'"),
+    "X-Content-Type-Options": "nosniff",
+    "Content-Disposition": "inline",
+}
 
 
 def _owner_read(principal: StaffPrincipal, route: str) -> bool:
@@ -68,3 +78,18 @@ async def get_page(
     except docs_reader.DocsUnavailable as e:
         raise HTTPException(status_code=503, detail=str(e))
     return JSONResponse(view, headers=_NO_STORE)
+
+
+@router.get("/asset", summary="One published SVG image (architecture diagrams) by repo and path")
+async def get_asset(
+    path: str = Query(..., min_length=5, max_length=300, description="repo-relative path of an .svg in the bundle"),
+    repo: str = Query("AA-Ecosys", min_length=1, max_length=64),
+    principal: StaffPrincipal = Depends(staff_policy),
+):
+    try:
+        data = await docs_reader.load_asset(repo, path, _owner_read(principal, "asset"))
+    except docs_reader.DocsMissing as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except docs_reader.DocsUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    return Response(content=data, media_type=docs_reader.ASSET_TYPE, headers=_SVG_HEADERS)

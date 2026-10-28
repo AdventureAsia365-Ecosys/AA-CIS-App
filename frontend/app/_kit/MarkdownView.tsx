@@ -6,8 +6,9 @@
 //   - every link goes through `resolveHref` (the page decides: another published page, an in-page anchor, an
 //     https / mailto link opened in a new tab with noopener, or plain text); react-markdown's defaultUrlTransform
 //     still strips javascript: / data: URLs first;
-//   - images are not loaded (the reader has no image store, and a remote image would leak the viewer's IP): the alt
-//     text is shown instead;
+//   - images are not loaded (a remote image would leak the viewer's IP): the alt text is shown instead, except an
+//     image the page resolves with `resolveImage` (AA-697: an SVG of the docs bundle, served by the same-origin BFF
+//     after a safety check), drawn with <img> so the SVG can neither run script nor fetch anything;
 //   - GitHub-flavoured Markdown (tables, task lists, strikethrough, autolinks) via remark-gfm. ```mermaid blocks are
 //     drawn by MermaidDiagram (lazy-loaded, strict mode, SVG sanitised; the labelled source on any error);
 //   - GitHub alerts ("> [!NOTE]", [!TIP], [!IMPORTANT], [!WARNING], [!CAUTION]) are callouts with a label
@@ -79,6 +80,10 @@ const CSS = `
 .aa-md th { background: ${K.neutralBg}; font-weight: 700; color: ${K.ink}; }
 .aa-md tr:last-child td { border-bottom: none; }
 .aa-md .aa-md-img { color: ${K.muted}; font-style: italic; }
+/* AA-697: the diagrams are drawn on white (Graphviz canvas), so the frame stays white in dark mode too. */
+.aa-md .aa-md-figure { display: block; margin: 12px 0; padding: 8px; background: #fff; border: 1px solid ${K.line};
+  border-radius: ${RADIUS.md}px; overflow-x: auto; }
+.aa-md .aa-md-figure img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
 .aa-md input[type="checkbox"] { margin-right: 6px; }
 `;
 
@@ -90,6 +95,8 @@ type Props = {
   resolveHref: (href: string | undefined) => MarkdownLink;
   /** The heading id (without prefix) for the heading that starts on this 1-based line, if known. */
   slugForLine: (line: number | undefined) => string | undefined;
+  /** AA-697: a same-origin URL for an image the page can show (an SVG of its docs bundle), or null for alt text. */
+  resolveImage?: (src: string | undefined) => string | null;
 };
 
 type HastNode = { type?: string; value?: string; tagName?: string; properties?: { className?: unknown };
@@ -122,7 +129,7 @@ export function scrollToHeading(slug: string): boolean {
   return true;
 }
 
-export function MarkdownView({ markdown, resolveHref, slugForLine }: Props) {
+export function MarkdownView({ markdown, resolveHref, slugForLine, resolveImage }: Props) {
   const components = React.useMemo<Components>(() => {
     const heading = (Tag: "h1" | "h2" | "h3" | "h4" | "h5" | "h6") =>
       function Heading({ node, children }: { node?: unknown; children?: React.ReactNode }) {
@@ -177,7 +184,16 @@ export function MarkdownView({ markdown, resolveHref, slugForLine }: Props) {
           </span>
         );
       },
-      img({ alt }) {
+      img({ src, alt }) {
+        const url = resolveImage?.(typeof src === "string" ? src : undefined) ?? null;
+        if (url) {
+          return (
+            <a className="aa-md-figure" href={url} target="_blank" rel="noopener noreferrer" title="Open full size">
+              {/* eslint-disable-next-line @next/next/no-img-element -- a same-origin SVG from the BFF, not an optimisable photo */}
+              <img src={url} alt={alt ?? ""} loading="lazy" decoding="async" />
+            </a>
+          );
+        }
         return <span className="aa-md-img">[image{alt ? `: ${alt}` : ""}]</span>;
       },
       table({ children }) {
@@ -203,7 +219,7 @@ export function MarkdownView({ markdown, resolveHref, slugForLine }: Props) {
         return <pre>{children}</pre>;
       },
     };
-  }, [resolveHref, slugForLine]);
+  }, [resolveHref, slugForLine, resolveImage]);
 
   return (
     <div className="aa-md">

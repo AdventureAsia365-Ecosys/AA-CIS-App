@@ -18,6 +18,7 @@ import {
   parseDocLang,
   pickLanguage,
   outline,
+  resolveImage,
   resolveLink,
   sectionOf,
   slugify,
@@ -139,4 +140,23 @@ test("parseDocLang falls back to English", () => {
   assert.equal(DEFAULT_DOC_LANG, "en");
   assert.equal(parseDocLang("vi"), "vi");
   for (const v of [null, undefined, "", "VI", "fr", 1]) assert.equal(parseDocLang(v), "en");
+});
+
+// ── AA-697: images ───────────────────────────────────────────────────────────────────────────────
+
+test("resolveImage: a relative SVG listed in the bundle loads through the BFF", () => {
+  const assets = new Set(["docs/architecture/diagrams/x.svg"]);
+  const url = "/api/admin/docs/asset?repo=AA-Ecosys&path=docs%2Farchitecture%2Fdiagrams%2Fx.svg";
+  assert.equal(resolveImage("x.svg", "docs/architecture/diagrams/README.md", "AA-Ecosys", assets), url);
+  assert.equal(resolveImage("architecture/diagrams/x.svg", "docs/arch.md", "AA-Ecosys", assets), url);
+  assert.equal(resolveImage("../architecture/diagrams/x.svg?v=1#top", "docs/ops/a.md", "AA-Ecosys", assets), url);
+  assert.equal(resolveImage("/docs/architecture/diagrams/x.svg", "docs/a.md", "AA-Ecosys", assets), url);
+});
+
+test("resolveImage: anything else stays alt text", () => {
+  const assets = new Set(["docs/x.svg", "docs/y.png"]);
+  for (const src of [undefined, "", "#a", "https://example.com/x.svg", "http://example.com/x.svg", "//example.com/x.svg",
+    "data:image/svg+xml;base64,PHN2Zz4=", "javascript:alert(1)", "y.png", "other.svg", "../../../x.svg", "%E0%A4%A.svg"]) {
+    assert.equal(resolveImage(src, "docs/a.md", "AA-Ecosys", assets), null, String(src));
+  }
 });
