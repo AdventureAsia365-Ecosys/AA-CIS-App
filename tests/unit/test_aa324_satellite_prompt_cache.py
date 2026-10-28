@@ -50,7 +50,7 @@ class TestAA324InvokeClaudeCacheWiring:
             bs.invoke_claude(
                 "user prompt here", model="sonnet",
                 system="brand rules + schema instructions (the cacheable prefix)",
-                account="acc1",
+                account="acc3",
             )
 
         call_kwargs = mock_bedrock_rt.invoke_model.call_args.kwargs
@@ -76,7 +76,7 @@ class TestAA324InvokeClaudeCacheWiring:
         mock_session.client.return_value = mock_bedrock_rt
 
         with patch.object(bs, "_get_satellite_session", return_value=mock_session):
-            bs.invoke_claude("user prompt here", model="haiku", system=None, account="acc1")
+            bs.invoke_claude("user prompt here", model="haiku", system=None, account="acc3")
 
         call_kwargs = mock_bedrock_rt.invoke_model.call_args.kwargs
         sent_body = json.loads(call_kwargs["body"])
@@ -123,7 +123,7 @@ class TestAA324SatelliteCacheStatsExtraction:
         request = LLMRequest(user_prompt="write a tour description", system_prompt="brand rules")
 
         with patch("shared.llm_client.bedrock_satellite.invoke_claude", return_value=fake_result):
-            resp = client._call_bedrock_satellite(request, model=BEDROCK_HAIKU, account="acc1")
+            resp = client._call_bedrock_satellite(request, model=BEDROCK_HAIKU, account="acc3")
 
         assert resp.cache_read_tokens == 0
         assert resp.cache_write_tokens == 0

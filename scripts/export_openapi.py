@@ -50,7 +50,6 @@ STUB_ENV = {
     "LANGFUSE_HOST": "http://localhost:3000",
     "BRONZE_BUCKET": "aa-cis-bronze-test",
     "BEDROCK_ACCT_PRIMARY": "acc3-test-account",
-    "BEDROCK_ACCT_FALLBACK": "acc1-test-account",
 }
 # Always forced: the AWS SDK must never find a real credential or reach AWS from this script.
 OFFLINE_AWS_ENV = {

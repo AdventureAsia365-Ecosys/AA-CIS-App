@@ -11,7 +11,7 @@ Metrics are emitted by GET /admin/acp/run-health on every query.
 
 Usage:
   SNS_TOPIC_ARN=arn:aws:sns:us-west-1:<account>:aa-cis-dev-alerts \
-  AWS_PROFILE=pqnghiep-admin python3 scripts/setup_run_health_alarms.py
+  AWS_PROFILE=aa365-admin python3 scripts/setup_run_health_alarms.py
 """
 import os
 import sys

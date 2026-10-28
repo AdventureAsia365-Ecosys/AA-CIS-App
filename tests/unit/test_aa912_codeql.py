@@ -458,7 +458,7 @@ async def test_cost_explorer_check_hides_exception_text():  # alert 32
     from api.routers import admin_llm_ops
 
     request = MagicMock()
-    result = {"rows": [], "errors": {"acc1": f"AccessDenied {FAKE_ARN}"}}
+    result = {"rows": [], "errors": {"acc3": f"AccessDenied {FAKE_ARN}"}}
     with patch.object(admin_llm_ops, "verify_admin_secret"), \
             patch.object(admin_llm_ops, "fetch_all_accounts_cost", return_value=result), \
             patch.object(admin_llm_ops, "record_snapshot", AsyncMock(return_value=0)), \
@@ -468,7 +468,7 @@ async def test_cost_explorer_check_hides_exception_text():  # alert 32
         resp = await admin_llm_ops.check_cost_explorer(request, x_admin_secret="x", days=7, start=None, end=None)
 
     assert set(resp) == {"row_count", "app_tag_row_count", "errors", "period_start", "period_end_exclusive"}
-    assert set(resp["errors"]) == {"acc1", "acc2_app_tag"}
+    assert set(resp["errors"]) == {"acc3", "acc2_app_tag"}
     assert "arn:" not in json.dumps(resp)
     refs = {_assert_ref(v) for v in resp["errors"].values()}
     assert refs <= _logged_refs(logs)

@@ -4428,6 +4428,7 @@
         "description": "Submit an S1-rewrite Bedrock Batch job for a set of tours (writer attempt-1 only).",
         "properties": {
           "account": {
+            "const": "acc3",
             "default": "acc3",
             "title": "Account",
             "type": "string"

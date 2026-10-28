@@ -163,10 +163,10 @@ async def test_ai_spend_sql_rolled_and_raw_days_never_both(env):
         await p.execute("""
             INSERT INTO shared.llm_call_daily (day, app, tenant_id, stage, role, model, provider, account, is_shadow,
                                                calls, fallback_calls, tokens_in, tokens_out, cost_usd, updated_at)
-            VALUES ($1, 'tripplanner', NULL, $2, 'writer', 'm', 'bedrock-satellite', 'acc1', false,
+            VALUES ($1, 'tripplanner', NULL, $2, 'writer', 'm', 'bedrock-satellite', 'acc3', false,
                     7, 0, 0, 0, 1.5, now())""", d1, marker)
-        for day, app, provider, account, cost in ((d1, "tripplanner", "bedrock-satellite", "acc1", 99.0),
-                                                  (d2, "tripplanner", "bedrock-satellite", "acc1", 0.25),
+        for day, app, provider, account, cost in ((d1, "tripplanner", "bedrock-satellite", "acc3", 99.0),
+                                                  (d2, "tripplanner", "bedrock-satellite", "acc3", 0.25),
                                                   (d2, None, "bedrock", "acc2", 0.5)):
             qs = json.dumps({"app": app} if app else {})
             await p.execute("""
@@ -179,7 +179,7 @@ async def test_ai_spend_sql_rolled_and_raw_days_never_both(env):
         rows = await p.fetch(platform_cost.AI_SPEND_SQL, d1, d2 + timedelta(days=1))
         got = {(r["app"], r["provider"], r["account"]): (r["calls"], round(r["cost_usd"], 4), r["billed_in_acc2"])
                for r in rows}
-        assert got[("tripplanner", "bedrock-satellite", "acc1")][:2] == (8, 1.75)  # 7 rolled + 1 raw (d2)
+        assert got[("tripplanner", "bedrock-satellite", "acc3")][:2] == (8, 1.75)  # 7 rolled + 1 raw (d2)
         assert got[("cis", "bedrock", "acc2")] == (1, 0.5, True)  # no app marker -> cis; acc2 Bedrock billed in acc2
     finally:
         await p.execute("DELETE FROM shared.llm_call_log WHERE stage = $1", marker)

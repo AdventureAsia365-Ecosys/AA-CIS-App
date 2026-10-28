@@ -1,5 +1,8 @@
 # Live writing progress: Redis snapshot + short poll, not SSE (AA-637)
 
+> Amendment (AA-998, S255, 28/10/2026): acc1 left the ecosystem; `invoke_claude` runs on acc3 only. The acc1
+> mentions below are history.
+
 - **Status:** Accepted (25/09/2026, AA-637, shipped with the live writing progress feature). Status line added
   19/10/2026 (AA-888) from the decision record.
 

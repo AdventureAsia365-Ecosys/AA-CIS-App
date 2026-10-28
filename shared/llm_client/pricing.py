@@ -17,7 +17,7 @@ logger = structlog.get_logger()
 
 # Bedrock model IDs (cross-region inference profiles)
 # AA-348 — BEDROCK_SONNET names the acc2-NATIVE (T1) Sonnet model only. When a call falls
-# through to a satellite account (T1.5a/T1.5b, shared/llm_client/bedrock_satellite.py — the
+# through to the satellite account (T1.5a, shared/llm_client/bedrock_satellite.py — the
 # common path in practice, native Sonnet is blocked for channel-program accounts, AA-291/AA-329),
 # the model actually invoked is a DIFFERENT, newer version: `global.anthropic.claude-sonnet-4-6`
 # (see bedrock_satellite.py's INFERENCE_PROFILE_SONNET / _INFERENCE_PROFILES). This is a

@@ -13,7 +13,7 @@ LUNA_56 = _m("gpt-5.6-luna", "GPT-5.6 Luna", "bedrock", profiles={"acc3": "opena
 LUNA_6 = _m("gpt-6-luna", "GPT-6 Luna", "bedrock", profiles={"acc3": "openai.gpt-6-luna"})
 LUNA_6_OAI = _m("gpt-6-luna-openai", "GPT-6 Luna (OpenAI)", "openai", api_style="openai_chat")
 GPT41 = _m("gpt-4.1", "GPT-4.1", "openai", api_style="openai_chat")
-HAIKU = _m("haiku", "Claude Haiku 4.5", "bedrock", profiles={"acc1": "p1", "acc3": "p3"}, vendor="anthropic")
+HAIKU = _m("haiku", "Claude Haiku 4.5", "bedrock", profiles={"acc3": "p3"}, vendor="anthropic")
 MODELS = [LUNA_56, LUNA_6, LUNA_6_OAI, GPT41, HAIKU]
 
 
@@ -24,17 +24,23 @@ def test_same_model_name_on_two_providers_is_told_apart():
 
 
 def test_bedrock_accounts_listed_in_try_order():
+    sonnet5 = _m("sonnet-5", "Claude Sonnet 5", "bedrock", profiles={"acc3": "p3", "acc2": "p2"}, vendor="anthropic")
+    assert model_via(sonnet5) == "Bedrock acc3 → acc2"
+
+
+def test_a_stale_profile_on_the_retired_account_is_not_listed():
+    # AA-998: before migration 295 applies, catalog rows still carry an acc1 profile; never shown as a hop.
     sonnet5 = _m("sonnet-5", "Claude Sonnet 5", "bedrock", profiles={"acc1": "p1", "acc3": "p3"}, vendor="anthropic")
-    assert model_via(sonnet5) == "Bedrock acc3 → acc1"
+    assert model_via(sonnet5) == "Bedrock acc3"
 
 
 def test_legacy_claude_keys_show_the_legacy_chain_order(monkeypatch):
-    # haiku/sonnet go through LLMClient._legacy_chain: acc3, then acc1 (AA-843: no acc2-native
+    # haiku/sonnet go through LLMClient._legacy_chain: acc3 only since AA-998 (AA-843: no acc2-native
     # attempt unless LLM_LEGACY_ACC2_NATIVE is on).
     monkeypatch.delenv("LLM_LEGACY_ACC2_NATIVE", raising=False)
-    assert model_via(HAIKU) == "Bedrock acc3 → acc1"
+    assert model_via(HAIKU) == "Bedrock acc3"
     monkeypatch.setenv("LLM_LEGACY_ACC2_NATIVE", "on")
-    assert model_via(HAIKU) == "Bedrock acc2 → acc3 → acc1"
+    assert model_via(HAIKU) == "Bedrock acc2 → acc3"
 
 
 def test_judge_options_carry_via():

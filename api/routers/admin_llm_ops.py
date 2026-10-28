@@ -38,6 +38,7 @@ from shared.aws_client.cost_explorer import (
 from shared.dfs_client.balance import read_latest_balance, record_balance_snapshot
 from shared.dfs_client.unmapped_market import list_unmapped_market_requests
 from shared.llm_client.catalog import (
+    SERVING_ACCOUNTS,
     CatalogPolicyBlocked,
     CatalogPriceRequired,
     list_catalog_rows,
@@ -86,9 +87,9 @@ _JUDGE_OPTIONS = [
     {"model_id": "gpt-4.1", "label": "GPT-4.1", "via": "OpenAI API", "available": False,
      "reason": "S235: retired; OpenAI API kept only as last-resort fallback via gpt-6-luna-openai"},
 ]
+# AA-998: acc3 is the only satellite account (llm_role_config CHECK, migration 295).
 _ACCOUNT_ROUTE_OPTIONS = [
-    {"value": "acc3", "label": "acc3 (satellite chính)"},
-    {"value": "acc1", "label": "acc1 (satellite fallback)"},
+    {"value": "acc3", "label": "acc3 (satellite)"},
 ]
 # Permanently rejected — never shown, not even as "blocked".
 # Palmyra X5: hard 1 req/min channel-program throttle, AA-334/AA-392 permanently rejected.
@@ -98,20 +99,20 @@ _LEGACY_VIA = {"gpt-4.1": "OpenAI API"}
 
 
 def _legacy_claude_via() -> str:
-    """Legacy haiku/sonnet chain (LLMClient._legacy_chain): the satellites, acc3 first by default;
-    AA-843 — acc2-native leads only when LLM_LEGACY_ACC2_NATIVE is on."""
-    return "Bedrock acc2 → acc3 → acc1" if legacy_acc2_native_enabled() else "Bedrock acc3 → acc1"
+    """Legacy haiku/sonnet chain (LLMClient._legacy_chain): the acc3 satellite (AA-998: no
+    cross-account fallback); AA-843 — acc2-native leads only when LLM_LEGACY_ACC2_NATIVE is on."""
+    return "Bedrock acc2 → acc3" if legacy_acc2_native_enabled() else "Bedrock acc3"
 
 
 def model_via(m) -> str:
     """AA-714 — where a Model Key is really served, for the admin UI. GPT models run either on
-    Bedrock (acc3 only: the OpenAI-on-Bedrock agreement exists on acc3, not acc1/acc2) or on the
+    Bedrock (acc3 only: the OpenAI-on-Bedrock agreement exists on acc3, not acc2) or on the
     OpenAI platform API; the same model name can be both (gpt-6-luna vs gpt-6-luna-openai)."""
     if m.provider == "openai":
         return "OpenAI API"
     if m.model_key in ("haiku", "sonnet"):
         return _legacy_claude_via()
-    accts = [a for a in ("acc3", "acc1", "acc2") if a in (m.bedrock_profile_ids or {})]
+    accts = [a for a in SERVING_ACCOUNTS if a in (m.bedrock_profile_ids or {})]
     if m.api_style == "embed" and not accts:
         return "Bedrock acc2"
     return "Bedrock " + " → ".join(accts) if accts else "Bedrock"
@@ -234,6 +235,9 @@ async def patch_llm_config(
                             detail=f"model {body.model_id!r} is not selectable for stage {stage!r}")
     if body.model_id in _openai_api_keys(models):
         raise HTTPException(status_code=422, detail=_OPENAI_LAST_RESORT_ONLY)
+    # AA-998: only acc3 (or no value = acc3) — the retired fallback account is refused here, before the DB CHECK.
+    if body.account_route is not None and body.account_route not in {o["value"] for o in _ACCOUNT_ROUTE_OPTIONS}:
+        raise HTTPException(status_code=422, detail=f"account_route {body.account_route!r} is not allowed (acc3 only)")
     try:
         updated = await set_stage_config(
             stage, body.model_id, body.account_route, updated_by=f"admin:{admin_actor}",
@@ -605,8 +609,9 @@ _TREE_SQL = """
         NULLIF(l.tenant_id, '00000000-0000-0000-0000-000000000001'::uuid)::text AS tenant_id,
         COALESCE(t.slug, 'aa_internal') AS tenant_label,
         l.model, l.stage, l.role,
-        -- AA-617: account (acc1/acc2/acc3, NULL for OpenAI/legacy) + provider so the tree can
-        -- split acc3 vs acc1 satellite spend, which l.model alone can't (model no longer carries
+        -- AA-617: account (acc2/acc3, NULL for OpenAI/legacy; older rows may hold the AA-998
+        -- retired fallback account) + provider so the tree can split satellite spend per account,
+        -- which l.model alone can't (model no longer carries
         -- the "satellite-" prefix). COALESCE keeps legacy NULL rows grouped under a visible label.
         COALESCE(l.account, 'unknown') AS account,
         COALESCE(l.provider, 'unknown') AS provider,
@@ -689,7 +694,7 @@ async def get_llm_usage_calls(
     tenant_id: Optional[str] = None,
     stage: Optional[str] = None,
     account: Optional[str] = None,
-    fallback_used: Optional[bool] = None,   # AA-622: drill into which calls fell back acc3->acc1/GPT
+    fallback_used: Optional[bool] = None,   # AA-622: drill into which calls fell back (route/GPT)
     days: Optional[int] = Query(None, ge=1, le=365),
     limit: int = Query(50, ge=1, le=500),
     start: Optional[date] = None,
@@ -1026,12 +1031,12 @@ async def get_dfs_balance(request: Request):
 # Same job-then-read split as the DFS balance pair above (AA-627), for the same reason: Cost
 # Explorer's own pricing API costs ~$0.01/request, so the External Spend page must never call it
 # live per page view.
-#   POST /admin/cost-explorer/check — fetches acc1/acc2/acc3's own CE data for a window
-#       (acc2 directly, acc1/acc3 via STS AssumeRole satellite roles -- see
+#   POST /admin/cost-explorer/check — fetches acc2/acc3's own CE data for a window
+#       (acc2 directly, acc3 via the STS AssumeRole satellite role -- see
 #       shared/aws_client/cost_explorer.py's module docstring for why there is no single
 #       consolidated call) and stores one row per (account, service, day). Secret-gated.
 #       NOTE: no scheduler calls this yet (unlike /admin/dfs-balance/check) -- today it only runs
-#       from the page's "Refresh from AWS" button. 3 CE requests (~$0.03) per call, plus one acc2 request grouped
+#       from the page's "Refresh from AWS" button. 2 CE requests (~$0.02) per call, plus one acc2 request grouped
 #       by the App tag for Platform › Cost per app (AA-884, ~$0.01).
 #   GET  /admin/cost-explorer — reads stored days in the same window as the rest of the page
 #       (never calls CE live per request), Bedrock vs infra split per account.
@@ -1065,7 +1070,7 @@ async def check_cost_explorer(
     # AA-884 — the same window from acc2 grouped by the App cost-allocation tag (Platform › Cost per app): one more
     # CE request (~$0.01). Its failure is reported in `errors` and never fails the SERVICE check above.
     # AA-912: the per-account error text stays in the server log; the client gets a generic value per
-    # key (same keys: acc1/acc2/acc3/acc2_app_tag) with a ref to find it.
+    # key (same keys: acc2/acc3/acc2_app_tag) with a ref to find it.
     errors: dict[str, str] = {}
     if result["errors"]:
         ref = new_error_ref()

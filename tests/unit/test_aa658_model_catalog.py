@@ -62,9 +62,17 @@ def test_loaded_catalog_is_cached_and_strips_satellite_prefix():
 
 
 def test_account_for_prefers_requested_account_when_served():
+    m = _model("x", bedrock_profile_ids={"acc3": "a", "acc2": "b"})
+    assert m.account_for("acc2") == "acc2"
+    assert m.account_for(None) == "acc3"
+    assert SONNET5.account_for("acc2") == "acc3"
+
+
+def test_account_for_never_picks_the_retired_account():
+    # AA-998: a stale acc1 profile (before migration 295) is ignored, asked for or not.
     m = _model("x", bedrock_profile_ids={"acc3": "a", "acc1": "b"})
-    assert m.account_for("acc1") == "acc1"
-    assert SONNET5.account_for("acc1") == "acc3"
+    assert m.account_for("acc1") == "acc3"
+    assert _model("y", bedrock_profile_ids={"acc1": "b"}).account_for("acc1") is None
 
 
 # ── pricing ───────────────────────────────────────────────────────────────────────────────────

@@ -74,7 +74,7 @@ interface DfsBalance {  // AA-627 — latest stored DataForSEO account balance (
   below_threshold: boolean; fetched_at: string | null; has_data: boolean;
 }
 interface CostExplorerAccount {  // AA-623 — one account's stored CE spend in the window
-  // account_key: "acc1" | "acc2" | "acc3" from the backend (AA-902), null for any other account.
+  // account_key: "acc2" | "acc3" | "retired" (AA-998 history) from the backend (AA-902); null if unresolved.
   account_id: string; account_key?: string | null; total_usd: number; bedrock_usd: number; other_usd: number;
 }
 interface CostExplorerService {
@@ -96,17 +96,20 @@ interface CallRow {  // AA-622 fallback drill-down — GET /admin/llm-usage/call
 }
 
 const ROLE_COLOR: Record<string, "gray" | "gold" | "green"> = { writer: "gold", judge: "green", validate: "gray" };
-const ACCOUNTS = ["acc3", "acc1", "acc2", "openai", "typesafe", "unknown"] as const;
+// AA-998: acc3 is the only LLM satellite. "retired" groups the older llm_call_log rows of the former
+// fallback account (history only; no account ID is shown, this repo is public).
+const ACCOUNTS = ["acc3", "acc2", "openai", "typesafe", "retired", "unknown"] as const;
 const ACCOUNT_META: Record<string, { label: string; short: string; color: string }> = {
   acc3:    { label: "acc3 (Bedrock)", short: "acc3",   color: A.slate },
-  acc1:    { label: "acc1 (Bedrock)", short: "acc1",   color: A.gold },
   acc2:    { label: "acc2 (Bedrock)", short: "acc2",   color: A.green },
   openai:  { label: "OpenAI (no AWS account)",        short: "OpenAI", color: A.ink3 },
   // AA-660 — Jev decisions (shared/llm_client/decide.py); details per stage in /admin/decisions.
   typesafe: { label: "Jev · TypeSafe (no AWS account)", short: "Jev",   color: A.accent },
+  retired: { label: "Retired fallback account (Bedrock, history)", short: "retired", color: A.gold },
   unknown: { label: "Legacy (no account logged)",     short: "legacy", color: A.muted },
 };
-// AA-623 — Cost Explorer rows carry the same acc1/acc2/acc3 key ACCOUNT_META uses (account_key, set by
+const LIVE_ACCOUNTS = new Set(["acc2", "acc3"]);
+// AA-623 — Cost Explorer rows carry the same acc2/acc3/retired key ACCOUNT_META uses (account_key, set by
 // the backend since AA-902 — this repo is public, so no account ID is mapped here), so they line up with
 // the estimated (token) breakdown. An unknown account falls back to its raw account_id.
 const ceKey = (r: { account_id: string; account_key?: string | null }) => r.account_key ?? r.account_id;
@@ -114,22 +117,23 @@ const ceKey = (r: { account_id: string; account_key?: string | null }) => r.acco
 // infra account (ECS/RDS/ELB/ElastiCache...) and native Claude is blocked there — its Bedrock
 // line is only Cohere Embed / Palmyra.
 const CE_ACCOUNT_LABEL: Record<string, string> = {
-  acc3: "acc3 (LLM satellite, primary)",
-  acc1: "acc1 (LLM satellite, fallback)",
+  acc3: "acc3 (LLM satellite)",
   acc2: "acc2 (main infra)",
+  retired: "Retired fallback account (history, AA-998)",
 };
 
 // The `account` column is NULL for OpenAI calls (no AWS account) and for any row written before
 // AA-617 added the column; both COALESCE to "unknown" in the backend. To keep OpenAI distinct from
 // truly-unknown legacy rows, we key the account dimension off `provider` when account is unknown:
-// provider="openai" -> "openai" bucket, otherwise "unknown". Real Bedrock rows carry acc1/2/3.
+// provider="openai" -> "openai" bucket, otherwise "unknown". Real Bedrock rows carry acc2/acc3; any other
+// logged account is the AA-998 retired fallback account's history -> "retired".
 function acctKey(b: { account: string; provider: string }): string {
   if (b.account === "unknown") {
     if (b.provider === "openai") return "openai";
     if (b.provider === "typesafe") return "typesafe";   // AA-660 — Jev
     return "unknown";
   }
-  return b.account;
+  return LIVE_ACCOUNTS.has(b.account) ? b.account : "retired";
 }
 
 function fmtUsd(n: number): string {
@@ -420,7 +424,7 @@ function FallbackModal({ tenantId, tenantLabel, rangeQs, rangeLabel, onClose }: 
           <div>
             <div style={{ fontFamily: serif, fontSize: 16, color: A.ink, fontWeight: 500 }}>Fallback calls</div>
             <div style={{ fontSize: 11.5, color: A.muted2 }}>
-              {tenantLabel ? `Tenant: ${tenantLabel}` : "All tenants"} · {rangeLabel} · calls that rotated acc3→acc1 or up to GPT
+              {tenantLabel ? `Tenant: ${tenantLabel}` : "All tenants"} · {rangeLabel} · calls that fell back to another model in the route or to GPT
             </div>
           </div>
           <Btn size="sm" variant="ghost" onClick={onClose} style={{ marginLeft: "auto" }}>Close</Btn>
@@ -631,7 +635,9 @@ function CostOperationsInner() {
     }
     return (costExplorer?.accounts ?? []).map(a => {
       const key = ceKey(a);
-      const label = CE_ACCOUNT_LABEL[key] ? `${CE_ACCOUNT_LABEL[key]} · ${a.account_id}` : a.account_id;
+      // The retired account is labelled without its ID (AA-998); any unlabelled key keeps the raw ID.
+      const label = key === "retired" ? CE_ACCOUNT_LABEL.retired
+        : CE_ACCOUNT_LABEL[key] ? `${CE_ACCOUNT_LABEL[key]} · ${a.account_id}` : a.account_id;
       return { ...a, key, label, estimated: estByAcct.get(key) ?? 0 };
     });
   }, [costExplorer, allBranches]);
@@ -844,7 +850,7 @@ function CostOperationsInner() {
                   <SLabel light>Reconcile note</SLabel>
                   <div style={{ fontSize: 12.5, color: "rgba(255,255,255,0.75)", lineHeight: 1.6 }}>
                     Computed from per-call cost in <code style={{ fontFamily: mono }}>llm_call_log</code> + <code style={{ fontFamily: mono }}>dfs_call_log</code> — NOT the AWS invoice.
-                    Claude on Bedrock runs on the satellite accounts (<b>acc3</b> primary, acc1 fallback); acc2 is the infra account and only calls non-Claude Bedrock models (Cohere Embed / Palmyra). DataForSEO is 3rd-party (never in Cost Explorer).
+                    Claude on Bedrock runs on the satellite account (<b>acc3</b>); acc2 is the infra account and only calls non-Claude Bedrock models (Cohere Embed / Palmyra). DataForSEO is 3rd-party (never in Cost Explorer).
                     See the AWS bill tab for the reconciliation against the real AWS invoice.
                   </div>
                 </Card>
@@ -889,7 +895,7 @@ function CostOperationsInner() {
                         <StatCard
                           label="Bedrock estimated (token)"
                           value={fmtUsd2(bedrockEstimated)}
-                          sub={`${rangeLabel} · llm_call_log acc1/2/3 only`}
+                          sub={`${rangeLabel} · llm_call_log Bedrock accounts only`}
                           accent={A.ink3}
                         />
                         <StatCard
@@ -956,7 +962,7 @@ function CostOperationsInner() {
                   <StatCard label="Pass rate" value={okElig > 0 ? pct(okCount / okElig) : "—"} sub={okElig > 0 ? `${okCount}/${okElig}` : "no signal"} />
                   <div onClick={() => llmFallback > 0 && setFbModal({ tenantId: tenantFilter, label: tenantLabelOf(tenantFilter) })}
                        style={{ cursor: llmFallback > 0 ? "pointer" : "default" }} title={llmFallback > 0 ? "View fallback calls" : undefined}>
-                    <StatCard label="Fallback ▸" value={llmCalls > 0 ? pct(llmFallback / llmCalls) : "—"} sub={`${fmtInt(llmFallback)} acc3→acc1/GPT`} accent={A.amber} />
+                    <StatCard label="Fallback ▸" value={llmCalls > 0 ? pct(llmFallback / llmCalls) : "—"} sub={`${fmtInt(llmFallback)} route / GPT fallback`} accent={A.amber} />
                   </div>
                   <StatCard label="Truncated" value={llmCalls > 0 ? pct(llmTruncated / llmCalls) : "—"} sub={`${fmtInt(llmTruncated)} max_tokens`} accent={A.red} />
                 </div>

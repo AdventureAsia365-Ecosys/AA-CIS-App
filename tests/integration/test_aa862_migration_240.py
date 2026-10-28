@@ -18,7 +18,7 @@ from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
                          "240_cohere_embed_satellite_fallback.sql")
 STAGES = ("f10_embed", "a3_place_embed", "tp_search_embed", "tp_component_embed")
-ACC3, ACC1 = "cohere-embed-v4-acc3", "cohere-embed-v4-acc1"
+ACC3, STRAY = "cohere-embed-v4-acc3", "cohere-embed-v4-stray"  # STRAY: a row 240 never creates
 
 
 @pytest.fixture
@@ -38,7 +38,7 @@ def cur():
 def _undo(c):
     c.execute("UPDATE shared.llm_role_config SET fallback_model_ids = '{}', account_route = NULL, "
               "model_id = 'cohere-embed-v4' WHERE stage = ANY (%s)", (list(STAGES),))
-    c.execute("DELETE FROM shared.llm_model_catalog WHERE model_key IN (%s, %s)", (ACC3, ACC1))
+    c.execute("DELETE FROM shared.llm_model_catalog WHERE model_key IN (%s, %s)", (ACC3, STRAY))
 
 
 def _run(c):
@@ -62,9 +62,9 @@ def test_post_240_state(cur):
     # test_aa712_migration_226 (runs earlier) deletes and re-seeds the a3_place_embed route without a
     # fallback, so re-run the idempotent migration instead of trusting the session-wide replay.
     _run(cur)
-    acc3, acc1 = _catalog(cur, ACC3), _catalog(cur, ACC1)
+    acc3, stray = _catalog(cur, ACC3), _catalog(cur, STRAY)
     assert acc3[0] == {"acc3": "global.cohere.embed-v4:0"} and acc3[1] is True and acc3[2] is None
-    assert acc1 is None                         # acc1 is not used (Nghiệp, S239)
+    assert stray is None                        # acc3 is the only satellite row (AA-998)
     routes = _routes(cur)
     assert set(routes) == set(STAGES)
     for model_id, account_route, fallbacks, _ in routes.values():
@@ -90,7 +90,7 @@ def test_copies_the_base_row_and_is_idempotent(cur):
     _run(cur)                                   # second run: no change, no error
     assert all(r[3] == "after-first-run" for r in _routes(cur).values())
     assert _catalog(cur, ACC3)[8] == "after-first-run"
-    assert _catalog(cur, ACC1) is None
+    assert _catalog(cur, STRAY) is None
 
 
 def test_keeps_an_admin_disable_of_the_acc3_row(cur):
@@ -101,11 +101,11 @@ def test_keeps_an_admin_disable_of_the_acc3_row(cur):
 
 def test_guard_refuses_a_hand_edited_route(cur):
     cur.execute("UPDATE shared.llm_role_config SET fallback_model_ids = %s WHERE stage = 'tp_search_embed'",
-                ([ACC3, ACC1],))
+                ([ACC3, STRAY],))
     with pytest.raises(psycopg2.Error, match="240: route tp_search_embed"):
         _run(cur)
     cur.execute("ROLLBACK")                     # the file's own BEGIN is still open after the raise
-    assert _routes(cur)["tp_search_embed"][2] == [ACC3, ACC1]
+    assert _routes(cur)["tp_search_embed"][2] == [ACC3, STRAY]
 
 
 def test_guard_refuses_a_route_with_an_account_route(cur):

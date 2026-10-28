@@ -36,7 +36,6 @@ DB_PASS = os.environ.get("CIS_TEST_DB_PASS", "cistest")
 # test name keeps S3Archiver & co. from asking STS for the account.
 os.environ.setdefault("BRONZE_BUCKET", "aa-cis-bronze-test")
 os.environ.setdefault("BEDROCK_ACCT_PRIMARY", "acc3-test-account")
-os.environ.setdefault("BEDROCK_ACCT_FALLBACK", "acc1-test-account")
 
 _SCHEMA_APPLIED = False
 

@@ -39,9 +39,9 @@ class LLMResponse(BaseModel):
     output_tokens: int = 0
     cost_usd:      float = 0.0
     fallback_used: bool = False
-    # AA-296/397 — account satellite thực sự đã trả response ("acc1"/"acc3"), None nếu qua
-    # acc2 native hoặc GPT-4.1; khác fallback_used (chất lượng thấp hơn ý định). Trước AA-397
-    # đây là bool `satellite_used` — đổi sang str|None để phân biệt acc1 vs acc3.
+    # AA-296/397 — the satellite account that actually answered ("acc3", the only one since
+    # AA-998), None for acc2 native or GPT-4.1; not the same as fallback_used (lower quality than
+    # intended). Before AA-397 this was a bool `satellite_used`.
     satellite_account: Optional[str] = None
     # AA-288: tokens read from / written to the Bedrock prompt cache for this call. Non-zero from
     # _call_bedrock (acc2, use_cache=True), the Claude satellite path, and — S234 — the Converse
@@ -52,7 +52,7 @@ class LLMResponse(BaseModel):
     cache_write_tokens: int = 0
     # AA-493: why generation stopped — Anthropic's `stop_reason` ("end_turn" | "max_tokens" |
     # "stop_sequence" | ...) for both _call_bedrock (native) and _call_bedrock_satellite
-    # (acc1/acc3), OpenAI's `finish_reason` ("stop" | "length" | ...) for _call_openai. None only
+    # (acc3), OpenAI's `finish_reason` ("stop" | "length" | ...) for _call_openai. None only
     # when a provider genuinely omits the field (never observed, but not assumed). This is the
     # only way to tell "LLM finished writing" apart from "LLM got cut off at max_tokens" — see
     # AA-493/AA-341 for the truncation-vs-compression ambiguity this closes.

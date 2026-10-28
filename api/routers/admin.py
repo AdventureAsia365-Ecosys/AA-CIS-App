@@ -1319,8 +1319,8 @@ async def generate_api_key(
     )
 
 
-# AA-750: POST /admin/tenants/{id}/brand-brief (DOCX upload → acc1 Lambda acp-brand-brief-parser) was
-# removed — it pointed at acc1 resources destroyed in AA-271 and no page called it. Tenants edit the
+# AA-750: POST /admin/tenants/{id}/brand-brief (DOCX upload → Lambda acp-brand-brief-parser on the old
+# account) was removed — it pointed at resources destroyed in AA-271 and no page called it. Tenants edit the
 # brand in BrandTab → /brand-identity (sanitized in-process, shared/validators/prompt_sanitize.py).
 
 

@@ -6,7 +6,8 @@ pointer for agents working only in this repo.
 
 ECS container has no psql, no aws CLI — only python3 + asyncpg + boto3.
 All infrastructure is on acc2 (profile `aa365-admin`, us-west-1). Never use another profile here: the
-old acc1 stack is destroyed (AA-271) and wrong-account writes are what AA-517 cleaned up.
+old acc1 stack is destroyed (AA-271), acc1 left the ecosystem entirely (AA-998), and wrong-account writes are
+what AA-517 cleaned up.
 ECS Exec sessions are logged for 365 days: never print env vars or secret values.
 
 ## Steps (each command on one line)

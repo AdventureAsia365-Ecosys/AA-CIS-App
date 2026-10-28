@@ -20,7 +20,7 @@ Admin console (Next.js, Vercel)          ──/api/* BFF (holds the admin secre
                                                  │
             ┌────────────────────────────────────┼───────────────────────────────┐
             ▼                                    ▼                               ▼
-  RDS Postgres 15 (acc2, shared)       Bedrock (acc3 satellite → acc1)    Jev (TypeSafe) decisions
+  RDS Postgres 15 (acc2, shared)       Bedrock (acc3 satellite only)      Jev (TypeSafe) decisions
   silver/gold_aa_internal, acp_*,      Claude / GPT Luna / Cohere via     DataForSEO (keywords/SERP)
   shared.* (jobs, LLM cost, gateway)   the Model Gateway                  Redis (cache, live progress)
 ```

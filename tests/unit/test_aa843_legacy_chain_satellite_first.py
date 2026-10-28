@@ -3,7 +3,7 @@
 acc2 is a channel-program account, so every acc2-native Anthropic call failed (ValidationException)
 before the chain reached acc3. By default `_legacy_chain` now never calls `_call_bedrock`;
 LLM_LEGACY_ACC2_NATIVE=on restores the old acc2-first order. Catalog routes, the T3 GPT-4.1 gate and
-shadows are unchanged."""
+shadows are unchanged. AA-998: acc3 is the only satellite account (no cross-account T1.5b / T2.5b)."""
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -48,7 +48,7 @@ class _Recorder:
             raise ACC2_REFUSAL
         return LLMResponse(content="native", model_used=model, provider="bedrock")
 
-    def satellite(self, request, model, account="acc1"):
+    def satellite(self, request, model, account="acc3"):
         self.calls.append(("sat", model, account))
         if ("sat", model, account) in self.fail:
             raise RuntimeError("Satellite Bedrock failed: boom")
@@ -87,41 +87,46 @@ def test_default_starts_at_primary_satellite_without_acc2(tier, model):
     assert resp.fallback_used is False
 
 
-def test_default_account_route_acc1_goes_first():
-    cfg = StageConfig(stage="t9_write", role="writer", provider="bedrock", model_id="haiku", account_route="acc1")
+def test_stale_account_route_is_ignored_and_acc3_used():
+    # AA-998: a stored account_route other than acc3 (only possible before migration 295) never
+    # reaches AWS; the call runs on acc3.
+    cfg = StageConfig(stage="t9_write", role="writer", provider="bedrock", model_id="haiku", account_route="acc9")
     rec = _Recorder()
-    resp = _run(None, rec, stage_cfg=cfg, stage="t9_write")
-    assert rec.calls == [("sat", BEDROCK_HAIKU, "acc1")]
-    assert resp.satellite_account == "acc1"
+    with patch.object(cl, "logger") as log:
+        resp = _run(None, rec, stage_cfg=cfg, stage="t9_write")
+    assert rec.calls == [("sat", BEDROCK_HAIKU, "acc3")]
+    assert resp.satellite_account == "acc3"
+    assert "llm_account_route_ignored" in [c.args[0] for c in log.warning.call_args_list]
 
 
-def test_default_haiku_primary_down_uses_other_satellite():
+def test_default_haiku_satellite_down_raises_no_cross_account_retry():
+    # AA-998: no second satellite account — an acc3 Haiku failure ends the legacy chain.
     rec = _Recorder(fail={("sat", BEDROCK_HAIKU, "acc3")})
-    resp = _run("haiku", rec)
-    assert rec.calls == [("sat", BEDROCK_HAIKU, "acc3"), ("sat", BEDROCK_HAIKU, "acc1")]
-    assert resp.satellite_account == "acc1"
-    assert resp.fallback_used is False
+    with pytest.raises(RuntimeError, match="GPT-4.1 retired"):
+        _run("haiku", rec)
+    assert rec.calls == [("sat", BEDROCK_HAIKU, "acc3")]
 
 
-def test_default_sonnet_drops_to_haiku_satellites_unchanged():
-    rec = _Recorder(fail={("sat", BEDROCK_SONNET, "acc3"), ("sat", BEDROCK_SONNET, "acc1")})
-    resp = _run("sonnet", rec)
-    assert rec.calls == [("sat", BEDROCK_SONNET, "acc3"), ("sat", BEDROCK_SONNET, "acc1"),
-                         ("sat", BEDROCK_HAIKU, "acc3")]
+def test_default_sonnet_drops_to_haiku_on_the_same_account():
+    rec = _Recorder(fail={("sat", BEDROCK_SONNET, "acc3")})
+    with patch.object(cl, "logger") as log:
+        resp = _run("sonnet", rec)
+    assert rec.calls == [("sat", BEDROCK_SONNET, "acc3"), ("sat", BEDROCK_HAIKU, "acc3")]
     assert resp.satellite_account == "acc3"
     assert resp.fallback_used is True  # Sonnet was intended, Haiku served it
+    assert "t1_5a_satellite_failed_trying_t2" in [c.args[0] for c in log.warning.call_args_list]
 
 
 def test_default_all_satellites_down_raises_without_acc2_or_openai():
-    rec = _Recorder(fail={("sat", m, a) for m in (BEDROCK_SONNET, BEDROCK_HAIKU) for a in ("acc3", "acc1")})
+    rec = _Recorder(fail={("sat", m, "acc3") for m in (BEDROCK_SONNET, BEDROCK_HAIKU)})
     c = _client()
     with patch.object(c, "_call_bedrock", side_effect=rec.native), \
             patch.object(c, "_call_bedrock_satellite", side_effect=rec.satellite), \
             patch.object(cl, "get_stage_config_sync", return_value=None), \
             pytest.raises(RuntimeError, match="GPT-4.1 retired"):
         c.generate(LLMRequest(system_prompt="s", user_prompt="u", model_tier="sonnet"))
-    assert all(kind == "sat" for kind, _, _ in rec.calls)
-    assert len(rec.calls) == 4
+    assert all(kind == "sat" and acct == "acc3" for kind, _, acct in rec.calls)
+    assert len(rec.calls) == 2
     c._openai.chat.completions.create.assert_not_called()
 
 
@@ -143,12 +148,11 @@ def test_default_logs_no_acc2_failure_events():
 def test_flag_restores_acc2_first_order(monkeypatch):
     monkeypatch.setenv(FLAG, "on")
     rec = _Recorder(fail={("native", BEDROCK_SONNET, "acc2"), ("sat", BEDROCK_SONNET, "acc3"),
-                          ("sat", BEDROCK_SONNET, "acc1"), ("native", BEDROCK_HAIKU, "acc2")})
+                          ("native", BEDROCK_HAIKU, "acc2")})
     with patch.object(cl, "logger") as log:
         resp = _run("sonnet", rec)
     assert rec.calls == [("native", BEDROCK_SONNET, "acc2"), ("sat", BEDROCK_SONNET, "acc3"),
-                         ("sat", BEDROCK_SONNET, "acc1"), ("native", BEDROCK_HAIKU, "acc2"),
-                         ("sat", BEDROCK_HAIKU, "acc3")]
+                         ("native", BEDROCK_HAIKU, "acc2"), ("sat", BEDROCK_HAIKU, "acc3")]
     assert resp.fallback_used is True and resp.satellite_account == "acc3"
     events = [c.args[0] for c in log.warning.call_args_list]
     assert "t1_failed_trying_t2" in events and "t2_failed_trying_t2_5a" in events
@@ -194,15 +198,15 @@ def test_shadow_runs_on_the_satellite_and_is_recorded():
             patch.object(c, "_call_bedrock_satellite", side_effect=rec.satellite), \
             patch("shared.llm_client.shadow.record_shadow_sync") as rec_shadow:
         c._run_shadow_bound(LLMRequest(system_prompt="s", user_prompt="u", stage="t9_write"),
-                            cfg, primary, "acc3", "acc1")
+                            cfg, primary, "acc3")
     assert rec.calls == [("sat", BEDROCK_HAIKU, "acc3")]
     kw = rec_shadow.call_args.kwargs
     assert kw["shadow_model"] == "haiku" and kw["error"] is None and kw["shadow"].content == "ok"
 
 
-def test_generate_starts_shadow_with_the_same_accounts():
+def test_generate_starts_shadow_with_the_same_account():
     cfg = StageConfig(stage="t9_write", role="writer", provider="bedrock", model_id="sonnet",
-                      account_route="acc1", shadow_model_id="haiku", shadow_sample_pct=100)
+                      account_route="acc3", shadow_model_id="haiku", shadow_sample_pct=100)
     rec = _Recorder()
     c = _client()
     with patch.object(c, "_call_bedrock", side_effect=rec.native), \
@@ -210,8 +214,8 @@ def test_generate_starts_shadow_with_the_same_accounts():
             patch.object(c, "_start_shadow") as start, \
             patch.object(cl, "get_stage_config_sync", return_value=cfg):
         c.generate(LLMRequest(system_prompt="s", user_prompt="u", stage="t9_write"))
-    assert rec.calls == [("sat", BEDROCK_SONNET, "acc1")]
-    assert start.call_args.args[3:] == ("acc1", "acc3")
+    assert rec.calls == [("sat", BEDROCK_SONNET, "acc3")]
+    assert start.call_args.args[3:] == ("acc3",)
 
 
 def test_satellite_stream_restarts_once_and_feeds_deltas():

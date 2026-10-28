@@ -7,7 +7,7 @@ always show the same numbers. The lazy CE refresh (> 24 h old or partial, Redis 
 per day, ~$0.01) is the module's own; without Redis it never calls CE and returns the stored data.
 
 Columns per row: ``aws_usd`` (acc2 bill by App tag), ``ai_outside_aws_usd`` (LLM spend not already on the acc2 bill:
-acc1/acc3 Bedrock, OpenAI, Jev — gateway estimates), ``total_usd`` = the two added (= ``cost_by_app`` total_usd).
+acc3 Bedrock, OpenAI, Jev — gateway estimates), ``total_usd`` = the two added (= ``cost_by_app`` total_usd).
 Labels, hints and ``ai_outside_aws_usd`` come from ``platform_cost`` itself (S243 finding 4: one wording, one netting
 rule on both pages); the totals also carry the gross AI estimate and the part already on the AWS bill.
 """

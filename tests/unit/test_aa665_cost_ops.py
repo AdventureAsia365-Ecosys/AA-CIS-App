@@ -245,8 +245,8 @@ def test_budget_status():
 
 
 def test_aws_budgets_env_override(monkeypatch):
-    monkeypatch.setenv(cost_ops.AWS_BUDGET_ENV, "acc2=300, acc1=20,bad")
-    assert cost_ops.aws_budgets() == {"acc2": 300.0, "acc3": 250.0, "acc1": 20.0}
+    monkeypatch.setenv(cost_ops.AWS_BUDGET_ENV, "acc2=300, acc3=20,bad")
+    assert cost_ops.aws_budgets() == {"acc2": 300.0, "acc3": 20.0}
     monkeypatch.delenv(cost_ops.AWS_BUDGET_ENV)
     assert cost_ops.aws_budgets() == cost_ops.AWS_MONTHLY_BUDGET_USD
 
@@ -305,7 +305,32 @@ async def test_cost_forecast_providers_aws_and_budgets(monkeypatch):
     a3 = aws["acc3"]
     assert a3["covered_from"] == "2026-10-20" and a3["days_missing"] == 19
     assert a3["run_rate_usd_per_day"] == 10.0                    # mean over the 6 stored days
-    assert aws["acc1"]["forecast_usd"] is None and aws["acc1"]["status"] == "no_budget"
+    assert set(aws) == {"acc2", "acc3"}   # AA-998: no retired-account row without its data
+
+
+@pytest.mark.asyncio
+async def test_cost_forecast_shows_retired_account_history_without_its_id(monkeypatch):
+    """AA-998: a month that still holds spend of the retired fallback account (llm_call_log rows, stored CE days)
+    shows it as one 'retired' row after acc2 / acc3, never as a raw account ID."""
+    now = datetime(2026, 9, 30, 9, tzinfo=timezone.utc)
+    monkeypatch.setattr("shared.aws_client.cost_explorer.account_key",
+                        lambda a: {"A2": "acc2", "A3": "acc3"}.get(a, "retired"))
+    monkeypatch.delenv(cost_ops.AWS_BUDGET_ENV, raising=False)
+    ai = [{"day": date(2026, 9, 10), "provider": "bedrock-satellite", "account": "acc1", "cost_usd": 0.5},
+          {"day": date(2026, 9, 10), "provider": "bedrock-satellite", "account": "acc3", "cost_usd": 2.0}]
+    fetched = datetime(2026, 9, 29, 1, tzinfo=timezone.utc)
+    ce_rows = [{"account_id": "A1", "day": date(2026, 9, 10), "amount_usd": 0.97, "fetched_at": fetched}]
+    pool = _Pool({cost_ops.AI_DAILY_SQL: ai, cost_ops.DFS_DAILY_SQL: [], cost_ops.CE_DAILY_SQL: ce_rows,
+                  cost_ops.CE_APP_DAILY_SQL: [], cost_ops.BUDGETS_SQL: []})
+    out = await cost_ops.cost_forecast(pool, "2026-09", now=now)
+    bedrock = next(p for p in out["providers"] if p["key"] == "bedrock")
+    assert [a["account"] for a in bedrock["accounts"]] == ["acc3", "retired"]
+    assert bedrock["accounts"][1]["label"] == cost_ops.ACCOUNT_LABELS["retired"]
+    aws = [a["account"] for a in out["aws_accounts"]]
+    assert aws == ["acc2", "acc3", "retired"]
+    retired = out["aws_accounts"][2]
+    assert retired["mtd_usd"] == pytest.approx(0.97) and retired["status"] == "no_budget"
+    assert "A1" not in str(out)
 
 
 @pytest.mark.asyncio

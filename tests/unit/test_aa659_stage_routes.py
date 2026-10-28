@@ -135,7 +135,7 @@ def test_shadow_failure_is_recorded_not_raised():
     primary = _resp("satellite-gpt-5.6-luna")
     with patch.object(c, "_call_key", side_effect=RuntimeError("gpt-4.1 down")), \
             patch("shared.llm_client.shadow.record_shadow_sync") as rec:
-        c._run_shadow(_req(), JUDGE_ROUTE, primary, "acc3", "acc1")
+        c._run_shadow(_req(), JUDGE_ROUTE, primary, "acc3")
     kw = rec.call_args.kwargs
     assert kw["shadow"] is None
     assert "gpt-4.1 down" in kw["error"]
@@ -148,7 +148,7 @@ def test_shadow_success_records_both_outputs():
     primary, shadow = _resp("satellite-gpt-5.6-luna"), _resp("gpt-4.1")
     with patch.object(c, "_call_key", return_value=shadow), \
             patch("shared.llm_client.shadow.record_shadow_sync") as rec:
-        c._run_shadow(_req(), JUDGE_ROUTE, primary, "acc3", "acc1")
+        c._run_shadow(_req(), JUDGE_ROUTE, primary, "acc3")
     kw = rec.call_args.kwargs
     assert kw["primary"] is primary and kw["shadow"] is shadow and kw["error"] is None
 

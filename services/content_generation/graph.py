@@ -349,7 +349,7 @@ class ContentState(TypedDict):
     brand_signature_words:  list   # AA-800: custom_validators.signature_words (T2 only)
     model_tier:             str
     fallback_used:          bool   # AA-213: True khi Sonnet T1 fell back to Haiku T2
-    satellite_account:      Optional[str]  # AA-296/397: "acc1"/"acc3" nếu qua satellite, None nếu không
+    satellite_account:      Optional[str]  # AA-296/397: "acc3" nếu qua satellite, None nếu không
     prompt_version:         str    # AA-289: sha256[:8] của system prompt cuối cùng gửi cho LLM
     cache_read_tokens:      int    # AA-288: Bedrock prompt-cache tokens read (0 nếu không cache)
     cache_write_tokens:     int    # AA-288: Bedrock prompt-cache tokens written (0 nếu không cache)

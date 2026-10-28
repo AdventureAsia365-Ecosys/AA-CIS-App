@@ -22,9 +22,10 @@ Sources, per app row:
 - ``ai_in_aws_acc2_usd``: the part of ``ai_usd`` billed on acc2 itself (Bedrock calls with account acc2 or none),
   already inside ``aws_usd`` of some tag (usually untagged: Bedrock usage carries no App tag). ``total_usd`` =
   ``aws_usd`` + (``ai_usd`` - ``ai_in_aws_acc2_usd``), so acc2 Bedrock is not counted twice.
-- ``llm_satellites``: the acc1 / acc3 Bedrock line from the SERVICE snapshot (``shared.cost_explorer_snapshot``, the
-  External Spend page's data) next to the llm_call_log estimate for the same accounts — a cross-check, not added to
-  any app (those calls are already in ``ai_usd`` by app).
+- ``llm_satellites``: the acc3 Bedrock line from the SERVICE snapshot (``shared.cost_explorer_snapshot``, the
+  External Spend page's data) next to the llm_call_log estimate for the same account — a cross-check, not added to
+  any app (those calls are already in ``ai_usd`` by app). AA-998: acc3 is the only satellite; a month that still has
+  spend of the retired fallback account (CE history or llm_call_log rows) also gets a ``retired`` entry.
 
 One presentation (S243 UI verify, finding 4): row labels and hints come from ``ROW_LABELS`` / ``ROW_HINTS`` here (the
 plain wording of the overview card), every row and the totals carry ``ai_outside_aws_usd`` (= ``ai_usd`` -
@@ -288,8 +289,10 @@ async def cost_by_app(pool: Any, month: Optional[str] = None, *, redis: Any = No
             r["ai_in_aws_acc2_usd"] += cost
         r["ai_by_source"].append({"provider": a["provider"], "account": a["account"], "calls": int(a["calls"] or 0),
                                   "cost_usd": round(cost, 4), "billed_in_aws_acc2": bool(a["billed_in_acc2"])})
-        if a["account"] in ("acc1", "acc3") and (a["provider"] or "").startswith("bedrock"):
-            sat_estimate[a["account"]] = sat_estimate.get(a["account"], 0.0) + cost
+        if a["account"] not in (None, "acc2") and (a["provider"] or "").startswith("bedrock"):
+            # acc3, or (history before AA-998) the retired fallback account.
+            sat = a["account"] if a["account"] == "acc3" else ce.RETIRED_ACCOUNT_KEY
+            sat_estimate[sat] = sat_estimate.get(sat, 0.0) + cost
 
     crm_status: dict[str, Any] = {"status": "not_requested"}
     if crm_llm is not None and "crm" in rows:
@@ -338,7 +341,7 @@ async def cost_by_app(pool: Any, month: Optional[str] = None, *, redis: Any = No
                       "the CRM's own gateway rollup (crm.ops.v1 GET /llm/usage, crm.llm_usage_daily)",
             "ai_outside_aws_usd": "ai_usd - ai_in_aws_acc2_usd (Bedrock on acc2 is already in aws_usd)",
             "total_usd": "aws_usd + ai_outside_aws_usd",
-            "llm_satellites": "acc1/acc3 Bedrock from Cost Explorer (shared.cost_explorer_snapshot) vs the estimate",
+            "llm_satellites": "acc3 Bedrock from Cost Explorer (shared.cost_explorer_snapshot) vs the estimate",
         },
     }
 
@@ -374,18 +377,23 @@ def _acc2_account_id() -> Optional[str]:
 
 
 async def _satellites(pool: Any, start: date, end: date, estimate: dict[str, float]) -> dict:
-    """acc1 / acc3 Bedrock actual (CE SERVICE snapshot, External Spend data) vs the llm_call_log estimate."""
+    """acc3 Bedrock actual (CE SERVICE snapshot, External Spend data) vs the llm_call_log estimate. A ``retired``
+    entry (no account ID) is added only when the window holds spend of the AA-998 retired fallback account."""
     try:
         data = await ce.read_cost_range(pool, start, end)
     except Exception as e:
         logger.warning("platform_cost_satellites_failed", error=repr(e)[:200])
         data = None
-    by_id = {a["account_id"]: a for a in (data or {}).get("accounts", [])}
-    out = {}
-    for name, account_id in (("acc1", ce.ACC1_ACCOUNT_ID), ("acc3", ce.ACC3_ACCOUNT_ID)):
-        acc = by_id.get(account_id)
-        out[name] = {"account_id": account_id,
-                     "ce_bedrock_usd": round(acc["bedrock_usd"], 4) if acc else None,
-                     "llm_log_estimate_usd": round(estimate.get(name, 0.0), 4)}
+    accounts = (data or {}).get("accounts", [])
+    acc3 = next((a for a in accounts if a["account_id"] == ce.ACC3_ACCOUNT_ID), None)
+    out: dict[str, Any] = {"acc3": {"account_id": ce.ACC3_ACCOUNT_ID,
+                                    "ce_bedrock_usd": round(acc3["bedrock_usd"], 4) if acc3 else None,
+                                    "llm_log_estimate_usd": round(estimate.get("acc3", 0.0), 4)}}
+    retired = [a for a in accounts if a.get("account_key") == ce.RETIRED_ACCOUNT_KEY]
+    if retired or estimate.get(ce.RETIRED_ACCOUNT_KEY):
+        out[ce.RETIRED_ACCOUNT_KEY] = {
+            "account_id": None,
+            "ce_bedrock_usd": round(sum(a["bedrock_usd"] for a in retired), 4) if retired else None,
+            "llm_log_estimate_usd": round(estimate.get(ce.RETIRED_ACCOUNT_KEY, 0.0), 4)}
     out["ce_fetched_at"] = (data or {}).get("fetched_at")
     return out

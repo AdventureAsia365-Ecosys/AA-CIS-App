@@ -245,7 +245,7 @@ def test_satellite_streams_only_when_given_a_callback(monkeypatch):
     rt.invoke_model_with_response_stream.return_value = {"body": _stream_events(["Hel", "lo"])}
     session = MagicMock()
     session.client.return_value = rt
-    monkeypatch.setattr(bs, "_get_satellite_session", lambda account="acc1": session)
+    monkeypatch.setattr(bs, "_get_satellite_session", lambda account="acc3": session)
 
     got = []
     res = bs.invoke_claude("p", model="haiku", account="acc3", on_delta=got.append)
@@ -282,7 +282,7 @@ def _client_streaming(monkeypatch, texts, path):
             {"content": [{"text": "".join(texts)}], "usage": {}, "stop_reason": "end_turn"}).encode())}
     session = MagicMock()
     session.client.return_value = rt
-    monkeypatch.setattr(bs, "_get_satellite_session", lambda account="acc1": session)
+    monkeypatch.setattr(bs, "_get_satellite_session", lambda account="acc3": session)
     monkeypatch.setattr(cl, "get_stage_config_sync", lambda stage: None)
     return c
 

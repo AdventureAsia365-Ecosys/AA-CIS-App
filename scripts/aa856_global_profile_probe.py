@@ -37,7 +37,7 @@ profile answered through the task role and shared.job has nothing queued/running
 called from many job kinds and API routes (angle gate, slate, segment matching, content writing,
 export...), so the gate is "no job in flight", the same rule as a backend deploy.
 
-AA-862 (migration 240, embed routes fall back acc2 -> acc3 -> acc1): `--account acc3|acc1` makes
+AA-862 (migration 240, embed routes fall back acc2 -> acc3): `--account acc3` makes
 `preflight --invoke` call that SATELLITE account instead, through the gateway's satellite client
 (STS AssumeRole into the account's invoker role, ExternalId, the same path the route fallback takes),
 plus one acc2 call of the same text to compare. It checks 1536 floats and cosine >= 0.999 between the
@@ -46,9 +46,8 @@ two vectors (same model, so stored vectors stay comparable). Two calls, two llm_
   ... python3 /tmp/s.py preflight --invoke --account acc3
 Gate: apply 240 only when it reports "gate": {"apply_240": true} for acc3. An acc2 throttle (20 rpm)
 leaves the cosine unproven (gate false): run it again a minute later. 240 only adds a fallback, so
-jobs in flight are reported but do not block it. For acc1, the same run decides whether the
-cohere-embed-v4-acc1 row may be enabled and appended to the routes (two admin actions, see 240).
-`post-apply --since` also reads the acc3 / acc1 rows and counts successes per account.
+jobs in flight are reported but do not block it. AA-998: acc3 is the only satellite account.
+`post-apply --since` also reads the acc3 row and counts successes per account.
 """
 from __future__ import annotations
 
@@ -68,7 +67,7 @@ GLOBAL_PROFILE = "global.cohere.embed-v4:0"
 US_PROFILE = "us.cohere.embed-v4:0"
 MODEL_KEY = "cohere-embed-v4"
 # AA-862 — migration 240: one catalog row per satellite account, same model and profile.
-SATELLITE_KEYS = {"acc3": "cohere-embed-v4-acc3", "acc1": "cohere-embed-v4-acc1"}
+SATELLITE_KEYS = {"acc3": "cohere-embed-v4-acc3"}  # AA-998: acc3 is the only satellite account
 ALL_MODEL_KEYS = [MODEL_KEY, *SATELLITE_KEYS.values()]
 SATELLITE_ADHOC_STAGE = "adhoc_aa862"
 SAME_MODEL_MIN_COSINE = 0.999
@@ -157,7 +156,7 @@ def _identity() -> dict[str, Any]:
 
 def _invoke_global(account: str = "acc2") -> dict[str, Any]:
     """One embed on the global profile through the gateway's own call path: the acc2 client (task
-    role, no retry), or for acc3 / acc1 the satellite client (AssumeRole into the invoker role)."""
+    role, no retry), or for acc3 the satellite client (AssumeRole into the invoker role)."""
     from shared.llm_client import embed as embed_mod
     from shared.llm_client.catalog import CatalogModel
 
@@ -341,7 +340,7 @@ def main(argv: list[str]) -> None:
     p.add_argument("mode", nargs="?", default="preflight", choices=("preflight", "post-apply"))
     p.add_argument("--invoke", action="store_true", help="preflight: make the one global-profile embed")
     p.add_argument("--since", help="post-apply: ISO-8601 UTC time DB Migrate applied 238 / 240")
-    p.add_argument("--account", default="acc2", choices=("acc2", "acc3", "acc1"),
+    p.add_argument("--account", default="acc2", choices=("acc2", "acc3"),
                    help="preflight: AA-862 — probe this satellite account (plus an acc2 reference call)")
     a = p.parse_args(argv)
     if a.mode == "preflight":

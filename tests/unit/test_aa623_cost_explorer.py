@@ -45,8 +45,8 @@ def test_fetch_one_account_cost_acc2_uses_direct_client_no_assume_role():
     assert rows[0]["period_start"] == "2026-09-16"
 
 
-def test_fetch_one_account_cost_acc1_assumes_role_first():
-    """acc1/acc3 must go through STS AssumeRole (satellite session) before calling CE."""
+def test_fetch_one_account_cost_acc3_assumes_role_first():
+    """acc3 must go through STS AssumeRole (satellite session) before calling CE."""
     from shared.aws_client import cost_explorer as ce_mod
     _reset_session_cache()
 
@@ -64,12 +64,12 @@ def test_fetch_one_account_cost_acc1_assumes_role_first():
 
     with patch("shared.aws_client.cost_explorer.boto3.client", return_value=fake_sts), \
          patch("shared.aws_client.cost_explorer.boto3.Session", return_value=fake_session):
-        rows = ce_mod._fetch_one_account_cost("acc1", "2026-09-16", "2026-09-17")
+        rows = ce_mod._fetch_one_account_cost("acc3", "2026-09-16", "2026-09-17")
 
     fake_sts.assume_role.assert_called_once()
     call_kwargs = fake_sts.assume_role.call_args.kwargs
-    assert call_kwargs["RoleArn"] == ce_mod.ACC1_ROLE_ARN
-    assert call_kwargs["ExternalId"] == ce_mod.ACC1_EXTERNAL_ID
+    assert call_kwargs["RoleArn"] == ce_mod.ACC3_ROLE_ARN
+    assert call_kwargs["ExternalId"] == ce_mod.ACC3_EXTERNAL_ID
     assert rows == []
     _reset_session_cache()
 
@@ -89,12 +89,15 @@ def test_fetch_one_account_cost_raises_unavailable_on_client_error():
 # ── fetch_all_accounts_cost — partial-failure tolerance ─────────────────────
 
 def test_fetch_all_accounts_cost_partial_failure_keeps_other_accounts():
-    """If acc1 fails (e.g. AssumeRole not applied yet) but acc2/acc3 succeed, the result must
-    still contain acc2/acc3's rows plus an entry under errors for acc1 -- not raise."""
+    """If acc3 fails (e.g. AssumeRole not applied yet) but acc2 succeeds, the result must
+    still contain acc2's rows plus an entry under errors for acc3 -- not raise."""
     from shared.aws_client import cost_explorer as ce_mod
 
+    seen = []
+
     def fake_fetch_one(account, start, end):
-        if account == "acc1":
+        seen.append(account)
+        if account == "acc3":
             raise ce_mod.CostExplorerUnavailable("AssumeRole not applied yet")
         return [{"account_id": account, "service": "X", "period_start": start,
                   "period_end": end, "amount_usd": 1.0, "unit": "USD", "raw": {}}]
@@ -102,9 +105,28 @@ def test_fetch_all_accounts_cost_partial_failure_keeps_other_accounts():
     with patch("shared.aws_client.cost_explorer._fetch_one_account_cost", side_effect=fake_fetch_one):
         result = ce_mod.fetch_all_accounts_cost("2026-09-16", "2026-09-17")
 
-    assert "acc1" in result["errors"]
-    assert len(result["rows"]) == 2  # acc2 + acc3
-    assert {r["account_id"] for r in result["rows"]} == {"acc2", "acc3"}
+    assert seen == ["acc2", "acc3"]  # AA-998: the retired fallback account is not fetched
+    assert set(result["errors"]) == {"acc3"}
+    assert {r["account_id"] for r in result["rows"]} == {"acc2"}
+
+
+def test_fetch_one_account_cost_refuses_the_retired_account():
+    from shared.aws_client import cost_explorer as ce_mod
+
+    with patch("shared.aws_client.cost_explorer.boto3.client") as m_client, \
+            pytest.raises(ValueError, match="Unknown Cost Explorer account"):
+        ce_mod._fetch_one_account_cost("acc1", "2026-09-16", "2026-09-17")
+    m_client.assert_not_called()
+
+
+def test_account_key_labels_history_of_other_accounts_as_retired():
+    from shared.aws_client import cost_explorer as ce_mod
+
+    with patch.object(ce_mod, "acc2_account_id", return_value="2" * 12), \
+            patch.object(ce_mod, "ACC3_ACCOUNT_ID", "3" * 12):
+        assert ce_mod.account_key("2" * 12) == "acc2"
+        assert ce_mod.account_key("3" * 12) == "acc3"
+        assert ce_mod.account_key("1" * 12) == ce_mod.RETIRED_ACCOUNT_KEY == "retired"
 
 
 def test_fetch_all_accounts_cost_raises_when_all_fail():
@@ -198,7 +220,7 @@ def test_fetch_one_account_cost_follows_next_page_token():
 
 
 def test_is_bedrock_service_matches_ce_service_names():
-    """Real SERVICE names seen in acc1/acc2/acc3 Cost Explorer (Sept 2026 CSV exports)."""
+    """Real SERVICE names seen in the Cost Explorer of the satellite and infra accounts (Sept 2026 CSV exports)."""
     from shared.aws_client.cost_explorer import is_bedrock_service
 
     for s in ("Amazon Bedrock", "Claude Sonnet 4.6 (Amazon Bedrock Edition)",

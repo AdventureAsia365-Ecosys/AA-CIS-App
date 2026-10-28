@@ -20,7 +20,7 @@ from api.core.error_ref import log_exception_ref, public_error
 from api.core.staff_authz import staff_policy_if_staff
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
-from typing import Awaitable, Callable, Optional, List
+from typing import Awaitable, Callable, Optional, List, Literal
 
 from api.routers._billing import usage_row_to_dict
 from api.routers.admin import verify_admin_secret
@@ -889,7 +889,7 @@ async def _execute_run_tour(
                     # AA-397: satellite_used (bool) giữ nguyên cho backward-compat, derive từ
                     # satellite_account is not None thay vì đọc field bool cũ (đã xoá khỏi LLMResponse).
                     result.get("satellite_account") is not None,
-                    result.get("satellite_account"),         # AA-397: satellite_account (text, 'acc1'/'acc3'/None)
+                    result.get("satellite_account"),         # AA-397: satellite_account (text, 'acc3'/None)
                     # S218 audit: the column existed but was never written (0/681 rows); metadata had it.
                     result.get("revalidate_passed") if result.get("revalidate_ran") else None,
                 )
@@ -1479,7 +1479,8 @@ class S1BatchSubmitRequest(BaseModel):
     """Submit an S1-rewrite Bedrock Batch job for a set of tours (writer attempt-1 only)."""
     tour_ids: List[str]
     batch_id: str                              # UUID → pipeline_runs accounting (like sync ingest)
-    account: str = "acc3"                      # satellite account owning Batch perms (AA-399)
+    # satellite account owning Batch perms (AA-399); AA-998: acc3 only, anything else is a 422
+    account: Literal["acc3"] = "acc3"
     seo_mode: str = "standard"
     model_tier: Optional[str] = "haiku"
     enforce_min: bool = True                   # reject sub-minimum batches (Bedrock rejects them)

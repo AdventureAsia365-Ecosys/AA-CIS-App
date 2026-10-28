@@ -304,7 +304,7 @@ export interface CostRefresh {
 }
 
 export interface SatelliteLine {
-  account_id: string;
+  account_id: string | null;
   ce_bedrock_usd: number | null;
   llm_log_estimate_usd: number;
 }
@@ -330,7 +330,9 @@ export interface CostResp {
     ai_outside_aws_usd: number;
     total_usd: number;
   };
-  llm_satellites: { acc1?: SatelliteLine; acc3?: SatelliteLine; ce_fetched_at?: string | null };
+  /** AA-998: acc3 is the only LLM satellite; `retired` is present only for a month that still holds spend of the
+   * former fallback account (history, `account_id` null). */
+  llm_satellites: { acc3?: SatelliteLine; retired?: SatelliteLine; ce_fetched_at?: string | null };
   /** AA-936: whether the CRM row's LLM spend (crm.ops.v1 /llm/usage, staff token) could be read. */
   crm_llm?: { status: string; reason?: string | null; http_status?: number | null };
   refresh: CostRefresh;

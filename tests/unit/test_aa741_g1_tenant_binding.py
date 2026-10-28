@@ -182,6 +182,6 @@ def test_shadow_thread_keeps_the_job_and_tenant():
             _patch("shared.llm_client.shadow.record_shadow_sync", side_effect=_rec):
         with call_log.bind_job("11111111-1111-1111-1111-111111111111"), call_log.bind_tenant(TENANT):
             c._start_shadow(LLMRequest(system_prompt="s", user_prompt="u", stage="s1_judge"),
-                            cfg, primary, "acc3", "acc1")
+                            cfg, primary, "acc3")
         assert done.wait(5)
     assert seen == {"job": "11111111-1111-1111-1111-111111111111", "tenant": TENANT}

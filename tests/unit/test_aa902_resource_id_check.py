@@ -21,11 +21,11 @@ def _kinds(line: str) -> list[str]:
 
 
 @pytest.mark.parametrize("line, kind", [
-    (f'ROLE = "arn:aws:iam::{FAKE}:role/AA-Bedrock-Invoker"', "ARN with account ID"),
+    (f'ROLE = "arn:aws:iam::{FAKE}:role/AA3-Bedrock-Invoker"', "ARN with account ID"),
     (f"arn:aws:bedrock:us-west-1:{FAKE}:inference-profile/global.x", "ARN with account ID"),
     (f'BUCKET = "aa-cis-bronze-{FAKE}"', "account ID in a resource name"),
     (f"s3://aa-cis-dev-e2e-mail-{FAKE}/inbound/", "account ID in a resource name"),
-    (f'ACC1_ACCOUNT_ID = "{FAKE}"', "12-digit account ID"),
+    (f'ACC3_ACCOUNT_ID = "{FAKE}"', "12-digit account ID"),
     (f'  "{FAKE}": "acc3",', "12-digit account ID"),
     (f"AA-623 found acc2/{FAKE} is a member account", "12-digit account ID"),
     (f"acc_{FAKE}", "12-digit account ID"),                 # after "_"
@@ -38,13 +38,13 @@ def test_each_pattern_is_found(line, kind):
 
 
 @pytest.mark.parametrize("line", [
-    "arn:aws:iam::<account>:role/AA-Bedrock-Invoker",
+    "arn:aws:iam::<account>:role/AA3-Bedrock-Invoker",
     'BUCKET = "aa-cis-bronze-<acc2>"',
     f'role = "arn:aws:iam::{DOC_EXAMPLE}:role/doc"',          # AWS documentation example account
     f'TENANT = "a1b2c3d4-0001-4000-8000-{"0" * 11}1"',         # UUID: last group is 12 digits
     f'tenant `a1b2c3d4-0001-...-{"0" * 11}1`',                 # elided UUID in a doc
     f'f"/photos/{{tid[:8]}}-0000-4000-8000-{"0" * 11}1"',      # UUID built in an f-string
-    'f"arn:aws:iam::{ACC1_ACCOUNT_ID}:role/x"',                # built at run time
+    'f"arn:aws:iam::{ACC3_ACCOUNT_ID}:role/x"',                # built at run time
 ])
 def test_placeholders_uuids_and_doc_examples_pass(line):
     assert check.scan_line(line) == []

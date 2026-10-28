@@ -7,7 +7,7 @@ T7/T8 already use, confirmed by STEP0 (docs/claude_audit/AA-450-00-...md §6) us
 3-way reasoning services/acp_angle_gate/generate.py's own docstring already worked through for
 T8's angle-generation call: T9 writes ONE short single-channel piece (same job shape as the old,
 not-reused acp_s4_social/writer.py), not the multi-H2 long-form draft
-services/acp_produce/generation.py's Bedrock-satellite-acc1-Sonnet-only path is locked to
+services/acp_produce/generation.py's Bedrock-satellite-Sonnet-only path is locked to
 (AA-334), and not a cross-vendor quality judge (judge_client.py's Nova Pro, reserved for
 quality_gates.py's F8/F9-equivalent gates — a writer must never share a model with the judge
 scoring it, ADR-2026-014/027).

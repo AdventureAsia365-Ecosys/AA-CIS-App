@@ -258,7 +258,9 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     `useState`/`useEffect`/`setInterval` fetch). Older pages keep their hand-rolled fetch until
     migrated.
 - **AI/Bedrock**: LLM calls (rewrite, research, gates) route through the ecosystem Bedrock path
-  (acc3 primary → acc1 fallback); the cross-account trust is provisioned in AA-CIS-Infra.
+  on the acc3 satellite only (AA-998, S255: acc1, the former cross-account fallback, left the ecosystem;
+  an acc3 failure falls to a same-account model or the job retry); the cross-account trust is provisioned in
+  AA-CIS-Infra.
   Embeddings (Cohere Embed v4) run natively on acc2, through the GLOBAL cross-region profile
   `global.cohere.embed-v4:0` since migration 238 (AA-856: the `us.` quota is fixed at 20 rpm, the global
   one is adjustable; one quota shared by f10_embed, a3_place_embed and TripPlanner search). Claude cannot be invoked from a local shell — the satellite roles only trust the
@@ -288,16 +290,16 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   - `s1_judge`, `t2_judge`, `t7_debate_judge`, `t10_judge`: GPT-5.6 Luna (Bedrock acc3) → GPT-6 Luna
     (Bedrock acc3) → GPT-6 Luna (OpenAI API, last resort); shadow GPT-6 Luna at the admin-set rate.
   - `s1_brand_audit`, `t2_brand_audit`: GPT-5.6 Luna → GPT-6 Luna (no OpenAI last resort).
-  - No acc1 fallback for the Luna models (OpenAI-on-Bedrock is enabled on acc3 only); the
-    acc3 → acc1 satellite chain (the stage's `account_route` picks which satellite goes first)
-    applies to the legacy Haiku/Sonnet keys. They no longer try acc2-native Bedrock first (AA-843:
+  - acc3 is the only satellite account (AA-998). The legacy Haiku/Sonnet chain is acc3 Sonnet → acc3 Haiku
+    (no cross-account tier); `account_route` is CHECKed to acc3 / NULL (migration 295) and the gateway ignores any
+    other value. `CatalogModel.account_for` only picks acc3 or acc2. They no longer try acc2-native Bedrock first (AA-843:
     acc2 is a channel-program account and always refuses Anthropic models); the env var
     `LLM_LEGACY_ACC2_NATIVE=on` restores that first attempt if acc2 ever gains model access.
   - A call served by the OpenAI API logs `llm_openai_fallback_used` and is recorded in `llm_call_log`
     with `provider = 'openai'`, `fallback_used = true`.
   - **Brand audit fails closed** (AA-714): a model/schema error gives `manual_check` +
     `BRAND_AUDIT_UNAVAILABLE` (held for review), never `pass`.
-  - **Where a GPT model runs**: on Bedrock only on acc3 (acc1/acc2 have no OpenAI models), or on the
+  - **Where a GPT model runs**: on Bedrock only on acc3 (acc2 has no OpenAI models), or on the
     OpenAI platform API (`gpt-6-luna-openai`, last resort only). `gpt-4.1` is disabled (migration 224)
     and admin cannot re-enable it; `LLMClient._call_openai` refuses any model whose catalog row is not
     enabled, so the legacy Haiku/Sonnet chain no longer falls back to GPT-4.1. Admin rejects an
@@ -354,19 +356,22 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     `typesafe`, role `validate`), so Jev shows in Cost Operations (Jev tab). Admin page: `/admin/decisions`.
     Key: secret `aa-cis/dev/typesafe`. Migration 181.
 - **Cost observability (epic AA-616)**:
-  - `shared.llm_call_log` records account (acc1/acc3), provider and `fallback_used` per call
+  - `shared.llm_call_log` records account (acc3 / acc2; rows before AA-998 may hold acc1), provider and
+    `fallback_used` per call
     (AA-617), with correct Haiku 4.5 pricing and cache tokens (AA-635).
   - `shared.dfs_call_log` records each DataForSEO call, its real `cost` and cache hits (AA-618).
     The DFS cache TTL is 7 days (AA-625).
   - `shared.dfs_balance_snapshot` + a daily Lambda alert on low DFS balance (AA-627).
-  - `shared.cost_explorer_snapshot` holds real AWS Cost Explorer figures for acc1/acc2/acc3,
+  - `shared.cost_explorer_snapshot` holds real AWS Cost Explorer figures for acc2/acc3,
     fetched on demand through `POST /admin/cost-explorer/check` (AA-623). acc2 calls CE
-    directly; acc1/acc3 via assume-role (`shared/aws_client/cost_explorer.py`).
+    directly; acc3 via assume-role (`shared/aws_client/cost_explorer.py`). AA-998: acc1 is no longer fetched; its
+    stored rows stay and read with `account_key = "retired"` (labelled "Retired fallback account", no account ID).
   - The admin **Cost Operations** page (`/admin/cost-ops`, AA-665; was External Spend at `/admin/llm-usage`, which
     redirects) has the tabs Overview, LLM, DataForSEO, AWS bill, Jev and Budgets. It compares estimated spend (token
     logs) with the real AWS bill (AWS bill tab), splitting Bedrock from infrastructure per account, over any date range.
     - Overview: the **month-end forecast vs budget** (`GET /admin/cost-ops/forecast`, `api/services/cost_ops.py`):
-      per provider family (Bedrock with the acc3/acc1/acc2 split, OpenAI, Jev, DataForSEO) and per AWS account,
+      per provider family (Bedrock with the acc3/acc2 split, OpenAI, Jev, DataForSEO) and per AWS account (acc2,
+      acc3; a `retired` row only for a month that still holds acc1 history),
       month to date + mean of the last 7 complete days x days left. DB only: the AI rows read
       `llm_call_daily`/`llm_call_log` like Cost per app, the AWS rows the STORED Cost Explorer snapshots (never a live
       CE call). Budgets: `spend_budget` global daily cap x days in the month; AWS from `cost_ops.AWS_MONTHLY_BUDGET_USD`
@@ -700,7 +705,7 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   its last readers (`GET /admin/acp/stuck-runs`, `POST /admin/acp/runs/{run_id}/force-fail`,
   `services/acp_shared/cost_utils.py`, `services/acp_canary/`) are deleted. Stuck or long work is a
   `shared.job` row (reaper + admin Jobs page). `tests/unit/test_aa751_no_acp_runs_reader.py` fails
-  on any new SQL against `acp_runs`. `infrastructure/canary/` (acc1 EventBridge skeleton) is deleted
+  on any new SQL against `acp_runs`. `infrastructure/canary/` (old-account EventBridge skeleton) is deleted
   too: its schedule and Lambda no longer exist (checked 16/10/2026).
 
 - **Photos (AA-708, migration 198)**: the `photo_sync` job copies the Jira CON board's PHOTOS
@@ -865,8 +870,11 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   documentation example accounts allowed for test fakes). Exceptions only in
   `.github/resource-id-allowlist.txt`, each with a max count and an expiry date. Code gets the bronze
   bucket from `shared/aws_client/bronze.py` (`BRONZE_BUCKET`, else `aa-cis-bronze-<caller account>`) and
-  acc2's own ID from STS; the acc1/acc3 satellite IDs are kept once, in `shared/llm_client/bedrock_satellite.py`
-  (allowlisted until the task definition carries them).
+  acc2's own ID from STS; the acc3 satellite ID comes from the task env (`BEDROCK_ACCT_PRIMARY`), read once in
+  `shared/llm_client/bedrock_satellite.py`.
+- **No acc1 in runtime code (AA-998)**: `tests/unit/test_aa998_no_acc1_runtime.py` fails when `acc1`, its account
+  ID, its IAM roles, its account env var or its CLI profile appears in api/ (not migrations), services/,
+  shared/, worker/, scripts/, frontend/ or portal/ — comments included.
 - **Quality registry lint (AA-926)**: the required **Lint** job also runs `python -m services.quality.lint --report`
   (PyYAML only): no gate-name or 7.0 pass-line literal outside `services/quality/` (api/, services/, shared/,
   worker/, scripts/aa729/ and the frontend/portal TS; docstrings, comments, `__all__`, tests and migrations
@@ -1439,7 +1447,8 @@ entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
   for the legacy `/admin/overview` provider table. AWS = acc2 Cost Explorer grouped by the `App` tag
   (`shared.cost_explorer_app_snapshot`, CIS 248; untagged is its own row with services), AI = LLM gateway estimates
   by `quality_signal->>'app'` from `shared.llm_call_log` + `shared.llm_call_daily`; acc2 Bedrock is subtracted from
-  AI so it is not counted twice; acc1/acc3 Bedrock CE actuals are a cross-check line. `GET /admin/platform/cost`
+  AI so it is not counted twice; acc3 Bedrock CE actuals are a cross-check line (`llm_satellites`; a `retired` entry
+  only for a month with acc1 history, AA-998). `GET /admin/platform/cost`
   (`spend.read`) refreshes a month whose snapshot misses days or is > 24 h old (and may still change) with one CE
   request (~$0.01) behind a Redis lock, at most once a day per window (a Redis attempt marker, also after an empty
   or failed answer); `POST /admin/cost-explorer/check` (the "Refresh from AWS" button) also

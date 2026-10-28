@@ -15,8 +15,10 @@ updated_at] contains the call: one candidate = "window" attribution, several = "
 listed), none = "none". started_at is the LAST attempt's start, and succeeded jobs are deleted after 30 days
 (retention_job), so this only explains recent rows; it is a hint, never a fact.
 
-Forecast (C3). Per provider family of the AI / third-party spend — Bedrock (with the acc3 / acc1 / acc2 split), OpenAI,
-Jev (TypeSafe), DataForSEO — and per AWS account bill (acc2, acc3, acc1):
+Forecast (C3). Per provider family of the AI / third-party spend — Bedrock (with the acc3 / acc2 split), OpenAI,
+Jev (TypeSafe), DataForSEO — and per AWS account bill (acc2, acc3). AA-998: the former LLM fallback account left the
+ecosystem; a month that still holds its spend (llm_call_log rows or stored Cost Explorer history) shows it as one
+``retired`` row (no account ID), after acc2 / acc3:
 
   * month to date = the month's spend so far (today's partial day included);
   * run rate = mean daily spend of the last ``RUN_RATE_DAYS`` complete days (may reach into the previous month);
@@ -64,10 +66,13 @@ PROVIDER_LABELS = {
     "other": "Other LLM providers",
 }
 ACCOUNT_LABELS = {
-    "acc3": "acc3 (LLM satellite, primary)",
-    "acc1": "acc1 (LLM satellite, fallback)",
+    "acc3": "acc3 (LLM satellite)",
     "acc2": "acc2 (main infra)",
+    ce.RETIRED_ACCOUNT_KEY: "Retired fallback account (history, AA-998)",
 }
+# Display order of the Bedrock split and the AWS rows; the retired account only appears when it has data.
+_BEDROCK_ACCOUNT_ORDER = ("acc3", "acc2", ce.RETIRED_ACCOUNT_KEY)
+_AWS_ACCOUNTS = ("acc2", "acc3")
 
 # ── C2: DataForSEO spend by job ─────────────────────────────────────────────────────────────────────────────────────
 
@@ -380,7 +385,9 @@ def _with_budget(row: dict[str, Any], budget: Optional[float], alert_pct: Option
 
 def _account_of(provider: Optional[str], account: Optional[str]) -> str:
     if (provider or "").startswith("bedrock"):
-        return account or "acc2"          # an older Bedrock row without account ran on acc2 (platform_cost rule)
+        acc = account or "acc2"           # an older Bedrock row without account ran on acc2 (platform_cost rule)
+        # AA-998: any other account is the retired fallback account's history.
+        return acc if acc in ("acc2", "acc3") else ce.RETIRED_ACCOUNT_KEY
     return account or "none"
 
 
@@ -445,14 +452,16 @@ async def cost_forecast(pool: Any, month: Optional[str] = None, *, now: Optional
         if key == "bedrock":
             row["accounts"] = [{"account": acc, "label": ACCOUNT_LABELS.get(acc, acc),
                                 **project(accounts[acc], start, month_end, complete_until)}
-                               for acc in sorted(accounts, key=lambda a: ("acc3", "acc1", "acc2").index(a)
-                                                 if a in ("acc3", "acc1", "acc2") else 9)]
+                               for acc in sorted(accounts, key=lambda a: _BEDROCK_ACCOUNT_ORDER.index(a)
+                                                 if a in _BEDROCK_ACCOUNT_ORDER else 9)]
         providers.append(row)
 
     aws_budget = aws_budgets()
     ce_series = _ce_series(ce_rows, ce_app_rows)
     aws = []
-    for acc in ("acc2", "acc3", "acc1"):
+    retired = ce.RETIRED_ACCOUNT_KEY
+    shown = _AWS_ACCOUNTS + ((retired,) if any(start <= d < month_end for d in ce_series.get(retired, {})) else ())
+    for acc in shown:
         days = {d: v for d, v in ce_series.get(acc, {}).items() if d < q_end}
         row: dict[str, Any] = {"account": acc, "label": ACCOUNT_LABELS[acc], "covered_from": None,
                                "covered_to": None, "fetched_at": None, "days_missing": None,
