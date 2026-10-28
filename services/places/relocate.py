@@ -204,12 +204,18 @@ async def _fix_country(conn, row: dict, country: str) -> bool:
         return False
 
 
+def _keep_linear(row: dict, reason: str) -> str:
+    """A row already flagged linear_feature keeps that reason: store._write_point un-hides the row on it once a
+    geocoder line lands, so overwriting it with off_route / non_place would leave the row hidden for good."""
+    return locate.REVIEW_LINEAR_FEATURE if row.get("review_reason") == locate.REVIEW_LINEAR_FEATURE else reason
+
+
 async def apply_row(conn, row: dict, routes: tuple, geocoder, *, hide_unconfirmed: bool) -> dict:
     """One row (module docstring). Returns {outcome, ...}. Raises the geocoder's CreditLimitReached /
     GeocoderUnavailable (the run stops; the row is not stamped and is taken again next run)."""
     c = classify_row(row, routes)
     if c["non_place"]:
-        reason = f"{name_filter.NON_PLACE_PREFIX}:{c['non_place']}"
+        reason = _keep_linear(row, f"{name_filter.NON_PLACE_PREFIX}:{c['non_place']}")
         async with conn.transaction():
             await store.lock_destinations(conn)
             if await _still_due(conn, row) is None:
@@ -238,7 +244,8 @@ async def apply_row(conn, row: dict, routes: tuple, geocoder, *, hide_unconfirme
             return {"outcome": "confirmed", "moved_km": km, "country_fixed": bool(fixed)}
         outcome = locate.REVIEW_OFF_ROUTE if c["on_route"] is False else locate.REVIEW_LLM_POINT
         # an off-route flag wins; otherwise a reason the row already carries (unconfirmed_hard_type …) is kept
-        reason = outcome if outcome == locate.REVIEW_OFF_ROUTE else (row.get("review_reason") or outcome)
+        reason = _keep_linear(row, outcome if outcome == locate.REVIEW_OFF_ROUTE
+                              else (row.get("review_reason") or outcome))
         await conn.execute(_FLAG_SQL, row["id"], reason, hide_unconfirmed)
         if hide_unconfirmed:
             await conn.execute(_HIDE_NAMES_SQL, row["id"])
@@ -254,6 +261,7 @@ async def apply(pool, geocoder, *, located_by: list[str], country: Optional[str]
     """Up to `limit` rows. Result counts per outcome; `stopped_credit_limit` / `stopped_geocoder_unavailable` when the
     geocoder stopped the run; `remaining` = rows still to do."""
     from services.places.geocoder import CreditLimitReached, GeocoderUnavailable
+    from shared.cost_guard import BudgetExceeded
 
     async with pool.acquire() as conn:
         rows = await candidates(conn, located_by=located_by, country=country, limit=limit)
@@ -274,6 +282,8 @@ async def apply(pool, geocoder, *, located_by: list[str], country: Optional[str]
             out["stopped_geocoder_unavailable"] = True
             logger.error("place_relocate_geocoder_unavailable", error=str(e)[:200])
             break
+        except BudgetExceeded:     # the run budget stops the run (the job alerts), not one row
+            raise
         except Exception as e:  # noqa: BLE001 — one bad row must not stop the run; it is taken again next run
             out["errors"] += 1
             logger.warning("place_relocate_row_failed", destination_id=row["id"], error=str(e)[:200])

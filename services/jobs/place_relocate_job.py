@@ -64,6 +64,10 @@ async def run(ctx: JobContext) -> Optional[dict]:
         async with ctx.pool.acquire() as conn:
             return await relocate.dry_run(conn, located_by=p["located_by"], country=p["country"],
                                           cost_per_request=inner.cost_per_request, daily_credits=daily_credits())
+    if daily_credits() <= 0:
+        return {"status": "refused_no_credit_share", "detail": (
+            f"GEOAPIFY_DAILY_CREDIT_LIMIT leaves no share after the {relocate.RESERVE_CREDITS} credits kept for "
+            "place_geocode: raise the limit; re-queueing would wait for a credit reset that never helps")}
     if not inner.calls_external:
         return {"status": "refused_no_geocoder", "geocoder": inner.name,
                 "detail": "apply needs GEOCODER_PROVIDER=geoapify: re-locating with model_only would change nothing"}

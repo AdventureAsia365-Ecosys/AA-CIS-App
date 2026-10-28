@@ -489,11 +489,11 @@ def test_relocate_kind_is_registered_background_cap_one():
 
 
 class _AdminConn:
-    def __init__(self, last):
-        self.last, self.enqueued = last, []
+    def __init__(self, last, busy=None):
+        self.last, self.busy, self.enqueued = last, busy, []
 
     async def fetchrow(self, sql, *a):
-        return self.last
+        return self.busy if "'queued'" in sql else self.last
 
 
 class _AdminPool:
@@ -546,3 +546,78 @@ async def test_relocate_endpoint_needs_a_matching_dry_run_before_apply(monkeypat
     assert queued[1][1]["mode"] == "dry_run"
     with pytest.raises(ValueError):
         admin_places.RelocateRequest(located_by=["manual"])
+
+
+@pytest.mark.asyncio
+async def test_relocate_endpoint_reuses_an_open_apply_chain(monkeypatch):
+    from api.routers import admin as admin_module
+    from api.routers import admin_places
+    from services.places import relocate
+    from shared.jobs import registry
+    monkeypatch.setattr(admin_module, "ADMIN_SECRET", "s")
+    queued = []
+
+    async def fake_enqueue(conn, kind, payload, **kw):
+        queued.append(kind)
+        return "job-new", True
+    monkeypatch.setattr(registry, "enqueue", fake_enqueue)
+    last = {"id": "dry-1", "result": json.dumps({"rule_version": relocate.RULE_VERSION, "located_by": ["llm"],
+                                                 "country": None})}
+    request = MagicMock()
+    request.app.state.pool = _AdminPool(_AdminConn(last, busy={"id": "job-open"}))
+    out = await admin_places.relocate_run(admin_places.RelocateRequest(mode="apply"), request, x_admin_secret="s")
+    assert out["job_id"] == "job-open" and out["reused"] and out["created"] is False and queued == []
+
+
+@pytest.mark.asyncio
+async def test_relocate_apply_refuses_when_no_credit_share_is_left(monkeypatch):
+    from services.jobs import place_relocate_job as job
+    monkeypatch.setenv("GEOCODER_PROVIDER", "geoapify")
+    monkeypatch.setenv("GEOAPIFY_DAILY_CREDIT_LIMIT", "1000")
+    ctx = MagicMock()
+    ctx.payload = {"mode": "apply"}
+    out = await job.run(ctx)
+    assert out["status"] == "refused_no_credit_share"
+
+
+def test_relocate_keeps_a_linear_feature_reason():
+    from services.places import locate, relocate
+    row = {"review_reason": locate.REVIEW_LINEAR_FEATURE}
+    assert relocate._keep_linear(row, locate.REVIEW_OFF_ROUTE) == locate.REVIEW_LINEAR_FEATURE
+    assert relocate._keep_linear({"review_reason": None}, locate.REVIEW_OFF_ROUTE) == locate.REVIEW_OFF_ROUTE
+
+
+@pytest.mark.asyncio
+async def test_relocate_run_budget_stops_the_run_not_one_row(monkeypatch):
+    from services.places import relocate
+    from shared.cost_guard import BudgetExceeded
+
+    async def boom(*a, **kw):
+        raise BudgetExceeded("cap")
+    monkeypatch.setattr(relocate, "apply_row", boom)
+
+    class _P:
+        def acquire(self):
+            import contextlib
+
+            @contextlib.asynccontextmanager
+            async def acq():
+                yield _RowsConn()
+            return acq()
+
+    class _RowsConn:
+        async def fetch(self, sql, *a):
+            return [_row("Kong Lor Cave", 17.30, 105.40)]
+
+        async def fetchval(self, sql, *a):
+            return 1
+
+        async def fetchrow(self, sql, *a):
+            return None
+
+        async def execute(self, *a):
+            return "OK"
+    monkeypatch.setattr(relocate, "candidates", AsyncMock(return_value=[_row("Kong Lor Cave", 17.30, 105.40)]))
+    monkeypatch.setattr(relocate, "routes_by_destination", AsyncMock(return_value={}))
+    with pytest.raises(BudgetExceeded):
+        await relocate.apply(_P(), MagicMock(), located_by=["llm"], country=None, limit=5, hide_unconfirmed=False)

@@ -444,6 +444,11 @@ _LAST_DEDUPE_SQL = """
       FROM shared.job WHERE kind = 'place_dedupe' AND status = 'succeeded'
      ORDER BY finished_at DESC NULLS LAST LIMIT 1
 """
+_OPEN_RELOCATE_APPLY_SQL = """
+    SELECT id::text AS id FROM shared.job
+     WHERE kind = $1 AND status IN ('queued', 'running') AND payload ->> 'mode' = 'apply'
+     ORDER BY created_at LIMIT 1
+"""
 
 
 def _json(v):
@@ -655,6 +660,9 @@ async def relocate_run(body: RelocateRequest, request: Request, x_admin_secret: 
                     "error": "run the dry run of this selection first (same rule version, located_by, country)",
                     "rule_version": relocate.RULE_VERSION, "last_dry_run": last["id"] if last is not None else None})
             payload["dry_run_job"] = last["id"]
+            busy = await conn.fetchrow(_OPEN_RELOCATE_APPLY_SQL, RELOCATE_KIND)
+            if busy is not None:    # one apply chain at a time: a second POST reuses it instead of a parallel chain
+                return {"job_id": busy["id"], "created": False, "reused": True, **payload}
         job_id, created = await enqueue(conn, RELOCATE_KIND, payload, created_by=actor)
     logger.info("place_relocate_queued", actor=actor, job_id=job_id, **{k: v for k, v in payload.items()
                                                                           if k != "located_by"})
