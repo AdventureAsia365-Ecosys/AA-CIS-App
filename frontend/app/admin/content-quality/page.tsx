@@ -35,7 +35,7 @@ import { LabelBadge } from "./PieceLabel";
 import PlaceCardFactsDrawer from "./PlaceCardFactsDrawer";
 import TourVersionDrawer from "./TourVersionDrawer";
 import {
-  DUPLICATE_REASON_LABELS, GATE_FILTER, LABEL_NAMES, fmtTime, gateLabel, usd,
+  DUPLICATE_REASON_LABELS, GATE_FILTER, LABEL_NAMES, bindingLabel, fmtTime, gateLabel, usd,
   type DuplicateCluster, type GateStat, type Paged, type PieceLabelValue, type PieceRow, type PiecesPage, type PlaceCard, type TenantStat,
   type VersionRow,
 } from "./shared";
@@ -228,6 +228,14 @@ function VersionsTab({ view, update, tenants }: { view: View; update: (p: Partia
     { accessorKey: "status", header: "Status" },
     { accessorKey: "quality_score", header: "Score", cell: (c) => <span style={{ fontFamily: mono }}>{c.row.original.quality_score ?? "—"}</span> },
     { accessorKey: "qa_status", header: "QA", cell: (c) => <span>{c.row.original.qa_status ?? "—"}{c.row.original.qa_auto_passed ? " · auto" : ""}</span> },
+    { id: "judge_binding", accessorKey: "judge_binding", header: "Set by", enableSorting: false,
+      cell: (c) => <span style={{ whiteSpace: "nowrap" }}>{bindingLabel(c.row.original.judge_binding)}</span> },
+    { id: "brand_claims_flagged", accessorKey: "brand_claims_flagged", header: "Brand claims", enableSorting: false,
+      cell: (c) => {
+        const n = c.row.original.brand_claims_flagged;
+        return n == null ? <span style={{ color: A.muted }}>—</span> : n === 0 ? <span style={{ color: A.muted }}>0</span>
+          : <Badge tone="warning" dot={false}>{n} not in source</Badge>;
+      } },
     { accessorKey: "escalations", header: "Escalations" },
     { accessorKey: "cost_usd", header: "Cost", cell: (c) => <span style={{ fontFamily: mono }}>{usd(c.row.original.cost_usd)}</span> },
   ], []);

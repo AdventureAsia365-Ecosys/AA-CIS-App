@@ -22,6 +22,7 @@ import os
 
 import structlog
 
+from services.content_generation import t2_judge_breakdown as t2_breakdown
 from services.content_generation.stages import stage_for
 from services.content_generation.brand_fit import (
     _JUDGE_SEED, _JUDGE_TEMPERATURE, billed_calls, has_brand_signals, run_billing, runs_signal,
@@ -360,6 +361,7 @@ def judge_node(state: dict) -> dict:
         tiebreak = None
         # The Jev tie-break Question (a1_brand_fit) was set up on v1 brand-angle scores: a v2 verdict skips it
         # (the AA-714 near-band median of 3 still applies inside score_brand_fit).
+        judge_score_raw = judge_score
         if not report_only and not v2_signal and in_tie_band(judge_score, validate_score):
             judge_score, tiebreak = _tie_break(state, generated, judge_score)   # AA-692 A1-4, AA-699 T2-1
 
@@ -372,6 +374,19 @@ def judge_node(state: dict) -> dict:
         feedback = state.get("feedback", "") or ""
         if new_score < _MIN_QUALITY and result.feedback and not report_only:
             feedback = f"{feedback}; {result.feedback}".strip("; ") if feedback else result.feedback
+
+        # AA-795: T2 only — the numbers behind this verdict and the axis that set the score (stored per version by
+        # the T2 job). Bookkeeping: an error here is logged and never costs the verdict.
+        t2_axes = None
+        if is_t2:
+            try:
+                t2_axes = t2_breakdown.axes(
+                    gate=gate, brand_fit=result.brand_fit_score, distinct=result.cross_brand_distinct,
+                    mission_present=result.mission_present, has_mission=mission_source == "tenant_core_idea",
+                    mission_cap=_MISSION_ABSENT_CAP, mission_source=mission_source, judge_score_raw=judge_score_raw,
+                    judge_score=judge_score, validate_score=validate_score, tiebreak=tiebreak)
+            except Exception as axes_err:
+                logger.warning("judge_t2_axes_failed", error=str(axes_err)[:200])
 
         logger.info("judge_done", brand_fit=result.brand_fit_score,
                     cross_brand_distinct=result.cross_brand_distinct,
@@ -419,6 +434,9 @@ def judge_node(state: dict) -> dict:
             "judge_score": judge_score,
             "judge_tiebreak": tiebreak,
             "cost_usd": state.get("cost_usd", 0) + result.cost_usd,
+            # AA-795: T2 only — the numbers behind this verdict and the axis that set the score; the T2 job stores
+            # them per version (tenant_tour_versions.judge_breakdown, CIS 300). Absent for A1 (unchanged).
+            **({"judge_t2_axes": t2_axes} if t2_axes else {}),
             # AA-645 (S249): the rubric version + verified unsupported specifics (metadata.judge); v1: absent.
             **({"judge_rubric": v2_signal["rubric"],
                 "judge_unsupported": [dict(c) for c in (getattr(result, "unsupported", ()) or ())],

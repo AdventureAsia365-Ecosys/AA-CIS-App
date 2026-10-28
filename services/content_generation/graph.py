@@ -378,6 +378,9 @@ class ContentState(TypedDict):
     # AA-209: judge_score must be declared too, else LangGraph strips it from the final state and it
     # never reaches _rewrite_tour → _build_generated_metadata (metadata.judge.judge_score stayed null).
     judge_score:                float
+    # AA-795: T2 only — gate, validate score, pre-tie-break judge score, mission cap and the binding axis of this
+    # verdict (t2_judge_breakdown.axes); the T2 job stores it per version (tenant_tour_versions.judge_breakdown).
+    judge_t2_axes:              dict
     # AA-645 (S249): rubric-v2 verdict details (brand_fit_v2); absent on a v1 verdict. Declared so LangGraph keeps
     # them (AA-209 gotcha) for generated_content.metadata.judge.
     judge_rubric:               str

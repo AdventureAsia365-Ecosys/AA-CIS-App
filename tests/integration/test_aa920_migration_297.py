@@ -159,6 +159,7 @@ def test_readiness_caps_the_version_while_297_is_missing(cur):
         cur.execute(STANDIN_DDL)
         _run(cur)
         cur.execute(sql, (list(readiness.OUT_OF_ORDER_CIS),))
-        assert cur.fetchone()[0] == max(head, 299) >= readiness.REQUIRED_CIS_SCHEMA
+        # AA-795: REQUIRED_CIS_SCHEMA is 300 now (above this probe's head); the cap is what this test pins.
+        assert cur.fetchone()[0] == max(head, 299) >= 297
     finally:
         cur.execute("DELETE FROM shared.schema_versions WHERE version = '299' AND description = %s", (probe,))

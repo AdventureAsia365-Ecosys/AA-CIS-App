@@ -350,6 +350,8 @@ async def _rewrite_tour(
             "judge_mission_present":      result.get("judge_mission_present"),
             "judge_feedback":             result.get("judge_feedback"),
             "judge_score":                result.get("judge_score"),
+            # AA-795: T2 — the verdict's axes (binding axis included), stored per version by the T2 job.
+            "judge_t2_axes":              result.get("judge_t2_axes"),
             # AA-645 (S249): rubric-v2 verdict details (None on a v1 verdict; the metadata guard skips them).
             "judge_rubric":               result.get("judge_rubric"),
             "judge_unsupported":          result.get("judge_unsupported"),

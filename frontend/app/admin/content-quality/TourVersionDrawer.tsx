@@ -16,6 +16,7 @@ import { Fragment, useState } from "react";
 import { A, mono } from "../_components/adminUi";
 import { ApiError, Badge, Button, ConfirmModal, Drawer, Spinner, apiGet, apiSend, useAdminIdentity, useToast } from "../../_kit";
 import { AdminEdits, ProblemList, RewritePanel, TenantCopyNotice, type Editor } from "./SentenceActions";
+import { JudgeBreakdownPanel } from "./JudgeBreakdownPanel";
 import { SEVERITY_TONE, worstOf } from "@/lib/gateSeverity";
 import { ReasonTag, WritingReasonChips } from "../_components/WritingReasonChips";
 import { preselect, type ReasonCode } from "@/lib/writingReasons";
@@ -214,6 +215,10 @@ export default function TourVersionDrawer({ id, onClose }: { id: string; onClose
               : !isAdmin ? "Only an admin can correct sentences."
               : "Edits change the tenant's copy in place: no new version, no notice and no flag for the tenant. Each edit is kept under Admin edits with the text before and after."}
           </div>
+
+          <Section title="Judge breakdown">
+            <JudgeBreakdownPanel b={v.judge_breakdown} />
+          </Section>
 
           <Section title={`Flagged sentences · ${v.flagged_sentences.length}`}>
             {v.flagged_sentences.length === 0 ? (

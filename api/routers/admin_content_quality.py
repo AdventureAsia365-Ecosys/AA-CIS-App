@@ -87,7 +87,7 @@ def _row(r) -> dict:
         elif isinstance(v, Decimal):
             v = float(v)
         out[k] = _j(v) if k in ("gate_ledger", "flags", "repair_log", "discarded_attempts", "writer_input",
-                                "facts", "escalate_detail", "failed_gates", "flag_gates") else v
+                                "facts", "escalate_detail", "failed_gates", "flag_gates", "judge_breakdown") else v
     return out
 
 
@@ -1016,6 +1016,14 @@ async def stats(request: Request, days: int = Query(30, ge=1, le=365), tenant_id
 
 # ── T2 tenant tour versions ────────────────────────────────────────────────────────────────────
 
+# AA-795: the list's view of tenant_tour_versions.judge_breakdown (CIS 300): the axis that set the score and how many
+# brand claims of the saved text the source does not support (NULL = no breakdown / check not run).
+_JUDGE_LIST_COLUMNS = """ttv.judge_breakdown->>'binding' AS judge_binding,
+                   CASE WHEN jsonb_typeof(ttv.judge_breakdown->'brand_claims'->'unsupported') = 'array'
+                        THEN jsonb_array_length(ttv.judge_breakdown->'brand_claims'->'unsupported') END
+                       AS brand_claims_flagged"""
+
+
 @router.get("/tour-versions")
 async def list_tour_versions(
     request: Request,
@@ -1052,6 +1060,7 @@ async def list_tour_versions(
             SELECT ttv.id, ttv.tenant_id, t.name AS tenant_name, pt.aa_name AS tour_name, ttv.version_number,
                    ttv.status, ttv.quality_score, ttv.qa_status, ttv.qa_auto_passed, ttv.qa_repair_count,
                    ttv.edit_source, ttv.created_at, ttv.job_id,
+                   {_JUDGE_LIST_COLUMNS},
                    COALESCE((SELECT sum(l.cost_usd) FROM shared.llm_call_log l WHERE l.job_id = ttv.job_id), 0)
                        AS cost_usd,
                    (SELECT count(*) FROM silver_aa_internal.review_queue rq
@@ -1084,7 +1093,7 @@ _VERSION_DETAIL_SQL = """
     SELECT ttv.id, ttv.tenant_id, ttv.published_tour_id, t.name AS tenant_name, pt.aa_name AS tour_name,
            ttv.version_number, ttv.status, ttv.quality_score, ttv.qa_status, ttv.qa_auto_passed,
            ttv.qa_repair_count, ttv.qa_checked_at, ttv.rewritten_content, ttv.edit_source, ttv.created_at,
-           ttv.job_id,
+           ttv.job_id, ttv.judge_breakdown,
            (SELECT max(v2.version_number) FROM gold_aa_internal.tenant_tour_versions v2
             WHERE v2.tenant_id = ttv.tenant_id AND v2.published_tour_id = ttv.published_tour_id
               AND v2.status <> 'failed')  -- a failed rewrite has no text: the older one stays the copy

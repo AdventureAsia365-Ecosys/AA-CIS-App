@@ -19,9 +19,11 @@ from typing import Any, Iterable, Optional
 TENANT_FORBIDDEN_KEY_RE = re.compile(
     r"needs_review|quality|score|qa_|judge|llm_cost|jev_cost|generation_meta|rule_ids|release|memory")
 
-# tenant_tour_versions columns that are gate or generation output, not content (generation_meta: CIS 297, AA-920).
+# tenant_tour_versions columns that are gate or generation output, not content (generation_meta: CIS 297, AA-920;
+# judge_breakdown: CIS 300, AA-795 — the T2 judge verdict and the brand-claim check).
 TENANT_HIDDEN_VERSION_FIELDS = frozenset({
     "quality_score", "qa_status", "qa_repair_count", "qa_checked_at", "qa_auto_passed", "generation_meta",
+    "judge_breakdown",
 })
 # published_tours columns that are A1 gate output.
 TENANT_HIDDEN_TOUR_FIELDS = frozenset({"quality_score", "quality_score_id"})

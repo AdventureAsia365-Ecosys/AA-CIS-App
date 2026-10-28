@@ -155,6 +155,36 @@ export interface VersionRow {
   created_at: string;
   cost_usd: number;
   escalations: number;
+  judge_binding: string | null; // AA-795: the axis that set the score (null = no breakdown stored)
+  brand_claims_flagged: number | null; // AA-795: brand claims the source does not support (null = not checked)
+}
+
+// AA-795 — tenant_tour_versions.judge_breakdown: the kept draft's T2 judge verdict + the brand-claim check.
+export interface JudgeBrandClaim {
+  kind: "age" | "group_size" | "ethos" | string;
+  claim: string;
+  field: string;
+  sentence: string;
+  in_brand_pack: boolean;
+}
+export interface JudgeBreakdown {
+  version: number;
+  judged: boolean;
+  brand_fit: number | null;
+  cross_brand_distinct: number | null;
+  mission_present: boolean | null;
+  judge_score: number | null;
+  judge_score_raw?: number | null;
+  validate_score: number | null;
+  final_score: number | null;
+  score_source: string;
+  gate: string | null;
+  mission_source: string | null;
+  mission_cap?: number | null;
+  binding: string;
+  feedback: string | null;
+  attempt?: number | null;
+  brand_claims?: { version: string; checked: number; supported: number; unsupported: JudgeBrandClaim[] };
 }
 
 // AA-802 — T2 silent correction (GET /tour-versions/{id}, POST …/sentences/suggest|apply).
@@ -167,7 +197,7 @@ export interface TourFlaggedSentence extends TourSentence {
   field: string; index: number | null; gates: string[]; blocking: boolean;
   suggested_reason?: string; // AA-916 WM-06
 }
-export interface TourVersionDetail extends Omit<VersionRow, "cost_usd" | "escalations"> {
+export interface TourVersionDetail extends Omit<VersionRow, "cost_usd" | "escalations" | "judge_binding" | "brand_claims_flagged"> {
   tenant_id: string;
   published_tour_id: string;
   latest_version_number: number | null;
@@ -180,6 +210,7 @@ export interface TourVersionDetail extends Omit<VersionRow, "cost_usd" | "escala
   editable: boolean;
   edit_block_reason: string | null;
   tenant_copy: TenantCopy;
+  judge_breakdown: JudgeBreakdown | null; // AA-795
 }
 export interface TourSuggestResponse extends SuggestResponse { field: string; index: number | null }
 export interface TourApplyBody extends ApplyBody { field: string; index: number | null }
@@ -187,6 +218,20 @@ export interface TourApplyBody extends ApplyBody { field: string; index: number 
 export const TOUR_FIELD_LABELS: Record<string, string> = {
   subtitle: "Subtitle", summary: "Summary", highlights: "Highlight", itineraries: "Itinerary",
 };
+// AA-795 — which number set a T2 version's stored score (judge_breakdown.binding).
+export const BINDING_LABELS: Record<string, string> = {
+  brand_fit: "Brand fit",
+  cross_brand: "Cross-brand distinctness",
+  mission: "Mission cap",
+  tiebreak: "Jev tie-break",
+  validate: "Structure check",
+  unjudged: "Not judged",
+};
+export const bindingLabel = (b: string | null | undefined) => (b ? BINDING_LABELS[b] ?? b : "—");
+export const CLAIM_KIND_LABELS: Record<string, string> = {
+  age: "Age", group_size: "Group size", ethos: "Brand ethos",
+};
+
 export const tourSectionLabel = (field: string, index: number | null) =>
   `${TOUR_FIELD_LABELS[field] ?? field}${index != null ? ` ${index + 1}` : ""}`;
 

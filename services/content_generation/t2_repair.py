@@ -77,7 +77,8 @@ def t2_drafts_graph_enabled() -> bool:
 DRAFT_KEYS = (
     "generated", "quality_score", "feedback", "failure_codes", "sub_scores", "passed_count",
     "failed_count", "judge_brand_fit", "judge_cross_brand_distinct", "judge_mission_present",
-    "judge_feedback", "judge_score", "judge_tiebreak", "model_used", "fallback_used", "satellite_account",
+    "judge_feedback", "judge_score", "judge_tiebreak", "judge_t2_axes", "model_used", "fallback_used",
+    "satellite_account",
     "itinerary_day_ratios", "itinerary_nudges_used",
 )
 

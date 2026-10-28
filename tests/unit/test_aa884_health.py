@@ -116,9 +116,11 @@ ALL_KEYS = list(readiness.REQUIRED_CIS_KEYS)
 
 @pytest.mark.asyncio
 async def test_ready_lists_the_registered_keys_above_the_baseline():
-    status, body = await readiness.readiness(_keys_pool(299, ALL_KEYS + [299]), now=0.0)
+    # One key newer than the required schema (a later migration already applied) is listed too.
+    newer = readiness.REQUIRED_CIS_SCHEMA + 1
+    status, body = await readiness.readiness(_keys_pool(newer, ALL_KEYS + [newer]), now=0.0)
     assert status == 200 and body["status"] == "ok"
-    assert body["registered_keys"] == [str(k) for k in ALL_KEYS] + ["299"]
+    assert body["registered_keys"] == [str(k) for k in ALL_KEYS] + [str(newer)]
     assert body["keys_baseline"] == str(readiness.LEGACY_CIS_BASELINE)
     assert "missing_schema_versions" not in body
 
