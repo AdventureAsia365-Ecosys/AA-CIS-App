@@ -89,9 +89,16 @@ function when(first: string | null, last: string | null): string {
   return first === last ? formatDateTime(first) : `${formatDateTime(first)} → ${formatDateTime(last)}`;
 }
 
-export default function DfsRunsPanel({ rangeQs, rangeLabel }: { rangeQs: string; rangeLabel: string }) {
+// The backend matches calls without a job only over windows of at most this many days (422 beyond).
+const INFER_MAX_DAYS = 31;
+
+export default function DfsRunsPanel({ rangeQs, rangeLabel, windowDays }: {
+  rangeQs: string; rangeLabel: string; windowDays: number;
+}) {
   const [infer, setInfer] = useState(false);
-  const qs = infer ? `${rangeQs}&infer_unlinked=true` : rangeQs;
+  const canInfer = windowDays <= INFER_MAX_DAYS;
+  const inferOn = infer && canInfer;
+  const qs = inferOn ? `${rangeQs}&infer_unlinked=true` : rangeQs;
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["cost-ops-dfs-runs", qs],
     queryFn: () => apiGet<RunsResp>(`/api/admin/dfs-usage/runs?${qs}`, { admin: true }),
@@ -178,8 +185,10 @@ export default function DfsRunsPanel({ rangeQs, rangeLabel }: { rangeQs: string;
   return (
     <div style={panelStyle} data-testid="cost-ops-dfs-runs">
       <PanelTitle aside={
-        <Button size="sm" variant={infer ? "primary" : "secondary"} onClick={() => setInfer((v) => !v)}>
-          {infer ? "Hide matched calls" : "Match calls without a job"}
+        <Button size="sm" variant={inferOn ? "primary" : "secondary"} onClick={() => setInfer((v) => !v)}
+                disabled={!canInfer}
+                title={canInfer ? undefined : `Pick a window of at most ${INFER_MAX_DAYS} days to match calls by time`}>
+          {inferOn ? "Hide matched calls" : "Match calls without a job"}
         </Button>
       }>
         Runs · what triggered the spend
@@ -210,7 +219,7 @@ export default function DfsRunsPanel({ rangeQs, rangeLabel }: { rangeQs: string;
             />
           </div>
           {data.truncated && <div style={{ ...noteStyle, marginTop: 6 }}>Showing the 200 costliest runs.</div>}
-          {infer && data.inferred && (
+          {inferOn && data.inferred && (
             <div style={{ marginTop: 16 }}>
               <PanelTitle>Calls without a job, matched by time (best effort)</PanelTitle>
               <div style={{ ...noteStyle, marginBottom: 8 }}>

@@ -462,17 +462,20 @@ async def cost_forecast(pool: Any, month: Optional[str] = None, *, now: Optional
             row.update(mtd_usd=None, run_rate_usd_per_day=None, days_left=None, forecast_usd=None)
         else:
             covered_to = max(in_month)
-            # CE days are complete only up to its lag: project from the day after the last stored day.
+            # CE days are complete only up to its lag: project from the day after the last stored day. A fetch made
+            # today stores today's partial day too: it counts in month to date but not in the run rate.
+            ce_complete_until = min(covered_to + timedelta(days=1), complete_until)
             proj = project({d: v[0] for d, v in days.items()}, start, month_end,
-                           complete_until=min(covered_to + timedelta(days=1), complete_until),
-                           rate_window_end=covered_to + timedelta(days=1), mean_over_present=True)
+                           complete_until=ce_complete_until, rate_window_end=ce_complete_until,
+                           mean_over_present=True)
             covered_from = min(in_month)
             row.update(proj, covered_from=covered_from.isoformat(), covered_to=covered_to.isoformat(),
                        fetched_at=max(v[1] for v in days.values()).isoformat(),
                        # days of the month before covered_to with no stored figure: month to date is then too low
                        days_missing=(covered_to - start).days + 1 - len(in_month),
                        days_present_in_rate_window=sum(
-                           1 for d in days if covered_to - timedelta(days=RUN_RATE_DAYS) < d <= covered_to))
+                           1 for d in days
+                           if ce_complete_until - timedelta(days=RUN_RATE_DAYS) <= d < ce_complete_until))
         _with_budget(row, aws_budget.get(acc), DEFAULT_ALERT_PCT, "AWS Budgets (mirrored in code until AA-665 C5)")
         aws.append(row)
 

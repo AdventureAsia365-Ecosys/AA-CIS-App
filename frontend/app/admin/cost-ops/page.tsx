@@ -513,6 +513,10 @@ function CostOperationsInner() {
   const rangeQs = custom ? `start=${custom.start}&end=${custom.end}` : `days=${days}`;
   const rangeLabel = custom ? `${custom.start} → ${custom.end}` : `last ${days} days`;
   const windowDays = custom ? custom.days : days;
+  // Days the window spans (a custom window: start to end, inclusive), for the DFS runs time match (max 31 days).
+  const windowSpanDays = custom
+    ? Math.round((Date.parse(`${custom.end}T00:00:00Z`) - Date.parse(`${custom.start}T00:00:00Z`)) / 86400000) + 1
+    : days;
   const applyCustom = () => {
     if (!draftStart) return;
     const end = draftEnd || new Date().toISOString().slice(0, 10);
@@ -1021,7 +1025,7 @@ function CostOperationsInner() {
                 </div>
 
                 {/* AA-665 C2 — DataForSEO spend by the job that made the calls (not tenant-filtered). */}
-                <DfsRunsPanel rangeQs={rangeQs} rangeLabel={rangeLabel} />
+                <DfsRunsPanel rangeQs={rangeQs} rangeLabel={rangeLabel} windowDays={windowSpanDays} />
 
                 <Card style={{ padding: 0, overflow: "hidden", marginBottom: 20 }}>
                   <div style={{ padding: "14px 18px" }}><SLabel style={{ marginBottom: 0 }}>Spend by tenant</SLabel></div>

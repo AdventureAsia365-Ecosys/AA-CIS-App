@@ -309,6 +309,27 @@ async def test_cost_forecast_providers_aws_and_budgets(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_cost_forecast_aws_partial_today_counts_in_mtd_not_in_the_rate(monkeypatch):
+    """A Cost Explorer fetch made today stores today's partial day: month to date includes it, the run rate does not
+    (else a few cents for today drag the 7-day mean down and the forecast with it)."""
+    now = datetime(2026, 10, 28, 9, tzinfo=timezone.utc)
+    monkeypatch.setattr("shared.aws_client.cost_explorer.account_key", lambda a: {"A2": "acc2"}.get(a))
+    monkeypatch.delenv(cost_ops.AWS_BUDGET_ENV, raising=False)
+    fetched = datetime(2026, 10, 28, 8, tzinfo=timezone.utc)
+    ce_rows = [{"account_id": "A2", "day": date(2026, 10, d), "amount_usd": 8.0, "fetched_at": fetched}
+               for d in range(1, 28)]
+    ce_rows.append({"account_id": "A2", "day": date(2026, 10, 28), "amount_usd": 0.5, "fetched_at": fetched})
+    pool = _Pool({cost_ops.CE_DAILY_SQL: ce_rows})
+    out = await cost_ops.cost_forecast(pool, None, now=now)
+    a2 = next(a for a in out["aws_accounts"] if a["account"] == "acc2")
+    assert a2["covered_to"] == "2026-10-28"
+    assert a2["mtd_usd"] == pytest.approx(27 * 8 + 0.5)
+    assert a2["run_rate_usd_per_day"] == pytest.approx(8.0)            # 21..27/10, today left out
+    assert a2["days_present_in_rate_window"] == 7
+    assert a2["days_left"] == 4 and a2["forecast_usd"] == pytest.approx(27 * 8 + 4 * 8)
+
+
+@pytest.mark.asyncio
 async def test_cost_forecast_rejects_a_future_month():
     with pytest.raises(ValueError):
         await cost_ops.cost_forecast(_Pool({}), "2099-01", now=datetime(2026, 10, 28, tzinfo=timezone.utc))
