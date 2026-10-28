@@ -326,8 +326,8 @@ async def list_tenants(
 
     AA-472: `seeded`/`seeded_tour_count`/`angle_assigned` are removed from this response --
     acp_shared.tenant_atom_state is no longer part of the N1 onboarding flow (portfolio seeding
-    and per-tenant angle assignment were both removed, Hướng B); the table is quarantined in
-    `retired` (CIS 294, AA-850)."""
+    and per-tenant angle assignment were both removed, Hướng B); the table was dropped
+    by CIS 296 (AA-850)."""
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
     async with pool.acquire() as conn:

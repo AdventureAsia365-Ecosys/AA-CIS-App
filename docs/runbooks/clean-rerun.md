@@ -17,7 +17,7 @@ deletes in one transaction, child → parent, and only commits when every delete
 
 | | Tables |
 |---|---|
-| **Delete** | publish_log, content_piece, angle_gate_option/request, subject, debate_brand_fit_cache, tenant_atom_state, route_pick · atom_ranking, atom_embedding, atom_matches, atom_segment_member/alias, route, hub, atom_segment, atomize_day_fingerprint, s1_from_atom_runs, tour_atoms · review_queue, quality_scores, seo_context (old format only — `:ideas_v3` rows are the S1 SEO cache), tenant_tour_versions, published_tours, generated_content |
+| **Delete** | publish_log, content_piece, angle_gate_option/request, subject, debate_brand_fit_cache · atom_ranking, atom_embedding, atom_matches, atom_segment_member/alias, route, hub, atom_segment, atomize_day_fingerprint, tour_atoms · review_queue, quality_scores, seo_context (old format only — `:ideas_v3` rows are the S1 SEO cache), tenant_tour_versions, published_tours, generated_content |
 | **Reset** | `raw_tours.pipeline_status → 'ingested'` (rows, `source_status`, `lifecycle_stage` untouched) |
 | **Keep** | raw_tours/raw_sources/upload_staging · tenants, brand rules, tenant config, competitor cache, facts, destinations · **search_demand, segment_research_log, question_embedding** (paid research cache) · all logs (llm_call_log, dfs_call_log, decision_log, job, pipeline_runs, notifications, audit_log) · Jev + model config · all `tripplanner.*` (no FK into CIS tours) |
 

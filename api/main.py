@@ -293,8 +293,8 @@ app.include_router(v1_planning_router)  # AA-448 — T7 Content Planning (previe
 app.include_router(v1_slate_router)  # AA-511 — the Slate (GET /v1/slate, POST /v1/subjects/{id}/pick)
 # AA-859 wave 4 (S247): v1_route_hub_router (GET /v1/routes, /v1/hubs, GET/POST /v1/route-picks) removed: 0 callers
 # in CIS frontend / portal, TripPlanner, Booking or Infra, 0 requests in 30 days of /ecs/aa-cis-dev logs, and
-# /v1/routes was broken anyway (a tuple bound to text[]). acp_contract.route_pick is
-# quarantined in `retired` (CIS 294, AA-850).
+# /v1/routes was broken anyway (a tuple bound to text[]). acp_contract.route_pick was
+# quarantined in `retired` (CIS 294) and dropped (CIS 296, AA-850).
 app.include_router(v1_angle_gate_router)  # AA-449 — T8 Angle Gate
 app.include_router(v1_content_writing_router)  # AA-450 — T9 Content Writing + T10-inline
 # AA-579: v1_exports_router (POST /v1/exports) removed — S8/S9 tàn dư (21/04/2026), 0 traffic

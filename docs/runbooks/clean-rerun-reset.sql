@@ -12,6 +12,7 @@
 --   (no FK into CIS tours; re-extract after the CIS rerun).
 -- DELETE: everything derived from raw_tours by S1 / A-series / T-series.
 -- Order = child → parent from the live FK graph (pg_constraint, 01/10/2026). No CASCADE used.
+-- AA-850 (CIS 294 / 296): tenant_atom_state, route_pick and s1_from_atom_runs were dropped; their lines are gone.
 --
 -- Run through the ECS exec runner, never by hand: part 1 alone first (read-only counts), then
 -- part 2 only after Nghiệp approves the counts. Part 2 runs in ONE transaction and checks
@@ -27,8 +28,6 @@ UNION ALL SELECT 'acp_shared.angle_gate_option', count(*) FROM acp_shared.angle_
 UNION ALL SELECT 'acp_shared.angle_gate_request', count(*) FROM acp_shared.angle_gate_request
 UNION ALL SELECT 'acp_shared.subject', count(*) FROM acp_shared.subject
 UNION ALL SELECT 'acp_shared.debate_brand_fit_cache', count(*) FROM acp_shared.debate_brand_fit_cache
-UNION ALL SELECT 'acp_shared.tenant_atom_state', count(*) FROM acp_shared.tenant_atom_state
-UNION ALL SELECT 'acp_contract.route_pick', count(*) FROM acp_contract.route_pick
 UNION ALL SELECT 'acp_contract.atom_ranking', count(*) FROM acp_contract.atom_ranking
 UNION ALL SELECT 'acp_contract.atom_embedding', count(*) FROM acp_contract.atom_embedding
 UNION ALL SELECT 'acp_contract.atom_matches', count(*) FROM acp_contract.atom_matches
@@ -38,7 +37,6 @@ UNION ALL SELECT 'acp_contract.route', count(*) FROM acp_contract.route
 UNION ALL SELECT 'acp_contract.hub', count(*) FROM acp_contract.hub
 UNION ALL SELECT 'acp_contract.atom_segment', count(*) FROM acp_contract.atom_segment
 UNION ALL SELECT 'acp_contract.atomize_day_fingerprint', count(*) FROM acp_contract.atomize_day_fingerprint
-UNION ALL SELECT 'acp_contract.s1_from_atom_runs', count(*) FROM acp_contract.s1_from_atom_runs
 UNION ALL SELECT 'acp_contract.tour_atoms', count(*) FROM acp_contract.tour_atoms
 UNION ALL SELECT 'silver_aa_internal.review_queue', count(*) FROM silver_aa_internal.review_queue
 UNION ALL SELECT 'silver_aa_internal.quality_scores', count(*) FROM silver_aa_internal.quality_scores
@@ -60,8 +58,6 @@ UNION ALL SELECT 'raw_tours (UPDATE pipeline_status, NOT deleted)', count(*)
 -- DELETE FROM acp_shared.angle_gate_request;
 -- DELETE FROM acp_shared.subject;
 -- DELETE FROM acp_shared.debate_brand_fit_cache;
--- DELETE FROM acp_shared.tenant_atom_state;
--- DELETE FROM acp_contract.route_pick;
 -- -- Atoms / segments / routes / hubs
 -- DELETE FROM acp_contract.atom_ranking;
 -- DELETE FROM acp_contract.atom_embedding;
@@ -72,7 +68,6 @@ UNION ALL SELECT 'raw_tours (UPDATE pipeline_status, NOT deleted)', count(*)
 -- DELETE FROM acp_contract.hub;
 -- DELETE FROM acp_contract.atom_segment;
 -- DELETE FROM acp_contract.atomize_day_fingerprint;
--- DELETE FROM acp_contract.s1_from_atom_runs;
 -- DELETE FROM acp_contract.tour_atoms;
 -- -- Master content (review_queue before tenant_tour_versions — FK)
 -- DELETE FROM silver_aa_internal.review_queue;

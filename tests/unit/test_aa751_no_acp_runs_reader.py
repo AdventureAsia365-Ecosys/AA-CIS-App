@@ -2,8 +2,8 @@
 AA-751 guard: no runtime code may read or write the dropped ACP v1 run table.
 
 `acp_shared.acp_runs` was dropped by migration 121. The look-alike `shared.acp_runs` (migration
-009, never dropped) has no reader either and is a Dead Table Registry candidate, so the guard
-covers both names. AA-751 deleted the last readers (`GET /admin/acp/stuck-runs`,
+009) had no reader either and was dropped by migration 296 (AA-850, after the 294 quarantine), so
+the guard covers both names. AA-751 deleted the last readers (`GET /admin/acp/stuck-runs`,
 `POST /admin/acp/runs/{run_id}/force-fail`, `services/acp_shared/cost_utils.py`,
 `services/acp_canary/`). Stuck work is a `shared.job` row now (reaper + the admin Jobs page),
 so a new SQL statement against `acp_runs` is a bug: it fails at runtime with

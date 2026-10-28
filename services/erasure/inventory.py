@@ -33,11 +33,11 @@ CIS_SCHEMAS: tuple[str, ...] = (
 
 # AA-850 (CIS 294, data standards DM-3.9): dead CIS tables wait here for their drop, with no grant to any role. Not a
 # runtime schema: the erasure neither counts nor deletes in it. A quarantined table that still has an FK to an erased
-# table (retired.route_pick -> shared.tenants, …) is reported by plan.py as `quarantined_child` (information): the
-# quarantine was refused while a non-platform tenant had rows there (DRY RUN verdict) and no role can write there
+# table (a tenant-keyed one -> shared.tenants) is reported by plan.py as `quarantined_child` (information): the
+# quarantine is refused while a non-platform tenant has rows there (DRY RUN verdict) and no role can write there
 # since, and the FKs are NO ACTION, so a row that broke this would fail the apply loudly and roll the erasure back.
-# The five tenant-keyed wave-1 tables (route_pick, tenant_atom_state, tenant_brand_rule_versions,
-# tenant_brand_rules_deleted_aa404, acp_runs) left TENANT_TABLES with 294.
+# Wave 1 (route_pick, tenant_atom_state, tenant_brand_rule_versions, tenant_brand_rules_deleted_aa404, acp_runs and
+# five more) left TENANT_TABLES with 294 and is dropped by CIS 296; the schema stays, empty, for the next waves.
 QUARANTINE_SCHEMAS: tuple[str, ...] = ("retired",)
 
 # The AA internal tenant owns Master Content; it can never be erased (offboard refuses it too).

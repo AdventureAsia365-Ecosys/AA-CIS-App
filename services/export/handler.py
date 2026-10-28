@@ -643,8 +643,8 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
         # entirely — STEP0 confirmed via real ECS-exec DB check that both tables it touched
         # (acp_shared.acp_run_context, acp_shared.acp_runs) were already dropped by migration
         # 121 (AA-477), so it had crashed on every real invocation since, silently swallowed by
-        # its own try/except, 0 rows ever durably written to shared.acp_runs either (quarantined in
-        # `retired` by CIS 294, AA-850). The
+        # its own try/except, 0 rows ever durably written to shared.acp_runs either (dropped by
+        # CIS 296, AA-850). The
         # EventBridge bus it published to (aa-cis-dev-acp-events) had 0 rules/0 targets for its
         # entire lifetime — see docs/implementation-notes/AA-492.md for the full trace.
         if batch_id:
