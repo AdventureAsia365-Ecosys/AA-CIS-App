@@ -26,9 +26,9 @@ message rather than a fabricated 'published' row.
 
 AA-462 — adds `facebook` (STEP0: of the 6 non-blog channels named in that issue, facebook has
 the most real content_piece data today — 3 approved pieces vs 0 everywhere else, real DB
-query). `_publish_to_channel()` dispatches on `channel`; the WordPress branch is the exact
-pre-AA-462 logic unchanged, the Facebook branch mirrors its shape 1:1 (own integration lookup,
-own adapter, same AA-460-lesson validation inside FacebookAdapter.create_post()). The other 5
+query). The dispatch on `channel` (services/acp_publish/dispatch.py since AA-765): the WordPress
+branch is the exact pre-AA-462 logic, the Facebook branch mirrors its shape 1:1 (own integration
+lookup, own adapter, same AA-460-lesson validation inside FacebookAdapter.create_post()). The other 5
 channels (tiktok/instagram/linkedin/email/ads) remain unbuilt — 404 with a clear "not yet
 supported" message rather than a generic "not found", so a future caller hitting one doesn't
 read it as a content/ownership problem.
@@ -38,13 +38,15 @@ row flips; a remote failure leaves the row 'published' and returns the reason. G
 tenant's published/unpublished rows for the portal's Unpublish action. The integration lookup maps
 channel -> integration_type ('blog' -> 'wordpress'): v1_integrations.py stores WordPress under
 'wordpress', so the AA-462 `integration_type = channel` lookup never found a blog connection.
+
+AA-765 — the channel dispatch (which integration, which adapter, how a post is built, found again and taken
+down) moved to services/acp_publish/dispatch.py; this router keeps HTTP, auth, the tenant pool, Secrets
+Manager and the publish_log bookkeeping.
 """
 from __future__ import annotations
 
 import asyncio
 import json
-from typing import Optional
-from urllib.parse import urlparse
 from uuid import UUID
 
 import boto3
@@ -60,25 +62,19 @@ from api.routers._served import annotate_by_request, refuse_http
 from api.routers.v1_tours import get_tenant
 from shared import tour_liveness as _tl
 from shared.tour_liveness import TourNotServedError
-from services.acp_content_writing.export import render_content_text_to_fragment
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from services.acp_publish import daily_limit
-from services.acp_publish.base import SocialPost
-from services.acp_publish.facebook import FacebookAdapter
-from services.acp_publish.idempotency import blog_slug, claim, finish, publish_key
-from services.acp_s4_blog.cms.base import BlogContent
-from services.acp_s4_blog.cms.wordpress import WordPressAdapter
+# AA-765: T11 channel dispatch (adapters, post building, remote lookup / delete) lives in services/acp_publish.
+from services.acp_publish.dispatch import (
+    INTEGRATION_TYPE, SUPPORTED_CHANNELS, channel_display_name, delete_remote, find_remote, other_account,
+    publish_to_channel,
+)
+from services.acp_publish.idempotency import claim, finish, publish_key
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/v1/publish-log", tags=["publish-log"])
 
 _SM_REGION = "us-west-1"
-# T11 scope: blog (AA-456/458) + facebook (AA-462). 5 channels remain unbuilt — see this
-# file's own header for why facebook was picked first (real STEP0 data, not a guess).
-_SUPPORTED_CHANNELS = ("blog", "facebook")
-# AA-815 — shared.tenant_integrations.integration_type per channel (v1_integrations.py writes
-# 'wordpress' / 'facebook'; the blog channel's connection is the WordPress one).
-_INTEGRATION_TYPE = {"blog": "wordpress", "facebook": "facebook"}
 
 
 def _get_secret(secret_key: str) -> dict:
@@ -151,32 +147,6 @@ async def list_publish_log(request: Request, tenant=Depends(get_tenant),
     return {"data": data, "total": len(data)}
 
 
-def _site_host(url: Optional[str]) -> str:
-    host = (urlparse(url or "").hostname or "").lower()
-    return host[4:] if host.startswith("www.") else host
-
-
-def _other_account(channel: str, creds: dict, external_id: str, external_url: Optional[str]) -> Optional[str]:
-    """AA-815 — the post was published to a different WordPress site / Facebook Page than the one
-    connected now (the tenant changed credentials since). WordPress post IDs are per-site
-    integers, so deleting `external_id` on the new site would trash an unrelated post. Returns
-    where the post lives, or None when it is the connected account (or that cannot be told)."""
-    if channel == "blog":
-        posted, connected = _site_host(external_url), _site_host(creds.get("wp_url"))
-        return posted if posted and connected and posted != connected else None
-    page_id = str(creds.get("page_id") or "")
-    posted_page = external_id.split("_", 1)[0] if "_" in external_id else ""
-    return f"Page {posted_page}" if posted_page and page_id and posted_page != page_id else None
-
-
-async def _delete_remote(channel: str, creds: dict, external_id: str) -> str:
-    """AA-815 — remove the live post. Returns the adapter's outcome ("trashed" / "already_gone" /
-    "deleted"); raises when the channel did not confirm the removal."""
-    if channel == "blog":
-        return await _wordpress(creds).delete_post(external_id)
-    return await _facebook(creds).delete_post(external_id)
-
-
 # AA-859 W4 — unpublish's three statements, module-level so tests can mutate them (forgotten-WHERE checks).
 # Each runs in its own short block; nothing holds a connection across Secrets Manager or the remote delete.
 _UNPUBLISH_SELECT_SQL = """
@@ -230,14 +200,14 @@ async def unpublish(publish_id: UUID, request: Request, tenant=Depends(get_tenan
         raise HTTPException(status_code=404, detail="publish_log row not found or already unpublished")
 
     channel = row["channel"]
-    name = _connect_action_verb(channel)
-    if channel not in _SUPPORTED_CHANNELS or not row["external_id"]:
+    name = channel_display_name(channel)
+    if channel not in SUPPORTED_CHANNELS or not row["external_id"]:
         raise HTTPException(status_code=422,
                             detail=f"This post has no {name} post ID on record — remove it on {name} directly.")
 
     # 2. the channel's connection
     async with acquire_scoped_conn(request, tenant_id, UNPUBLISH_FLAG, fail_closed=True) as (conn, _):
-        integ = await conn.fetchrow(_UNPUBLISH_INTEGRATION_SQL, tenant_id, _INTEGRATION_TYPE[channel])
+        integ = await conn.fetchrow(_UNPUBLISH_INTEGRATION_SQL, tenant_id, INTEGRATION_TYPE[channel])
     if not integ or not integ["secret_key"]:
         raise HTTPException(status_code=422,
                             detail=f"Connect {name} to unpublish — the post is still live on {name}.")
@@ -249,14 +219,14 @@ async def unpublish(publish_id: UUID, request: Request, tenant=Depends(get_tenan
     if is_tombstoned_secret(creds):  # AA-859: a disconnect tombstoned them; the post is still live
         raise HTTPException(status_code=422, detail=reconnect_detail(name))
 
-    elsewhere = _other_account(channel, creds, row["external_id"], row["external_url"])
+    elsewhere = other_account(channel, creds, row["external_id"], row["external_url"])
     if elsewhere:
         raise HTTPException(status_code=422,
                             detail=f"This post was published to {elsewhere}, not the {name} account connected "
                                    f"now — remove it there directly.")
 
     try:  # no connection held across the channel's HTTP call
-        remote = await _delete_remote(channel, creds, row["external_id"])
+        remote = await delete_remote(channel, creds, row["external_id"])
     except Exception as exc:  # noqa: BLE001 — the adapter raises only when removal is unconfirmed
         logger.warning("tenant_unpublish_remote_failed", tenant_id=tenant_id, publish_id=str(publish_id),
                        channel=channel, error=str(exc))
@@ -367,7 +337,7 @@ async def list_pending(request: Request, tenant=Depends(get_tenant)):
     async with acquire_scoped_conn(
         request, tenant_id, STAGE1_PUBLISH_PENDING_FLAG, fail_closed=True,
     ) as (conn, used_tenant_pool):
-        rows = await conn.fetch(_PENDING_SQL, tenant_id, list(_SUPPORTED_CHANNELS))
+        rows = await conn.fetch(_PENDING_SQL, tenant_id, list(SUPPORTED_CHANNELS))
         # AA-986 L3: the served state of each piece's tour (Publish badge; publishing it is refused with a 409)
         served = await annotate_by_request(conn, tenant_id, [{"request_id": r.get("request_id")} for r in rows])
     logger.info("aa544_stage1_list_pending", tenant_id=tenant_id, used_tenant_pool=used_tenant_pool)
@@ -390,58 +360,6 @@ async def list_pending(request: Request, tenant=Depends(get_tenant)):
         ],
         "total": len(rows),
     }
-
-
-def _connect_action_verb(channel: str) -> str:
-    """A 422 "connect X to publish" message is only useful with a real display name filled in
-    — 'wordpress' -> 'WordPress' (matches the original AA-458 copy exactly, "Connect WordPress
-    to publish"), 'facebook' -> 'Facebook'. Falls back to str.title() for any future channel."""
-    return {"blog": "WordPress", "facebook": "Facebook"}.get(channel, channel.title())
-
-
-def _wordpress(creds: dict) -> WordPressAdapter:
-    return WordPressAdapter(wp_url=creds["wp_url"], username=creds["username"], app_password=creds["app_password"])
-
-
-def _facebook(creds: dict) -> FacebookAdapter:
-    return FacebookAdapter(page_id=creds["page_id"], page_access_token=creds["page_access_token"])
-
-
-def _slug(piece, key: str) -> str:
-    return blog_slug(piece.get("slug") or piece.get("angle_name") or "", key)
-
-
-async def _find_remote(channel: str, creds: dict, piece, key: str) -> Optional[tuple]:
-    """AA-726 — (external_id, external_url) of a post an earlier attempt already created, or None."""
-    if channel == "blog":
-        result = await _wordpress(creds).find_post_by_slug(_slug(piece, key))
-    else:
-        result = await _facebook(creds).find_recent_post(piece["content_text"])
-    return (str(result.post_id), result.post_url) if result else None
-
-
-async def _call_adapter(channel: str, creds: dict, piece, key: str) -> tuple:
-    """Returns (external_id, external_url) on success, raises on any failure — one branch per
-    supported channel, each building its own adapter from that channel's own creds shape and
-    relying on the adapter's own AA-460-lesson validation (never trusts a bare success status
-    itself). Unknown channels never reach here — publish() already 404s before calling this."""
-    if channel == "blog":
-        # AA-768 (S233) — the T9 blog's own SEO title/meta (fitted to the 45-60 / 140-155 band)
-        # instead of the internal angle name and an empty meta.
-        title = piece.get("seo_title") or piece["angle_name"] or "Untitled"
-        # AA-613 — content_text is markdown (T9's blog prompt writes `## ` H2s, `**bold**`, FAQ
-        # pairs). Publishing it raw into content_html made WordPress show literal `##`/`**`.
-        # Render the markdown to a bare <article> fragment first (the CMS supplies the page
-        # chrome; the standalone-document mode is for tenant download, not publish).
-        content = BlogContent(
-            title=title, content_html=render_content_text_to_fragment(piece["content_text"]),
-            slug=_slug(piece, key), seo_title=title, seo_meta=piece.get("meta_description") or "",
-            status="publish",
-        )
-        result = await _wordpress(creds).create_post(content)
-    else:  # channel == "facebook" — the only 2 branches _SUPPORTED_CHANNELS allows through
-        result = await _facebook(creds).create_post(SocialPost(message=piece["content_text"]))
-    return str(result.post_id), result.post_url
 
 
 # AA-859 wave 3: POST /v1/publish-log/{piece_id}/publish on the tenant pool behind PUBLISH_FLAG (fail closed).
@@ -501,7 +419,7 @@ def _publishable_channel(piece) -> str:
             detail="A newer version of this content exists — reload and publish that one.",
         )
     channel = piece["channel"]
-    if channel not in _SUPPORTED_CHANNELS:
+    if channel not in SUPPORTED_CHANNELS:
         raise HTTPException(status_code=404, detail=f"Publishing to '{channel}' is not yet supported")
     return channel
 
@@ -549,10 +467,10 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
             await _tl.ensure_served(conn, tour_of, "publish a new post")
         except TourNotServedError as exc:
             raise refuse_http(exc) from exc
-        integ = await conn.fetchrow(_PUBLISH_INTEGRATION_SQL, tenant_id, _INTEGRATION_TYPE[channel])
+        integ = await conn.fetchrow(_PUBLISH_INTEGRATION_SQL, tenant_id, INTEGRATION_TYPE[channel])
 
     if not integ or not integ["secret_key"]:
-        raise HTTPException(status_code=422, detail=f"Connect {_connect_action_verb(channel)} to publish")
+        raise HTTPException(status_code=422, detail=f"Connect {channel_display_name(channel)} to publish")
 
     try:  # no connection held: sync boto3 off the event loop (a fresh Session per call costs ~50 ms)
         creds = await asyncio.to_thread(_get_secret, integ["secret_key"])
@@ -561,7 +479,7 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
                      secret_key=integ["secret_key"], error=str(exc))
         raise HTTPException(status_code=502, detail="Could not read saved credentials — try reconnecting")
     if is_tombstoned_secret(creds):  # AA-859: refused before claim(), so no publish_log row is written
-        raise HTTPException(status_code=422, detail=reconnect_detail(_connect_action_verb(channel)))
+        raise HTTPException(status_code=422, detail=reconnect_detail(channel_display_name(channel)))
 
     key = publish_key(piece_id, channel, piece["content_text"])
     # AA-819 — the override read runs before claim()'s transaction (a missing column must not abort it).
@@ -594,13 +512,13 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
         if claimed.prior_attempt:
             # AA-726 read-before-retry — an earlier attempt may have posted although its
             # response was lost. A lookup that fails raises, so we never post blind.
-            found = await _find_remote(channel, creds, piece, key)
+            found = await find_remote(channel, creds, piece, key)
         if found:
             external_id, external_url = found
             logger.info("channel_publish_found_remote", tenant_id=tenant_id, piece_id=str(piece_id),
                         channel=channel, external_id=external_id)
         else:
-            external_id, external_url = await _call_adapter(channel, creds, piece, key)
+            external_id, external_url = await publish_to_channel(channel, creds, piece, key)
         success = True
         error_msg = None
     except Exception as exc:  # noqa: BLE001 — the adapter already validated the response shape

@@ -537,7 +537,7 @@ async def test_unpublish_on_a_tombstoned_secret_is_422_and_the_row_stays(channel
                  "external_id": "42", "external_url": "https://b.com/p/42"}
     request, conn = _main_request(published, {"secret_key": "acp/x"})
     with patch.object(pub_mod, "_get_secret", return_value=dict(TOMBSTONE)), \
-            patch.object(pub_mod, "_delete_remote", AsyncMock(side_effect=AssertionError("no remote call"))):
+            patch.object(pub_mod, "delete_remote", AsyncMock(side_effect=AssertionError("no remote call"))):
         with pytest.raises(HTTPException) as exc:
             await pub_mod.unpublish(uuid4(), request, tenant={"sub": str(TENANT_ID)})
     assert exc.value.status_code == 422 and name in exc.value.detail

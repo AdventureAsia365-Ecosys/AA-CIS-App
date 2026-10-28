@@ -13,7 +13,7 @@ real callers, so its eval branch and fixture tour set are gone with it.)
 ON-DEMAND ONLY (AA-289 explicit constraint): this module has no scheduler of its own. It is
 invoked either directly (python -m services.eval.regression) via ECS exec, or by
 .github/workflows/eval-regression.yml, which is workflow_dispatch-only — no `schedule:`
-trigger. Real LLM cost every run (Bedrock Haiku/GPT-4.1 for S1-old) — do not wire this into
+trigger. Real LLM cost every run (the S1 writer and judge stage routes) — do not wire this into
 any push/PR trigger without AA-287 Budgets alarms in place first (Done as of this PR, but
 "done" != "wire this to run automatically" per the issue's own explicit warning).
 
@@ -158,8 +158,8 @@ def _detect_itinerary_regression(current_summary: dict) -> bool:
 async def run_s1_old_eval() -> dict:
     """Runs every Golden Tour through the REAL old-S1 LangGraph pipeline (generate -> validate
     -> llm_judge -> brand_audit -> flag_fix -> revalidate), no brand_rules (default AA voice —
-    judge_node skips its GPT-4.1 call with no differentiation profile; brand_audit_node still
-    runs its own GPT-4.1 call for legacy/no-profile brands, per its own docstring), seo={}
+    judge_node skips its judge call with no differentiation profile; brand_audit_node still
+    runs its own audit call for legacy/no-profile brands, per its own docstring), seo={}
     (skip DataForSEO — an eval run scores writing quality, not live keyword data)."""
     from api.routers.v1_pipeline import _rewrite_tour
 

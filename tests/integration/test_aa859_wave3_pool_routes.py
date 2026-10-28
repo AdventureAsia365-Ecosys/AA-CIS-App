@@ -173,7 +173,7 @@ async def test_brand_post_on_tenant_pool_for_a_tenant_without_rows(ctx):
 
 async def _publish(c, tid, piece_id, flag_on):
     with patch.object(pub_mod, "_get_secret", return_value=dict(WP_CREDS)), \
-            patch.object(pub_mod, "_call_adapter", AsyncMock(return_value=("4242", "https://b.invalid/?p=4242"))):
+            patch.object(pub_mod, "publish_to_channel", AsyncMock(return_value=("4242", "https://b.invalid/?p=4242"))):
         return await pub_mod.publish(piece_id, _request(c.conn, flag_on), tenant={"sub": tid})
 
 

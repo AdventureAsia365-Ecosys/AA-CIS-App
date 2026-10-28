@@ -2,15 +2,11 @@
 services.acp_content_writing.generate — the T9 write call (SKILL_v2.md workflow step 9) and the
 attempt-2 rewrite call (feedback-driven, not a fresh write).
 
-LLM layer: shared.llm_client.client.LLMClient (model_tier="sonnet") — the same "exclusive layer"
-T7/T8 already use, confirmed by STEP0 (docs/claude_audit/AA-450-00-...md §6) using the exact
-3-way reasoning services/acp_angle_gate/generate.py's own docstring already worked through for
-T8's angle-generation call: T9 writes ONE short single-channel piece (same job shape as the old,
-not-reused acp_s4_social/writer.py), not the multi-H2 long-form draft
-services/acp_produce/generation.py's Bedrock-satellite-Sonnet-only path is locked to
-(AA-334), and not a cross-vendor quality judge (judge_client.py's Nova Pro, reserved for
-quality_gates.py's F8/F9-equivalent gates — a writer must never share a model with the judge
-scoring it, ADR-2026-014/027).
+LLM layer: shared.llm_client.client.LLMClient on the `t9_write` stage route (the model is whatever
+shared.llm_role_config names — AA-659 / ADR 0006), the same gateway T7/T8 use. T9 writes ONE short
+single-channel piece; it is a writer, not the judge client (shared/llm_client/judge.py) that
+quality_gates.py's F9 gate calls — a writer must never share a model with the judge scoring it
+(ADR-2026-014/027).
 
 Deliberately SYNCHRONOUS functions, not `async def` — same "wrap at the async/sync boundary, not
 inside every helper" decision AA-416 already made and documented

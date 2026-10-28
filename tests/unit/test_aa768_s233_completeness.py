@@ -101,14 +101,14 @@ class TestCompleteGate:
 
 @pytest.mark.asyncio
 async def test_wordpress_publish_uses_piece_seo_title_and_meta():
-    from api.routers import v1_publish
+    from services.acp_publish import dispatch
     wp = MagicMock()
     wp.create_post = AsyncMock(return_value=MagicMock(post_id=7, post_url="https://x/7"))
     piece = {"content_text": "## Hi\nBody.", "slug": "s", "angle_name": "Internal angle name",
              "seo_title": "Thimphu Craft Bazaar: A Weekend Textile Market Guide",
              "meta_description": "A meta that is long enough."}
-    with patch.object(v1_publish, "_wordpress", return_value=wp):
-        await v1_publish._call_adapter("blog", {}, piece, "k")
+    with patch.object(dispatch, "_wordpress", return_value=wp):
+        await dispatch.publish_to_channel("blog", {}, piece, "k")
     content = wp.create_post.call_args.args[0]
     assert content.title == piece["seo_title"] and content.seo_title == piece["seo_title"]
     assert content.seo_meta == piece["meta_description"]
@@ -116,13 +116,13 @@ async def test_wordpress_publish_uses_piece_seo_title_and_meta():
 
 @pytest.mark.asyncio
 async def test_wordpress_publish_falls_back_to_angle_name():
-    from api.routers import v1_publish
+    from services.acp_publish import dispatch
     wp = MagicMock()
     wp.create_post = AsyncMock(return_value=MagicMock(post_id=7, post_url="https://x/7"))
     piece = {"content_text": "Body.", "slug": "s", "angle_name": "Angle", "seo_title": None,
              "meta_description": None}
-    with patch.object(v1_publish, "_wordpress", return_value=wp):
-        await v1_publish._call_adapter("blog", {}, piece, "k")
+    with patch.object(dispatch, "_wordpress", return_value=wp):
+        await dispatch.publish_to_channel("blog", {}, piece, "k")
     assert wp.create_post.call_args.args[0].title == "Angle"
 
 

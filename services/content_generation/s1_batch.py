@@ -16,7 +16,7 @@ byte-identical to what generate_node would have sent. SEO context is fetched the
 (for the prompt) and in _execute_run_tour (for validate/persist); DataForSEO is Redis-cached per
 country/seed so the two reads agree in practice.
 
-NOTE: the writer here is Haiku only (the S1 writer tier). The judge (GPT-4.1) never batches — it
+NOTE: the writer here is Haiku only (the S1 writer tier). The judge (s1_judge route) never batches — it
 runs on-demand inside _execute_run_tour. Do not route the judge through this module.
 """
 from __future__ import annotations

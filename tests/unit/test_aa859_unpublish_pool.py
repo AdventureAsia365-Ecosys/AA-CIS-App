@@ -42,7 +42,7 @@ def _row():
 
 async def _call_unpublish(request, tenant_id):
     with patch.object(pub_mod, "_get_secret", return_value=dict(WP_CREDS)), \
-            patch.object(pub_mod, "_delete_remote", AsyncMock(return_value="trashed")):
+            patch.object(pub_mod, "delete_remote", AsyncMock(return_value="trashed")):
         return await pub_mod.unpublish(PUBLISH_ID, request, tenant={"sub": str(tenant_id) if tenant_id else ""})
 
 
@@ -168,7 +168,7 @@ async def test_secret_read_and_remote_delete_run_between_blocks_with_no_connecti
 
     request, _ = _ordered_request(order, [PUBLISHED, INTEG, UPDATED])
     with patch.object(pub_mod, "_get_secret", side_effect=get_secret), \
-            patch.object(pub_mod, "_delete_remote", side_effect=delete_remote):
+            patch.object(pub_mod, "delete_remote", side_effect=delete_remote):
         out = await pub_mod.unpublish(PUBLISH_ID, request, tenant={"sub": TENANT_ID})
 
     assert out["status"] == "unpublished" and out["remote"] == "trashed"
@@ -183,7 +183,7 @@ async def test_flag_off_runs_the_same_three_statements_on_the_admin_pool_without
     order = []
     request, conn = _ordered_request(order, [PUBLISHED, INTEG, UPDATED], flag=False)
     with patch.object(pub_mod, "_get_secret", return_value=dict(WP_CREDS)), \
-            patch.object(pub_mod, "_delete_remote", AsyncMock(return_value="trashed")):
+            patch.object(pub_mod, "delete_remote", AsyncMock(return_value="trashed")):
         out = await pub_mod.unpublish(PUBLISH_ID, request, tenant={"sub": TENANT_ID})
     assert order == ["acquire", "select_log", "release", "acquire", "select_integration", "release",
                      "acquire", "update", "release"]
@@ -204,7 +204,7 @@ async def test_rollback_read_once_holds_for_all_three_blocks_despite_later_redis
     request, conn = _ordered_request(order, [PUBLISHED, INTEG, UPDATED], flag=False)
     request.app.state.redis.get = AsyncMock(side_effect=["false", RedisError("blip"), RedisError("blip")])
     with patch.object(pub_mod, "_get_secret", return_value=dict(WP_CREDS)), \
-            patch.object(pub_mod, "_delete_remote", AsyncMock(return_value="trashed")), \
+            patch.object(pub_mod, "delete_remote", AsyncMock(return_value="trashed")), \
             capture_logs() as logs:
         out = await pub_mod.unpublish(PUBLISH_ID, request, tenant={"sub": TENANT_ID})
     assert out["status"] == "unpublished"
@@ -291,7 +291,7 @@ async def test_secret_read_failure_is_502_and_the_row_stays():
 async def test_tombstoned_credentials_are_422_reconnect_on_the_tenant_pool():
     request, conn = _tenant_request(PUBLISHED, INTEG)
     with patch.object(pub_mod, "_get_secret", return_value={"disconnected": True}), \
-            patch.object(pub_mod, "_delete_remote", AsyncMock(side_effect=AssertionError("no remote call"))):
+            patch.object(pub_mod, "delete_remote", AsyncMock(side_effect=AssertionError("no remote call"))):
         with pytest.raises(HTTPException) as exc:
             await pub_mod.unpublish(PUBLISH_ID, request, tenant={"sub": TENANT_ID})
     assert exc.value.status_code == 422 and "reconnect" in exc.value.detail
@@ -302,7 +302,7 @@ async def test_tombstoned_credentials_are_422_reconnect_on_the_tenant_pool():
 async def test_remote_failure_is_502_with_no_update_and_no_audit():
     request, conn = _tenant_request(PUBLISHED, INTEG)
     with patch.object(pub_mod, "_get_secret", return_value=dict(WP_CREDS)), \
-            patch.object(pub_mod, "_delete_remote", AsyncMock(side_effect=RuntimeError("WP 500"))):
+            patch.object(pub_mod, "delete_remote", AsyncMock(side_effect=RuntimeError("WP 500"))):
         with pytest.raises(HTTPException) as exc:
             await pub_mod.unpublish(PUBLISH_ID, request, tenant={"sub": TENANT_ID})
     assert exc.value.status_code == 502

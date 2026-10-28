@@ -2,15 +2,10 @@
 services.acp_angle_gate.generate — the one real LLM call T8 makes (workflow steps 5-6: sinh 3
 angle + recommend 1).
 
-Model: Bedrock Sonnet 4.5 via shared.llm_client.client.LLMClient (model_tier="sonnet") — the
-same "exclusive LLM layer" services/content_generation/graph.py::generate_node() already uses
-for its one real content-strategy LLM call, per the build task's explicit instruction ("đúng
-exclusive LLM layer đã chốt"). This is deliberately NOT services/acp_produce/generation.py's
-Bedrock-satellite-Sonnet-only path (that module writes long-form draft CONTENT, a different
-job with its own separate AA-334 model decision) and NOT judge_client.py's Nova Pro path (that's
-a cross-vendor QUALITY judge, must never share a model with any writer per ADR-2026-014/027) —
-angle generation is a content-STRATEGY call, the same kind of job graph.py's generate_node()
-does, so it reuses that module's own LLM layer, not either of the other two.
+Model: whatever the `t8_angle_gen` stage route in shared.llm_role_config names (AA-659 / ADR 0006), through
+shared.llm_client.client.LLMClient — the same gateway services/content_generation/graph.py::generate_node()
+uses. Angle generation is a content-STRATEGY call, a writer: it is not the judge client
+(shared/llm_client/judge.py), whose routes must never share a model with a writer (ADR-2026-014/027).
 
 JSON parsing follows graph.py::generate_node()'s exact pattern: strip markdown fences -> try
 json.loads() -> on failure, deterministic json-repair salvage (no re-ask) via the `json_repair`

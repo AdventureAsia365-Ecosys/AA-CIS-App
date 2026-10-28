@@ -437,7 +437,7 @@ def _parse_judge_output(stage: str, raw: Optional[str]) -> Optional[dict]:
     """
     if not raw or not raw.strip():
         return None
-    from services.acp_produce.judge_client import parse_judge_json
+    from shared.llm_client.judge import parse_judge_json
     try:
         data = parse_judge_json(raw)
     except Exception:

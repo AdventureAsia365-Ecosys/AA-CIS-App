@@ -7,10 +7,8 @@ class LLMRequest(BaseModel):
     few_shots:     list[dict] = []
     max_tokens:    int = 4096
     temperature:   float = 0.7
-    # model_tier controls which Bedrock model to start from:
-    #   "haiku"  → skip T1, go directly to T2 (Haiku) — fast/cheap
-    #   "sonnet" → try T1 (Sonnet) first, fall back to T2 then T3
-    #   "gpt-4.1"→ OpenAI direct, no Bedrock fallback
+    # model_tier: a per-request model override (a catalog Model Key, or a legacy "haiku" / "sonnet"
+    # tier; "gpt-4.1" is retired, S235). None — the normal case — uses the `stage` route below.
     # AA-518 (02/09/2026): default changed "haiku" -> None. Every real caller in this codebase
     # already set this explicitly (grep-confirmed before the change — see docs/implementation-
     # notes/AA-518.md "s1_generate stage" note), so the old "haiku" default was already dead

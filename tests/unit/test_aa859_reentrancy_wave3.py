@@ -100,7 +100,7 @@ async def _publish(request, held):
     async def limit(conn, tid):
         return 20
     with patch.object(pub_mod, "_get_secret", side_effect=secret), \
-            patch.object(pub_mod, "_call_adapter", AsyncMock(side_effect=adapter)), \
+            patch.object(pub_mod, "publish_to_channel", AsyncMock(side_effect=adapter)), \
             patch.object(pub_mod.daily_limit, "effective_limit", AsyncMock(side_effect=limit)), \
             patch.object(pub_mod, "claim", AsyncMock(return_value=Claim("claimed", publish_id=PUBLISH_ID))), \
             patch.object(pub_mod, "finish", AsyncMock(return_value=dict(_FINISHED))):

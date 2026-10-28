@@ -2,7 +2,7 @@
 
 Async, S3-mediated alternative to the synchronous per-tour invoke_model path (LLMClient.generate →
 _call_bedrock_satellite) for rewriting many tours at once. Only the WRITER attempt-1 goes through
-Batch — the judge (GPT-4.1, different vendor) and the generate↔judge retry loop stay on-demand.
+Batch — the judge (its own stage route, a different vendor) and the generate↔judge retry loop stay on-demand.
 
 Flow (all on the acc3 satellite account, which owns the Batch permissions — AA-399; the only one since AA-998):
   1. build_manifest_jsonl()  — one JSONL record per tour: {recordId: tour_id, modelInput: <body>}

@@ -233,7 +233,7 @@ def test_converse_schema_without_tool_call_raises():
 # ── judge call sites ──────────────────────────────────────────────────────────────────────────
 
 def test_invoke_judge_goes_through_the_route():
-    from services.acp_produce import judge_client
+    from shared.llm_client import judge as judge_client
     fake = MagicMock()
     fake.generate.return_value = _resp("satellite-gpt-5.6-luna", input_tokens=3, output_tokens=4,
                                        cost_usd=0.01, satellite_account="acc3", fallback_used=False)
@@ -247,7 +247,7 @@ def test_invoke_judge_goes_through_the_route():
 
 def test_invoke_judge_requires_a_stage():
     import pytest
-    from services.acp_produce import judge_client
+    from shared.llm_client import judge as judge_client
     with pytest.raises(TypeError):
         judge_client.invoke_judge("sys", "user")
 

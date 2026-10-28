@@ -28,7 +28,7 @@ import structlog
 
 from shared.llm_client.call_log import billed_record
 from shared.llm_client.client import LLMClient
-from shared.llm_client.models import LLMRequest
+from shared.llm_client.judge import call_judge, strip_json_fence
 from services.quality.registry import threshold
 
 logger = structlog.get_logger()
@@ -40,9 +40,10 @@ _JUDGE_SEED = 42
 
 # AA-714 layer 2 — a reasoning judge (no seed) wobbles ±1 around MIN_QUALITY=7; a lone call then
 # decides retry/HITL on noise. When the first score lands in this band AND the model does not take a
-# seed, score two more times and keep the median. A model that honours the seed (GPT-4.1) is already
-# reproducible, so it is scored once. Layer 1 = the single call; layer 3 = the Jev tie-break in
-# judge_node, which only fires when a score is still exactly on the line after this.
+# seed, score two more times and keep the median. A model that honours the seed (catalog
+# `supports_temperature`) is already reproducible, so it is scored once. Layer 1 = the single call;
+# layer 3 = the Jev tie-break in judge_node, which only fires when a score is still exactly on the
+# line after this.
 _REPEAT_BAND = threshold("brand_fit.repeat_band")  # inclusive (6.0, 8.0); the pass line sits in the middle
 _REPEAT_EXTRA = 2                  # 2 more calls -> median of 3
 
@@ -555,10 +556,11 @@ def score_brand_fit(
     model_override: Optional[str] = None, rubric: str = "v1", source: Optional[dict] = None,
     tour_agency: Optional[dict] = None,
 ) -> BrandFitResult:
-    """The GPT-4.1 brand-fit call itself — extracted verbatim from judge_node.py's try block
-    (same system prompt, same model_tier pin, same temperature/seed, same score-combining
-    rule). Raises on any failure (LLM error, JSON parse failure) — callers decide how to
-    degrade: judge_node.py catches and returns validate's score unchanged (non-blocking gate);
+    """The brand-fit call itself — extracted verbatim from judge_node.py's try block (same
+    system prompt, same temperature/seed, same score-combining rule); the model is the `stage`
+    route's (shared.llm_role_config), sent through the judge client (shared/llm_client/judge.py).
+    Raises on any failure (LLM error, JSON parse failure) — callers decide how to degrade:
+    judge_node.py catches and returns validate's score unchanged (non-blocking gate);
     Debate (slate.py) is expected to do the same ("any failure/malformed ruling and the
     rules-based list stands unchanged" — the origin's own safety rule, AA-631's issue).
 
@@ -695,7 +697,7 @@ def _attach_billed(exc: BaseException, records: list[dict]) -> None:
 
 def _seeded_model(model_used: Optional[str]) -> bool:
     """True when the model honours the fixed seed (so one call is already reproducible). Reads the
-    catalog's `supports_temperature`; unknown/legacy models (gpt-4.1) are treated as seeded."""
+    catalog's `supports_temperature`; unknown/legacy models are treated as seeded."""
     if not model_used:
         return True
     from shared.llm_client.catalog import get_model_sync
@@ -715,28 +717,15 @@ def _judge(system_prompt: str, user_prompt: str, *, mission_absent_cap: float | 
     AA-645: `v2_context` = (generated page, source text) marks a rubric-v2 call: the reply is read by
     `brand_fit_v2.apply_reply` (claims verified against the page, code caps); there is no mission axis
     (mission_present True, never caps)."""
-    request = LLMRequest(
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-        # AA-659 / ADR 0006: the model comes from the "s1_judge" stage route. The judge-vendor ≠
-        # writer-vendor rule (ADR-2026-014/027) is enforced when the route is saved in admin.
-        # AA-763: T2 passes "t2_judge", Debate "t7_debate_judge" (same route, own key).
-        stage=stage,
-        temperature=_JUDGE_TEMPERATURE,
-        seed=_JUDGE_SEED,
-        **({"model_tier": model_tier} if model_tier else {}),
-    )
-    client = LLMClient()
-    resp = client.generate(request)
+    # AA-765: the request is built and sent by the one judge client (shared/llm_client/judge.py). The model
+    # comes from the `stage` route (AA-659 / ADR 0006): "s1_judge", T2 "t2_judge", Debate "t7_debate_judge"
+    # (AA-763). LLMClient stays this module's own name so callers and tests reach the gateway through it.
+    resp = call_judge(system_prompt, user_prompt, stage=stage, temperature=_JUDGE_TEMPERATURE, seed=_JUDGE_SEED,
+                      model_tier=model_tier, client=LLMClient())
 
     try:
-        raw = resp.content.strip()
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-            raw = raw.strip()
-        result = json.loads(raw)
+        # Strict JSON (no json_repair here, unlike T10): a salvaged brand-fit verdict is not trusted.
+        result = json.loads(strip_json_fence(resp.content))
         if not isinstance(result, dict):   # a JSON list / scalar is no verdict
             raise ValueError(f"judge reply is a JSON {type(result).__name__}, not an object")
 
