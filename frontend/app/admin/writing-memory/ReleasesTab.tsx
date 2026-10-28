@@ -10,7 +10,10 @@
 //              train, the evidence verdicts (R0, Eval, Shadow), the reverify flag, who drafted / approved it, when it
 //              was created / activated, and its prompt (the prompt register: the sha256 its R0 replay measured).
 //   Drawer     one release: its evidence runs with their summary (counts and hashes only), the fingerprint, and
-//              the actions its status allows: Attach evidence, Approve, Activate, Roll back, Reject.
+//              the actions its status allows: Attach evidence, Approve, Activate, Roll back, Reject. A release that
+//              was ever active also has Check now: the post-activation check in DRY RUN (the writes since its
+//              activation carry its rules hash, hold no QA trace and no other tenant's text; $0, no model call,
+//              nothing moves), with the verdict and its counts.
 // Every action is a backend route (api/routers/admin_writing_memory.py, ai.admin, a signed-in admin id); the buttons
 // show only for a role with ai.admin (lib/rbac.ts, a hint: the backend re-checks every call). The API answers a
 // refused action with its reason, which the toast prints.
@@ -25,9 +28,9 @@ import {
 import { can } from "@/lib/rbac";
 import { TenantSelect, useTenants } from "../_components/TenantSelect";
 import {
-  EVIDENCE_NEEDED, RELEASE_STATUSES, WM_API, WRITERS, actorLabel, evidenceOk, evidenceWord, isUuid, monthStart,
-  owner, releaseActions, releaseTone, wmSend,
-  type ActiveReleases, type ContentClass, type Release, type ReleaseDetail, type ReleaseRun,
+  CHECK_CODE_LABELS, EVIDENCE_NEEDED, RELEASE_STATUSES, WM_API, WRITERS, actorLabel, checkSentence, checkTone,
+  evidenceOk, evidenceWord, isUuid, monthStart, owner, releaseActions, releaseTone, wmSend,
+  type ActiveReleases, type ContentClass, type PostActivationReport, type Release, type ReleaseDetail, type ReleaseRun,
   type ReleasesPage, type Writer, type WriterSwitch,
 } from "@/lib/writingMemory";
 
@@ -207,8 +210,8 @@ function NewDraftModal({ open, onClose, onCreated }: { open: boolean; onClose: (
           <input value={f.notes} maxLength={1000} onChange={(e) => setF({ ...f, notes: e.target.value })}
             style={inputStyle} /></label>
         <div style={{ color: K.muted, fontSize: 12 }}>
-          No rule ids = an empty release (like release 0). Only empty releases can be activated today: the writers do
-          not read rules from a release yet.</div>
+          No rule ids = an empty release (like release 0). A release with rules goes live only after its R2 eval and
+          shadow runs pass and an admin approves it; no writer reads a lexicon-only release.</div>
       </div>
     </Modal>
   );
@@ -245,6 +248,57 @@ function RunCard({ label, run, id }: { label: string; run: ReleaseRun | null; id
       {s.reasons && s.reasons.length > 0 && <div style={{ color: K.danger }}>{s.reasons.join("; ")}</div>}
       {s.prompt_sha256 && <div style={{ color: K.muted }}>prompt <span style={{ fontFamily: mono }}>
         {s.prompt_sha256.slice(0, 16)}</span>{s.git_sha ? ` · code ${s.git_sha.slice(0, 8)}` : ""}</div>}
+    </div>
+  );
+}
+
+function PostActivationCheck({ r }: { r: Release }) {
+  const toast = useToast();
+  const [report, setReport] = useState<PostActivationReport | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function run() {
+    setBusy(true);
+    const res = await wmSend<PostActivationReport>(`/releases/${r.release_id}/post-activation-check`, "POST",
+      { apply: false });
+    setBusy(false);
+    if (res.ok) setReport(res.data);
+    else toast.error(res.message);
+  }
+
+  const codes = Object.entries(report?.violation_codes ?? {});
+  return (
+    <div style={{ display: "grid", gap: 6, fontSize: 12.5 }}>
+      <h3 style={{ fontSize: 13, margin: 0 }}>Post-activation check</h3>
+      <div style={{ color: K.muted, fontSize: 12 }}>Reads the writes made since this release went active: each must
+        carry its rules hash and hold no QA trace and no other tenant&apos;s text. A dry run: no model call, nothing
+        moves. The hourly check rolls a failing release back by itself.</div>
+      <div><Button size="sm" variant="secondary" disabled={busy} onClick={run}>
+        {busy ? "Checking…" : "Check now"}</Button></div>
+      {report && (
+        <div style={{ border: `1px solid ${K.line}`, borderRadius: 8, padding: 8, display: "grid", gap: 4 }}
+          aria-live="polite">
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+            <Badge tone={checkTone(report.verdict)}>{report.verdict.replace("_", " ")}</Badge>
+            <span style={{ color: K.muted }}>cost ${Number(report.cost_usd ?? 0).toFixed(2)}</span>
+          </div>
+          <div>{checkSentence(report)}</div>
+          {report.verdict !== "not_applicable" && (
+            <div style={{ color: K.muted }}>{report.checked} read · {report.carried ?? 0} carried ·{" "}
+              {report.not_carried ?? 0} written without it · {report.not_rendered ?? 0} rules not rendered ·{" "}
+              {report.fingerprint_mismatch ?? 0} hash mismatch</div>)}
+          {codes.length > 0 && <div style={{ color: K.danger }}>{codes.map(([c, n]) =>
+            `${CHECK_CODE_LABELS[c] ?? c}: ${n}`).join(" · ")}</div>}
+          {(report.violating_refs ?? []).length > 0 && (
+            <div style={{ display: "grid", gap: 2 }}>
+              {(report.violating_refs ?? []).slice(0, 10).map((v) => (
+                <div key={`${v.source}-${v.ref}`} style={{ overflowWrap: "anywhere" }}>
+                  <span style={{ color: K.muted }}>{v.source}</span>{" "}
+                  <span style={{ fontFamily: mono }}>{v.ref}</span>{" "}
+                  {v.codes.map((c) => CHECK_CODE_LABELS[c] ?? c).join(", ")}</div>))}
+            </div>)}
+        </div>
+      )}
     </div>
   );
 }
@@ -344,6 +398,9 @@ function ReleaseDrawer({ releaseId, onClose, canAdmin, active, ownerOf }: { rele
               ? r.fingerprint.prompt_sha256.slice(0, 16) : "—"}</span></div>
             {r.items_sha256 && <div>Rules hash <span style={{ fontFamily: mono }}>{r.items_sha256.slice(0, 16)}</span></div>}
           </div>
+
+          {/* keyed by release: another release opened in the same drawer starts with no report */}
+          {canAdmin && r.activated_at && <PostActivationCheck key={r.release_id} r={r} />}
 
           {canAdmin && allowed && (
             <div style={{ display: "grid", gap: 12, borderTop: `1px solid ${K.line}`, paddingTop: 12 }}>

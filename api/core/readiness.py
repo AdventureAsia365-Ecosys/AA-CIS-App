@@ -6,7 +6,9 @@
   in ``shared.schema_versions`` (the table also holds ``bk-*``, ``tp-*`` and ``rl-*`` keys, which are never compared).
   Ready = DB answered and that number >= ``REQUIRED_CIS_SCHEMA``, the newest migration this code needs. Raise the
   constant in the same PR as code that needs a newer migration, so the deploy smoke and the Platform Apps page show a
-  missing apply instead of a 500 on first use.
+  missing apply instead of a 500 on first use. A number used out of order (applied after a higher one, e.g. a reserved
+  number) goes into ``OUT_OF_ORDER_CIS``: while it is not registered the reported version is capped just below it, so
+  max() alone cannot hide a missing apply (AA-920: 297 applied after 299).
 
 ``/health/ready`` is public (the ALB / CI probe shape), so the answer is cached in-process for
 ``READY_CACHE_SECONDS`` (failures too): a burst of probes reaches RDS at most once per window per task.
@@ -22,17 +24,27 @@ from shared.sentry_init import release
 
 logger = structlog.get_logger()
 
-# The newest CIS migration this code needs: 293 (AA-665 C2 — every shared.dfs_call_log write names job_id; without the
-# column each DFS cost row is lost, the write being fire-and-forget). Before: 287 (AA-919 WM-18 — the writers resolve
+# The newest CIS migration this code needs: 297 (AA-920 WM-25 — the T2 job's save UPDATE names
+# gold_aa_internal.tenant_tour_versions.generation_meta; without the column every T2 save fails). Before: 293 (AA-665
+# C2 — every shared.dfs_call_log write names job_id; without the column each DFS cost row is lost, the write being
+# fire-and-forget); 287 (AA-919 WM-18 — the writers resolve
 # their writing-memory release from shared.writing_memory_release / writing_memory_writer on every call (failing open
 # without them) and /admin/writing-memory/releases reads and writes them); 280 (AA-917 — the writing-memory jobs and
 # /admin/writing-memory read and write shared.writing_rule; 277, AA-916: the admin A1 field edit and both sentence
 # applies write shared.writing_signal inside their own transaction; without the table they fail).
-REQUIRED_CIS_SCHEMA = 293
+REQUIRED_CIS_SCHEMA = 297
+# Versions this code needs that were registered after a higher one (reserved numbers): 297 (AA-920 WM-25) was reserved
+# in S255 and applied after 299. max() is already 299 without it, so the version reported is capped below the lowest
+# listed version that is not registered (297 missing -> 296 -> "schema_behind").
+OUT_OF_ORDER_CIS = (297,)
 READY_CACHE_SECONDS = 5.0
 
+# The highest numeric CIS version, capped below the lowest OUT_OF_ORDER_CIS version that is not registered ($1).
 SCHEMA_VERSION_SQL = """
-    SELECT max(version::int) FROM shared.schema_versions WHERE version ~ '^[0-9]+$'
+    SELECT CASE WHEN m.missing IS NULL THEN m.head ELSE least(m.head, m.missing - 1) END
+      FROM (SELECT (SELECT max(version::int) FROM shared.schema_versions WHERE version ~ '^[0-9]+$') AS head,
+                   (SELECT min(r) FROM unnest($1::int[]) AS r
+                     WHERE NOT EXISTS (SELECT 1 FROM shared.schema_versions s WHERE s.version = r::text)) AS missing) m
 """
 
 _cache: dict[str, Any] = {"at": None, "value": None}
@@ -48,7 +60,7 @@ async def _probe(pool: Any) -> tuple[int, dict]:
         return 503, {"status": "unavailable", "db": "not_ready", "schema_version": None,
                      "required_schema": str(REQUIRED_CIS_SCHEMA), "git_sha": sha}
     try:
-        version: Optional[int] = await pool.fetchval(SCHEMA_VERSION_SQL)
+        version: Optional[int] = await pool.fetchval(SCHEMA_VERSION_SQL, list(OUT_OF_ORDER_CIS))
     except Exception as e:  # any DB failure is "not ready", never a 500
         logger.warning("health_ready_db_failed", error=repr(e)[:200])
         return 503, {"status": "unavailable", "db": "error", "schema_version": None,

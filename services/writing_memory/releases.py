@@ -9,10 +9,12 @@ API is bypassed or wrong (`DBRefused`, 409 `db_refused`: proof that the second l
 
 Policy (not a DB rule, `wiring_problem`): `activate` refuses a class the writer does not render with 409
 `content_not_wired` (WIRED_CLASSES). AA-920 wired `rules` and `repair_hint_only` for A1 (WM-23) and T9 (WM-24) through
-the one builder of `insertion.py`. T2 stays `empty` only until WM-25 lands (the `generation_meta` migration with the
-tenant projection denylist in the same PR). `lexicon_only` is not rendered by any writer: its evidence is an R0 replay
-only (no R2 / shadow), which is not enough for a prompt change; a lexicon rule reaches T9 through L0 (`l0.py`) or
-inside a `rules` release.
+the one builder of `insertion.py`, and `rules` for T2 (WM-25: the version records its stamp in `generation_meta`,
+CIS 297, hidden from every tenant read by `_tenant_projection`). T2 does not take `repair_hint_only`: a hint-only
+release changes no T2 writing slot and its repair passes (the shared flag-fix node, T3) have no test for one; a T2
+repair hint goes live inside a `rules` release. `lexicon_only` is not rendered by any writer: its evidence is an R0
+replay only (no R2 / shadow), which is not enough for a prompt change; a lexicon rule reaches T9 through L0 (`l0.py`)
+or inside a `rules` release.
 
 Rollback moves the active pointer back to the release the current one superseded (`previous_release_id`), with no
 deploy: the current release becomes `retired` with `rollback: <reason>` and can never be re-activated (a fix is a new
@@ -46,8 +48,8 @@ JUDGE_STAGE = "writing_memory_eval"          # WM-19's judge stage (fingerprinte
 GOLDEN_SET = "aa729"
 MIN_R0_INPUTS = 20                           # WM-20: >= 20 stored inputs per writer
 MAX_RULES = 40
-# What each writer renders (AA-920: A1 = WM-23, T9 = WM-24; T2 waits for WM-25, see the module docstring).
-WIRED_CLASSES = {"a1": frozenset({"empty", "rules", "repair_hint_only"}), "t2": frozenset({"empty"}),
+# What each writer renders (AA-920: A1 = WM-23, T9 = WM-24, T2 = WM-25; see the module docstring).
+WIRED_CLASSES = {"a1": frozenset({"empty", "rules", "repair_hint_only"}), "t2": frozenset({"empty", "rules"}),
                  "t9_blog": frozenset({"empty", "rules", "repair_hint_only"}),
                  "t9_social": frozenset({"empty", "rules", "repair_hint_only"})}
 TRANSITIONS = {("draft", "evaluated"), ("draft", "rejected"), ("evaluated", "approved"), ("evaluated", "rejected"),
@@ -240,13 +242,14 @@ def evidence_problem(release: dict, runs: dict[str, Optional[dict]], rules: list
 
 
 def wiring_problem(release: dict) -> Optional[tuple[str, str]]:
-    """Only a class the writer renders may go active (WIRED_CLASSES; T2 content waits for WM-25, lexicon_only for no
-    writer)."""
+    """Only a class the writer renders may go active (WIRED_CLASSES; T2 takes no repair-hint-only release,
+    lexicon_only goes live for no writer)."""
     wired = WIRED_CLASSES.get(release["writer"], frozenset({"empty"}))
     if release["content_class"] not in wired:
-        why = ("T2 renders rules only after WM-25 (generation_meta + tenant projection)" if release["writer"] == "t2"
-               else "a lexicon-only release has R0 evidence only; use the L0 path or a rules release"
-               if release["content_class"] == "lexicon_only" else "not wired")
+        why = ("a lexicon-only release has R0 evidence only; use the L0 path or a rules release"
+               if release["content_class"] == "lexicon_only"
+               else "a T2 repair hint goes live inside a rules release" if release["writer"] == "t2"
+               else "not wired")
         return "content_not_wired", f"{release['writer']} does not render {release['content_class']} releases ({why})"
     return None
 

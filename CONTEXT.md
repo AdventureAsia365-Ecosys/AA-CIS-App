@@ -1063,8 +1063,10 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
 - **Health and version (AA-884)**: `GET /health` returns `git_sha` (the image's `APP_GIT_SHA`, the merge commit) and
   `GET /health/ready` (public, 5 s in-process cache) returns 200 only when the DB answers and the newest numeric CIS
   migration in `shared.schema_versions` is ≥ `api/core/readiness.py` `REQUIRED_CIS_SCHEMA` (bump it in the PR whose
-  code needs a newer migration). Deploy Dev's smoke asserts both, and that a live worker reports the same SHA
-  (`shared.job_worker.git_sha`, written at worker start).
+  code needs a newer migration). A needed number applied after a higher one (a reserved number, e.g. 297 after 299)
+  goes into `OUT_OF_ORDER_CIS`: while it is not registered the reported version is capped just below it. Deploy Dev's
+  smoke asserts both, and that a live worker reports the same SHA (`shared.job_worker.git_sha`, written at worker
+  start).
 - **Release version (AA-891)**: release-please (manifest mode, `release-please-config.json`,
   `.release-please-manifest.json`, workflow `release-please.yml` with the CI bot GitHub App token) keeps one release PR
   open on `main`; merging it bumps the manifest, `CHANGELOG.md` and `api/version.py` (the only copy in code: FastAPI app
@@ -2470,11 +2472,13 @@ the items hash equals the release's `items_sha256`; otherwise the part renders n
 the system prompt; T9 platform rules appended to `SYSTEM_PROMPT` (cached across tenants) and tenant rules after the
 brand words line, both filtered by the rule's `applies_to` channels; a `repair_hint` rule only in the repair pass of
 a failed gate of its `gate_class` (A1 flag-fix, T9 `rewrite_with_feedback`), never in a writing slot. Activation by
-writer (`releases.WIRED_CLASSES`): A1 and T9 take `rules` and `repair_hint_only`; T2 takes `empty` only until WM-25
-(the `generation_meta` column with the tenant projection denylist); no writer takes `lexicon_only` (R0-only
-evidence; lexicon reaches T9 through L0 or inside a `rules` release) — anything else is 409 `content_not_wired`.
+writer (`releases.WIRED_CLASSES`): A1 and T9 take `rules` and `repair_hint_only`; T2 takes `rules` (WM-25; a T2
+repair hint goes live inside a `rules` release); no writer takes `lexicon_only` (R0-only evidence; lexicon reaches T9
+through L0 or inside a `rules` release) — anything else is 409 `content_not_wired`.
 Each write records a stamp (ids, numbers and the release fingerprint `items_sha256`, never text): A1
-`generated_content.metadata.writing_release` (S1 writer v2 only), T2 `shared.job.result.writing_release`, T9
+`generated_content.metadata.writing_release` (S1 writer v2 only), T2 `tenant_tour_versions.generation_meta`
+(`{writing_release, rule_ids, writer_prompt_version}`, CIS 297, admin-only: `_tenant_projection` hides the column and every
+`generation_meta|rule_ids|release|memory` key from tenant reads) plus `shared.job.result.writing_release`, T9
 `content_piece.writer_input.writing_release`. **Post-activation check** (AA-920 WM-26,
 `services/writing_memory/post_activation.py`, job `writing_memory_post_activation`, $0, queued hourly by the api ops
 sampler while a release with content is active; or POST `/admin/writing-memory/releases/{id}/post-activation-check`,

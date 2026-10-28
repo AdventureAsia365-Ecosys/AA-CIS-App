@@ -197,7 +197,9 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
     # AA-919 (WM-18 / WM-20): the T2 writing-memory release of this tenant (platform + tenant pointer; None = memory
     # off, fails open). Every T2 write (the first and the T3 repair rounds) goes through build_t2_system_prompt, which
     # consumes it; the job result records it (`writing_release`). Release 0 changes no prompt byte.
-    from services.writing_memory.insertion import resolve as _wm_resolve, stamp as _wm_stamp
+    # AA-920 (WM-25): the version row records it too (`generation_meta`, CIS 297; hidden from every tenant read).
+    from services.writing_memory.insertion import (generation_meta as _wm_meta, resolve as _wm_resolve,
+                                                   stamp as _wm_stamp)
     writing_memory = await _wm_resolve(pool, "t2", tenant_id)
     if writing_memory:
         diag["writing_release"] = _wm_stamp(writing_memory)
@@ -241,6 +243,9 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
             }
 
             import json as _j3
+            # AA-920 (WM-25): the version's own record of how it was written (CIS 297, admin-only): the release stamp
+            # + rule ids, and the prompt hash of the kept draft (T3 may keep a repair round's output).
+            generation_meta = _wm_meta(writing_memory, prompt_version=result.get("prompt_version"))
             gen = result["generated"]
             rewritten = {
                 "name":        gen.get("name", tour_dict["name"]),
@@ -294,11 +299,13 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
                         qa_status = $4,
                         qa_repair_count = $5,
                         qa_checked_at = now(),
-                        qa_auto_passed = $6
+                        qa_auto_passed = $6,
+                        generation_meta = $8::jsonb
                     WHERE id = $7::uuid
                 """,
                     _j3.dumps(rewritten), new_status, final_score,
-                    qa_status, qa["attempts"], qa_auto_passed, version_id)
+                    qa_status, qa["attempts"], qa_auto_passed, version_id,
+                    _j3.dumps(generation_meta) if generation_meta is not None else None)
             import structlog as _sl2
             _sl2.get_logger().info("tenant_rewrite_done",
                 version_id=str(version_id), score=final_score, status=new_status,

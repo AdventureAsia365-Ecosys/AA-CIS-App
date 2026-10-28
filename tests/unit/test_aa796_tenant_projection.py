@@ -20,12 +20,24 @@ PT_ID = uuid.uuid4()
 TOUR_ID = uuid.uuid4()
 VERSION_ID = uuid.uuid4()
 
+# AA-920 WM-25: the writing-memory stamp a T2 version stores (CIS 297), with ids a tenant must never receive.
+WM_RELEASE_ID = str(uuid.uuid4())
+WM_RULE_ID = str(uuid.uuid4())
+WM_GENERATION_META = {"writing_release": {"writer": "t2", "platform": {"release_id": WM_RELEASE_ID, "release_no": 1,
+                                                                       "items_sha256": "a" * 64},
+                                          "tenant": None, "ignored": False},
+                      "rule_ids": [WM_RULE_ID]}
+
 # Every forbidden column a real row can carry (published_tours, tenant_tour_versions, raw_tours,
-# v_tenant_monthly_usage), plus the stored score-derived status.
+# v_tenant_monthly_usage), plus the stored score-derived status. AA-920 WM-25: `generation_meta` (CIS 297) and the
+# writing-memory keys a later join could add (`rule_ids`, `writing_release`, `memory_enabled`): dropped by name or by
+# TENANT_FORBIDDEN_KEY_RE.
 _POISON = {
     "status": "needs_review", "quality_score": Decimal("5.5"), "quality_score_id": uuid.uuid4(),
     "qa_status": "escalated", "qa_repair_count": 2, "qa_checked_at": NOW, "qa_auto_passed": True,
     "llm_cost_usd": Decimal("0.12"), "jev_cost_usd": Decimal("0.01"),
+    "generation_meta": WM_GENERATION_META, "rule_ids": [WM_RULE_ID], "writing_release": WM_GENERATION_META[
+        "writing_release"], "memory_enabled": True,
 }
 
 
@@ -103,7 +115,13 @@ def _string_values(obj):
 
 def assert_tenant_clean(resp):
     assert tp.forbidden_keys(resp) == []
-    assert "needs_review" not in set(_string_values(resp))
+    values = set(_string_values(resp))
+    assert "needs_review" not in values
+    # AA-920 WM-25: no writing-memory key at any depth, and no release / rule id as a value either
+    flat = str(resp)
+    for key in ("generation_meta", "rule_ids", "release", "memory"):
+        assert key not in flat, key
+    assert WM_RELEASE_ID not in flat and WM_RULE_ID not in flat
 
 
 # ── one call per tenant-JWT route in scope ────────────────────────────────────
@@ -273,6 +291,19 @@ def test_marketplace_reuses_the_shared_state_function():
 def test_forbidden_keys_walks_nested_values():
     obj = {"a": [{"ok": 1, "qa_status": "x"}], "b": {"judge": {"brand_fit": 1}}, "jev_cost_usd": 0}
     assert sorted(tp.forbidden_keys(obj)) == ["a[0].qa_status", "b.judge", "jev_cost_usd"]
+
+
+def test_writing_memory_keys_are_forbidden_at_any_depth():
+    """AA-920 WM-25 Done-when: no tenant response carries `generation_meta`, `rule_ids`, `release` or `memory` keys."""
+    obj = {"generation_meta": {}, "x": {"rule_ids": []}, "y": [{"writing_release": {"release_id": "r"}}],
+           "memory_enabled": True}
+    assert sorted(tp.forbidden_keys(obj)) == ["generation_meta", "memory_enabled", "x.rule_ids", "y[0].writing_release",
+                                              "y[0].writing_release.release_id"]
+    assert "generation_meta" in tp.TENANT_HIDDEN_VERSION_FIELDS
+    # a version row keeps its content columns and loses every memory column
+    row = {"id": "v", "rewritten_content": "{}", "created_at": NOW, **_POISON}
+    out = tp.project_version(row)
+    assert set(out) == {"id", "rewritten_content", "created_at", "status"}
 
 
 # ── AA-802: a version corrected by an admin (silent correction) stays clean ────────────────────
