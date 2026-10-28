@@ -172,15 +172,18 @@ def test_content_classes_and_items_hash():
 
 
 def test_wiring_per_writer_after_aa920():
-    """AA-920: A1 (WM-23) and T9 (WM-24) render rules and repair hints; T2 waits for WM-25; lexicon_only for no one."""
+    """AA-920: A1 (WM-23) and T9 (WM-24) render rules and repair hints; T2 (WM-25) renders rules releases (a T2
+    repair hint goes live inside one); lexicon_only for no one. The refusal names no issue id (admin-visible text)."""
     for writer in ("a1", "t9_blog", "t9_social"):
         for cls in ("empty", "rules", "repair_hint_only"):
             assert rel.wiring_problem(_release(cls, writer=writer)) is None, (writer, cls)
         assert rel.wiring_problem(_release("lexicon_only", writer=writer))[0] == "content_not_wired"
-    assert rel.wiring_problem(_release(writer="t2")) is None
-    for cls in ("rules", "repair_hint_only", "lexicon_only"):
+    for cls in ("empty", "rules"):
+        assert rel.wiring_problem(_release(cls, writer="t2")) is None, cls
+    for cls in ("repair_hint_only", "lexicon_only"):
         code, detail = rel.wiring_problem(_release(cls, writer="t2"))
-        assert code == "content_not_wired" and "WM-25" in detail
+        assert code == "content_not_wired" and "WM-" not in detail and "AA-" not in detail
+    assert "inside a rules release" in rel.wiring_problem(_release("repair_hint_only", writer="t2"))[1]
 
 
 def test_approval_is_a_humans():

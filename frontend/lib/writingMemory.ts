@@ -247,3 +247,42 @@ export function monthStart(v: string): string | null {
 export function isUuid(v: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v.trim());
 }
+
+// ── post-activation check (POST /releases/{id}/post-activation-check, DRY RUN) ──────────────────────────────────────
+
+export type CheckVerdict = "pass" | "pending" | "violation" | "not_applicable";
+
+/** The report of services/writing_memory/post_activation.check_release: counts, codes and ids, never text. */
+export interface PostActivationReport {
+  release_id: string; writer: Writer; release_no: number; status: ReleaseStatus; verdict: CheckVerdict;
+  n: number; checked: number; carried?: number; not_carried?: number; not_rendered?: number;
+  fingerprint_mismatch?: number; violations?: number; violation_codes?: Record<string, number>;
+  violating_refs?: { source: string; ref: string; codes: string[] }[]; action: string; reason?: string;
+  cost_usd: number;
+}
+
+export function checkTone(v: CheckVerdict): "success" | "danger" | "warning" | "neutral" {
+  return v === "pass" ? "success" : v === "violation" ? "danger" : v === "pending" ? "warning" : "neutral";
+}
+
+/** One plain sentence for the verdict of a dry-run check. */
+export function checkSentence(r: Pick<PostActivationReport, "verdict" | "n" | "checked" | "carried" | "reason">):
+  string {
+  const carried = r.carried ?? 0;
+  if (r.verdict === "not_applicable") {
+    return r.reason === "never activated" ? "This release was never active, so it wrote nothing to check."
+      : "An empty release adds nothing to the prompt, so there is nothing to check.";
+  }
+  if (r.verdict === "violation") {
+    return "At least one write made with this release breaks a hard stop. The hourly check rolls it back; "
+      + "this dry run moved nothing.";
+  }
+  if (r.verdict === "pass") return `${carried} writes carry this release and none breaks a hard stop.`;
+  return `${carried} of the ${r.n} writes needed carry this release so far, none breaking a hard stop `
+    + `(${r.checked} writes read).`;
+}
+
+/** Labels of the violation codes the check reports (post_activation.check_write). */
+export const CHECK_CODE_LABELS: Record<string, string> = {
+  qa_trace: "QA trace in the text", tenant_leak: "another tenant's text", fingerprint_mismatch: "rules hash mismatch",
+};

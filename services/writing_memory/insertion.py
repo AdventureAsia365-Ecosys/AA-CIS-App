@@ -324,7 +324,28 @@ def stamp(view: Optional[dict], **extra) -> Optional[dict]:
     return out
 
 
+def generation_meta(view: Optional[dict], *, prompt_version: Optional[str] = None) -> Optional[dict]:
+    """AA-920 WM-25: what a T2 version records in `tenant_tour_versions.generation_meta` (CIS 297).
+
+    `writing_release` + `rule_ids` (only with a view): the stamp plus the rule ids the view carried (platform part
+    first, then the tenant's; no duplicate). `writer_prompt_version` (when known): sha256[:8] of the exact system prompt
+    of the kept draft (`batch_prompt.prompt_version_of`, as generated_content.metadata.prompt_version; WM-08 left T2
+    out for want of this column). None when neither is there: the column stays NULL. Ids, numbers and hashes only,
+    never rule text; the column is hidden from every tenant read (`_tenant_projection.TENANT_HIDDEN_VERSION_FIELDS`)."""
+    out: dict = {}
+    if prompt_version:
+        out["writer_prompt_version"] = str(prompt_version)
+    if view:
+        rule_ids: list[str] = []
+        for p in _parts(view):
+            for rid in p.get("rule_ids") or []:
+                if str(rid) not in rule_ids:
+                    rule_ids.append(str(rid))
+        out.update({"writing_release": stamp(view), "rule_ids": rule_ids})
+    return out or None
+
+
 __all__ = ["PLATFORM_HEADING", "REPAIR_HEADING", "SLOTS", "TENANT_HEADING", "WRITERS", "WRITING_KINDS",
-           "a1_house_rules", "attach_items", "has_content", "ignored", "load_items", "part_of", "render_rules",
-           "repair_hint_block", "repair_hints", "resolve", "rule_line", "rule_texts", "stamp", "t2_block",
-           "t9_platform_block", "t9_tenant_lines", "with_repair_hints", "writer_for_channel"]
+           "a1_house_rules", "attach_items", "generation_meta", "has_content", "ignored", "load_items", "part_of",
+           "render_rules", "repair_hint_block", "repair_hints", "resolve", "rule_line", "rule_texts", "stamp",
+           "t2_block", "t9_platform_block", "t9_tenant_lines", "with_repair_hints", "writer_for_channel"]

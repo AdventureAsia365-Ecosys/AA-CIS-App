@@ -81,3 +81,16 @@ async def test_ready_is_cached_for_five_seconds():
     assert pool.fetchval.await_count == 1
     await readiness.readiness(pool, now=105.5)
     assert pool.fetchval.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_ready_passes_the_out_of_order_versions_to_the_cap():
+    # AA-920: 297 is registered after 299; max() alone would report ready without it. The SQL caps the reported
+    # version below the lowest listed version that is not registered (the cap itself runs on real Postgres in
+    # tests/integration/test_aa920_migration_297.py).
+    pool = _pool(readiness.REQUIRED_CIS_SCHEMA)
+    await readiness.readiness(pool, now=0.0)
+    sql, versions = pool.fetchval.await_args.args
+    assert versions == list(readiness.OUT_OF_ORDER_CIS) and 297 in versions
+    assert "unnest($1::int[])" in sql and "least(m.head, m.missing - 1)" in sql
+    assert all(v <= readiness.REQUIRED_CIS_SCHEMA for v in readiness.OUT_OF_ORDER_CIS)

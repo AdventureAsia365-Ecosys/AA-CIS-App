@@ -12,12 +12,16 @@ by services/jobs/t2_rewrite_job.py) remains the admin signal. It is only mapped 
 import re
 from typing import Any, Iterable, Optional
 
-# Keys a tenant-JWT /v1/* response must never carry (AA-796 Done-when; used by the key-walk test).
-TENANT_FORBIDDEN_KEY_RE = re.compile(r"needs_review|quality|score|qa_|judge|llm_cost|jev_cost")
+# Keys a tenant-JWT /v1/* response must never carry (AA-796 Done-when; used by the key-walk test). AA-920 WM-25 adds
+# the writing-memory keys (`generation_meta`, `rule_ids`, `release` (writing_release, release_id, release_no),
+# `memory`): which release and which learned rules wrote a version is AA's QA state, not the tenant's content
+# (hard stop 3).
+TENANT_FORBIDDEN_KEY_RE = re.compile(
+    r"needs_review|quality|score|qa_|judge|llm_cost|jev_cost|generation_meta|rule_ids|release|memory")
 
-# tenant_tour_versions columns that are gate output, not content.
+# tenant_tour_versions columns that are gate or generation output, not content (generation_meta: CIS 297, AA-920).
 TENANT_HIDDEN_VERSION_FIELDS = frozenset({
-    "quality_score", "qa_status", "qa_repair_count", "qa_checked_at", "qa_auto_passed",
+    "quality_score", "qa_status", "qa_repair_count", "qa_checked_at", "qa_auto_passed", "generation_meta",
 })
 # published_tours columns that are A1 gate output.
 TENANT_HIDDEN_TOUR_FIELDS = frozenset({"quality_score", "quality_score_id"})

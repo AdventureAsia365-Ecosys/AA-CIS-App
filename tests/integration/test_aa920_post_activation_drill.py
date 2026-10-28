@@ -99,3 +99,31 @@ async def test_seeded_violation_rolls_a1_back_and_the_next_write_uses_release0(c
     assert nxt["platform"]["release_no"] == 0                                         # the next write: release 0
     # the job's sweep finds nothing left to check (the rolled-back release is retired)
     assert r1["release_id"] not in await pa.content_releases(conn)
+
+
+# ── the Dev drill script (scripts/writing_memory/wm26_dev_drill.py) on the same schema ─────────────────────────────
+
+@pytest.mark.asyncio
+async def test_the_dev_drill_script_rolls_back_and_the_next_write_uses_the_previous_release(conn):
+    from scripts.writing_memory import wm26_dev_drill as dd
+    r0 = await _release0(conn, "a1")
+    await _a1_write(conn, None, "An earlier v2 write.")                 # the drill attaches its writes to a v2 tour
+    rep = await dd.drill(conn)
+    assert "failed" not in rep and "refused" not in rep, rep
+    assert rep["before"]["release_id"] == r0["release_id"]
+    assert rep["dry_run"]["verdict"] == "violation" and rep["dry_run"]["cost_usd"] == 0
+    assert rep["apply"]["action"] == "rolled_back" and rep["apply"]["active_release_id"] == r0["release_id"]
+    assert rep["next_write_stamp"]["release_id"] == r0["release_id"]
+    assert rep["alerts"]["audit_rows"] == 1 and rep["alerts"]["bell_rows"] == 1
+    assert all(rep["steps"].values()) and len(rep["steps"]) == 4
+    assert dd.RULE_TEXT not in json.dumps(rep, default=str) and "gate_ledger" not in json.dumps(rep, default=str)
+
+
+@pytest.mark.asyncio
+async def test_the_dev_drill_refuses_on_top_of_a_live_rules_release(conn):
+    from scripts.writing_memory import wm26_dev_drill as dd
+    r1 = await _a1_release1(conn)
+    before = await conn.fetchval("SELECT count(*) FROM shared.writing_memory_release")
+    rep = await dd.drill(conn)
+    assert rep["refused"] == "live_content_release" and rep["before"]["release_id"] == r1["release_id"]
+    assert await conn.fetchval("SELECT count(*) FROM shared.writing_memory_release") == before

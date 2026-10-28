@@ -28,7 +28,8 @@ own gate verdicts).
 Callers: the `writing_memory_post_activation` job (every active release with content, apply on; the api ops sampler
 queues it hourly while one exists) and POST /admin/writing-memory/releases/{id}/post-activation-check (one release,
 DRY RUN unless `apply`). Writers read: A1 `silver_aa_internal.generated_content` (S1 writer v2 rows), T2
-`gold_aa_internal.tenant_tour_versions` + its `shared.job` result, T9 `acp_shared.content_piece` (approved / held).
+`gold_aa_internal.tenant_tour_versions` (its `generation_meta` stamp, CIS 297, which also covers a version whose job
+row is gone; the `shared.job` result for a version written before 297), T9 `acp_shared.content_piece` (approved / held).
 Every tenant read filters the owner explicitly (cis_app's policies are USING (true)).
 """
 from __future__ import annotations
@@ -90,10 +91,11 @@ _A1_SQL = """
 
 _T2_SQL = """
     SELECT v.id::text AS ref, v.tenant_id::text AS tenant_id, v.created_at, v.rewritten_content,
-           j.result->'writing_release' AS stamp
+           coalesce(v.generation_meta->'writing_release', j.result->'writing_release') AS stamp
       FROM gold_aa_internal.tenant_tour_versions v
-      JOIN shared.job j ON j.id = v.job_id AND j.kind = 't2_rewrite'
-     WHERE v.created_at >= $1 AND ($2::timestamptz IS NULL OR v.created_at < $2)
+      LEFT JOIN shared.job j ON j.id = v.job_id AND j.kind = 't2_rewrite'
+     WHERE (v.generation_meta IS NOT NULL OR j.id IS NOT NULL)
+       AND v.created_at >= $1 AND ($2::timestamptz IS NULL OR v.created_at < $2)
        AND ($3::uuid IS NULL OR v.tenant_id = $3::uuid)
      ORDER BY v.created_at DESC, v.id DESC
      LIMIT $4

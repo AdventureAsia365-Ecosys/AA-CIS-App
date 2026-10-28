@@ -182,9 +182,13 @@ export const WRITING_MEMORY_GUIDE: GuideContent = {
           "Approve (drawer, evaluated): your one click, as the signed-in admin. The approval reference is optional: "
             + "a link to the decision.",
           "Activate (drawer, approved): greyed out, with 'Not activatable yet: …', while the evidence does not hold "
-            + "or the writer cannot read that kind of release yet (T2 reads only empty releases until its stamp "
-            + "column lands; no writer reads a lexicon-only release, which goes live through Activate (L0)). After "
-            + "the confirm, the release before it retires and this one serves the next write.",
+            + "or the writer cannot read that kind of release (T2 reads empty and rules releases, not a "
+            + "repair-hint-only one; no writer reads a lexicon-only release, which goes live through Activate (L0)). "
+            + "After the confirm, the release before it retires and this one serves the next write.",
+          "Check now (drawer, any release that was ever active): runs the hourly post-activation check once, as a "
+            + "dry run. It reads the texts written since the release went live and shows the verdict (pass, "
+            + "pending, violation, or not applicable for an empty release), the counts and, for a violation, the "
+            + "ids of the failing texts. No model call, no cost, nothing moves: only the hourly check rolls back.",
           "Roll back (drawer, active, with a previous release) and Reject (draft, evaluated or approved): type a "
             + "reason of at least 3 characters first. A rolled-back release never comes back: a fix is a new release.",
         ] },

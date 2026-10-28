@@ -6,7 +6,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  EVIDENCE_NEEDED, actorLabel, evidenceOk, evidenceWord, isUuid, monthStart, releaseActions, releaseTone,
+  CHECK_CODE_LABELS, EVIDENCE_NEEDED, actorLabel, checkSentence, checkTone, evidenceOk, evidenceWord, isUuid,
+  monthStart, releaseActions, releaseTone,
 } from "./writingMemory.ts";
 
 const run = (run_kind, verdict, extra = {}) => ({ run_kind, verdict, finished: true, ...extra });
@@ -61,4 +62,26 @@ test("small formatters", () => {
   assert.equal(isUuid("nope"), false);
   assert.equal(releaseTone("active"), "success");
   assert.equal(releaseTone("rejected"), "danger");
+});
+
+// AA-920 WM-25: the "Check now" card of the release drawer (POST /releases/{id}/post-activation-check, DRY RUN).
+test("check verdict tones and sentences follow post_activation.verdict", () => {
+  assert.equal(checkTone("pass"), "success");
+  assert.equal(checkTone("violation"), "danger");
+  assert.equal(checkTone("pending"), "warning");
+  assert.equal(checkTone("not_applicable"), "neutral");
+  const base = { n: 20, checked: 7, carried: 5 };
+  assert.match(checkSentence({ ...base, verdict: "not_applicable", reason: "never activated" }), /never active/);
+  assert.match(checkSentence({ ...base, verdict: "not_applicable" }), /empty release/);
+  assert.match(checkSentence({ ...base, verdict: "violation" }), /moved nothing/);
+  assert.equal(checkSentence({ ...base, carried: 20, verdict: "pass" }),
+    "20 writes carry this release and none breaks a hard stop.");
+  assert.equal(checkSentence({ ...base, verdict: "pending" }),
+    "5 of the 20 writes needed carry this release so far, none breaking a hard stop (7 writes read).");
+  assert.match(checkSentence({ n: 20, checked: 0, verdict: "pending" }), /^0 of the 20/, "a missing count reads 0");
+});
+
+test("every violation code check_write emits has a label, and no label names an issue id", () => {
+  for (const code of ["qa_trace", "tenant_leak", "fingerprint_mismatch"]) assert.ok(CHECK_CODE_LABELS[code], code);
+  for (const label of Object.values(CHECK_CODE_LABELS)) assert.doesNotMatch(label, /\b(AA|WM)-\d+/);
 });
