@@ -28,12 +28,16 @@ class Health(BaseModel):
 
 class Readiness(BaseModel):
     """GET /health/ready — ``status`` ``ok`` (200) or ``schema_behind`` / ``unavailable`` (503); ``db`` ``ok``,
-    ``error`` or ``not_ready``."""
+    ``error`` or ``not_ready``. ``registered_keys``: the numeric CIS versions registered above
+    ``keys_baseline``; ``missing_schema_versions``: required keys that are not registered."""
     status: str
     db: str
     schema_version: Optional[str]
     required_schema: str
     git_sha: str
+    registered_keys: Optional[List[str]] = None
+    keys_baseline: Optional[str] = None
+    missing_schema_versions: Optional[List[str]] = None
 
 
 class Jwk(BaseModel):

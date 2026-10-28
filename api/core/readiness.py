@@ -10,6 +10,13 @@
   number) goes into ``OUT_OF_ORDER_CIS``: while it is not registered the reported version is capped just below it, so
   max() alone cannot hide a missing apply (AA-920: 297 applied after 299).
 
+AA-993 M4a (root ADR 0017 d7): the body also lists ``registered_keys``, every numeric CIS version registered above
+``LEGACY_CIS_BASELINE`` (below it the hand-applied legacy files left gaps: 1-24, 62-64, 158, 232, 252, 263), and
+readiness requires every key of ``REQUIRED_CIS_KEYS`` (each number from the baseline up to ``REQUIRED_CIS_SCHEMA``),
+like Booking and Partner, so a gap under the required key is ``schema_behind`` with ``missing_schema_versions``. The
+Deploy Dev ``schema-gate`` (M4b) reads ``registered_keys`` from the running task. The keys are a second read; if it
+fails, readiness falls back to the version rule above and the body has no ``registered_keys``.
+
 ``/health/ready`` is public (the ALB / CI probe shape), so the answer is cached in-process for
 ``READY_CACHE_SECONDS`` (failures too): a burst of probes reaches RDS at most once per window per task.
 """
@@ -38,6 +45,11 @@ REQUIRED_CIS_SCHEMA = 297
 # listed version that is not registered (297 missing -> 296 -> "schema_behind").
 OUT_OF_ORDER_CIS = (297,)
 READY_CACHE_SECONDS = 5.0
+# AA-993 M4a: every number above this one is a registered CIS migration on Dev, number for number (298 is reserved and
+# not applied yet, above REQUIRED_CIS_SCHEMA). Below it are the legacy gaps; they are never listed nor required.
+LEGACY_CIS_BASELINE = 263
+# Every CIS key this code needs: raising REQUIRED_CIS_SCHEMA requires every number up to it (strict prefix, ADR 0017).
+REQUIRED_CIS_KEYS = tuple(range(LEGACY_CIS_BASELINE + 1, REQUIRED_CIS_SCHEMA + 1))
 
 # The highest numeric CIS version, capped below the lowest OUT_OF_ORDER_CIS version that is not registered ($1).
 SCHEMA_VERSION_SQL = """
@@ -45,6 +57,12 @@ SCHEMA_VERSION_SQL = """
       FROM (SELECT (SELECT max(version::int) FROM shared.schema_versions WHERE version ~ '^[0-9]+$') AS head,
                    (SELECT min(r) FROM unnest($1::int[]) AS r
                      WHERE NOT EXISTS (SELECT 1 FROM shared.schema_versions s WHERE s.version = r::text)) AS missing) m
+"""
+
+# The numeric CIS versions registered above LEGACY_CIS_BASELINE ($1), in number order.
+REGISTERED_KEYS_SQL = """
+    SELECT coalesce(array_agg(version::int ORDER BY version::int), '{}')
+      FROM shared.schema_versions WHERE version ~ '^[0-9]+$' AND version::int > $1
 """
 
 _cache: dict[str, Any] = {"at": None, "value": None}
@@ -66,10 +84,31 @@ async def _probe(pool: Any) -> tuple[int, dict]:
         return 503, {"status": "unavailable", "db": "error", "schema_version": None,
                      "required_schema": str(REQUIRED_CIS_SCHEMA), "git_sha": sha}
     ok = version is not None and version >= REQUIRED_CIS_SCHEMA
+    keys = await _registered_keys(pool)
+    missing = [str(k) for k in REQUIRED_CIS_KEYS if keys is not None and k not in keys]
+    ok = ok and not missing
     body = {"status": "ok" if ok else "schema_behind", "db": "ok",
             "schema_version": None if version is None else str(version),
             "required_schema": str(REQUIRED_CIS_SCHEMA), "git_sha": sha}
+    if keys is not None:
+        body["registered_keys"] = [str(k) for k in keys]
+        body["keys_baseline"] = str(LEGACY_CIS_BASELINE)
+    if missing:
+        body["missing_schema_versions"] = missing
     return (200 if ok else 503), body
+
+
+async def _registered_keys(pool: Any) -> Optional[list[int]]:
+    """The registered numeric CIS keys above LEGACY_CIS_BASELINE, or None when the read fails or answers something
+    other than a list (readiness then keeps the version rule alone)."""
+    try:
+        keys = await pool.fetchval(REGISTERED_KEYS_SQL, LEGACY_CIS_BASELINE)
+    except Exception as e:  # never a 500, never a flip to 503 on this read alone
+        logger.warning("health_ready_keys_failed", error=repr(e)[:200])
+        return None
+    if not isinstance(keys, (list, tuple)):
+        return None
+    return sorted(int(k) for k in keys)
 
 
 async def readiness(pool: Any, *, now: Optional[float] = None) -> tuple[int, dict]:

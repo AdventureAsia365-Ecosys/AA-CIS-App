@@ -3835,7 +3835,7 @@
         "type": "object"
       },
       "Readiness": {
-        "description": "GET /health/ready — ``status`` ``ok`` (200) or ``schema_behind`` / ``unavailable`` (503); ``db`` ``ok``,\n``error`` or ``not_ready``.",
+        "description": "GET /health/ready — ``status`` ``ok`` (200) or ``schema_behind`` / ``unavailable`` (503); ``db`` ``ok``,\n``error`` or ``not_ready``. ``registered_keys``: the numeric CIS versions registered above\n``keys_baseline``; ``missing_schema_versions``: required keys that are not registered.",
         "properties": {
           "db": {
             "title": "Db",
@@ -3844,6 +3844,45 @@
           "git_sha": {
             "title": "Git Sha",
             "type": "string"
+          },
+          "keys_baseline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keys Baseline"
+          },
+          "missing_schema_versions": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Missing Schema Versions"
+          },
+          "registered_keys": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registered Keys"
           },
           "required_schema": {
             "title": "Required Schema",

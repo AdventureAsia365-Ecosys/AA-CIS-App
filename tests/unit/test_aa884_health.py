@@ -55,7 +55,7 @@ async def test_ready_compares_numeric_versions_only():
     pool = _pool(readiness.REQUIRED_CIS_SCHEMA + 3)
     status, body = await readiness.readiness(pool, now=0.0)
     assert status == 200 and body["status"] == "ok"
-    sql = pool.fetchval.await_args.args[0]
+    sql = pool.fetchval.await_args_list[0].args[0]
     assert "version ~ '^[0-9]+$'" in sql and "version::int" in sql  # bk-/tp-/rl- keys never compared
 
 
@@ -78,9 +78,9 @@ async def test_ready_is_cached_for_five_seconds():
     pool = _pool(readiness.REQUIRED_CIS_SCHEMA)
     await readiness.readiness(pool, now=100.0)
     await readiness.readiness(pool, now=104.0)
-    assert pool.fetchval.await_count == 1
+    assert pool.fetchval.await_count == 2          # the version read + the registered keys read (AA-993 M4a)
     await readiness.readiness(pool, now=105.5)
-    assert pool.fetchval.await_count == 2
+    assert pool.fetchval.await_count == 4
 
 
 @pytest.mark.asyncio
@@ -90,7 +90,57 @@ async def test_ready_passes_the_out_of_order_versions_to_the_cap():
     # tests/integration/test_aa920_migration_297.py).
     pool = _pool(readiness.REQUIRED_CIS_SCHEMA)
     await readiness.readiness(pool, now=0.0)
-    sql, versions = pool.fetchval.await_args.args
+    sql, versions = pool.fetchval.await_args_list[0].args
     assert versions == list(readiness.OUT_OF_ORDER_CIS) and 297 in versions
     assert "unnest($1::int[])" in sql and "least(m.head, m.missing - 1)" in sql
     assert all(v <= readiness.REQUIRED_CIS_SCHEMA for v in readiness.OUT_OF_ORDER_CIS)
+
+
+# ── AA-993 M4a: registered_keys and REQUIRED_CIS_KEYS ──
+def _keys_pool(version, keys, keys_exc=None):
+    """fetchval answering by statement: the version read, then the registered keys read."""
+    async def fetchval(sql, *args):
+        if sql == readiness.REGISTERED_KEYS_SQL:
+            assert args == (readiness.LEGACY_CIS_BASELINE,)
+            if keys_exc is not None:
+                raise keys_exc
+            return keys
+        return version
+    pool = MagicMock()
+    pool.fetchval = AsyncMock(side_effect=fetchval)
+    return pool
+
+
+ALL_KEYS = list(readiness.REQUIRED_CIS_KEYS)
+
+
+@pytest.mark.asyncio
+async def test_ready_lists_the_registered_keys_above_the_baseline():
+    status, body = await readiness.readiness(_keys_pool(299, ALL_KEYS + [299]), now=0.0)
+    assert status == 200 and body["status"] == "ok"
+    assert body["registered_keys"] == [str(k) for k in ALL_KEYS] + ["299"]
+    assert body["keys_baseline"] == str(readiness.LEGACY_CIS_BASELINE)
+    assert "missing_schema_versions" not in body
+
+
+@pytest.mark.asyncio
+async def test_a_gap_under_the_required_key_is_schema_behind():
+    gap = [k for k in ALL_KEYS if k != 280]
+    status, body = await readiness.readiness(_keys_pool(readiness.REQUIRED_CIS_SCHEMA, gap), now=0.0)
+    assert status == 503 and body["status"] == "schema_behind"
+    assert body["missing_schema_versions"] == ["280"]
+    assert "280" not in body["registered_keys"]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_keys_read_keeps_the_version_rule():
+    pool = _keys_pool(readiness.REQUIRED_CIS_SCHEMA, None, keys_exc=OSError("boom"))
+    status, body = await readiness.readiness(pool, now=0.0)
+    assert status == 200 and "registered_keys" not in body
+
+
+def test_required_keys_run_from_the_baseline_to_the_required_schema():
+    keys = readiness.REQUIRED_CIS_KEYS
+    assert keys[0] == readiness.LEGACY_CIS_BASELINE + 1 and keys[-1] == readiness.REQUIRED_CIS_SCHEMA
+    assert list(keys) == list(range(keys[0], keys[-1] + 1))
+    assert set(readiness.OUT_OF_ORDER_CIS) <= set(keys)
