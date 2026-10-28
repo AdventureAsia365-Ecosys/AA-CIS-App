@@ -64,12 +64,12 @@ async function shot(page: Page, name: string, fullPage = false) {
 async function waitForPageData(page: Page) {
   // The admin shell has no <main> landmark (the content region is a scrolling div): wait for the page heading.
   await expect(page.locator('h1').first()).toBeVisible({ timeout: 20000 });
-  // First data row or the kit's empty state; skeletons gone.
+  // First data row or the kit's empty state (the docs reader opens on "Select a page", AA-898); skeletons gone.
   await expect
     .poll(
       async () => {
         const rows = await page.locator('table tbody tr, [role="row"]').count().catch(() => 0);
-        const empty = await page.getByText(/no (results|data|items|pieces|rules|signals)|nothing (here|yet)/i)
+        const empty = await page.getByText(/no (results|data|items|pieces|rules|signals)|nothing (here|yet)|select a page/i)
           .first().isVisible().catch(() => false);
         const loading = await page.locator('[aria-busy="true"], .aa-skeleton').count().catch(() => 0);
         return (rows > 0 || empty) && loading === 0 ? 'ready' : 'waiting';
