@@ -65,6 +65,22 @@ def test_a_claim_the_source_states_is_supported():
     assert out["unsupported"] == [] and out["checked"] == out["supported"] == 3
 
 
+@pytest.mark.parametrize("claim,source", [
+    ("Anyone under 12 rides with an adult.", "Children under 12 must be accompanied."),   # "anyone" is not "one"
+    ("Families with children aged 7-16 love it.", "Minimum age: 7. Maximum age: 16."),     # label-style source
+    ("Travel in small groups of up to 12.", "Maximum group size: 12"),                      # label-style source
+    ("Great for children 8 and up, aged 8+.", "Children 8+ welcome."),
+])
+def test_a_source_label_or_other_wording_supports_the_claim(claim, source):
+    assert bc.check({"summary": claim}, source)["unsupported"] == []
+
+
+def test_numbers_are_whole_tokens():
+    assert bc._numbers("anyone under 12") == frozenset({12})
+    assert bc._numbers("often aged 10") == frozenset({10})
+    assert bc.check({"summary": "A forest aged 300 years, where people gather."}, "")["unsupported"] == []
+
+
 def test_different_numbers_are_not_supported():
     out = bc.check({"summary": "For children aged 5 to 16."}, "Suitable for children aged 7 to 16.")
     assert [c["kind"] for c in out["unsupported"]] == ["age"]
@@ -111,6 +127,7 @@ def _axes(**kw):
     ({"brand_fit": 5.0, "judge_score_raw": 5.0, "judge_score": 5.0}, "brand_fit"),
     ({"mission_present": False, "judge_score_raw": 6.0, "judge_score": 6.0}, "mission"),
     ({"mission_present": False, "brand_fit": 6.0, "judge_score_raw": 6.0, "judge_score": 6.0}, "brand_fit"),  # tie
+    ({"mission_present": None, "judge_score_raw": 6.0, "judge_score": 6.0}, "mission"),  # None caps (t2_judge_score)
     ({"mission_present": False, "has_mission": False}, "brand_fit"),                     # no core idea: no cap
     ({"gate": "brand_fit", "mission_present": False}, "brand_fit"),                     # A1-style gate: no cap
     ({"gate": "combined", "judge_score_raw": 5.0, "judge_score": 5.0}, "cross_brand"),

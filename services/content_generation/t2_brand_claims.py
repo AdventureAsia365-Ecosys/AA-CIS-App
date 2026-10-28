@@ -37,7 +37,9 @@ _NUM_WORDS = {
     "eighteen": 18, "nineteen": 19, "twenty": 20, "twenty-one": 21, "twenty one": 21, "twenty-five": 25,
     "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80,
 }
-_NUM = r"(?:\d{1,2}|" + "|".join(sorted((re.escape(w) for w in _NUM_WORDS), key=len, reverse=True)) + r")"
+# Whole tokens only: "300" is never read as "30", and "anyone" / "often" never yield "one" / "ten".
+_NUM = (r"(?:(?<![\w])\d{1,2}(?!\d)|(?<![a-z])(?:"
+        + "|".join(sorted((re.escape(w) for w in _NUM_WORDS), key=len, reverse=True)) + r")(?![a-z]))")
 _RANGE = rf"{_NUM}(?:\s*(?:-|–|to|and|or)\s*{_NUM})?"
 _PERSON = (r"(?:children|child|kids|kid|teens|teenagers|teenager|youngsters|young\s+people|young\s+travell?ers|"
            r"travell?ers|guests|participants|students|adults|families|family\s+members|anyone|those|people|"
@@ -102,6 +104,23 @@ ETHOS_TERMS: dict[str, str] = {
 _ETHOS_COMPILED = {name: re.compile(rf"(?<![a-z0-9])(?:{rx})(?![a-z0-9])") for name, rx in ETHOS_TERMS.items()}
 
 _SENT_SPLIT = re.compile(r"(?<=[.!?])\s+")
+
+# Source side only: A1 text often states ages and group sizes as labels ("Minimum age: 7", "Maximum group size: 12",
+# "Children 8+") that the claim patterns do not read. A number in a source clause that names an age or a group counts
+# as stated, so a claim the source backs in another wording is not reported (report-only: missing a claim is
+# preferred to a false flag).
+_CLAUSE_SPLIT = re.compile(r"(?<=[.!?;])\s+|\n+")
+_AGE_CONTEXT = re.compile(r"\b(?:ages?|aged|years?[- ]olds?|child|children|kids?|infants?|teens?|teenagers?|minors?|"
+                          r"under[- ]\d{1,2}s)\b", re.I)
+_GROUP_CONTEXT = re.compile(r"\b(?:groups?|pax|guests|travell?ers|participants|people|persons)\b", re.I)
+
+
+def _context_numbers(source: str, context: re.Pattern) -> frozenset[int]:
+    out: set[int] = set()
+    for clause in _CLAUSE_SPLIT.split(source or ""):
+        if context.search(clause):
+            out |= _numbers(clause)
+    return frozenset(out)
 
 
 def enabled() -> bool:
@@ -211,6 +230,8 @@ def check(rewritten: dict, source: str, brand: str = "") -> dict:
     src_group = [n for _, n in _hits(_GROUP_PATTERNS, source)]
     src_age_nums = frozenset().union(*src_age) if src_age else frozenset()
     src_group_nums = frozenset().union(*src_group) if src_group else frozenset()
+    src_age_nums |= _context_numbers(source, _AGE_CONTEXT)
+    src_group_nums |= _context_numbers(source, _GROUP_CONTEXT)
 
     checked = supported = 0
     unsupported: list[dict] = []

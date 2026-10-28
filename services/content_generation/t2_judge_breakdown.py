@@ -39,7 +39,7 @@ def judge_axis(*, gate: str, brand_fit: float, distinct: Optional[float], missio
     candidates: list[tuple[str, float]] = [(BRAND_FIT, float(brand_fit))]
     if gate == "combined" and distinct is not None:
         candidates.append((CROSS_BRAND, float(distinct)))
-    if gate in ("brand_fit_mission", "combined") and has_mission and mission_present is False \
+    if gate in ("brand_fit_mission", "combined") and has_mission and not mission_present \
             and mission_cap is not None:
         candidates.append((MISSION, float(mission_cap)))
     low = min(v for _, v in candidates)
