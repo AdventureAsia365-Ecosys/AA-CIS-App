@@ -98,3 +98,8 @@ ffa78aefa4e88ec83def8938768c1f3b47bba6dc:tests/integration/test_007_rls_isolatio
 # scan goes red. Its PR head stays fetchable, so it is pinned by commit.
 3b19b6dfdf156956e538fd3c920d4538efa5eab0:canary/aa981-canary.tfvars:credential-key-literal:2
 3b19b6dfdf156956e538fd3c920d4538efa5eab0:canary/aa981-canary.tfvars:terraform-plaintext-secret:2
+
+# UI kit core manifest (AA-994): the old flat MANIFEST.json format mapped "tokens.ts" to the file's SHA-256 content
+# hash; the key name "tokens" trips generic-api-key. Not a secret (the hash of a committed source file). The current
+# format nests the hash under "sha256", which does not match.
+93dacc48d69ef8e1e847889a1dec7b80e5cd8109:frontend/app/_kit/core/MANIFEST.json:generic-api-key:34
