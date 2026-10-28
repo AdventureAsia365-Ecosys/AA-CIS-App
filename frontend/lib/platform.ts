@@ -265,7 +265,10 @@ export interface CostService {
 
 export interface AiSource {
   provider: string | null;
+  /** internal account key (never shown, AA-998) */
   account: string | null;
+  /** what the page shows: the AWS account ID, "Retired account", or null (no AWS account) */
+  account_name?: string | null;
   calls: number;
   cost_usd: number;
   billed_in_aws_acc2: boolean;
@@ -304,6 +307,10 @@ export interface CostRefresh {
 }
 
 export interface SatelliteLine {
+  /** internal account key (never shown, AA-998) */
+  key?: string;
+  /** the account ID with its role, or "Retired account" */
+  label?: string | null;
   account_id: string | null;
   ce_bedrock_usd: number | null;
   llm_log_estimate_usd: number;
@@ -330,9 +337,10 @@ export interface CostResp {
     ai_outside_aws_usd: number;
     total_usd: number;
   };
-  /** AA-998: acc3 is the only LLM satellite; `retired` is present only for a month that still holds spend of the
-   * former fallback account (history, `account_id` null). */
-  llm_satellites: { acc3?: SatelliteLine; retired?: SatelliteLine; ce_fetched_at?: string | null };
+  /** AA-998: one line per AWS account that ran LLM calls (the LLM account, plus the retired fallback account only
+   * for a month that still holds its spend: history, `account_id` null), named by `label`. The response also keys
+   * each line by its internal account key; the page reads `lines` only. */
+  llm_satellites: { lines?: SatelliteLine[]; ce_fetched_at?: string | null };
   /** AA-936: whether the CRM row's LLM spend (crm.ops.v1 /llm/usage, staff token) could be read. */
   crm_llm?: { status: string; reason?: string | null; http_status?: number | null };
   refresh: CostRefresh;

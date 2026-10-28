@@ -1,7 +1,21 @@
 """AA-714 — admin LLM settings say where each model really runs (Bedrock acc3 vs OpenAI API) and
-show the whole stage route (primary → fallbacks, shadow)."""
+show the whole stage route (primary → fallbacks, shadow). AA-998: an account is named by its AWS account ID,
+never by its internal key."""
+import re
+
+import pytest
+
 from api.routers.admin_llm_ops import _catalog_options, _route_view, model_via
 from shared.llm_client.catalog import CatalogModel
+
+# AWS documentation example accounts (the resource-ID check allows them). acc2 = the unit conftest's fake.
+ACC2 = "111122223333"
+ACC3 = "444455556666"
+
+
+@pytest.fixture(autouse=True)
+def _acc3_id(monkeypatch):
+    monkeypatch.setattr("shared.llm_client.bedrock_satellite.ACC3_ACCOUNT_ID", ACC3)
 
 
 def _m(key, label, provider, api_style="converse", profiles=None, vendor="openai"):
@@ -18,34 +32,34 @@ MODELS = [LUNA_56, LUNA_6, LUNA_6_OAI, GPT41, HAIKU]
 
 
 def test_same_model_name_on_two_providers_is_told_apart():
-    assert model_via(LUNA_6) == "Bedrock acc3"
+    assert model_via(LUNA_6) == f"Bedrock {ACC3}"
     assert model_via(LUNA_6_OAI) == "OpenAI API"
     assert model_via(GPT41) == "OpenAI API"
 
 
 def test_bedrock_accounts_listed_in_try_order():
     sonnet5 = _m("sonnet-5", "Claude Sonnet 5", "bedrock", profiles={"acc3": "p3", "acc2": "p2"}, vendor="anthropic")
-    assert model_via(sonnet5) == "Bedrock acc3 → acc2"
+    assert model_via(sonnet5) == f"Bedrock {ACC3} → {ACC2}"
 
 
 def test_a_stale_profile_on_the_retired_account_is_not_listed():
     # AA-998: before migration 295 applies, catalog rows still carry an acc1 profile; never shown as a hop.
     sonnet5 = _m("sonnet-5", "Claude Sonnet 5", "bedrock", profiles={"acc1": "p1", "acc3": "p3"}, vendor="anthropic")
-    assert model_via(sonnet5) == "Bedrock acc3"
+    assert model_via(sonnet5) == f"Bedrock {ACC3}"
 
 
 def test_legacy_claude_keys_show_the_legacy_chain_order(monkeypatch):
     # haiku/sonnet go through LLMClient._legacy_chain: acc3 only since AA-998 (AA-843: no acc2-native
     # attempt unless LLM_LEGACY_ACC2_NATIVE is on).
     monkeypatch.delenv("LLM_LEGACY_ACC2_NATIVE", raising=False)
-    assert model_via(HAIKU) == "Bedrock acc3"
+    assert model_via(HAIKU) == f"Bedrock {ACC3}"
     monkeypatch.setenv("LLM_LEGACY_ACC2_NATIVE", "on")
-    assert model_via(HAIKU) == "Bedrock acc2 → acc3"
+    assert model_via(HAIKU) == f"Bedrock {ACC2} → {ACC3}"
 
 
 def test_judge_options_carry_via():
     opts = {o["model_id"]: o for o in _catalog_options("judge", "s1_judge", MODELS)}
-    assert opts["gpt-5.6-luna"]["via"] == "Bedrock acc3"
+    assert opts["gpt-5.6-luna"]["via"] == f"Bedrock {ACC3}"
     assert opts["gpt-6-luna-openai"]["via"] == "OpenAI API"
 
 
@@ -54,8 +68,13 @@ def test_route_view_lists_chain_in_order_and_shadow():
            "shadow_model_id": "gpt-6-luna", "shadow_sample_pct": 100}
     r = _route_view(row, MODELS)
     assert [(i["model_id"], i["via"]) for i in r["chain"]] == [
-        ("gpt-5.6-luna", "Bedrock acc3"), ("gpt-6-luna", "Bedrock acc3"), ("gpt-6-luna-openai", "OpenAI API")]
-    assert r["shadow"] == {"model_id": "gpt-6-luna", "label": "GPT-6 Luna", "via": "Bedrock acc3", "sample_pct": 100}
+        ("gpt-5.6-luna", f"Bedrock {ACC3}"), ("gpt-6-luna", f"Bedrock {ACC3}"), ("gpt-6-luna-openai", "OpenAI API")]
+    assert r["shadow"] == {"model_id": "gpt-6-luna", "label": "GPT-6 Luna", "via": f"Bedrock {ACC3}", "sample_pct": 100}
+
+
+def test_via_never_names_an_account_key():
+    for m in MODELS:
+        assert not re.search(r"acc[0-9]", model_via(m))
 
 
 def test_route_view_without_catalog_or_shadow():

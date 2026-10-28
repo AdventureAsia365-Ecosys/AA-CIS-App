@@ -3,6 +3,8 @@ AWS call, and every default is acc3."""
 import inspect
 from unittest.mock import MagicMock, patch
 
+import re
+
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -49,7 +51,8 @@ def test_s1_batch_request_accepts_acc3_only():
 def test_settings_offer_acc3_only():
     from api.routers import admin_llm_ops as ops
 
-    assert [o["value"] for o in ops._ACCOUNT_ROUTE_OPTIONS] == ["acc3"]
+    assert list(ops._ACCOUNT_ROUTE_VALUES) == ["acc3"]
+    assert [o["value"] for o in ops._account_route_options()] == ["acc3"]
 
 
 @pytest.mark.asyncio
@@ -81,7 +84,8 @@ async def test_patch_llm_config_refuses_any_account_route_but_acc3(route, ok):
             with pytest.raises(HTTPException) as exc:
                 await ops.patch_llm_config("t9_write", ops.LlmConfigPatch(model_id="haiku", account_route=route),
                                            x_admin_secret="x", x_admin_user_id="a")
-            assert exc.value.status_code == 422 and "acc3 only" in exc.value.detail
+            assert exc.value.status_code == 422 and "LLM account only" in exc.value.detail
+            assert not re.search(r"acc[0-9]", exc.value.detail)   # AA-998: the admin never sees an account key
             m_set.assert_not_called()
 
 

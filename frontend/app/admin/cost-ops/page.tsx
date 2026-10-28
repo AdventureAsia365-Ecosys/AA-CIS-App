@@ -22,6 +22,11 @@ import {
 } from "../_components/adminUi";
 import { ScrollX, AdminMain, PageHeader, formatDate, formatDateTime } from "../../_kit";
 import { useChartColors } from "../../_kit/useTheme";
+import { useAwsAccounts } from "../_components/useAwsAccounts";
+import {
+  LIVE_ACCOUNTS, LLM_ACCOUNT, MAIN_ACCOUNT, RETIRED_ACCOUNT, RETIRED_ACCOUNT_LABEL, accountLabel, accountName,
+  isLiveAccount, type AwsAccounts,
+} from "@/lib/awsAccounts";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -74,7 +79,8 @@ interface DfsBalance {  // AA-627 — latest stored DataForSEO account balance (
   below_threshold: boolean; fetched_at: string | null; has_data: boolean;
 }
 interface CostExplorerAccount {  // AA-623 — one account's stored CE spend in the window
-  // account_key: "acc2" | "acc3" | "retired" (AA-998 history) from the backend (AA-902); null if unresolved.
+  // account_key: the internal key of a live account, or "retired" (AA-998 history), from the backend (AA-902);
+  // null if unresolved. Shown as the account ID (lib/awsAccounts.ts), never as the key.
   account_id: string; account_key?: string | null; total_usd: number; bedrock_usd: number; other_usd: number;
 }
 interface CostExplorerService {
@@ -96,36 +102,42 @@ interface CallRow {  // AA-622 fallback drill-down — GET /admin/llm-usage/call
 }
 
 const ROLE_COLOR: Record<string, "gray" | "gold" | "green"> = { writer: "gold", judge: "green", validate: "gray" };
-// AA-998: acc3 is the only LLM satellite. "retired" groups the older llm_call_log rows of the former
-// fallback account (history only; no account ID is shown, this repo is public).
-const ACCOUNTS = ["acc3", "acc2", "openai", "typesafe", "retired", "unknown"] as const;
-const ACCOUNT_META: Record<string, { label: string; short: string; color: string }> = {
-  acc3:    { label: "acc3 (Bedrock)", short: "acc3",   color: A.slate },
-  acc2:    { label: "acc2 (Bedrock)", short: "acc2",   color: A.green },
-  openai:  { label: "OpenAI (no AWS account)",        short: "OpenAI", color: A.ink3 },
+// AA-998: one LLM account. "retired" groups the older llm_call_log rows of the former fallback account (history
+// only, shown without an ID). AWS accounts are named by their account ID (lib/awsAccounts.ts), never by the key.
+const ACCOUNTS = [LLM_ACCOUNT, MAIN_ACCOUNT, "openai", "typesafe", RETIRED_ACCOUNT, "unknown"] as const;
+const ACCOUNT_COLOR: Record<string, string> = {
+  [LLM_ACCOUNT]: A.slate, [MAIN_ACCOUNT]: A.green, openai: A.ink3, typesafe: A.accent, [RETIRED_ACCOUNT]: A.gold,
+  unknown: A.muted,
+};
+// Buckets that are not an AWS account.
+const OTHER_ACCOUNT_META: Record<string, { label: string; short: string }> = {
+  openai:  { label: "OpenAI (no AWS account)",        short: "OpenAI" },
   // AA-660 — Jev decisions (shared/llm_client/decide.py); details per stage in /admin/decisions.
-  typesafe: { label: "Jev · TypeSafe (no AWS account)", short: "Jev",   color: A.accent },
-  retired: { label: "Retired fallback account (Bedrock, history)", short: "retired", color: A.gold },
-  unknown: { label: "Legacy (no account logged)",     short: "legacy", color: A.muted },
+  typesafe: { label: "Jev · TypeSafe (no AWS account)", short: "Jev" },
+  unknown: { label: "Legacy (no account logged)",     short: "legacy" },
 };
-const LIVE_ACCOUNTS = new Set(["acc2", "acc3"]);
-// AA-623 — Cost Explorer rows carry the same acc2/acc3/retired key ACCOUNT_META uses (account_key, set by
-// the backend since AA-902 — this repo is public, so no account ID is mapped here), so they line up with
-// the estimated (token) breakdown. An unknown account falls back to its raw account_id.
+/** Short name of an account bucket: the AWS account ID, "Retired account", or OpenAI / Jev / legacy. */
+function acctShort(k: string, dir?: AwsAccounts): string {
+  return OTHER_ACCOUNT_META[k]?.short ?? accountName(k, dir);
+}
+/** Long name of an account bucket, for the LLM estimate (every AWS line of it is Bedrock). */
+function acctLong(k: string, dir?: AwsAccounts): string {
+  if (OTHER_ACCOUNT_META[k]) return OTHER_ACCOUNT_META[k].label;
+  return isLiveAccount(k) ? `${accountLabel(k, dir)} · Bedrock` : `${RETIRED_ACCOUNT_LABEL} (Bedrock, history)`;
+}
+// AA-623 — Cost Explorer rows carry the same account key the token estimate uses (account_key, set by the backend
+// since AA-902), so they line up with the estimated (token) breakdown. An unresolved account keeps its raw ID.
 const ceKey = (r: { account_id: string; account_key?: string | null }) => r.account_key ?? r.account_id;
-// Cost Explorer covers WHOLE accounts, so these labels must not say "(Bedrock)": acc2 is the main
-// infra account (ECS/RDS/ELB/ElastiCache...) and native Claude is blocked there — its Bedrock
-// line is only Cohere Embed / Palmyra.
-const CE_ACCOUNT_LABEL: Record<string, string> = {
-  acc3: "acc3 (LLM satellite)",
-  acc2: "acc2 (main infra)",
-  retired: "Retired fallback account (history, AA-998)",
-};
+const ceName = (r: { account_id: string; account_key?: string | null }, dir?: AwsAccounts) =>
+  r.account_key ? accountName(r.account_key, dir) : r.account_id;
+// Cost Explorer covers WHOLE accounts, so these labels must not say "Bedrock": the main account runs the
+// infrastructure (ECS/RDS/ELB/ElastiCache...) and native Claude is blocked there — its Bedrock line is only
+// Cohere Embed / Palmyra. accountLabel() adds the role ("main infrastructure" / "LLM").
 
 // The `account` column is NULL for OpenAI calls (no AWS account) and for any row written before
 // AA-617 added the column; both COALESCE to "unknown" in the backend. To keep OpenAI distinct from
 // truly-unknown legacy rows, we key the account dimension off `provider` when account is unknown:
-// provider="openai" -> "openai" bucket, otherwise "unknown". Real Bedrock rows carry acc2/acc3; any other
+// provider="openai" -> "openai" bucket, otherwise "unknown". Real Bedrock rows carry a live account key; any other
 // logged account is the AA-998 retired fallback account's history -> "retired".
 function acctKey(b: { account: string; provider: string }): string {
   if (b.account === "unknown") {
@@ -133,7 +145,7 @@ function acctKey(b: { account: string; provider: string }): string {
     if (b.provider === "typesafe") return "typesafe";   // AA-660 — Jev
     return "unknown";
   }
-  return LIVE_ACCOUNTS.has(b.account) ? b.account : "retired";
+  return LIVE_ACCOUNTS.includes(b.account) ? b.account : RETIRED_ACCOUNT;
 }
 
 function fmtUsd(n: number): string {
@@ -170,11 +182,11 @@ function QualityCell({ b }: { b: Branch }) {
 }
 
 function AcctDot({ account }: { account: string }) {
-  const m = ACCOUNT_META[account] ?? { short: account, color: A.muted };
+  const dir = useAwsAccounts();
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, color: A.muted }}>
-      <span style={{ width: 7, height: 7, borderRadius: "50%", background: m.color, flexShrink: 0 }} />
-      {m.short}
+      <span style={{ width: 7, height: 7, borderRadius: "50%", background: ACCOUNT_COLOR[account] ?? A.muted, flexShrink: 0 }} />
+      {acctShort(account, dir)}
     </span>
   );
 }
@@ -214,6 +226,7 @@ function TenantSpendTable({ branches, onFallbackClick }: {
   branches: Branch[];
   onFallbackClick: (tenantId: string | null, label: string) => void;
 }) {
+  const dir = useAwsAccounts();
   const rows = useMemo(() => buildTenantRows(branches), [branches]);
   const accountsPresent = useMemo(() => ACCOUNTS.filter(a => branches.some(b => acctKey(b) === a)), [branches]);
   if (rows.length === 0) return <div style={{ color: A.muted2, fontSize: 13, padding: "8px 0" }}>No LLM calls in range.</div>;
@@ -228,7 +241,7 @@ function TenantSpendTable({ branches, onFallbackClick }: {
         <th style={{ ...TH, textAlign: "right" }}>$/1K tok</th>
         <th style={{ ...TH, textAlign: "right" }}>Pass</th>
         <th style={{ ...TH, textAlign: "right" }}>Fallback</th>
-        {accountsPresent.map(a => <th key={a} style={{ ...TH, textAlign: "right" }}>{ACCOUNT_META[a].short}</th>)}
+        {accountsPresent.map(a => <th key={a} style={{ ...TH, textAlign: "right" }}>{acctShort(a, dir)}</th>)}
       </tr></thead>
       <tbody>
         {rows.map(r => (
@@ -324,6 +337,7 @@ function TopGroup({ label, sublabel, dotColor, branches, groupBy }: {
   groupBy: "account" | "tenant";
 }) {
   const [open, setOpen] = useState(true);
+  const dir = useAwsAccounts();
   const cost = branches.reduce((s, b) => s + b.total_cost_usd, 0);
   const calls = branches.reduce((s, b) => s + b.call_count, 0);
   // second-level key: if grouped by account -> break down by model; if by tenant -> by account
@@ -353,8 +367,8 @@ function TopGroup({ label, sublabel, dotColor, branches, groupBy }: {
           {[...sub.entries()].map(([k, bs]) => (
             <SubNode
               key={k}
-              label={groupBy === "account" ? k : (ACCOUNT_META[k]?.short ?? k)}
-              dotColor={groupBy === "tenant" ? ACCOUNT_META[k]?.color : undefined}
+              label={groupBy === "account" ? k : acctShort(k, dir)}
+              dotColor={groupBy === "tenant" ? ACCOUNT_COLOR[k] : undefined}
               branches={bs}
               indent={38}
             />
@@ -498,6 +512,7 @@ function CostOperationsInner() {
   const [tenantFilter, setTenantFilter] = useState<string | null>(null);
   const [acctFilter, setAcctFilter] = useState<string | null>(null);
   const [groupBy, setGroupBy] = useState<"account" | "tenant">("tenant");
+  const awsAccounts = useAwsAccounts();
   // AA-622 fallback drill-down: {tenantId, label} when open (tenantId null = all tenants)
   const [fbModal, setFbModal] = useState<{ tenantId: string | null; label: string | null } | null>(null);
 
@@ -621,10 +636,10 @@ function CostOperationsInner() {
   const spendByAccount = useMemo(() => {
     const m = new Map<string, number>();
     for (const b of llm) { const ak = acctKey(b); m.set(ak, (m.get(ak) ?? 0) + b.total_cost_usd); }
-    const rows = [...m.entries()].map(([key, cost]) => ({ key, label: ACCOUNT_META[key]?.label ?? key, cost }));
+    const rows = [...m.entries()].map(([key, cost]) => ({ key, label: acctLong(key, awsAccounts), cost }));
     if (dfsCost > 0) rows.push({ key: "dfs", label: "DataForSEO (3rd-party)", cost: dfsCost });
     return rows.sort((a, b) => b.cost - a.cost);
-  }, [llm, dfsCost]);
+  }, [llm, dfsCost, awsAccounts]);
   // AA-623 — Cost Explorer per account, Bedrock vs infra, next to the token estimate for the same
   // account. Only Bedrock-on-AWS estimate is comparable: OpenAI/legacy rows never hit an AWS bill.
   const ceByAccount = useMemo(() => {
@@ -635,12 +650,11 @@ function CostOperationsInner() {
     }
     return (costExplorer?.accounts ?? []).map(a => {
       const key = ceKey(a);
-      // The retired account is labelled without its ID (AA-998); any unlabelled key keeps the raw ID.
-      const label = key === "retired" ? CE_ACCOUNT_LABEL.retired
-        : CE_ACCOUNT_LABEL[key] ? `${CE_ACCOUNT_LABEL[key]} · ${a.account_id}` : a.account_id;
+      // The account ID with its role; the retired account without its ID (AA-998); an unresolved key its raw ID.
+      const label = a.account_key ? accountLabel(a.account_key, awsAccounts) : a.account_id;
       return { ...a, key, label, estimated: estByAcct.get(key) ?? 0 };
     });
-  }, [costExplorer, allBranches]);
+  }, [costExplorer, allBranches, awsAccounts]);
   const bedrockEstimated = ceByAccount.reduce((s, r) => s + r.estimated, 0);
   const ceTopServices = useMemo(() => (costExplorer?.services ?? []).slice(0, 10), [costExplorer]);
   // Stored CE days only cover windows someone clicked "Refresh from AWS" for — flag gaps.
@@ -739,7 +753,7 @@ function CostOperationsInner() {
               <span style={{ fontSize: 12, color: A.muted, marginRight: 2 }}>Account</span>
               <Btn size="sm" variant={acctFilter === null ? "primary" : "secondary"} onClick={() => setAcctFilter(null)}>All</Btn>
               {acctOptions.map(a => (
-                <Btn key={a} size="sm" variant={acctFilter === a ? "primary" : "secondary"} onClick={() => setAcctFilter(a)}>{ACCOUNT_META[a].short}</Btn>
+                <Btn key={a} size="sm" variant={acctFilter === a ? "primary" : "secondary"} onClick={() => setAcctFilter(a)}>{acctShort(a, awsAccounts)}</Btn>
               ))}
             </div>
             {filterActive && (
@@ -825,7 +839,7 @@ function CostOperationsInner() {
                   </Card>
                   <Card>
                     <SLabel>Spend by account</SLabel>
-                    <Bar rows={spendByAccount} total={totalSpend} colorOf={(k) => k === "dfs" ? A.green : (ACCOUNT_META[k]?.color ?? A.muted)} />
+                    <Bar rows={spendByAccount} total={totalSpend} colorOf={(k) => k === "dfs" ? A.green : (ACCOUNT_COLOR[k] ?? A.muted)} />
                   </Card>
                 </div>
 
@@ -850,7 +864,7 @@ function CostOperationsInner() {
                   <SLabel light>Reconcile note</SLabel>
                   <div style={{ fontSize: 12.5, color: "rgba(255,255,255,0.75)", lineHeight: 1.6 }}>
                     Computed from per-call cost in <code style={{ fontFamily: mono }}>llm_call_log</code> + <code style={{ fontFamily: mono }}>dfs_call_log</code> — NOT the AWS invoice.
-                    Claude on Bedrock runs on the satellite account (<b>acc3</b>); acc2 is the infra account and only calls non-Claude Bedrock models (Cohere Embed / Palmyra). DataForSEO is 3rd-party (never in Cost Explorer).
+                    Claude on Bedrock runs on the LLM account (<b>{accountName(LLM_ACCOUNT, awsAccounts)}</b>); the main infrastructure account ({accountName(MAIN_ACCOUNT, awsAccounts)}) only calls non-Claude Bedrock models (Cohere Embed / Palmyra). DataForSEO is 3rd-party (never in Cost Explorer).
                     See the AWS bill tab for the reconciliation against the real AWS invoice.
                   </div>
                 </Card>
@@ -933,7 +947,7 @@ function CostOperationsInner() {
                           <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 8 }}>
                             {ceTopServices.map(s => (
                               <div key={`${s.account_id}-${s.service}`} style={{ display: "flex", gap: 8, fontSize: 12 }}>
-                                <span style={{ color: A.muted2, minWidth: 44 }}>{ceKey(s)}</span>
+                                <span style={{ color: A.muted2, minWidth: 44, fontFamily: mono }}>{ceName(s, awsAccounts)}</span>
                                 <span style={{ color: s.is_bedrock ? A.gold : A.ink2 }}>{s.service}</span>
                                 <span style={{ marginLeft: "auto", fontFamily: mono, color: A.ink3 }}>{fmtUsd2(s.amount_usd)}</span>
                               </div>
@@ -942,8 +956,8 @@ function CostOperationsInner() {
                         </details>
                       )}
                       <div style={{ fontSize: 11, color: A.muted2, marginTop: 8 }}>
-                        Compare the Bedrock columns only: Cost Explorer bills whole accounts, and acc2 is the main infra account
-                        (native Claude is blocked there — its Bedrock line is Cohere Embed / Palmyra only). CE days are UTC and the
+                        Compare the Bedrock columns only: Cost Explorer bills whole accounts, and the main infrastructure
+                        account ({accountName(MAIN_ACCOUNT, awsAccounts)}) runs the infrastructure too (native Claude is blocked there — its Bedrock line is Cohere Embed / Palmyra only). CE days are UTC and the
                         latest ~24h is still being finalized. OpenAI and DataForSEO are not AWS and never appear here.
                       </div>
                     </>
@@ -968,7 +982,7 @@ function CostOperationsInner() {
                 </div>
 
                 <Card style={{ marginBottom: 18, padding: 0, overflow: "hidden" }}>
-                  <div style={{ padding: "14px 18px" }}><SLabel style={{ marginBottom: 0 }}>Spend by tenant{acctFilter ? ` · ${ACCOUNT_META[acctFilter]?.short}` : ""}</SLabel></div>
+                  <div style={{ padding: "14px 18px" }}><SLabel style={{ marginBottom: 0 }}>Spend by tenant{acctFilter ? ` · ${acctShort(acctFilter, awsAccounts)}` : ""}</SLabel></div>
                   <div style={{ padding: "0 18px 16px" }}>
                     <TenantSpendTable branches={llm} onFallbackClick={(tid, label) => setFbModal({ tenantId: tid, label })} />
                   </div>
@@ -986,9 +1000,8 @@ function CostOperationsInner() {
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                     {llmTree.map(([k, bs]) => {
                       const isAcct = groupBy === "account";
-                      const meta = isAcct ? ACCOUNT_META[k] : null;
-                      const label = isAcct ? (meta?.label ?? k) : (bs[0]?.tenant_label ?? k);
-                      const dot = isAcct ? (meta?.color ?? A.muted) : A.accent;
+                      const label = isAcct ? acctLong(k, awsAccounts) : (bs[0]?.tenant_label ?? k);
+                      const dot = isAcct ? (ACCOUNT_COLOR[k] ?? A.muted) : A.accent;
                       const sublabel = isAcct ? "account" : "tenant";
                       return <TopGroup key={k} label={label} sublabel={sublabel} dotColor={dot} branches={bs} groupBy={groupBy} />;
                     })}
@@ -1002,7 +1015,7 @@ function CostOperationsInner() {
                       <div key={c.stage} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, padding: "5px 0", borderBottom: `1px solid ${A.line2}` }}>
                         <span style={{ fontFamily: mono, color: A.ink2, minWidth: 150 }}>{c.stage}</span>
                         <Badge color={ROLE_COLOR[c.role] ?? "gray"}>{c.role}</Badge>
-                        <span style={{ marginLeft: "auto", fontFamily: mono, color: A.ink3 }}>{c.model_id}{c.account_route ? ` · ${c.account_route}` : ""}</span>
+                        <span style={{ marginLeft: "auto", fontFamily: mono, color: A.ink3 }}>{c.model_id}{c.account_route ? ` · ${accountName(c.account_route, awsAccounts)}` : ""}</span>
                       </div>
                     ))}
                   </div>

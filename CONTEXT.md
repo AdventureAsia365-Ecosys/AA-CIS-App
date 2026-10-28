@@ -365,7 +365,14 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   - `shared.cost_explorer_snapshot` holds real AWS Cost Explorer figures for acc2/acc3,
     fetched on demand through `POST /admin/cost-explorer/check` (AA-623). acc2 calls CE
     directly; acc3 via assume-role (`shared/aws_client/cost_explorer.py`). AA-998: acc1 is no longer fetched; its
-    stored rows stay and read with `account_key = "retired"` (labelled "Retired fallback account", no account ID).
+    stored rows stay and read with `account_key = "retired"` (shown as "Retired account", no account ID).
+  - **How the admin names an AWS account** (AA-998): never by the internal key (acc2 / acc3 stay as keys in
+    `account_route`, `llm_call_log.account` and the cost rows) but by its 12-digit account ID, read at run time
+    (acc2: STS of the task's own credentials, once per process; acc3: `BEDROCK_ACCT_PRIMARY`) by
+    `shared/aws_client/accounts.py` and served by `GET /admin/aws-accounts`. The frontend names accounts only
+    through `frontend/lib/awsAccounts.ts` (`accountName` / `accountLabel`, hook `useAwsAccounts`); a guard test
+    fails on a key spelled anywhere else in the frontend. Labels built by the API (Settings › Models "via",
+    the account-route option, the forecast and Cost per app lines) use the same module.
   - The admin **Cost Operations** page (`/admin/cost-ops`, AA-665; was External Spend at `/admin/llm-usage`, which
     redirects) has the tabs Overview, LLM, DataForSEO, AWS bill, Jev and Budgets. It compares estimated spend (token
     logs) with the real AWS bill (AWS bill tab), splitting Bedrock from infrastructure per account, over any date range.

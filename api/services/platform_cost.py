@@ -53,6 +53,7 @@ import structlog
 
 from api.core.app_registry import APPS, SHARED_COST_TAGS, app_for_cost_tag
 from shared.aws_client import cost_explorer as ce
+from shared.aws_client.accounts import account_label, account_name
 
 logger = structlog.get_logger()
 
@@ -287,7 +288,8 @@ async def cost_by_app(pool: Any, month: Optional[str] = None, *, redis: Any = No
         r["ai_calls"] += int(a["calls"] or 0)
         if a["billed_in_acc2"]:
             r["ai_in_aws_acc2_usd"] += cost
-        r["ai_by_source"].append({"provider": a["provider"], "account": a["account"], "calls": int(a["calls"] or 0),
+        r["ai_by_source"].append({"provider": a["provider"], "account": a["account"],
+                                  "account_name": account_name(a["account"]), "calls": int(a["calls"] or 0),
                                   "cost_usd": round(cost, 4), "billed_in_aws_acc2": bool(a["billed_in_acc2"])})
         if a["account"] not in (None, "acc2") and (a["provider"] or "").startswith("bedrock"):
             # acc3, or (history before AA-998) the retired fallback account.
@@ -303,7 +305,8 @@ async def cost_by_app(pool: Any, month: Optional[str] = None, *, redis: Any = No
             r["ai_usd"] += float(usage.get("cost_usd") or 0.0)
             r["ai_calls"] += int(usage.get("calls") or 0)
             # Estimates of the CRM's own gateway; its model calls do not run on acc2 (billed_in_aws_acc2 false).
-            r["ai_by_source"].extend({"provider": f"crm_gateway:{m['model']}", "account": None, "calls": m["calls"],
+            r["ai_by_source"].extend({"provider": f"crm_gateway:{m['model']}", "account": None, "account_name": None,
+                                      "calls": m["calls"],
                                       "cost_usd": round(m["cost_usd"], 4), "billed_in_aws_acc2": False}
                                      for m in usage.get("by_model") or [])
 
@@ -336,12 +339,13 @@ async def cost_by_app(pool: Any, month: Optional[str] = None, *, redis: Any = No
         "crm_llm": crm_status,
         "refresh": refresh,
         "sources": {
-            "aws_usd": "AWS Cost Explorer, acc2, UnblendedCost grouped by tag App (shared.cost_explorer_app_snapshot)",
+            "aws_usd": "AWS Cost Explorer, main account, UnblendedCost grouped by tag App "
+                       "(shared.cost_explorer_app_snapshot)",
             "ai_usd": "LLM gateway estimates by app (shared.llm_call_log / shared.llm_call_daily); the CRM row from "
                       "the CRM's own gateway rollup (crm.ops.v1 GET /llm/usage, crm.llm_usage_daily)",
-            "ai_outside_aws_usd": "ai_usd - ai_in_aws_acc2_usd (Bedrock on acc2 is already in aws_usd)",
+            "ai_outside_aws_usd": "ai_usd - ai_in_aws_acc2_usd (Bedrock on the main account is already in aws_usd)",
             "total_usd": "aws_usd + ai_outside_aws_usd",
-            "llm_satellites": "acc3 Bedrock from Cost Explorer (shared.cost_explorer_snapshot) vs the estimate",
+            "llm_satellites": "LLM account Bedrock from Cost Explorer (shared.cost_explorer_snapshot) vs the estimate",
         },
     }
 
@@ -395,5 +399,8 @@ async def _satellites(pool: Any, start: date, end: date, estimate: dict[str, flo
             "account_id": None,
             "ce_bedrock_usd": round(sum(a["bedrock_usd"] for a in retired), 4) if retired else None,
             "llm_log_estimate_usd": round(estimate.get(ce.RETIRED_ACCOUNT_KEY, 0.0), 4)}
+    # AA-998: what the page renders — one line per account, named by its ID ("Retired account" without one).
+    out["lines"] = [{"key": k, "label": account_label(k), **out[k]} for k in ("acc3", ce.RETIRED_ACCOUNT_KEY)
+                    if k in out]
     out["ce_fetched_at"] = (data or {}).get("fetched_at")
     return out

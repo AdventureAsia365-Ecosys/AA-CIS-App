@@ -325,9 +325,10 @@ async def test_cost_forecast_shows_retired_account_history_without_its_id(monkey
     out = await cost_ops.cost_forecast(pool, "2026-09", now=now)
     bedrock = next(p for p in out["providers"] if p["key"] == "bedrock")
     assert [a["account"] for a in bedrock["accounts"]] == ["acc3", "retired"]
-    assert bedrock["accounts"][1]["label"] == cost_ops.ACCOUNT_LABELS["retired"]
+    assert bedrock["accounts"][1]["label"] == "Retired account"   # AA-998: no ID, never the internal key
     aws = [a["account"] for a in out["aws_accounts"]]
     assert aws == ["acc2", "acc3", "retired"]
+    assert out["aws_accounts"][0]["label"] == "111122223333 (main infrastructure)"   # AA-998: the ID, not the key
     retired = out["aws_accounts"][2]
     assert retired["mtd_usd"] == pytest.approx(0.97) and retired["status"] == "no_budget"
     assert "A1" not in str(out)

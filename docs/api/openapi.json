@@ -8113,6 +8113,69 @@
         ]
       }
     },
+    "/admin/aws-accounts": {
+      "get": {
+        "operationId": "get_aws_accounts_admin_aws_accounts_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "The AWS accounts the admin pages name, with their account IDs",
+        "tags": [
+          "admin-llm-ops"
+        ]
+      }
+    },
     "/admin/billing": {
       "get": {
         "description": "Admin billing view — defaults to aa_internal; pass ?tenant_id= for a specific tenant.\n\nAA-798: ``llm_cost_usd`` is the view's column, i.e. real month-to-date\n``SUM(shared.llm_call_log.cost_usd)`` for the tenant (migration 223). An unknown tenant is a\n404 (it used to get an invented Starter plan); a tenant without a plan gets\n``plan_attached: false`` and null quotas/price (see ``_billing.usage_row_to_dict``).",
@@ -11574,7 +11637,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "AA-623 — stored AWS Cost Explorer spend for a window (no live CE call)",
+        "summary": "Stored AWS Cost Explorer spend for a window (no live CE call)",
         "tags": [
           "admin-llm-ops"
         ]

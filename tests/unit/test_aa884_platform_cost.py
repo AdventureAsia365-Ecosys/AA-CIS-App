@@ -179,7 +179,8 @@ async def test_llm_satellites_is_acc3_only_without_retired_history(monkeypatch):
         "accounts": [{"account_id": ce.ACC3_ACCOUNT_ID, "account_key": "acc3", "bedrock_usd": 4.2}],
         "fetched_at": "x"}))
     out = await pc.cost_by_app(_pool(AI_ROWS[:3]), None, redis=None, now=NOW)
-    assert set(out["llm_satellites"]) == {"acc3", "ce_fetched_at"}
+    assert set(out["llm_satellites"]) == {"acc3", "lines", "ce_fetched_at"}
+    assert [line["key"] for line in out["llm_satellites"]["lines"]] == ["acc3"]
 
 
 @pytest.mark.asyncio

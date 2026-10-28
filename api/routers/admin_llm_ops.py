@@ -29,6 +29,7 @@ from api.core.error_ref import log_exception_ref, new_error_ref, public_error
 from api.core.staff_authz import staff_policy
 from services.quality.registry import threshold
 from api.routers.admin import verify_admin_secret
+from shared.aws_client import accounts as aws_accounts
 from shared.aws_client.cost_explorer import (
     CostExplorerUnavailable,
     fetch_all_accounts_cost,
@@ -87,10 +88,13 @@ _JUDGE_OPTIONS = [
     {"model_id": "gpt-4.1", "label": "GPT-4.1", "via": "OpenAI API", "available": False,
      "reason": "S235: retired; OpenAI API kept only as last-resort fallback via gpt-6-luna-openai"},
 ]
-# AA-998: acc3 is the only satellite account (llm_role_config CHECK, migration 295).
-_ACCOUNT_ROUTE_OPTIONS = [
-    {"value": "acc3", "label": "acc3 (satellite)"},
-]
+# AA-998: acc3 is the only satellite account (llm_role_config CHECK, migration 295). The admin shows its AWS
+# account ID, never the key (shared/aws_client/accounts.py), so the label is built per request.
+_ACCOUNT_ROUTE_VALUES = (aws_accounts.LLM_ACCOUNT_KEY,)
+
+
+def _account_route_options() -> list[dict]:
+    return [{"value": k, "label": aws_accounts.account_label(k)} for k in _ACCOUNT_ROUTE_VALUES]
 # Permanently rejected — never shown, not even as "blocked".
 # Palmyra X5: hard 1 req/min channel-program throttle, AA-334/AA-392 permanently rejected.
 
@@ -98,10 +102,18 @@ _ACCOUNT_ROUTE_OPTIONS = [
 _LEGACY_VIA = {"gpt-4.1": "OpenAI API"}
 
 
+def _bedrock_via(keys) -> str:
+    """"Bedrock <account ID> → <account ID>" for account keys in serving order (AA-998: IDs, never the keys)."""
+    names = [aws_accounts.account_name(k) for k in keys]
+    return "Bedrock " + " → ".join(n for n in names if n) if names else "Bedrock"
+
+
 def _legacy_claude_via() -> str:
     """Legacy haiku/sonnet chain (LLMClient._legacy_chain): the acc3 satellite (AA-998: no
     cross-account fallback); AA-843 — acc2-native leads only when LLM_LEGACY_ACC2_NATIVE is on."""
-    return "Bedrock acc2 → acc3" if legacy_acc2_native_enabled() else "Bedrock acc3"
+    if legacy_acc2_native_enabled():
+        return _bedrock_via((aws_accounts.MAIN_ACCOUNT_KEY, aws_accounts.LLM_ACCOUNT_KEY))
+    return _bedrock_via((aws_accounts.LLM_ACCOUNT_KEY,))
 
 
 def model_via(m) -> str:
@@ -114,8 +126,8 @@ def model_via(m) -> str:
         return _legacy_claude_via()
     accts = [a for a in SERVING_ACCOUNTS if a in (m.bedrock_profile_ids or {})]
     if m.api_style == "embed" and not accts:
-        return "Bedrock acc2"
-    return "Bedrock " + " → ".join(accts) if accts else "Bedrock"
+        return _bedrock_via((aws_accounts.MAIN_ACCOUNT_KEY,))
+    return _bedrock_via(accts)
 
 
 def _via_map(models: Optional[list]) -> dict[str, str]:
@@ -208,7 +220,7 @@ async def get_llm_config():
     for r in rows:
         r["updated_at"] = r["updated_at"].isoformat() if r["updated_at"] else None
         r["options"] = _options_for(r["role"], r["stage"], models)
-        r["account_route_options"] = _ACCOUNT_ROUTE_OPTIONS if r["provider"] == "claude" else []
+        r["account_route_options"] = _account_route_options() if r["provider"] == "claude" else []
         r["route"] = _route_view(r, models)
     return {"stages": rows}
 
@@ -236,8 +248,9 @@ async def patch_llm_config(
     if body.model_id in _openai_api_keys(models):
         raise HTTPException(status_code=422, detail=_OPENAI_LAST_RESORT_ONLY)
     # AA-998: only acc3 (or no value = acc3) — the retired fallback account is refused here, before the DB CHECK.
-    if body.account_route is not None and body.account_route not in {o["value"] for o in _ACCOUNT_ROUTE_OPTIONS}:
-        raise HTTPException(status_code=422, detail=f"account_route {body.account_route!r} is not allowed (acc3 only)")
+    if body.account_route is not None and body.account_route not in _ACCOUNT_ROUTE_VALUES:
+        raise HTTPException(status_code=422,
+                            detail="This account route is not allowed: models run on the LLM account only")
     try:
         updated = await set_stage_config(
             stage, body.model_id, body.account_route, updated_by=f"admin:{admin_actor}",
@@ -1094,7 +1107,14 @@ async def check_cost_explorer(
     }
 
 
-@router.get("/cost-explorer", summary="AA-623 — stored AWS Cost Explorer spend for a window (no live CE call)")
+# AA-998 — the admin names AWS accounts by their ID, never by the internal key. Every staff role may read it (no
+# POLICY entry): the pages that show an account (Settings › Models, Cost Operations, Cost per app, Jobs) differ.
+@router.get("/aws-accounts", summary="The AWS accounts the admin pages name, with their account IDs")
+async def get_aws_accounts():
+    return {"accounts": aws_accounts.account_directory()}
+
+
+@router.get("/cost-explorer", summary="Stored AWS Cost Explorer spend for a window (no live CE call)")
 async def get_cost_explorer(
     request: Request, days: int = Query(7, ge=1, le=365),
     start: Optional[date] = None, end: Optional[date] = None,

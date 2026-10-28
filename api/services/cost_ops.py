@@ -47,6 +47,7 @@ import structlog
 
 from api.services.platform_cost import month_window, provider_family
 from shared.aws_client import cost_explorer as ce
+from shared.aws_client.accounts import account_label
 
 logger = structlog.get_logger()
 
@@ -64,11 +65,6 @@ PROVIDER_LABELS = {
     "jev": "Jev (TypeSafe)",
     "dfs": "DataForSEO",
     "other": "Other LLM providers",
-}
-ACCOUNT_LABELS = {
-    "acc3": "acc3 (LLM satellite)",
-    "acc2": "acc2 (main infra)",
-    ce.RETIRED_ACCOUNT_KEY: "Retired fallback account (history, AA-998)",
 }
 # Display order of the Bedrock split and the AWS rows; the retired account only appears when it has data.
 _BEDROCK_ACCOUNT_ORDER = ("acc3", "acc2", ce.RETIRED_ACCOUNT_KEY)
@@ -450,7 +446,7 @@ async def cost_forecast(pool: Any, month: Optional[str] = None, *, now: Optional
         _with_budget(row, monthly, alert_pct, f"Budgets tab: daily cap {per_day} USD x {n_days} days"
                      if per_day is not None else "")
         if key == "bedrock":
-            row["accounts"] = [{"account": acc, "label": ACCOUNT_LABELS.get(acc, acc),
+            row["accounts"] = [{"account": acc, "label": account_label(acc) or acc,
                                 **project(accounts[acc], start, month_end, complete_until)}
                                for acc in sorted(accounts, key=lambda a: _BEDROCK_ACCOUNT_ORDER.index(a)
                                                  if a in _BEDROCK_ACCOUNT_ORDER else 9)]
@@ -463,7 +459,7 @@ async def cost_forecast(pool: Any, month: Optional[str] = None, *, now: Optional
     shown = _AWS_ACCOUNTS + ((retired,) if any(start <= d < month_end for d in ce_series.get(retired, {})) else ())
     for acc in shown:
         days = {d: v for d, v in ce_series.get(acc, {}).items() if d < q_end}
-        row: dict[str, Any] = {"account": acc, "label": ACCOUNT_LABELS[acc], "covered_from": None,
+        row: dict[str, Any] = {"account": acc, "label": account_label(acc), "covered_from": None,
                                "covered_to": None, "fetched_at": None, "days_missing": None,
                                "days_present_in_rate_window": 0}
         in_month = [d for d in days if start <= d < month_end]
@@ -504,7 +500,7 @@ async def cost_forecast(pool: Any, month: Optional[str] = None, *, now: Optional
             "providers": "LLM gateway estimates (shared.llm_call_daily + shared.llm_call_log, as Cost per app) and "
                          "shared.dfs_call_log; the CRM's own gateway is not included",
             "aws_accounts": "stored Cost Explorer snapshots (no live call): shared.cost_explorer_snapshot, and for "
-                            "acc2 shared.cost_explorer_app_snapshot when fetched later",
+                            "the main account shared.cost_explorer_app_snapshot when fetched later",
             "budgets": "shared.spend_budget global daily cap x days in month; AWS from AWS_MONTHLY_BUDGET_USD",
             "forecast": f"month to date over complete days + mean of the last {RUN_RATE_DAYS} complete days x days "
                         "left",

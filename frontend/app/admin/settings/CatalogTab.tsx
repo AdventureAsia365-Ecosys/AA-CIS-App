@@ -21,6 +21,8 @@ import {
   useToast,
 } from "../../_kit";
 import { type CatalogRow } from "./llmShared";
+import { useAwsAccounts } from "../_components/useAwsAccounts";
+import { accountName } from "@/lib/awsAccounts";
 
 interface CatalogResp {
   models: CatalogRow[];
@@ -104,6 +106,7 @@ export function CatalogTab() {
   const toast = useToast();
   const qc = useQueryClient();
   const [editing, setEditing] = useState<string | null>(null);
+  const awsAccounts = useAwsAccounts();
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["llm-catalog"],
@@ -151,7 +154,7 @@ export function CatalogTab() {
         const accts = accountsOf(c.row.original);
         return (
           <span style={{ fontFamily: mono, fontSize: 12, color: A.muted }}>
-            {accts.length ? accts.join(", ") : "—"}
+            {accts.length ? accts.map((a) => accountName(a, awsAccounts)).join(", ") : "—"}
           </span>
         );
       },
@@ -241,7 +244,7 @@ export function CatalogTab() {
         </div>
       ),
     },
-  ], [toggleMut]);
+  ], [toggleMut, awsAccounts]);
 
   const editingRow = models.find((m) => m.model_key === editing) ?? null;
 

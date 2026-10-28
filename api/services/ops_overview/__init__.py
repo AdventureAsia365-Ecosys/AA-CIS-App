@@ -31,12 +31,13 @@ ACTIVITY_TTL_S = 300
 COST_TTL_S = 900
 
 SOURCES = {
-    "health": "AWS CloudWatch (acc2, us-west-1): API Gateway Count/5XXError/4XXError/Latency for the CIS and Booking "
-              "APIs, Lambda Invocations/Errors/Throttles/Duration for TripPlanner, and alarm states by name prefix",
+    "health": "AWS CloudWatch (main account, us-west-1): API Gateway Count/5XXError/4XXError/Latency for the CIS and "
+              "Booking APIs, Lambda Invocations/Errors/Throttles/Duration for TripPlanner, and alarm states by name "
+              "prefix",
     "tripplanner": "tripplanner.v_ops_traffic_daily (TripPlanner contract view, tp-015) and shared.llm_call_log "
                    "stage tp_search_embed",
     "booking": "booking.v_ops_funnel_daily and booking.v_ops_case_status (Booking contract views, bk-017)",
-    "cost": "AWS Cost Explorer by App tag (acc2) and LLM gateway estimates, via the Platform cost module "
+    "cost": "AWS Cost Explorer by App tag (main account) and LLM gateway estimates, via the Platform cost module "
             "(/admin/platform/cost)",
 }
 
