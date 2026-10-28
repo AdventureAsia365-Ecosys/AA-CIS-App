@@ -230,8 +230,22 @@ def cohen_kappa(pairs: Iterable[tuple[str, str]]) -> Optional[float]:
     return round((po - pe) / (1 - pe), 3)
 
 
-def judge_counts(kappa: Optional[float], n_pairs: int) -> bool:
-    return kappa is not None and n_pairs >= cfg.MIN_KAPPA_PAIRS and kappa >= cfg.MIN_KAPPA
+def label_counts(pairs: Iterable[tuple[str, str]]) -> dict[str, int]:
+    """{pass, fail}: how many calibration pairs carry each golden label."""
+    p = [a for a, b in pairs if a in ("pass", "fail") and b in ("pass", "fail")]
+    return {"pass": p.count("pass"), "fail": p.count("fail")}
+
+
+def judge_counts(kappa: Optional[float], n_pairs: int, labels: Optional[dict[str, int]] = None) -> bool:
+    """The judge counts toward stops: kappa >= MIN_KAPPA on >= MIN_KAPPA_PAIRS pairs and, when the label counts are
+    given (the runner always gives them), >= MIN_KAPPA_PER_LABEL of each label. Without a few fail labels the judge was
+    never shown to find a failure (kappa is 1.0 for a constant judge on a constant label set), and with one or two a
+    single item moves kappa across the threshold (S255 lesson: check the recall of each class, not only kappa)."""
+    if kappa is None or n_pairs < cfg.MIN_KAPPA_PAIRS or kappa < cfg.MIN_KAPPA:
+        return False
+    if labels is not None and min(labels.get("pass", 0), labels.get("fail", 0)) < cfg.MIN_KAPPA_PER_LABEL:
+        return False
+    return True
 
 
 # ── control policy ─────────────────────────────────────────────────────────────────────────────────────────────────

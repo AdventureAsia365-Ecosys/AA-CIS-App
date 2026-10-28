@@ -163,6 +163,18 @@ def test_judge_counts_needs_kappa_and_pairs():
     assert not ec.judge_counts(None, 40)
 
 
+def test_judge_counts_needs_each_label_class():
+    """S255: a constant judge on a one-class label set gets kappa 1.0; it was never shown to find a failure."""
+    one_class = [("pass", "pass")] * 12
+    assert ec.cohen_kappa(one_class) == 1.0 and ec.label_counts(one_class) == {"pass": 12, "fail": 0}
+    assert not ec.judge_counts(1.0, 12, ec.label_counts(one_class))
+    two_fails = [("pass", "pass")] * 10 + [("fail", "fail")] * 2
+    assert not ec.judge_counts(ec.cohen_kappa(two_fails), 12, ec.label_counts(two_fails))
+    three = [("pass", "pass")] * 10 + [("fail", "fail")] * 3
+    assert ec.judge_counts(ec.cohen_kappa(three), 13, ec.label_counts(three))
+    assert ec.label_counts([("pass", "error"), ("fail", "pass")]) == {"pass": 0, "fail": 1}
+
+
 def test_control_is_regenerated_only_in_reverify():
     assert ec.control_mode("r2") == "rejudge"
     assert ec.control_mode("reverify") == "regenerate"
