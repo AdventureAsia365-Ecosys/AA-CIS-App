@@ -68,6 +68,7 @@ export const PAGE_RULES: PageRule[] = [
   { prefix: "/admin/writing-memory", roles: ["admin"] },    // AA-917 — signals and candidate rules (tenant text)
   { prefix: "/admin/api-docs", roles: ["admin"] },          // AA-577 follow-up — OpenAPI reader
   { prefix: "/admin/data-model", roles: ["admin"] },        // AA-894 — live ERD from the nightly schema dump
+  { prefix: "/admin/docs", roles: ["admin"] },              // AA-898 — docs catalog reader (synced by root CI)
   // AA-883 — Platform pages (staff directory first). Matches /admin/platform and /admin/platform/…
   // only, never /admin/platform-stats (pageRule compares prefix or prefix + "/").
   { prefix: "/admin/platform", roles: ["admin"] },
@@ -148,6 +149,9 @@ export const API_READ_RULES: { prefix: string; roles: StaffRole[] }[] = [
   // AA-894 — backend /admin/data-model (the live ERD of every schema, PII tags included): admin only, re-checked by
   // the backend (staff_policy, capability ops.read).
   { prefix: "data-model", roles: ["admin"] },
+  // AA-898 — backend /admin/docs/* (the docs catalog reader; owner-only pages filtered by the backend on the verified
+  // owner flag): admin only, re-checked by the backend (staff_policy, capability ops.read).
+  { prefix: "docs", roles: ["admin"] },
   // AA-992 — backend /admin/data-coverage (counts of every stage, CRM included): admin only, re-checked by the backend
   // (staff_policy, capability ops.read).
   { prefix: "data-coverage", roles: ["admin"] },
