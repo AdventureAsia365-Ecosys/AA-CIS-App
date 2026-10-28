@@ -36,5 +36,14 @@ client / T11 dispatch refactor is its own branch (`refactor/aa-765-judge-client-
 
 ## Should know
 
+- The "OpenAPI breaking changes" check (`.github/workflows/api-contract.yml`, oasdiff) fails on a removed public
+  path (`api-path-removed-without-deprecation`, level ERR; `/v1/*` is not in `INTERNAL_PATHS`). The removal is
+  intended, so the PR carries the `api-breaking` label (or a `chore!:` title) and its body states the client plan:
+  no client calls the path (admin frontend, portal, Partner, Booking, TripPlanner and Infra grepped), nothing to
+  change (docs/api/README.md "Breaking changes").
+- Reviewer check (S256): the committed `docs/api/openapi.json` delta was compared with a local render of the
+  merge base and of this branch (same fastapi/pydantic for both): the only difference is the file schema
+  representation of the removed `Body_run_pipeline_v1_pipeline_run_post` (`format: binary` locally vs
+  `contentMediaType` under the pinned versions), so the committed file matches what CI renders.
 - Live check after deploy: `POST /v1/pipeline/run` from inside the api task with the admin secret → 404/405
   (from the internet `/v1/pipeline/*` already 404s at the edge, AA-799 note).

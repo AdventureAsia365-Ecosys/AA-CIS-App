@@ -1,4 +1,3 @@
-import re
 """
 /v1/pipeline — the AA master review queue (list / approve / reject), Step Functions execution status and
 sources, admin only (AA-799). The rewrite helpers here (`_rewrite_tour`) are also used by services/eval.
@@ -7,9 +6,9 @@ AA-765 (AA-799 follow-up): `POST /v1/pipeline/run` (upload an Excel file and rew
 request) was removed — no caller left (the admin uploads through /admin, S0 → S1 jobs) and it was an
 LLM-spend entry point outside the job runner.
 """
+import re
 import os
 import json
-import uuid
 import asyncio
 import structlog
 
