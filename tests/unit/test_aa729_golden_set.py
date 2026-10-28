@@ -432,6 +432,59 @@ def test_labels_export_and_apply():
         labels.apply_labels(_fixture(), panel, approved_by=" ")
 
 
+def _panel_fixture():
+    fx = _fixture()
+    fx["fixture_version"] = "1.1.0"
+    fx["samples"][0].update({"label_source": "agent_panel",
+                             "label": common.make_label("pass", "agent_panel", grade="light", reason="old reason")})
+    fx["samples"][2].update({"label_source": "tenant_edit", "label": common.make_label("fail", "tenant_edit")})
+    return fx
+
+
+def test_relabel_applies_a_calibration_review_to_panel_labels_only():
+    review = {"s1-001": {"from": "pass", "verdict": "fail", "grade": "heavy",
+                         "reason": "a one-phrase trip promise the itinerary lacks; ask x@y.io"}}
+    new, info = labels.relabel(_panel_fixture(), review, approved_by="owner", review_ref="audit/S256")
+    assert new["fixture_version"] == "1.2.0" and info["relabelled"] == ["s1-001"]
+    lab = new["samples"][0]["label"]
+    assert lab["verdict"] == "fail" and lab["grade"] == "heavy" and lab["source"] == "agent_panel"
+    assert "x@y.io" not in lab["reason"]
+    assert lab["evidence"][-1]["previous"] == {"verdict": "pass", "grade": "light", "reason": "old reason"}
+    hist = new["label_history"][-1]
+    assert hist["source"] == "calibration_review" and hist["relabelled"] == ["s1-001"]
+    assert hist["from_version"] == "1.1.0" and hist["review"] == "audit/S256"
+    # the input fixture is not touched (labels are immutable per version)
+    assert _panel_fixture()["samples"][0]["label"]["verdict"] == "pass"
+
+
+@pytest.mark.parametrize("review, msg", [
+    ({"s1-001": {"from": "fail", "verdict": "fail", "grade": "heavy", "reason": "r"}}, "current verdict"),
+    ({"t9b-001": {"from": "fail", "verdict": "pass", "grade": "light", "reason": "r"}}, "is not relabelled"),
+    ({"s1-002": {"from": "pass", "verdict": "fail", "grade": "heavy", "reason": "r"}}, "is not relabelled"),
+    ({"s1-001": {"from": "pass", "verdict": "fail", "grade": "light", "reason": "r"}}, "disagree"),
+    ({"s1-001": {"from": "pass", "verdict": "fail", "grade": "heavy", "reason": " "}}, "no reason"),
+    ({"zz-404": {"from": "pass", "verdict": "fail", "grade": "heavy", "reason": "r"}}, "unknown sample"),
+])
+def test_relabel_refuses_a_stale_or_inconsistent_review(review, msg):
+    with pytest.raises(ValueError, match=msg):
+        labels.relabel(_panel_fixture(), review, approved_by="owner", review_ref="audit/S256")
+
+
+def test_relabel_needs_an_approver_and_a_review_ref():
+    review = {"s1-001": {"from": "pass", "verdict": "fail", "grade": "heavy", "reason": "r"}}
+    with pytest.raises(ValueError, match="approved_by"):
+        labels.relabel(_panel_fixture(), review, approved_by=" ", review_ref="x")
+    with pytest.raises(ValueError, match="review_ref"):
+        labels.relabel(_panel_fixture(), review, approved_by="owner", review_ref="")
+
+
+def test_panel_pack_carries_the_rubric_rules():
+    pack = labels.export_pack(_fixture())
+    md = labels.pack_markdown(pack)
+    assert list(pack["rubric"]["rules"]) == list(labels.RUBRIC["rules"])
+    assert all(r in md for r in labels.RUBRIC["rules"])
+
+
 # ── guards on the names the harness patches ──────────────────────────────────────────────────────
 
 
