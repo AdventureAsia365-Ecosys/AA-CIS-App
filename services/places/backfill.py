@@ -192,7 +192,7 @@ async def plan(conn, *, country: Optional[str], limit: int, only_stale: bool) ->
 
 
 async def estimate(conn, tours: list[dict], geocoder_cost_per_request: float, geocoder_external: bool) -> dict:
-    from services.places.pipeline import canonical
+    from services.places.pipeline import canonical, tour_day_count
 
     price = await load_route_prices(conn)
 
@@ -207,7 +207,8 @@ async def estimate(conn, tours: list[dict], geocoder_cost_per_request: float, ge
                 day_calls += 1
         c = canonical(t.get("country"))
         anchors = {}
-        for bl in days_mod.parse_days(text):
+        day_blocks = days_mod.parse_days(text)
+        for bl in day_blocks:
             s, e, o = days_mod.rule_day(bl)
             a = days_mod.anchor_place(o, e)
             for d in range(bl.day_from, bl.day_to + 1):
@@ -218,7 +219,8 @@ async def estimate(conn, tours: list[dict], geocoder_cost_per_request: float, ge
             if loc is not None and name_norm(a):
                 keys.add((name_norm(a), country_norm(c), loc))
         atoms = await store.tour_atoms(conn, t["tour_id"])
-        comps, _ = comp_mod.build_components(t["source_id"], c, atoms, anchors)
+        tour_days = tour_day_count(t.get("duration"), text, max((bl.day_to for bl in day_blocks), default=0))
+        comps, _ = comp_mod.build_components(t["source_id"], c, atoms, anchors, tour_days=tour_days)
         if comps:
             tours_with_places += 1
         for x in comps:

@@ -6,7 +6,9 @@ Changes vs TripPlanner (design §2.3 / §3):
   - one filter for "not a place to pin": `skip_reason()` = the place-card rule `card_skip_reason()`
     (unnamed places, logistics nouns on stay/transit/food atoms) plus TripPlanner's lodging/transit
     words under the same activity gate; transit atoms are never pinned (map_activity) — except a
-    self-propelled journey (AA-990 N1: "cycle Seoul to Siheung" on a cycling tour, `journey_activity`);
+    self-propelled journey (AA-990 N1: "cycle Seoul to Siheung" on a cycling tour, `journey_activity`), and
+    except the route legs of a transit tour (AA-990 N1, S255: a tour whose own places cover under half of its days
+    is pinned on its legs' arrival places on the uncovered days, `route_leg_days`);
   - one component per (day, place, activity) instead of one per atom: `atom_ids` keeps every atom,
     `text_extract` is the longest atom text; its id is uuid5(source_id, day, name_norm, country,
     activity) — stable across re-atomize and re-upload (names.component_id);
@@ -57,7 +59,12 @@ TEXT_MAX = 280
 # built tour is stale once and its next place_extract (backfill only_stale, or any automatic trigger) rebuilds the
 # components; days and vectors are reused, so the rebuild pays only for new names and new texts.
 # 2 = AA-990 N1 (S254): self-propelled transit journeys are pinned.
-COMPONENTS_RULE_VERSION = 2
+# 3 = AA-990 N1 (S255): the route legs of a transit tour are pinned on its uncovered days (route_leg_days).
+COMPONENTS_RULE_VERSION = 3
+# TripPlanner's S236 rule (backend/browse/routes.py PLACES_MIN_DAY_SHARE): a route is offered only when it pins at
+# least this share of the tour's days. The tour-level leg rule below uses the same bar, so it only ever fires for a
+# tour that would otherwise get no route at all (lessons: an exclusion must match the next step's final decision).
+ROUTE_MIN_DAY_SHARE = 0.5
 ALL_MONTHS = list(range(1, 13))
 _LOGISTICS_TYPES = frozenset({"stay", "transit", "food", ""})
 
@@ -145,6 +152,35 @@ def skip_reason(place: Optional[str], activity_type: Optional[str], action: Opti
     return None
 
 
+# AA-990 N1 (S255): the tour-level transit rule. Some tours are journeys whose every day is a leg between two places,
+# and A3 types the legs 'transit' with a motorised or neutral verb: the 14-day "Seoul to Busan" ride ("Seoul to Siheung
+# city — go", "Busan city — move … by transportation") and the 2-day Oze-to-Nikko drive past waterfalls ("Kegon Falls
+# — travel to"). Their transit atoms ARE the itinerary. The per-atom journey rule cannot keep them (a drive to Busan and
+# a drive to the airport read the same), so the rule is per TOUR: when the tour's own places (every component the
+# per-atom rules keep) cover fewer days than TripPlanner needs to offer a route, and the transit legs of the uncovered
+# days lift it to that bar, those legs are pinned, one component per leg, on the uncovered days only. A day that
+# already has a place keeps it and its legs stay skipped, and so does every leg of a tour the rule cannot route.
+# A leg links to its place card when it has one, else to its arrival ("Seoul to Siheung city" → "Siheung city"); the
+# itinerary spelling stays the component's name (its id). Logistics and unnamed places stay skipped (skip_reason
+# first). The activity comes from the leg's own words (map_activity 'other': "… National Park" → wildlife_nature),
+# else local_immersion, never the motorised mode.
+def route_leg_days(covered: set[int], legs_by_day: dict[int, list], tour_days: int) -> set[int]:
+    """The uncovered days whose transit legs are pinned: all of them when the tour's own places cover under
+    ROUTE_MIN_DAY_SHARE of `tour_days` and the legs lift it to that share, else none."""
+    if tour_days <= 0 or len(covered) >= ROUTE_MIN_DAY_SHARE * tour_days:
+        return set()
+    extra = {d for d, legs in legs_by_day.items() if legs and d not in covered}
+    if len(covered) + len(extra) < ROUTE_MIN_DAY_SHARE * tour_days:
+        return set()
+    return extra
+
+
+def leg_link_name(place: str) -> str:
+    """Where a route leg is pinned without a place card: the arrival of "A to B", else the place."""
+    ab = days_mod.a_to_b(place)
+    return (ab[1] if ab and ab[1] else None) or place
+
+
 @dataclass
 class Component:
     component_id: str
@@ -196,37 +232,29 @@ def components_hash(atoms: list[dict]) -> str:
 
 
 def build_components(source_id: str, tour_country: str, atoms: list[dict],
-                     day_towns: Optional[dict[int, str]] = None) -> tuple[list[Component], dict]:
+                     day_towns: Optional[dict[int, str]] = None,
+                     tour_days: Optional[int] = None) -> tuple[list[Component], dict]:
     """Atoms (atom_id, itinerary_day, place, activity_type, text, card_id?, card_display_name?,
     card_country?, card_locality?) -> merged components + skip counters. `day_towns` = the day's
-    overnight anchor, the locality fallback of a generic name."""
+    overnight anchor, the locality fallback of a generic name. `tour_days` = the tour's day count (the
+    tour-level leg rule's denominator; at least the highest day of the atoms and day_towns)."""
     day_towns = day_towns or {}
     merged: dict[tuple, Component] = {}
     counters = {"atoms": len(atoms), "skipped": {}, "generic_without_locality": 0, "linked_to_feature": 0,
-                "transit_journeys": 0}
-    for a in sorted(atoms, key=lambda x: (x.get("itinerary_day") or 0, str(x.get("atom_id")))):
-        place = (a.get("place") or "").strip()
-        day = a.get("itinerary_day")
-        action = atom_action(a)
-        reason = "no_day" if day is None else skip_reason(place, a.get("activity_type"), action)
-        activity = map_activity(a.get("activity_type"), a.get("text") or "", action) if reason is None else None
-        if reason is None and activity is None:
-            reason = "transit"
-        if reason is not None:
-            counters["skipped"][reason] = counters["skipped"].get(reason, 0) + 1
-            continue
-        if (a.get("activity_type") or "").strip().lower() == "transit":
-            counters["transit_journeys"] += 1      # AA-990 N1: a self-propelled journey kept
-        day = int(day)
+                "transit_journeys": 0, "transit_route_legs": 0, "route_leg_days": 0}
+
+    def add(a: dict, place: str, day: int, activity: str, leg: bool = False) -> None:
         key = (day, name_norm(place), activity)
         text = (a.get("text") or "").strip()[:TEXT_MAX] or place
         comp = merged.get(key)
         if comp is None:
             # AA-847 (S246): a descriptive phrase around a linear feature ("sandbank on the Nam Ou River") links to
             # that feature's destination; the component id keeps the itinerary spelling (no id-map impact)
-            feature = None if (a.get("card_display_name") or "").strip() else geomatch.linked_feature(place)
+            card_name = (a.get("card_display_name") or "").strip()
+            feature = None if card_name else geomatch.linked_feature(place)
             counters["linked_to_feature"] += 1 if feature else 0
-            link_name = (a.get("card_display_name") or "").strip() or feature or place
+            # AA-990 N1 (S255): a route leg without a card links to its arrival ("Seoul to Siheung city" → Siheung)
+            link_name = card_name or feature or (leg_link_name(place) if leg else place)
             link_country = a.get("card_country") or tour_country or ""
             locality = a.get("card_locality") or (day_towns.get(day) if is_generic(link_name) else None)
             loc_key = locality_key(link_name, locality)
@@ -245,6 +273,38 @@ def build_components(source_id: str, tour_country: str, atoms: list[dict],
         elif len(text) > len(comp.text_extract):
             comp.text_extract = text
         comp.atom_ids.append(str(a["atom_id"]))
+
+    legs_by_day: dict[int, list[tuple[dict, str]]] = {}
+    for a in sorted(atoms, key=lambda x: (x.get("itinerary_day") or 0, str(x.get("atom_id")))):
+        place = (a.get("place") or "").strip()
+        day = a.get("itinerary_day")
+        action = atom_action(a)
+        reason = "no_day" if day is None else skip_reason(place, a.get("activity_type"), action)
+        activity = map_activity(a.get("activity_type"), a.get("text") or "", action) if reason is None else None
+        if reason is None and activity is None:
+            reason = "transit"
+        if reason == "transit":
+            legs_by_day.setdefault(int(day), []).append((a, place))   # a candidate for the tour-level leg rule
+            continue
+        if reason is not None:
+            counters["skipped"][reason] = counters["skipped"].get(reason, 0) + 1
+            continue
+        if (a.get("activity_type") or "").strip().lower() == "transit":
+            counters["transit_journeys"] += 1      # AA-990 N1: a self-propelled journey kept
+        add(a, place, int(day), activity)
+
+    covered = {c.day_index for c in merged.values()}
+    known_days = [d for d in (*legs_by_day, *covered, *day_towns) if d is not None]
+    days_total = max([tour_days or 0, *known_days]) if known_days or tour_days else 0
+    leg_days = route_leg_days(covered, legs_by_day, days_total)
+    for day in sorted(legs_by_day):
+        for a, place in legs_by_day[day]:
+            if day not in leg_days:
+                counters["skipped"]["transit"] = counters["skipped"].get("transit", 0) + 1
+                continue
+            counters["transit_route_legs"] += 1
+            add(a, place, day, map_activity("other", a.get("text") or place), leg=True)
+    counters["route_leg_days"] = len(leg_days)
     out = sorted(merged.values(), key=lambda c: (c.day_index, c.name_norm, c.activity))
     counters["components"] = len(out)
     return out, counters

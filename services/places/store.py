@@ -16,7 +16,7 @@ MASTER_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 _LIVE_SQL = """
     SELECT pt.tour_id::text AS tour_id,
            COALESCE(rt.source_group_id, rt.tour_id)::text AS source_id,
-           pt.aa_name, pt.aa_itineraries, rt.country,
+           pt.aa_name, pt.aa_itineraries, rt.country, rt.duration,
            pt.generated_content_id::text AS version_id
       FROM gold_aa_internal.published_tours pt
       JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id

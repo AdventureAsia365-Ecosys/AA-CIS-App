@@ -103,6 +103,12 @@ def _clean(place: Optional[str]) -> Optional[str]:
     return p or None
 
 
+def a_to_b(text: Optional[str]) -> Optional[tuple[Optional[str], Optional[str]]]:
+    """("A", "B") of an "A to B" phrase ("Seoul to Siheung city", "drive from Paro to Thimphu"), else None."""
+    m = _A_TO_B.match((text or "").strip())
+    return (_clean(m.group("a")), _clean(m.group("b"))) if m else None
+
+
 def rule_day(block: DayBlock) -> tuple[Optional[str], Optional[str], Optional[str]]:
     """(start, end, overnight) found by the rules alone; None where they find nothing."""
     start = end = None

@@ -42,6 +42,16 @@ def canonical(country: Optional[str], tour_country: Optional[str] = None) -> str
     return one.name if one else (country or "").strip()
 
 
+def tour_day_count(duration_raw: Optional[str], itinerary: Optional[str], highest_day: int = 0) -> int:
+    """The tour's day count as TripPlanner's S236 route rule reads it (browse/routes.py TOUR_DAYS_COUNT_SQL:
+    GREATEST(v_tour.duration_days, its day rows)): the duration text's number, else the highest canonical day
+    (validity.duration_days = the v_tour rule), never under `highest_day` (the day records' last day). AA-990 N1
+    (S255): the leg rule's denominator must be TripPlanner's, or a "10 days" tour whose itinerary text stops at day 6
+    would pin legs that still give it no route."""
+    from services.places import validity
+    return max(highest_day or 0, validity.duration_days(duration_raw, itinerary) or 0)
+
+
 @dataclass
 class ExtractDeps:
     generate_days: Optional[Callable[[str, str], Awaitable[str]]] = None
@@ -115,13 +125,18 @@ async def extract_tour_places(pool, tour: dict, deps: ExtractDeps, *, force: boo
     day_towns = {d: a for d, a in anchors.items() if a}
 
     # ── components ──
-    comps, c_counts = comp_mod.build_components(source_id, country, atoms, day_towns)
+    # AA-990 N1 (S255): the tour-level leg rule measures coverage against the tour's day count
+    tour_days = tour_day_count(tour.get("duration"), text, max((r.day_index for r in records), default=0))
+    comps, c_counts = comp_mod.build_components(source_id, country, atoms, day_towns, tour_days=tour_days)
     for c in comps:
         c.country = canonical(c.country, country)
         c.country_norm = country_norm(c.country)
     counts.update(components=c_counts["components"], skipped=c_counts["skipped"],
                   generic_without_locality=c_counts["generic_without_locality"],
-                  linked_to_feature=c_counts.get("linked_to_feature", 0))
+                  linked_to_feature=c_counts.get("linked_to_feature", 0),
+                  transit_journeys=c_counts.get("transit_journeys", 0),
+                  transit_route_legs=c_counts.get("transit_route_legs", 0),
+                  route_leg_days=c_counts.get("route_leg_days", 0))
 
     # ── link ── card destination → resolved name → reusable destination → pending
     comp_keys = {c.component_id: (c.name_norm, c.country_norm, c.locality_norm) for c in comps
