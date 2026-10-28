@@ -55,6 +55,7 @@ def test_background_kind_never_claimed_with_two_or_fewer_free_slots(free):
     w = worker.Worker(MagicMock(), max_parallel=WORKER_MAX_PARALLEL_DEFAULT)
     background = {n for n, k in kinds().items() if k.background}
     assert background == {"place_extract", "place_geocode", "tour_graph_build", "place_shape", "place_dedupe",
+                          "place_relocate",   # AA-997
                           # AA-825 retention kinds (data standards C5.4d)
                           "retention_llm_call_log", "retention_tenant_api_usage", "retention_job",
                           "retention_decision_log", "retention_cost_explorer_snapshot",
@@ -76,7 +77,7 @@ def test_background_kind_never_claimed_with_two_or_fewer_free_slots(free):
 
 def test_place_kinds_are_cap_one():
     load_kinds()
-    for kind in ("place_extract", "place_geocode", "tour_graph_build", "place_shape", "place_dedupe"):
+    for kind in ("place_extract", "place_geocode", "tour_graph_build", "place_shape", "place_dedupe", "place_relocate"):
         assert kinds()[kind].concurrency == 1
 
 

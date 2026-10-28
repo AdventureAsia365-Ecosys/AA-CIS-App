@@ -424,25 +424,68 @@ def _km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     return km(lat1, lng1, lat2, lng2)
 
 
-def accept(query: str, cands: list[Candidate], lat: float, lng: float, iso2: str = "",
-           top_n: int = TOP_N) -> Verdict:
-    """The first of the top `top_n` candidates passing (a) name, (b) type, (c) distance; country must match
-    `iso2` when given (the request filters by country already — this is the hard guard)."""
+DAY_TRIP = "day_trip"   # reference_km: a second-choice pass (see there)
+
+
+def reference_km(c_lat: float, c_lng: float, lat: Optional[float], lng: Optional[float], query: str,
+                 routes=()) -> tuple[Optional[float], Optional[str]]:
+    """(distance, reason) of a candidate against the reference (AA-997). With a tour route (guards.route_km: the
+    neighbouring days' stops of the tours using the name) the route decides — the model's point is only a hint and a
+    candidate near a wrong hint but far off the route is rejected (`off_route`, the Beijing "City Wall" on a Xi'an
+    tour); a right candidate far from a wrong hint passes (Kong Lor 70 km from the model's point). Without a route the
+    model's point is the reference (the S236 bake-off rule, ACCEPT_KM / LONG_FEATURE_KM). With neither: `no_reference`
+    (nothing to check a geocoder answer against, so nothing is accepted).
+    `day_trip` (a second choice, accept / _accept_native take it only when no candidate passes outright): off the
+    route's radius but within guards.DAY_TRIP_KM of it AND within the bake-off radius of the model's point — a day trip
+    from the base (Ayutthaya ~75 km from Bangkok, Mutianyu ~70 km from Beijing) where the geocoder and the model agree;
+    a homonym in another city (~900 km) stays `off_route`."""
+    from services.places import guards
+    d = guards.route_km(c_lat, c_lng, routes)
+    if d is not None:
+        if d <= guards.route_radius(query):
+            return d, None
+        if (d <= guards.DAY_TRIP_KM and lat is not None and lng is not None
+                and _km(lat, lng, c_lat, c_lng) <= radius_km(query)):
+            return d, DAY_TRIP
+        return d, "off_route"
+    if lat is None or lng is None:
+        return None, "no_reference"
+    d = _km(lat, lng, c_lat, c_lng)
+    return d, (None if d <= radius_km(query) else "distance")
+
+
+def accept(query: str, cands: list[Candidate], lat: Optional[float], lng: Optional[float], iso2: str = "",
+           top_n: int = TOP_N, *, routes=(), iso_codes: Optional[tuple] = None,
+           settlement: Optional[bool] = None) -> Verdict:
+    """The first of the top `top_n` candidates passing (a) name, (b) type, (c) distance (reference_km); country must
+    match `iso2` (or one of `iso_codes`, AA-997: China covers hk / mo) when given (the request filters by country
+    already — this is the hard guard). `settlement` forces the `city` rule (the town fallback asks for a town)."""
     n_tok = len(tokens(query))
-    settlement = is_settlement(query)
-    radius = radius_km(query)
+    settlement = is_settlement(query) if settlement is None else settlement
+    codes = set(iso_codes or ()) | ({iso2} if iso2 else set())
     reasons = []
+    fallback: Optional[Verdict] = None      # the first `day_trip` candidate: taken only when none passes outright
     for i, c in enumerate(cands[:top_n]):
         sim = name_sim(query, c.name)
-        dist = _km(lat, lng, c.lat, c.lng)
-        if iso2 and c.iso2 and c.iso2 != iso2:
+        if codes and c.iso2 and c.iso2 not in codes:
             reasons.append(f"{i}:country")
         elif not (sim >= 0.999 or (sim >= 0.5 and n_tok >= 2)):
             reasons.append(f"{i}:name")
         elif c.result_type in REJECT_TYPES or (c.result_type == "city" and not settlement):
             reasons.append(f"{i}:type")
-        elif dist > radius:
-            reasons.append(f"{i}:distance")
         else:
-            return Verdict(c, i, round(sim, 3), round(dist, 2), reasons)
-    return Verdict(None, reasons=reasons)
+            dist, why = reference_km(c.lat, c.lng, lat, lng, query, routes)
+            if why == DAY_TRIP and fallback is None:
+                fallback = Verdict(c, i, round(sim, 3), round(dist, 2))
+            if why:
+                reasons.append(f"{i}:{why}")
+            else:
+                return Verdict(c, i, round(sim, 3), round(dist, 2), reasons)
+    return with_fallback(fallback, reasons)
+
+
+def with_fallback(fallback: Optional[Verdict], reasons: list[str]) -> Verdict:
+    """The `day_trip` second choice when there is one (its reasons list the scan), else no candidate."""
+    if fallback is None:
+        return Verdict(None, reasons=reasons)
+    return Verdict(fallback.accepted, fallback.rank, fallback.sim, fallback.km, reasons)

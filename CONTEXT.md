@@ -411,7 +411,7 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   - Job kinds live in `services/jobs/` (`segment_research`, `t2_rewrite`, `t9_write`, `a3_atomize`,
     `s1_seo_prefetch`, `photo_sync`, `s1_rewrite`, `s1_batch_ingest`, `revalidate`, `recompute`,
     `place_cards_build`, `t7_slate`, `t8_angles`, and the place pipeline `place_extract`,
-    `place_geocode`, `tour_graph_build` — AA-712, `place_shape`, `place_dedupe` — AA-847, the five `retention_*` kinds — AA-825,
+    `place_geocode`, `tour_graph_build` — AA-712, `place_shape`, `place_dedupe` — AA-847, `place_relocate` — AA-997, the five `retention_*` kinds — AA-825,
     `ops_alert_email` — AA-828, `data_erasure` — AA-839, the writing-memory kinds `writing_signal_backfill`,
     `writing_signal_fact_filter`, `writing_memory_mine` — AA-917). Every claim merges `progress.attempt_started_at` (AA-751, F18):
     `started_at` keeps the first attempt's start, so per-attempt age reads the progress key.
@@ -713,10 +713,20 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   `model_only` for tests / emergency; `mapbox_permanent` / `amazon_location` fail as not supported —
   Mapbox is the basemap only, Amazon Location is not used) confirms it with the bake-off acceptance
   rule (`services/places/geomatch.py`: top 3, name match, no admin-area types, ≤ 25 km / 50 km for long
-  features; `rank.confidence` recorded, never a gate) → `located_by='geoapify'`, `geo_precision='point'`;
-  otherwise the model's point stays (`llm`, `geo_precision='area'` — never drawn as a pin; hard kinds
-  such as temple / pass / lake / village get `review_reason` for `/admin/places`). Generic phrases
-  ("ger camp", "local market") are not geocoded. Free plan 3,000 credits/day: ≤ 5 req/s, retry on
+  features; `rank.confidence` recorded, never a gate) → `located_by='geoapify'`, `geo_precision='point'`.
+  **AA-997 (S254 geocode audit): coordinates come from the geocoder only.** With a tour route (the located overnight
+  stops of days d-1..d+1 of the tours using the name, `store.route_anchors` / `guards.route_km`, ≤ 50 km for a site,
+  100 km for a long feature; a day trip ≤ 150 km off the route passes only as a second choice when the answer also
+  agrees with the model's point) the route is the distance reference instead of the model's point, which is only a
+  hint (Geoapify `bias`); unconfirmed → the town the model names, geocoded as a settlement (`area`,
+  `review_reason='centroid_fallback'`); else no point (`unconfirmed_by_geocoder`, `unknown` at once). A model null gets
+  one geocoder-only search when a route exists, else it is final. China searches cover HK / MO and a point there is
+  stored as Hong Kong / Macao. Only `GEOCODER_PROVIDER=model_only` still stores the model's point (`llm`, `area`,
+  `review_reason='llm_point'`). Names that are not places (route legs, generic lodging, activities, regions,
+  descriptions: `services/places/name_filter.py`) never reach a paid call (`unknown`, `last_error='non_place:<cause>'`).
+  Existing model-placed rows are re-located by the job kind `place_relocate` (`POST /admin/places/relocate`, dry run
+  first; flags `off_route` / `llm_point`, optional hide; no model call; 1,000 daily credits kept for place_geocode).
+  Generic phrases ("ger camp", "local market") are not geocoded. Free plan 3,000 credits/day: ≤ 5 req/s, retry on
   429/5xx, daily credit guard 2,500 (UTC day, `geo.geocode_call`); AA-990: a run stopped by it with names still
   due queues the next run for 00:10 UTC + jitter (`enqueue.enqueue_after_credit_reset`, one row per reset day, queued
   geocode rows moved there too), and the data coverage page flags names due for > 24 h (`geo.names_stalled`). The

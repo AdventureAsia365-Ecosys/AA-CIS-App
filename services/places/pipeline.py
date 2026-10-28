@@ -17,7 +17,7 @@ import structlog
 from services.places import components as comp_mod
 from services.places import days as days_mod
 from services.places import graph as graph_mod
-from services.places import guards, locate, store
+from services.places import guards, locate, name_filter, store
 from services.places.names import country_norm, locality_key, name_norm
 from shared import countries as _countries
 
@@ -310,7 +310,8 @@ async def geocode_pending(pool, generate, geocoder, *, limit: int, job_id: Optio
     async with pool.acquire() as conn:
         due = await store.due_names(conn, limit)
     out = {"names": len(due), "resolved": 0, "inserted": 0, "updated": 0, "kept": 0, "failed": 0,
-           "unknown": 0, "deferred": 0, "review": 0, "shapes_pending": 0, "by": {}, "geocoder": geocoder.name}
+           "unknown": 0, "deferred": 0, "review": 0, "shapes_pending": 0, "by": {}, "geocoder": geocoder.name,
+           "non_place": 0, "non_place_by": {}, "no_point_by": {}, "centroid_fallback": 0, "with_route": 0}
     if not due:
         return out
     keys = [(r["name_norm"], r["country_norm"], r["locality_norm"]) for r in due]
@@ -327,8 +328,25 @@ async def geocode_pending(pool, generate, geocoder, *, limit: int, job_id: Optio
             if dest:
                 await store.mark_name(conn, k, destination_id=dest)
                 out["resolved"] += 1
-    todo = [locate.Item(k, r["display_name"], r["country"], r.get("tour_name") or "", r.get("locality"))
-            for r, k in zip(due, keys) if not (known.get(k) or card_dest.get(r.get("place_card_id") or ""))]
+        # AA-997: names that are not places (route legs, generic lodging, activities, regions, descriptions) never
+        # reach the model or the geocoder: 'unknown' at once with `non_place:<cause>` (services/places/name_filter.py)
+        todo_rows = []
+        for r, k in zip(due, keys):
+            if known.get(k) or card_dest.get(r.get("place_card_id") or ""):
+                continue
+            verdict = name_filter.classify(r["display_name"], r.get("locality"))
+            if not verdict.is_place:
+                await store.mark_name(conn, k, error=verdict.reason, final=True)
+                out["non_place"] += 1
+                out["non_place_by"][verdict.cause] = out["non_place_by"].get(verdict.cause, 0) + 1
+                out["unknown"] += 1
+                continue
+            todo_rows.append((r, k, verdict.query))
+        # AA-997: the route each name is checked against (the located stops of days d-1..d+1 of its tours)
+        routes = await store.route_anchors(conn, [k for _, k, _ in todo_rows])
+    todo = [locate.Item(k, q, r["country"], r.get("tour_name") or "", r.get("locality"), routes=routes.get(k, ()))
+            for r, k, q in todo_rows]
+    out["with_route"] = sum(1 for it in todo if it.routes)
     touched: list[str] = []
     try:
         for start in range(0, len(todo), locate.BATCH):
@@ -354,8 +372,10 @@ async def geocode_pending(pool, generate, geocoder, *, limit: int, job_id: Optio
                             else "stopped_credit_limit"] = True
                         continue
                     if o.point is None:
-                        st = await store.mark_name(conn, it.key, error=o.error or o.reason)
+                        st = await store.mark_name(conn, it.key, error=o.error or o.reason, final=o.final)
                         out["unknown" if st == "unknown" else "failed"] += 1
+                        why = (o.reason or "error").split(":")[0]
+                        out["no_point_by"][why] = out["no_point_by"].get(why, 0) + 1
                         continue
                     async with conn.transaction():
                         await store.lock_destinations(conn)     # AA-847: serialised with place_dedupe merges
@@ -370,6 +390,7 @@ async def geocode_pending(pool, generate, geocoder, *, limit: int, job_id: Optio
                     out["resolved"] += 1
                     out["by"][o.point.located_by] = out["by"].get(o.point.located_by, 0) + 1
                     out["review"] += 1 if o.point.review_reason else 0
+                    out["centroid_fallback"] += 1 if o.point.review_reason == locate.REVIEW_CENTROID else 0
                     touched.append(dest_id)
             if progress is not None:
                 await progress(step="locate", done=min(start + locate.BATCH, len(todo)), total=len(todo))

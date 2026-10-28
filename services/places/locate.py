@@ -1,4 +1,20 @@
 """AA-712 — where a place is: the model proposes coordinates, the configured geocoder confirms.
+
+AA-997 (S254 geocode audit, fix plan steps 1, 2, 5, 6): COORDINATES COME FROM THE GEOCODER ONLY. The model's point is a
+hint (bias, and the distance reference when the tour has no located stop near that day); the audit measured model-placed
+rows at 53-60 % correct against ~91 % for Geoapify-placed ones. Per name, in order:
+  a. the name, searched in the model's country (China covers Hong Kong / Macao), accepted by geomatch.accept against
+     the tour ROUTE (guards.route_km: the located overnight stops of days d-1..d+1 of every tour using the name, 50 km /
+     100 km for long features) — or, with no route, against the model's point (the S236 bake-off rule);
+  b. else the TOWN the model says the place is in (the answer's town element), searched as a settlement under the same
+     reference → the town's point, precision 'area', review_reason `centroid_fallback` (never drawn as the site's pin);
+  c. else no point: `unconfirmed_by_geocoder`, final (status 'unknown' at once — asking the same again does not help).
+  A model null (it does not know the place) gets a geocoder-only search of the name in the item's country when the tour
+  has a route to check it against (§7 "geocoder-only fallback"); without one, or when it finds nothing, the null is
+  final too (`unknown_to_model`). `model_only` (tests / emergency switch, no geocoder) still stores the model's point,
+  as 'area' with review_reason `llm_point` (or `unconfirmed_hard_type`).
+The rest of this docstring is the AA-712 / AA-990 design; its "otherwise the model's point is kept" (step 2) is
+replaced by the rules above (model_only excepted).
 Port of AA-TripPlanner-Web backend/extraction/locate.py (AA-675 follow-up, @ 6523816).
 
 Mapbox forward geocoding by name alone is unreliable for Asian place names, even limited to the
@@ -30,12 +46,13 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Awaitable, Callable, Optional
 
 import structlog
 
 from services.places import geomatch, guards
+from shared.cost_guard import BudgetExceeded
 from services.places.names import name_norm
 from services.places.geocoder import (CONFIRMED_BY, Confirmed, CreditLimitReached, GeocoderUnavailable,
                                       Unconfirmed)
@@ -51,6 +68,10 @@ REVIEW_UNCONFIRMED_HARD = "unconfirmed_hard_type"
 # decision S246: lines are drawn, never hidden, so nothing writes it any more; store._write_point un-hides a row that
 # still carries it when the name is located again as a line.
 REVIEW_LINEAR_FEATURE = "linear_feature"
+# AA-997 review reasons (shared.destinations.review_reason, listed on /admin/places)
+REVIEW_LLM_POINT = "llm_point"                # only the model placed it (model_only; or found by the relocate job)
+REVIEW_CENTROID = "centroid_fallback"         # the town's point stands in for the site
+REVIEW_OFF_ROUTE = "off_route"                # far off the tour's route (relocate job, existing rows)
 DEFER_CREDIT_LIMIT = "credit_limit"
 DEFER_UNAVAILABLE = "geocoder_unavailable"
 # AA-990: why a name got no point although the batch answered (geo.place_name.last_error). `unknown_to_model` used to
@@ -61,6 +82,8 @@ REASON_MALFORMED = "malformed_answer"     # the value is not [lat, lng, country,
 # f"{UNKNOWN_COUNTRY}:<the model's text>": the text names no ISO 3166-1 country ('Siberia', 'India and Pakistan');
 # any ISO country is accepted here (shared/countries) and then checked by guards.point_ok (bbox + polygon).
 UNKNOWN_COUNTRY = "unknown_country"
+REASON_UNCONFIRMED = "unconfirmed_by_geocoder"   # AA-997: the model proposed a point, no geocoder answer confirmed it
+FINAL_REASONS = frozenset({REASON_NULL, REASON_UNCONFIRMED})   # status 'unknown' at once (no retry loop)
 
 SYSTEM_PROMPT = (
     "You are a geographer for Adventure Asia. For each place named on a tour itinerary you give "
@@ -76,6 +99,8 @@ class Item:
     country: str          # a hint only: the card / tour country; the answer's country is where the place really is
     tour_name: str = ""
     locality: Optional[str] = None
+    # AA-997: the routes of the tours using the name (guards.Route each), the geocoder's reference; () = none located
+    routes: tuple = field(default=(), compare=False, hash=False)
 
     @property
     def label(self) -> str:
@@ -122,6 +147,11 @@ class Outcome:
     reason: Optional[str] = None  # why point is None without an error (unknown / guard)
     deferred: bool = False        # credit guard / geocoder unavailable: stays pending, no try counted (reason)
 
+    @property
+    def final(self) -> bool:
+        """AA-997: no point and no use asking again (store: status 'unknown' at once)."""
+        return self.point is None and not self.deferred and self.error is None and self.reason in FINAL_REASONS
+
 
 @dataclass(frozen=True)
 class Proposal:
@@ -129,6 +159,7 @@ class Proposal:
     lng: float
     country: str
     native_name: Optional[str] = None   # 中文 / 한글 name (Taiwan, South Korea) — the geocoder's 2nd query
+    town: Optional[str] = None          # AA-997: the town / village the place is in (the town fallback)
 
 
 def build_prompt(items: list[Item]) -> str:
@@ -136,13 +167,14 @@ def build_prompt(items: list[Item]) -> str:
     return f"""Places (name | the tour's country | the tour's name, for context):
 {lines}
 
-Return ONLY a JSON object mapping each place name, copied exactly, to [latitude, longitude, country]
-or null. Country is where the place really is (a Thailand tour may sleep in Siem Reap, Cambodia).
-Use the town, village, park or landmark itself; for a hotel, lodge or camp, the town it is in.
-For a place in Taiwan or South Korea, add its name in the local script (Chinese / Hangul) as a 4th
-element when you know it.
-Example: {{"Paro": [27.43, 89.41, "Bhutan"], "Taroko Gorge": [24.16, 121.62, "Taiwan", "太魯閣"],
-"Unknown Lodge": null}}"""
+Return ONLY a JSON object mapping each place name, copied exactly, to
+[latitude, longitude, country, town] or null. Country is where the place really is (a Thailand tour may
+sleep in Siem Reap, Cambodia). Town is the town or village the place is in or next to (the place itself
+when it is a town). Use the town, village, park or landmark itself; for a hotel, lodge or camp, the town
+it is in. For a place in Taiwan or South Korea, add its name in the local script (Chinese / Hangul) as a
+last element when you know it.
+Example: {{"Paro": [27.43, 89.41, "Bhutan", "Paro"], "Taroko Gorge": [24.16, 121.62, "Taiwan", "Hualien",
+"太魯閣"], "Tiger's Nest": [27.49, 89.36, "Bhutan", "Paro"], "Unknown Lodge": null}}"""
 
 
 class AnswerUnreadable(ValueError):
@@ -180,13 +212,20 @@ def _proposal(v) -> "Proposal | str":
         return REASON_MALFORMED
     if not isinstance(raw_country, str) or not raw_country.strip():
         return REASON_MALFORMED
-    country = guards.canonical_country(raw_country)
+    country = guards.lenient_country(raw_country)       # AA-997: "Tibet, China" -> China
     if not country:
         return f"{UNKNOWN_COUNTRY}:{raw_country.strip()[:40]}"
-    native = v[3] if len(v) > 3 and isinstance(v[3], str) else None
-    if not (country in NATIVE_NAME_COUNTRIES and geomatch.has_native_script(native)):
+    native, town = None, None
+    for extra in v[3:5] if isinstance(v, (list, tuple)) else ():
+        if not isinstance(extra, str) or not extra.strip():
+            continue
+        if geomatch.has_native_script(extra):
+            native = native or extra.strip()
+        else:
+            town = town or extra.strip()[:120]
+    if not (country in NATIVE_NAME_COUNTRIES and native):
         native = None
-    return Proposal(lat, lng, country, native.strip() if native else None)
+    return Proposal(lat, lng, country, native, town)
 
 
 def read_answer(raw: str, labels: list[str], plain: Optional[dict[str, str]] = None) -> dict[str, "Proposal | str"]:
@@ -256,8 +295,6 @@ GenerateFn = Callable[[str, str], Awaitable[str]]
 
 async def locate_many(items: list[Item], generate: GenerateFn, geocoder) -> dict[tuple, Outcome]:
     """Outcome per item key. `generate` raises to stop (e.g. BudgetExceeded propagates)."""
-    from shared.cost_guard import BudgetExceeded
-
     out: dict[tuple, Outcome] = {}
     stopped: Optional[str] = None     # DEFER_* once the geocoder cannot check any more names this run
     external = geocoder is not None and getattr(geocoder, "calls_external", False)
@@ -286,35 +323,80 @@ async def locate_many(items: list[Item], generate: GenerateFn, geocoder) -> dict
             if i.label in errors:
                 out[i.key] = Outcome(None, error=errors[i.label])
                 continue
-            point = answer.get(i.label, REASON_MISSING)
-            if not isinstance(point, Proposal):
-                out[i.key] = Outcome(None, reason=point)
-                continue
-            lat, lng, country = point.lat, point.lng, point.country
-            bad = guards.point_ok(lat, lng, country)
-            if bad:
-                out[i.key] = Outcome(None, reason=bad)
-                continue
-            res = None
-            if external and not stopped:
-                try:
-                    # the plain name: a generic name's locality is in the key, not in the query
-                    res = await geocoder.confirm(i.name, lat, lng, country, native_name=point.native_name)
-                except CreditLimitReached as e:
-                    logger.warning("place_geocoder_credit_limit", provider=geocoder.name, error=str(e)[:200])
-                    stopped = DEFER_CREDIT_LIMIT
-                except GeocoderUnavailable as e:
-                    logger.error("place_geocoder_unavailable", provider=geocoder.name, error=str(e)[:200])
-                    stopped = DEFER_UNAVAILABLE
-                except Exception as e:  # noqa: BLE001 — retried later, never a guess
-                    logger.warning("place_geocoder_failed", provider=geocoder.name, error=str(e)[:200])
-                    out[i.key] = Outcome(None, error=f"{geocoder.name}: {str(e)[:200]}")
-                    continue
             if stopped:
                 out[i.key] = Outcome(None, reason=stopped, deferred=True)
                 continue
-            out[i.key] = Outcome(_located(i, lat, lng, country, res))
+            try:
+                out[i.key] = await _resolve(i, answer.get(i.label, REASON_MISSING), geocoder, external)
+            except CreditLimitReached as e:
+                logger.warning("place_geocoder_credit_limit", provider=geocoder.name, error=str(e)[:200])
+                stopped = DEFER_CREDIT_LIMIT
+            except GeocoderUnavailable as e:
+                logger.error("place_geocoder_unavailable", provider=geocoder.name, error=str(e)[:200])
+                stopped = DEFER_UNAVAILABLE
+            except BudgetExceeded:
+                raise
+            except Exception as e:  # noqa: BLE001 — retried later, never a guess
+                logger.warning("place_geocoder_failed", provider=geocoder.name, error=str(e)[:200])
+                out[i.key] = Outcome(None, error=f"{geocoder.name}: {str(e)[:200]}")
+                continue
+            if stopped:
+                out[i.key] = Outcome(None, reason=stopped, deferred=True)
     return out
+
+
+async def _resolve(item: Item, answer, geocoder, external: bool) -> Outcome:
+    """One name: the geocoder's point for the name, else for its town (area), else none (AA-997, module docstring).
+    Raises the geocoder's CreditLimitReached / GeocoderUnavailable / errors (locate_many handles them)."""
+    prop = answer if isinstance(answer, Proposal) else None
+    if prop is not None:      # "China" for a point in Hong Kong / Macao: theirs (it fails China's polygon)
+        prop = replace(prop, country=guards.refine_country(prop.lat, prop.lng, prop.country))
+    bad = guards.point_ok(prop.lat, prop.lng, prop.country) if prop else None
+    if not external:          # model_only: the model's point, flagged (no geocoder to ask)
+        if prop is None:
+            return Outcome(None, reason=answer)
+        if bad:
+            return Outcome(None, reason=bad)
+        return Outcome(_located(item, prop.lat, prop.lng, prop.country, None))
+    if prop is None or bad:
+        # the model does not know it (or gave an impossible point): one geocoder-only search when the tour's route can
+        # check the answer; a malformed / missing answer stays retryable as before
+        why = answer if prop is None else bad
+        if (prop is None and answer != REASON_NULL) or not guards.has_route(item.routes):
+            return Outcome(None, reason=why)
+        country = prop.country if prop else (guards.canonical_country(item.country) or item.country)
+        res = await geocoder.confirm(item.name, None, None, country, routes=item.routes)
+        hit = _confirmed(item, res, country)
+        return Outcome(hit) if hit else Outcome(None, reason=REASON_NULL if prop is None else why)
+    res = await geocoder.confirm(item.name, prop.lat, prop.lng, prop.country, native_name=prop.native_name,
+                                 routes=item.routes)
+    hit = _confirmed(item, res, prop.country)
+    if hit:
+        return Outcome(hit)
+    town = prop.town
+    if town and geomatch.name_sim(town, item.name) < 0.999 and not geomatch.is_generic_phrase(town):
+        tres = await geocoder.confirm(town, prop.lat, prop.lng, prop.country, routes=item.routes, settlement=True)
+        thit = _confirmed(item, tres, prop.country, town=town)
+        if thit:
+            return Outcome(thit)
+    return Outcome(None, reason=REASON_UNCONFIRMED)
+
+
+def _confirmed(item: Item, res, country: str, *, town: Optional[str] = None) -> Optional[Located]:
+    """The geocoder's accepted point when it is in the asked country (or its CN / HK / MO family) and passes the hard
+    guard; Hong Kong / Macao points asked as China are stored as Hong Kong / Macao. `town`: the point is the town's
+    (precision 'area', review_reason centroid_fallback; a linear name keeps 'line': its shape is searched there)."""
+    if not isinstance(res, Confirmed) or not guards.same_country(country, res.country):
+        return None
+    ctry = guards.refine_country(res.lat, res.lng, res.country)
+    if guards.point_ok(res.lat, res.lng, ctry) is not None:
+        return None
+    if town is None:
+        kind = geomatch.feature_kind(item.name, (res.meta or {}).get("result_type"))
+        return Located(res.lat, res.lng, ctry, res.located_by, res.place_id, meta=dict(res.meta), kind=kind)
+    kind = geomatch.LINEAR if geomatch.feature_kind(item.name) == geomatch.LINEAR else geomatch.AREA
+    meta = {**res.meta, "outcome": "town_fallback", "town": town}
+    return Located(res.lat, res.lng, ctry, res.located_by, None, meta=meta, review_reason=REVIEW_CENTROID, kind=kind)
 
 
 async def _ask(batch: list[Item], generate: GenerateFn) -> dict[str, "Proposal | str"]:
@@ -345,18 +427,20 @@ async def _ask_batch(batch: list[Item], generate: GenerateFn) -> tuple[dict[str,
 
 
 def _located(item: Item, lat: float, lng: float, country: str, res) -> Located:
-    """The confirmed point when the geocoder accepted a candidate in the model's country, else the model's
-    point ('llm', area precision; hard place kinds go to the review list)."""
-    if isinstance(res, Confirmed) and res.country == country \
-            and guards.point_ok(res.lat, res.lng, res.country) is None:
-        kind = geomatch.feature_kind(item.name, (res.meta or {}).get("result_type"))
-        return Located(res.lat, res.lng, res.country, res.located_by, res.place_id, meta=dict(res.meta), kind=kind)
+    """The confirmed point when the geocoder accepted a candidate in the model's country, else the model's point
+    ('llm', area precision). AA-997: the model's point is stored only by `model_only` (no geocoder configured); it is
+    flagged `llm_point` (`unconfirmed_hard_type` for a hard kind) so /admin/places lists it."""
+    hit = _confirmed(item, res, country)
+    if hit:
+        return hit
     meta = None
     if isinstance(res, Confirmed):     # accepted by the rule but in another country / outside its bbox
         meta = {**res.meta, "outcome": "rejected_country_guard"}
     elif isinstance(res, Unconfirmed):
         meta = dict(res.meta)
     kind = geomatch.feature_kind(item.name)
+    country = guards.refine_country(lat, lng, country)
     # a line's geometry is searched by name (place_shape: Overpass) around this point: no pin review for it
-    review = REVIEW_UNCONFIRMED_HARD if kind != geomatch.LINEAR and geomatch.is_hard(item.name) else None
+    review = None if kind == geomatch.LINEAR else (
+        REVIEW_UNCONFIRMED_HARD if geomatch.is_hard(item.name) else REVIEW_LLM_POINT)
     return Located(lat, lng, country, "llm", meta=meta, review_reason=review, kind=kind)

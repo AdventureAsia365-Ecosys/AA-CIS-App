@@ -302,6 +302,8 @@ POLICY: dict[tuple[str, str], str] = {
     ("POST", "/admin/places/merges/{merge_id}/undo"): OPS_WRITE,
     ("POST", "/admin/places/dedupe/countries"): OPS_WRITE,
     ("POST", "/admin/places/dedupe/run"): OPS_WRITE,
+    # admin_places — AA-997 re-locate model-placed destinations (Geoapify credits; dry run first)
+    ("POST", "/admin/places/relocate"): OPS_WRITE,
     # ── admin_segment_research — DFS demand research (paid run; preview is a free dry run)
     ("POST", "/admin/segment-research/preview"): OPS_READ,
     ("POST", "/admin/segment-research/run"): OPS_WRITE,

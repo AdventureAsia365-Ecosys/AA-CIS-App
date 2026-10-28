@@ -194,7 +194,7 @@ async def test_confirm_sends_the_rule_request_and_stores_audit_fields():
     url, params = http.get.call_args[0][0], http.get.call_args[1]["params"]
     assert url == gc.GEOAPIFY_URL
     assert params == {"text": "Tashilhunpo Monastery", "format": "json", "limit": "3", "lang": "en",
-                      "filter": "countrycode:cn", "apiKey": KEY}
+                      "filter": "countrycode:cn,hk,mo", "apiKey": KEY}   # AA-997: China covers HK / MO
     assert g.requests == 1 and KEY not in json.dumps(got.meta)
 
 
@@ -460,7 +460,7 @@ def test_unconfirmed_hard_place_is_an_area_on_the_review_list():
     assert (p.located_by, p.precision, p.review_reason, p.provider) == ("llm", "area", "unconfirmed_hard_type",
                                                                          "geoapify")
     town = locate._located(locate.Item(("y",), "Bikaner", "India"), 28.0, 73.3, "India", None)
-    assert town.precision == "area" and town.review_reason is None
+    assert town.precision == "area" and town.review_reason == "llm_point"     # AA-997: only model_only stores it
     ok = locate._located(item, 27.66, 86.78, "Nepal",
                          gc.Confirmed(27.67, 86.77, "Nepal", "pid", "geoapify", {"provider": "geoapify"}))
     assert ok.precision == "point" and ok.review_reason is None and ok.meta["provider"] == "geoapify"

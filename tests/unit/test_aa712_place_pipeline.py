@@ -217,7 +217,7 @@ class _FakeGeocoder:
     def __init__(self, results=None, fail=False):
         self.results, self.fail, self.requests = results or {}, fail, 0
 
-    async def confirm(self, name, lat, lng, country, *, native_name=None):
+    async def confirm(self, name, lat, lng, country, *, native_name=None, routes=(), settlement=False):
         self.requests += 1
         if self.fail:
             raise RuntimeError("HTTP 401")
@@ -231,15 +231,17 @@ async def test_locate_many_confirm_mismatch_and_failures():
                 '"Siem Reap": [13.36, 103.86, "Cambodia"], "Mars": [18.79, 98.98, "Vietnam"]}')
 
     geo = _FakeGeocoder({"Delhi": gc.Confirmed(28.6, 77.2, "India", "dX", "geoapify"),
-                         "Laya": gc.Confirmed(28.0, 89.7, "Nepal", "n", "geoapify")})   # other country: ignored
+                         "Laya": gc.Confirmed(28.0, 89.7, "Nepal", "n", "geoapify"),   # other country: ignored
+                         "Siem Reap": gc.Confirmed(13.36, 103.86, "Cambodia", "sr", "geoapify")})
     items = [locate.Item(("delhi",), "Delhi", "India"), locate.Item(("laya",), "Laya", "Bhutan"),
              locate.Item(("ghost",), "Ghost", "Laos"), locate.Item(("sr",), "Siem Reap", "Thailand"),
              locate.Item(("mars",), "Mars", "Vietnam")]
     out = await locate.locate_many(items, generate, geo)
     assert out[("delhi",)].point.located_by == "geoapify" and out[("delhi",)].point.place_id == "dX"
-    assert out[("laya",)].point == locate.Located(28.07, 89.7, "Bhutan", "llm")
-    assert out[("laya",)].point.meta["outcome"] == "rejected_country_guard"
-    assert out[("ghost",)].point is None and out[("ghost",)].reason == "unknown_to_model"
+    # AA-997: no geocoder answer in the model's country → no point at all (the model's point is never stored)
+    assert out[("laya",)].point is None and out[("laya",)].reason == "unconfirmed_by_geocoder"
+    assert out[("laya",)].final
+    assert out[("ghost",)].point is None and out[("ghost",)].reason == "unknown_to_model" and out[("ghost",)].final
     assert out[("sr",)].point.country == "Cambodia"                          # cross-border night kept
     assert out[("mars",)].point is None and out[("mars",)].reason == "outside_country_bbox"
     assert geo.requests == 3                                                 # guard-rejected / unknown: no call
