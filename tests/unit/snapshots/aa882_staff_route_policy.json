@@ -139,6 +139,10 @@
     "capability": "spend.read",
     "module": "api.routers.admin_llm_ops"
   },
+  "GET /admin/cost-ops/forecast": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_llm_ops"
+  },
   "GET /admin/dashboard/hubs": {
     "capability": null,
     "module": "api.routers.admin_dashboard"
@@ -204,6 +208,10 @@
     "module": "api.routers.admin_llm_ops"
   },
   "GET /admin/dfs-usage/by-country": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_llm_ops"
+  },
+  "GET /admin/dfs-usage/runs": {
     "capability": "spend.read",
     "module": "api.routers.admin_llm_ops"
   },

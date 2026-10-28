@@ -45,8 +45,8 @@ JEV_CREDIT_PAGE_PATH = "/admin/settings?tab=jev-credit"
 PLACES_PAGE_PATH = "/admin/places"
 ALERTS_PAGE_PATH = "/admin/platform/alerts"
 THRESHOLD_STOP = "stop"
-# Admin page with the spend overview and the Budgets tab (nav: Operations -> External Spend).
-SPEND_PAGE_PATH = "/admin/llm-usage"
+# Admin page with the spend overview and the Budgets tab (nav: AI & spend -> Cost Operations, AA-665).
+SPEND_PAGE_PATH = "/admin/cost-ops?tab=budgets"
 
 
 def admin_base_url() -> str:
@@ -147,7 +147,7 @@ def render_spend_budget(payload: dict, *, to: Recipients, base_url: Optional[str
         "<p><strong>Spend budget alert</strong> (shared.spend_budget, cost guard)</p>"
         f"<table style=\"border-collapse:collapse\">{cells}</table>"
         + (f"<p>Detail: {html.escape(note)}</p>" if note else "")
-        + f"<p><a href=\"{html.escape(link)}\">Open External Spend / Budgets</a></p>"
+        + f"<p><a href=\"{html.escape(link)}\">Open Cost Operations / Budgets</a></p>"
         "<p style=\"color:#777;font-size:12px\">The same alert is in the admin notification bell. "
         "One e-mail per budget, threshold and UTC day.</p></div>"
     )
