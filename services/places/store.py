@@ -657,10 +657,51 @@ async def clear_manual_shape(conn, destination_id: str) -> bool:
     return res.endswith(" 1")
 
 
+# ── AA-997: the route a name is checked against ─────────────────────────────────────────────────────────────────────
+# Per (name key, tour source, day of the name): the overnight destinations of days d-1..d+1 of that source, in day
+# order. Only usable, trusted points are anchors: located by the geocoder (or an admin, or the legacy Mapbox rows the
+# audit found 8/9 right), not suspect, not merged, not a line (a line's point is one spot on a long feature), and never
+# the destination being checked itself (`exclude`). A name that is itself a night anchor counts its own day too.
+_ROUTE_ANCHORS_SQL = """
+    WITH k AS (SELECT * FROM unnest($1::text[], $2::text[], $3::text[]) AS k(n, c, l)),
+         uses AS (
+           SELECT k.n, k.c, k.l, tp.source_id, tp.day_index
+             FROM geo.tour_place tp JOIN k ON (tp.name_norm, tp.country_norm, tp.locality_norm) = (k.n, k.c, k.l)
+           UNION
+           SELECT k.n, k.c, k.l, td.source_id, td.day_index
+             FROM geo.tour_day td JOIN k ON (td.anchor_norm, td.anchor_country_norm, td.anchor_locality_norm)
+                                            = (k.n, k.c, k.l))
+    SELECT u.n, u.c, u.l, u.source_id, u.day_index, td.day_index AS anchor_day, d.lat, d.lng
+      FROM uses u
+      JOIN geo.tour_day td ON td.source_id = u.source_id AND td.day_index BETWEEN u.day_index - 1 AND u.day_index + 1
+      JOIN shared.destinations d ON d.id = td.overnight_destination_id
+     WHERE d.located_by IN ('geoapify', 'manual', 'mapbox') AND d.geo_status <> 'suspect' AND d.duplicate_of IS NULL
+       AND d.geo_precision IS DISTINCT FROM 'line' AND NOT (d.id = ANY($4::uuid[]))
+     ORDER BY u.n, u.c, u.l, u.source_id, u.day_index, td.day_index
+"""
+
+
+async def route_anchors(conn, keys: Iterable[tuple], exclude: Iterable[str] = ()) -> dict[tuple, tuple]:
+    """{name key: routes} — one route (tuple of (lat, lng) in day order) per (tour source, day) using the name; keys
+    with no located anchor are absent. guards.route_km measures a point against them."""
+    a, b, c = _keys_arrays(keys)
+    if not a:
+        return {}
+    rows = await conn.fetch(_ROUTE_ANCHORS_SQL, a, b, c, sorted({str(x) for x in exclude if x}))
+    by: dict[tuple, dict[tuple, list]] = {}
+    for r in rows:
+        pts = by.setdefault((r["n"], r["c"], r["l"]), {}).setdefault((r["source_id"], r["day_index"]), [])
+        p = (float(r["lat"]), float(r["lng"]))
+        if not pts or pts[-1] != p:
+            pts.append(p)
+    return {k: tuple(tuple(v) for v in routes.values()) for k, routes in by.items()}
+
+
 async def mark_name(conn, key: tuple, *, destination_id: Optional[str] = None, error: Optional[str] = None,
-                    max_tries: int = 3, retry_days: int = 1) -> str:
+                    max_tries: int = 3, retry_days: int = 1, final: bool = False) -> str:
     """Resolved (destination_id given), or one more failed try: pending again in `retry_days`,
-    'unknown' after `max_tries` (negative cache, like place_card_miss). Returns the new status."""
+    'unknown' after `max_tries` (negative cache, like place_card_miss) — at once when `final` (AA-997: a non-place
+    name, a model null, a point no geocoder confirms: asking again gives the same answer). Returns the new status."""
     if destination_id is not None:
         await conn.execute(
             """UPDATE geo.place_name SET status = 'resolved', destination_id = $4::uuid, tries = tries + 1,
@@ -670,11 +711,11 @@ async def mark_name(conn, key: tuple, *, destination_id: Optional[str] = None, e
         return "resolved"
     return await conn.fetchval(
         """UPDATE geo.place_name SET tries = tries + 1, last_error = $4, updated_at = now(),
-                  status = CASE WHEN tries + 1 >= $5 THEN 'unknown' ELSE 'pending' END,
+                  status = CASE WHEN $7 OR tries + 1 >= $5 THEN 'unknown' ELSE 'pending' END,
                   next_retry_at = now() + make_interval(days => $6)
             WHERE (name_norm, country_norm, locality_norm) = ($1, $2, $3)
         RETURNING status""",
-        key[0], key[1], key[2], (error or "")[:500], max_tries, retry_days)
+        key[0], key[1], key[2], (error or "")[:500], max_tries, retry_days, bool(final))
 
 
 RELINK_SQL = (

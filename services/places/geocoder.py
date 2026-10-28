@@ -98,10 +98,12 @@ class Geocoder(Protocol):
     cost_per_request: float
     requests: int
 
-    async def confirm(self, name: str, lat: float, lng: float, country: str, *,
-                      native_name: Optional[str] = None) -> Result:
+    async def confirm(self, name: str, lat: Optional[float], lng: Optional[float], country: str, *,
+                      native_name: Optional[str] = None, routes: tuple = (), settlement: bool = False) -> Result:
         """Confirmed (a candidate passed the acceptance rule), Unconfirmed (checked, nothing passed) or
-        None (this geocoder does not check). Raises on a failed call — the name is retried later."""
+        None (this geocoder does not check). Raises on a failed call — the name is retried later.
+        AA-997: lat / lng (the model's point) is a hint and may be None; `routes` (guards.route_km) is the reference
+        when given; `settlement` asks for a town (the town fallback)."""
         ...
 
     async def aclose(self) -> None: ...
@@ -180,8 +182,8 @@ class ModelOnlyGeocoder:
     def __init__(self, **_ignored):
         self.requests = 0
 
-    async def confirm(self, name: str, lat: float, lng: float, country: str, *,
-                      native_name: Optional[str] = None) -> Result:
+    async def confirm(self, name: str, lat: Optional[float], lng: Optional[float], country: str, *,
+                      native_name: Optional[str] = None, routes: tuple = (), settlement: bool = False) -> Result:
         return None
 
     async def aclose(self) -> None:
@@ -235,16 +237,22 @@ class GeoapifyGeocoder:
         return self.daily_credit_limit - self.credits_used_today - self.requests
 
     @staticmethod
-    def params(text: str, iso2: str) -> dict:
-        """Request parameters WITHOUT the key (safe to log / assert)."""
+    def params(text: str, iso2: str, *, codes: Optional[list] = None,
+               bias: Optional[tuple[float, float]] = None) -> dict:
+        """Request parameters WITHOUT the key (safe to log / assert). AA-997: `codes` widens the country filter (China
+        covers hk / mo, guards.search_codes); `bias` = (lat, lng) ranks results near the tour's route first."""
         p = {"text": text, "format": "json", "limit": str(geomatch.TOP_N), "lang": "en"}
-        if iso2:
-            p["filter"] = f"countrycode:{iso2}"
+        codes = [c for c in (codes or ([iso2] if iso2 else [])) if c]
+        if codes:
+            p["filter"] = f"countrycode:{','.join(codes)}"
+        if bias is not None:
+            p["bias"] = f"proximity:{bias[1]:.5f},{bias[0]:.5f}"
         return p
 
-    async def search(self, text: str, iso2: str) -> dict:
+    async def search(self, text: str, iso2: str, *, codes: Optional[list] = None,
+                     bias: Optional[tuple[float, float]] = None) -> dict:
         """One search (with retries on 429 / 5xx / transport errors). Every attempt costs a credit."""
-        params = {**self.params(text, iso2), "apiKey": self._get_key()}
+        params = {**self.params(text, iso2, codes=codes, bias=bias), "apiKey": self._get_key()}
         last = "unknown"
         for attempt in range(self.max_retries + 1):
             if self.credits_left() <= 0:
@@ -284,21 +292,27 @@ class GeoapifyGeocoder:
         raise GeocoderError(f"geoapify: {last} after {self.max_retries + 1} attempts")
 
     # ── the confirm call ──
-    async def confirm(self, name: str, lat: float, lng: float, country: str, *,
-                      native_name: Optional[str] = None) -> Result:
+    async def confirm(self, name: str, lat: Optional[float], lng: Optional[float], country: str, *,
+                      native_name: Optional[str] = None, routes: tuple = (), settlement: bool = False) -> Result:
         iso = guards.iso2(country)
+        codes = guards.search_codes(country)
         queries = geomatch.normalise(name)
         if not queries:
             return Unconfirmed({"provider": self.name, "outcome": "skipped_generic"})
+        if not guards.has_route(routes) and (lat is None or lng is None):
+            # AA-997: nothing to check an answer against (no model point, no located stop of the tour): no call
+            return Unconfirmed({"provider": self.name, "outcome": "skipped_no_reference"})
         if native_name and iso in NATIVE_RETRY_ISO2 and geomatch.has_native_script(native_name):
             queries = queries + [native_name.strip()]
+        bias = guards.route_bias(routes)
         tried = []
         for q in queries:
-            payload = await self.search(q, iso)
+            payload = await self.search(q, iso, codes=codes, bias=bias)
             cands = geomatch.candidates(payload)
             native = geomatch.has_native_script(q)
-            v = (_accept_native(q, cands, lat, lng, iso, ref_name=name) if native
-                 else geomatch.accept(q, cands, lat, lng, iso))
+            v = (_accept_native(q, cands, lat, lng, iso, ref_name=name, routes=routes, iso_codes=codes) if native
+                 else geomatch.accept(q, cands, lat, lng, iso, routes=routes, iso_codes=tuple(codes),
+                                      settlement=True if settlement else None))
             tried.append({"query": q, "results": len(cands), "rejected": v.reasons,
                           "top": _brief(cands[0]) if cands else None})
             if v.accepted is not None:
@@ -307,6 +321,7 @@ class GeoapifyGeocoder:
                 if not ctry:
                     continue
                 meta = {"provider": self.name, "outcome": "accepted", "query": q, "rank": v.rank,
+                        "reference": "route" if guards.has_route(routes) else "hint",
                         "result_type": c.result_type, "confidence": c.confidence, "match_type": c.match_type,
                         "name": c.name, "sim": v.sim, "km": v.km, "source": c.source,
                         "attribution": ATTRIBUTION, "tried": tried[:-1]}
@@ -322,30 +337,32 @@ def _brief(c: geomatch.Candidate) -> dict:
     return {"name": c.name, "result_type": c.result_type, "confidence": c.confidence}
 
 
-def _accept_native(query: str, cands: list, lat: float, lng: float, iso2: str, *,
-                   ref_name: str = "") -> geomatch.Verdict:
+def _accept_native(query: str, cands: list, lat: Optional[float], lng: Optional[float], iso2: str, *,
+                   ref_name: str = "", routes: tuple = (), iso_codes=None) -> geomatch.Verdict:
     """A native-script query (中文 / 한글) has no Latin tokens to compare. Same rule as geomatch.accept
     otherwise: the radius and the settlement-only `city` rule come from the English name (`ref_name`) and
     the native query's own feature suffix (山莊 / 寺 / 湖 / 사 / 호 …); the candidate's name must contain the
     query or be contained in it, and then be ≥ 2 characters and ≥ half the query's length — "太平" (a city)
     for "太平山莊" (a mountain lodge) is the Taipingshan homonym trap of bake-off row 58."""
     q = query.replace(" ", "")
-    radius = geomatch.radius_km(ref_name) if ref_name else geomatch.ACCEPT_KM
     settlement = (geomatch.is_settlement(ref_name) if ref_name else True) and not geomatch.native_feature(q)
+    codes = set(iso_codes or ()) | ({iso2} if iso2 else set())
     reasons = []
     for i, c in enumerate(cands[:geomatch.TOP_N]):
         nm = (c.name or "").replace(" ", "")
-        dist = guards.km(lat, lng, c.lat, c.lng)
-        if iso2 and c.iso2 and c.iso2 != iso2:
+        if codes and c.iso2 and c.iso2 not in codes:
             reasons.append(f"{i}:country")
         elif not nm or not (q in nm or nm in q) or (nm in q and (len(nm) < 2 or 2 * len(nm) < len(q))):
             reasons.append(f"{i}:name")
         elif c.result_type in geomatch.REJECT_TYPES or (c.result_type == "city" and not settlement):
             reasons.append(f"{i}:type")
-        elif dist > radius:
-            reasons.append(f"{i}:distance")
         else:
-            return geomatch.Verdict(c, i, 1.0, round(dist, 2), reasons)
+            # the radius comes from the English name (`ref_name`)
+            dist, why = geomatch.reference_km(c.lat, c.lng, lat, lng, ref_name or query, routes)
+            if why:
+                reasons.append(f"{i}:{why}")
+            else:
+                return geomatch.Verdict(c, i, 1.0, round(dist, 2), reasons)
     return geomatch.Verdict(None, reasons=reasons)
 
 

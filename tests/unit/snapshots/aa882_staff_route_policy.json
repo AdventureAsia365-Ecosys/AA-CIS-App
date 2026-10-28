@@ -927,6 +927,10 @@
     "capability": "ops.write",
     "module": "api.routers.admin_places"
   },
+  "POST /admin/places/relocate": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_places"
+  },
   "POST /admin/places/shapes/backfill": {
     "capability": "ops.write",
     "module": "api.routers.admin_places"

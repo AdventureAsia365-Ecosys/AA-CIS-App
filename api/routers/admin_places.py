@@ -40,6 +40,14 @@ AA-847 Problem 2 (automatic duplicate merge, migration 257; owner decision S246:
        the current rule version — that diff is what the job applies (changes outside it count against the breaker)
   POST /admin/places/dedupe/run {mode = dry_run | apply, country?}   queue one place_dedupe run
 
+AA-997 (S254 geocode audit, fix plan step 1: coordinates come from the geocoder only):
+  POST /admin/places/relocate {mode = dry_run | apply, located_by = ["llm"] (| "mapbox"), country?, limit ≤ 400,
+                               hide_unconfirmed = false}
+       queue one place_relocate run (services/places/relocate.py). dry_run: no call, no write — counts (non-place
+       names, points off the tours' route, Hong Kong / Macao stored as China) and the Geoapify credit / day estimate
+       in the job result (GET /admin/job-runner/jobs/{id}). apply: the geocoder-only path per row, ≤ limit rows a run,
+       re-enqueued until done; 409 when the latest dry run of this rule version and selection is missing.
+
 Every response that shows coordinates carries the Geoapify / OpenStreetMap attribution (ADR 0007).
 """
 from __future__ import annotations
@@ -600,3 +608,54 @@ async def dedupe_run(body: DedupeRunRequest, request: Request, x_admin_secret: s
         job_id, created = await enqueue(conn, DEDUPE_KIND, {"mode": body.mode, "country": body.country,
                                                             "reason": "admin"}, created_by=actor)
     return {"job_id": job_id, "created": created, "mode": body.mode, "country": body.country}
+
+
+class RelocateRequest(BaseModel):
+    mode: str = Field("dry_run", pattern="^(dry_run|apply)$")
+    located_by: list[str] = Field(default_factory=lambda: ["llm"], min_length=1, max_length=2)
+    country: Optional[str] = Field(None, max_length=80)
+    limit: int = Field(400, ge=1, le=400)
+    hide_unconfirmed: bool = False
+
+    @field_validator("located_by")
+    @classmethod
+    def _sources(cls, v):
+        from services.places.relocate import LOCATED_BY_ALLOWED
+        bad = [x for x in v if x not in LOCATED_BY_ALLOWED]
+        if bad:
+            raise ValueError(f"located_by must be in {list(LOCATED_BY_ALLOWED)}")
+        return sorted(set(v))
+
+
+_LAST_RELOCATE_DRY_RUN_SQL = """
+    SELECT id::text AS id, result FROM shared.job
+     WHERE kind = 'place_relocate' AND status = 'succeeded' AND payload ->> 'mode' = 'dry_run'
+     ORDER BY finished_at DESC NULLS LAST LIMIT 1
+"""
+
+
+@router.post("/relocate", summary="AA-997 — queue one place_relocate run (dry_run by default; apply after a dry run)")
+async def relocate_run(body: RelocateRequest, request: Request, x_admin_secret: str = Header(None),
+                       x_admin_user_id: Optional[str] = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    from services.places import relocate
+    from services.places.enqueue import RELOCATE_KIND
+    from shared.jobs.registry import enqueue
+    actor = f"admin:{x_admin_user_id or 'unknown'}"
+    payload = {"mode": body.mode, "located_by": body.located_by, "country": body.country, "limit": body.limit,
+               "hide_unconfirmed": body.hide_unconfirmed, "reason": "admin"}
+    async with request.app.state.pool.acquire() as conn:
+        if body.mode == "apply":
+            last = await conn.fetchrow(_LAST_RELOCATE_DRY_RUN_SQL)
+            res = (_json(last["result"]) or {}) if last is not None else {}
+            same = (res.get("rule_version") == relocate.RULE_VERSION and res.get("located_by") == body.located_by
+                    and (res.get("country") or None) == (body.country or None))
+            if not same:
+                raise HTTPException(status_code=409, detail={
+                    "error": "run the dry run of this selection first (same rule version, located_by, country)",
+                    "rule_version": relocate.RULE_VERSION, "last_dry_run": last["id"] if last is not None else None})
+            payload["dry_run_job"] = last["id"]
+        job_id, created = await enqueue(conn, RELOCATE_KIND, payload, created_by=actor)
+    logger.info("place_relocate_queued", actor=actor, job_id=job_id, **{k: v for k, v in payload.items()
+                                                                          if k != "located_by"})
+    return {"job_id": job_id, "created": created, **payload}

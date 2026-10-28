@@ -92,6 +92,111 @@ def point_ok(lat: Optional[float], lng: Optional[float], country: Optional[str])
     return None
 
 
+# ── AA-997: route coherence ─────────────────────────────────────────────────────────────────────────────────────────
+# A place a tour visits on day d lies near that tour's route on days d-1..d+1: the overnight towns of those days
+# (only geocoder-located or admin-fixed ones) joined in day order. The S254 audit found the wrong pins mostly 5-100 km
+# off the route (Kilimanjaro huts, Kong Lor, Jait Sagar) or in another city with the same landmark name (Xi'an's City
+# Wall / Bell and Drum Tower placed in Beijing). The tour-median rule `tour_spread` caught them at 23 % precision; the
+# distance to the polyline of the neighbouring days' stops is the audit's replacement (fix plan step 2). The distance
+# is to the SEGMENTS, not only to the stops, so a site on a long transfer day (between two towns 300 km apart) passes.
+ROUTE_KM = 50.0          # a site / village
+ROUTE_LONG_KM = 100.0    # a long feature (lake, river, valley, park, trail, road, national ...)
+Route = tuple            # tuple[tuple[float, float], ...]: (lat, lng) stops in day order
+
+
+def route_radius(name: Optional[str]) -> float:
+    from services.places import geomatch
+    return ROUTE_LONG_KM if geomatch.radius_km(name or "") > geomatch.ACCEPT_KM else ROUTE_KM
+
+
+def _segment_km(lat: float, lng: float, a: tuple, b: tuple) -> float:
+    """Distance from the point to segment a-b (equirectangular projection around the point: good to a few % for
+    segments under ~1,000 km, which is all a guard needs)."""
+    k = math.cos(math.radians(lat))
+    ax, ay = (a[1] - lng) * k * 111.32, (a[0] - lat) * 110.57
+    bx, by = (b[1] - lng) * k * 111.32, (b[0] - lat) * 110.57
+    dx, dy = bx - ax, by - ay
+    seg2 = dx * dx + dy * dy
+    t = 0.0 if seg2 == 0 else max(0.0, min(1.0, -(ax * dx + ay * dy) / seg2))
+    px, py = ax + t * dx, ay + t * dy
+    return math.hypot(px, py)
+
+
+def route_km(lat: float, lng: float, routes: Iterable[Route]) -> Optional[float]:
+    """The distance (km) from the point to the nearest route (any tour that uses the name); None when no route has a
+    stop (then no route check is possible)."""
+    best: Optional[float] = None
+    for r in routes or ():
+        pts = [p for p in r if p is not None]
+        if not pts:
+            continue
+        d = km(lat, lng, pts[0][0], pts[0][1]) if len(pts) == 1 else min(
+            _segment_km(lat, lng, pts[i], pts[i + 1]) for i in range(len(pts) - 1))
+        best = d if best is None else min(best, d)
+    return best
+
+
+def has_route(routes: Iterable[Route]) -> bool:
+    """At least one route with a stop."""
+    return any(p is not None for r in (routes or ()) for p in r)
+
+
+def on_route(lat: float, lng: float, routes: Iterable[Route], name: Optional[str] = None) -> Optional[bool]:
+    """True / False against the routes; None when there is no route to check against."""
+    d = route_km(lat, lng, routes)
+    return None if d is None else d <= route_radius(name)
+
+
+def route_bias(routes: Iterable[Route]) -> Optional[tuple[float, float]]:
+    """A (lat, lng) to bias a geocoder search toward: the middle stop of the first route that has one."""
+    for r in routes or ():
+        pts = [p for p in r if p is not None]
+        if pts:
+            return pts[len(pts) // 2]
+    return None
+
+
+# ── AA-997: Hong Kong / Macao inside "China", and lenient country text ──────────────────────────────────────────────
+# The model (and the tour) says "China" for Hong Kong and Macao; the audit found all 13 HK and 7 MO rows stored as CN.
+# Geoapify codes them hk / mo, so a China search must include them, and a point inside their polygon is theirs.
+COUNTRY_FAMILY = {"cn": ("cn", "hk", "mo"), "hk": ("hk", "cn"), "mo": ("mo", "cn")}
+
+
+def search_codes(country: Optional[str]) -> list[str]:
+    """ISO alpha-2 codes a search for this country should cover ('China' -> ['cn', 'hk', 'mo'])."""
+    code = iso2(country)
+    return list(COUNTRY_FAMILY.get(code, (code,))) if code else []
+
+
+def same_country(a: Optional[str], b: Optional[str]) -> bool:
+    """Same ISO country, or one of the CN / HK / MO family (a confirming result in Hong Kong for 'China' agrees)."""
+    ia, ib = iso2(a), iso2(b)
+    return bool(ia and ib) and (ia == ib or ib in COUNTRY_FAMILY.get(ia, ()))
+
+
+def refine_country(lat: float, lng: float, country: str) -> str:
+    """'China' -> 'Hong Kong' / 'Macao' for a point inside their polygon (no buffer); any other country unchanged."""
+    if iso2(country) != "cn":
+        return country
+    from services.places import shape
+    for code in ("hk", "mo"):
+        if shape.in_country(lat, lng, code, buffer_km=0):
+            return ISO2_COUNTRY[code]
+    return country
+
+
+def lenient_country(text: Optional[str]) -> Optional[str]:
+    """canonical_country, then — for compound text such as 'Tibet, China' or 'Lhasa (China)' — the one ISO country its
+    parts name (all parts that resolve must agree; 'India and Pakistan' stays None)."""
+    one = canonical_country(text)
+    if one or not text:
+        return one
+    import re
+    found = {canonical_country(p) for p in re.split(r"[,/;()\[\]]|\s+-\s+", text) if p.strip()}
+    found.discard(None)
+    return found.pop() if len(found) == 1 else None
+
+
 @dataclass(frozen=True)
 class DayStop:
     day_index: int

@@ -424,25 +424,46 @@ def _km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     return km(lat1, lng1, lat2, lng2)
 
 
-def accept(query: str, cands: list[Candidate], lat: float, lng: float, iso2: str = "",
-           top_n: int = TOP_N) -> Verdict:
-    """The first of the top `top_n` candidates passing (a) name, (b) type, (c) distance; country must match
-    `iso2` when given (the request filters by country already — this is the hard guard)."""
+def reference_km(c_lat: float, c_lng: float, lat: Optional[float], lng: Optional[float], query: str,
+                 routes=()) -> tuple[Optional[float], Optional[str]]:
+    """(distance, reason) of a candidate against the reference (AA-997). With a tour route (guards.route_km: the
+    neighbouring days' stops of the tours using the name) the route decides — the model's point is only a hint and a
+    candidate near a wrong hint but far off the route is rejected (`off_route`, the Beijing "City Wall" on a Xi'an
+    tour); a right candidate far from a wrong hint passes (Kong Lor 70 km from the model's point). Without a route the
+    model's point is the reference (the S236 bake-off rule, ACCEPT_KM / LONG_FEATURE_KM). With neither: `no_reference`
+    (nothing to check a geocoder answer against, so nothing is accepted)."""
+    from services.places import guards
+    d = guards.route_km(c_lat, c_lng, routes)
+    if d is not None:
+        return d, (None if d <= guards.route_radius(query) else "off_route")
+    if lat is None or lng is None:
+        return None, "no_reference"
+    d = _km(lat, lng, c_lat, c_lng)
+    return d, (None if d <= radius_km(query) else "distance")
+
+
+def accept(query: str, cands: list[Candidate], lat: Optional[float], lng: Optional[float], iso2: str = "",
+           top_n: int = TOP_N, *, routes=(), iso_codes: Optional[tuple] = None,
+           settlement: Optional[bool] = None) -> Verdict:
+    """The first of the top `top_n` candidates passing (a) name, (b) type, (c) distance (reference_km); country must
+    match `iso2` (or one of `iso_codes`, AA-997: China covers hk / mo) when given (the request filters by country
+    already — this is the hard guard). `settlement` forces the `city` rule (the town fallback asks for a town)."""
     n_tok = len(tokens(query))
-    settlement = is_settlement(query)
-    radius = radius_km(query)
+    settlement = is_settlement(query) if settlement is None else settlement
+    codes = set(iso_codes or ()) | ({iso2} if iso2 else set())
     reasons = []
     for i, c in enumerate(cands[:top_n]):
         sim = name_sim(query, c.name)
-        dist = _km(lat, lng, c.lat, c.lng)
-        if iso2 and c.iso2 and c.iso2 != iso2:
+        if codes and c.iso2 and c.iso2 not in codes:
             reasons.append(f"{i}:country")
         elif not (sim >= 0.999 or (sim >= 0.5 and n_tok >= 2)):
             reasons.append(f"{i}:name")
         elif c.result_type in REJECT_TYPES or (c.result_type == "city" and not settlement):
             reasons.append(f"{i}:type")
-        elif dist > radius:
-            reasons.append(f"{i}:distance")
         else:
-            return Verdict(c, i, round(sim, 3), round(dist, 2), reasons)
+            dist, why = reference_km(c.lat, c.lng, lat, lng, query, routes)
+            if why:
+                reasons.append(f"{i}:{why}")
+            else:
+                return Verdict(c, i, round(sim, 3), round(dist, 2), reasons)
     return Verdict(None, reasons=reasons)

@@ -461,12 +461,29 @@ async def test_geocode_failures_stay_pending_then_unknown(pool, cur):
     from services.places.geocoder import ModelOnlyGeocoder
     cur.execute("INSERT INTO geo.place_name (name_norm, country_norm, locality_norm, display_name, country) "
                 "VALUES ('zz712 nowhere', 'laos', '', 'Zz712 Nowhere', 'Laos')")
-    loc = _Llm(locate_answer='{"Zz712 Nowhere": null}')
+    loc = _Llm(locate_answer='{"Zz712 Nowhere": [12.0]}')        # malformed: retried, unknown after 3 tries
     for _ in range(3):
         cur.execute("UPDATE geo.place_name SET next_retry_at = now() WHERE name_norm = 'zz712 nowhere'")
         await pipeline.geocode_pending(pool, loc.locate, ModelOnlyGeocoder(), limit=100)
     cur.execute("SELECT status, tries FROM geo.place_name WHERE name_norm = 'zz712 nowhere'")
     assert cur.fetchone() == ("unknown", 3)
+
+
+@pytest.mark.asyncio
+async def test_aa997_null_and_non_place_names_are_unknown_at_once(pool, cur):
+    """AA-997: a model null (asking again returns null again) and a non-place name (no call at all) are 'unknown' after
+    one try, with their reason."""
+    from services.places import pipeline
+    from services.places.geocoder import ModelOnlyGeocoder
+    cur.execute("INSERT INTO geo.place_name (name_norm, country_norm, locality_norm, display_name, country) "
+                "VALUES ('zz997 nowhere', 'laos', '', 'Zz997 Nowhere', 'Laos'), "
+                "('zz997 pakse to champasak', 'laos', '', 'Zz997 Pakse to Champasak', 'Laos')")
+    loc = _Llm(locate_answer='{"Zz997 Nowhere": null}')
+    await pipeline.geocode_pending(pool, loc.locate, ModelOnlyGeocoder(), limit=100)
+    cur.execute("SELECT name_norm, status, tries, last_error FROM geo.place_name WHERE name_norm LIKE 'zz997%' "
+                "ORDER BY name_norm")
+    assert cur.fetchall() == [("zz997 nowhere", "unknown", 1, "unknown_to_model"),
+                              ("zz997 pakse to champasak", "unknown", 1, "non_place:route_segment")]
 
 
 @pytest.mark.asyncio

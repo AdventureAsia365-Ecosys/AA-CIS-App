@@ -154,6 +154,11 @@ async def after_liveness_change(db, *, tour_id: str, new_status: str, created_by
 DEDUPE_KIND = "place_dedupe"
 
 
+# AA-997: re-locate model-placed destinations through the geocoder-only path (admin POST /admin/places/relocate; dry
+# run first). Background, cap 1, shares the Geoapify lock with place_geocode / place_shape.
+RELOCATE_KIND = "place_relocate"
+
+
 async def enqueue_dedupe(db, *, reason: str, created_by: str = "system") -> tuple[str, bool]:
     return await enqueue_debounced(db, DEDUPE_KIND, reason=reason, created_by=created_by)
 

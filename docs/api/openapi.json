@@ -4057,6 +4057,51 @@
         "title": "ReleaseReasonBody",
         "type": "object"
       },
+      "RelocateRequest": {
+        "properties": {
+          "country": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country"
+          },
+          "hide_unconfirmed": {
+            "default": false,
+            "title": "Hide Unconfirmed",
+            "type": "boolean"
+          },
+          "limit": {
+            "default": 400,
+            "maximum": 400.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "located_by": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 2,
+            "minItems": 1,
+            "title": "Located By",
+            "type": "array"
+          },
+          "mode": {
+            "default": "dry_run",
+            "pattern": "^(dry_run|apply)$",
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "title": "RelocateRequest",
+        "type": "object"
+      },
       "ResearchScope": {
         "properties": {
           "country": {
@@ -19169,6 +19214,95 @@
           }
         },
         "summary": "AA-847 — undo one duplicate-place merge (dry run by default)",
+        "tags": [
+          "admin-places"
+        ]
+      }
+    },
+    "/admin/places/relocate": {
+      "post": {
+        "operationId": "relocate_run_admin_places_relocate_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RelocateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "AA-997 — queue one place_relocate run (dry_run by default; apply after a dry run)",
         "tags": [
           "admin-places"
         ]
