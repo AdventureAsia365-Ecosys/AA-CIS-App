@@ -1755,3 +1755,7 @@ makes the Terra LinkedIn closer.
   (both `record_call_sync` and `record_unusable_sync`), so cost per arm is `quality_signal->>'arm'`, not run_ids
   copied from stdout.
 - **R7-F5: the TRAVELLER_RETURN_LINE limit** is stated in R7-D3 (kept as is, see there).
+
+### Round 7 outcome (S254): reverted
+
+Blind 9-arm panel (720 scores, control arm r6b): brand_voice r7 6.60 vs r6b 6.75 / r6 6.67 (noise 0.08), reader_value r7 6.95 vs 7.15–7.22; AI-tells 5.75 and source fidelity 7.70 held. The ship rule failed, so the code was reverted (round 6 live again). The diagnosis above stays valid for the next round: the angle-brief copying and the missing style-guide focus are real, but the generic BRAND FOCUS block did not lift brand voice and cost reader value; next try the T8 angle generator itself (it writes briefs the seed cannot support). Report: root `docs/audits/2026-10-28-S254-aa790-r7-panel/`.
