@@ -36515,7 +36515,7 @@
     },
     "/v1/tours/pool": {
       "get": {
-        "description": "Browse AA shared pool (published_tours from aa_internal).\n\nAA-796: no A1 quality score on the tenant side — the `min_quality` filter, the\n`sort=quality` order and the `quality_score` column are gone. An old client still sending\n`min_quality` / `sort=quality` gets the unfiltered, newest-first list (FastAPI ignores\nunknown query params).",
+        "description": "Browse AA shared pool (published_tours from aa_internal).\n\nAA-671: each row also carries `activities` (graph activity codes), `intensity` (easy | moderate | challenging |\nstrenuous, the highest of the tour's components, or null) and `cover_image_url` / `cover_image_large_url` (the\ntour's first photo on the public photo route, 600 / 1600 px, or null). Filters `activity`, `intensity` (exact\nlevel) and `added_within_days` (published in the last N days); the answer's `facets` lists the accepted values.\n\nAA-796: no A1 quality score on the tenant side — the `min_quality` filter, the\n`sort=quality` order and the `quality_score` column are gone. An old client still sending\n`min_quality` / `sort=quality` gets the unfiltered, newest-first list (FastAPI ignores\nunknown query params).",
         "operationId": "browse_pool_v1_tours_pool_get",
         "parameters": [
           {
@@ -36614,6 +36614,72 @@
               "default": "newest",
               "title": "Sort",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "activity",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "adventure_sport",
+                    "cultural_heritage",
+                    "culinary",
+                    "local_immersion",
+                    "trekking",
+                    "water_activities",
+                    "wellness_relaxation",
+                    "wildlife_nature"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Activity"
+            }
+          },
+          {
+            "in": "query",
+            "name": "intensity",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "easy",
+                    "moderate",
+                    "challenging",
+                    "strenuous"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Intensity"
+            }
+          },
+          {
+            "in": "query",
+            "name": "added_within_days",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 365,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Added Within Days"
             }
           }
         ],

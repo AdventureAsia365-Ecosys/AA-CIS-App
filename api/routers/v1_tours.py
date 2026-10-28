@@ -1,7 +1,7 @@
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from typing import Optional
+from typing import Annotated, Literal, Optional
 from pydantic import BaseModel as _BM
 import asyncpg
 from api.core.aa544_tenant_pool import (
@@ -17,6 +17,7 @@ from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from api.routers._served import annotate as _annotate_served, refuse_http as _refuse_not_served
 from shared import tour_liveness as _tl
 from shared.tour_liveness import TourNotServedError, live_source_sql
+from services.photos.sync import public_base
 from api.routers._tenant_projection import (
     project_billing, project_raw, project_tour, project_version,
     tenant_status_filter, tenant_version_status,
@@ -118,6 +119,7 @@ _POOL_COUNT_SQL = """
     SELECT COUNT(*)
     FROM gold_aa_internal.published_tours pt
     LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
+    {facet_join}
     {where}
 """
 _POOL_REWRITTEN_TENANT_COND = "ttv.tenant_id = ${tid}::uuid"
@@ -131,13 +133,74 @@ _POOL_ROWS_SQL = """
                SELECT 1 FROM gold_aa_internal.tenant_tour_versions ttv
                WHERE ttv.published_tour_id = pt.id
                  AND {rewritten_cond}
-           ) AS already_rewritten
+           ) AS already_rewritten,
+           facet.activity_codes, facet.intensity_rank, cover.path AS cover_photo_path
     FROM gold_aa_internal.published_tours pt
     LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
+    {facet_join}
+    {cover_join}
     {where}
     ORDER BY {order_by}
     LIMIT ${limit} OFFSET ${offset}
 """
+# AA-671 — the Marketplace facets of each pool tour, from CIS data the catalog already serves (no new column):
+#   activities = the distinct graph activities of the tour's components, intensity = the highest component intensity
+#   (the catalog.http.v1 facets rule, services/catalog_http/mapping.py facets()), cover = the tour's position-1 photo.
+# Graph vocabulary: geo.tour_place CHECKs tour_place_activity_check / tour_place_intensity_level_check (graph.v1);
+# the tenant sees the catalog.http.v1 intensity names (leisurely -> easy, active -> challenging), like the CRM.
+# The two pools read different relations for the same rows: aa_app_user (tenant pool) holds SELECT on the catalog
+# contract views and not on geo / shared.v_tour_photos; cis_app (admin pool, flag off) the reverse (ADR 0015 d3).
+POOL_ACTIVITIES = ("adventure_sport", "cultural_heritage", "culinary", "local_immersion", "trekking",
+                   "water_activities", "wellness_relaxation", "wildlife_nature")
+POOL_INTENSITY_LEVELS = ("leisurely", "moderate", "active", "strenuous")     # increasing; rank = index + 1
+POOL_INTENSITIES = ("easy", "moderate", "challenging", "strenuous")          # tenant names, same order
+_INTENSITY_RANK_SQL = ("max(array_position(ARRAY['leisurely','moderate','active','strenuous']::text[], "
+                       "c.intensity_level))")
+_POOL_FACET_JOIN = {
+    True: f"""LEFT JOIN LATERAL (
+        SELECT array_agg(DISTINCT c.activity ORDER BY c.activity) AS activity_codes,
+               {_INTENSITY_RANK_SQL} AS intensity_rank
+          FROM catalog.v_tour_component c
+         WHERE c.source_system = 'cis' AND c.tour_id = pt.tour_id
+    ) facet ON true""",
+    # Flag off: v_tour_component's own rows (258) on its source tables: components of the tour's source key whose
+    # destination is usable.
+    False: f"""LEFT JOIN LATERAL (
+        SELECT array_agg(DISTINCT c.activity ORDER BY c.activity) AS activity_codes,
+               {_INTENSITY_RANK_SQL} AS intensity_rank
+          FROM geo.tour_place c
+          JOIN shared.destinations d ON d.id = c.destination_id
+                                    AND d.geo_status <> 'suspect' AND d.duplicate_of IS NULL
+         WHERE c.source_id = rt.source_key
+    ) facet ON true""",
+}
+_POOL_COVER_JOIN = {
+    True: """LEFT JOIN LATERAL (
+        SELECT ph.path FROM catalog.v_tour_photo ph
+         WHERE ph.source_system = 'cis' AND ph.tour_id = pt.tour_id AND ph.position = 1
+         LIMIT 1
+    ) cover ON true""",
+    False: """LEFT JOIN LATERAL (
+        SELECT ph.path FROM shared.v_tour_photos ph
+         WHERE ph.tour_id = pt.tour_id AND ph.position = 1
+         LIMIT 1
+    ) cover ON true""",
+}
+
+
+def _pool_facets(row: dict) -> dict:
+    """The facet columns of one pool row -> the tenant fields (activities, intensity, cover image URLs)."""
+    codes = row.pop("activity_codes", None) or []
+    rank = row.pop("intensity_rank", None)
+    path = row.pop("cover_photo_path", None)
+    row["activities"] = [c for c in codes if c in POOL_ACTIVITIES]
+    row["intensity"] = POOL_INTENSITIES[rank - 1] if isinstance(rank, int) and 1 <= rank <= 4 else None
+    base = public_base() + path if isinstance(path, str) and path.startswith("/") else None
+    row["cover_image_url"] = f"{base}?size=small" if base else None
+    row["cover_image_large_url"] = f"{base}?size=large" if base else None
+    return row
+
+
 # Countries for the filter dropdown: same master_status/deleted_at gate as the listing, so a
 # trashed/deactivated tour's country doesn't show as a filterable option.
 _POOL_COUNTRIES_SQL = f"""
@@ -164,8 +227,17 @@ async def browse_pool(
     duration_min: Optional[int] = Query(None, ge=1),
     duration_max: Optional[int] = Query(None),
     sort: str = Query("newest"),
+    # Annotated, so a direct call (tests, other routers) that leaves them out gets None, not a Query object
+    activity: Annotated[Optional[Literal[POOL_ACTIVITIES]], Query()] = None,
+    intensity: Annotated[Optional[Literal[POOL_INTENSITIES]], Query()] = None,
+    added_within_days: Annotated[Optional[int], Query(ge=1, le=365)] = None,
 ):
     """Browse AA shared pool (published_tours from aa_internal).
+
+    AA-671: each row also carries `activities` (graph activity codes), `intensity` (easy | moderate | challenging |
+    strenuous, the highest of the tour's components, or null) and `cover_image_url` / `cover_image_large_url` (the
+    tour's first photo on the public photo route, 600 / 1600 px, or null). Filters `activity`, `intensity` (exact
+    level) and `added_within_days` (published in the last N days); the answer's `facets` lists the accepted values.
 
     AA-796: no A1 quality score on the tenant side — the `min_quality` filter, the
     `sort=quality` order and the `quality_score` column are gone. An old client still sending
@@ -204,21 +276,36 @@ async def browse_pool(
             f"{_DURATION_DAYS_SQL} <= ${len(params)}"
         )
 
+    # AA-671 facet filters (the facet join is added to the count only when one of them is set)
+    if activity is not None:
+        params.append(activity)
+        conditions.append(f"${len(params)}::text = ANY(facet.activity_codes)")
+    if intensity is not None:
+        params.append(POOL_INTENSITIES.index(intensity) + 1)
+        conditions.append(f"facet.intensity_rank = ${len(params)}::int")
+    if added_within_days is not None:
+        params.append(added_within_days)
+        conditions.append(f"pt.published_at >= now() - make_interval(days => ${len(params)}::int)")
+    count_needs_facets = activity is not None or intensity is not None
+
     order_by = "pt.published_at DESC"  # AA-796 — the only tenant sort; `sort` kept for old clients
     where = "WHERE " + " AND ".join(conditions)
     # tenant_id added as last param for the already_rewritten subquery
     params_paged = params + [page_size, offset, tenant_id]
-    rows_sql = _POOL_ROWS_SQL.format(
-        rewritten_cond=_POOL_REWRITTEN_TENANT_COND.format(tid=len(params) + 3),
-        where=where, order_by=order_by, limit=len(params) + 1, offset=len(params) + 2)
 
     async with acquire_scoped_conn(
         request, tenant_id, T2_VERSION_READS_FLAG, fail_closed=True,
     ) as (conn, used_tenant_pool):
-        total = await conn.fetchval(_POOL_COUNT_SQL.format(where=where), *params)
+        facet_join = _POOL_FACET_JOIN[used_tenant_pool]
+        rows_sql = _POOL_ROWS_SQL.format(
+            rewritten_cond=_POOL_REWRITTEN_TENANT_COND.format(tid=len(params) + 3),
+            facet_join=facet_join, cover_join=_POOL_COVER_JOIN[used_tenant_pool],
+            where=where, order_by=order_by, limit=len(params) + 1, offset=len(params) + 2)
+        count_sql = _POOL_COUNT_SQL.format(facet_join=facet_join if count_needs_facets else "", where=where)
+        total = await conn.fetchval(count_sql, *params)
         rows = await conn.fetch(rows_sql, *params_paged)
         countries = await conn.fetch(_POOL_COUNTRIES_SQL)
-        data = await _annotate_served(conn, [project_tour(r) for r in rows])   # AA-986 L3
+        data = await _annotate_served(conn, [_pool_facets(project_tour(r)) for r in rows])   # AA-986 L3
     _log_t2_read("pool", tenant_id, used_tenant_pool, count=len(rows))
 
     return {
@@ -226,6 +313,7 @@ async def browse_pool(
         "pagination": {"page": page, "page_size": page_size,
                        "total": total, "pages": -(-total // page_size)},
         "countries": [r["country"] for r in countries],
+        "facets": {"activities": list(POOL_ACTIVITIES), "intensities": list(POOL_INTENSITIES)},
         "tenant_id": tenant_id,
     }
 
