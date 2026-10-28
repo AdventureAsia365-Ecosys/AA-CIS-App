@@ -289,6 +289,10 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   route (a Bedrock outage), never a primary or a shadow; GPT-4.1 is retired.** Judge routes on Dev:
   - `s1_judge`, `t2_judge`, `t7_debate_judge`, `t10_judge`: GPT-5.6 Luna (Bedrock acc3) → GPT-6 Luna
     (Bedrock acc3) → GPT-6 Luna (OpenAI API, last resort); shadow GPT-6 Luna at the admin-set rate.
+  - **One judge client** (AA-765): every judge request — S1/T2 brand fit and the T7 Debate candidate fit
+    (`brand_fit._judge`), the T10 F9 judge (`quality_gates` via `invoke_judge`) — is built and sent by
+    `shared/llm_client/judge.py` (`call_judge`; it also holds the judge JSON parsers). It writes no
+    `llm_call_log` row: the callers (judge_node, debate, quality_gates) do, once they have the verdict.
   - `s1_brand_audit`, `t2_brand_audit`: GPT-5.6 Luna → GPT-6 Luna (no OpenAI last resort).
   - acc3 is the only satellite account (AA-998). The legacy Haiku/Sonnet chain is acc3 Sonnet → acc3 Haiku
     (no cross-account tier); `account_route` is CHECKed to acc3 / NULL (migration 295) and the gateway ignores any
@@ -2954,8 +2958,11 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   (columns/filters by channel·status·goal/sort/saved views/CSV) with a right-side drawer for the
   piece (content + context + flags + inline edit + exports), and bulk actions (export selected,
   publish selected eligible pieces) via react-query.
-- **T11 — Publish / Export**: tenant-facing WordPress publish, blog Channel only today
-  (`/portal/content/publish`, was `t11-publish`); the other 7 Channels have no publish step built yet. Blog markdown is
+- **T11 — Publish / Export**: tenant-facing publish to WordPress (blog Channel) and a Facebook Page
+  (`/portal/content/publish`, was `t11-publish`); the other Channels have no publish step built yet. The router
+  `api/routers/v1_publish.py` keeps HTTP, auth, the tenant pool, Secrets Manager and the `publish_log` claim / finish
+  and daily limit; the per-channel dispatch (integration type, adapter, post building, remote lookup and delete) is
+  `services/acp_publish/dispatch.py` (AA-765). Blog markdown is
   converted to an HTML fragment before it is sent to WordPress (AA-613 fixed raw `##`/`**`
   appearing on the site). Export has two modes: a full HTML document and a bare HTML fragment
   for pasting into a CMS. Every export and publish writes an audit row.
