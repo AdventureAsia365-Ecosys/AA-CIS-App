@@ -609,20 +609,6 @@
         "title": "BackfillRequest",
         "type": "object"
       },
-      "Body_run_pipeline_v1_pipeline_run_post": {
-        "properties": {
-          "file": {
-            "contentMediaType": "application/octet-stream",
-            "title": "File",
-            "type": "string"
-          }
-        },
-        "required": [
-          "file"
-        ],
-        "title": "Body_run_pipeline_v1_pipeline_run_post",
-        "type": "object"
-      },
       "BookingTokenResponse": {
         "description": "AA-680 — POST /auth/booking-token: an RS256 JWT (aud=booking) for AA-Booking.",
         "properties": {
@@ -35657,95 +35643,6 @@
           }
         ],
         "summary": "Reject Review",
-        "tags": [
-          "pipeline"
-        ]
-      }
-    },
-    "/v1/pipeline/run": {
-      "post": {
-        "description": "Upload Excel file → parse → rewrite up to max_tours tours.\nReturns before/after comparison with quality scores.\n\nArgs:\n    file: Excel file (.xlsx)\n    max_tours: Max number of tours to process (default 5, max 20)",
-        "operationId": "run_pipeline_v1_pipeline_run_post",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "max_tours",
-            "required": false,
-            "schema": {
-              "default": 5,
-              "title": "Max Tours",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-admin-secret",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Admin-Secret"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-admin-role",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Admin-Role"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_run_pipeline_v1_pipeline_run_post"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Run Pipeline",
         "tags": [
           "pipeline"
         ]

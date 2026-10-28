@@ -45,7 +45,6 @@
   "POST /v1/notifications/{notif_id}/read 200",
   "POST /v1/pipeline/review-queue/{review_id}/approve 200",
   "POST /v1/pipeline/review-queue/{review_id}/reject 200",
-  "POST /v1/pipeline/run 200",
   "POST /v1/planning/trip-reallocation/confirm 200",
   "POST /v1/publish-log/{piece_id}/publish 200",
   "POST /v1/slate/refresh 202",

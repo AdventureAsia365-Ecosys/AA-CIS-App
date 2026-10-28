@@ -342,7 +342,6 @@ POLICY: dict[tuple[str, str], str] = {
 
     # ── /v1 routers the staff BFF calls with the admin secret (/api/pipeline, the /api/tenant staff
     # branch). Their own guard keeps tenant JWTs out; POLICY narrows the staff roles.
-    ("POST", "/v1/pipeline/run"): CONTENT_WRITE,
     ("POST", "/v1/pipeline/review-queue/{review_id}/approve"): REVIEW_ACT,
     ("POST", "/v1/pipeline/review-queue/{review_id}/reject"): REVIEW_ACT,
     ("PATCH", "/v1/rules/{rule_id}"): CONTENT_SETTINGS_WRITE,      # global output rules, every tenant

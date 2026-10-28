@@ -156,7 +156,7 @@ def test_content_work_routes_are_the_every_staff_pages():
         "/admin/tours/{tour_id}/trash", "/admin/tours/{tour_id}/restore",
         "/admin/notifications/read-all", "/admin/notifications/{notif_id}/read",
         "/admin/aa-content", "/admin/aa-content/{content_id}/draft",      # AA-977: drafts are content work
-        "/v1/pipeline/run", "/v1/pipeline/review-queue/{review_id}/approve",
+        "/v1/pipeline/review-queue/{review_id}/approve",
         "/v1/pipeline/review-queue/{review_id}/reject",
         # AA-835 — the supply content review (edit, regenerate, publish, reject, unpublish)
         "/admin/supply-content/{entity_id}/versions", "/admin/supply-content/{entity_id}/draft",

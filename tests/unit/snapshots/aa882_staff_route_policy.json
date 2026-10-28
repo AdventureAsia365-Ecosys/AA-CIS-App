@@ -1223,10 +1223,6 @@
     "capability": "review.act",
     "module": "api.routers.v1_pipeline"
   },
-  "POST /v1/pipeline/run": {
-    "capability": "content.write",
-    "module": "api.routers.v1_pipeline"
-  },
   "PUT /admin/aa-content/{content_id}/draft": {
     "capability": "content.write",
     "module": "api.routers.admin_aa_content"
