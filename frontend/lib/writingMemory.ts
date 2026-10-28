@@ -113,8 +113,10 @@ export function ruleTone(s: RuleStatus): "success" | "danger" | "warning" | "neu
     : s === "candidate" ? "warning" : "neutral";
 }
 
-export function owner(scope: Scope, tenantId: string | null): string {
-  return scope === "platform" ? "Platform" : `Tenant ${(tenantId || "").slice(0, 8)}`;
+/** "Platform", else the tenant's printed name when the caller has one (the Releases tab, AA-919), else "Tenant" plus
+ *  the first 8 characters of its id (the Signals / Candidates / Rules lists never print tenant names). */
+export function owner(scope: Scope, tenantId: string | null, tenantName?: string): string {
+  return scope === "platform" ? "Platform" : tenantName || `Tenant ${(tenantId || "").slice(0, 8)}`;
 }
 
 export function usd(n: number | null | undefined): string {
