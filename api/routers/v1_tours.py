@@ -164,14 +164,16 @@ _POOL_FACET_JOIN = {
          WHERE c.source_system = 'cis' AND c.tour_id = pt.tour_id
     ) facet ON true""",
     # Flag off: v_tour_component's own rows (258) on its source tables: components of the tour's source key whose
-    # destination is usable.
+    # destination is usable. The key is written as the expression of raw_tours.source_key (258,
+    # COALESCE(source_group_id, tour_id)::text, a stored generated column on Dev), like 272, so the SQL does not
+    # depend on the stored column (the integration replay skips 258).
     False: f"""LEFT JOIN LATERAL (
         SELECT array_agg(DISTINCT c.activity ORDER BY c.activity) AS activity_codes,
                {_INTENSITY_RANK_SQL} AS intensity_rank
           FROM geo.tour_place c
           JOIN shared.destinations d ON d.id = c.destination_id
                                     AND d.geo_status <> 'suspect' AND d.duplicate_of IS NULL
-         WHERE c.source_id = rt.source_key
+         WHERE c.source_id = (COALESCE(rt.source_group_id, rt.tour_id))::text
     ) facet ON true""",
 }
 _POOL_COVER_JOIN = {
