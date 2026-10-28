@@ -1,27 +1,27 @@
+"""
+/v1/pipeline — the AA master review queue (list / approve / reject), Step Functions execution status and
+sources, admin only (AA-799). The rewrite helpers here (`_rewrite_tour`) are also used by services/eval.
+
+AA-765 (AA-799 follow-up): `POST /v1/pipeline/run` (upload an Excel file and rewrite up to 20 tours in the
+request) was removed — no caller left (the admin uploads through /admin, S0 → S1 jobs) and it was an
+LLM-spend entry point outside the job runner.
+"""
 import re
-"""
-POST /v1/pipeline/run — Upload Excel → parse → rewrite → return results
-Chạy trực tiếp trong ECS, không cần Lambda/Step Functions.
-"""
 import os
 import json
-import uuid
 import asyncio
-import tempfile
 import structlog
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request
 from api.core.secret_compare import secrets_equal
 from api.core.staff_authz import staff_policy_if_staff
 from api.core.staff_credential import principal_verified
-from fastapi.responses import JSONResponse
 from typing import Optional
 
 from shared.tour_liveness import (
     SOURCE_NOT_LIVE, SourceNotLiveError, live_source_exists_sql, live_source_sql, source_not_live_message,
     source_state,
 )
-from services.ingestion.excel_parser import ExcelParser
 from services.content_generation.graph import build_graph
 from pydantic import BaseModel
 import asyncpg
@@ -405,80 +405,6 @@ async def _rewrite_tour(
             "status": "failed",
             "error": str(e),
         }
-
-
-@router.post("/run")
-async def run_pipeline(
-    file: UploadFile = File(...),
-    max_tours: int = 5,
-):
-    """
-    Upload Excel file → parse → rewrite up to max_tours tours.
-    Returns before/after comparison with quality scores.
-
-    Args:
-        file: Excel file (.xlsx)
-        max_tours: Max number of tours to process (default 5, max 20)
-    """
-    if not file.filename.endswith((".xlsx", ".xls")):
-        raise HTTPException(400, "Only .xlsx/.xls files supported")
-
-    max_tours = min(max_tours, 20)  # Hard cap at 20
-
-    # Save upload to temp file
-    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
-        content = await file.read()
-        tmp.write(content)
-        tmp_path = tmp.name
-
-    logger.info("pipeline_started", filename=file.filename, max_tours=max_tours)
-
-    try:
-        # Parse Excel
-        parser = ExcelParser(tmp_path, source_file=file.filename)
-        records = parser.parse()
-
-        if not records:
-            raise HTTPException(400, "No valid tour records found in Excel file")
-
-        # Limit tours
-        records = records[:max_tours]
-        logger.info("tours_parsed", total=len(records))
-
-        # Rewrite tours concurrently (max 3 at a time to avoid rate limits)
-        semaphore = asyncio.Semaphore(3)
-
-        async def bounded_rewrite(tour, idx):
-            async with semaphore:
-                return await _rewrite_tour(tour, idx + 1, len(records))
-
-        tasks = [bounded_rewrite(tour, i) for i, tour in enumerate(records)]
-        results = await asyncio.gather(*tasks)
-
-        # Summary stats
-        successful = [r for r in results if r.get("status") == "success"]
-        failed = [r for r in results if r.get("status") == "failed"]
-        total_cost = sum(r.get("cost_usd", 0) for r in results)
-        avg_quality = (
-            sum(r.get("quality_score", 0) for r in successful) / len(successful)
-            if successful else 0
-        )
-
-        return JSONResponse({
-            "batch_id": str(uuid.uuid4()),
-            "filename": file.filename,
-            "summary": {
-                "total": len(records),
-                "successful": len(successful),
-                "failed": len(failed),
-                "avg_quality_score": round(avg_quality, 2),
-                "total_cost_usd": round(total_cost, 4),
-            },
-            "results": results,
-        })
-
-    finally:
-        os.unlink(tmp_path)
 
 
 # ── SF per-tour endpoint — MOVED TO /admin/run-tour (admin_pipeline.py) ──────

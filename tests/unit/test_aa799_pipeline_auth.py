@@ -66,7 +66,7 @@ ROUTES = _routes()
 
 def test_router_has_the_known_routes():
     paths = {p for _, p in ROUTES}
-    for expected in ("/v1/pipeline/run", "/v1/pipeline/review-queue",
+    for expected in ("/v1/pipeline/review-queue",
                      "/v1/pipeline/review-queue/x-aa799/approve", "/v1/pipeline/review-queue/x-aa799/reject",
                      "/v1/pipeline/execution/x-aa799", "/v1/pipeline/sources"):
         assert expected in paths
@@ -132,12 +132,12 @@ def test_admin_secret_end_to_end_review_queue():
     assert res.json()["pagination"]["total"] == 0
 
 
-def test_admin_secret_end_to_end_run_reaches_handler():
-    # A non-Excel upload is rejected by the handler itself (400) — proves auth passed, no work done.
-    # AA-882 (GĐ3): a write needs the staff role the BFF forwards (no role = machine, refused).
+def test_run_endpoint_is_gone():
+    # AA-765 (AA-799 follow-up): the caller-less Excel upload + rewrite endpoint was removed.
+    assert "/v1/pipeline/run" not in {p for _, p in ROUTES}
     res = _client().post("/v1/pipeline/run", headers={"X-Admin-Secret": ADMIN_SECRET, "x-admin-role": "admin"},
-                         files={"file": ("x.txt", b"nope", "text/plain")})
-    assert res.status_code == 400
+                         files={"file": ("x.xlsx", b"nope", "application/octet-stream")})
+    assert res.status_code in (404, 405)
 
 
 def test_sources_admin_reads_master_tenant():
