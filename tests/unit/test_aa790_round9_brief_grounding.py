@@ -20,7 +20,7 @@ SEED = ("Riverside Monastery — visit the prayer hall\nLocation: Riverside Mona
         "- Its hall holds a library of 300 hand-copied texts.")
 SEED2 = ("Lakeside Camp — overnight in a tented camp\nLocation: Lakeside Camp, Example Province\nDay 3 of the trip\n"
          "Source itinerary: Arrive in the afternoon; overnight in a tented camp by the lake. Optional boat ride.")
-BRIEF = ("Warm, scene-setting narrative that opens mid-moment: the table, the food, the guide unrolling a map. "
+BRIEF = ("Warm, picture-led story that starts in motion: the courtyard, the tea, the porter folding a blanket. "
          "Lead with the 3-kilometre walk along the river and the evening prayers. Three H2 sections in day order, "
          "a CTA paragraph, then a four-pair FAQ.")
 PACKS = (
@@ -29,8 +29,9 @@ PACKS = (
     {"brand_name": "Kin Co", "brand_type": "Premium family adventure travel brand", "voice": ["Warm", "Reassuring"]},
 )
 CHANNELS = ("blog", "linkedin", "facebook", "instagram", "tiktok", "ads", "email", "landing_page")
-# sha256 of the 192 fixture prompts joined, computed on main 67af0922 (round 6 live) before round 9 existed.
-ROUND6_FIXTURE_SHA = "f6a4555a3e19b612d2b0f9b83e6895b6b9e54017a2b68255e19dd2571574f46f"
+# sha256 of the 192 fixture prompts joined, computed on main 67af0922 (round 6 live) before round 9 existed
+# (recomputed on 67af0922 and 717c58f1 after BRIEF became synthetic text, AA-919 golden-set guard).
+ROUND6_FIXTURE_SHA = "aec208af965d479a801d517e2267c73047f4e007e14335de4a0ca63b74a7a804"
 
 
 def fixture_prompts(**extra) -> list[str]:
@@ -112,7 +113,7 @@ def test_r9_changes_only_the_brief_line(monkeypatch, how):
 def test_r9_brief_line_content():
     prompt = fixture_prompts(brief_grounding="r9")[0]
     line = next(ln for ln in prompt.splitlines() if ln.startswith("ANGLE'S BEST FINAL STYLE: "))
-    assert "unrolling a map" not in line and "Warm" not in line
+    assert "folding a blanket" not in line and "Warm" not in line
     assert "Lead with the 3-kilometre walk along the river and the evening prayers." in line
     assert "Three H2 sections in day order, a CTA paragraph; a four-pair FAQ." in line
 
@@ -121,8 +122,8 @@ def test_r9_brief_line_content():
 
 def test_scene_tone_and_thesis_clauses_are_dropped_grounded_ones_kept():
     out, dropped = bg.ground_brief(BRIEF, SEED)
-    assert dropped == ["Warm, scene-setting narrative that opens mid-moment: the table, the food, the guide "
-                       "unrolling a map"]
+    assert dropped == ["Warm, picture-led story that starts in motion: the courtyard, the tea, the porter "
+                       "folding a blanket"]
     assert out.startswith("Lead with the 3-kilometre walk")
 
 
@@ -241,7 +242,7 @@ def test_harness_passes_the_mode_and_reads_the_brief_back():
     assert off["brief_grounding"] == "off" and on["brief_grounding"] == "r9"
     seen_off = rp.brief_seen(prompts.build_user_prompt(**off))
     seen_on = rp.brief_seen(prompts.build_user_prompt(**on))
-    assert "unrolling a map" in seen_off and "unrolling a map" not in seen_on
+    assert "folding a blanket" in seen_off and "folding a blanket" not in seen_on
     # explicit 'off' in the harness is the default prompt byte for byte
     default = {k: v for k, v in off.items() if k != "brief_grounding"}
     assert prompts.build_user_prompt(**off) == prompts.build_user_prompt(**default)
