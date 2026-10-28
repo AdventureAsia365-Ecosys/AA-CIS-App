@@ -53,6 +53,7 @@ import { A, mono, sans, Card, Badge, Btn, LoadingScreen, TH, TD } from "../_comp
 import { fetchJson, EmptyState, ErrorState, AuditTable, Col } from "../_components/auditPanels";
 import { AdminMain, AdminPaneBody, AdminPaneHeader, PageHeader, formatDateTime } from "../../_kit";
 import { SeedLine, type SeedInfo } from "../_components/SeedLine";
+import { TenantSelect } from "../_components/TenantSelect";
 
 const MARKETS = ["US", "UK", "AU", "DE", "FR", "NL"];
 
@@ -1073,8 +1074,6 @@ interface SlateRow {
   seed?: SeedInfo | null;
 }
 
-interface TenantOption { tenant_id: string; name: string; }
-
 const SLATE_STATE_COLOR: Record<string, "gray" | "blue" | "green" | "red"> = {
   proposed: "gray", picked: "blue", used: "green", cut: "red",
 };
@@ -1138,8 +1137,6 @@ function SlateSection() {
   // Tour, and no longer depends on the page's shared Tour/Market filter at all.
   const [selectedTenant, setSelectedTenant] = useState<string | null>(null);
   const [selectedChannel, setSelectedChannel] = useState("");
-  const { data: tenantsData } = usePlatformFetch<{ tenants: TenantOption[] }>("/api/admin/tenants", {}, true);
-  const tenants = tenantsData?.tenants ?? [];
 
   const { data, loading, error, reload } = usePlatformFetch<{ data: SlateRow[]; total: number; by_state: Record<string, number> }>(
     "/api/admin/dashboard/slate", { tenant_id: selectedTenant ?? undefined, channel: selectedChannel || undefined }, !!selectedTenant,
@@ -1147,11 +1144,9 @@ function SlateSection() {
 
   const tenantPicker = (
     <div style={{ display: "flex", gap: 10, marginBottom: 14, alignItems: "center", flexWrap: "wrap" }}>
-      <span style={{ fontSize: 12, color: A.muted }}>Tenant:</span>
-      <select value={selectedTenant ?? ""} onChange={e => setSelectedTenant(e.target.value || null)} style={{ ...selectStyle, flex: "1 1 220px", width: "100%", minWidth: 0, maxWidth: "100%", fontWeight: 600 }}>
-        <option value="">Choose a tenant…</option>
-        {tenants.map(t => <option key={t.tenant_id} value={t.tenant_id}>{t.name}</option>)}
-      </select>
+      {/* AA-919 S254: the shared admin tenant picker (active tenants, by name). */}
+      <TenantSelect inline value={selectedTenant ?? ""} onChange={id => setSelectedTenant(id || null)}
+        placeholder="Choose a tenant…" />
       <span style={{ fontSize: 12, color: A.muted }}>Channel:</span>
       <select value={selectedChannel} onChange={e => setSelectedChannel(e.target.value)} style={selectStyle}>
         <option value="">All channels</option>

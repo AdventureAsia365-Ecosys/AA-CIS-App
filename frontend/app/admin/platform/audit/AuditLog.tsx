@@ -40,6 +40,7 @@ import {
   type Tone, AdminMain,
 } from "../../../_kit";
 import { BOOKING_AUDIT_LOG_URL } from "@/lib/apps";
+import { TenantName } from "../../_components/TenantSelect";
 import {
   EMPTY_AUDIT_FILTERS,
   auditQuery,
@@ -457,7 +458,9 @@ function AuditDrawer({ row, onClose }: { row: AuditRow | null; onClose: () => vo
             <DField label="Route" value={row.route ? <code style={codeStyle}>{row.route}</code> : "—"} />
             <DField label="Status" value={row.status ?? "—"} />
             <DField label="Resource" value={row.resource_type ? `${row.resource_type}${row.resource_id ? ` · ${row.resource_id}` : ""}` : "—"} />
-            <DField label="Tenant" value={row.tenant_id ?? "—"} />
+            <DField label="Tenant" value={row.tenant_id ? (
+              <><TenantName id={row.tenant_id} /> <span style={{ fontFamily: mono, fontSize: 11.5, color: K.muted }}>{row.tenant_id}</span></>
+            ) : "—"} />
             <DField label="Chain #" value={row.chain_seq ?? "pre-chain (before the chain started)"} />
             <DField label="Row hash" value={row.row_hash ? <code style={codeStyle}>{row.row_hash}</code> : "—"} />
             <DField label="Row id" value={<code style={codeStyle}>{row.id}</code>} />

@@ -47,6 +47,8 @@ import {
   type TenantPage,
   type TenantSummary,
 } from "@/lib/crmConsole";
+import type { TenantRef } from "@/lib/tenants";
+import { TenantSelect } from "../../_components/TenantSelect";
 import AgencyDrawer from "./AgencyDrawer";
 import { Field, InlineError, fieldStyle, noteStyle } from "./consoleUi";
 
@@ -213,12 +215,6 @@ function yesNo(v: boolean) {
 
 // ── Create agency ────────────────────────────────────────────────────────────────────────────────
 
-interface CisTenant {
-  tenant_id: string;
-  name: string;
-  status?: string;
-}
-
 function newUuid(): string {
   // crypto.randomUUID needs a secure context, which the admin site always is (https, or localhost in development).
   return crypto.randomUUID();
@@ -228,12 +224,6 @@ function CreateAgencyModal({ open, forceSynthetic, onClose, onCreated }: {
   open: boolean; forceSynthetic: boolean; onClose: () => void; onCreated: (agency: TenantSummary) => void;
 }) {
   const toast = useToast();
-  const tenants = useQuery({
-    queryKey: ["admin-tenants-for-crm"],
-    queryFn: () => apiGet<{ tenants: CisTenant[] }>("/api/admin/tenants"),
-    enabled: open,
-    staleTime: 60_000,
-  });
   const [source, setSource] = useState<"cis" | "synthetic">("cis");
   const [tenantId, setTenantId] = useState("");
   const [name, setName] = useState("");
@@ -252,9 +242,8 @@ function CreateAgencyModal({ open, forceSynthetic, onClose, onCreated }: {
   };
   const close = () => { if (!busy) { reset(); onClose(); } };
 
-  const pickTenant = (id: string) => {
+  const pickTenant = (id: string, t?: TenantRef) => {
     setTenantId(id);
-    const t = tenants.data?.tenants.find((x) => x.tenant_id === id);
     if (t) setName(t.name);
   };
 
@@ -304,15 +293,9 @@ function CreateAgencyModal({ open, forceSynthetic, onClose, onCreated }: {
           )}
         </div>
         {source === "cis" ? (
-          <Field label="CIS tenant" htmlFor="crm-create-tenant"
-            hint={tenants.isError ? "Could not load the CIS tenants." : "The agency uses the CIS tenant's id."}>
-            <select id="crm-create-tenant" value={tenantId} onChange={(e) => pickTenant(e.target.value)} style={fieldStyle}>
-              <option value="">{tenants.isLoading ? "Loading…" : "Pick a tenant"}</option>
-              {(tenants.data?.tenants ?? []).map((t) => (
-                <option key={t.tenant_id} value={t.tenant_id}>{t.name}</option>
-              ))}
-            </select>
-          </Field>
+          // AA-919 S254: the shared admin tenant picker (active CIS tenants by name; it shows its own load error).
+          <TenantSelect label="CIS tenant" value={tenantId} onChange={pickTenant} required
+            hint="The agency uses the CIS tenant's id." />
         ) : (
           <Field label="New agency id" htmlFor="crm-create-id" hint="A random id; this agency belongs to no CIS tenant.">
             <input id="crm-create-id" type="text" readOnly value={tenantId} style={{ ...fieldStyle, color: K.muted }} />

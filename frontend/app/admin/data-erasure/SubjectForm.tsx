@@ -3,18 +3,23 @@
 //
 // Traveller: the address is hashed in the browser (sha256 of the trimmed, lowercased address, Web Crypto) and the
 // input is cleared at once; only the hash is sent. The address is never put in the URL, a query key or storage.
-// Tenant: a picker of offboarded tenants (GET /admin/tenants?include_inactive=true), or a pasted tenant id.
+// Tenant: the shared admin TenantSelect (AA-919 S254) offering only offboarded tenants (GET
+// /admin/tenants?include_inactive=true), or a pasted tenant id ("Another tenant id…").
 
 import { Play } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { Button, K, Tabs, formatDateTime, mono } from "../../_kit";
 import {
   emailLooksValid, emailSha256, hoursSince, tenantIdProblem, type Subject, type TenantOption,
 } from "@/lib/dataErasure";
+import { tenantOptionText, type TenantRef } from "@/lib/tenants";
+import { TenantSelect } from "../_components/TenantSelect";
 import type { SendResult } from "./ApplyPanel";
 import { Notice, Section, hintStyle, inputStyle, labelStyle } from "./erasureUi";
 
 const OTHER = "__other__";
+const OTHER_OPTION = [{ value: OTHER, label: "Another tenant id…" }] as const;
+const isOffboarded = (t: TenantRef) => t.status === "offboarded";
 
 export default function SubjectForm({ tenants, tenantsError, retentionDays, now, send, onStarted }: {
   tenants: TenantOption[] | undefined;
@@ -38,6 +43,9 @@ export default function SubjectForm({ tenants, tenantsError, retentionDays, now,
   const tenantProblem = subject === "tenant" ? tenantIdProblem(tenantId) : null;
   const pickedRow = offboarded.find((t) => t.tenant_id === tenantId);
   const days = pickedRow ? hoursSince(pickedRow.cancelled_at, now) : null;
+  const optionText = useCallback(
+    (t: TenantRef) => `${tenantOptionText(t)}${t.cancelled_at ? ` ${formatDateTime(t.cancelled_at)}` : ""}`, [],
+  );
   const emailOk = emailLooksValid(email);
   const canRun = !busy && (subject === "tenant" ? !tenantProblem : emailOk);
 
@@ -82,23 +90,8 @@ export default function SubjectForm({ tenants, tenantsError, retentionDays, now,
       {subject === "tenant" ? (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
           {offboarded.length > 0 && (
-            <label style={labelStyle}>
-              Offboarded tenant
-              <select
-                data-testid="erasure-tenant-select"
-                value={picked}
-                onChange={(e) => setPicked(e.target.value)}
-                style={inputStyle}
-              >
-                <option value="">Pick a tenant…</option>
-                {offboarded.map((t) => (
-                  <option key={t.tenant_id} value={t.tenant_id}>
-                    {t.name} ({t.slug}){t.cancelled_at ? ` · offboarded ${formatDateTime(t.cancelled_at)}` : ""}
-                  </option>
-                ))}
-                <option value={OTHER}>Another tenant id…</option>
-              </select>
-            </label>
+            <TenantSelect label="Offboarded tenant" includeInactive offer={isOffboarded} optionText={optionText}
+              extraOptions={OTHER_OPTION} value={picked} onChange={setPicked} testId="erasure-tenant-select" />
           )}
           {(picked === OTHER || offboarded.length === 0) && (
             <label style={labelStyle}>
