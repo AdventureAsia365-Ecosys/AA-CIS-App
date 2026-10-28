@@ -16,7 +16,7 @@ an offered item: the contrast is what the writer gets wrong.
 This module is the ONE place that decides it (lesson S218: a value computed in two code paths must
 use one function). `atom_seed` writes the Status line, and `trip_facts.optional_activities` (F17)
 reads it back (`quality_gates.promises_an_option` did too until AA-787). It is light on purpose:
-`atom_seed` must not import `quality_gates` (judge_client / llm_client).
+`atom_seed` must not import `quality_gates` (the judge client / llm_client).
 
 The Status text itself contains 'optional' and 'not included': every reader of a seed either reads it
 through `status_of_line` / `is_status_line` or skips lines starting with `STATUS_PREFIX`

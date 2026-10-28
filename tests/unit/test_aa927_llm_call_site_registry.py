@@ -9,8 +9,9 @@ shadow.py excluded — they are the gateway):
 - any load of a `.generate` attribute in a module that imports LLMClient — called or passed
   (`asyncio.to_thread(llm.generate, request)`, `LLMClient().generate` as an argument);
 - any load of the name `embed` imported from shared.llm_client.embed, and `<embed module>._call`;
-- any load of `invoke_judge`, `score_brand_fit`, `score_candidate_fit`, `_judge` (the judge helpers whose
-  callers write the row) and `submit_batch_job` (Bedrock Batch).
+- any load of `invoke_judge`, `call_judge` (the one judge client, shared/llm_client/judge.py — AA-765),
+  `score_brand_fit`, `score_candidate_fit`, `_judge` (the judge helpers whose callers write the row) and
+  `submit_batch_job` (Bedrock Batch).
 """
 from __future__ import annotations
 
@@ -22,7 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SCAN_DIRS = ("services", "api", "shared", "scripts")
 GATEWAY_INTERNALS = {"shared/llm_client/client.py", "shared/llm_client/embed.py", "shared/llm_client/shadow.py"}
-HELPER_NAMES = {"invoke_judge", "score_brand_fit", "score_candidate_fit", "_judge", "submit_batch_job"}
+HELPER_NAMES = {"invoke_judge", "call_judge", "score_brand_fit", "score_candidate_fit", "_judge", "submit_batch_job"}
 LOGGERS = {"record_call", "record_call_sync", "record_call_with_pool", "record_calls", "record_calls_sync",
            "record_billed_failure", "record_billed_failure_sync", "record_unusable", "record_unusable_sync",
            "_log_t10_judge_call", "_record_t9_write_call"}
@@ -55,7 +56,6 @@ LOGGED_CALL_SITES: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
     ("services/acp_content_writing/faq_answer_fit.py", "_fit_call"): _self(
         "services/acp_content_writing/faq_answer_fit.py", "_fit_call"),
     ("services/acp_content_writing/quality_gates.py", "_gate_brand_voice"): (_F9_LOG, _F9_FAIL),
-    ("services/acp_produce/judge_client.py", "invoke_judge"): (_F9_LOG, _F9_FAIL),
     # AA-645 S250: both atomize paths call through _ask_atoms (one retry); it writes the billed_unusable rows,
     # the two paths write the row of the reply they keep.
     ("services/acp_contract/a3_atomize.py", "_ask_atoms"): (
@@ -108,6 +108,10 @@ LOGGED_CALL_SITES: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
     # AA-835: the supply content draft (job supply_content_draft); its row right after generate(), the billed
     # unusable row in the except branch.
     ("services/supply_content/writer.py", "draft_content"): _self("services/supply_content/writer.py", "draft_content"),
+    # AA-765: the one judge client. call_judge sends every judge request (S1/T2/T7 brand fit via brand_fit._judge,
+    # T10 F9 via invoke_judge); the callers write the rows.
+    ("shared/llm_client/judge.py", "call_judge"): (_JN, _DEBATE, _F9_LOG, _F9_FAIL),
+    ("shared/llm_client/judge.py", "invoke_judge"): (_F9_LOG, _F9_FAIL),
     ("shared/llm_client/column_mapper.py", "detect_column_mapping"): (
         ("shared/llm_client/column_mapper.py", "_log_call"),),
     ("scripts/aa856_global_profile_probe.py", "_invoke_global"): (

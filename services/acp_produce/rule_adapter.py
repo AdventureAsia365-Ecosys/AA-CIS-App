@@ -35,7 +35,7 @@ STEP 0 (re-verified, not assumed from the earlier survey):
    (historical record of that session), documented here and in
    docs/implementation-notes/AA-363.md instead. Correct point: AFTER E1-E5
    generation produces piece.body_tagged, before/alongside F1-F9
-   (deterministic checks are cheap; running them before the F8/F9 Nova Pro
+   (deterministic checks are cheap; running them before the F8/F9 LLM
    judge calls avoids paying for a judge call on content that was always
    going to be rejected for a banned word).
 

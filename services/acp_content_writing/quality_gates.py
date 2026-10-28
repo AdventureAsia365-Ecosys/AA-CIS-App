@@ -56,7 +56,7 @@ from services.acp_content_writing.trip_facts import TripFactContext, find_trip_f
 from services.acp_shared.channel_spec import (B2B_RE, EDITORIAL, GENERIC_OPENER_RE, HASHTAG_RE, STOCK_PATTERNS,
                                               ChannelSpec, channel_spec, first_sentence, opener_overlap,
                                               post_words)
-from services.acp_produce.judge_client import invoke_judge, parse_judge_json_checked
+from shared.llm_client.judge import invoke_judge, parse_judge_json_checked
 from services.acp_shared.citation_tags import TAG_RE, strip_citation_tags as _strip_tags
 from services.acp_shared.grounding import find_novel_numeric_claims
 from services.acp_shared.offered import STATUS_PREFIX
@@ -669,10 +669,9 @@ def _log_t10_judge_call(raw: dict, *, gate: str, passed: bool, extra: dict) -> N
     """Used by gate_brand_voice() below (gate_framework() shared it until AA-787). The gate function is
     deliberately channel/context-agnostic (this file's own module docstring), so no tenant identity is threaded
     down into them — the row's tenant comes from the running T9 job (call_log.bind_tenant,
-    AA-741 G1). cost_usd uses pricing.calc_cost() — accurate for the real production judge (gpt-4.1, in
-    COST_TABLE); an approximation (Sonnet-tier fallback rate) for a manual nova_pro/gpt56
-    override, which is not the shipped default — acceptable for an observability log, not used
-    for billing."""
+    AA-741 G1). cost_usd is the gateway's own figure for the model that answered; pricing.calc_cost() is
+    only the fallback when a reply carries none (an approximation — acceptable for an observability log,
+    not used for billing)."""
     from shared.llm_client.pricing import calc_cost
     model = raw.get("model_used", "unknown")
     in_tok, out_tok = raw.get("input_tokens", 0), raw.get("output_tokens", 0)
@@ -2089,7 +2088,7 @@ F15_WARN_GATE = qr.F15_VOICE_WARN
 # Gates that may block (to trigger one repair) but never hold a piece on their own.
 # AA-800: a second stock superlative (F2_superlatives) is style too.
 STYLE_ONLY_GATES = frozenset({F15_GATE, qr.F2_SUPERLATIVES})
-# S234 round 3 — gates whose sentence repair runs on the cheap t9_repair stage (Haiku) when they are
+# S234 round 3 — gates whose sentence repair runs on the cheap t9_repair stage route when they are
 # the only blocking failures: style (F15), near-duplicates (F13_repeat), trip facts and rarity
 # (F17/F18 — the repair keeps or cuts a sentence the seed already bounds).
 # AA-819 — F19_authenticity too: the repair rewrites the sentence in the brand's voice or cuts it.

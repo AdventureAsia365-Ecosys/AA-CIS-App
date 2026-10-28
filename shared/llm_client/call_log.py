@@ -188,7 +188,7 @@ async def record_call(
     provider: Optional[str] = None,
 ) -> None:
     """Opens its own short-lived connection — the call sites this is used from (S1 graph nodes,
-    N7 E2-E5, judge_client.py, T5 atomize) are scattered across sync and async code with no
+    N7 E2-E5, the T10 judge, T5 atomize) are scattered across sync and async code with no
     single shared asyncpg.Pool threaded down to them (T9/T5's own async orchestrators DO have a
     pool in scope — those call sites pass it to `record_call_with_pool()` instead, see below, to
     avoid paying for a whole new connection when an open one is already sitting right there).
