@@ -10,6 +10,8 @@ generate_node() in services/content_generation/graph.py already uses.
 """
 from __future__ import annotations
 
+import os
+
 from services.acp_angle_gate.brand_audience import BrandAudience
 from services.acp_angle_gate.channel_style import ChannelStyle
 from services.acp_shared.brand_pack import render_brand_block
@@ -96,6 +98,85 @@ recommended_index must be 0, 1, or 2. The caller re-ranks the 3 angles by measur
 override recommended_index."""
 
 
+# ---------------------------------------------------------------- AA-790 round 8 (S255): the brief contract
+# Rounds 4-7 tuned the T9 writer; round 7 (a generic BRAND FOCUS block in the T9 prompt) failed the blind panel on
+# brand voice and reader value and was reverted (CIS #1087). Round 8 changes what T8 hands the writer instead: a short
+# brief built for THIS brand's reader, tied to seed facts, with no fact inventory, no thesis to prove and no ask the
+# seed cannot meet (diagnosis: docs/implementation-notes/AA-790-writer-ai-tells.md, "Round 8"). Behind a mode switch
+# so the paid A/B can run both briefs on one deployed image: api/worker env `T8_ANGLE_BRIEF_MODE` = `r8` turns it
+# on; anything else (unset by default) keeps SYSTEM_PROMPT byte for byte. The user prompt is the same in both modes.
+BRIEF_MODE_ENV = "T8_ANGLE_BRIEF_MODE"
+BRIEF_MODE_OFF = "off"
+BRIEF_MODE_R8 = "r8"
+BRIEF_MODES = (BRIEF_MODE_OFF, BRIEF_MODE_R8)
+
+# The four labelled parts of a round-8 brief, in order (generate.r8_brief_problems checks them).
+R8_BRIEF_LABELS = ("Reader:", "Brand:", "Lead with:", "Shape:")
+R8_BRIEF_TARGET_WORDS = 90      # what the prompt asks for
+R8_BRIEF_MAX_WORDS = 120        # what the contract check allows before one retry (LLMs overshoot a word target)
+R8_BRIEF_MAX_FIGURES = 5        # the prompt says at most three facts, dates or figures; day numbers make it 5
+
+# The exact round-6 bullet SYSTEM_PROMPT carries (a test pins that it is there, so the replace below never misses).
+_BRIEF_SPEC_OFF = """- best_final_style: a brief for the writer: the shape of the piece, what to emphasise, and WHICH \
+details from the CONTENT SEED to lead with. It never sets a voice or mood (the writer takes its \
+voice only from the BRAND block), never writes or prescribes the first sentence (no "Open with …"), \
+and never names an audience other than the brand's own Audience line. The writer follows it, so \
+it must not name any object, scene, sound, smell, number, activity, form of access or promise that \
+is not in the CONTENT SEED (no "the guide unrolling a map", no "the smell of incense" unless the \
+seed says so).
+"""
+
+_BRIEF_SPEC_R8 = f"""- best_final_style: a short brief for the writer, at most {R8_BRIEF_TARGET_WORDS} words, in four \
+labelled parts in this order, each one or two plain sentences:
+  "Reader: ..." what the reader does, sees, eats or where they stay in this piece, in the CONTENT \
+SEED's own terms (a ride, a walk, a swim, a meal, a night, a visit), so the piece follows the traveller \
+through the trip and never describes the place like a reference work.
+  "Brand: ..." one or two points from the brand's own style guide or Audience mindset that this angle \
+carries, each tied to the CONTENT SEED fact that carries it (for example "pace: the seed says the walk \
+ends at the camp before lunch"). Name only points the seed can carry; when it carries none, write \
+"Brand: voice only".
+  "Lead with: ..." at most three details from the CONTENT SEED.
+  "Shape: ..." the structure in one sentence (length, sections, where the call to action sits); it may \
+name the sections but never assigns facts to each one.
+The brief is not an outline of facts: it never lists more than three facts, dates or figures and never \
+asks for a survey of every stop. It never gives the piece a thesis to prove or a verdict to reach (what \
+a place "reveals", "means" or "represents", an organising idea, a "quiet revelation"), because the \
+writer turns that into a verdict line. It never sets a voice or mood (the writer takes its voice only \
+from the BRAND block), never writes or prescribes the first sentence (no "Open with …"), and never names \
+an audience other than the brand's own Audience line. The writer follows it, so it must not ask for \
+anything the CONTENT SEED does not give: no object, scene, sound, smell, number, activity, form of \
+access or promise (no "the guide unrolling a map", no "the smell of incense" unless the seed says so), \
+and no reassurance, practical note, comfort, pace, safety, logistics or "what visitors see" line unless \
+the seed states it. When the brand's style guide asks for one of those and the seed has nothing for it, \
+leave it out of the brief.
+"""
+
+# Inserted right before the "Every angle must fit the BRAND" paragraph.
+_BRAND_ANCHOR = "Every angle must fit the BRAND: "
+_BRAND_FIRST_R8 = """Build every angle for THIS brand's reader first and for search demand second. Read the BRAND \
+block's Audience, Audience mindset, Core idea and style guide, and build each angle on the moments of \
+the CONTENT SEED this reader comes for: two different brands given the same seed should get different \
+angles. why_it_works names why this brand's audience would read the piece; search demand may support \
+that reason but is never the whole of it.
+
+"""
+
+SYSTEM_PROMPT_R8 = SYSTEM_PROMPT.replace(_BRIEF_SPEC_OFF, _BRIEF_SPEC_R8).replace(
+    _BRAND_ANCHOR, _BRAND_FIRST_R8 + _BRAND_ANCHOR, 1)
+
+
+def brief_mode(value: str | None = None) -> str:
+    """The brief mode: `value` when given (the A/B harness), else the env switch. Only 'r8' turns round 8 on; every
+    other value, unset included, is 'off' (the round-6 prompt)."""
+    raw = os.environ.get(BRIEF_MODE_ENV, "") if value is None else value
+    return BRIEF_MODE_R8 if (raw or "").strip().lower() == BRIEF_MODE_R8 else BRIEF_MODE_OFF
+
+
+def system_prompt(mode: str | None = None) -> str:
+    """SYSTEM_PROMPT for 'off', SYSTEM_PROMPT_R8 for 'r8' (`mode` None reads the env switch)."""
+    return SYSTEM_PROMPT_R8 if brief_mode(mode) == BRIEF_MODE_R8 else SYSTEM_PROMPT
+
+
 def build_user_prompt(
     *, content_seed: str, goal: Goal, brand_audience: BrandAudience,
     destination: str | None, trip_name: str | None,
@@ -167,4 +248,6 @@ def build_user_prompt(
     return "\n\n".join(parts)
 
 
-__all__ = ["SYSTEM_PROMPT", "build_user_prompt"]
+__all__ = ["BRIEF_MODE_ENV", "BRIEF_MODE_OFF", "BRIEF_MODE_R8", "BRIEF_MODES", "R8_BRIEF_LABELS",
+           "R8_BRIEF_MAX_FIGURES", "R8_BRIEF_MAX_WORDS", "R8_BRIEF_TARGET_WORDS", "SYSTEM_PROMPT",
+           "SYSTEM_PROMPT_R8", "brief_mode", "build_user_prompt", "system_prompt"]

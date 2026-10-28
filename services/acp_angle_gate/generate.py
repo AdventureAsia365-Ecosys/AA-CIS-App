@@ -29,7 +29,9 @@ from services.acp_angle_gate.brand_audience import BrandAudience
 from services.acp_angle_gate.channel_style import ChannelStyle
 from services.acp_angle_gate.goals import Goal
 from services.acp_shared.brand_pack import foreign_brand_mentions
-from services.acp_angle_gate.prompts import SYSTEM_PROMPT, build_user_prompt
+from services.acp_angle_gate.prompts import (BRIEF_MODE_OFF, BRIEF_MODE_R8, R8_BRIEF_LABELS, R8_BRIEF_MAX_FIGURES,
+                                             R8_BRIEF_MAX_WORDS, brief_mode as resolve_brief_mode,
+                                             build_user_prompt, system_prompt)
 from services.acp_angle_gate.route_digest import thin_anchor
 from services.acp_shared.channel_spec import sanitize_best_final_style
 from services.acp_shared.dfs_relevance import SearchDemandSignal
@@ -41,6 +43,9 @@ from shared.llm_client.call_log import record_call, record_call_with_pool, recor
 logger = structlog.get_logger()
 
 _REQUIRED_ANGLE_FIELDS = ("name", "why_it_works", "formula_fit", "best_final_style")
+# The live stage: its llm_role_config route picks the model, and every row is logged under it. The AA-790 A/B
+# harness passes its own adhoc stage + the live model id instead (scripts/aa790/t9_writer_repanel.py).
+T8_STAGE = "t8_angle_gen"
 
 
 class AngleGenerationError(Exception):
@@ -103,6 +108,8 @@ async def _generate_once(
     # (defaults None) so existing tests that call this without them are unaffected.
     channel_style: ChannelStyle | None = None, revision_feedback: list[str] | None = None,
     attempt: int = 1, is_route: bool = False,
+    brief_mode: str = BRIEF_MODE_OFF, stage: str = T8_STAGE, model_tier: str | None = None,
+    quality_signal_extra: dict | None = None,
 ) -> tuple[list[dict], int, str, float]:
     """Returns (angles, recommended_index, recommendation_reason, cost_usd). `angles` is a list
     of exactly 3 dicts with the 4 required fields — service.py persists these directly into
@@ -116,7 +123,12 @@ async def _generate_once(
 
     `piece_history` (AA-498, Decision 4) — real prior pieces already written for this exact
     atom, so the LLM can avoid repeating an angle. Empty/None omits the prompt block entirely,
-    same "no signal -> no prompt noise" precedent `search_demand` already set."""
+    same "no signal -> no prompt noise" precedent `search_demand` already set.
+
+    AA-790 round 8 (S255): `brief_mode` picks the system prompt ('off' = SYSTEM_PROMPT, 'r8' = SYSTEM_PROMPT_R8; the
+    user prompt is the same). `stage` / `model_tier` / `quality_signal_extra` exist for the A/B harness (adhoc stage,
+    the live t8 model id, the arm label); the live path passes none of them, so its request and its log row are
+    unchanged in 'off' mode."""
     user_prompt = build_user_prompt(
         content_seed=content_seed, goal=goal,
         brand_audience=brand_audience, destination=destination, trip_name=trip_name,
@@ -125,18 +137,22 @@ async def _generate_once(
     )
     client = LLMClient()
     request = LLMRequest(
-        system_prompt=SYSTEM_PROMPT, user_prompt=user_prompt, stage="t8_angle_gen", max_tokens=2048,
+        system_prompt=system_prompt(brief_mode), user_prompt=user_prompt, stage=stage, max_tokens=2048,
+        model_tier=model_tier,
     )
+    extra = dict(quality_signal_extra or {})
+    if brief_mode != BRIEF_MODE_OFF:
+        extra["brief_mode"] = brief_mode
     resp = await asyncio.to_thread(client.generate, request)
     try:
         parsed = _parse_response(resp.content)
         angles, recommended_index, reason = _validate(parsed)
     except Exception as e:
         # AA-927: the reply was billed — its row (billed_unusable) before the generation error goes up.
-        await record_unusable(resp, stage="t8_angle_gen", role="writer", error=e,
+        await record_unusable(resp, stage=stage, role="writer", error=e,
                               tenant_id=str(tenant_id) if tenant_id else None,
                               angle_gate_request_id=str(request_id) if request_id else None,
-                              quality_signal_extra={"attempt": attempt})
+                              quality_signal_extra={"attempt": attempt, **extra})
         raise
     logger.info(
         "angle_gate_angles_generated", goal=goal["key"],
@@ -145,11 +161,11 @@ async def _generate_once(
     avg_answers = (sum(len(a["answers"]) for a in angles) / len(angles)) if angles else 0
     quality_signal = {
         "angles_generated": len(angles), "recommended_index": recommended_index,
-        "avg_paa_answers_per_angle": round(avg_answers, 2), "attempt": attempt,
+        "avg_paa_answers_per_angle": round(avg_answers, 2), "attempt": attempt, **extra,
     }
     if pool is not None:
         await record_call_with_pool(
-            pool, stage="t8_angle_gen", role="writer", model=resp.model_used,
+            pool, stage=stage, role="writer", model=resp.model_used,
             tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
             cost_usd=resp.cost_usd,
             tenant_id=str(tenant_id) if tenant_id else None,
@@ -161,7 +177,7 @@ async def _generate_once(
         )
     else:
         await record_call(
-            stage="t8_angle_gen", role="writer", model=resp.model_used,
+            stage=stage, role="writer", model=resp.model_used,
             tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
             cost_usd=resp.cost_usd,
             tenant_id=str(tenant_id) if tenant_id else None,
@@ -176,9 +192,30 @@ async def _generate_once(
 
 _ANGLE_TEXT_FIELDS = ("name", "why_it_works", "formula_fit", "best_final_style")
 
+# AA-790 round 8 — a figure is a run of digits ('1637', '70', '20,000', '3-5'); 'Day 3' counts too.
+_FIGURE_RE = re.compile(r"\d[\d,.]*(?:\s*[-\u2013]\s*\d[\d,.]*)?")
+_WORD_RE = re.compile(r"[^\W_][\w'\u2019-]*")
+
+
+def r8_brief_problems(brief: str | None) -> list[str]:
+    """The round-8 brief contract, deterministic ($0): the four labelled parts (R8_BRIEF_LABELS, any case), at most
+    R8_BRIEF_MAX_WORDS words, at most R8_BRIEF_MAX_FIGURES figures. Returns plain problem phrases ([] = kept). Used as
+    retry feedback by angle_contract_violations (round 8 only) and as the $0 brief census by the A/B harness."""
+    text = (brief or "").strip()
+    lower = text.lower()
+    out = [f"has no '{label}' part" for label in R8_BRIEF_LABELS if label.lower() not in lower]
+    words = len(_WORD_RE.findall(text))
+    if words > R8_BRIEF_MAX_WORDS:
+        out.append(f"is {words} words long (at most {R8_BRIEF_MAX_WORDS}; aim for about 90)")
+    figures = len(_FIGURE_RE.findall(text))
+    if figures > R8_BRIEF_MAX_FIGURES:
+        out.append(f"lists {figures} figures (it is not an outline of facts: at most three facts, dates or figures)")
+    return out
+
 
 def angle_contract_violations(angles: list[dict], brand_pack: BrandAudience,
-                              moments: list[dict] | None = None) -> list[str]:
+                              moments: list[dict] | None = None, *,
+                              brief_mode: str = BRIEF_MODE_OFF) -> list[str]:
     """AA-771 (S233) — deterministic checks on the 3 angles before anyone sees them: a brand that
     is not the tenant's (stored S232 angles said "how AA builds this visit" for terra-family) and
     the tenant's own forbidden words.
@@ -186,7 +223,10 @@ def angle_contract_violations(angles: list[dict], brand_pack: BrandAudience,
     S234 (C7) — with a Route's `moments` (route_digest.route_moments): when ALL 3 angles lead with a
     thin moment, that is a violation too (one thin angle out of 3 is only re-ranked, at no cost —
     ranking.rank_angles). Tone, opening and audience in the brief are not violations: they are
-    stripped in code before the angle is saved (sanitize_best_final_style), never retried."""
+    stripped in code before the angle is saved (sanitize_best_final_style), never retried.
+
+    AA-790 round 8: in brief mode 'r8' a brief that breaks the round-8 contract (r8_brief_problems) is a violation
+    too, so it gets the same one retry with the problems as feedback. Mode 'off' checks exactly what it did before."""
     out: list[str] = []
     thin = [thin_anchor(a, moments) for a in angles] if moments else []
     if thin and all(thin):
@@ -202,23 +242,31 @@ def angle_contract_violations(angles: list[dict], brand_pack: BrandAudience,
         for w in brand_pack.get("forbidden_words") or []:
             if w.strip() and re.search(rf"(?<!\w){re.escape(w.strip().lower())}(?!\w)", lower):
                 out.append(f"angle {i + 1} ('{a.get('name')}') uses '{w.strip()}', which the brand forbids")
+    if brief_mode == BRIEF_MODE_R8:
+        for i, a in enumerate(angles):
+            for problem in r8_brief_problems(a.get("best_final_style")):
+                out.append(f"angle {i + 1} ('{a.get('name')}') best_final_style {problem}")
     return out
 
 
 async def generate_angles(*, brand_audience: BrandAudience, moments: list[dict] | None = None,
-                          **kwargs) -> tuple[list[dict], int, str, float]:
+                          brief_mode: str | None = None, **kwargs) -> tuple[list[dict], int, str, float]:
     """One angle call; when the angles break the brand contract (angle_contract_violations), one
     more call with those violations as feedback. Returns the second set either way (ranking then
     penalises any remaining avoid-list hits and thin anchors). Cost covers both calls.
 
     `moments` (S234): a Route request's moments (route_digest.route_moments) — each returned angle
-    carries `thin_anchor` ('<moment> (n facts)' or None) for ranking.rank_angles."""
-    angles, idx, reason, cost = await _generate_once(brand_audience=brand_audience, **kwargs)
-    violations = angle_contract_violations(angles, brand_audience, moments)
+    carries `thin_anchor` ('<moment> (n facts)' or None) for ranking.rank_angles.
+
+    `brief_mode` (AA-790 round 8): None reads the env switch (prompts.BRIEF_MODE_ENV; the live path), the A/B harness
+    passes 'off' or 'r8'. Both calls and the contract check use the same mode."""
+    mode = resolve_brief_mode(brief_mode)
+    angles, idx, reason, cost = await _generate_once(brand_audience=brand_audience, brief_mode=mode, **kwargs)
+    violations = angle_contract_violations(angles, brand_audience, moments, brief_mode=mode)
     if violations:
-        logger.info("angle_gate_contract_retry", violations=violations[:5])
+        logger.info("angle_gate_contract_retry", violations=violations[:5], brief_mode=mode)
         angles, idx, reason, cost2 = await _generate_once(
-            brand_audience=brand_audience, revision_feedback=violations, attempt=2, **kwargs)
+            brand_audience=brand_audience, revision_feedback=violations, attempt=2, brief_mode=mode, **kwargs)
         cost += cost2
     if moments:
         for a in angles:
@@ -226,4 +274,5 @@ async def generate_angles(*, brand_audience: BrandAudience, moments: list[dict] 
     return angles, idx, reason, cost
 
 
-__all__ = ["AngleGenerationError", "generate_angles", "angle_contract_violations", "sanitize_best_final_style"]
+__all__ = ["AngleGenerationError", "T8_STAGE", "generate_angles", "angle_contract_violations", "r8_brief_problems",
+           "sanitize_best_final_style"]
