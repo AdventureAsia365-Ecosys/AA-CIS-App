@@ -161,6 +161,18 @@ def test_unlisted_paths_404_without_an_asset_read(client, path):
     "<style>g{fill:url(https://example.com/x)}</style>",
     '<animate attributeName="href" to="#a"/>',
     "<text>000000000000</text>",
+    # The parsed re-check: namespace prefixes and XML character references the raw-text regexes cannot see.
+    '<s:script xmlns:s="http://www.w3.org/2000/svg">x()</s:script>',
+    '<h:script xmlns:h="http://www.w3.org/1999/xhtml">x()</h:script>',
+    '<h:iframe xmlns:h="http://www.w3.org/1999/xhtml" src="https://example.com/"/>',
+    '<s:set xmlns:s="http://www.w3.org/2000/svg" attributeName="href" to="#a"/>',
+    '<use xmlns:x="http://www.w3.org/1999/xlink" x:href="https://example.com/a.svg#p"/>',
+    '<rect style="fill:u&#114;l(https://example.com/x)"/>',
+    "<style>&#64;import 'x.css';</style>",
+    "<style>g{fill:u\\72l(https://example.com/x)}</style>",
+    '<?xml-stylesheet type="text/css" href="#a"?>',
+    '<g xml:base="https://example.com/"/>',
+    "<text>00000&#48;000000</text>",
 ])
 def test_unsafe_svg_is_never_served(client, inner):
     bad = _svg(inner)

@@ -46,6 +46,7 @@ import json
 import os
 import re
 import time
+import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
@@ -100,6 +101,19 @@ _SVG_FORBIDDEN = (
 _SVG_REF = re.compile(r"\s(?:xlink:)?href\s*=\s*(?:\"([^\"]*)\"|'([^']*)')", re.I)
 _SVG_START = re.compile(
     r"\s*(?:<\?xml[^>]*>\s*)?(?:<!--.*?-->\s*)*(?:<!DOCTYPE svg[^>\[]*>\s*)?(?:<!--.*?-->\s*)*<svg[\s>]", re.S)
+# Parsed re-check (root svg_tree_problems): a namespace prefix (<s:script>, x:href) or an XML character reference
+# (u&#114;l(...)) slips past the raw-text regexes, so the parsed document must hold only SVG-namespace elements from
+# _SVG_ELEMENTS, attributes without a namespace (plus xlink:href / xlink:title / xml:space), no on* attribute, every
+# href a fragment or an inline PNG, and no decoded value that could fetch or run anything; no processing instruction.
+_SVG_NS = "http://www.w3.org/2000/svg"
+_XLINK_NS = "http://www.w3.org/1999/xlink"
+_XML_NS = "http://www.w3.org/XML/1998/namespace"
+_SVG_ELEMENTS = frozenset({
+    "svg", "g", "title", "desc", "defs", "use", "a", "image", "text", "tspan", "path", "polygon", "polyline",
+    "ellipse", "circle", "rect", "line", "linearGradient", "radialGradient", "stop", "clipPath", "marker", "symbol"})
+_SVG_NS_ATTRS = frozenset({f"{{{_XLINK_NS}}}href", f"{{{_XLINK_NS}}}title", f"{{{_XML_NS}}}space"})
+_SVG_BAD_VALUE = re.compile(r"url\(\s*['\"]?(?!#)|javascript\s*:|@import|image-set|expression\s*\(|\\", re.I)
+_SVG_XML_DECL = re.compile(r"\s*<\?xml\s[^>]*\?>")
 
 DEFAULT_LANG = "en"
 _LANG = re.compile(r"^[a-z]{2}$")
@@ -170,7 +184,41 @@ def svg_is_safe(text: str) -> bool:
         ref = (m.group(1) if m.group(1) is not None else m.group(2)).strip()
         if not (ref.startswith("#") or _INLINE_PNG.fullmatch(ref)):
             return False
-    return not _ACCOUNT_ID.search(_INLINE_PNG.sub("data:image/png;base64,", text))
+    if _ACCOUNT_ID.search(_INLINE_PNG.sub("data:image/png;base64,", text)):
+        return False
+    return _svg_tree_is_safe(text)
+
+
+def _svg_tree_is_safe(text: str) -> bool:
+    """The parsed half of rule 9 (entity declarations are refused before this runs, so nothing expands)."""
+    decl = _SVG_XML_DECL.match(text)
+    if "<?" in text[decl.end() if decl else 0:]:
+        return False
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        return False
+    if root.tag != f"{{{_SVG_NS}}}svg":
+        return False
+    decoded: list[str] = []
+    for el in root.iter():
+        ns, _, name = el.tag[1:].partition("}") if el.tag.startswith("{") else ("", "", el.tag)
+        if ns != _SVG_NS or name not in _SVG_ELEMENTS:
+            return False
+        decoded += [el.text or "", el.tail or ""]
+        for attr, value in el.attrib.items():
+            local = attr.rpartition("}")[2]
+            if (attr.startswith("{") and attr not in _SVG_NS_ATTRS) or local.lower().startswith("on"):
+                return False
+            if local == "href":
+                v = value.strip()
+                if not (v.startswith("#") or _INLINE_PNG.fullmatch(v)):
+                    return False
+                continue
+            if _SVG_BAD_VALUE.search(value):
+                return False
+            decoded.append(value)
+    return not _ACCOUNT_ID.search(" ".join(decoded))
 
 
 def _clean_asset(raw: Any) -> Optional[dict]:
