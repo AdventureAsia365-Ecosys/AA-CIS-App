@@ -126,6 +126,22 @@ async def test_incident_view_falls_back_to_the_daily_rollup():
 
 
 @pytest.mark.asyncio
+async def test_recent_window_without_raw_llm_rows_never_reads_the_daily_rollup():
+    # Raw rows still kept: none in the window means no such LLM calls; the rollup's whole days would count others.
+    inc = _incident()
+    pool = _Pool({ci.INCIDENT_LLM_DAILY_SQL: [{"stage": "a3_search_demand", "calls": 8000, "cost_usd": 3.3}]})
+    v = await ci.incident_view(pool, inc, now=inc.started_at + timedelta(days=30))
+    assert v["llm"]["calls"] == 0 and v["llm"]["source"] == "raw"
+    assert all(sql != ci.INCIDENT_LLM_DAILY_SQL for sql, _ in pool.calls)
+
+
+def test_raw_retention_matches_the_retention_policy():
+    from services.retention.policy import SPECS
+    (raw,) = [p for p in SPECS["retention_llm_call_log"].parts if p.name == "raw"]
+    assert ci.LLM_RAW_RETENTION_DAYS == raw.window_days
+
+
+@pytest.mark.asyncio
 async def test_incident_view_without_llm_stages_reads_no_llm():
     v = await ci.incident_view(_Pool({}), _incident(llm_stages=()))
     assert v["llm"] == {"source": None, "calls": 0, "cost_usd": 0, "stages": []}

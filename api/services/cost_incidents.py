@@ -26,10 +26,13 @@ so (``llm_source = "daily"``: whole days, not the incident's hours).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 UTC = timezone.utc
+
+# Raw llm_call_log window (services/retention/policy.py SPECS["retention_llm_call_log"], pinned by a unit test).
+LLM_RAW_RETENTION_DAYS = 180
 
 
 @dataclass(frozen=True)
@@ -140,8 +143,12 @@ def _iso(v: Any) -> Optional[str]:
     return v.isoformat() if v is not None else None
 
 
-async def incident_view(pool: Any, incident: CostIncident) -> dict[str, Any]:
-    """The record plus its numbers read live from the logs over the incident window."""
+async def incident_view(pool: Any, incident: CostIncident, now: Optional[datetime] = None) -> dict[str, Any]:
+    """The record plus its numbers read live from the logs over the incident window.
+
+    The daily rollup is read only when the raw rows can have been pruned (window older than the raw retention):
+    a recent window with no raw rows had no such LLM calls, and the rollup's whole days would count unrelated ones.
+    """
     a, b = incident.started_at, incident.ended_at
     rows = await pool.fetch(INCIDENT_DFS_SQL, a, b)
     endpoints = [{
@@ -157,7 +164,8 @@ async def incident_view(pool: Any, incident: CostIncident) -> dict[str, Any]:
         stages = list(incident.llm_stages)
         llm_rows = await pool.fetch(INCIDENT_LLM_SQL, a, b, stages)
         llm_source = "raw"
-        if not llm_rows:
+        raw_pruned = a < (now or datetime.now(UTC)) - timedelta(days=LLM_RAW_RETENTION_DAYS)
+        if not llm_rows and raw_pruned:
             llm_rows = await pool.fetch(INCIDENT_LLM_DAILY_SQL, a.date(), b.date(), stages)
             llm_source = "daily" if llm_rows else None
         llm = [{"stage": r["stage"], "calls": int(r["calls"]), "cost_usd": round(float(r["cost_usd"] or 0.0), 6)}
