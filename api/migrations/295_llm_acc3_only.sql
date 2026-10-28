@@ -12,6 +12,9 @@
 --   1. Every catalog row: bedrock_profile_ids - 'acc1' (only rows that have the key are touched; updated_by and a
 --      note record it). Guard: refuse if a row's ONLY profile is acc1 — removing it would leave a model with no
 --      account, a decision for a human (live Dev 28/10/2026: none; the 4 rows above also carry acc3).
+--   1b. The seeded catalog text the Settings pages render without a key or an issue ID: the cohere-embed-v4-acc3
+--      label (240), gpt-6-luna's old blocked_reason (170), the haiku (169) and jev-latest (181) price_source.
+--      Exact seeded value only.
 --   2. account_route CHECK -> acc3 or NULL. Guard: refuse if any stage still routes to acc1 (live Dev: 0); move such
 --      a stage to acc3 first (Settings > Models or a DB Migrate run-script), then apply.
 --   Kept on purpose: silver_aa_internal.generated_content.satellite_account CHECK (100) still allows 'acc1', because
@@ -72,6 +75,24 @@ UPDATE shared.llm_model_catalog
        updated_at = now(),
        updated_by = 'migration-295-aa998'
  WHERE bedrock_profile_ids ? 'acc1';
+
+-- 1b. Seeded catalog text the Settings pages render (label, blocked_reason) named an account key: the admin shows
+--     account IDs, never the keys. Only the exact seeded value is replaced, so an admin's own edit is kept.
+UPDATE shared.llm_model_catalog
+   SET label = 'Cohere Embed v4 (LLM account)', updated_at = now(), updated_by = 'migration-295-aa998'
+ WHERE model_key = 'cohere-embed-v4-acc3' AND label = 'Cohere Embed v4 (acc3 satellite)';   -- seeded by 240
+UPDATE shared.llm_model_catalog
+   SET blocked_reason = 'Bedrock agreement not accepted on the LLM account yet (28/09/2026)',
+       updated_at = now(), updated_by = 'migration-295-aa998'
+ WHERE blocked_reason = 'Bedrock agreement not accepted on acc3 yet (28/09/2026)';           -- seeded by 170
+-- Rendered text never carries an internal issue ID either (the price source column of Settings > Catalog).
+UPDATE shared.llm_model_catalog
+   SET price_source = 'pricing.py', updated_at = now(), updated_by = 'migration-295-aa998'
+ WHERE price_source = 'pricing.py (AA-635)';                                                  -- seeded by 169
+UPDATE shared.llm_model_catalog
+   SET price_source = 'typesafe.ai pricing (24/09/2026): input only, output free',
+       updated_at = now(), updated_by = 'migration-295-aa998'
+ WHERE price_source = 'typesafe.ai pricing (AA-634, 24/09/2026): input only, output free';   -- seeded by 181
 
 ALTER TABLE shared.llm_role_config
     DROP CONSTRAINT IF EXISTS llm_role_config_account_route_check;
