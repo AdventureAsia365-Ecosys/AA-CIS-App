@@ -31,15 +31,16 @@ from shared.sentry_init import release
 
 logger = structlog.get_logger()
 
-# The newest CIS migration this code needs: 297 (AA-920 WM-25 — the T2 job's save UPDATE names
-# gold_aa_internal.tenant_tour_versions.generation_meta; without the column every T2 save fails). Before: 293 (AA-665
+# The newest CIS migration this code needs: 300 (AA-795 — the T2 job's save UPDATE names
+# gold_aa_internal.tenant_tour_versions.judge_breakdown; without the column every T2 save fails). Before: 297 (AA-920
+# WM-25 — the same save names tenant_tour_versions.generation_meta); 293 (AA-665
 # C2 — every shared.dfs_call_log write names job_id; without the column each DFS cost row is lost, the write being
 # fire-and-forget); 287 (AA-919 WM-18 — the writers resolve
 # their writing-memory release from shared.writing_memory_release / writing_memory_writer on every call (failing open
 # without them) and /admin/writing-memory/releases reads and writes them); 280 (AA-917 — the writing-memory jobs and
 # /admin/writing-memory read and write shared.writing_rule; 277, AA-916: the admin A1 field edit and both sentence
 # applies write shared.writing_signal inside their own transaction; without the table they fail).
-REQUIRED_CIS_SCHEMA = 297
+REQUIRED_CIS_SCHEMA = 300
 # Versions this code needs that were registered after a higher one (reserved numbers): 297 (AA-920 WM-25) was reserved
 # in S255 and applied after 299. max() is already 299 without it, so the version reported is capped below the lowest
 # listed version that is not registered (297 missing -> 296 -> "schema_behind").

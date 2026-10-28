@@ -187,6 +187,26 @@ async def t2_seo(pool, pt, tenant_id: str) -> tuple[dict, dict]:
     return seo_data, diag
 
 
+def t2_judge_breakdown(result: dict, rewritten: dict, tour_dict: dict, brand_rules: dict, *,
+                       final_score: float, score_source: str = "rewrite",
+                       chosen_attempt=None) -> "dict | None":
+    """AA-795 (report 12 F-f / F-g): what `tenant_tour_versions.judge_breakdown` (CIS 300) records for a saved T2
+    version — the kept draft's judge verdict (brand fit, distinct, mission, feedback, gate, binding axis) and the
+    deterministic brand-claim check of the saved text against the A1 source (`t2_brand_claims`, report-only; kill
+    switch T2_BRAND_CLAIM_CHECK=off). Fails open: an error here logs and saves NULL, never costs the version."""
+    from services.content_generation import t2_brand_claims, t2_judge_breakdown as breakdown
+    try:
+        claims = None
+        if t2_brand_claims.enabled():
+            claims = t2_brand_claims.check(rewritten, t2_brand_claims.source_text(tour_dict),
+                                           t2_brand_claims.brand_text(brand_rules))
+        return breakdown.build(result, final_score=final_score, score_source=score_source, brand_claims=claims,
+                               chosen_attempt=chosen_attempt)
+    except Exception as e:
+        logger.warning("t2_judge_breakdown_failed", error=str(e)[:300])
+        return None
+
+
 async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant_id: str,
                             version_id: str, published_tour_id: str) -> dict:
     """SEO lookup, rewrite, T3 QA gate, save — unchanged from the pre-AA-652 router closure
@@ -280,6 +300,16 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
                     published_tour_id
                 )
             final_score = rewrite_score if rewrite_score else float(source_score or 0)
+            # AA-795: the kept draft's judge verdict + the brand-claim fidelity check of the saved text (CIS 300,
+            # admin-only, report-only: nothing above changes because of it).
+            judge_breakdown = t2_judge_breakdown(
+                result, rewritten, tour_dict, brand_rules, final_score=final_score,
+                score_source="rewrite" if rewrite_score else "source_fallback",
+                chosen_attempt=qa.get("chosen_attempt"))
+            if judge_breakdown is not None:
+                diag["judge"] = {"binding": judge_breakdown.get("binding"),
+                                 "brand_claims_unsupported": len(
+                                     (judge_breakdown.get("brand_claims") or {}).get("unsupported") or [])}
             # qa_status keeps its migration-107 meaning unchanged (the real QA verdict,
             # 'escalated' still means the gate did NOT actually clear) — qa_auto_passed
             # (migration 109) is the new, separate tenant-facing badge flag: true means
@@ -300,12 +330,14 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
                         qa_repair_count = $5,
                         qa_checked_at = now(),
                         qa_auto_passed = $6,
-                        generation_meta = $8::jsonb
+                        generation_meta = $8::jsonb,
+                        judge_breakdown = $9::jsonb
                     WHERE id = $7::uuid
                 """,
                     _j3.dumps(rewritten), new_status, final_score,
                     qa_status, qa["attempts"], qa_auto_passed, version_id,
-                    _j3.dumps(generation_meta) if generation_meta is not None else None)
+                    _j3.dumps(generation_meta) if generation_meta is not None else None,
+                    _j3.dumps(judge_breakdown, default=str) if judge_breakdown is not None else None)
             import structlog as _sl2
             _sl2.get_logger().info("tenant_rewrite_done",
                 version_id=str(version_id), score=final_score, status=new_status,

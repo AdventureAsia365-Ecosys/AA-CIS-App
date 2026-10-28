@@ -626,7 +626,12 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   - **T2 tenant rewrite is a job** (`t2_rewrite`, AA-652): `tenant_tour_versions.job_id`; a job
     that ends without success marks the version `status='failed'` (kind hook `on_terminal`), and
     the portal shows "Writing failed" + Retry (`POST /v1/tours/versions/{id}/retry`) instead of
-    an endless "Writing…". **T9 write is a job** too (`t9_write`, `content_piece.job_id`; a job that
+    an endless "Writing…". The saved version also records (admin-only, hidden from every tenant read)
+    how it was written (`generation_meta`, CIS 297, AA-920) and how it was scored (`judge_breakdown`, CIS 300,
+    AA-795: the kept draft's brand fit / distinct / mission / feedback, the gate and the **binding axis** that set
+    the score, plus `brand_claims` — age, group-size and brand-ethos claims of the saved text the A1 source does not
+    support, deterministic and report-only, `services/content_generation/t2_brand_claims.py`); the admin reads it in
+    Content Quality → Tour versions. **T9 write is a job** too (`t9_write`, `content_piece.job_id`; a job that
     ends without success marks the piece `failed`, which the portal already shows with Retry).
     **A3 atomize is a job** (`a3_atomize`, one tour at a time), enqueued by publish
     (`process_export`) and by `POST /admin/atoms/atomize` (one job per tour).

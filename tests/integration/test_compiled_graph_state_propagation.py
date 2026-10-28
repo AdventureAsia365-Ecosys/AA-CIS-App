@@ -271,6 +271,10 @@ async def test_t2_graph_run_writes_as_the_brand_and_gates_on_brand_fit(patch_llm
     assert result["judge_cross_brand_distinct"] == pytest.approx(3.0)
     assert result["judge_mission_present"] is True
     assert result["quality_score"] == pytest.approx(9.0)
+    # AA-795: the verdict's axes survive astream() (declared in ContentState) and reach the T2 job's save
+    axes = result["judge_t2_axes"]
+    assert axes["gate"] == "brand_fit_mission" and axes["binding"] in ("brand_fit", "validate")
+    assert axes["mission_source"] == "tenant_core_idea" and axes["judge_score_raw"] == pytest.approx(9.0)
 
 
 # AA-793: a T2 run whose retries all score lower than the first draft. The hitl exit must save the
@@ -301,6 +305,9 @@ async def test_t2_graph_run_saves_the_best_draft_and_revises_it(patch_llm_client
     assert result["quality_score"] == pytest.approx(5.0)
     assert result["best_draft_restored"] is True
     assert [d["score"] for d in result["draft_scores"]] == [5.0, 4.0, 3.0]
+    # AA-795: the restored draft carries its OWN verdict's axes (t2_repair.DRAFT_KEYS), not the last draft's
+    assert result["judge_t2_axes"]["judge_score_raw"] == pytest.approx(5.0)
+    assert result["judge_brand_fit"] == pytest.approx(5.0)
     writers = [r for r in client.calls if r.stage == "t2_generate"]
     assert len(writers) == 3
     assert "YOUR PREVIOUS DRAFT" not in writers[0].user_prompt
