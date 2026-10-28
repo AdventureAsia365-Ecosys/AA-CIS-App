@@ -18,6 +18,10 @@ TEMPORARY, removed at the end of project code with A10 / A10a (AA-816):
   manual Edit with a reason chip (S252 orchestrator decision: the AA-916 WM-07 sample of admin sentence actions on
   synthetic Dev tenants). On those routes only ``mode`` ``cut`` / ``manual`` is accepted (:data:`E2E_SENTENCE_MODES`):
   ``rewrite`` records a model suggestion, and ``.../sentences/suggest`` (the paid model call) stays refused.
+- AA-898 (S255): the one READ beyond its admin role, ``docs.owner_read`` (api/core/staff_authz.docs_owner_read_via):
+  on Dev only (``ENVIRONMENT`` exactly "dev", re-read per call) and only on a verified Cognito session, it may list and
+  read the owner-only pages of ``/admin/docs`` so the agent's admin-evidence run can screenshot one. ``is_owner`` stays
+  False, so ``staff.write`` and every owner-only write stay refused. Removed with A10 / A10b like the rest of this list.
 - AA-979 (S252, root ADR 0006a A10b amendment "A10b-1"): the allow-list also holds the two Content studio invitation
   routes (:data:`E2E_STUDIO_INVITATION_WRITES`: invite, send again), so the AA-979 phase 2 re-enrolment E2E runs without
   a person. The middleware and the route policy let them through; the routes themselves then refuse the A10b session

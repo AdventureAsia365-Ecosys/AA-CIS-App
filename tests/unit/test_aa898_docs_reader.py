@@ -298,3 +298,198 @@ def test_account_id_left_in_a_page_is_masked_on_serve(client):
     md = res.json()["markdown"]
     assert acct_a not in md and acct_b not in md
     assert md.count(docs_reader.ACCOUNT_ID_MARKER) == 2
+
+
+# ── docs.owner_read: owners, and the Dev-only E2E CIS admin (A10b, TEMPORARY) ───────────────────────────────────────
+
+def _as_identity(**kw):
+    identity = SimpleNamespace(**{"auth": "cognito", "is_owner": False, "e2e_read_only": False, **kw})
+    return patch.object(staff_authz, "request_staff_identity", lambda request: identity)
+
+
+def _principal(**kw):
+    base = {"kind": "staff", "role": "admin", "perms": staff_authz.ROLE_PERMS["admin"], "auth": "cognito",
+            "is_owner": False, "e2e_read_only": False}
+    base.update(kw)
+    return staff_authz.StaffPrincipal(**base)
+
+
+def test_docs_owner_read_is_not_a_role_or_route_capability():
+    assert staff_authz.DOCS_OWNER_READ == "docs.owner_read"
+    assert staff_authz.DOCS_OWNER_READ not in staff_authz.CAPABILITIES
+    assert staff_authz.DOCS_OWNER_READ not in staff_authz.POLICY.values()
+
+
+@pytest.mark.parametrize("env,kw,expected", [
+    ("dev", {"is_owner": True}, "owner"),
+    ("prod", {"is_owner": True}, "owner"),                                  # a real owner is not env-gated
+    ("dev", {"e2e_read_only": True}, "e2e_dev"),
+    ("prod", {"e2e_read_only": True}, None),
+    ("staging", {"e2e_read_only": True}, None),
+    ("Dev", {"e2e_read_only": True}, None),                                  # exact match only
+    (None, {"e2e_read_only": True}, None),                                   # unset refuses
+    ("dev", {"e2e_read_only": True, "auth": None}, None),                    # no verified Cognito session
+    ("dev", {"e2e_read_only": True, "role": "viewer",
+             "perms": staff_authz.ROLE_PERMS["viewer"]}, None),               # not the admin scope
+    ("dev", {}, None),                                                       # an ordinary admin
+    ("dev", {"is_owner": True, "auth": None}, None),                         # owner flag without Cognito
+])
+def test_docs_owner_read_via(monkeypatch, env, kw, expected):
+    if env is None:
+        monkeypatch.delenv("ENVIRONMENT", raising=False)
+    else:
+        monkeypatch.setenv("ENVIRONMENT", env)
+    p = _principal(**kw)
+    assert staff_authz.docs_owner_read_via(p) == expected
+    assert staff_authz.can_read_owner_docs(p) is (expected is not None)
+    assert staff_authz.docs_owner_read_via(staff_authz.MACHINE) is None
+
+
+def test_e2e_admin_reads_owner_pages_on_dev_but_stays_not_owner(client, monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "dev")
+    with _use(FakeS3(_objects())), _as_identity(e2e_read_only=True):
+        body = client.get(MANIFEST, headers=ADMIN).json()
+        page = client.get(PAGE, params={"path": "docs/legal/register.md"}, headers=ADMIN)
+    assert {p["path"] for p in body["pages"]} == {"docs/ops/runbook.md", "docs/legal/register.md"}
+    assert body["is_owner"] is False and body["owner_read"] is True
+    assert page.status_code == 200 and page.json()["markdown"] == OWNER_BODY
+
+
+@pytest.mark.parametrize("env", ["prod", "staging", ""])
+def test_e2e_admin_gets_no_owner_pages_outside_dev(client, monkeypatch, env):
+    monkeypatch.setenv("ENVIRONMENT", env)
+    fake = FakeS3(_objects())
+    with _use(fake), _as_identity(e2e_read_only=True):
+        body = client.get(MANIFEST, headers=ADMIN).json()
+        page = client.get(PAGE, params={"path": "docs/legal/register.md"}, headers=ADMIN)
+    assert [p["path"] for p in body["pages"]] == ["docs/ops/runbook.md"]
+    assert body["owner_read"] is False and body["counts"]["hidden_owner_only"] == 1
+    assert page.status_code == 404
+    assert not any("register" in k for k in fake.calls)
+
+
+def test_e2e_admin_owner_read_grants_no_staff_write(client, monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "dev")
+    p = _principal(e2e_read_only=True)
+    assert staff_authz.can_read_owner_docs(p)
+    for (method, route), cap in staff_authz.POLICY.items():
+        if cap == staff_authz.STAFF_WRITE:
+            assert staff_authz.denial_reason(p, method, route), (method, route)
+
+
+def test_ordinary_admin_on_cognito_gets_no_owner_pages(client, monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "dev")
+    with _use(FakeS3(_objects())), _as_identity():
+        body = client.get(MANIFEST, headers=ADMIN).json()
+    assert body["owner_read"] is False and body["is_owner"] is False
+    assert [p["path"] for p in body["pages"]] == ["docs/ops/runbook.md"]
+
+
+# ── translations (lang / translation_of / translations, root build_docs_reader.py rule 8) ────────────────────────────
+
+VI_BODY = "# Sổ tay\n\nLàm việc đó.\n"
+
+
+def _tr(path: str, title: str = "Sổ tay", lang: str = "vi", **over) -> dict:
+    t = {"lang": lang, "path": path, "key": f"pages/AA-Ecosys/{path}", "title": title}
+    t.update(over)
+    return t
+
+
+def _with_translation(register_vi_access="owner"):
+    return _manifest([
+        _entry("docs/ops/runbook.md", lang="en", translation_of=None, translations=[_tr("docs/ops/runbook.vi.md")]),
+        _entry("docs/ops/runbook.vi.md", body=VI_BODY, title="Sổ tay", lang="vi",
+               translation_of="docs/ops/runbook.md", translations=[]),
+        _entry("docs/legal/register.md", access="owner", body=OWNER_BODY, id="SEC-04", title="Register", lang="en",
+               translation_of=None, translations=[_tr("docs/legal/register.vi.md", "Đăng ký")]),
+        _entry("docs/legal/register.vi.md", access=register_vi_access, body=OWNER_BODY, id="SEC-04", title="Đăng ký",
+               lang="vi", translation_of="docs/legal/register.md", translations=[]),
+    ])
+
+
+def _objects_vi(manifest):
+    objs = _objects(manifest)
+    objs["docs-reader/pages/AA-Ecosys/docs/ops/runbook.vi.md"] = VI_BODY.encode()
+    objs["docs-reader/pages/AA-Ecosys/docs/legal/register.vi.md"] = OWNER_BODY.encode()
+    return objs
+
+
+def test_translation_fields_are_served_without_keys(client):
+    with _use(FakeS3(_objects_vi(_with_translation()))):
+        body = client.get(MANIFEST, headers=ADMIN).json()
+        vi = client.get(PAGE, params={"path": "docs/ops/runbook.vi.md"}, headers=ADMIN)
+        en = client.get(PAGE, params={"path": "docs/ops/runbook.md"}, headers=ADMIN)
+    pages = {p["path"]: p for p in body["pages"]}
+    assert set(pages) == {"docs/ops/runbook.md", "docs/ops/runbook.vi.md"}
+    assert pages["docs/ops/runbook.md"]["lang"] == "en" and pages["docs/ops/runbook.md"]["translation_of"] is None
+    assert pages["docs/ops/runbook.md"]["translations"] == [
+        {"lang": "vi", "path": "docs/ops/runbook.vi.md", "title": "Sổ tay"}]
+    assert (pages["docs/ops/runbook.vi.md"]["lang"], pages["docs/ops/runbook.vi.md"]["translation_of"],
+            pages["docs/ops/runbook.vi.md"]["translations"]) == ("vi", "docs/ops/runbook.md", [])
+    assert vi.status_code == 200 and vi.json()["markdown"] == VI_BODY
+    assert vi.json()["page"]["translation_of"] == "docs/ops/runbook.md"
+    assert en.json()["page"]["translations"][0]["path"] == "docs/ops/runbook.vi.md"
+    assert "key" not in json.dumps(body["pages"])
+
+
+def test_old_manifest_without_fields_reads_as_english(client):
+    with _use(FakeS3(_objects())):
+        body = client.get(MANIFEST, headers=ADMIN).json()
+        page = client.get(PAGE, params={"path": "docs/ops/runbook.md"}, headers=ADMIN).json()
+    p = body["pages"][0]
+    assert (p["lang"], p["translation_of"], p["translations"]) == ("en", None, [])
+    assert page["page"]["translations"] == []
+
+
+@pytest.mark.parametrize("vi_access", ["owner", "staff"])
+def test_translation_of_an_owner_page_is_owner_too(client, vi_access):
+    fake = FakeS3(_objects_vi(_with_translation(vi_access)))
+    with _use(fake):
+        body = client.get(MANIFEST, headers=ADMIN).json()
+        page = client.get(PAGE, params={"path": "docs/legal/register.vi.md"}, headers=ADMIN)
+    assert not any(p["path"].startswith("docs/legal/") for p in body["pages"])
+    assert body["counts"]["hidden_owner_only"] == 1   # the page and its translation count once
+    assert page.status_code == 404 and not any("register" in k for k in fake.calls)
+    with _use(FakeS3(_objects_vi(_with_translation(vi_access)))), _as_owner():
+        body = client.get(MANIFEST, headers=ADMIN).json()
+    pages = {p["path"]: p for p in body["pages"]}
+    assert pages["docs/legal/register.vi.md"]["access"] == "owner"
+    assert [t["path"] for t in pages["docs/legal/register.md"]["translations"]] == ["docs/legal/register.vi.md"]
+
+
+def test_translation_unlisted_by_its_original_is_still_owner(client):
+    pages = [_entry("docs/legal/register.md", access="owner", lang="en", translations=[]),
+             _entry("docs/legal/register.vi.md", access="staff", lang="vi", translation_of="docs/legal/register.md")]
+    with _use(FakeS3({M_KEY: _manifest(pages)})):
+        body = client.get(MANIFEST, headers=ADMIN).json()
+    assert body["pages"] == [] and body["counts"]["hidden_owner_only"] == 1
+
+
+@pytest.mark.parametrize("item", [
+    _tr("docs/ops/missing.vi.md"),                                       # no such entry
+    _tr("docs/ops/runbook.vi.md", key="pages/AA-Ecosys/docs/other.md"),   # key does not match the path
+    _tr("../etc/passwd.md"),                                             # climbing
+    _tr("docs/ops/runbook.vi.md", lang="VI"),                            # bad language code
+    _tr("docs/ops/runbook.vi.md", lang="en"),                            # English is not a translation
+    _tr("docs/ops/runbook.vi.md", lang="fr"),                            # the entry says vi
+    "docs/ops/runbook.vi.md",                                            # not an object
+])
+def test_bad_or_one_sided_translation_items_are_dropped(client, item):
+    pages = [_entry("docs/ops/runbook.md", lang="en", translations=[item]),
+             _entry("docs/ops/runbook.vi.md", lang="vi", translation_of="docs/ops/runbook.md")]
+    with _use(FakeS3({M_KEY: _manifest(pages)})):
+        body = client.get(MANIFEST, headers=ADMIN).json()
+    by = {p["path"]: p for p in body["pages"]}
+    assert by["docs/ops/runbook.md"]["translations"] == []
+    assert by["docs/ops/runbook.vi.md"]["translation_of"] is None   # one-sided: no toggle, not listed (lang vi)
+    assert by["docs/ops/runbook.vi.md"]["lang"] == "vi"
+
+
+def test_bad_lang_and_translation_of_fall_back_to_english_page(client):
+    pages = [_entry("docs/a.md", lang="VI; drop", translation_of="../etc/passwd", translations="x"),
+             _entry("docs/b.md", lang="en", translation_of="docs/a.md")]     # English pages translate nothing
+    with _use(FakeS3({M_KEY: _manifest(pages)})):
+        body = client.get(MANIFEST, headers=ADMIN).json()
+    for p in body["pages"]:
+        assert (p["lang"], p["translation_of"], p["translations"]) == ("en", None, [])

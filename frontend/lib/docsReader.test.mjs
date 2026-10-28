@@ -7,11 +7,16 @@ import { test } from "node:test";
 
 import {
   ALL,
+  DEFAULT_DOC_LANG,
   Slugger,
   audienceOptions,
   groupBySection,
+  listedPages,
   matchesFilter,
   normalizePath,
+  originalOf,
+  parseDocLang,
+  pickLanguage,
   outline,
   resolveLink,
   sectionOf,
@@ -99,4 +104,39 @@ test("outline and table of contents skip code fences and use line numbers", () =
   assert.deepEqual(outline(md).map((h) => [h.line, h.level, h.slug]),
     [[1, 1, "title"], [3, 2, "step-one"], [7, 3, "detail-x"], [8, 2, "step-one-1"], [9, 4, "deep"]]);
   assert.deepEqual(tableOfContents(md).map((t) => t.slug), ["step-one", "detail-x", "step-one-1"]);
+});
+
+// ── languages (EN default, VI when a translation is published) ─────────────────────────────────
+
+const en = page("docs/guides/ceo.md", {
+  lang: "en", translation_of: null, translations: [{ lang: "vi", path: "docs/guides/ceo.vi.md", title: "CEO (VI)" }],
+});
+const vi = page("docs/guides/ceo.vi.md", { lang: "vi", translation_of: "docs/guides/ceo.md", translations: [] });
+const solo = page("docs/ops/runbook.md", { lang: "en", translation_of: null, translations: [] });
+const orphanVi = page("docs/ops/orphan.vi.md", { lang: "vi", translation_of: null, translations: [] });
+
+test("the list shows originals only", () => {
+  assert.deepEqual(listedPages([en, vi, solo, orphanVi]).map((p) => p.path), ["docs/guides/ceo.md", "docs/ops/runbook.md"]);
+  // an older API answer without the fields lists everything
+  assert.equal(listedPages([page("docs/a.md")]).length, 1);
+});
+
+test("pickLanguage: translation, no translation, English default", () => {
+  assert.deepEqual(pickLanguage(en, "vi"), { path: "docs/guides/ceo.vi.md", lang: "vi", available: ["en", "vi"], missing: false });
+  assert.deepEqual(pickLanguage(en, "en"), { path: "docs/guides/ceo.md", lang: "en", available: ["en", "vi"], missing: false });
+  assert.deepEqual(pickLanguage(solo, "vi"), { path: "docs/ops/runbook.md", lang: "en", available: ["en"], missing: true });
+  assert.deepEqual(pickLanguage(page("docs/b.md"), "vi").missing, true);   // fields absent: treated as English
+});
+
+test("originalOf maps a translation path back to its original", () => {
+  const by = new Map([en, vi, solo].map((p) => [p.path, p]));
+  assert.equal(originalOf("docs/guides/ceo.vi.md", by)?.path, "docs/guides/ceo.md");
+  assert.equal(originalOf("docs/guides/ceo.md", by)?.path, "docs/guides/ceo.md");
+  assert.equal(originalOf("docs/missing.md", by), undefined);
+});
+
+test("parseDocLang falls back to English", () => {
+  assert.equal(DEFAULT_DOC_LANG, "en");
+  assert.equal(parseDocLang("vi"), "vi");
+  for (const v of [null, undefined, "", "VI", "fr", 1]) assert.equal(parseDocLang(v), "en");
 });

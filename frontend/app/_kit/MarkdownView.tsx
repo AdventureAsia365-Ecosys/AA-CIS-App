@@ -8,8 +8,10 @@
 //     still strips javascript: / data: URLs first;
 //   - images are not loaded (the reader has no image store, and a remote image would leak the viewer's IP): the alt
 //     text is shown instead;
-//   - GitHub-flavoured Markdown (tables, task lists, strikethrough, autolinks) via remark-gfm. Mermaid blocks are
-//     shown as their source, labelled (no diagram renderer yet).
+//   - GitHub-flavoured Markdown (tables, task lists, strikethrough, autolinks) via remark-gfm. ```mermaid blocks are
+//     drawn by MermaidDiagram (lazy-loaded, strict mode, SVG sanitised; the labelled source on any error);
+//   - GitHub alerts ("> [!NOTE]", [!TIP], [!IMPORTANT], [!WARNING], [!CAUTION]) are callouts with a label
+//     (lib/markdownCallouts.ts, a remark plugin: the content stays ordinary Markdown).
 // Heading ids come from `slugForLine` (the page builds them from the same text as its table of contents), prefixed
 // with "doc-" so they never collide with ids of the shell.
 
@@ -17,6 +19,8 @@ import React from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { K, RADIUS, mono, sans } from "./core/tokens";
+import { MermaidDiagram } from "./MermaidDiagram";
+import { CALLOUT_LABEL, calloutKindOf, remarkCallouts, type CalloutKind } from "@/lib/markdownCallouts";
 
 export type MarkdownLink =
   | { kind: "internal"; href: string; onNavigate: () => void }
@@ -47,6 +51,19 @@ const CSS = `
 .aa-md strong { font-weight: 700; }
 .aa-md blockquote { margin: 0.8em 0; padding: 4px 14px; border-left: 3px solid ${K.accentBorder}; color: ${K.ink2};
   background: ${K.accentTint}; border-radius: ${RADIUS.sm}px; }
+.aa-md blockquote[data-callout] { color: ${K.ink}; padding: 8px 14px; }
+.aa-md blockquote[data-callout="note"] { border-left-color: ${K.info}; background: ${K.infoSoft}; }
+.aa-md blockquote[data-callout="tip"] { border-left-color: ${K.success}; background: ${K.successSoft}; }
+.aa-md blockquote[data-callout="important"] { border-left-color: ${K.accent}; background: ${K.accentTint}; }
+.aa-md blockquote[data-callout="warning"] { border-left-color: ${K.amber}; background: ${K.amberSoft}; }
+.aa-md blockquote[data-callout="caution"] { border-left-color: ${K.danger}; background: ${K.dangerTint}; }
+.aa-md .aa-md-callout-title { display: block; font-size: 12px; font-weight: 700; letter-spacing: 0.04em;
+  text-transform: uppercase; margin: 2px 0 2px; }
+.aa-md blockquote[data-callout="note"] .aa-md-callout-title { color: ${K.info}; }
+.aa-md blockquote[data-callout="tip"] .aa-md-callout-title { color: ${K.success}; }
+.aa-md blockquote[data-callout="important"] .aa-md-callout-title { color: ${K.accentDeep}; }
+.aa-md blockquote[data-callout="warning"] .aa-md-callout-title { color: ${K.amber}; }
+.aa-md blockquote[data-callout="caution"] .aa-md-callout-title { color: ${K.danger}; }
 .aa-md hr { border: none; border-top: 1px solid ${K.line}; margin: 1.4em 0; }
 .aa-md code { font-family: ${mono}; font-size: 12.5px; background: ${K.neutralBg}; padding: 1px 5px;
   border-radius: ${RADIUS.sm}px; }
@@ -65,6 +82,8 @@ const CSS = `
 .aa-md input[type="checkbox"] { margin-right: 6px; }
 `;
 
+const REMARK_PLUGINS = [remarkGfm, remarkCallouts];
+
 type Props = {
   markdown: string;
   /** How to render a link found in the text (the page resolves it against what it can open). */
@@ -72,6 +91,23 @@ type Props = {
   /** The heading id (without prefix) for the heading that starts on this 1-based line, if known. */
   slugForLine: (line: number | undefined) => string | undefined;
 };
+
+type HastNode = { type?: string; value?: string; tagName?: string; properties?: { className?: unknown };
+                  children?: HastNode[] };
+
+function hastText(node: HastNode | undefined): string {
+  if (!node) return "";
+  if (node.type === "text") return node.value ?? "";
+  return (node.children ?? []).map(hastText).join("");
+}
+
+/** The source of a ```mermaid fence (the <pre>'s <code> child), or null for any other code block. */
+export function mermaidSource(pre: unknown): string | null {
+  const code = (pre as HastNode | undefined)?.children?.find((c) => c.type === "element" && c.tagName === "code");
+  const cls = code?.properties?.className;
+  if (!Array.isArray(cls) || !cls.includes("language-mermaid")) return null;
+  return hastText(code).replace(/\n$/, "");
+}
 
 function headingId(slugForLine: Props["slugForLine"], node: unknown): string | undefined {
   const line = (node as { position?: { start?: { line?: number } } } | undefined)?.position?.start?.line;
@@ -151,16 +187,20 @@ export function MarkdownView({ markdown, resolveHref, slugForLine }: Props) {
           </div>
         );
       },
-      pre({ children, node }) {
-        const first = (node as { children?: { properties?: { className?: unknown } }[] } | undefined)?.children?.[0];
-        const cls = first?.properties?.className;
-        const isMermaid = Array.isArray(cls) && cls.includes("language-mermaid");
+      blockquote({ children, node }) {
+        const kind: CalloutKind | null = calloutKindOf(node);
+        if (!kind) return <blockquote>{children}</blockquote>;
         return (
-          <pre>
-            {isMermaid && <span className="aa-md-label">Diagram source (Mermaid)</span>}
+          <blockquote data-callout={kind} data-testid="md-callout" role="note" aria-label={CALLOUT_LABEL[kind]}>
+            <span className="aa-md-callout-title">{CALLOUT_LABEL[kind]}</span>
             {children}
-          </pre>
+          </blockquote>
         );
+      },
+      pre({ children, node }) {
+        const source = mermaidSource(node);
+        if (source !== null) return <MermaidDiagram source={source} />;
+        return <pre>{children}</pre>;
       },
     };
   }, [resolveHref, slugForLine]);
@@ -168,7 +208,7 @@ export function MarkdownView({ markdown, resolveHref, slugForLine }: Props) {
   return (
     <div className="aa-md">
       <style>{CSS}</style>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml components={components}>
+      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} skipHtml components={components}>
         {markdown}
       </ReactMarkdown>
     </div>

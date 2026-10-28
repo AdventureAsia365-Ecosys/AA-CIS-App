@@ -5,18 +5,22 @@
 
 Read only. The bundle comes from the root repo "Docs sync" workflow through S3 (api/services/docs_reader.py), cached
 in this process; nothing here touches the database. Admin only: POLICY = ops.read, and the BFF refuses every other
-role first (frontend/lib/rbac.ts API_READ_RULES "docs"). Owner-only pages (N-3) are listed and served only when the
-verified Cognito session carries the owner flag (StaffPrincipal.is_owner); for anyone else they do not exist (404).
+role first (frontend/lib/rbac.ts API_READ_RULES "docs"). Owner-only pages (N-3) are listed and served only to a
+principal holding docs.owner_read (staff_authz.can_read_owner_docs: a verified Cognito owner; Dev only and temporary,
+the E2E CIS admin of ADR 0006a A10b, read only, is_owner still False); for anyone else they do not exist (404).
 
 Included in main.py WITHOUT an include prefix: staff_policy reads the route template from scope["route"].path.
 """
 from __future__ import annotations
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 
-from api.core.staff_authz import StaffPrincipal, staff_policy
+from api.core.staff_authz import StaffPrincipal, docs_owner_read_via, staff_policy
 from api.services import docs_reader
+
+logger = structlog.get_logger()
 
 # staff_policy checks the admin secret (or a verified staff Bearer) first, then the POLICY capability. The routes take
 # the same dependency again for its value (the principal); FastAPI runs it once per request.
@@ -25,7 +29,14 @@ router = APIRouter(prefix="/admin/docs", tags=["admin-docs"], dependencies=[Depe
 _NO_STORE = {"Cache-Control": "private, no-store"}
 
 
-def _owner(principal: StaffPrincipal) -> bool:
+def _owner_read(principal: StaffPrincipal, route: str) -> bool:
+    via = docs_owner_read_via(principal)
+    if via == "e2e_dev":
+        logger.info("docs_owner_read_e2e_dev", route=route)   # A10b: every use is visible in the logs
+    return via is not None
+
+
+def _is_owner(principal: StaffPrincipal) -> bool:
     return bool(principal.is_owner and principal.auth == "cognito")
 
 
@@ -35,7 +46,8 @@ async def get_manifest(
     principal: StaffPrincipal = Depends(staff_policy),
 ):
     try:
-        view = await docs_reader.load_manifest(_owner(principal), refresh=refresh)
+        view = await docs_reader.load_manifest(_owner_read(principal, "manifest"), refresh=refresh,
+                                               is_owner=_is_owner(principal))
     except docs_reader.DocsMissing as e:
         raise HTTPException(status_code=404, detail=str(e))
     except docs_reader.DocsUnavailable as e:
@@ -50,7 +62,7 @@ async def get_page(
     principal: StaffPrincipal = Depends(staff_policy),
 ):
     try:
-        view = await docs_reader.load_page(repo, path, _owner(principal))
+        view = await docs_reader.load_page(repo, path, _owner_read(principal, "page"))
     except docs_reader.DocsMissing as e:
         raise HTTPException(status_code=404, detail=str(e))
     except docs_reader.DocsUnavailable as e:

@@ -78,3 +78,8 @@ note covers PR-2 (code), which merges after 283 is applied.
   map entry + env guard, `resolve_staff` flag, middleware cap, `staff_authz` field + check, `_refuse_e2e_mode`), the
   `admin-evidence` project, spec and helper parameters' admin constants, and these tests; restore-247 migration after
   deleting the row.
+  - AA-898 (S255): also the `docs.owner_read` E2E branch: the `"e2e_dev"` case of
+    `staff_authz.docs_owner_read_via` (the capability then means "verified Cognito owner" only), the
+    `docs_owner_read_e2e_dev` log line in `api/routers/admin_docs._owner_read`, the e2e cases of
+    `tests/unit/test_aa898_docs_reader.py` (`test_docs_owner_read_via` rows with `e2e_read_only`,
+    `test_e2e_admin_*`), and the docs reader steps (7b) of `tests/e2e/admin-evidence/admin-pages.spec.ts`.
