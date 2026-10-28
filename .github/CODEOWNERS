@@ -31,14 +31,11 @@
 /shared/secrets.py                            @pqnghiep1354
 /scripts/link_staff_identity.py               @pqnghiep1354
 
-# Sign-in routes, sessions and page gates (admin app and tenant portal)
+# Sign-in routes, sessions and page gates (admin app)
 /frontend/app/api/auth/                       @pqnghiep1354
 /frontend/lib/auth-server.ts                  @pqnghiep1354
 /frontend/lib/cognito*.ts                     @pqnghiep1354
 /frontend/proxy.ts                            @pqnghiep1354
-/portal/app/api/auth/                         @pqnghiep1354
-/portal/lib/auth-server.ts                    @pqnghiep1354
-/portal/proxy.ts                              @pqnghiep1354
 
 # Container image
 /Dockerfile                                   @pqnghiep1354

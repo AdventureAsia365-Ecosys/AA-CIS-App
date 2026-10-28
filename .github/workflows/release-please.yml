@@ -2,7 +2,7 @@ name: Release Please
 # AA-891 — keeps one release PR open on main (version bump + CHANGELOG.md). Merging it tags vX.Y.Z and makes the
 # GitHub release. Config: release-please-config.json (manifest mode); current version: .release-please-manifest.json;
 # the version in code: api/version.py (extra-files). Merging a release PR does not redeploy: deploy-dev.yml has
-# no path for CHANGELOG.md or the manifest and ignores api/version.py; vercel-deploy*.yml only watch frontend/portal.
+# no path for CHANGELOG.md or the manifest and ignores api/version.py; vercel-deploy.yml only watches frontend/.
 #
 # The release PR is opened with the aa-ecosys-ci-bot GitHub App token, not GITHUB_TOKEN: a PR opened by
 # GITHUB_TOKEN does not trigger workflows, so the required checks would never run on it. GITHUB_TOKEN gets

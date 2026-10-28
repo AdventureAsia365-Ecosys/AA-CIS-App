@@ -2,10 +2,11 @@
 
 `it.com` is on the Public Suffix List, so `lumiguides.it.com` is the site: every `*.lumiguides.it.com` host (the
 other apps, and the fixed Preview hosts `booking-preview` / `aa-cis-preview` that serve unmerged PR code) is the
-same site as the admin and portal hosts, and its requests carry their SameSite=Lax session cookies. A `text/plain`
+same site as the admin host, and its requests carry their SameSite=Lax session cookies. A `text/plain`
 POST needs no CORS preflight and the proxies forward it as JSON with the victim's credential, so each write route
 must call `refuseCrossSiteWrite(req)` (lib/crossSiteGuard.ts → lib/sameOrigin.ts isCrossSiteWrite) first.
-The behaviour itself is checked live by tests/e2e/smoke/aa911-bff-cross-site.spec.ts.
+The behaviour itself is checked live by tests/e2e/smoke/aa911-bff-cross-site.spec.ts. The portal's write routes are
+checked in AA-Partner (api/tests/unit/test_portal_guards.py) since the portal moved there (AA-979).
 """
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
-APPS = [REPO / "frontend" / "app" / "api", REPO / "portal" / "app" / "api"]
+APPS = [REPO / "frontend" / "app" / "api"]
 
 WRITE_EXPORT = re.compile(r"export\s+(?:const\s+|(?:async\s+)?function\s+)(POST|PUT|PATCH|DELETE)\b")
 # a re-export (`export { handler as POST }`) would hide the handler from this scan: refused outright
@@ -32,7 +33,6 @@ EXEMPT = {
     # Sign-in routes read no session cookie, so a cross-site POST cannot act as a signed-in user; login CSRF
     # (signing the victim into the attacker's account) is accepted for the dev phase (AA-911 notes).
     "frontend/app/api/auth/login/route.ts": None,
-    "portal/app/api/auth/tenant-login/route.ts": None,
 }
 
 
@@ -56,8 +56,6 @@ def test_write_routes_found():
         "frontend/app/api/pipeline/[...path]/route.ts",
         "frontend/app/api/tenant/[...path]/route.ts",
         "frontend/app/api/tenant/pipeline/brand-identity/route.ts",
-        "portal/app/api/tenant/[...path]/route.ts",
-        "portal/app/api/playground/proxy/route.ts",
     ):
         assert must in rels, f"{must} not found as a write route"
 

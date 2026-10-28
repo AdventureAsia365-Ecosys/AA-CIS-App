@@ -27,8 +27,6 @@ htmlcov/
 Thumbs.db
 node_modules/
 package-lock.json
-# AA-885: the portal app's lockfile is tracked (Vercel + CI run `npm ci` in portal/)
-!/portal/package-lock.json
 test-results/
 playwright-report/
 tests/e2e/results/

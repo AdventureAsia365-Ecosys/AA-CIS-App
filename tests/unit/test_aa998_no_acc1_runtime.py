@@ -16,7 +16,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 SCANNED_ROOTS = ("api", "services", "shared", "worker", "scripts", "frontend/app", "frontend/lib",
-                 "frontend/components", "portal")
+                 "frontend/components")
 SKIPPED = (Path("api/migrations"),)
 SKIPPED_DIRS = {"node_modules", ".next", "__pycache__", "dist", "build"}
 SUFFIXES = {".py", ".ts", ".tsx", ".js", ".mjs", ".cjs", ".sh", ".sql", ".json", ".yml", ".yaml", ".toml"}

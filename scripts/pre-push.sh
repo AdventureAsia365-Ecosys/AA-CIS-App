@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # AA-993 H1 (design D5): run this repo's CI checks locally before a push.
 #
-# Every command here is copied from .github/workflows/ci.yml (jobs Lint, Unit Tests, Frontend Lint, Frontend Build,
-# Portal Lint, Portal Build). When ci.yml changes, change the matching CI_CMD entry below in the same PR.
+# Every command here is copied from .github/workflows/ci.yml (jobs Lint, Unit Tests, Frontend Lint, Frontend Build).
+# When ci.yml changes, change the matching CI_CMD entry below in the same PR.
 #
 # Modes
 #   (default) fast  checks picked from `git diff --name-only <base>...<head>`; flake8 on the changed files only,
@@ -24,7 +24,7 @@
 set -uo pipefail
 
 SELF=$(realpath "${BASH_SOURCE[0]}")
-CHECK_IDS=(resource_ids text_guard quality_lint flake8 unit frontend_kit frontend_tsc frontend_lint portal_tsc portal_lint)
+CHECK_IDS=(resource_ids text_guard quality_lint flake8 unit frontend_kit frontend_tsc frontend_lint)
 
 # --- CI command lines, verbatim from .github/workflows/ci.yml (printed when a check fails) -----------------------
 # shellcheck disable=SC2054  # the commas belong to flake8's option values
@@ -43,10 +43,8 @@ UNIT_INSTALL="pip install -r requirements.txt -r requirements-dev.txt"
 CI_CMD[frontend_tsc]="cd frontend && npx tsc --noEmit -p .   (ci.yml Frontend Build > Type-check; next build stays CI-only)"
 CI_CMD[frontend_kit]="cd frontend && node app/_kit/core/check-kit-copy.mjs --self && node app/_kit/core/check-kit-copy.mjs --css . && node app/_kit/core/check-kit-copy.mjs --suppressions <base eslint-suppressions.json> eslint-suppressions.json --base-files <git ls-tree -r --name-only <base> -- frontend/> && node app/_kit/core/check-kit-copy.mjs --no-kit-disable app --ignore _kit   (ci.yml Frontend Build > Kit core self-check; Frontend Lint > Suppressions do not grow, No inline disable of a kit rule)"
 CI_CMD[frontend_lint]="cd frontend && npx eslint --prune-suppressions && git diff --exit-code eslint-suppressions.json   (ci.yml Frontend Lint; locally only the changed files, or all of frontend/ when the lint config, the kit rules or the suppressions file changed; fix, or after fixing old violations: npx eslint --prune-suppressions <files>)"
-CI_CMD[portal_tsc]="cd portal && npx tsc --noEmit -p .   (ci.yml Portal Build > Type-check; next build stays CI-only)"
-CI_CMD[portal_lint]="cd portal && npm run lint   (ci.yml Portal Lint; continue-on-error in CI, so report-only here)"
 # Checks that CI runs with continue-on-error: a failure is reported, never blocks.
-REPORT_ONLY=" portal_lint "
+REPORT_ONLY=" "
 # Unit Tests job env (ci.yml test-unit > Run unit tests): dummy values only, no real secret. COVERAGE_CORE only matters
 # with --cov (full mode); CI pins the coverage version it was verified on in requirements-dev.txt.
 UNIT_ENV=(COVERAGE_CORE=sysmon ENVIRONMENT=test AWS_REGION=us-west-1 AWS_DEFAULT_REGION=us-west-1
@@ -66,7 +64,7 @@ is_doc() { [[ $1 == docs/* || $1 == *.md ]]; }
 # plan_checks MODE CI FILE...: print the check ids to run, one per line, in CHECK_IDS order.
 plan_checks() {
   local mode=$1 ci=$2; shift 2
-  local f code=0 py_lint=0 py=0 fe=0 po=0
+  local f code=0 py_lint=0 py=0 fe=0
   if [[ $ci == 1 ]]; then printf '%s\n' "${CHECK_IDS[@]}"; return; fi
   for f in "$@"; do
     is_doc "$f" || code=1
@@ -78,7 +76,6 @@ plan_checks() {
     esac
     case $f in pyproject.toml|requirements.txt|requirements-dev.txt|.trivyignore) py=1 ;; esac
     [[ $f == frontend/* ]] && fe=1
-    [[ $f == portal/* ]] && po=1
   done
   echo resource_ids
   echo text_guard
@@ -89,7 +86,6 @@ plan_checks() {
     [[ $py == 1 ]] && echo unit
   fi
   [[ $fe == 1 ]] && { echo frontend_kit; echo frontend_tsc; echo frontend_lint; }
-  [[ $po == 1 ]] && { echo portal_tsc; echo portal_lint; }
   return 0
 }
 
@@ -244,7 +240,6 @@ self_test() {
   expect ".trivyignore: unit"                      fast 0 "resource_ids text_guard quality_lint unit" .trivyignore
   expect "yaml registry: quality lint"             fast 0 "resource_ids text_guard quality_lint" services/quality/registry.yaml
   expect "frontend only: tsc + lint, never build"  fast 0 "resource_ids text_guard quality_lint frontend_kit frontend_tsc frontend_lint" frontend/app/page.tsx
-  expect "portal only"                             fast 0 "resource_ids text_guard quality_lint portal_tsc portal_lint" portal/app/x.tsx
   expect "workflow only: unit (CI gate tests)"     fast 0 "resource_ids text_guard quality_lint unit" .github/workflows/ci.yml
   expect "ratchet config: unit"                    fast 0 "resource_ids text_guard quality_lint unit" .github/coverage-ratchet.json
   expect "mixed backend + frontend"                fast 0 "resource_ids text_guard quality_lint flake8 unit frontend_kit frontend_tsc frontend_lint" shared/db.py frontend/lib/a.ts
@@ -267,8 +262,6 @@ self_test() {
   r=0; [[ $got == ". " ]] || r=1; verdict "frontend lint targets: suppressions change lints all" "$got" "$r"
   got=$(frontend_lint_targets frontend/app/_kit/core/eslint-kit.mjs | tr '\n' ' ')
   r=0; [[ $got == ". " ]] || r=1; verdict "frontend lint targets: kit rule change lints all" "$got" "$r"
-  got=$(frontend_lint_targets portal/app/x.tsx | tr '\n' ' ')
-  r=0; [[ -z $got ]] || r=1; verdict "frontend lint targets: portal files are not frontend" "$got" "$r"
   # Uses the repo's own tests (grep only, nothing is run): a changed test file maps to itself, and the lint
   # module maps to its test file.
   got=$(MAX_TEST_FILES=1000 unit_targets tests/unit/test_aa926_lint.py services/quality/lint.py docs/x.md | tr '\n' ' ')
@@ -549,8 +542,6 @@ main() {
       frontend_kit) do_frontend_kit ;;
       frontend_tsc) node_check frontend "$id" npx tsc --noEmit -p . ;;
       frontend_lint) do_frontend_lint ;;
-      portal_tsc) node_check portal "$id" npx tsc --noEmit -p . ;;
-      portal_lint) node_check portal "$id" npm run lint ;;
     esac
   done
 

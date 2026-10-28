@@ -22,14 +22,14 @@ export const BOOKING_ADMIN_URL = trimSlash(process.env.NEXT_PUBLIC_BOOKING_ADMIN
 /** TripPlanner public site (no admin of its own, design §6.4). */
 export const TRIPPLANNER_URL = trimSlash(process.env.NEXT_PUBLIC_TRIPPLANNER_URL || DEV_TRIPPLANNER_URL);
 
-/** AA-885 — the tenant portal, its own Next.js app (portal/) and Vercel project (aa-cis-portal). Code
- * constant, no env var. Used only by next.config.ts (308 from the old /portal and /tenant-login URLs);
- * the staff /login page does not link to the portal (separate app, separate host). */
+/** AA-885 / AA-979 — the tenant portal (Content studio): AA-Partner portal/, served on Fargate behind CloudFront at
+ * this host. Code constant, no env var. Used only by next.config.ts (308 from the old /portal and /tenant-login
+ * URLs); the staff /login page does not link to the portal (separate app, separate host). */
 export const PORTAL_BASE_URL = "https://portal.lumiguides.it.com";
 
 /** AA-979 P2b (runbook §4.3) — the public trip page /trip/<tourId> moved to the AA-Partner CRM web on the client host
  * (Dev go-dev.). Code constant, no env var (same as PORTAL_BASE_URL). Used only by next.config.ts: the admin host
- * answers 307 /trip/:path* -> here (301 only at the P2b clean-up: a cached 301 cannot be rolled back, critic S5). The
+ * answers 308 /trip/:path* -> here (permanent since the P2b clean-up; a 307 during the rollback window). The
  * API builds published page URLs from its own TRIP_PAGE_BASE_URL (api/routers/v1_trip_page.py). */
 export const TRIP_PAGE_BASE_URL = "https://go-dev.lumiguides.it.com";
 

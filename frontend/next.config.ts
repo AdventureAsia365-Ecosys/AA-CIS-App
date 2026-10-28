@@ -44,16 +44,16 @@ const nextConfig: NextConfig = {
       // AA-665 — External Spend became Cost Operations. 307 (not 308) so the old URL can be reused; the query string
       // (?tab=…) carries over.
       { source: "/admin/llm-usage", destination: "/admin/cost-ops", permanent: false },
-      // AA-885 — the tenant portal moved to its own app and host (Vercel aa-cis-portal). Old portal
+      // AA-885 / AA-979 — the tenant portal is its own app and host (AA-Partner portal/, Fargate). Old portal
       // URLs answer 308 to the same path there (the query string carries over); the admin app serves
       // no portal page any more.
       { source: "/portal", destination: `${PORTAL_BASE_URL}/portal`, permanent: true },
       { source: "/portal/:path*", destination: `${PORTAL_BASE_URL}/portal/:path*`, permanent: true },
       { source: "/tenant-login", destination: `${PORTAL_BASE_URL}/tenant-login`, permanent: true },
-      // AA-979 P2b (runbook §4.3) — the public trip page moved to the AA-Partner CRM web on the client host. 307, not
-      // 301, until the P2b clean-up (critic S5: browsers cache a 301 with no expiry, so it could not be rolled back);
-      // the query string carries over. app/trip/[tourId] stays here as the rollback target until then.
-      { source: "/trip/:path*", destination: `${TRIP_PAGE_BASE_URL}/trip/:path*`, permanent: false },
+      // AA-979 — the public trip page lives on the AA-Partner CRM web (client host). Permanent (308) since the P2b
+      // clean-up (runbook §4.5); it was a 307 during the rollback window (critic S5). The query string carries over.
+      // The CIS page (app/trip/[tourId]) was deleted at the clean-up.
+      { source: "/trip/:path*", destination: `${TRIP_PAGE_BASE_URL}/trip/:path*`, permanent: true },
     ];
   },
 };

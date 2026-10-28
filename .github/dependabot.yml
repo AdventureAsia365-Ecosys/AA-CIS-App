@@ -17,8 +17,8 @@ updates:
         patterns: ["*"]
     commit-message:
       prefix: "chore(deps)"
-  # AA-979: no /portal entry. The tenant portal moved to AA-Partner (its Dependabot covers it there); the copy
-  # left here is frozen (tests/unit/test_aa885_portal_split.py), so a security PR against it would fail the freeze guard.
+  # AA-979: no /portal entry. The tenant portal lives in AA-Partner (its Dependabot covers it there); the frozen copy
+  # that stayed here was deleted at the P2b clean-up.
   - package-ecosystem: pip
     directory: "/"
     schedule:
