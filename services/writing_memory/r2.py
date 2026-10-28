@@ -438,7 +438,8 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
                 await store.insert_result(row)
                 await after("calibrate")
             out.judge_kappa = ec.cohen_kappa(pairs)
-            out.judge_counts = ec.judge_counts(out.judge_kappa, len(pairs))
+            details["kappa_labels"] = ec.label_counts(pairs)
+            out.judge_counts = ec.judge_counts(out.judge_kappa, len(pairs), details["kappa_labels"])
             if progress:
                 await progress(phase="calibrated", kappa=out.judge_kappa, pairs=len(pairs))
 
@@ -780,12 +781,15 @@ async def estimate(pool, conf: R2Config) -> dict:
         plan["probe"] = [it for it in plan["probe"] if it.get("split") != "trap"]
     n = {k: len(v) for k, v in plan.items()}
     calib = calibration_items(items)
+    calib_labels = {v: sum(1 for it in calib if it["label_verdict"] == v) for v in ("pass", "fail")}
     per = cfg.R2_ITEM_ESTIMATE_USD[conf.writer] + cfg.JUDGE_CALL_ESTIMATE_USD
     # calibration (every labelled item) + the planned controls (the same call for release 0's frozen controls)
     judge_only = (len(calib) + sum(n.values())) * cfg.JUDGE_CALL_ESTIMATE_USD
     gen = sum(n.values()) * (cfg.JUDGE_CALL_ESTIMATE_USD if conf.seed_fault else per)
     return {"writer": conf.writer, "release": conf.release_id, "items": len(items), "plan": n,
-            "calibration_items": len(calib), "calibrated_possible": len(calib) >= cfg.MIN_KAPPA_PAIRS,
+            "calibration_items": len(calib), "calibration_labels": calib_labels,
+            "calibrated_possible": (len(calib) >= cfg.MIN_KAPPA_PAIRS
+                                    and min(calib_labels.values()) >= cfg.MIN_KAPPA_PER_LABEL),
             "estimated_usd_max": round(judge_only + gen, 3), "cap_usd": conf.cap_usd,
             "month_spend_usd": round(await store.month_spend(), 4), "month_cap_usd": cfg.MONTH_CAP_USD}
 

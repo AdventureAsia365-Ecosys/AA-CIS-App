@@ -51,6 +51,8 @@ SHADOW_RUN_CAP_USD = 7.0         # qlint: allow a dollar cap (cost-cuts K3: T2 5
 R2_PROBE_SIZE = 3                # WM-19 scope 1: a 3-item probe first
 MIN_KAPPA = 0.6                  # WM-19 scope 4: the judge counts toward stops only at kappa >= 0.6 ...
 MIN_KAPPA_PAIRS = 10             # ... measured on >= 10 labelled controls (fewer: informative only)
+MIN_KAPPA_PER_LABEL = 3          # ... with >= 3 pass AND >= 3 fail labels among them (S255: a one-class label set
+#                                  gives kappa 1.0 to a judge that never had to find a failure, or swings on one item)
 NOISE_K = 1                      # quality-system design 4.2: one shared noise_k = 1 until a tier has >= 20 items
 MAX_ERROR_SHARE = 0.2            # more than 20% of the attempted items in error: the run is invalid
 # Pre-call reservation per item (the cap check reserves this before each item; actuals come from llm_call_log).

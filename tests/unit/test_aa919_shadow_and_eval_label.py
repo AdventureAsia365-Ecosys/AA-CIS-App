@@ -318,6 +318,37 @@ def test_t9_writer_input_shape_builds_the_write_kwargs():
         ew._t9_context({})
 
 
+def test_t9_judge_source_holds_the_scope_and_the_angle_brief():
+    """S255 (AA-919): the golden labels were made on the full writer input; the judge's SOURCE carries the scope line
+    and the angle brief the writer was told to follow, for both stored shapes."""
+    from services.writing_memory import eval_writers as ew
+    angle = {"name": "Zz invented angle", "formula_fit": "Problem then proof.", "best_final_style": "Calm; the narrow "
+             "invented peninsula.", "answers": ["not shown"], "option_id": "x"}
+    golden = {"context": {"channel": "linkedin", "atom_text": "Invented seed.", "scope": "SCOPE: day 4 only.",
+                          "chosen": angle}}
+    live = {"writer_input": {"channel": "linkedin", "seed": "Invented seed.", "scope": "SCOPE: day 4 only.",
+                             "angle": angle}}
+    for inp in (golden, live):
+        src = ew.source_text("t9_social", inp)
+        assert "day 4 only." in src and "Zz invented angle" in src and "narrow invented peninsula" in src
+        assert "not shown" not in src and "option_id" not in src
+    assert "BRIEF" not in ew.source_text("t9_social", {"context": {"atom_text": "Seed only."}})
+
+
+def test_t9_judge_prompt_keeps_the_brief_when_the_facts_are_long():
+    """S255 review: a T9 blog's facts run to 15-40k chars and the judge reads the first SOURCE_CHARS of the source,
+    so the scope, the brief and the brand come before the facts (at the end they were cut for every t9_blog item)."""
+    from services.writing_memory import eval_writers as ew
+    from services.writing_memory.eval_judge import SOURCE_CHARS, build_user_prompt
+    ctx = {"channel": "blog", "atom_text": "Invented seed.", "facts_text": "Zz invented fact. " * 3000,
+           "scope": "SCOPE: day 4 only.", "chosen": {"name": "Zz invented angle"},
+           "brand_audience": {"brand_name": "Zz Invented Brand"}}
+    src = ew.source_text("t9_blog", {"context": ctx})
+    assert len(src) > SOURCE_CHARS
+    prompt = build_user_prompt(writer="t9_blog", source_text=src, output_text="x")
+    assert "day 4 only." in prompt and "Zz invented angle" in prompt and "Zz Invented Brand" in prompt
+
+
 def test_job_kinds_are_registered_paid_and_background():
     from services.jobs import writing_memory_job as j
     from shared.jobs.registry import get_kind

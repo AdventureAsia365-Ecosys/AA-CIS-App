@@ -21,23 +21,28 @@ TENANT_A = "0a919a00-0000-4000-8000-00000000000a"
 TENANT_B = "0a919b00-0000-4000-8000-00000000000b"
 
 
-def _item(i: int, split: str, *, label="pass", trap=False, post_edit=False, tiers=(), writer="a1", tenant=None):
+def _item(i: int, split: str, *, label="pass", trap=False, post_edit=False, tiers=(), writer="a1", tenant=None,
+          bad_control=False):
     tour = {"name": f"Invented loop {i}", "summary": f"Pretend walkers cross invented meadow {i}.",
             "description": "Nothing real happens on this fictional route."}
+    frozen = "A calm invented rewrite." + (" BADFACT" if bad_control else "")
     return {"item_id": str(uuid.UUID(int=1000 + i)), "sample_id": f"s-{i:03d}", "writer": writer, "channel": None,
             "scope": "tenant" if tenant else "platform", "tenant_id": tenant, "split": split, "trap": trap,
             "tiers": list(tiers), "input": {"tour": tour, "brand_rules_ref": "s1:default", "tenant_id": tenant,
                                             "context": {"channel": "linkedin", "atom_text": tour["summary"],
                                                         "tenant_id": tenant}},
-            "control_output": {"name": f"Rewritten loop {i}", "summary": "A calm invented rewrite."},
+            "control_output": {"name": f"Rewritten loop {i}", "summary": frozen},
             "post_edit": post_edit, "label_verdict": label,
             "injection_spec": {"canary": "ZZCANARY"} if trap else None}
 
 
-def golden(n_tune=10, n_hold=4, n_trap=2, labels_fail=0):
+def golden(n_tune=10, n_hold=4, n_trap=2, labels_fail=0, bad_holdout=3):
+    """`bad_holdout` holdout items carry a fail label on a frozen text the fake judge fails (BADFACT): a calibrated
+    judge needs >= MIN_KAPPA_PER_LABEL of each label (S255). Their candidates are clean (fixed, never new fails)."""
     items = [_item(i, "trap", label="fail", trap=True) for i in range(n_trap)]
     items += [_item(100 + i, "tune", label="fail" if i < labels_fail else "pass") for i in range(n_tune)]
-    items += [_item(200 + i, "holdout") for i in range(n_hold)]
+    items += [_item(200 + i, "holdout", label="fail" if i < bad_holdout else "pass", bad_control=i < bad_holdout)
+              for i in range(n_hold)]
     return items
 
 
@@ -273,6 +278,21 @@ def test_low_kappa_judge_is_informative():
     out, _, _ = run(store, r2.R2Config(writer="a1"), judge=make_judge(wrong_on=wrong))
     assert out.judge_kappa is not None and out.judge_kappa < cfg.MIN_KAPPA and not out.judge_counts
     assert out.verdict == "informative"
+
+
+def test_a_one_class_label_set_never_calibrates_the_judge():
+    """S255: 14 pass labels and a judge that passes everything: kappa 1.0, but the judge never had to find a failure,
+    so it does not count (informative, no hard stop 1)."""
+    store = FakeStore(golden(bad_holdout=0))
+    out, _, _ = run(store, r2.R2Config(writer="a1"))
+    assert out.judge_kappa == 1.0 and not out.judge_counts and out.verdict == "informative"
+    assert store.runs[out.run_id]["details"]["kappa_labels"] == {"pass": 14, "fail": 0}
+
+
+def test_calibrated_run_records_the_label_counts():
+    store = FakeStore(golden())
+    out, _, _ = run(store, r2.R2Config(writer="a1"))
+    assert out.judge_counts and store.runs[out.run_id]["details"]["kappa_labels"] == {"pass": 11, "fail": 3}
 
 
 def test_futility_at_tune():

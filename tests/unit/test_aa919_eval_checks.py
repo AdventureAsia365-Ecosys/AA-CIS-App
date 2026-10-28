@@ -163,6 +163,18 @@ def test_judge_counts_needs_kappa_and_pairs():
     assert not ec.judge_counts(None, 40)
 
 
+def test_judge_counts_needs_each_label_class():
+    """S255: a constant judge on a one-class label set gets kappa 1.0; it was never shown to find a failure."""
+    one_class = [("pass", "pass")] * 12
+    assert ec.cohen_kappa(one_class) == 1.0 and ec.label_counts(one_class) == {"pass": 12, "fail": 0}
+    assert not ec.judge_counts(1.0, 12, ec.label_counts(one_class))
+    two_fails = [("pass", "pass")] * 10 + [("fail", "fail")] * 2
+    assert not ec.judge_counts(ec.cohen_kappa(two_fails), 12, ec.label_counts(two_fails))
+    three = [("pass", "pass")] * 10 + [("fail", "fail")] * 3
+    assert ec.judge_counts(ec.cohen_kappa(three), 13, ec.label_counts(three))
+    assert ec.label_counts([("pass", "error"), ("fail", "pass")]) == {"pass": 0, "fail": 1}
+
+
 def test_control_is_regenerated_only_in_reverify():
     assert ec.control_mode("r2") == "rejudge"
     assert ec.control_mode("reverify") == "regenerate"
@@ -239,9 +251,13 @@ def test_tune_decision():
 
 # ── the judge reply ────────────────────────────────────────────────────────────────────────────────────────────────
 
-def test_parse_verdict_drops_unknown_classes_and_forces_fail_on_a_fact_class():
+def test_parse_verdict_drops_unknown_classes_and_keeps_the_judges_verdict():
+    # S255: a class no longer forces fail. The label rubric passes a text a light edit fixes, and a class on it is
+    # still reported (hard stop 1 reads the classes, not the verdict).
     v = parse_verdict(json.dumps({"verdict": "pass", "score": 12, "failure_classes": ["fact.number", "zz.made_up"]}))
-    assert v == {"verdict": "fail", "score": 10.0, "failure_classes": ["fact.number"]}
+    assert v == {"verdict": "pass", "score": 10.0, "failure_classes": ["fact.number"]}
+    v = parse_verdict(json.dumps({"verdict": "fail", "score": 3, "failure_classes": ["fact.embellish"]}))
+    assert v == {"verdict": "fail", "score": 3.0, "failure_classes": ["fact.embellish"]}
     with pytest.raises(ValueError):
         parse_verdict(json.dumps({"verdict": "maybe", "score": 1, "failure_classes": []}))
     with pytest.raises(ValueError):
@@ -252,3 +268,16 @@ def test_judge_prompt_names_every_class_and_is_versioned():
     sp = system_prompt()
     assert all(c in sp for c in JUDGE_CLASSES)
     assert len(judge_version()) == 12
+
+
+def test_judge_verdict_rubric_is_the_golden_label_rubric():
+    """S255 (AA-919 kappa -0.073): the judge is calibrated against labels made with scripts/aa729/labels.RUBRIC, so it
+    must ask the same question. Every pass label of the golden set is grade `light`; a judge that fails every text
+    'not publishable as is' disagrees with all of them by construction."""
+    from scripts.aa729.labels import RUBRIC
+    from services.writing_memory.eval_judge import LABEL_RUBRIC
+    assert LABEL_RUBRIC == {"pass": RUBRIC["pass"], "fail": RUBRIC["fail"]}
+    sp = system_prompt()
+    assert RUBRIC["pass"] in sp and RUBRIC["fail"] in sp
+    assert "would not be publishable as is" not in sp and "forces" not in sp
+    assert "also when the verdict is pass" in sp
