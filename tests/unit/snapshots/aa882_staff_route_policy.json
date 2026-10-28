@@ -663,18 +663,6 @@
     "capability": null,
     "module": "api.routers.v1_rules"
   },
-  "GET /v1/social": {
-    "capability": null,
-    "module": "api.routers.v1_social"
-  },
-  "GET /v1/social/{social_id}": {
-    "capability": null,
-    "module": "api.routers.v1_social"
-  },
-  "GET /v1/social/{social_id}/context": {
-    "capability": null,
-    "module": "api.routers.v1_social"
-  },
   "PATCH /admin/atoms/{atom_id}": {
     "capability": "atoms.write",
     "module": "api.routers.admin_atoms"
@@ -1230,10 +1218,6 @@
   "POST /v1/pipeline/run": {
     "capability": "content.write",
     "module": "api.routers.v1_pipeline"
-  },
-  "POST /v1/social/batch-review": {
-    "capability": "atoms.write",
-    "module": "api.routers.v1_social"
   },
   "PUT /admin/aa-content/{content_id}/draft": {
     "capability": "content.write",

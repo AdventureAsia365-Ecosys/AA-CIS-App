@@ -211,7 +211,6 @@ def test_guard_functions_accept_a_verified_principal_only_inside_its_request():
     ("GET", "/v1/pipeline/sources", {}, 401, "Not authenticated"),
     ("GET", "/v1/pipeline/sources", {"X-Admin-Secret": "wrong"}, 403, "Invalid admin secret"),
     ("GET", "/v1/rules", {}, 401, "Not authenticated"),
-    ("GET", "/v1/social/batch-review", {}, 401, "Not authenticated"),
 ])
 def test_no_secret_and_no_principal_answer_as_before(real, pool, method, path, headers, status, detail):
     res = real.request(method, path, headers=headers)

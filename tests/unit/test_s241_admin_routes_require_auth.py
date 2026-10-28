@@ -532,18 +532,12 @@ def test_unconfigured_secret_is_still_503(client, monkeypatch):
     assert client.get("/admin/budgets").status_code == 503
 
 
-# ── /v1/rules + /v1/social: staff only; a tenant JWT is refused (S241 review) ─────────────────
+# ── /v1/rules: staff only; a tenant JWT is refused (S241 review; /v1/social was removed by AA-850) ─────────────
 
-_SOCIAL_ID = "aaaaaaaa-0000-0000-0000-000000000001"
 _RULE_ID = "bbbbbbbb-0000-0000-0000-000000000001"
 _V1_STAFF_ROUTES = [
     ("GET", "/v1/rules", None),
     ("PATCH", f"/v1/rules/{_RULE_ID}", {"active": False}),
-    ("GET", "/v1/social?limit=200", None),
-    ("POST", "/v1/social/batch-review",
-     {"decisions": [{"social_id": _SOCIAL_ID, "status": "approved"}], "reviewer_id": "x"}),
-    ("GET", f"/v1/social/{_SOCIAL_ID}/context", None),
-    ("GET", f"/v1/social/{_SOCIAL_ID}", None),
 ]
 
 
@@ -551,14 +545,13 @@ _V1_STAFF_ROUTES = [
 def v1_client(monkeypatch):
     from fastapi.testclient import TestClient
 
-    from api.routers import v1_rules, v1_social
+    from api.routers import v1_rules
 
-    # The two routers alone (no rate-limit middleware, which would look up the tenant in Redis/DB).
+    # The router alone (no rate-limit middleware, which would look up the tenant in Redis/DB).
     # The DB pool raises if touched: the guard must refuse before any query runs.
     monkeypatch.setenv("ADMIN_SECRET", _SECRET)
     v1_app = FastAPI()
     v1_app.include_router(v1_rules.router)
-    v1_app.include_router(v1_social.router)
     v1_app.state.pool = MagicMock(acquire=MagicMock(side_effect=AssertionError("the DB must not be reached")))
     return TestClient(v1_app, raise_server_exceptions=True)
 
