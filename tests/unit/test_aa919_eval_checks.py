@@ -276,8 +276,21 @@ def test_judge_verdict_rubric_is_the_golden_label_rubric():
     'not publishable as is' disagrees with all of them by construction."""
     from scripts.aa729.labels import RUBRIC
     from services.writing_memory.eval_judge import LABEL_RUBRIC
-    assert LABEL_RUBRIC == {"pass": RUBRIC["pass"], "fail": RUBRIC["fail"]}
+    assert LABEL_RUBRIC == {"pass": RUBRIC["pass"], "fail": RUBRIC["fail"], "rules": RUBRIC["rules"]}
     sp = system_prompt()
     assert RUBRIC["pass"] in sp and RUBRIC["fail"] in sp
+    assert all(r in sp for r in RUBRIC["rules"])
     assert "would not be publishable as is" not in sp and "forces" not in sp
     assert "also when the verdict is pass" in sp
+
+
+def test_judge_rubric_rules_settle_the_one_phrase_claim():
+    """S256 calibration review (AA-919): panel votes split on one-phrase claims ("minutes" vs "no fact change"), so the
+    shared rubric says it outright: an unsupported claim or trip promise fails even when one phrase fixes it; wording,
+    reflection and brief-asked content do not. The judge prompt no longer calls a one-phrase flaw a light edit."""
+    from services.writing_memory.eval_judge import LABEL_RUBRIC
+    rules = " ".join(LABEL_RUBRIC["rules"])
+    assert "fails even when one phrase would fix it" in rules
+    assert "meta description" in rules and "hashtags" in rules
+    assert "Reflection that states no fact" in rules and "brief and brand pack are part of the source" in rules
+    assert "(one phrase, one field)" not in system_prompt()
