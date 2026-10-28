@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.13.0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/compare/v0.12.0...v0.13.0) (2026-10-28)
+
+
+### Features
+
+* admin host forwards /trip/* to the CRM client host (307) ([#1082](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1082)) ([0ef0d14](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/0ef0d1475d9598ede50e6502c88f566370b31fde))
+* deploy guard blocks only on an open wave or a running deploy-blocking kind (AA-993 G5) ([#1081](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1081)) ([69dc633](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/69dc6332ba83ed04763a1d3ab8594f080b1b6761))
+* drain-safe s1_rewrite persist stages and a3_atomize tour lock (AA-993 G2, G3) ([#1077](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1077)) ([74c545d](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/74c545dcc0c3cf589ab7f0a13ef2f76db9ca8e39))
+* kit lint rules in the core at error with a shrinking suppressions baseline ([#1078](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1078)) ([9980781](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/99807813134cb8c7c1e0b2a4d1e5d7a0fc78f842))
+* T9 writer round 7, brand focus from the style guide and the angle brief as a brief ([#1085](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1085)) ([2b7d776](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/2b7d776cc68f1bdd85c656b52ee5432bee42e653))
+* writing memory Releases tab (switch, train close, release actions) ([#1076](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1076)) ([39dc01f](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/39dc01f06280536d98959eed9944b4e3dff326b2))
+* writing-memory R2 runner and targeted shadow (WM-19, WM-21) ([#1084](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1084)) ([32d7473](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/32d7473fea32705faf7cfb6bdbd2907777eebee1))
+
+
+### Bug Fixes
+
+* clean cross-border place card locality/region when the rebuild refuses a country change ([#1074](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1074)) ([ecef8db](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/ecef8db1cd1fc64fa4996573d0101a94d75017ac))
+* dedupe catalog photos by path and use canonical destination covers ([#1073](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1073)) ([96eb393](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/96eb39329ea7ce9d079f4144735a35854bedfe94))
+* keep S1 llm_call_log rows when a job is enqueued with the aa_internal tenant slug ([#1079](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1079)) ([e22e5fb](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/e22e5fb6cb4ffc3cc51e3e17c140dc53af39f158))
+* keep Writing memory tables inside the page column (Releases, Signals) ([#1080](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1080)) ([1976bf9](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/1976bf94e8b313a890cf407dc47c6fecee229fb1))
+* mark kit core useMediaQuery as a client module ([#1083](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1083)) ([a38efd4](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/a38efd49b9bb7ad125cf89fd4c354aff4cc945db))
+* pick the release tenant by name and show tenant names on the Releases tab ([#1086](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1086)) ([4ea505f](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/4ea505f1908d38cc9ec7d20025ade2113158b5bf))
+* pin self-propelled transit journeys in the place build ([#1089](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1089)) ([8aabaf0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/8aabaf0a9b5accc7ba4ea3033f96bfad3c9c1112))
+
+
+### Reverts
+
+* T9 writer round 7 (blind panel did not pass the ship bars) ([#1087](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1087)) ([f43141b](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/f43141ba106c9177954ca58022f4c55be12e6de0))
+
 ## [0.12.0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/compare/v0.11.0...v0.12.0) (2026-10-27)
 
 
