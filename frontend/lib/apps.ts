@@ -81,8 +81,10 @@ const GITHUB_ORG_URL = "https://github.com/AdventureAsia365-Ecosys";
 /** The CIS admin console itself (this app, Vercel aa-cis-frontend). */
 export const CIS_ADMIN_URL = "https://aa-cis.lumiguides.it.com";
 
-/** AA-Partner's Dev partner host (CloudFront; the agency CRM web, AA-CIS-Infra crm_edge.tf). AA-936. */
-export const CRM_PARTNER_URL = "https://partner-dev.lumiguides.it.com";
+/** AA-Partner's agency host (CloudFront; the agency CRM web, AA-CIS-Infra crm_agency_edge.tf). AA-936; AA-979 P2b
+ * clean-up: the old partner host only answers 301 here (except its /crm API paths, which api/core/app_registry.py
+ * still reads for health). */
+export const CRM_PARTNER_URL = "https://portal.lumiguides.it.com";
 
 export type PlatformAppId = "cis" | AppId | "crm";
 
