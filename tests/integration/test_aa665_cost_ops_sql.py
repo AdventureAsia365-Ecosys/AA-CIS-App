@@ -2,8 +2,9 @@
 
 C2: shared.dfs_call_log rows written through record_dfs_call_with_pool carry the bound job id; dfs_runs groups them
 by job (job fields, payload scope, the job's LLM cost) and, with infer_unlinked, matches rows without a job to the job
-whose run window contains them. C3: cost_forecast over llm_call_daily (rolled day wins over raw rows of that day),
-llm_call_log, dfs_call_log and the stored Cost Explorer snapshot, against the spend_budget rows.
+whose run window contains them, or to a recorded cost incident (api/services/cost_incidents.py) when no job ran.
+C3: cost_forecast over llm_call_daily (rolled day wins over raw rows of that day), llm_call_log, dfs_call_log and
+the stored Cost Explorer snapshot, against the spend_budget rows.
 
 The fixture rows live in January / February 2025 (no other test writes there) and are deleted at the end.
 """
@@ -19,7 +20,7 @@ import pytest_asyncio
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
-from api.services import cost_ops  # noqa: E402
+from api.services import cost_incidents, cost_ops  # noqa: E402
 from shared.dfs_client.call_log import record_dfs_call_with_pool  # noqa: E402
 from shared.llm_client.call_log import bind_job  # noqa: E402
 
@@ -115,6 +116,42 @@ async def test_two_overlapping_jobs_make_an_ambiguous_match(pool):
     out = await cost_ops.dfs_runs(pool, _utc(2025, 1, 12), _utc(2025, 1, 13), infer_unlinked=True)
     (row,) = out["inferred"]
     assert row["attribution"] == "ambiguous" and row["job_id"] is None and row["candidate_kinds"] == [KIND]
+
+
+@pytest.mark.asyncio
+async def test_rows_without_a_job_inside_a_recorded_incident_are_attributed_to_it(pool, monkeypatch):
+    inc = cost_incidents.CostIncident(
+        id="aa665-probe", provider="dfs", title="Probe incident", started_at=_utc(2025, 1, 14, 5),
+        ended_at=_utc(2025, 1, 14, 11), trigger="t", scope="s", failure_point="f", cause="c",
+        llm_stages=(STAGE,))
+    monkeypatch.setattr(cost_ops, "incidents_overlapping",
+                        lambda since, until, provider=None: cost_incidents.incidents_overlapping(
+                            since, until, provider, (inc,)))
+    async with pool.acquire() as c:
+        job_id = await _job(c, _utc(2025, 1, 14, 6), _utc(2025, 1, 14, 7), {"a": 1})
+        await _dfs_at(c, _utc(2025, 1, 14, 5, 5), 0.5)            # incident, no job
+        await _dfs_at(c, _utc(2025, 1, 14, 8, 51), 0.25)          # incident, no job: the last paid call
+        await _dfs_at(c, _utc(2025, 1, 14, 9, 30), 0.0)           # incident, failed call logged at 0
+        await _dfs_at(c, _utc(2025, 1, 14, 6, 30), 0.1)           # incident window, but a job ran: the job wins
+        await _dfs_at(c, _utc(2025, 1, 14, 12), 0.05)             # after the incident, no job
+        await _llm(c, _utc(2025, 1, 14, 5, 6), 0.01, "bedrock", "acc3")
+        await _llm(c, _utc(2025, 1, 14, 5, 7), 0.02, "bedrock", "acc3")
+
+    out = await cost_ops.dfs_runs(pool, _utc(2025, 1, 14), _utc(2025, 1, 15), infer_unlinked=True)
+    (view,) = out["incidents"]
+    assert view["id"] == "aa665-probe" and view["dfs"]["calls"] == 4
+    assert view["dfs"]["cost_usd"] == pytest.approx(0.85)
+    assert view["dfs"]["first_paid_at"] == _utc(2025, 1, 14, 5, 5).isoformat()
+    assert view["dfs"]["last_paid_at"] == _utc(2025, 1, 14, 8, 51).isoformat()
+    assert view["llm"]["source"] == "raw" and view["llm"]["calls"] == 2
+    assert view["llm"]["cost_usd"] == pytest.approx(0.03)
+
+    inferred = {r["attribution"]: r for r in out["inferred"]}
+    assert inferred["incident"]["incident_id"] == "aa665-probe" and inferred["incident"]["calls"] == 3
+    assert inferred["incident"]["incident_title"] == "Probe incident" and inferred["incident"]["job_id"] is None
+    assert inferred["incident"]["dfs_cost_usd"] == pytest.approx(0.75)
+    assert inferred["window"]["job_id"] == job_id and inferred["window"]["calls"] == 1
+    assert inferred["none"]["calls"] == 1 and inferred["none"]["incident_id"] is None
 
 
 @pytest.mark.asyncio

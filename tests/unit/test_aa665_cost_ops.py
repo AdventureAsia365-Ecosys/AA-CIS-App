@@ -185,9 +185,10 @@ async def test_dfs_runs_infer_unlinked():
     jid = uuid.UUID(JOB)
     pool = _Pool({
         cost_ops.DFS_INFER_SQL: [
-            {"job_id": jid, "attribution": "window", "candidate_kinds": [], "calls": 5, "live_calls": 5,
-             "dfs_cost_usd": 3.0, "first_call_at": since, "last_call_at": since},
-            {"job_id": None, "attribution": "ambiguous", "candidate_kinds": ["s1_rewrite", "segment_research"],
+            {"job_id": jid, "attribution": "window", "candidate_kinds": [], "incident_id": None, "calls": 5,
+             "live_calls": 5, "dfs_cost_usd": 3.0, "first_call_at": since, "last_call_at": since},
+            {"job_id": None, "attribution": "ambiguous", "incident_id": None,
+             "candidate_kinds": ["s1_rewrite", "segment_research"],
              "calls": 2, "live_calls": 2, "dfs_cost_usd": 0.1, "first_call_at": since, "last_call_at": since},
         ],
         cost_ops.JOBS_BY_ID_SQL: [{"id": jid, "kind": "segment_research", "status": "failed", "created_by": None,
