@@ -30,6 +30,7 @@ from api.routers.v1_pipeline import _rewrite_tour
 from services.content_generation.pipeline_lessons import load_s1_lessons_block
 from services.content_generation import s1_checkpoint as _ckpt  # AA-993 G2
 from shared.aws_client.bronze import bronze_bucket
+from shared.secrets import get_database_url  # AA-838 D9: default application_name
 from shared.tour_liveness import (
     SOURCE_NOT_LIVE, SourceNotLiveError, live_source_exists_sql, live_source_sql, source_not_live_message,
     source_state,
@@ -582,7 +583,7 @@ async def _execute_run_tour(
     """
     on_stage = stage_cb
 
-    conn = await asyncpg.connect(os.environ["DATABASE_URL"])
+    conn = await asyncpg.connect(get_database_url())
     TENANT_SLUG_MAP = {"aa_internal": "00000000-0000-0000-0000-000000000001"}
     tenant_uuid = TENANT_SLUG_MAP.get(req.tenant_id, req.tenant_id)
     try:
@@ -1097,7 +1098,7 @@ async def _run_tour_safe(tour_req: TourRunRequest, job_id: str | None = None,
                         batch_id=tour_req.batch_id, reason="batch_id is not a valid uuid")
             return
         try:
-            conn = await asyncpg.connect(os.environ["DATABASE_URL"])
+            conn = await asyncpg.connect(get_database_url())
             await conn.execute(
                 "UPDATE shared.pipeline_runs SET status='failed', error_message=$2 "
                 "WHERE batch_id=$1::uuid AND status='ingesting'",
@@ -1150,7 +1151,7 @@ async def _revalidate_tour(content_id: str) -> dict:
     """
     from services.content_generation.graph import build_revalidation_graph
 
-    conn = await asyncpg.connect(os.environ["DATABASE_URL"])
+    conn = await asyncpg.connect(get_database_url())
     try:
         gc = await conn.fetchrow("""
             SELECT gc.id, gc.tour_id, gc.tenant_id, gc.version_num,
@@ -1567,7 +1568,7 @@ async def list_brand_rules(
     verify_admin_secret(x_admin_secret)
     TENANT_SLUG_MAP = {"aa_internal": "00000000-0000-0000-0000-000000000001"}
     tenant_uuid = TENANT_SLUG_MAP.get(tenant_id, tenant_id)
-    conn = await asyncpg.connect(os.environ["DATABASE_URL"])
+    conn = await asyncpg.connect(get_database_url())
     try:
         rows = await conn.fetch("""
             SELECT id, brand_name, version, is_active

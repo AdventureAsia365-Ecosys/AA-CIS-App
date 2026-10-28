@@ -21,7 +21,6 @@ runs on-demand inside _execute_run_tour. Do not route the judge through this mod
 """
 from __future__ import annotations
 
-import os
 import uuid
 from typing import Optional
 
@@ -30,6 +29,7 @@ import structlog
 
 from shared.llm_client import bedrock_batch
 from shared.llm_client.bedrock_batch import BatchUnavailable
+from shared.secrets import get_database_url  # AA-838 D9: default application_name
 from services.content_generation.batch_prompt import materialize_s1_prompt
 from services.content_generation.pipeline_lessons import load_s1_lessons_block
 
@@ -175,7 +175,7 @@ async def submit_s1_batch(
     tenant_uuid = _TENANT_SLUG_MAP.get(tenant_id, tenant_id)
     job_slug = uuid.uuid4().hex[:12]
 
-    conn = await asyncpg.connect(os.environ["DATABASE_URL"])
+    conn = await asyncpg.connect(get_database_url())
     records: list[tuple[str, dict]] = []
     included: list[str] = []
     try:
