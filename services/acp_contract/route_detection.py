@@ -4,8 +4,8 @@
 `acp_contract.route_pick` at AA-511 STEP0, migration 132 — freed the name `subject` for the
 unrelated Slate-proposal concept `acp_shared.subject`. AA-859 wave 4 (S247) retired the tenant
 route hub `/v1/routes`, `/v1/hubs`, `/v1/route-picks` (0 callers in code, 0 requests in 30 days of
-api logs) and with it `create_route_pick()`; the `acp_contract.route_pick` table stays, a Dead
-Table Registry candidate.)
+api logs) and with it `create_route_pick()`; the table is quarantined in `retired` (CIS 294,
+AA-850), as `retired.route_pick`, until its drop.)
 
 Ported from Ms. Thư's aa-social-media `src/aa_social/routes.py` (`derive_routes()`/`families()`/
 `stops()`) and `stages/score.py`'s `_store_routes()` (rebuild-whole persistence). Full evidence

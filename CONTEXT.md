@@ -686,6 +686,13 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   (AA-603; `acp_deliver.tenant_tour_pages` is kept), the `/v1/s1-from-atom` route (AA-611), and
   the atom "star" (AA-609; the DB column `tour_atoms.starred` still exists). Do not rebuild on
   any of these.
+- **Quarantine schema `retired` (data standards DM-3.9, CIS 294, AA-850)**: dead CIS tables and views wait there
+  for their drop migration (>= 14 days later) with no grant to any role (`cis_app` has no USAGE: a forgotten reader
+  fails with 42501). Owner migrations only; never read or write it from code. Wave 1 (294): `atom_decompose_jobs`,
+  `s1_from_atom_runs`, `route_pick`, `marketplace_portfolios`, `tenant_atom_state`, `acp_runs`,
+  `tenant_brand_rule_versions`, `tenant_brand_rules_deleted_aa404`, `v_batch_stats`, `v_pipeline_summary`. The tenant
+  erasure skips it (`services/erasure/inventory.py` `QUARANTINE_SCHEMAS`; an FK child there is a `quarantined_child`
+  information line). Registry: AA-Ecosys `docs/audits/2026-10-28-S255-aa850-dead-tables/registry.md`.
 - **ACP v1 run model is gone (AA-751, 16/10)**: `acp_shared.acp_runs` was dropped by migration 121;
   its last readers (`GET /admin/acp/stuck-runs`, `POST /admin/acp/runs/{run_id}/force-fail`,
   `services/acp_shared/cost_utils.py`, `services/acp_canary/`) are deleted. Stuck or long work is a
@@ -1777,7 +1784,7 @@ Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`
   the Subject row, so a concurrent t7_slate proposal waits and then sees `picked`; the tenant trip query returns one
   row per tour with the tenant's own trip page, else the master's (it used to repeat a tour once per tenant with a
   page for it). The tenant route hub (`/v1/routes`, `/v1/hubs`, `/v1/route-picks`) is retired (0 callers, 0
-  requests in 30 days); `acp_contract.route_pick` stays, a Dead Table Registry candidate.
+  requests in 30 days); `acp_contract.route_pick` is quarantined in `retired` (CIS 294, AA-850).
 - **MAIN exceptions** (code comment `# AA-859 MAIN exception: <reason>`): `write_audit_log`
   (`acp_shared.audit_log` has no RLS and is never granted; written after the tenant transaction
   commits, best-effort on the tenant path); enqueue-in-transaction routes (angle-gate goal, T2 rewrite /

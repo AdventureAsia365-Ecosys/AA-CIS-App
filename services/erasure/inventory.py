@@ -31,6 +31,15 @@ CIS_SCHEMAS: tuple[str, ...] = (
     "acp_silver_s4", "geo", "gold_aa_internal", "shared", "silver_aa_internal",
 )
 
+# AA-850 (CIS 294, data standards DM-3.9): dead CIS tables wait here for their drop, with no grant to any role. Not a
+# runtime schema: the erasure neither counts nor deletes in it. A quarantined table that still has an FK to an erased
+# table (retired.route_pick -> shared.tenants, …) is reported by plan.py as `quarantined_child` (information): the
+# quarantine was refused while a non-platform tenant had rows there (DRY RUN verdict) and no role can write there
+# since, and the FKs are NO ACTION, so a row that broke this would fail the apply loudly and roll the erasure back.
+# The five tenant-keyed wave-1 tables (route_pick, tenant_atom_state, tenant_brand_rule_versions,
+# tenant_brand_rules_deleted_aa404, acp_runs) left TENANT_TABLES with 294.
+QUARANTINE_SCHEMAS: tuple[str, ...] = ("retired",)
+
 # The AA internal tenant owns Master Content; it can never be erased (offboard refuses it too).
 PLATFORM_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 
@@ -59,7 +68,6 @@ def _d(table: str, reason: str, **kw) -> TenantTable:
 
 TENANT_TABLES: tuple[TenantTable, ...] = (
     # ── content and planning (T2 / T7 / T8 / T9, quarter plans)
-    _d("acp_contract.route_pick", "tenant route picks (T7)"),
     _d("acp_deliver.tenant_tour_pages", "tenant tour page URLs"),
     _d("acp_shared.acp_output_rules", "tenant output rules (NULL tenant = global rules, untouched)"),
     _d("acp_shared.acp_quota_ledger", "tenant quota ledger"),
@@ -70,7 +78,6 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     _d("acp_shared.publish_log", "tenant publish history (channels)"),
     _d("acp_shared.quarter_plan", "quarter plans (versions follow through the FK)"),
     _d("acp_shared.subject", "tenant subjects (T7 slate)"),
-    _d("acp_shared.tenant_atom_state", "tenant atom state"),
     _d("acp_shared.tenant_config", "planning config: markets, channels, posts/week"),
     _d("acp_shared.year_plan", "year plans"),
     _d("gold_aa_internal.content_exports", "export rows"),
@@ -86,8 +93,6 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     _d("silver_aa_internal.upload_staging", "upload staging rows"),
     # ── account, brand, integrations, settings
     _d("shared.tenant_brand_rules", "brand identity"),
-    _d("shared.tenant_brand_rule_versions", "brand identity history"),
-    _d("shared.tenant_brand_rules_deleted_aa404", "AA-404 backup copy of brand rules"),
     _d("shared.tenant_export_config", "export settings"),
     _d("shared.tenant_integrations", "CMS / social connections (secret names; the secrets are a checklist step)"),
     _d("shared.tenant_rewrite_usage", "rewrite counters"),
@@ -111,8 +116,7 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     # Platform releases have no tenant and stay.
     _d("shared.writing_memory_shadow", "writing-memory shadow outputs written from the tenant's inputs"),
     _d("shared.writing_memory_release", "the tenant's writing-memory releases (ids only, no text)"),
-    _d("shared.pipeline_runs", "tenant pipeline batches (acp_runs and raw rows follow through FKs)"),
-    _d("shared.acp_runs", "ACP run rows"),
+    _d("shared.pipeline_runs", "tenant pipeline batches (raw rows follow through FKs)"),
     _d("shared.tenant_api_usage", "per-request API usage; a CHECK forbids a tenant-actor row without a tenant"),
     _d("shared.tenant_api_usage_monthly", "monthly API usage rollup of the tenant"),
     # Job rows carry the tenant in the payload (offboard cancels the queued ones). Queued/running rows are a

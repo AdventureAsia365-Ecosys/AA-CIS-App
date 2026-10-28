@@ -17,7 +17,8 @@ from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
 from services.erasure.inventory import (
-    CIS_SCHEMAS, EMAIL_TOKEN_RE, TRAVELLER_EXACT, TRAVELLER_TEXT, Registry, TenantTable, TravellerScan,
+    CIS_SCHEMAS, EMAIL_TOKEN_RE, QUARANTINE_SCHEMAS, TRAVELLER_EXACT, TRAVELLER_TEXT, Registry, TenantTable,
+    TravellerScan,
 )
 
 MAX_DEPTH = 8          # FK hops from a tenant table; deeper is a blocker (never seen: raw_tours -> atoms -> members)
@@ -142,7 +143,7 @@ class Node:
 @dataclass
 class Check:
     """A count that must be 0 before an apply (blocker), or is reported for information."""
-    kind: str                         # cross_tenant | kept_row_reference | foreign_owner | live_jobs | ...
+    kind: str                         # cross_tenant | kept_row_reference | foreign_owner | quarantined_child | ...
     table: str
     detail: str
     sql: Optional[str]                # SELECT count(*) ...; None = a static finding (always blocks)
@@ -245,6 +246,9 @@ def plan_tenant(registry: Registry, catalog: Catalog) -> TenantPlan:
                 continue
             visited_edges.add(key)
             schema = e.child.split(".", 1)[0]
+            if schema in QUARANTINE_SCHEMAS:
+                pending_checks.append(("quarantined_child", e))
+                continue
             if schema not in CIS_SCHEMAS:
                 pending_checks.append(("foreign_owner", e))
                 continue
@@ -268,6 +272,11 @@ def plan_tenant(registry: Registry, catalog: Catalog) -> TenantPlan:
         cols = ", ".join(f"c.{qcol(c)}" for c in e.child_cols)
         pcols = ", ".join(f"p.{qcol(c)}" for c in e.parent_cols)
         refs = f"({cols}) IN (SELECT {pcols} FROM {qname(e.parent)} p WHERE {parent_pred})"
+        if kind == "quarantined_child":
+            checks.append(Check("quarantined_child", e.child,
+                                f"{e.conname}: a quarantined table (DM-3.9, AA-850) references erased rows",
+                                f"SELECT count(*) FROM {qname(e.child)} c WHERE {refs}"))
+            continue
         if kind == "foreign_owner":
             checks.append(Check("foreign_owner", e.child, f"{e.conname}: another owner's rows point at erased rows",
                                 f"SELECT count(*) FROM {qname(e.child)} c WHERE {refs}"))
@@ -395,6 +404,14 @@ async def count_tenant(conn, plan: TenantPlan, tenant_id: str) -> dict:
             async with conn.transaction():
                 n = int(await conn.fetchval(c.sql, tenant_id))
         except Exception as e:  # e.g. no privilege on another owner's table
+            if c.kind == "quarantined_child":
+                # AA-850: the runtime holds no privilege in `retired` by design (CIS 294). Not a blocker: the
+                # quarantine was refused while a non-platform tenant had rows there and nobody can write since; the
+                # NO ACTION FK fails the apply loudly (rolled back) should a row ever reference an erased one.
+                info.append({"kind": c.kind, "table": c.table, "rows": None,
+                             "detail": f"{c.detail} (not readable by the runtime, {type(e).__name__}: the FK "
+                                       f"refuses the apply if a row references the tenant)"})
+                continue
             blockers.append({"kind": c.kind, "table": c.table, "detail": f"{c.detail} (not readable: "
                              f"{type(e).__name__})", "rows": None})
             continue

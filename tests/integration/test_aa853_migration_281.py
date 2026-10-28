@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 sys.path.insert(0, os.path.dirname(__file__))
 import test_aa860_migration_245 as t245  # noqa: E402
 from test_aa860_migration_245 import rds_like_245  # noqa: E402,F401  (module fixture: Dev after 244 + 245)
+from _rls_fixture_helpers import undo_294_for_reapply  # noqa: E402
 
 MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations", "281_schema_drift_reconcile.sql")
 CHANGED = {("silver_aa_internal.raw_tours", c): "text"
@@ -130,6 +131,9 @@ PLANS_STANDIN = """
 
 
 def _standins(c):
+    # AA-850: 281 recreates the views over the columns it changes, v_pipeline_summary among them; CIS 294 (after 281
+    # on Dev) quarantined it and v_batch_stats in `retired`. Back to shared, owned by cis_owner as 245 left them.
+    undo_294_for_reapply(c, ("v_batch_stats", "v_pipeline_summary"), owner="cis_owner")
     c.execute("SELECT to_regclass('shared.membership_plans') IS NULL")
     if c.fetchone()[0]:
         c.execute(PLANS_STANDIN)
