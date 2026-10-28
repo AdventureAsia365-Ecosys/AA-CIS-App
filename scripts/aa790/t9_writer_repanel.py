@@ -334,6 +334,7 @@ def main() -> int:
           f"t8_mode={a.t8_mode}", flush=True)
     index = write_indexes(rows)
     run_id = uuid.uuid4().hex[:12]
+    print(f"AA790 run={run_id} (quality_signal aa790_run; the eval run id to record, D-23)", flush=True)
     spent, out = 0.0, []
     regen: dict[str, dict] = {}
     if a.angles == "regen":
@@ -358,7 +359,7 @@ def main() -> int:
                "label": None, "source": STAGE, "before_text": r["content_text"],
                "ai_tells_before": ai_tells.census(r["content_text"] or "", tell),
                "lead_focus": args.get("lead_focus"), "writer_prompt_version": WRITER_PROMPT_VERSION, "arm": a.arm,
-               "angle_source": "regen" if got.get("chosen") else "stored", "t8_mode": a.t8_mode,
+               "angle_source": "regen" if got.get("chosen") else "stored", "t8_mode": a.t8_mode, "aa790_run": run_id,
                "angle_used": {k: args["angle"].get(k) for k in ANGLE_FIELDS}}
         if a.dry_run:
             from services.acp_content_writing.prompts import build_user_prompt

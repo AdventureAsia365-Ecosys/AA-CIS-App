@@ -1844,7 +1844,8 @@ round 7 stands: change the T8 angle generator, leave the round-6 T9 prompt (`b59
   used for every piece of that request, T9 written with the live round-6 prompt. No app-table write. `--arm` (removed
   with the round-7 revert) is back on every row and in every call's quality signal (T8 and T9). The three angles per
   request, the pick, the brief census and the T8 cost go to `<out>.angles.json`. The T8 spend counts against the same
-  `--max-usd` cap (reserve $0.10 a request).
+  `--max-usd` cap (reserve $0.10 a request). The run id (`aa790_run`, printed as `AA790 run=…` and stored on every row
+  and call) is the eval run id the PR records (D-23).
 
 ### Changed (vs the brief)
 
