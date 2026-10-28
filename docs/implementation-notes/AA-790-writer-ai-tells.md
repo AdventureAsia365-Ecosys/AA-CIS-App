@@ -1916,3 +1916,97 @@ round 7 stands: change the T8 angle generator, leave the round-6 T9 prompt (`b59
   r8 vs r8c comparison stays fair; r8 vs the stored r6 texts does not isolate the contract (D8-a, and the A / A'
   lesson: only trust r8 − r8c when it is clearly larger than the run-to-run noise), so the flag decision needs r8c.
   Rows carry `arm`, `t8_mode`, `angle_source` and `angle_used`: strip them before the blind panel sees a row.
+
+### Round 8 outcome (S255): failed, flag off
+
+Blind panel (160 items, before / r1–r6 / r8, 640 scores): ai_tells 5.8 (bar 5.5, pass); brand_voice 6.83 against r6
+6.80 (fail: ≥ 7 overall and for 3 of 4 tenants, and > r6 + 0.15); reader_value −0.27 and source_fidelity −0.30
+against r6 (fail). `T8_ANGLE_BRIEF_MODE` stays unset; round 6 stays live. Report: root
+`docs/audits/2026-10-28-S255-aa790-r8-panel/`. The planned r8c control was not run (a fail needs no attribution).
+
+## Round 9 (S256, 28/10/2026): ground the brief in the seed before the writer reads it
+
+Input: the round-8 panel scores (640, private root `.tmp-session/S255/aa790/panel-a/panel-scores.json`), the r8 texts
+and briefs (`S255/aa790/out/aa790-repanel-r8.json`), the stored S251 writer inputs and the stored r3 / r5 / r6 texts.
+No paid call. The $0 analysis scripts are in the private root `.tmp-session/S256/aa790/` (`coverage.py`,
+`bgshare.py`, `try_ground.py`).
+
+### Diagnosis
+
+- **D9-a, the round-8 losses are the brief's own asks.** Reading every r8-vs-r6 loss reason on source fidelity (13
+  pieces) and reader value (10): the quoted defects are things the brief asked for and the seed does not have. The
+  family LinkedIn brief asked the reader to watch students at work, "practised, not demonstrated" → posts promising a
+  visit while the work is underway (fidelity 9 → 6.5, 8 → 7, 7.5 → 7); a luxury blog brief asked for a FAQ on what a
+  chorten means and holds → a whole unsupported FAQ (7 → 6.5, reader value 8 → 7.5); a family blog brief led with an
+  optional ride → "the group is travelling by horseback" (7.5 → 6.5). Invented scene / visit-format reasons: r6 7,
+  r8 10 of 20. This is the same mechanism round 7 found with the live briefs (the institutional closer copied from a
+  brief that asked for a reassuring note, 20 of 42 posts). The T8 prompt already forbids such briefs (the round-6
+  best_final_style bullet); the model still writes them, and T9 follows the brief.
+- **D9-b, not seed drift.** 8 of the 20 r8 pieces had `seed_match = False` (the atom changed since S251), but the r8
+  − r6 drop is larger on the 12 matched pieces (fidelity −0.42, reader value −0.38, brand voice +0.00) than on the 8
+  drifted ones (−0.12, −0.12, +0.06).
+- **D9-c, a "use more trip facts" checklist is not supported.** The share of the seed's trip-line plan facts
+  (distance, time of day, meals, stays, transport, status) that the blog texts use is already 0.90 in r6 (r3 0.91,
+  before 0.82, r8 0.89); the family LinkedIn seed has none. "No practical information" in 15–16 of 20 reader-value
+  reasons is the seed's limit, not the writer's omission. Correlation of plan-fact coverage with reader value: 0.17.
+- **D9-d, a place-background budget is not supported either.** The share of blog sentences built from Place background
+  correlates with brand voice across pieces (+0.38) only through the tenant (luxury seeds are background-heavy);
+  within a piece it is −0.10 on brand voice and −0.01 on reader value.
+- **D9-e, the gap against the Done-when is still per tenant.** The energetic and nature brands score low on brand
+  voice in every arm; the judges name long encyclopedic stretches and SEO wording. Round 9 does not claim to fix that;
+  it removes a source of fidelity and reader-value loss that also costs voice (a brief that sets a thesis or tone the
+  brand block does not).
+
+### Decisions
+
+- **R9-D1: a deterministic filter on the brief, at T9, behind a flag.** `brief_grounding.ground_brief` splits the
+  brief into clauses (sentences / lines, then ' — ', '; ', ', then') and drops every clause that asks for content the
+  seed + FACTS do not have: two or more unsupported content words making at least a fifth of the clause, or five or
+  more in any clause. A word is supported by the seed's words (singular forms, a shared five-letter stem, or inside one
+  long seed word: 'night' in 'overnight') or by `BRIEF_WORDS` (the closed list of words a brief uses about the piece,
+  its reader and its shape); numbers must be in the seed, except a shape count ('900–1,100 words', '3–4 FAQ pairs',
+  'H2'). Tone, mood and thesis words are not in the list, so a tone line or a thesis the seed does not state goes too
+  (the BRAND block owns the voice, R6/R8). An aside after a dash that continues a dropped clause goes with it; a label
+  ('Lead with:') moves to the next kept clause; nothing left → the existing fallback line.
+- **R9-D2: why T9 and not T8.** Rounds 7 (T9 instruction) and 8 (T8 contract) both asked a model to stop; the brief
+  still carried the asks. Code at the point of use removes the cause on every brief, old and new, at $0, with no new
+  retry, gate or LLM call. T8's stored angle, the angle picker, the AI-tell context (`ai_tells.angle_text`) and the
+  brief-copy check (`hygiene.brief_phrases`) still see the full brief, so a writer that copies a dropped clause is
+  still caught.
+- **R9-D3: the switch.** api/worker env `T9_BRIEF_GROUNDING_MODE`: only `r9` turns it on; unset (default) or any other
+  value is `off`. `build_user_prompt(brief_grounding=...)` overrides it (the harness). Off, `ground_angle` returns the
+  same angle object, so the prompt is built from exactly what it was before: a 192-prompt fixture is pinned to its
+  hash on main 67af0922. SYSTEM_PROMPT is untouched (`writer_prompt_version` stays `b5978839`). When on, the piece's
+  `writer_input` carries `brief_grounding: r9` (absent when off).
+- **R9-D4: the harness.** `--brief-grounding off|r9` and `--angles-file <out>.angles.json` (reuse the live T8 angles of
+  an earlier `--angles regen` run with no T8 call), so the control, its repeat and the round-9 arm all write from the
+  same live-T8 briefs. Rows carry `brief_grounding`, `brief_seen` (the brief line the writer got, read from the built
+  prompt) and `brief_changed`.
+
+### Changed (vs the brief)
+
+- The lane brief suggested "source-grounded angle brief" or "reader-value checklist". The checklist is not supported
+  by the data (D9-c); the grounded brief is built as a $0 filter at T9 instead of another T8 prompt (R9-D2).
+- No new T9 prompt text: the only line that changes is ANGLE'S BEST FINAL STYLE.
+
+### Tradeoffs
+
+- **Word-level, not semantic.** A scene made only of seed words passes ('the family watches students at work' drops
+  only because 'watches' and 'work' are not in the seed); a grounded clause with two paraphrased words can drop. On the
+  20 stored + 10 r8 briefs: 2,280 → 1,284 words; the stored pre-#690 briefs lose most of their tone / thesis / scene
+  lines, the r8 briefs lose their 'Brand:' points and their unsupported scenes, and their shape and lead details stay.
+- **A brief reduced to the fallback** gives the writer only the angle name and why_it_works; that is the round-6
+  writer on the seed alone, which the panel has scored before (rounds with short briefs scored higher on voice, D8-b).
+- why_it_works is not filtered (it states the angle's case, often in search or audience terms; filtering it would
+  leave fragments).
+
+### Should know
+
+- Code: `services/acp_content_writing/brief_grounding.py` (new), `prompts.build_user_prompt(brief_grounding=...)`,
+  `service.writer_input_snapshot` (marker), `scripts/aa790/t9_writer_repanel.py` (`--brief-grounding`,
+  `--angles-file`, `brief_seen`, `load_angles_file`).
+- Tests: `tests/unit/test_aa790_round9_brief_grounding.py` (flag-off fixture hash for env unset / 'off' / other
+  values / explicit off over env r9; only the brief line moves in r9; drop / keep cases; numbers; stems; labels;
+  dash asides; FACTS as source; writer_input marker; harness pass-through and angles file).
+- Ship path if the panel passes: set `T9_BRIEF_GROUNDING_MODE=r9` on the worker (t9 runs there) and the api (admin
+  regenerate). Not in this PR: the paid A/B and the panel (orchestrator; plan in the lane result).
