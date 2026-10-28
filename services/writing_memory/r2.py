@@ -239,6 +239,16 @@ def prompt_version(writer: str, writer_prompt: Optional[str]) -> str:
     return f"{writer}:judge-{judge_version()}"[:64]
 
 
+def _claims_of(v) -> dict:
+    """{"judge_claims": [...]} when the verdict quotes the phrases behind its classes (eval_judge, S256), else {}."""
+    claims = list(getattr(v, "claims", None) or [])[:8]
+    return {"judge_claims": claims} if claims else {}
+
+
+def _with_claims(det: dict, v) -> dict:
+    return {**det, **_claims_of(v)} if v is not None else det
+
+
 class _Stop(Exception):
     def __init__(self, reason: str, phase: str):
         super().__init__(reason, phase)
@@ -252,6 +262,7 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
     source_text=, output_text=, run_id=, item_id=, arm=)` -> eval_judge.Verdict; `flush()` waits for the background
     llm_call_log writes, so `run_spend` sees the item just done."""
     from services.writing_memory import eval_writers as ew
+    from services.writing_memory.eval_judge import judge_source_text
     from shared.llm_client.call_log import bind_eval_stage
 
     conf.validate()
@@ -353,7 +364,9 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
             raise _Stop("budget_cap", phase)
 
     async def judge(item: dict, output: dict, arm: str):
-        return await judge_fn(pool, writer=writer, source_text=ew.source_text(writer, item["input"], shared_inputs),
+        # S256 source parity: the judge reads what the AA-729 panel read (eval_judge.judge_source_text), not the
+        # isolation probe's shorter `ew.source_text`.
+        return await judge_fn(pool, writer=writer, source_text=judge_source_text(writer, item["input"], shared_inputs),
                               output_text=ew.output_text(writer, output), run_id=run_id, item_id=item["item_id"],
                               arm=arm)
 
@@ -373,7 +386,7 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
                 "scored_result_id": scored, "output": output, "output_sha256": sha256_json(output) if output else None,
                 "verdict": verdict, "score": score, "failure_codes": list(codes)[:50], "hard_stop": bool(hard_stop),
                 "judge_model": getattr(judge, "model", None), "judge_version": getattr(judge, "judge_version", None),
-                "cost_usd": round(max(cost, 0.0), 6), "details": det or {}}
+                "cost_usd": round(max(cost, 0.0), 6), "details": _with_claims(det or {}, judge)}
 
     async def judged(it: dict, text_out: dict, err_key: str):
         await reserve(cfg.JUDGE_CALL_ESTIMATE_USD, "calibrate")
@@ -423,7 +436,8 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
                 if ctl_v is not None:
                     cal = "same_row" if same else (None if cal_v is None else {
                         "scored_result_id": fsrc["result_id"], "verdict": cal_v.verdict, "score": cal_v.score,
-                        "failure_codes": list(cal_v.failure_codes)[:50], "label": it.get("label_verdict")})
+                        "failure_codes": list(cal_v.failure_codes)[:50], "label": it.get("label_verdict"),
+                        **_claims_of(cal_v)})
                     row = result_row(it, arm="control", mode="rejudge", verdict=ctl_v.verdict, score=ctl_v.score,
                                      codes=ctl_v.failure_codes, judge=ctl_v, scored=csrc["result_id"], cost=cost,
                                      det={"source_mode": csrc.get("mode"), "frozen": is_frozen, "calibration": cal})

@@ -255,9 +255,9 @@ def test_parse_verdict_drops_unknown_classes_and_keeps_the_judges_verdict():
     # S255: a class no longer forces fail. The label rubric passes a text a light edit fixes, and a class on it is
     # still reported (hard stop 1 reads the classes, not the verdict).
     v = parse_verdict(json.dumps({"verdict": "pass", "score": 12, "failure_classes": ["fact.number", "zz.made_up"]}))
-    assert v == {"verdict": "pass", "score": 10.0, "failure_classes": ["fact.number"]}
+    assert v == {"verdict": "pass", "score": 10.0, "failure_classes": ["fact.number"], "claims": []}
     v = parse_verdict(json.dumps({"verdict": "fail", "score": 3, "failure_classes": ["fact.embellish"]}))
-    assert v == {"verdict": "fail", "score": 3.0, "failure_classes": ["fact.embellish"]}
+    assert v == {"verdict": "fail", "score": 3.0, "failure_classes": ["fact.embellish"], "claims": []}
     with pytest.raises(ValueError):
         parse_verdict(json.dumps({"verdict": "maybe", "score": 1, "failure_classes": []}))
     with pytest.raises(ValueError):
