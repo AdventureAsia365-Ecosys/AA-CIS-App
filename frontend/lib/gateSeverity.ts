@@ -83,11 +83,23 @@ export function severityCounts(g: LedgerEntryLike): Record<Severity, number> {
   return out;
 }
 
+/** How countsLabel words one count. English by default; AA-994: a page passes the UI language's
+ *  (lib/gateSeverity.messages.ts SEVERITY_MESSAGES, keys countBlock / countWarn). */
+export interface CountWords {
+  countBlock: (n: number) => string;
+  countWarn: (n: number) => string;
+}
+
+export const COUNT_WORDS: CountWords = {
+  countBlock: (n) => `${n} blocking`,
+  countWarn: (n) => `${n} warning${n === 1 ? "" : "s"}`,
+};
+
 /** "2 blocking · 1 warning" (only the non-zero parts; "" when nothing). */
-export function countsLabel(c: Record<Severity, number>): string {
+export function countsLabel(c: Record<Severity, number>, words: CountWords = COUNT_WORDS): string {
   const parts: string[] = [];
-  if (c.block) parts.push(`${c.block} blocking`);
-  if (c.warn) parts.push(`${c.warn} warning${c.warn === 1 ? "" : "s"}`);
+  if (c.block) parts.push(words.countBlock(c.block));
+  if (c.warn) parts.push(words.countWarn(c.warn));
   return parts.join(" · ");
 }
 

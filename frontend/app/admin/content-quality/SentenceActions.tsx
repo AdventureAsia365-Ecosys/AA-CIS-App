@@ -16,12 +16,15 @@ import { useState } from "react";
 import { ReasonTag, WritingReasonChips } from "../_components/WritingReasonChips";
 import { exemplarPath, preselect, toggledPref, type ExemplarPref, type ReasonCode } from "@/lib/writingReasons";
 import { A, mono } from "../_components/adminUi";
-import { ApiError, Badge, Button, ConfirmModal, Spinner, apiSend, useAdminIdentity, useToast } from "../../_kit";
+import { ApiError, Badge, Button, ConfirmModal, Spinner, apiSend, useAdminIdentity, useT, useToast } from "../../_kit";
 import {
-  fmtTime, gateLabel, tourSectionLabel, usd,
+  fmtTime, usd,
   type AdminEdit, type ApplyBody, type CheckFailure, type FlaggedSentence, type PieceDetail, type SuggestResponse,
   type TenantCopy,
 } from "./shared";
+import { D, EDIT_MODE } from "./drawer.messages";
+import { STATUS } from "./messages";
+import { useCqText, useLookup } from "./useCqText";
 import { SeverityBadge, SourceNote } from "./Severity";
 import { SEVERITY_TONE, markSeverity, worstOf } from "@/lib/gateSeverity";
 
@@ -37,6 +40,9 @@ export interface Editor {
 const problemText = (s: FlaggedSentence) => s.problems.map((p) => `${p.gate}: ${p.problem}`).join(" | ");
 
 export function FlaggedSentences({ piece }: { piece: PieceDetail }) {
+  const t = useT(D);
+  const status = useLookup(STATUS);
+  const { gateLabel } = useCqText();
   const toast = useToast();
   const qc = useQueryClient();
   const { isAdmin } = useAdminIdentity();
@@ -73,9 +79,9 @@ export function FlaggedSentences({ piece }: { piece: PieceDetail }) {
       qc.invalidateQueries({ queryKey: ["cq-pieces"] });
       setCutting(null);
       setEditor(null);
-      toast.success(body.mode === "cut" ? "Sentence cut" : "Sentence replaced");
+      toast.success(body.mode === "cut" ? t("sentenceCut") : t("sentenceReplaced"));
       if (warnings && warnings.length > 0) {
-        toast.info(`Saved with warnings — ${warnings.map((w) => `${gateLabel(w.gate)}: ${w.violations.join(" | ")}`).join("; ")}`, 8000);
+        toast.info(t("savedWithWarnings", warnings.map((w) => `${gateLabel(w.gate)}: ${w.violations.join(" | ")}`).join("; ")), 8000);
       }
     },
     onError: onFail,
@@ -96,20 +102,19 @@ export function FlaggedSentences({ piece }: { piece: PieceDetail }) {
   };
 
   if (piece.flagged_sentences.length === 0) {
-    return <div style={{ fontSize: 12, color: A.muted }}>No flagged sentence found in the final text.</div>;
+    return <div style={{ fontSize: 12, color: A.muted }}>{t("noFlagged")}</div>;
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       {!canEdit && (
         <div style={{ fontSize: 11.5, color: A.muted }}>
-          {isAdmin ? `A ${piece.status} piece cannot be edited.` : "Only an admin can cut or rewrite sentences."}
+          {isAdmin ? t("cannotEditStatus", status(piece.status)) : t("onlyAdminCut")}
         </div>
       )}
       {canEdit && delivered && (
         <div style={{ fontSize: 12, background: A.amberSoft, padding: "6px 8px", borderRadius: 6, color: A.ink }}>
-          The tenant already {piece.published ? "published" : "exported"} this piece. An edit changes our copy only —
-          the {piece.published ? "published post (WordPress is not re-synced)" : "downloaded file"} keeps the old text.
+          {piece.published ? t("deliveredPublished") : t("deliveredExported")}
         </div>
       )}
       {piece.flagged_sentences.map((s) => {
@@ -134,13 +139,13 @@ export function FlaggedSentences({ piece }: { piece: PieceDetail }) {
             )}
             {canEdit && !open && (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8, alignItems: "center" }}>
-                <span data-testid="cq-cut"><Button size="sm" variant="danger" disabled={busy} onClick={() => setCutting(s)}>Cut</Button></span>
+                <span data-testid="cq-cut"><Button size="sm" variant="danger" disabled={busy} onClick={() => setCutting(s)}>{t("cut")}</Button></span>
                 <span data-testid="cq-rewrite">
                   <Button size="sm" variant="secondary" disabled={busy || !hasSource}
-                          title={hasSource ? "Ask the model for a rewrite (about $0.001-0.006)" : "No writer input stored for this piece — use Edit"}
-                          onClick={() => suggest.mutate({ s, note: "" })}>Rewrite</Button>
+                          title={hasSource ? t("rewriteTitle") : t("noWriterInput")}
+                          onClick={() => suggest.mutate({ s, note: "" })}>{t("rewrite")}</Button>
                 </span>
-                <Button size="sm" variant="ghost" disabled={busy} onClick={() => setEditor({ key: s.key, draft: s.sentence, note: "", suggestion: null })}>Edit</Button>
+                <Button size="sm" variant="ghost" disabled={busy} onClick={() => setEditor({ key: s.key, draft: s.sentence, note: "", suggestion: null })}>{t("edit")}</Button>
                 {loadingThis && <Spinner size={14} />}
               </div>
             )}
@@ -163,16 +168,16 @@ export function FlaggedSentences({ piece }: { piece: PieceDetail }) {
           start: cutting.start, end: cutting.end, text: cutting.text, replacement: "", mode: "cut",
           gate: cutting.gates[0], problem: problemText(cutting).slice(0, 1000), reason_code: reasonOf(cutting),
         })}
-        title="Cut this sentence?"
+        title={t("cutTitle")}
         destructive
         busy={apply.isPending}
-        confirmLabel="Cut"
+        confirmLabel={t("cut")}
         body={
           <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 13 }}>
             <div style={{ background: A.redSoft, borderRadius: 6, padding: "6px 8px", color: A.ink }}>{cutting?.sentence}</div>
-            {cutting && <div style={{ display: "flex", gap: 6, alignItems: "center", color: A.body }}>Reason <ReasonTag code={reasonOf(cutting)} /></div>}
-            <div style={{ color: A.body }}>The tenant&rsquo;s copy of this piece changes. The edit is audit-logged with the removed text.</div>
-            {delivered && <div style={{ color: A.amber }}>The tenant already {piece.published ? "published" : "exported"} this piece; their copy is not updated.</div>}
+            {cutting && <div style={{ display: "flex", gap: 6, alignItems: "center", color: A.body }}>{t("reason")} <ReasonTag code={reasonOf(cutting)} /></div>}
+            <div style={{ color: A.body }}>{t("cutBodyPiece")}</div>
+            {delivered && <div style={{ color: A.amber }}>{piece.published ? t("cutPublished") : t("cutExported")}</div>}
           </div>
         }
       />
@@ -201,22 +206,24 @@ export function RewritePanel({ s, ed, busy, regenerating, onChange, onApply, onR
   s: { sentence: string }; ed: Editor; busy: boolean; regenerating: boolean;
   onChange: (patch: Partial<Editor>) => void; onApply: () => void; onRegenerate?: () => void; onDiscard: () => void;
 }) {
+  const t = useT(D);
+  const { gateLabel } = useCqText();
   const sug = ed.suggestion;
   const empty = !ed.draft.trim();
   return (
     <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
-      <div style={{ fontSize: 11, fontWeight: 600, color: A.muted }}>BEFORE</div>
+      <div style={{ fontSize: 11, fontWeight: 600, color: A.muted }}>{t("before")}</div>
       <div style={{ fontSize: 12.5, background: A.redSoft, color: A.ink, borderRadius: 6, padding: "6px 8px", textDecoration: "line-through", wordBreak: "break-word" }}>{s.sentence}</div>
       <div style={{ fontSize: 11, fontWeight: 600, color: A.muted }}>
-        AFTER {sug ? `· suggested by ${sug.model ?? "the model"} · ${usd(sug.cost_usd)}` : "· your text"}
+        {t("after")}{sug ? t("suggestedBy", sug.model ?? t("theModel"), usd(sug.cost_usd)) : t("yourText")}
       </div>
       <textarea
-        aria-label="Replacement sentence" value={ed.draft} rows={3} maxLength={3000}
+        aria-label={t("replacementAria")} value={ed.draft} rows={3} maxLength={3000}
         onChange={(e) => onChange({ draft: e.target.value })}
         style={{ width: "100%", boxSizing: "border-box", fontSize: 12.5, lineHeight: 1.5, background: A.greenSoft, color: A.ink, border: `1px solid ${A.line}`, borderRadius: 6, padding: "6px 8px", fontFamily: "inherit", resize: "vertical" }}
       />
       {sug && !sug.replacement && (
-        <div style={{ fontSize: 12, color: A.body }}>The model found nothing true left to say and suggests cutting this sentence — use Cut, or write your own text.</div>
+        <div style={{ fontSize: 12, color: A.body }}>{t("nothingLeft")}</div>
       )}
       {sug && sug.checks.length > 0 && ed.draft.trim() === sug.replacement.trim() && (
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -227,49 +234,50 @@ export function RewritePanel({ s, ed, busy, regenerating, onChange, onApply, onR
           ))}
           <div style={{ fontSize: 11.5, color: A.muted }}>
             {sug.checks.some((c) => c.blocking)
-              ? "This text would be refused on Apply — edit it first."
-              : "Warnings only — Apply still saves this text."}
+              ? t("wouldRefuse")
+              : t("warningsOnly")}
           </div>
         </div>
       )}
       {onRegenerate && (
         <input
-          aria-label="Note for the model" placeholder="Optional note for Regenerate (e.g. keep the place name)"
+          aria-label={t("noteAria")} placeholder={t("notePlaceholder")}
           value={ed.note} maxLength={200} onChange={(e) => onChange({ note: e.target.value })}
           style={{ width: "100%", boxSizing: "border-box", fontSize: 12, background: A.card, color: A.ink, border: `1px solid ${A.line}`, borderRadius: 6, padding: "5px 8px" }}
         />
       )}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-        <Button size="sm" variant="primary" disabled={busy || empty} title={empty ? "Empty text — use Cut instead" : undefined} onClick={onApply}>Apply</Button>
-        {onRegenerate && <Button size="sm" variant="secondary" disabled={busy} onClick={onRegenerate}>{sug ? "Regenerate" : "Suggest"}</Button>}
-        <Button size="sm" variant="ghost" disabled={busy} onClick={onDiscard}>Discard</Button>
+        <Button size="sm" variant="primary" disabled={busy || empty} title={empty ? t("emptyUseCut") : undefined} onClick={onApply}>{t("apply")}</Button>
+        {onRegenerate && <Button size="sm" variant="secondary" disabled={busy} onClick={onRegenerate}>{sug ? t("regenerate") : t("suggest")}</Button>}
+        <Button size="sm" variant="ghost" disabled={busy} onClick={onDiscard}>{t("discard")}</Button>
         {(regenerating || busy) && <Spinner size={14} />}
       </div>
     </div>
   );
 }
 
-const MODE_LABEL: Record<string, string> = { cut: "cut", rewrite: "rewrite (suggestion)", manual: "edit" };
-
 /** Which object the edits belong to: the exemplar PATCH goes through it (the backend checks the signal is its). */
 export interface EditOwner { kind: "pieces" | "tour-versions"; id: string; queryKey: readonly unknown[] }
 
 export function AdminEdits({ edits, owner }: { edits: AdminEdit[]; owner?: EditOwner }) {
+  const t = useT(D);
+  const mode = useLookup(EDIT_MODE);
+  const { sectionLabel } = useCqText();
   const { isAdmin } = useAdminIdentity();
-  if (edits.length === 0) return <div style={{ fontSize: 12, color: A.muted }}>No admin edits.</div>;
+  if (edits.length === 0) return <div style={{ fontSize: 12, color: A.muted }}>{t("noAdminEdits")}</div>;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       {edits.map((e, i) => (
         <div key={`${e.created_at}-${i}`} data-testid="cq-admin-edit" style={{ fontSize: 12, borderBottom: `1px solid ${A.line}`, paddingBottom: 6 }}>
           <div style={{ color: A.muted, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
             <span>
-              {fmtTime(e.created_at)} · {e.actor} · {MODE_LABEL[e.details.mode ?? ""] ?? e.action}{e.details.gate ? ` · ${e.details.gate}` : ""}
-              {e.details.field ? ` · ${tourSectionLabel(e.details.field, e.details.index ?? null)}` : ""}
+              {fmtTime(e.created_at)} · {e.actor} · {e.details.mode ? mode(e.details.mode) : e.action}{e.details.gate ? ` · ${e.details.gate}` : ""}
+              {e.details.field ? ` · ${sectionLabel(e.details.field, e.details.index ?? null)}` : ""}
             </span>
             <ReasonTag code={e.details.reason_code} />
           </div>
           <div style={{ textDecoration: "line-through", color: A.body, wordBreak: "break-word" }}>{e.details.before}</div>
-          {e.details.after ? <div style={{ color: A.ink, wordBreak: "break-word" }}>{e.details.after}</div> : <div style={{ color: A.muted }}>(removed)</div>}
+          {e.details.after ? <div style={{ color: A.ink, wordBreak: "break-word" }}>{e.details.after}</div> : <div style={{ color: A.muted }}>{t("removed")}</div>}
           {owner && e.details.signal_id && (
             <ExemplarToggles owner={owner} signalId={e.details.signal_id} value={e.details.exemplar_pref ?? null} canEdit={isAdmin} />
           )}
@@ -279,13 +287,13 @@ export function AdminEdits({ edits, owner }: { edits: AdminEdit[]; owner?: EditO
   );
 }
 
-const EXEMPLAR_LABEL = { use: "Use as example", never: "Never use as example" } as const;
-
 /** AA-916 WM-07 — the example preference of one admin edit (its writing signal). A click on the active toggle
  *  clears it. The drawer query is refetched after the save, so the value shown is the stored one. */
 function ExemplarToggles({ owner, signalId, value, canEdit }: {
   owner: EditOwner; signalId: string; value: ExemplarPref; canEdit: boolean;
 }) {
+  const t = useT(D);
+  const exemplar = (p: "use" | "never") => (p === "use" ? t("useAsExample") : t("neverAsExample"));
   const toast = useToast();
   const qc = useQueryClient();
   const save = useMutation({
@@ -294,21 +302,21 @@ function ExemplarToggles({ owner, signalId, value, canEdit }: {
         method: "PATCH", body: { exemplar_pref: pref }, admin: true,
       }),
     onSuccess: (r) => {
-      toast.success(r.exemplar_pref ? `Saved: ${EXEMPLAR_LABEL[r.exemplar_pref].toLowerCase()}` : "Example preference cleared");
+      toast.success(r.exemplar_pref ? t("savedPref", exemplar(r.exemplar_pref).toLowerCase()) : t("prefCleared"));
       qc.invalidateQueries({ queryKey: owner.queryKey });
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : String(e), 8000),
   });
   if (!canEdit) {
-    return value ? <div style={{ marginTop: 4, fontSize: 11.5, color: A.muted }}>{EXEMPLAR_LABEL[value]}</div> : null;
+    return value ? <div style={{ marginTop: 4, fontSize: 11.5, color: A.muted }}>{exemplar(value)}</div> : null;
   }
   return (
     <div data-testid="cq-exemplar" data-value={value ?? ""} style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6, alignItems: "center" }}>
       {(["use", "never"] as const).map((pref) => (
         <Button key={pref} size="sm" variant={value === pref ? "primary" : "ghost"} disabled={save.isPending}
-                title={value === pref ? "Click again to clear" : pref === "use" ? "Writing memory may show this edit as a good example" : "Writing memory never shows this edit as an example"}
+                title={value === pref ? t("clickToClear") : pref === "use" ? t("useTitle") : t("neverTitle")}
                 onClick={() => save.mutate(toggledPref(value, pref))}>
-          {EXEMPLAR_LABEL[pref]}
+          {exemplar(pref)}
         </Button>
       ))}
       {save.isPending && <Spinner size={14} />}
@@ -319,15 +327,15 @@ function ExemplarToggles({ owner, signalId, value, canEdit }: {
 /** AA-802 — the tenant took a copy away (published / exported) BEFORE an admin edit: that copy still
  *  has the old text and nothing re-syncs it. Shown at the top of the T9 and T2 drawers. */
 export function TenantCopyNotice({ copy, what }: { copy?: TenantCopy | null; what: "piece" | "version" }) {
+  const t = useT(D);
   // optional: the admin UI can ship before the API that returns `tenant_copy` (Vercel vs ECS deploy)
   if (!copy?.older_copy) return null;
-  const how = copy.published_at && copy.delivered_at === copy.published_at
-    ? "published it (WordPress / the channel is not re-synced)"
-    : "downloaded it";
+  const how = copy.published_at && copy.delivered_at === copy.published_at ? t("howPublished") : t("howDownloaded");
+  const rest = t("olderCopyBody", how, fmtTime(copy.delivered_at), copy.edits_after_delivery,
+    what === "piece" ? t("whatPiece") : t("whatVersion"), copy.published_at ? t("untilRepublish") : t("untilExport"));
   return (
     <div data-testid="cq-older-copy" style={{ fontSize: 12.5, background: A.amberSoft, borderRadius: 8, padding: "8px 10px", color: A.ink, marginBottom: 10 }}>
-      <b>The tenant has an older copy.</b> They {how} on {fmtTime(copy.delivered_at)}, before {copy.edits_after_delivery} admin
-      edit{copy.edits_after_delivery === 1 ? "" : "s"} to this {what}. Their copy keeps the old text until they {copy.published_at ? "re-publish" : "export again"}.
+      <b>{t("olderCopy")}</b>{rest}
     </div>
   );
 }

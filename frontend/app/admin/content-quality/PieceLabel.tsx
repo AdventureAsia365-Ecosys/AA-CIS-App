@@ -11,14 +11,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { A } from "../_components/adminUi";
-import { ApiError, Badge, Button, apiGet, apiSend, useAdminIdentity, useToast } from "../../_kit";
+import { ApiError, Badge, Button, apiGet, apiSend, useAdminIdentity, useT, useToast } from "../../_kit";
 import {
-  DEFECT_NAMES, LABEL_HINTS, LABEL_NAMES, fmtTime,
+  fmtTime,
   type DefectLevel, type PieceDetail, type PieceLabel as Label, type PieceLabelBody, type PieceLabelValue, type PieceLabels,
 } from "./shared";
+import { D } from "./drawer.messages";
+import { DEFECT, DEFECT_LEVEL, LABEL_HINT, LABEL_NAME, STATUS } from "./messages";
+import { useLookup } from "./useCqText";
 
 const LABELS: PieceLabelValue[] = ["as_is", "light", "heavy", "reject"];
-const DEFECTS = ["fact", "voice", "format", "ai_phrasing"];
+const DEFECTS = ["fact", "voice", "format", "ai_phrasing"] as const;
 const LEVELS: DefectLevel[] = ["none", "light", "heavy"];
 const EDITABLE = ["approved", "held"];
 const TONE: Record<PieceLabelValue, "success" | "info" | "warning" | "danger"> = {
@@ -26,7 +29,8 @@ const TONE: Record<PieceLabelValue, "success" | "info" | "warning" | "danger"> =
 };
 
 export function LabelBadge({ label }: { label: PieceLabelValue }) {
-  return <Badge tone={TONE[label]} dot={false}>{LABEL_NAMES[label]}</Badge>;
+  const name = useT(LABEL_NAME);
+  return <Badge tone={TONE[label]} dot={false}>{name(label)}</Badge>;
 }
 
 const fieldStyle: React.CSSProperties = {
@@ -51,6 +55,11 @@ function labelBodyFrom(d: LabelDraft): PieceLabelBody | null {
 }
 
 function LabelForm({ piece, mine }: { piece: PieceDetail; mine: Label | null }) {
+  const t = useT(D);
+  const labelName = useT(LABEL_NAME);
+  const labelHint = useT(LABEL_HINT);
+  const defectName = useT(DEFECT);
+  const level = useT(DEFECT_LEVEL);
   const toast = useToast();
   const qc = useQueryClient();
   const [d, setD] = useState<LabelDraft>(() => draftFrom(mine));
@@ -62,7 +71,7 @@ function LabelForm({ piece, mine }: { piece: PieceDetail; mine: Label | null }) 
       qc.setQueryData(["cq-piece-label", piece.piece_id], (old: PieceLabels | undefined) => ({ ...old, ...r }));
       qc.invalidateQueries({ queryKey: ["cq-pieces"] });
       const saved = r.mine?.label ?? d.label;
-      toast.success(saved ? `Labelled ${LABEL_NAMES[saved]}` : "Label saved");
+      toast.success(saved ? t("labelledAs", labelName(saved)) : t("labelSaved"));
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : String(e), 8000),
   });
@@ -74,16 +83,16 @@ function LabelForm({ piece, mine }: { piece: PieceDetail; mine: Label | null }) 
 
   return (
     <div data-testid="cq-label-form" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <div role="radiogroup" aria-label="Label" style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+      <div role="radiogroup" aria-label={t("labelSection")} style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         {LABELS.map((l) => {
           const on = d.label === l;
           return (
-            <button key={l} type="button" role="radio" aria-checked={on} title={LABEL_HINTS[l]}
+            <button key={l} type="button" role="radio" aria-checked={on} title={labelHint(l)}
                     data-testid={`cq-label-${l}`} onClick={() => setD((x) => ({ ...x, label: l }))}
                     style={{ ...fieldStyle, cursor: "pointer", fontWeight: on ? 700 : 400,
                              borderColor: on ? A.accent : A.line, background: on ? A.accentSoft : A.card }}>
-              {LABEL_NAMES[l]}
-              <span style={{ display: "block", fontSize: 10.5, fontWeight: 400, color: A.muted }}>{LABEL_HINTS[l]}</span>
+              {labelName(l)}
+              <span style={{ display: "block", fontSize: 10.5, fontWeight: 400, color: A.muted }}>{labelHint(l)}</span>
             </button>
           );
         })}
@@ -91,41 +100,44 @@ function LabelForm({ piece, mine }: { piece: PieceDetail; mine: Label | null }) 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         {DEFECTS.map((k) => (
           <label key={k} style={{ display: "flex", gap: 4, alignItems: "center", fontSize: 12, color: A.body }}>
-            {DEFECT_NAMES[k]}
+            {defectName(k)}
             <select value={d.defects[k] ?? ""} onChange={(e) => setDefect(k, e.target.value as DefectLevel | "")}
-                    aria-label={`${DEFECT_NAMES[k]} defects`} style={fieldStyle}>
+                    aria-label={t("defectsAria", defectName(k))} style={fieldStyle}>
               <option value="">—</option>
-              {LEVELS.map((v) => <option key={v} value={v}>{v}</option>)}
+              {LEVELS.map((v) => <option key={v} value={v}>{level(v)}</option>)}
             </select>
           </label>
         ))}
         <label style={{ display: "flex", gap: 4, alignItems: "center", fontSize: 12, color: A.body }}>
-          Minutes to fix
-          <input type="number" min={0} max={600} value={d.minutes_to_fix ?? ""} aria-label="Minutes to fix"
+          {t("minutesToFix")}
+          <input type="number" min={0} max={600} value={d.minutes_to_fix ?? ""} aria-label={t("minutesToFix")}
                  onChange={(e) => setD((x) => ({ ...x, minutes_to_fix: e.target.value === "" ? null : Math.max(0, Math.min(600, Math.round(Number(e.target.value)))) }))}
                  style={{ ...fieldStyle, width: 72 }} />
         </label>
       </div>
-      <textarea value={d.reason ?? ""} maxLength={4000} rows={2} aria-label="Reason"
-                placeholder="Reason — the worst sentences, or why"
+      <textarea value={d.reason ?? ""} maxLength={4000} rows={2} aria-label={t("reasonAria")}
+                placeholder={t("reasonPlaceholder")}
                 onChange={(e) => setD((x) => ({ ...x, reason: e.target.value }))}
                 style={{ ...fieldStyle, width: "100%", resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }} />
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <span data-testid="cq-label-save">
           <Button size="sm" variant="primary" disabled={save.isPending || !body}
                   onClick={() => { if (body) save.mutate(body); }}>
-            {save.isPending ? "Saving…" : mine ? "Update my label" : "Save label"}
+            {save.isPending ? t("saving") : mine ? t("updateLabel") : t("saveLabel")}
           </Button>
         </span>
-        {!body && <span data-testid="cq-label-pick-hint" style={{ fontSize: 11.5, color: A.muted }}>Pick a verdict to save</span>}
-        {mine && <span style={{ fontSize: 11.5, color: A.muted }}>Saved {fmtTime(mine.labelled_at)}</span>}
+        {!body && <span data-testid="cq-label-pick-hint" style={{ fontSize: 11.5, color: A.muted }}>{t("pickVerdict")}</span>}
+        {mine && <span style={{ fontSize: 11.5, color: A.muted }}>{t("savedAt", fmtTime(mine.labelled_at))}</span>}
       </div>
     </div>
   );
 }
 
 function LabelList({ labels }: { labels: Label[] }) {
-  if (!labels.length) return <div style={{ fontSize: 12, color: A.muted }}>No one has labelled this piece yet.</div>;
+  const t = useT(D);
+  const defectName = useLookup(DEFECT);
+  const level = useLookup(DEFECT_LEVEL);
+  if (!labels.length) return <div style={{ fontSize: 12, color: A.muted }}>{t("noLabels")}</div>;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       {labels.map((l) => (
@@ -133,10 +145,10 @@ function LabelList({ labels }: { labels: Label[] }) {
           <LabelBadge label={l.label} />
           <span style={{ color: A.muted }}>{l.labelled_by.replace(/^admin:/, "")} · {fmtTime(l.labelled_at)}</span>
           {Object.entries(l.defects || {}).filter(([, v]) => v !== "none").map(([k, v]) => (
-            <span key={k} style={{ color: A.muted }}>{DEFECT_NAMES[k] ?? k}: {v}</span>
+            <span key={k} style={{ color: A.muted }}>{defectName(k)}: {level(v)}</span>
           ))}
-          {l.minutes_to_fix != null && <span style={{ color: A.muted }}>{l.minutes_to_fix} min</span>}
-          {l.text_changed_since_label && <Badge tone="warning" dot={false}>text edited since</Badge>}
+          {l.minutes_to_fix != null && <span style={{ color: A.muted }}>{t("minutes", l.minutes_to_fix)}</span>}
+          {l.text_changed_since_label && <Badge tone="warning" dot={false}>{t("editedSince")}</Badge>}
           {l.reason && <span style={{ flexBasis: "100%", color: A.body }}>{l.reason}</span>}
         </div>
       ))}
@@ -145,6 +157,8 @@ function LabelList({ labels }: { labels: Label[] }) {
 }
 
 export function PieceLabelSection({ piece }: { piece: PieceDetail }) {
+  const t = useT(D);
+  const status = useLookup(STATUS);
   const { isAdmin } = useAdminIdentity();
   const { data, error, isLoading } = useQuery({
     queryKey: ["cq-piece-label", piece.piece_id],
@@ -152,7 +166,7 @@ export function PieceLabelSection({ piece }: { piece: PieceDetail }) {
     enabled: isAdmin,
     retry: false,
   });
-  if (!isAdmin) return <div style={{ fontSize: 12, color: A.muted }}>Only an admin can label pieces.</div>;
+  if (!isAdmin) return <div style={{ fontSize: 12, color: A.muted }}>{t("onlyAdminLabel")}</div>;
   if (error) {
     const unavailable = error instanceof ApiError && error.status === 503;
     return (
@@ -161,20 +175,20 @@ export function PieceLabelSection({ piece }: { piece: PieceDetail }) {
       </div>
     );
   }
-  if (isLoading || !data) return <div style={{ fontSize: 12, color: A.muted }}>Loading…</div>;
+  if (isLoading || !data) return <div style={{ fontSize: 12, color: A.muted }}>{t("loading")}</div>;
   const others = data.labels.filter((l) => l.labelled_by !== data.mine?.labelled_by);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       {EDITABLE.includes(piece.status)
         ? <LabelForm key={data.mine?.labelled_at ?? "new"} piece={piece} mine={data.mine} />
-        : <div style={{ fontSize: 12, color: A.muted }}>A {piece.status} piece has no final text to label.</div>}
+        : <div style={{ fontSize: 12, color: A.muted }}>{t("noFinalText", status(piece.status))}</div>}
       {data.mine?.text_changed_since_label && (
         <div style={{ fontSize: 12, background: A.amberSoft, padding: "6px 8px", borderRadius: 6, color: A.ink }}>
-          The text was edited after your label — check it still holds, then save again.
+          {t("editedAfterLabel")}
         </div>
       )}
       <div>
-        <div style={{ fontSize: 11.5, fontWeight: 600, marginBottom: 4, color: A.ink }}>Other labellers · {others.length}</div>
+        <div style={{ fontSize: 11.5, fontWeight: 600, marginBottom: 4, color: A.ink }}>{t("otherLabellers", others.length)}</div>
         <LabelList labels={others} />
       </div>
     </div>

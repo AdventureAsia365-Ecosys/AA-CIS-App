@@ -1,5 +1,7 @@
 // lib/writingMemory.ts — AA-917 WM-14: types and helpers of Quality › Writing memory (/admin/writing-memory).
 // Backend: api/routers/admin_writing_memory.py (admin only: tenant.read reads, ai.admin writes), through the BFF.
+// AA-994: the text helpers below are English by default and take the UI language's words as an optional last
+// argument (lib/writingMemory.messages.ts, the same keys), so `npm run test:unit` keeps loading this file directly.
 
 export const WM_API = "/api/admin/writing-memory";
 
@@ -113,18 +115,32 @@ export function ruleTone(s: RuleStatus): "success" | "danger" | "warning" | "neu
     : s === "candidate" ? "warning" : "neutral";
 }
 
+/** The words owner() prints (WM_TEXT in lib/writingMemory.messages.ts has the Vietnamese ones). */
+export const OWNER_TEXT = {
+  platform: "Platform",
+  tenantShort: (id: string) => `Tenant ${id}`,
+};
+export type OwnerText = typeof OWNER_TEXT;
+
 /** "Platform", else the tenant's printed name when the caller has one (the Releases tab, AA-919), else "Tenant" plus
  *  the first 8 characters of its id (the Signals / Candidates / Rules lists never print tenant names). */
-export function owner(scope: Scope, tenantId: string | null, tenantName?: string): string {
-  return scope === "platform" ? "Platform" : tenantName || `Tenant ${(tenantId || "").slice(0, 8)}`;
+export function owner(scope: Scope, tenantId: string | null, tenantName?: string, text: OwnerText = OWNER_TEXT): string {
+  return scope === "platform" ? text.platform : tenantName || text.tenantShort((tenantId || "").slice(0, 8));
 }
 
 export function usd(n: number | null | undefined): string {
   return `$${(n ?? 0).toFixed(2)}`;
 }
 
+/** The two messages wmSend() makes itself (the API's own refusal text is passed through as sent). */
+export const SEND_TEXT = {
+  requestFailed: (status: number) => `Request failed (${status})`,
+  noAnswer: "No answer from the server; reload before trying again.",
+};
+export type SendText = typeof SEND_TEXT;
+
 /** Send a write to the BFF; resolves to { ok, data | message } and never throws. */
-export async function wmSend<T>(path: string, method: string, body?: unknown):
+export async function wmSend<T>(path: string, method: string, body?: unknown, text: SendText = SEND_TEXT):
   Promise<{ ok: true; data: T } | { ok: false; message: string }> {
   try {
     const res = await fetch(`${WM_API}${path}`, {
@@ -135,11 +151,11 @@ export async function wmSend<T>(path: string, method: string, body?: unknown):
     if (!res.ok) {
       const d = (json as { detail?: unknown }).detail;
       const msg = typeof d === "string" ? d : (d as { detail?: string } | undefined)?.detail;
-      return { ok: false, message: msg || `Request failed (${res.status})` };
+      return { ok: false, message: msg || text.requestFailed(res.status) };
     }
     return { ok: true, data: json as T };
   } catch {
-    return { ok: false, message: "No answer from the server; reload before trying again." };
+    return { ok: false, message: text.noAnswer };
   }
 }
 
@@ -206,9 +222,12 @@ export function evidenceOk(slot: "r0" | "eval" | "shadow", run: EvidenceRun | nu
     || (cls === "empty" && run.run_kind === "baseline_import" && run.verdict === "baseline");
 }
 
-/** One word per evidence slot for the list: "passed", "failed", "missing" (named, not found), or "—" (not named). */
+/** One word per evidence slot for the list: "passed", "failed", "missing" (named, not found), or "—" (not named).
+ *  The word is also the key of its UI-language text (EVIDENCE_WORD_MESSAGES). */
+export type EvidenceWord = "—" | "missing" | "running" | "baseline" | "passed" | "failed";
+
 export function evidenceWord(slot: "r0" | "eval" | "shadow", run: EvidenceRun | null | undefined,
-  cls: ContentClass): string {
+  cls: ContentClass): EvidenceWord {
   if (!run) return "—";
   if (run.missing) return "missing";
   if (!run.finished) return "running";
@@ -265,21 +284,26 @@ export function checkTone(v: CheckVerdict): "success" | "danger" | "warning" | "
   return v === "pass" ? "success" : v === "violation" ? "danger" : v === "pending" ? "warning" : "neutral";
 }
 
+/** The sentences checkSentence() prints (CHECK_SENTENCE_MESSAGES has the Vietnamese ones, same keys). */
+export const CHECK_TEXT = {
+  neverActive: "This release was never active, so it wrote nothing to check.",
+  emptyRelease: "An empty release adds nothing to the prompt, so there is nothing to check.",
+  violation: "At least one write made with this release breaks a hard stop. The hourly check rolls it back; "
+    + "this dry run moved nothing.",
+  pass: (carried: number) => `${carried} writes carry this release and none breaks a hard stop.`,
+  pending: (carried: number, n: number, checked: number) =>
+    `${carried} of the ${n} writes needed carry this release so far, none breaking a hard stop (${checked} writes read).`,
+};
+export type CheckText = typeof CHECK_TEXT;
+
 /** One plain sentence for the verdict of a dry-run check. */
-export function checkSentence(r: Pick<PostActivationReport, "verdict" | "n" | "checked" | "carried" | "reason">):
-  string {
+export function checkSentence(r: Pick<PostActivationReport, "verdict" | "n" | "checked" | "carried" | "reason">,
+  text: CheckText = CHECK_TEXT): string {
   const carried = r.carried ?? 0;
-  if (r.verdict === "not_applicable") {
-    return r.reason === "never activated" ? "This release was never active, so it wrote nothing to check."
-      : "An empty release adds nothing to the prompt, so there is nothing to check.";
-  }
-  if (r.verdict === "violation") {
-    return "At least one write made with this release breaks a hard stop. The hourly check rolls it back; "
-      + "this dry run moved nothing.";
-  }
-  if (r.verdict === "pass") return `${carried} writes carry this release and none breaks a hard stop.`;
-  return `${carried} of the ${r.n} writes needed carry this release so far, none breaking a hard stop `
-    + `(${r.checked} writes read).`;
+  if (r.verdict === "not_applicable") return r.reason === "never activated" ? text.neverActive : text.emptyRelease;
+  if (r.verdict === "violation") return text.violation;
+  if (r.verdict === "pass") return text.pass(carried);
+  return text.pending(carried, r.n, r.checked);
 }
 
 /** Labels of the violation codes the check reports (post_activation.check_write). */

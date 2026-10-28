@@ -24,7 +24,11 @@ const read = (p) => readFileSync(join(FRONTEND, p), "utf8");
 const GUIDES = [
   { name: "Writing memory", module: "app/admin/writing-memory/guide.ts", exportName: "WRITING_MEMORY_GUIDE",
     page: "app/admin/writing-memory/WritingMemory.tsx",
-    sources: ["lib/writingMemory.ts", "app/admin/writing-memory/ReleasesTab.tsx"] },
+    // AA-994: the page prints its words through these dictionaries (English side = the labels the guide quotes).
+    messages: ["app/admin/writing-memory/messages.ts", "app/admin/writing-memory/releases.messages.ts",
+      "lib/writingMemory.messages.ts"],
+    sources: ["lib/writingMemory.ts", "app/admin/writing-memory/ReleasesTab.tsx"],
+    vi: { module: "app/admin/writing-memory/guide.vi.ts", exportName: "WRITING_MEMORY_GUIDE_VI" } },
 ];
 
 // ── the shape check itself ──────────────────────────────────────────────────────────────────────────────────────
@@ -80,7 +84,7 @@ for (const g of GUIDES) {
     assert.ok(guide, `${g.module} exports ${g.exportName}`);
     assert.deepEqual(guideProblems(guide), []);
     const text = JSON.stringify(guide);
-    assert.doesNotMatch(text.replaceAll("Nghiệp", ""), /[ăâđêôơưạảấầẩẫậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỵỷỹ]/i,
+    assert.doesNotMatch(text, /[ăâđêôơưạảấầẩẫậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỵỷỹ]/i,
       "English only");
     assert.doesNotMatch(text, /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i, "no UUID");
     assert.doesNotMatch(text, /\b\d{12}\b/, "no account number");
@@ -89,7 +93,7 @@ for (const g of GUIDES) {
 
   test(`${g.name} guide: every documented label and control is still on the page`, async () => {
     const guide = (await import(`../${g.module}`))[g.exportName];
-    const code = [g.page, ...g.sources].map(read).join("\n");
+    const code = [g.page, ...g.sources, ...(g.messages ?? [])].map(read).join("\n");
     const labels = guideUiLabels(guide);
     assert.ok(labels.length > 0, "the guide documents the page's labels in uiLabels blocks");
     for (const l of labels) assert.ok(code.includes(l), `the page no longer prints "${l}"`);
@@ -98,10 +102,28 @@ for (const g of GUIDES) {
 
   test(`${g.name} page wires the Guide tab the kit way`, () => {
     const page = read(g.page);
-    assert.match(page, /\{ key: "guide", label: "Guide" \}/, "a Guide tab");
+    // AA-994: the tab label and the link text may come from the page's dictionary (useT) instead of a literal.
+    const words = [page, ...(g.messages ?? []).map(read)].join("\n");
+    assert.match(page, /\{ key: "guide", label: (?:"Guide"|t\("\w+"\)) \}/, "a Guide tab");
+    assert.match(words, /: "Guide"/, "the Guide tab is labelled Guide in English");
     assert.match(page, /<GuidePanel content=\{/, "rendered with the kit GuidePanel");
-    assert.ok(page.includes("New here? Read the Guide"), "the description links to the Guide");
+    assert.ok(words.includes("New here? Read the Guide"), "the description links to the Guide");
   });
+
+  if (g.vi) {
+    test(`${g.name} guide: the Vietnamese twin has the same outline`, async () => {
+      const en = (await import(`../${g.module}`))[g.exportName];
+      const vi = (await import(`../${g.vi.module}`))[g.vi.exportName];
+      assert.ok(vi, `${g.vi.module} exports ${g.vi.exportName}`);
+      assert.deepEqual(guideProblems(vi), []);
+      assert.deepEqual(vi.sections.map((s) => s.id), en.sections.map((s) => s.id), "same section ids, same order");
+      assert.deepEqual(vi.sections.map((s) => s.blocks.map((b) => b.kind)),
+        en.sections.map((s) => s.blocks.map((b) => b.kind)), "same blocks in every section");
+      assert.equal(vi.glossary.length, en.glossary.length, "same number of glossary terms");
+      assert.equal(guideControlLabels(vi).length, guideControlLabels(en).length, "same control cards");
+      assert.doesNotMatch(JSON.stringify(vi), /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i, "no UUID");
+    });
+  }
 }
 
 test("every page that renders a GuidePanel is registered here", () => {

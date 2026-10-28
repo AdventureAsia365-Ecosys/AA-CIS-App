@@ -17,24 +17,28 @@
 // Every action is a backend route (api/routers/admin_writing_memory.py, ai.admin, a signed-in admin id); the buttons
 // show only for a role with ai.admin (lib/rbac.ts, a hint: the backend re-checks every call). The API answers a
 // refused action with its reason, which the toast prints.
+// AA-994: every string comes from releases.messages.ts (English default, Vietnamese when picked).
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, ShieldCheck } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import {
   Badge, Button, ConfirmModal, DataTable, Drawer, ErrorState, K, Modal, TableSkeleton, apiGet,
-  formatDateTime, mono, useAdminIdentity, useToast, type ColumnDef,
+  mono, useAdminIdentity, useFormat, useT, useToast, type ColumnDef,
 } from "../../_kit";
 import { can } from "@/lib/rbac";
 import { TenantSelect, useTenants } from "../_components/TenantSelect";
 import {
-  CHECK_CODE_LABELS, EVIDENCE_NEEDED, RELEASE_STATUSES, WM_API, WRITERS, actorLabel, checkSentence, checkTone,
-  evidenceOk, evidenceWord, isUuid, monthStart, owner, releaseActions, releaseTone, wmSend,
+  EVIDENCE_NEEDED, RELEASE_STATUSES, WM_API, WRITERS, actorLabel, checkTone,
+  evidenceOk, evidenceWord, isUuid, monthStart, releaseActions, releaseTone,
   type ActiveReleases, type ContentClass, type PostActivationReport, type Release, type ReleaseDetail, type ReleaseRun,
   type ReleasesPage, type Writer, type WriterSwitch,
 } from "@/lib/writingMemory";
+import { CHECK_CODE_MESSAGES, EVIDENCE_WORD_MESSAGES } from "@/lib/writingMemory.messages";
+import { CHECK_VERDICT, R, RELEASE_STATUS } from "./releases.messages";
+import { useWmText } from "./useWmText";
 
-const SLOTS = [["r0", "R0"], ["eval", "Eval"], ["shadow", "Shadow"]] as const;
+const SLOTS = [["r0", "slotR0"], ["eval", "slotEval"], ["shadow", "slotShadow"]] as const;
 
 const inputStyle: React.CSSProperties = {
   width: "100%", fontSize: 13, padding: "6px 8px", borderRadius: 8, border: `1px solid ${K.line}`,
@@ -50,6 +54,8 @@ function short(id: string | null | undefined, n = 8): string {
 }
 
 function EvidenceBadges({ r }: { r: Release }) {
+  const t = useT(R);
+  const evWord = useT(EVIDENCE_WORD_MESSAGES);
   const need = EVIDENCE_NEEDED[r.content_class] ?? [];
   return (
     <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
@@ -59,7 +65,7 @@ function EvidenceBadges({ r }: { r: Release }) {
         const word = evidenceWord(slot, run, r.content_class);
         const tone = evidenceOk(slot, run, r.content_class) ? "success"
           : run && !run.missing && !run.finished ? "warning" : run ? "danger" : "warning";
-        return <Badge key={slot} tone={tone} dot={false}>{label} {word}</Badge>;
+        return <Badge key={slot} tone={tone} dot={false}>{t(label)} {evWord(word)}</Badge>;
       })}
     </div>
   );
@@ -70,6 +76,9 @@ function EvidenceBadges({ r }: { r: Release }) {
 function WritersPanel({ active, canAdmin }: { active: ActiveReleases | undefined; canAdmin: boolean }) {
   const toast = useToast();
   const qc = useQueryClient();
+  const t = useT(R);
+  const status = useT(RELEASE_STATUS);
+  const wm = useWmText();
   const [flip, setFlip] = useState<WriterSwitch | null>(null);
   const [closing, setClosing] = useState<Writer | null>(null);
   const [month, setMonth] = useState("");
@@ -77,7 +86,7 @@ function WritersPanel({ active, canAdmin }: { active: ActiveReleases | undefined
 
   async function patch(writer: Writer, body: object, ok: string) {
     setBusy(true);
-    const r = await wmSend<WriterSwitch>(`/writers/${writer}`, "PATCH", body);
+    const r = await wm.send<WriterSwitch>(`/writers/${writer}`, "PATCH", body);
     setBusy(false);
     if (r.ok) {
       toast.success(ok);
@@ -96,62 +105,55 @@ function WritersPanel({ active, canAdmin }: { active: ActiveReleases | undefined
   const closeMonth = monthStart(month);
   type Row = (typeof rows)[number];
   const writerCols: ColumnDef<Row, unknown>[] = [
-    { id: "writer", accessorFn: (x) => x.w.writer, header: "Writer",
+    { id: "writer", accessorFn: (x) => x.w.writer, header: t("colWriter"),
       cell: (c) => <span style={{ fontFamily: mono }}>{c.row.original.w.writer}</span> },
-    { id: "memory", accessorFn: (x) => x.w.memory_enabled, header: "Memory",
+    { id: "memory", accessorFn: (x) => x.w.memory_enabled, header: t("colMemory"),
       cell: (c) => <Badge tone={c.row.original.w.memory_enabled ? "success" : "neutral"}>
-        {c.row.original.w.memory_enabled ? "on" : "off"}</Badge> },
-    { id: "platform", accessorFn: (x) => x.platform?.release_no ?? -1, header: "Platform release",
+        {c.row.original.w.memory_enabled ? t("memoryOn") : t("memoryOff")}</Badge> },
+    { id: "platform", accessorFn: (x) => x.platform?.release_no ?? -1, header: t("colPlatformRelease"),
       cell: (c) => { const p = c.row.original.platform;
-        return p ? <span>#{p.release_no}{p.reverify && <> <Badge tone="warning" dot={false}>reverify</Badge></>}</span>
-          : "none active"; } },
-    { id: "tenants", accessorFn: (x) => x.tenants, header: "Tenant releases" },
-    { id: "train", accessorFn: (x) => x.w.train_closed_month ?? "", header: "Train closed through",
-      cell: (c) => (c.row.original.w.train_closed_month ? c.row.original.w.train_closed_month.slice(0, 7) : "open") },
+        return p ? <span>#{p.release_no}{p.reverify && <> <Badge tone="warning" dot={false}>{status("reverify")}</Badge></>}</span>
+          : t("noneActive"); } },
+    { id: "tenants", accessorFn: (x) => x.tenants, header: t("colTenantReleases") },
+    { id: "train", accessorFn: (x) => x.w.train_closed_month ?? "", header: t("colTrainClosed"),
+      cell: (c) => (c.row.original.w.train_closed_month ? c.row.original.w.train_closed_month.slice(0, 7) : t("trainOpen")) },
     { id: "actions", header: "", enableSorting: false,
       cell: (c) => { const w = c.row.original.w;
         return canAdmin ? (
           <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}
             onClick={(e) => e.stopPropagation()}>
             <Button size="sm" variant={w.memory_enabled ? "danger" : "secondary"} onClick={() => setFlip(w)}>
-              {w.memory_enabled ? "Turn memory off" : "Turn memory on"}</Button>
-            <Button size="sm" variant="ghost" onClick={() => setClosing(w.writer)}>Close month</Button>
+              {w.memory_enabled ? t("turnMemoryOff") : t("turnMemoryOn")}</Button>
+            <Button size="sm" variant="ghost" onClick={() => setClosing(w.writer)}>{t("closeMonth")}</Button>
           </div>
         ) : null; } },
   ];
 
   return (
     <section>
-      <h2 style={{ fontSize: 15, margin: "0 0 4px" }}>Writers</h2>
-      <div style={{ fontSize: 12.5, color: K.muted, marginBottom: 8 }}>
-        Memory on: the writer reads its active release. Memory off: it writes as if there were no memory (it does not
-        stop L0 rules). Turning memory on needs an active platform release.
-      </div>
+      <h2 style={{ fontSize: 15, margin: "0 0 4px" }}>{t("writersTitle")}</h2>
+      <div style={{ fontSize: 12.5, color: K.muted, marginBottom: 8 }}>{t("writersHelp")}</div>
       <DataTable tableId="wm-writers" data={rows} columns={writerCols} getRowId={(x) => x.w.writer}
-        paginate={false} tableMinWidth={760} compact emptyTitle="No writer row"
-        emptyDescription="The four writer rows come with the release tables (CIS 287)." />
+        paginate={false} tableMinWidth={760} compact emptyTitle={t("writersEmpty")}
+        emptyDescription={t("writersEmptyDesc")} />
       <ConfirmModal open={!!flip} onClose={() => setFlip(null)} busy={busy} destructive={!!flip?.memory_enabled}
-        title={flip?.memory_enabled ? `Turn memory off for ${flip.writer}?` : `Turn memory on for ${flip?.writer}?`}
-        confirmLabel={flip?.memory_enabled ? "Turn memory off" : "Turn memory on"}
+        title={flip?.memory_enabled ? t("confirmOffTitle", flip.writer) : t("confirmOnTitle", flip?.writer ?? "")}
+        confirmLabel={flip?.memory_enabled ? t("turnMemoryOff") : t("turnMemoryOn")}
         onConfirm={() => flip && patch(flip.writer, { memory_enabled: !flip.memory_enabled },
-          flip.memory_enabled ? `Memory off for ${flip.writer}: the next write ignores its release`
-            : `Memory on for ${flip.writer}: the next write reads its active release`)}
-        body={<div style={{ fontSize: 13, lineHeight: 1.5 }}>{flip?.memory_enabled
-          ? "The next write of this writer ignores every release (platform and tenant) and writes as with no memory. "
-            + "Active L0 rules still apply. No deploy is needed; turn it on again the same way."
-          : "The next write of this writer reads its active platform release and the tenant's active release, if any."}
+          flip.memory_enabled ? t("memoryOffDone", flip.writer) : t("memoryOnDone", flip.writer))}
+        body={<div style={{ fontSize: 13, lineHeight: 1.5 }}>
+          {flip?.memory_enabled ? t("memoryOffBody") : t("memoryOnBody")}
         </div>} />
-      <Modal open={!!closing} onClose={() => setClosing(null)} title={`Close the release train of ${closing ?? ""}`}
+      <Modal open={!!closing} onClose={() => setClosing(null)} title={t("closeTrainTitle", closing ?? "")}
         footer={<div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <Button variant="ghost" onClick={() => setClosing(null)}>Cancel</Button>
+          <Button variant="ghost" onClick={() => setClosing(null)}>{t("cancel")}</Button>
           <Button variant="primary" disabled={!closeMonth || busy}
             onClick={() => closing && closeMonth && patch(closing, { train_closed_month: closeMonth },
-              `The ${month} train of ${closing} is closed`)}>Close month</Button>
+              t("trainClosed", month, closing))}>{t("closeMonth")}</Button>
         </div>}>
         <div style={{ display: "grid", gap: 8, fontSize: 13, lineHeight: 1.5 }}>
-          <div>No regular release of this month or an earlier one can be activated after this. Lexicon releases,
-            emergencies and rollbacks are never blocked. A closed month cannot be reopened here.</div>
-          <label>Month
+          <div>{t("closeMonthHelp")}</div>
+          <label>{t("month")}
             <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} style={inputStyle} /></label>
         </div>
       </Modal>
@@ -165,6 +167,8 @@ function NewDraftModal({ open, onClose, onCreated }: { open: boolean; onClose: (
   onCreated: (id: string) => void }) {
   const toast = useToast();
   const qc = useQueryClient();
+  const t = useT(R);
+  const wm = useWmText();
   const [f, setF] = useState({ writer: "t9_social" as Writer, scope: "platform", tenant: "", rules: "", notes: "" });
   const [busy, setBusy] = useState(false);
   const ruleIds = f.rules.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
@@ -172,13 +176,13 @@ function NewDraftModal({ open, onClose, onCreated }: { open: boolean; onClose: (
 
   async function create() {
     setBusy(true);
-    const r = await wmSend<Release>("/releases", "POST", {
+    const r = await wm.send<Release>("/releases", "POST", {
       writer: f.writer, scope: f.scope, tenant_id: f.scope === "tenant" ? f.tenant.trim() : null, rule_ids: ruleIds,
       notes: f.notes.trim() || null,
     });
     setBusy(false);
     if (r.ok) {
-      toast.success(`Draft #${r.data.release_no} created; attach its evidence next`);
+      toast.success(t("draftCreated", r.data.release_no));
       setF({ ...f, tenant: "", rules: "", notes: "" });
       qc.invalidateQueries({ queryKey: ["wm"] });
       onCreated(r.data.release_id);
@@ -186,32 +190,30 @@ function NewDraftModal({ open, onClose, onCreated }: { open: boolean; onClose: (
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="New release draft" width={520}
+    <Modal open={open} onClose={onClose} title={t("newDraftTitle")} width={520}
       footer={<div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-        <Button variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button variant="primary" disabled={bad || busy} onClick={create}>Create draft</Button>
+        <Button variant="ghost" onClick={onClose}>{t("cancel")}</Button>
+        <Button variant="primary" disabled={bad || busy} onClick={create}>{t("createDraft")}</Button>
       </div>}>
       <div style={{ display: "grid", gap: 10, fontSize: 13 }}>
-        <label>Writer
+        <label>{t("writer")}
           <select value={f.writer} onChange={(e) => setF({ ...f, writer: e.target.value as Writer })} style={inputStyle}>
             {WRITERS.map((w) => <option key={w} value={w}>{w}</option>)}
           </select></label>
-        <label>Owner
+        <label>{t("owner")}
           <select value={f.scope} onChange={(e) => setF({ ...f, scope: e.target.value })} style={inputStyle}>
-            <option value="platform">Platform (every tenant)</option>
-            <option value="tenant">One tenant</option>
+            <option value="platform">{t("ownerPlatform")}</option>
+            <option value="tenant">{t("ownerTenant")}</option>
           </select></label>
         {f.scope === "tenant" && <TenantSelect value={f.tenant} required
           onChange={(tenant) => setF({ ...f, tenant })} />}
-        <label>Rule ids (optional, one per line)
+        <label>{t("ruleIds")}
           <textarea value={f.rules} onChange={(e) => setF({ ...f, rules: e.target.value })} rows={3}
             style={{ ...inputStyle, fontFamily: mono, fontSize: 12 }} /></label>
-        <label>Notes (optional)
+        <label>{t("notes")}
           <input value={f.notes} maxLength={1000} onChange={(e) => setF({ ...f, notes: e.target.value })}
             style={inputStyle} /></label>
-        <div style={{ color: K.muted, fontSize: 12 }}>
-          No rule ids = an empty release (like release 0). A release with rules goes live only after its R2 eval and
-          shadow runs pass and an admin approves it; no writer reads a lexicon-only release.</div>
+        <div style={{ color: K.muted, fontSize: 12 }}>{t("newDraftHelp")}</div>
       </div>
     </Modal>
   );
@@ -220,46 +222,53 @@ function NewDraftModal({ open, onClose, onCreated }: { open: boolean; onClose: (
 // ── one release ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 function RunCard({ label, run, id }: { label: string; run: ReleaseRun | null; id: string | null }) {
+  const t = useT(R);
+  const { formatDateTime } = useFormat();
   if (!id) return (
     <div style={{ border: `1px dashed ${K.line}`, borderRadius: 8, padding: 8, color: K.muted, fontSize: 12.5 }}>
-      {label}: no run attached</div>
+      {t("noRunAttached", label)}</div>
   );
   if (!run) return (
     <div style={{ border: `1px solid ${K.line}`, borderRadius: 8, padding: 8, fontSize: 12.5, color: K.danger }}>
-      {label}: run <span style={{ fontFamily: mono }}>{short(id)}</span> not found</div>
+      {t("runLead", label)}<span style={{ fontFamily: mono }}>{short(id)}</span>{t("runNotFound")}</div>
   );
   const s = run.summary || {};
   const facts: string[] = [];
-  if (s.inputs !== undefined) facts.push(`${s.inputs} inputs`);
-  if (s.byte_diffs !== undefined) facts.push(`${s.byte_diffs} byte diffs`);
-  if (s.compared_with_pre !== undefined) facts.push(`${s.compared_with_pre} compared with the pre-deploy reference`);
-  if (s.stored_hashes) facts.push(`${s.stored_hash_match ?? 0}/${s.stored_hashes} stored hashes reproduced`);
-  if (s.errors) facts.push(`${s.errors} errors`);
+  if (s.inputs !== undefined) facts.push(t("factInputs", s.inputs));
+  if (s.byte_diffs !== undefined) facts.push(t("factByteDiffs", s.byte_diffs));
+  if (s.compared_with_pre !== undefined) facts.push(t("factCompared", s.compared_with_pre));
+  if (s.stored_hashes) facts.push(t("factHashes", s.stored_hash_match ?? 0, s.stored_hashes));
+  if (s.errors) facts.push(t("factErrors", s.errors));
   return (
     <div style={{ border: `1px solid ${K.line}`, borderRadius: 8, padding: 8, display: "grid", gap: 4, fontSize: 12.5 }}>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
         <b>{label}</b><Badge dot={false}>{run.run_kind}</Badge>
         <Badge tone={run.verdict === "pass" || run.verdict === "baseline" ? "success" : "danger"}>{run.verdict ?? "—"}</Badge>
         <span style={{ fontFamily: mono, color: K.muted }}>{short(run.id)}</span>
-        <span style={{ color: K.muted }}>{run.finished_at ? formatDateTime(run.finished_at) : "not finished"}</span>
+        <span style={{ color: K.muted }}>{run.finished_at ? formatDateTime(run.finished_at) : t("notFinished")}</span>
       </div>
       {facts.length > 0 && <div>{facts.join(" · ")}</div>}
       {s.results && <div style={{ color: K.muted }}>{Object.entries(s.results).map(([k, v]) => `${k} ${v}`).join(" · ")}</div>}
       {s.reasons && s.reasons.length > 0 && <div style={{ color: K.danger }}>{s.reasons.join("; ")}</div>}
-      {s.prompt_sha256 && <div style={{ color: K.muted }}>prompt <span style={{ fontFamily: mono }}>
-        {s.prompt_sha256.slice(0, 16)}</span>{s.git_sha ? ` · code ${s.git_sha.slice(0, 8)}` : ""}</div>}
+      {s.prompt_sha256 && <div style={{ color: K.muted }}>{t("prompt")} <span style={{ fontFamily: mono }}>
+        {s.prompt_sha256.slice(0, 16)}</span>{s.git_sha ? t("code", s.git_sha.slice(0, 8)) : ""}</div>}
     </div>
   );
 }
 
 function PostActivationCheck({ r }: { r: Release }) {
   const toast = useToast();
+  const t = useT(R);
+  const verdict = useT(CHECK_VERDICT);
+  const codeLabel = useT(CHECK_CODE_MESSAGES);
+  const wm = useWmText();
+  const label = (c: string) => (c in CHECK_CODE_MESSAGES.en ? codeLabel(c as keyof typeof CHECK_CODE_MESSAGES.en) : c);
   const [report, setReport] = useState<PostActivationReport | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function run() {
     setBusy(true);
-    const res = await wmSend<PostActivationReport>(`/releases/${r.release_id}/post-activation-check`, "POST",
+    const res = await wm.send<PostActivationReport>(`/releases/${r.release_id}/post-activation-check`, "POST",
       { apply: false });
     setBusy(false);
     if (res.ok) setReport(res.data);
@@ -269,33 +278,31 @@ function PostActivationCheck({ r }: { r: Release }) {
   const codes = Object.entries(report?.violation_codes ?? {});
   return (
     <div style={{ display: "grid", gap: 6, fontSize: 12.5 }}>
-      <h3 style={{ fontSize: 13, margin: 0 }}>Post-activation check</h3>
-      <div style={{ color: K.muted, fontSize: 12 }}>Reads the writes made since this release went active: each must
-        carry its rules hash and hold no QA trace and no other tenant&apos;s text. A dry run: no model call, nothing
-        moves. The hourly check rolls a failing release back by itself.</div>
+      <h3 style={{ fontSize: 13, margin: 0 }}>{t("checkTitle")}</h3>
+      <div style={{ color: K.muted, fontSize: 12 }}>{t("checkHelp")}</div>
       <div><Button size="sm" variant="secondary" disabled={busy} onClick={run}>
-        {busy ? "Checking…" : "Check now"}</Button></div>
+        {busy ? t("checking") : t("checkNow")}</Button></div>
       {report && (
         <div style={{ border: `1px solid ${K.line}`, borderRadius: 8, padding: 8, display: "grid", gap: 4 }}
           aria-live="polite">
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-            <Badge tone={checkTone(report.verdict)}>{report.verdict.replace("_", " ")}</Badge>
-            <span style={{ color: K.muted }}>cost ${Number(report.cost_usd ?? 0).toFixed(2)}</span>
+            <Badge tone={checkTone(report.verdict)}>
+              {report.verdict in CHECK_VERDICT.en ? verdict(report.verdict) : report.verdict}</Badge>
+            <span style={{ color: K.muted }}>{t("cost", Number(report.cost_usd ?? 0).toFixed(2))}</span>
           </div>
-          <div>{checkSentence(report)}</div>
+          <div>{wm.checkSentence(report)}</div>
           {report.verdict !== "not_applicable" && (
-            <div style={{ color: K.muted }}>{report.checked} read · {report.carried ?? 0} carried ·{" "}
-              {report.not_carried ?? 0} written without it · {report.not_rendered ?? 0} rules not rendered ·{" "}
-              {report.fingerprint_mismatch ?? 0} hash mismatch</div>)}
+            <div style={{ color: K.muted }}>{t("checkCounts", report.checked, report.carried ?? 0,
+              report.not_carried ?? 0, report.not_rendered ?? 0, report.fingerprint_mismatch ?? 0)}</div>)}
           {codes.length > 0 && <div style={{ color: K.danger }}>{codes.map(([c, n]) =>
-            `${CHECK_CODE_LABELS[c] ?? c}: ${n}`).join(" · ")}</div>}
+            `${label(c)}: ${n}`).join(" · ")}</div>}
           {(report.violating_refs ?? []).length > 0 && (
             <div style={{ display: "grid", gap: 2 }}>
               {(report.violating_refs ?? []).slice(0, 10).map((v) => (
                 <div key={`${v.source}-${v.ref}`} style={{ overflowWrap: "anywhere" }}>
                   <span style={{ color: K.muted }}>{v.source}</span>{" "}
                   <span style={{ fontFamily: mono }}>{v.ref}</span>{" "}
-                  {v.codes.map((c) => CHECK_CODE_LABELS[c] ?? c).join(", ")}</div>))}
+                  {v.codes.map(label).join(", ")}</div>))}
             </div>)}
         </div>
       )}
@@ -307,6 +314,10 @@ function ReleaseDrawer({ releaseId, onClose, canAdmin, active, ownerOf }: { rele
   onClose: () => void; canAdmin: boolean; active: ActiveReleases | undefined; ownerOf: (r: Release) => string }) {
   const toast = useToast();
   const qc = useQueryClient();
+  const t = useT(R);
+  const status = useT(RELEASE_STATUS);
+  const wm = useWmText();
+  const { formatDateTime } = useFormat();
   const q = useQuery({ queryKey: ["wm", "release", releaseId], enabled: !!releaseId,
     queryFn: () => apiGet<ReleaseDetail>(`${WM_API}/releases/${releaseId}`) });
   const [reason, setReason] = useState("");
@@ -327,7 +338,7 @@ function ReleaseDrawer({ releaseId, onClose, canAdmin, active, ownerOf }: { rele
   async function act(path: string, body: unknown, ok: (d: Release) => string) {
     if (!r) return;
     setBusy(true);
-    const res = await wmSend<Release>(`/releases/${r.release_id}/${path}`, "POST", body);
+    const res = await wm.send<Release>(`/releases/${r.release_id}/${path}`, "POST", body);
     setBusy(false);
     setConfirm(null);
     if (res.ok) {
@@ -349,54 +360,54 @@ function ReleaseDrawer({ releaseId, onClose, canAdmin, active, ownerOf }: { rele
 
   return (
     <Drawer open={!!releaseId} onClose={close} width={640}
-      title={r ? `Release #${r.release_no} · ${r.writer} · ${ownerOf(r)}` : "Release"}>
+      title={r ? t("releaseTitle", r.release_no, r.writer, ownerOf(r)) : t("release")}>
       {q.isLoading || !r ? (q.error ? <ErrorState message={(q.error as Error).message} onRetry={() => q.refetch()} />
         : <TableSkeleton rows={5} cols={2} />) : (
         <div style={{ display: "grid", gap: 14, fontSize: 13 }}>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <Badge tone={releaseTone(r.status)}>{r.status}</Badge>
+            <Badge tone={releaseTone(r.status)}>{status(r.status)}</Badge>
             <Badge dot={false}>{r.content_class}</Badge>
-            <Badge dot={false}>{r.rule_ids.length} rules</Badge>
-            <Badge dot={false}>train {r.train_kind}{r.train_month ? ` ${r.train_month.slice(0, 7)}` : ""}</Badge>
-            {r.reverify && <Badge tone="warning">reverify: {r.reverify_reasons.join(", ") || "flagged"}</Badge>}
+            <Badge dot={false}>{t("rulesCount", r.rule_ids.length)}</Badge>
+            <Badge dot={false}>{t("train", r.train_kind)}{r.train_month ? ` ${r.train_month.slice(0, 7)}` : ""}</Badge>
+            {r.reverify && <Badge tone="warning">{t("reverifyBecause", r.reverify_reasons.join(", ") || t("flagged"))}</Badge>}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 240px), 1fr))",
             gap: 6, color: K.muted, fontSize: 12.5 }}>
-            <div>Drafted {formatDateTime(r.created_at)} by {actorLabel(r.created_by)}</div>
-            {r.tenant_id && <div style={{ overflowWrap: "anywhere" }}>Owner <span style={{ color: K.ink }}>
+            <div>{t("drafted", formatDateTime(r.created_at), actorLabel(r.created_by))}</div>
+            {r.tenant_id && <div style={{ overflowWrap: "anywhere" }}>{t("ownerLabel")} <span style={{ color: K.ink }}>
               {ownerOf(r)}</span>
               <div style={{ fontFamily: mono, fontSize: 11.5 }}>{r.tenant_id}</div></div>}
-            <div>Approved {r.approved_at ? `${formatDateTime(r.approved_at)} by ${actorLabel(r.approved_by)}` : "—"}</div>
-            <div>Activated {r.activated_at ? formatDateTime(r.activated_at) : "—"}</div>
-            <div>Retired {r.retired_at ? `${formatDateTime(r.retired_at)} (${r.retired_reason ?? ""})` : "—"}</div>
-            {r.previous_release_id && <div>Previous release <span style={{ fontFamily: mono }}>
+            <div>{t("approvedLine")} {r.approved_at
+              ? t("approvedBy", formatDateTime(r.approved_at), actorLabel(r.approved_by)) : "—"}</div>
+            <div>{t("activatedLine")} {r.activated_at ? formatDateTime(r.activated_at) : "—"}</div>
+            <div>{t("retiredLine")} {r.retired_at ? `${formatDateTime(r.retired_at)} (${r.retired_reason ?? ""})` : "—"}</div>
+            {r.previous_release_id && <div>{t("previousRelease")} <span style={{ fontFamily: mono }}>
               {short(r.previous_release_id)}</span></div>}
-            {r.approval_ref && <div style={{ overflowWrap: "anywhere" }}>Approval ref: {r.approval_ref}</div>}
-            {r.rejected_reason && <div style={{ color: K.danger }}>Rejected by {actorLabel(r.rejected_by)}:{" "}
+            {r.approval_ref && <div style={{ overflowWrap: "anywhere" }}>{t("approvalRef", r.approval_ref)}</div>}
+            {r.rejected_reason && <div style={{ color: K.danger }}>{t("rejectedBy", actorLabel(r.rejected_by))}{" "}
               {r.rejected_reason}</div>}
-            {r.emergency_reason && <div>Emergency: {r.emergency_reason}</div>}
+            {r.emergency_reason && <div>{t("emergency", r.emergency_reason)}</div>}
           </div>
           {r.notes && <div style={{ color: K.ink }}>{r.notes}</div>}
 
           <div style={{ display: "grid", gap: 6 }}>
-            <h3 style={{ fontSize: 13, margin: 0 }}>Evidence</h3>
-            <div style={{ color: K.muted, fontSize: 12 }}>A {r.content_class} release needs: {need.map((n) =>
-              n === "r0" ? "an R0 replay" : n === "eval" ? (r.content_class === "empty"
-                ? "an eval run (R2 pass or the golden-set baseline)" : "an R2 eval pass") : "a shadow pass").join(" and ")}.
+            <h3 style={{ fontSize: 13, margin: 0 }}>{t("evidence")}</h3>
+            <div style={{ color: K.muted, fontSize: 12 }}>{t("needs", r.content_class, need.map((n) =>
+              n === "r0" ? t("needR0") : n === "eval" ? (r.content_class === "empty"
+                ? t("needEvalEmpty") : t("needEval")) : t("needShadow")).join(t("and")))}
             </div>
             {SLOTS.map(([slot, label]) => (
-              <RunCard key={slot} label={label} run={r.runs?.[slot] ?? null}
+              <RunCard key={slot} label={t(label)} run={r.runs?.[slot] ?? null}
                 id={slot === "r0" ? r.r0_run_id : slot === "eval" ? r.eval_run_id : r.shadow_run_id} />))}
           </div>
 
           <div style={{ display: "grid", gap: 4, fontSize: 12.5, color: K.muted }}>
-            <h3 style={{ fontSize: 13, margin: 0, color: K.ink }}>Fingerprint</h3>
-            <div>Golden set {r.fingerprint?.golden_set ?? "—"} · gate taxonomy {String(r.fingerprint?.gate_taxonomy ?? "—")}</div>
-            <div>Writer model {r.fingerprint?.writer_route?.model_id ?? "—"} · judge model{" "}
-              {r.fingerprint?.judge_route?.model_id ?? "—"}</div>
-            <div>Prompt <span style={{ fontFamily: mono }}>{r.fingerprint?.prompt_sha256
+            <h3 style={{ fontSize: 13, margin: 0, color: K.ink }}>{t("fingerprint")}</h3>
+            <div>{t("goldenSet", r.fingerprint?.golden_set ?? "—", String(r.fingerprint?.gate_taxonomy ?? "—"))}</div>
+            <div>{t("models", r.fingerprint?.writer_route?.model_id ?? "—", r.fingerprint?.judge_route?.model_id ?? "—")}</div>
+            <div>{t("promptLabel")} <span style={{ fontFamily: mono }}>{r.fingerprint?.prompt_sha256
               ? r.fingerprint.prompt_sha256.slice(0, 16) : "—"}</span></div>
-            {r.items_sha256 && <div>Rules hash <span style={{ fontFamily: mono }}>{r.items_sha256.slice(0, 16)}</span></div>}
+            {r.items_sha256 && <div>{t("rulesHash")} <span style={{ fontFamily: mono }}>{r.items_sha256.slice(0, 16)}</span></div>}
           </div>
 
           {/* keyed by release: another release opened in the same drawer starts with no report */}
@@ -406,10 +417,10 @@ function ReleaseDrawer({ releaseId, onClose, canAdmin, active, ownerOf }: { rele
             <div style={{ display: "grid", gap: 12, borderTop: `1px solid ${K.line}`, paddingTop: 12 }}>
               {allowed.evidence && (
                 <div style={{ display: "grid", gap: 6 }}>
-                  <h3 style={{ fontSize: 13, margin: 0 }}>Attach evidence</h3>
+                  <h3 style={{ fontSize: 13, margin: 0 }}>{t("attachEvidence")}</h3>
                   {need.map((slot) => (
-                    <label key={slot} style={{ fontSize: 12.5 }}>{slot === "r0" ? "R0 run id" : slot === "eval"
-                      ? "Eval run id" : "Shadow run id"}
+                    <label key={slot} style={{ fontSize: 12.5 }}>{slot === "r0" ? t("r0RunId") : slot === "eval"
+                      ? t("evalRunId") : t("shadowRunId")}
                       <input value={ev[slot]} onChange={(e) => setEv({ ...ev, [slot]: e.target.value })}
                         style={{ ...inputStyle, fontFamily: mono, fontSize: 12 }} /></label>))}
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -417,63 +428,60 @@ function ReleaseDrawer({ releaseId, onClose, canAdmin, active, ownerOf }: { rele
                       <Button size="sm" variant="ghost"
                         onClick={() => setEv({ r0: platform.r0_run_id ?? "", eval: platform.eval_run_id ?? "",
                           shadow: platform.shadow_run_id ?? "" })}
-                        title="Fill in the runs of this writer's active platform release (an empty release reuses them)">
-                        Use the active platform release&apos;s runs</Button>)}
+                        title={t("usePlatformRunsTitle")}>
+                        {t("usePlatformRuns")}</Button>)}
                     <Button size="sm" variant="primary" disabled={evBad || busy}
                       onClick={() => act("evidence", evBody, (d) => d.status === "evaluated"
-                        ? "Evidence attached: the release is evaluated" : "Evidence attached; more runs are needed")}>
-                      Attach evidence</Button>
+                        ? t("evidenceEvaluated") : t("evidenceMore"))}>
+                      {t("attachEvidence")}</Button>
                   </div>
                 </div>
               )}
               {allowed.approve && (
                 <div style={{ display: "grid", gap: 6 }}>
-                  <h3 style={{ fontSize: 13, margin: 0 }}>Approve</h3>
-                  <input placeholder="Approval reference (optional: a link to the decision)" value={ref}
+                  <h3 style={{ fontSize: 13, margin: 0 }}>{t("approve")}</h3>
+                  <input placeholder={t("approvalRefPlaceholder")} value={ref}
                     maxLength={300} onChange={(e) => setRef(e.target.value)} style={inputStyle}
-                    aria-label="Approval reference" />
+                    aria-label={t("approvalRefAria")} />
                   <div><Button variant="primary" disabled={busy}
                     onClick={() => act("approve", ref.trim() ? { approval_ref: ref.trim() } : {},
-                      () => "Approved by you; Activate puts it live")}>
-                    <ShieldCheck size={14} /> Approve</Button></div>
+                      () => t("approvedDone"))}>
+                    <ShieldCheck size={14} /> {t("approve")}</Button></div>
                 </div>
               )}
               {allowed.activate && (
                 <div style={{ display: "grid", gap: 6 }}>
                   <div><Button variant="primary" disabled={!!r.activation || busy} onClick={() => setConfirm("activate")}
-                    title={r.activation?.detail || "The writer's next write uses this release"}>Activate</Button></div>
-                  {r.activation && <div style={{ color: K.muted, fontSize: 12 }}>Not activatable yet:{" "}
+                    title={r.activation?.detail || t("activateTitle")}>{t("activate")}</Button></div>
+                  {r.activation && <div style={{ color: K.muted, fontSize: 12 }}>{t("notActivatable")}{" "}
                     {r.activation.detail}</div>}
                 </div>
               )}
               {(allowed.rollback || allowed.reject || r.status === "active") && (
                 <div style={{ display: "grid", gap: 6 }}>
-                  <input placeholder={allowed.rollback ? "Why roll it back?" : "Why reject it?"} value={reason}
+                  <input placeholder={allowed.rollback ? t("whyRollback") : t("whyReject")} value={reason}
                     onChange={(e) => setReason(e.target.value)} style={inputStyle} maxLength={400}
-                    aria-label={allowed.rollback ? "Rollback reason" : "Reject reason"} />
+                    aria-label={allowed.rollback ? t("rollbackAria") : t("rejectAria")} />
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     {allowed.rollback && <Button variant="danger" disabled={reason.trim().length < 3 || busy}
-                      onClick={() => setConfirm("rollback")}>Roll back</Button>}
+                      onClick={() => setConfirm("rollback")}>{t("rollBack")}</Button>}
                     {allowed.reject && <Button variant="danger" disabled={reason.trim().length < 3 || busy}
-                      onClick={() => act("reject", { reason: reason.trim() }, () => "Release rejected")}>Reject</Button>}
+                      onClick={() => act("reject", { reason: reason.trim() }, () => t("releaseRejected"))}>{t("reject")}</Button>}
                   </div>
                   {r.status === "active" && !r.previous_release_id && <div style={{ color: K.muted, fontSize: 12 }}>
-                    No previous release to roll back to: turn this writer&apos;s memory off instead (Writers).</div>}
+                    {t("noPrevious")}</div>}
                 </div>
               )}
             </div>
           )}
           <ConfirmModal open={confirm === "activate"} onClose={() => setConfirm(null)} busy={busy}
-            title={`Activate release #${r.release_no} of ${r.writer}?`} confirmLabel="Activate"
-            onConfirm={() => act("activate", undefined, (d) => `Release #${d.release_no} is active`)}
-            body={<div style={{ fontSize: 13, lineHeight: 1.5 }}>The current active release of this writer and owner
-              is retired (superseded) and this one serves the next write. Roll back returns to it without a deploy.</div>} />
+            title={t("activateConfirmTitle", r.release_no, r.writer)} confirmLabel={t("activate")}
+            onConfirm={() => act("activate", undefined, (d) => t("activeNow", d.release_no))}
+            body={<div style={{ fontSize: 13, lineHeight: 1.5 }}>{t("activateBody")}</div>} />
           <ConfirmModal open={confirm === "rollback"} onClose={() => setConfirm(null)} busy={busy} destructive
-            title={`Roll back release #${r.release_no} of ${r.writer}?`} confirmLabel="Roll back"
-            onConfirm={() => act("rollback", { reason: reason.trim() },
-              (d) => `Rolled back: release #${d.release_no} is active again`)}
-            body={<div style={{ fontSize: 13, lineHeight: 1.5 }}>This release is retired for good (a fix is a new
-              release) and the previous one serves the next write. No deploy is needed.</div>} />
+            title={t("rollbackConfirmTitle", r.release_no, r.writer)} confirmLabel={t("rollBack")}
+            onConfirm={() => act("rollback", { reason: reason.trim() }, (d) => t("rolledBack", d.release_no))}
+            body={<div style={{ fontSize: 13, lineHeight: 1.5 }}>{t("rollbackBody")}</div>} />
         </div>
       )}
     </Drawer>
@@ -485,63 +493,67 @@ function ReleaseDrawer({ releaseId, onClose, canAdmin, active, ownerOf }: { rele
 export default function ReleasesTab() {
   const toast = useToast();
   const qc = useQueryClient();
+  const t = useT(R);
+  const status = useT(RELEASE_STATUS);
+  const wm = useWmText();
+  const { formatDateTime } = useFormat();
   const canAdmin = can(useAdminIdentity().role, "ai.admin");
   const tenants = useTenants();
   // Owner: "Platform", the tenant's name (else its slug), or "Tenant" + the short id when the list does not know it.
   const { byId, label } = tenants;
-  const ownerOf = useCallback((r: Release) => owner(r.scope, r.tenant_id,
-    r.tenant_id && byId.has(r.tenant_id) ? label(r.tenant_id) : undefined), [byId, label]);
+  const ownerOf = useCallback((r: Release) => wm.owner(r.scope, r.tenant_id,
+    r.tenant_id && byId.has(r.tenant_id) ? label(r.tenant_id) : undefined), [byId, label, wm]);
   const [writer, setWriter] = useState("");
-  const [status, setStatus] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
   const [open, setOpen] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [scanning, setScanning] = useState(false);
   const active = useQuery({ queryKey: ["wm", "releases-active"],
     queryFn: () => apiGet<ActiveReleases>(`${WM_API}/releases/active`) });
-  const list = useQuery({ queryKey: ["wm", "releases", writer, status],
+  const list = useQuery({ queryKey: ["wm", "releases", writer, statusFilter],
     queryFn: () => apiGet<ReleasesPage>(`${WM_API}/releases?limit=200${writer ? `&writer=${writer}` : ""}`
-      + `${status ? `&status=${status}` : ""}`) });
+      + `${statusFilter ? `&status=${statusFilter}` : ""}`) });
 
   async function scan() {
     setScanning(true);
-    const r = await wmSend<{ flagged: unknown[] }>("/releases/reverify-scan", "POST");
+    const r = await wm.send<{ flagged: unknown[] }>("/releases/reverify-scan", "POST");
     setScanning(false);
     if (r.ok) {
       const n = Array.isArray(r.data.flagged) ? r.data.flagged.length : 0;
-      toast[n ? "info" : "success"](n ? `${n} active releases flagged reverify` : "No active release needs a reverify");
+      toast[n ? "info" : "success"](n ? t("flaggedReverify", n) : t("noReverify"));
       qc.invalidateQueries({ queryKey: ["wm"] });
     } else toast.error(r.message);
   }
 
   const cols = useMemo<ColumnDef<Release, unknown>[]>(() => [
-    { accessorKey: "writer", header: "Writer",
+    { accessorKey: "writer", header: t("colWriter"),
       cell: (c) => <span style={{ fontFamily: mono }}>{c.row.original.writer}</span> },
-    { id: "owner", accessorFn: (r) => ownerOf(r), header: "Owner",
+    { id: "owner", accessorFn: (r) => ownerOf(r), header: t("colOwner"),
       cell: (c) => { const r = c.row.original;
         return <span title={r.tenant_id ?? undefined} style={{ display: "inline-block", maxWidth: "100%" }}>
           <Badge tone={r.scope === "platform" ? "purple" : "info"}>
             {ownerOf(r)}</Badge></span>; } },
-    { accessorKey: "release_no", header: "No.", cell: (c) => `#${c.row.original.release_no}` },
-    { accessorKey: "status", header: "Status",
+    { accessorKey: "release_no", header: t("colNo"), cell: (c) => `#${c.row.original.release_no}` },
+    { accessorKey: "status", header: t("colStatus"),
       cell: (c) => { const r = c.row.original;
         return <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-          <Badge tone={releaseTone(r.status)}>{r.status}</Badge>
-          {r.reverify && <Badge tone="warning" dot={false}>reverify</Badge>}</div>; } },
-    { id: "content", accessorFn: (r) => r.rule_ids.length, header: "Content",
-      cell: (c) => <span style={{ fontSize: 12 }}>{c.row.original.content_class} · {c.row.original.rule_ids.length} rules</span> },
-    { id: "evidence", header: "Evidence", enableSorting: false, cell: (c) => <EvidenceBadges r={c.row.original} /> },
-    { id: "who", accessorFn: (r) => r.approved_by ?? "", header: "Drafted / approved by",
+          <Badge tone={releaseTone(r.status)}>{status(r.status)}</Badge>
+          {r.reverify && <Badge tone="warning" dot={false}>{status("reverify")}</Badge>}</div>; } },
+    { id: "content", accessorFn: (r) => r.rule_ids.length, header: t("colContent"),
+      cell: (c) => <span style={{ fontSize: 12 }}>{t("contentLine", c.row.original.content_class, c.row.original.rule_ids.length)}</span> },
+    { id: "evidence", header: t("colEvidence"), enableSorting: false, cell: (c) => <EvidenceBadges r={c.row.original} /> },
+    { id: "who", accessorFn: (r) => r.approved_by ?? "", header: t("colWho"),
       cell: (c) => <span style={{ fontSize: 12 }}>{actorLabel(c.row.original.created_by)} /{" "}
         {actorLabel(c.row.original.approved_by)}</span> },
-    { accessorKey: "created_at", header: "Created",
+    { accessorKey: "created_at", header: t("colCreated"),
       cell: (c) => <span style={{ fontSize: 12, whiteSpace: "nowrap" }}>{formatDateTime(c.row.original.created_at)}</span> },
-    { accessorKey: "activated_at", header: "Activated",
+    { accessorKey: "activated_at", header: t("colActivated"),
       cell: (c) => <span style={{ fontSize: 12, whiteSpace: "nowrap" }}>
         {c.row.original.activated_at ? formatDateTime(c.row.original.activated_at) : "—"}</span> },
-    { id: "prompt", header: "Prompt", enableSorting: false,
+    { id: "prompt", header: t("colPrompt"), enableSorting: false,
       cell: (c) => <span style={{ fontFamily: mono, fontSize: 12, color: K.muted }}>
         {c.row.original.fingerprint?.prompt_sha256 ? c.row.original.fingerprint.prompt_sha256.slice(0, 12) : "—"}</span> },
-  ], [ownerOf]);
+  ], [ownerOf, t, status, formatDateTime]);
 
   const total = list.data?.total ?? 0;
   const shown = list.data?.items.length ?? 0;
@@ -556,32 +568,31 @@ export default function ReleasesTab() {
         : active.isLoading ? <TableSkeleton rows={4} cols={5} /> : <WritersPanel active={active.data} canAdmin={canAdmin} />}
       <section>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 4 }}>
-          <h2 style={{ fontSize: 15, margin: 0, flex: "1 1 auto" }}>Releases</h2>
+          <h2 style={{ fontSize: 15, margin: 0, flex: "1 1 auto" }}>{t("releasesTitle")}</h2>
           {canAdmin && <>
-            <Button variant="ghost" onClick={scan} disabled={scanning}
-              title="Flags the active releases whose golden set, model route or gate taxonomy changed since their evidence (they keep serving)">
-              Reverify scan</Button>
-            <Button variant="primary" onClick={() => setCreating(true)}><Plus size={14} /> New draft</Button>
+            <Button variant="ghost" onClick={scan} disabled={scanning} title={t("reverifyScanTitle")}>
+              {t("reverifyScan")}</Button>
+            <Button variant="primary" onClick={() => setCreating(true)}><Plus size={14} /> {t("newDraft")}</Button>
           </>}
         </div>
         <div style={{ fontSize: 12.5, color: K.muted, marginBottom: 8 }}>
-          draft → evaluated (evidence attached) → approved (one signed-in admin) → active. Activating retires the
-          release before it; Roll back returns to it. Click a row for its evidence and actions.
-          {shown < total ? ` Showing ${shown} of ${total}: narrow the filters.` : ""}
+          {t("releasesHelp")}
+          {shown < total ? t("showing", shown, total) : ""}
         </div>
         {list.error ? <ErrorState message={(list.error as Error).message} onRetry={() => list.refetch()} /> : (
           <DataTable tableId="wm-releases" data={list.data?.items ?? []} columns={cols} getRowId={(r) => r.release_id}
             loading={list.isLoading} onRowClick={(r) => setOpen(r.release_id)} tableMinWidth={1100}
-            emptyTitle="No release here" emptyDescription="Release 0 of each writer is drafted by the release 0 tool."
+            emptyTitle={t("releasesEmpty")} emptyDescription={t("releasesEmptyDesc")}
             toolbarExtra={<div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              <select value={writer} onChange={(e) => setWriter(e.target.value)} aria-label="Writer" style={selectStyle}>
-                <option value="">Every writer</option>
+              <select value={writer} onChange={(e) => setWriter(e.target.value)} aria-label={t("writerAria")}
+                style={selectStyle}>
+                <option value="">{t("everyWriter")}</option>
                 {WRITERS.map((w) => <option key={w} value={w}>{w}</option>)}
               </select>
-              <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Release status"
-                style={selectStyle}>
-                <option value="">Every status</option>
-                {RELEASE_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+              <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+                aria-label={t("statusAria")} style={selectStyle}>
+                <option value="">{t("everyStatus")}</option>
+                {RELEASE_STATUSES.map((s) => <option key={s} value={s}>{status(s)}</option>)}
               </select>
             </div>} />
         )}

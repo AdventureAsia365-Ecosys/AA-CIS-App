@@ -1,9 +1,9 @@
 // app/admin/content-quality/shared.ts — AA-769. Types + helpers for the Content Quality page
 // (GET /admin/content-quality/*). Cross-tenant, admin only.
 
+// AA-994: the label maps below are the English side of messages.ts; pages print them through useCqText() / useT.
+
 import type { SeedInfo } from "../_components/SeedLine";
-import { gateFilterGroups, gateLabelOf } from "@/lib/gateLabels";
-import { GATE_LABELS, RETIRED_GATES } from "@/lib/quality-registry.generated";
 import type { ExemplarPref, ReasonCode } from "@/lib/writingReasons";
 
 export interface PieceRow {
@@ -215,11 +215,11 @@ export interface TourVersionDetail extends Omit<VersionRow, "cost_usd" | "escala
 export interface TourSuggestResponse extends SuggestResponse { field: string; index: number | null }
 export interface TourApplyBody extends ApplyBody { field: string; index: number | null }
 
-export const TOUR_FIELD_LABELS: Record<string, string> = {
+export const TOUR_FIELD_LABELS = {
   subtitle: "Subtitle", summary: "Summary", highlights: "Highlight", itineraries: "Itinerary",
 };
 // AA-795 — which number set a T2 version's stored score (judge_breakdown.binding).
-export const BINDING_LABELS: Record<string, string> = {
+export const BINDING_LABELS = {
   brand_fit: "Brand fit",
   cross_brand: "Cross-brand distinctness",
   mission: "Mission cap",
@@ -227,13 +227,9 @@ export const BINDING_LABELS: Record<string, string> = {
   validate: "Structure check",
   unjudged: "Not judged",
 };
-export const bindingLabel = (b: string | null | undefined) => (b ? BINDING_LABELS[b] ?? b : "—");
-export const CLAIM_KIND_LABELS: Record<string, string> = {
+export const CLAIM_KIND_LABELS = {
   age: "Age", group_size: "Group size", ethos: "Brand ethos",
 };
-
-export const tourSectionLabel = (field: string, index: number | null) =>
-  `${TOUR_FIELD_LABELS[field] ?? field}${index != null ? ` ${index + 1}` : ""}`;
 
 export interface GateStat { gate: string; channel: string; runs: number; failed: number; blocking_failed: number }
 export interface TenantStat { tenant_name: string; tenant_id: string; pieces: number; approved: number; held: number; failed: number; cost_usd: number }
@@ -282,7 +278,7 @@ export interface DuplicateCluster {
   reasons: ("same_core_name" | "name_contains" | "alias")[];
   cards: DuplicateCard[];
 }
-export const DUPLICATE_REASON_LABELS: Record<string, string> = {
+export const DUPLICATE_REASON_LABELS = {
   same_core_name: "same name",
   name_contains: "one name contains the other",
   alias: "alias match",
@@ -302,7 +298,7 @@ export const LABEL_HINTS: Record<PieceLabelValue, string> = {
   heavy: "More than a light edit",
   reject: "Not worth fixing",
 };
-export const DEFECT_NAMES: Record<string, string> = {
+export const DEFECT_NAMES = {
   fact: "Fact", voice: "Voice", format: "Format", ai_phrasing: "AI phrasing",
 };
 export interface PieceLabel {
@@ -335,14 +331,8 @@ export const fmtTime = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
 
 // AA-926 — gate labels and the retired set come from the quality registry (services/quality/taxonomy.yaml),
-// generated into lib/quality-registry.generated.ts. Same 33 labels in the same order, plus labels for four
-// active gates that showed as raw codes (F2_platform_truth, F2_superlatives, F2_style_warn, F19_authenticity).
-export { GATE_LABELS, RETIRED_GATES };
-
-export const gateLabel = (g: string) => gateLabelOf(GATE_LABELS, RETIRED_GATES, g);
-
-/** AA-924 scope 4: the gate filter's options (active, then retired gates labelled "(retired)"). */
-export const GATE_FILTER = gateFilterGroups(GATE_LABELS, RETIRED_GATES);
+// generated into lib/quality-registry.generated.ts (AA-994: and its Vietnamese twin .vi.ts). The pages read them
+// through useCqText(): gateLabel(g) and gateFilter (AA-924 scope 4: active gates, then the retired ones).
 
 /** Backend offsets are Python code-point indices; JS strings index UTF-16 units. Returns a mapper
  *  from code-point index to JS index (the identity when the text has no astral chars, e.g. emoji). */
