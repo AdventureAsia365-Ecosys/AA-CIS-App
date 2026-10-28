@@ -25,7 +25,6 @@ Output rows have the pilot row shape (``id``, ``piece_id``, ``tenant``, ``channe
 private root ``.tmp-session/``, never in this repo.
 
   python3 /tmp/s.py --ids <id,id,...> [--dry-run] [--max-usd 2.0] [--out /tmp/aa790-repanel.json] [--s3 s3://b/k]
-                    [--arm r7]
 
 ``--dry-run`` builds every prompt and prints its size, the lead fact and the stored text's census; no model call, $0.
 """
@@ -160,11 +159,10 @@ def finish(text: str, row: dict, args: dict) -> tuple[str, list[str], dict]:
     return strip_citation_tags(text), log, writer_census
 
 
-def call_writer(row: dict, args: dict, model_tier: Optional[str], run_id: str, arm: str = "") -> dict:
+def call_writer(row: dict, args: dict, model_tier: Optional[str], run_id: str) -> dict:
     """One writer call through the gateway (AA-927 canonical pattern): the row is written once the reply is parsed;
     a reply that came back (billed) but cannot be parsed writes a billed_unusable row in the except branch and
-    re-raises. A call that raises inside ``generate()`` is logged by the gateway itself. ``arm`` goes into the
-    quality signal, so the wave-report cost per arm comes from ``quality_signal->>'arm'``."""
+    re-raises. A call that raises inside ``generate()`` is logged by the gateway itself."""
     from services.acp_content_writing import generate
     from services.acp_content_writing.prompts import SYSTEM_PROMPT, build_user_prompt
     from shared.llm_client.call_log import record_call_sync, record_unusable_sync
@@ -174,7 +172,7 @@ def call_writer(row: dict, args: dict, model_tier: Optional[str], run_id: str, a
     channel = args["channel_style"]["channel"]
     user = build_user_prompt(**args)
     signal = {"aa790_run": run_id, "piece": row["piece_id"], "channel": channel, "mode": "repanel_write",
-              "lead_focus": bool(args.get("lead_focus")), "arm": arm}
+              "lead_focus": bool(args.get("lead_focus"))}
     resp = LLMClient().generate(LLMRequest(system_prompt=SYSTEM_PROMPT, user_prompt=user, stage=STAGE,
                                            model_tier=model_tier, max_tokens=generate.max_tokens_for(channel)))
     try:
@@ -212,8 +210,6 @@ def main() -> int:
     ap.add_argument("--max-usd", type=float, default=2.0)
     ap.add_argument("--out", default="/tmp/aa790-repanel.json")
     ap.add_argument("--s3", help="also upload the JSON to this s3://bucket/key")
-    ap.add_argument("--arm", default="", help="a label stored on every row and in the llm_call_log quality_signal "
-                                              "(round 7: 'r6b' control, 'r7')")
     a = ap.parse_args()
 
     from services.acp_content_writing import ai_tells
@@ -224,7 +220,7 @@ def main() -> int:
     missing = sorted(set(ids) - {r["piece_id"] for r in rows})
     print(f"AA790 rows={len(rows)} missing={missing} writer_prompt_version={WRITER_PROMPT_VERSION}", flush=True)
     model_tier = None if a.dry_run else stage_model()
-    print(f"AA790 model_tier={model_tier} stage={STAGE} cap=${a.max_usd} arm={a.arm or '-'}", flush=True)
+    print(f"AA790 model_tier={model_tier} stage={STAGE} cap=${a.max_usd}", flush=True)
     index = write_indexes(rows)
     run_id = uuid.uuid4().hex[:12]
     spent, out = 0.0, []
@@ -243,19 +239,13 @@ def main() -> int:
                "status": "rewrite", "cta": args["cta"], "brand_pack": args["brand_audience"], "custom_validators": {},
                "label": None, "source": STAGE, "before_text": r["content_text"],
                "ai_tells_before": ai_tells.census(r["content_text"] or "", tell),
-               "lead_focus": args.get("lead_focus"), "writer_prompt_version": WRITER_PROMPT_VERSION, "arm": a.arm}
+               "lead_focus": args.get("lead_focus"), "writer_prompt_version": WRITER_PROMPT_VERSION}
         if a.dry_run:
             from services.acp_content_writing.prompts import build_user_prompt
-            user = build_user_prompt(**args)
-            rec["prompt_chars"] = len(user)
-            # AA-790 round 7: the BRAND FOCUS points and the ANGLE BRIEF line the deployed image renders
-            # (getattr: the same script also runs the round-6 control arm on an image without them)
-            focus = getattr(ai_tells, "brand_focus_points", lambda _p: [])(args["brand_audience"])
-            rec["brand_focus_points"] = len(focus)
+            rec["prompt_chars"] = len(build_user_prompt(**args))
             print(f"AA790 dry {rec['id']} {channel} prompt_chars={rec['prompt_chars']} "
                   f"lead={bool(rec['lead_focus'])} before={rec['ai_tells_before']['fixable_total']}"
-                  f"+{rec['ai_tells_before']['residue']} focus={len(focus)} "
-                  f"angle_brief={'ANGLE BRIEF:' in user}", flush=True)
+                  f"+{rec['ai_tells_before']['residue']}", flush=True)
             out.append(rec)
             continue
         est = EST_USD.get(channel, EST_USD_DEFAULT)
@@ -266,7 +256,7 @@ def main() -> int:
             continue
         t0 = time.monotonic()
         try:
-            w = call_writer(r, args, model_tier, run_id, a.arm)
+            w = call_writer(r, args, model_tier, run_id)
         except Exception as e:  # noqa: BLE001 — recorded per piece, the run goes on
             spent += est  # a billed failure is logged by the gateway; reserve its estimate against the cap
             rec["error"] = f"{type(e).__name__}: {str(e)[:300]}"

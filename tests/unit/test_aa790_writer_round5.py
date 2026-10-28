@@ -252,10 +252,8 @@ _PACKS = {"TRAIL": TRAIL, "ATLAS": ATLAS, "WILD": WILD, "FAMRUN": FAMRUN}
 @pytest.mark.parametrize("name, channel", sorted(_ROUND4_USER_PROMPTS))
 def test_non_family_user_prompts_are_byte_identical_to_round_four(name, channel):
     """Round 6 adds the BRAND TEXTURE block (ai_tells.brand_texture_rule) to a pack with a texture signal: without
-    that block the prompt is still the round-4 one, byte for byte (the family-run lodge has no signal at all).
-    Round 7 (S254) adds the ANGLE BRIEF line to every prompt (these packs have no style guide, so no BRAND FOCUS):
-    it is taken out too."""
-    p = _prompt(channel, _PACKS[name]).replace("\n" + ai_tells.ANGLE_BRIEF_RULE, "")
+    that block the prompt is still the round-4 one, byte for byte (the family-run lodge has no signal at all)."""
+    p = _prompt(channel, _PACKS[name])
     assert "FAMILY BRAND" not in p and FAMILY_SHORT_POST_RULE not in p
     texture = ai_tells.brand_texture_rule(_PACKS[name], channel)
     assert bool(texture) == (name != "FAMRUN")

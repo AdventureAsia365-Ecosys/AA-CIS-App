@@ -39,10 +39,9 @@ markup the writer wasn't asked for before:
 from __future__ import annotations
 
 from services.acp_angle_gate.brand_audience import BrandAudience
-from services.acp_content_writing.ai_tells import (ANGLE_BRIEF_RULE, BLOG_HEADING_RULE, PROMPT_RULES,
-                                                   SELF_CHECK_RULE, SOCIAL_AUDIENCE_RULE, VISIT_DETAIL_RULE,
-                                                   brand_focus_rule, brand_texture_rule, brand_voice_rule,
-                                                   family_presence_rule)
+from services.acp_content_writing.ai_tells import (BLOG_HEADING_RULE, PROMPT_RULES, SELF_CHECK_RULE,
+                                                   SOCIAL_AUDIENCE_RULE, VISIT_DETAIL_RULE, brand_texture_rule,
+                                                   brand_voice_rule, family_presence_rule)
 from services.acp_shared.brand_pack import render_brand_block
 from services.acp_shared.signature_vocabulary import t9_words_line
 from services.acp_angle_gate.channel_style import ChannelStyle
@@ -208,9 +207,7 @@ Rules:
 - SOURCE FIDELITY and VISIT DETAIL override the brand's style guide and its examples: what the
   traveller does, feels or discovers comes only from the content seed. The style guide sets tone
   and sentence shape, not content. A BRAND TEXTURE block, when the brief has one, belongs to the
-  style guide: it sets sentence shape and where the reader stands, never content. A BRAND FOCUS block, when the
-  brief has one, is the style guide's own points: it says which of them to cover where the content seed has a
-  fact for it, never content of its own.
+  style guide: it sets sentence shape and where the reader stands, never content.
 - Use concrete, verifiable details from the content seed given. Never invent a fact, number,
   measurement, or claim that is not in the content seed.
 - SOURCE FIDELITY (same policy as the tour writer):
@@ -325,9 +322,6 @@ def build_user_prompt(
     a plain-text post also gets its one-concrete-family-moment line (ai_tells.FAMILY_SHORT_POST_RULE). AA-790 round 6:
     a non-family pack with an energetic, luxury / cultural or nature / respectful signal gets the BRAND TEXTURE block
     right after the PACE / RESTRAINT line (ai_tells.brand_texture_rule; the FAQ lines on a blog only).
-    AA-790 round 7: every prompt gets the ANGLE BRIEF line right after the three angle lines (the angle is a brief,
-    never copy); a pack whose style guide gives points gets the BRAND FOCUS block last among the brand blocks, before
-    the channel format (ai_tells.brand_focus_rule).
 
     `memory_lines` (AA-919): the writing-memory lines of the tenant slot (services/writing_memory/insertion
     t9_tenant_lines), placed right after the brand's words line; None / [] adds nothing."""
@@ -399,8 +393,6 @@ def build_user_prompt(
         f"SELECTED ANGLE: {angle['name']}",
         f"WHY THIS ANGLE WORKS: {angle['why_it_works']}",
         f"ANGLE'S BEST FINAL STYLE: {angle['best_final_style']}",
-        # AA-790 round 7 — the angle is a brief: its wording ("making it an accessible, structured stop") was copy.
-        ANGLE_BRIEF_RULE,
         "",
         f"CALL TO ACTION TO INCLUDE: {cta}",
         "",
@@ -455,9 +447,6 @@ def build_user_prompt(
     # AA-790 round 4 — a family brand (voice / brand type): the family in every section, from seed facts only.
     # Round 5: the children / parents in the seed's own moments, warmth from its pace cues; one moment in a short post.
     prompt += family_presence_rule(brand_audience, channel_style["channel"])
-    # AA-790 round 7 — the BRAND FOCUS block: the style guide's own first rules as a checklist met only from the seed
-    # ('' when the guide gives none); a brand with no texture block also gets the back-to-the-traveller line here.
-    prompt += brand_focus_rule(brand_audience)
     if channel_style["channel"] in PLAIN_TEXT_CHANNELS:
         prompt += _PLAIN_TEXT_INSTRUCTIONS
     if channel_style["channel"] == "blog":
