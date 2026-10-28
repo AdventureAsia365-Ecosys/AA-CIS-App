@@ -193,37 +193,61 @@ def migration_body(n) -> str:
         return "\n".join(line for line in f.read().splitlines() if line.strip() not in ("BEGIN;", "COMMIT;"))
 
 
-# AA-850 (CIS 294): wave-1 objects quarantined in `retired` -> their source schema. Old migrations that tests re-apply
-# name some of them (239: acp_shared.tenant_atom_state; 281: shared.v_pipeline_summary / v_batch_stats).
-QUARANTINED_294 = {
+# AA-850: the wave-1 objects CIS 294 quarantined in `retired` and CIS 296 dropped -> (pre-294 schema, kind). Tests that
+# re-apply 294 itself, or an old migration that names one of them (239: acp_shared.tenant_atom_state), rebuild them as
+# minimal stand-ins: the replay has run 296, so none of the ten exists any more.
+WAVE1_850 = {
     "atom_decompose_jobs": ("acp_contract", "TABLE"), "s1_from_atom_runs": ("acp_contract", "TABLE"),
     "route_pick": ("acp_contract", "TABLE"), "marketplace_portfolios": ("acp_shared", "TABLE"),
     "tenant_atom_state": ("acp_shared", "TABLE"), "acp_runs": ("shared", "TABLE"),
     "tenant_brand_rule_versions": ("shared", "TABLE"), "tenant_brand_rules_deleted_aa404": ("shared", "TABLE"),
     "v_batch_stats": ("shared", "VIEW"), "v_pipeline_summary": ("shared", "VIEW"),
 }
+# The stand-ins: the columns the tests touch, and the outbound FKs Dev's tables had (the 294 / 296 lock notes).
+_WAVE1_850_STANDIN = {
+    "atom_decompose_jobs": "(job_id text PRIMARY KEY, tour_ids jsonb NOT NULL DEFAULT '[]', status text NOT NULL, "
+                           "input_s3_uri text, submitted_at timestamptz NOT NULL DEFAULT now())",
+    "s1_from_atom_runs": "(run_id uuid PRIMARY KEY DEFAULT gen_random_uuid(), "
+                         "tour_id uuid NOT NULL REFERENCES silver_aa_internal.raw_tours (tour_id))",
+    "route_pick": "(route_pick_id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES shared.tenants (tenant_id), "
+                  "hub_name text, route_snapshot jsonb, selected_at timestamptz)",
+    "marketplace_portfolios": "(portfolio_id uuid PRIMARY KEY, tour_ids uuid[] NOT NULL DEFAULT '{}', "
+                              "status text NOT NULL, created_at timestamptz NOT NULL DEFAULT now())",
+    "tenant_atom_state": "(tenant_id uuid NOT NULL REFERENCES shared.tenants (tenant_id), "
+                         "tour_id uuid NOT NULL REFERENCES silver_aa_internal.raw_tours (tour_id), "
+                         "PRIMARY KEY (tenant_id, tour_id))",
+    "acp_runs": "(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid, "
+                "batch_id uuid REFERENCES shared.pipeline_runs (batch_id))",
+    "tenant_brand_rule_versions": "(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), "
+                                  "tenant_id uuid NOT NULL REFERENCES shared.tenants (tenant_id))",
+    "tenant_brand_rules_deleted_aa404": "(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid)",
+    "v_batch_stats": "SELECT batch_id FROM shared.pipeline_runs",
+    "v_pipeline_summary": "SELECT tour_id FROM silver_aa_internal.raw_tours",
+}
 
 
-def undo_294_for_reapply(cur, names, owner=None):
-    """Move `names` from `retired` back to their pre-294 schema (no grant comes back: 294 left none and the old
-    migrations being re-applied predate it). Run inside the test's transaction (rolled back with it); a name that
-    is not in `retired` (294 not applied) is left alone. `owner`: also hand them to that role (the replay runs 294
-    before a test applies 245, so their owner is the test user, not cis_owner as on Dev)."""
+def wave1_standins(cur, names=tuple(WAVE1_850), schema=None):
+    """Create minimal stand-ins of the dropped wave-1 objects `names` in their pre-294 schema (or in `schema`, e.g.
+    `retired` for the pre-296 state), inside the test's transaction (rolled back with it). A name that already exists
+    there is left alone (a DB that has not run 296)."""
     for name in names:
-        src, kind = QUARANTINED_294[name]
-        cur.execute("SELECT to_regclass(%s) IS NOT NULL", (f"retired.{name}",))
+        src, kind = WAVE1_850[name]
+        target = schema or src
+        cur.execute("SELECT to_regclass(%s) IS NOT NULL", (f"{target}.{name}",))
         if cur.fetchone()[0]:
-            cur.execute(f"ALTER {kind} retired.{name} SET SCHEMA {src}")
-            if owner:
-                cur.execute(f"ALTER {kind} {src}.{name} OWNER TO {owner}")
+            continue
+        if kind == "VIEW":
+            cur.execute(f"CREATE VIEW {target}.{name} AS {_WAVE1_850_STANDIN[name]}")
+        else:
+            cur.execute(f"CREATE TABLE {target}.{name} {_WAVE1_850_STANDIN[name]}")
 
 
 def undo_241_for_239_reapply(cur):
     """Take angle_gate_option back to the pre-241 state 239's guard 1 expects (no RLS, no policy, no
     column UPDATE), year_plan to its pre-265 state (undo_265_year_plan), and grant Dev's legacy-table
     grants 239's guard 4 counts with. Run inside the test's transaction (rolled back with it). 239 names
-    acp_shared.tenant_atom_state, quarantined by CIS 294 (AA-850): it goes back to acp_shared first."""
-    undo_294_for_reapply(cur, ("tenant_atom_state",))
+    acp_shared.tenant_atom_state, dropped by CIS 296 (AA-850): a stand-in comes back in acp_shared first."""
+    wave1_standins(cur, ("tenant_atom_state",))
     cur.execute("DROP POLICY IF EXISTS tenant_isolation ON acp_shared.angle_gate_option")
     cur.execute("ALTER TABLE acp_shared.angle_gate_option DISABLE ROW LEVEL SECURITY")
     cur.execute("REVOKE UPDATE (chosen) ON acp_shared.angle_gate_option FROM aa_app_user")

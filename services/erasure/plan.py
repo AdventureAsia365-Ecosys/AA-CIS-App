@@ -406,7 +406,7 @@ async def count_tenant(conn, plan: TenantPlan, tenant_id: str) -> dict:
         except Exception as e:  # e.g. no privilege on another owner's table
             if c.kind == "quarantined_child":
                 # AA-850: the runtime holds no privilege in `retired` by design (CIS 294). Not a blocker: the
-                # quarantine was refused while a non-platform tenant had rows there and nobody can write since; the
+                # quarantine is refused while a non-platform tenant has rows there and nobody can write since; the
                 # NO ACTION FK fails the apply loudly (rolled back) should a row ever reference an erased one.
                 info.append({"kind": c.kind, "table": c.table, "rows": None,
                              "detail": f"{c.detail} (not readable by the runtime, {type(e).__name__}: the FK "
