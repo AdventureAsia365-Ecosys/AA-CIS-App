@@ -1,5 +1,5 @@
 """AA-462 — POST /v1/publish-log/{piece_id}/publish, the facebook branch (api/routers/
-v1_publish.py::publish() / _call_adapter()). Same call-sequence/mocking shape as
+v1_publish.py::publish() / services/acp_publish/dispatch.py::publish_to_channel()). Same call-sequence/mocking shape as
 test_aa458_publish.py's own WordPress success/failure tests — piece lookup, integration
 lookup, existing-failed check, final write, all via the same sequential-conn pattern.
 """

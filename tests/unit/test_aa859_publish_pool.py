@@ -84,7 +84,7 @@ class _Calls:
         return (patch.object(pub_mod, "claim", self.claim), patch.object(pub_mod, "finish", self.finish),
                 patch.object(pub_mod.daily_limit, "effective_limit", self.limit),
                 patch.object(pub_mod, "_get_secret", self.secret),
-                patch.object(pub_mod, "_call_adapter", self.adapter))
+                patch.object(pub_mod, "publish_to_channel", self.adapter))
 
 
 async def _publish(request, tenant_id=TENANT_ID, calls=None):

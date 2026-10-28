@@ -35,7 +35,7 @@ async def _unpublish(request, held=None):
         return "trashed"
 
     with patch.object(pub_mod, "_get_secret", side_effect=get_secret), \
-            patch.object(pub_mod, "_delete_remote", AsyncMock(side_effect=delete_remote)):
+            patch.object(pub_mod, "delete_remote", AsyncMock(side_effect=delete_remote)):
         return await pub_mod.unpublish(PUBLISH_ID, request, tenant={"sub": TENANT_ID})
 
 

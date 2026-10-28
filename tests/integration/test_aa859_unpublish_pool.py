@@ -47,7 +47,7 @@ async def _status(conn, publish_id):
 async def _unpublish(c, tid, publish_id, flag_on, remote=None):
     remote = remote or AsyncMock(return_value="trashed")
     with patch.object(pub_mod, "_get_secret", return_value=dict(WP_CREDS)), \
-            patch.object(pub_mod, "_delete_remote", remote):
+            patch.object(pub_mod, "delete_remote", remote):
         return await pub_mod.unpublish(publish_id, _request(c.conn, flag_on), tenant={"sub": str(tid)})
 
 
