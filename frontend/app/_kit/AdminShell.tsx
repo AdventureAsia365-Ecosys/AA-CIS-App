@@ -11,6 +11,9 @@
 // The shell owns three bits of interaction state: the ⌘K / Ctrl K palette, the mobile drawer, and
 // the backdrop. All are driven by explicit handlers (no setState-in-effect); the only effect is the
 // global keydown listener for ⌘K.
+//
+// AA-994: the shell renders the one I18nProvider of the admin (language from the `cis_lang` cookie, English by
+// default), so the topbar switch changes the text of the shell and of every page below it.
 
 import { useEffect, useState } from "react";
 import { Sidebar } from "./Sidebar";
@@ -19,6 +22,8 @@ import { BottomNav } from "./BottomNav";
 import { CommandPalette } from "./CommandPalette";
 import { SessionKeepAlive } from "./SessionKeepAlive";
 import { K } from "./core/tokens";
+import { I18nProvider } from "./core/useI18n";
+import { langStore } from "./i18n";
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -46,28 +51,30 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   }, [drawerOpen]);
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: K.bg }}>
-      {/* AA-816: refreshes a Cognito session while the page stays open (no-op for legacy). */}
-      <SessionKeepAlive />
-      <Sidebar drawerOpen={drawerOpen} onNavigate={() => setDrawerOpen(false)} />
+    <I18nProvider store={langStore}>
+      <div style={{ display: "flex", minHeight: "100vh", background: K.bg }}>
+        {/* AA-816: refreshes a Cognito session while the page stays open (no-op for legacy). */}
+        <SessionKeepAlive />
+        <Sidebar drawerOpen={drawerOpen} onNavigate={() => setDrawerOpen(false)} />
 
-      {/* Backdrop behind the open drawer (< 768px only; CSS shows it). */}
-      {drawerOpen && (
-        <div className="aa-admin-backdrop" onClick={() => setDrawerOpen(false)} aria-hidden="true" />
-      )}
+        {/* Backdrop behind the open drawer (< 768px only; CSS shows it). */}
+        {drawerOpen && (
+          <div className="aa-admin-backdrop" onClick={() => setDrawerOpen(false)} aria-hidden="true" />
+        )}
 
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", height: "100vh" }}>
-        <Topbar
-          onOpenSearch={() => setPaletteOpen(true)}
-          onOpenMenu={() => setDrawerOpen(true)}
-        />
-        {/* The page renders the kit AdminMain as its frame and scroll region (never a hand-written <main>). */}
-        {children}
+        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", height: "100vh" }}>
+          <Topbar
+            onOpenSearch={() => setPaletteOpen(true)}
+            onOpenMenu={() => setDrawerOpen(true)}
+          />
+          {/* The page renders the kit AdminMain as its frame and scroll region (never a hand-written <main>). */}
+          {children}
+        </div>
+
+        <BottomNav onOpenMore={() => setDrawerOpen(true)} />
+
+        <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       </div>
-
-      <BottomNav onOpenMore={() => setDrawerOpen(true)} />
-
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
-    </div>
+    </I18nProvider>
   );
 }

@@ -6,6 +6,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { Providers } from "./_kit/core/Providers";
 import { themeStore } from "./_kit/theme";
+import { langStore } from "./_kit/i18n";
 
 export const metadata: Metadata = {
   title: "AA-CIS",
@@ -14,7 +15,9 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" data-theme="light">
+    // The head scripts set data-theme / data-sidebar / lang before paint, so <html> attributes may differ from the
+    // server HTML on purpose.
+    <html lang="en" data-theme="light" suppressHydrationWarning>
       <head>
         {/* AA-601 part B — theme restore (runs before paint, no wrong-theme flash).
             localStorage.cis_theme holds the CHOICE: 'light' | 'dark' | (absent === system).
@@ -22,6 +25,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             value ('light'|'dark') is written to <html data-theme>, which drives the --aa-* vars. The script is the
             kit core's (app/_kit/core/theme.ts createThemeStore, AA-994 S1a) for the CIS key (app/_kit/theme.ts). */}
         <script dangerouslySetInnerHTML={{ __html: themeStore.restoreScript }} />
+
+        {/* AA-994 — UI language restore: <html lang> from the `cis_lang` cookie (absent === English) before paint.
+            The kit core's script (app/_kit/core/i18n.ts createLangStore) for the CIS cookie (app/_kit/i18n.ts). */}
+        <script dangerouslySetInnerHTML={{ __html: langStore.restoreScript }} />
 
         {/* AA-752 — sidebar collapsed-state restore (runs before paint, no wrong-width flash).
             localStorage.cis_sidebar === 'collapsed' means the rail is collapsed; absent === expanded.

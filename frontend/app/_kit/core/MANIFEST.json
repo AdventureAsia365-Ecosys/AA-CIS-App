@@ -27,6 +27,9 @@
     "GuidePanel.tsx": {
       "sha256": "c17bb6f391efb1c652a6f286e05b3b02d31cb38b20ecf49fccbf9d7bcc8104f7"
     },
+    "LangSwitch.tsx": {
+      "sha256": "c478bb35583c5ae2848493a8c020926f672de1f2fc94a8cee020f39357f973cc"
+    },
     "Modal.tsx": {
       "sha256": "7a6d6e58b2c4ffd0cc57300bb267154c0faf0f8fb0d64d438c58e0e168863614"
     },
@@ -54,6 +57,9 @@
     "guide.ts": {
       "sha256": "2f98d7ba5a97579d96ab4b77f7e502167714177171ce8392c488c311cfdd2660"
     },
+    "i18n.ts": {
+      "sha256": "44abb6d5201474cbbd8a7eb449d535829bc3c77af044362385156ea88310d583"
+    },
     "primitives.tsx": {
       "sha256": "a96f3d52092facc793e428a52b9f7ae48462a6dba6e87790334249f8bbb13ed6"
     },
@@ -74,6 +80,9 @@
     },
     "useHydrated.ts": {
       "sha256": "ff03882575b53db53178d782e184fc9844ab02f03e5c89d09ff981f2422180a4"
+    },
+    "useI18n.ts": {
+      "sha256": "ce29338e19c1f82137684836bc50dc139bc4d667adf9c626ac738c6ac46aaa66"
     },
     "useMediaQuery.ts": {
       "sha256": "df0174679a66288ff2343bc45b797b08dea342cbff09d940f60287e45f66d96f"
