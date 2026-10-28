@@ -720,3 +720,38 @@ async def test_fp_strip_hash_drops_the_salt_too():
     # or raise), and only object payloads are rewritten
     assert "CASE WHEN jsonb_typeof(result) = 'object' THEN result - 'subject_salt' ELSE result END" in sql
     assert "jsonb_typeof(payload) = 'object'" in sql
+
+
+# ── AA-850 (CIS 294): FK children in the quarantine schema `retired` ─────────────────────────────────────────────────
+
+def test_aa850_quarantined_child_is_its_own_check_kind():
+    """A dead table moved to `retired` keeps its FK to an erased table: it is a quarantined_child check (counted when
+    readable), not a foreign_owner one and not a cascade node (the erasure never deletes in `retired`)."""
+    reg = _registry(inv.TenantTable("shared.tenants", "delete", "acct"))
+    cat = _catalog(["shared.tenants"], {"shared.tenants": "uuid"},
+                   [E("route_pick_tenant_id_fkey", "retired.route_pick", "shared.tenants",
+                      ("tenant_id",), ("tenant_id",))])
+    plan = pl.plan_tenant(reg, cat)
+    assert [(c.kind, c.table) for c in plan.checks] == [("quarantined_child", "retired.route_pick")]
+    assert plan.checks[0].sql.startswith('SELECT count(*) FROM "retired"."route_pick" c WHERE')
+    assert "retired.route_pick" not in plan.nodes and "retired.route_pick" not in plan.order
+
+
+@pytest.mark.asyncio
+async def test_aa850_unreadable_quarantined_child_is_information_not_a_blocker():
+    """On Dev the runtime has no USAGE on `retired` (CIS 294): the unreadable count is reported, it does not block."""
+    plan = pl.TenantPlan(nodes={}, checks=[pl.Check("quarantined_child", "retired.route_pick", "d", "SELECT boom"),
+                                           pl.Check("foreign_owner", "booking.x", "d", "SELECT boom")],
+                         order=[], null_first=[], unregistered=[], missing=[])
+    out = await pl.count_tenant(_FakeConn(), plan, TID)
+    assert [b["kind"] for b in out["blockers"]] == ["foreign_owner"]
+    q = [c for c in out["checks_passed"] if c["kind"] == "quarantined_child"]
+    assert len(q) == 1 and q[0]["rows"] is None and "not readable" in q[0]["detail"]
+
+
+def test_aa850_wave1_tables_left_the_registry():
+    names = {t.table for t in inv.TENANT_TABLES}
+    for t in ("acp_contract.route_pick", "acp_shared.tenant_atom_state", "shared.tenant_brand_rule_versions",
+              "shared.tenant_brand_rules_deleted_aa404", "shared.acp_runs"):
+        assert t not in names
+    assert inv.QUARANTINE_SCHEMAS == ("retired",) and not set(inv.QUARANTINE_SCHEMAS) & set(inv.CIS_SCHEMAS)

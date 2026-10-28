@@ -239,8 +239,9 @@ def _apply_schema(conn):
     # AA-860 (X1 S21): also the four schemas x1_244_ci_shape creates and keeps (empty on Dev). Left over, they let
     # 019 create acp_silver_s4.social_content (RLS on) on the next session's replay, which CI's fresh DB never has
     # and the 244 / 245 exact RLS-set guards refuse.
+    # AA-850: also `retired` (CIS 294 quarantine): left over, the next replay's 294 finds the wave-1 names taken.
     for schema in ("acp_shared", "acp_contract", "acp_deliver", "catalog", "geo",
-                   "acp_gold_output", "acp_silver_s2", "acp_silver_s3", "acp_silver_s4"):
+                   "acp_gold_output", "acp_silver_s2", "acp_silver_s3", "acp_silver_s4", "retired"):
         try:
             cur.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
         except psycopg2.Error as e:

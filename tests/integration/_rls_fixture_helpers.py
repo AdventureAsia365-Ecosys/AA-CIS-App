@@ -193,10 +193,37 @@ def migration_body(n) -> str:
         return "\n".join(line for line in f.read().splitlines() if line.strip() not in ("BEGIN;", "COMMIT;"))
 
 
+# AA-850 (CIS 294): wave-1 objects quarantined in `retired` -> their source schema. Old migrations that tests re-apply
+# name some of them (239: acp_shared.tenant_atom_state; 281: shared.v_pipeline_summary / v_batch_stats).
+QUARANTINED_294 = {
+    "atom_decompose_jobs": ("acp_contract", "TABLE"), "s1_from_atom_runs": ("acp_contract", "TABLE"),
+    "route_pick": ("acp_contract", "TABLE"), "marketplace_portfolios": ("acp_shared", "TABLE"),
+    "tenant_atom_state": ("acp_shared", "TABLE"), "acp_runs": ("shared", "TABLE"),
+    "tenant_brand_rule_versions": ("shared", "TABLE"), "tenant_brand_rules_deleted_aa404": ("shared", "TABLE"),
+    "v_batch_stats": ("shared", "VIEW"), "v_pipeline_summary": ("shared", "VIEW"),
+}
+
+
+def undo_294_for_reapply(cur, names, owner=None):
+    """Move `names` from `retired` back to their pre-294 schema (no grant comes back: 294 left none and the old
+    migrations being re-applied predate it). Run inside the test's transaction (rolled back with it); a name that
+    is not in `retired` (294 not applied) is left alone. `owner`: also hand them to that role (the replay runs 294
+    before a test applies 245, so their owner is the test user, not cis_owner as on Dev)."""
+    for name in names:
+        src, kind = QUARANTINED_294[name]
+        cur.execute("SELECT to_regclass(%s) IS NOT NULL", (f"retired.{name}",))
+        if cur.fetchone()[0]:
+            cur.execute(f"ALTER {kind} retired.{name} SET SCHEMA {src}")
+            if owner:
+                cur.execute(f"ALTER {kind} {src}.{name} OWNER TO {owner}")
+
+
 def undo_241_for_239_reapply(cur):
     """Take angle_gate_option back to the pre-241 state 239's guard 1 expects (no RLS, no policy, no
     column UPDATE), year_plan to its pre-265 state (undo_265_year_plan), and grant Dev's legacy-table
-    grants 239's guard 4 counts with. Run inside the test's transaction (rolled back with it)."""
+    grants 239's guard 4 counts with. Run inside the test's transaction (rolled back with it). 239 names
+    acp_shared.tenant_atom_state, quarantined by CIS 294 (AA-850): it goes back to acp_shared first."""
+    undo_294_for_reapply(cur, ("tenant_atom_state",))
     cur.execute("DROP POLICY IF EXISTS tenant_isolation ON acp_shared.angle_gate_option")
     cur.execute("ALTER TABLE acp_shared.angle_gate_option DISABLE ROW LEVEL SECURITY")
     cur.execute("REVOKE UPDATE (chosen) ON acp_shared.angle_gate_option FROM aa_app_user")

@@ -235,10 +235,11 @@ def test_tenant_role_privileges(cur):
 # ── the loop ──────────────────────────────────────────────────────────────────────────────────────
 
 def test_loop_revokes_table_and_column_privileges(cur):
-    """Grants of the kinds Dev has (and one column grant) on relations without RLS are all revoked."""
-    col = _first_column(cur, "acp_shared.tenant_atom_state")
+    """Grants of the kinds Dev has (and one column grant) on relations without RLS are all revoked. The column grant
+    sits on acp_shared.audit_log (tenant_atom_state until CIS 294 quarantined it, AA-850)."""
+    col = _first_column(cur, "acp_shared.audit_log")
     cur.execute(f"GRANT SELECT, INSERT, UPDATE ON acp_shared.year_plan TO {TENANT_ROLE}")
-    cur.execute(f"GRANT UPDATE ({col}) ON acp_shared.tenant_atom_state TO {TENANT_ROLE}")
+    cur.execute(f"GRANT UPDATE ({col}) ON acp_shared.audit_log TO {TENANT_ROLE}")
     cur.execute(f"GRANT SELECT ON shared.tenants, shared.job TO {TENANT_ROLE}")
     cur.execute(f"GRANT SELECT ON acp_contract.v_active_tour_atoms TO {TENANT_ROLE}")
     cur.execute(NO_PRIVILEGE_WITHOUT_RLS_SQL)
@@ -246,7 +247,7 @@ def test_loop_revokes_table_and_column_privileges(cur):
     cur.execute(_body())
     cur.execute(NO_PRIVILEGE_WITHOUT_RLS_SQL)
     assert cur.fetchall() == []
-    for table in ("acp_shared.year_plan", "acp_shared.tenant_atom_state", "shared.tenants", "shared.job",
+    for table in ("acp_shared.year_plan", "acp_shared.audit_log", "shared.tenants", "shared.job",
                   "acp_contract.v_active_tour_atoms"):
         cur.execute("SELECT has_any_column_privilege(%s, %s, 'SELECT, INSERT, UPDATE, REFERENCES')",
                     (TENANT_ROLE, table))
@@ -297,17 +298,17 @@ def test_first_apply_from_the_pre_241_state(cur, seeded):
 def test_schema_versions_row_records_what_was_revoked(cur):
     """DB Migrate registers no asyncpg log listener, so the loop's NOTICEs never reach its log: the
     revoked set (table and column privileges) and the PUBLIC SELECTs kept are in the description."""
-    col = _first_column(cur, "acp_shared.tenant_atom_state")
+    col = _first_column(cur, "acp_shared.audit_log")
     _to_pre_241(cur)
     cur.execute(f"GRANT SELECT, INSERT ON acp_shared.year_plan TO {TENANT_ROLE}")
-    cur.execute(f"GRANT UPDATE ({col}) ON acp_shared.tenant_atom_state TO {TENANT_ROLE}")
+    cur.execute(f"GRANT UPDATE ({col}) ON acp_shared.audit_log TO {TENANT_ROLE}")
     cur.execute("GRANT SELECT ON shared.job TO PUBLIC")
     cur.execute(_body())
     cur.execute("SELECT description FROM shared.schema_versions WHERE version = '241'")
     description = cur.fetchone()[0]
     assert f"{OPTION} (SELECT)" in description
     assert "acp_shared.year_plan (INSERT, SELECT)" in description
-    assert f"acp_shared.tenant_atom_state (UPDATE({col}))" in description
+    assert f"acp_shared.audit_log (UPDATE({col}))" in description
     assert "PUBLIC SELECT kept on relations without RLS: " in description and "shared.job" in description
 
 
