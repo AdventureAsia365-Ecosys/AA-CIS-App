@@ -1759,3 +1759,160 @@ makes the Terra LinkedIn closer.
 ### Round 7 outcome (S254): reverted
 
 Blind 9-arm panel (720 scores, control arm r6b): brand_voice r7 6.60 vs r6b 6.75 / r6 6.67 (noise 0.08), reader_value r7 6.95 vs 7.15–7.22; AI-tells 5.75 and source fidelity 7.70 held. The ship rule failed, so the code was reverted (round 6 live again). The diagnosis above stays valid for the next round: the angle-brief copying and the missing style-guide focus are real, but the generic BRAND FOCUS block did not lift brand voice and cost reader value; next try the T8 angle generator itself (it writes briefs the seed cannot support). Report: root `docs/audits/2026-10-28-S254-aa790-r7-panel/`.
+
+## Round 8 (S255, 28/10/2026): the T8 angle brief, not the T9 prompt
+
+Input: the round-7 report (root `docs/audits/2026-10-28-S254-aa790-r7-panel/`: r7 failed brand_voice and
+reader_value against the same-night control r6b, ai_tells and fidelity held; reverted in #1087), the stored
+`writer_input.angle` of the 20 pilot pieces (`s251/aa790writer/out/seeds.json`, private root `.tmp-session/`) and the
+S252 7-arm panel scores (`s252/aa790/r6panel/panel-scores.json`). No paid call for the diagnosis. The decision from
+round 7 stands: change the T8 angle generator, leave the round-6 T9 prompt (`b5978839`) as it is.
+
+### Diagnosis
+
+- **D8-a, every round so far wrote from old briefs.** The 20 pilot pieces reuse 10 T8 requests whose angles were
+  written before the AA-771 T8 contract (#690, 13/10): their briefs still set a tone ("Tone is reassuring"), prescribe
+  the opening ("opens mid-moment") and name the exact invented scene the current T8 prompt cites as a DON'T. So
+  rounds 1-7 measured the T9 writer on briefs the live T8 no longer writes, and nothing has measured T8 itself. An
+  A/B of a T8 change must regenerate the angles in BOTH arms (control = the live round-6 brief, flag off), or it
+  compares the change with briefs from an older prompt.
+- **D8-b, the long briefs are fact outlines, and they score lower.** Brief length on the 10 requests: 63-124 words
+  for four of them, 145-221 for six. The long ones list which facts go in which section, with dates and percentages
+  (up to 7 figures), and ask for a stop-by-stop survey. Brand voice in the S252 panel, rounds 5 + 6: the four short
+  briefs 7.25-7.75 (n = 8 scores), the six long ones 6.25-7.38 (n = 32, mean about 6.7). Inside one tenant the order
+  holds (Terra blog: 63 words 7.75, 124 words 7.25, 154 words 6.25; Terra LinkedIn 145 words 6.54). Reference-prose
+  reasons ("encyclopedic", "reference", "guidebook", "fact-listing", "institutional") in brand-voice / reader-value
+  reasons: 18 of 64 for long briefs, 3 of 16 for short ones. Small n and tenant-confounded (the six Terra LinkedIn
+  pieces share one long brief), but it is the same direction as the round-7 reasons.
+- **D8-c, the briefs set a thesis to prove.** "the idea of convergence", "heritage practised rather than preserved",
+  "a quiet revelation about what makes this trip different", "what the ruins represent": a brief built on an
+  argument makes the writer state a verdict; rounds 4-6 cut the verdict lines as AI tells and nothing is left but the
+  fact outline.
+- **D8-d, the briefs ask for what the seed lacks.** The Terra LinkedIn brief asks for "one reassuring practical note"
+  that makes the stop accessible and structured, and for what a visiting family observes; the seed has neither, so
+  the writer copies the brief's wording (round-7 D-b: 20 of 42 Terra LinkedIn posts carry that closer). A Terra blog
+  brief asks for distances and how the pace is set across the days, on a seed without distances.
+- **D8-e, the briefs are not brand-specific.** Trail Pulse (energetic cycling) and WildKind (nature, observant) got
+  the same angle on the same seed: the same landmark as the hook, the same "destination guide / pillar guide with an
+  H2 per stop" outline, why_it_works on search volume ("dominates the search demand signal"). With the same outline,
+  two brands can only differ in sentence-level voice, which is exactly what rounds 4-7 could not lift. No brief says
+  which of the brand's own style-guide asks (Terra pace and comfort, Atlas guiding and privacy, Trail momentum,
+  WildKind habitats) this piece carries, or with which seed fact; round 7 tried that as a generic block in T9 for all
+  points at once and cost reader value.
+
+### Decisions
+
+- **R8-D1: a brief contract in the T8 system prompt, behind a mode switch.** `prompts.SYSTEM_PROMPT_R8` =
+  `SYSTEM_PROMPT` with (a) the best_final_style bullet replaced by a round-8 bullet and (b) one brand-first paragraph
+  before "Every angle must fit the BRAND". Every other byte is the same (test: reversing the two replacements gives
+  `SYSTEM_PROMPT` back). The user prompt is the same in both modes. Mode: api/worker env `T8_ANGLE_BRIEF_MODE`, only
+  the value `r8` turns it on; unset (default) or anything else is `off`, the live prompt byte for byte (sha
+  `df5bd75e54608e21` pinned). The A/B harness passes the mode explicitly (`generate_angles(brief_mode=...)`), so both
+  arms run on one deployed image with the env unset.
+- **R8-D2: the round-8 brief.** At most 90 words, four labelled parts in order: `Reader:` (what the reader does, sees,
+  eats or where they stay, in the seed's own terms: targets reader value and the reference-prose pattern, D8-b),
+  `Brand:` (one or two of the brand's own style-guide or mindset points this angle carries, each tied to the seed fact
+  that carries it, or "voice only": D8-e, scoped to the angle instead of round 7's every-point block), `Lead with:` (at
+  most three seed details) and `Shape:` (the structure in one sentence; it may name sections, never assigns facts to
+  each). Rules: not an outline of facts (at most three facts, dates or figures, no survey of every stop; D8-b), no
+  thesis or verdict to reach (D8-c), no voice, no first sentence, no other audience (kept from round 6), and nothing the
+  seed lacks, now naming reassurance, practical note, comfort, pace, safety, logistics and "what visitors see"
+  explicitly, with "when the style guide asks for one and the seed has nothing, leave it out of the brief" (D8-d).
+- **R8-D3: brand first, search second.** The new paragraph: build each angle on the seed moments THIS brand's reader
+  comes for, two brands on one seed should get different angles, and why_it_works names why this brand's audience
+  reads it (search demand may support it, never the whole reason). D8-e.
+- **R8-D4: a $0 contract check on the brief, through the existing retry.** `generate.r8_brief_problems`: the four
+  labels (any case), at most 120 words (the prompt asks 90; models overshoot a word target), at most 5 figures (day
+  numbers count). In mode `r8` its problems join `angle_contract_violations`, so a breaking set gets the existing one
+  retry with the problems as feedback (no new retry loop, no new gate, no registry or ledger entry). Mode `off` checks
+  exactly what it did before (tested with a fact outline: no violation, one call).
+- **R8-D5: one input builder for the live job and the A/B.** `service.set_goal_and_generate` is split, with no
+  behaviour change, into `angle_inputs` (every $0 DB read T8 does: route guard, atom seed or Route digest, brand pack,
+  channel spec, trip, search demand + real questions, piece history; returns `AngleInputs`), `measurable_rank` (the
+  AA-512 ranking before Jev) and `sanitize_briefs` (the AA-771 sanitiser). The place-card build stays in
+  `set_goal_and_generate` (it is an LLM step; it now runs before the AA-914 route guard instead of after it: the two
+  are independent). Lesson "one value, two code paths → one function": the harness builds its angle call from the
+  same object, so the A/B cannot drift from the live inputs.
+- **R8-D6: `_generate_once` takes `stage`, `model_tier` and `quality_signal_extra`** (defaults: `t8_angle_gen`, None,
+  none), for the harness's `adhoc_aa790` stage with the live `t8_angle_gen` model id, like the writer harness already
+  does. The live call passes none of them: same LLMRequest, same log row (test pins the quality-signal keys). In mode
+  `r8` the row's quality signal carries `brief_mode: r8`.
+- **R8-D7: the harness regenerates angles** (`scripts/aa790/t9_writer_repanel.py --angles regen --t8-mode off|r8
+  --arm <label>`): one T8 call (plus at most one contract retry) per distinct request of the selected pieces, ranked
+  as live (`measurable_rank`; the Jev answer check `verify_answers` is skipped: it only moves the pick when Jev
+  rejects a claimed PAA answer, and it would add Jev calls to an adhoc run), sanitised as live, the recommended angle
+  used for every piece of that request, T9 written with the live round-6 prompt. No app-table write. `--arm` (removed
+  with the round-7 revert) is back on every row and in every call's quality signal (T8 and T9). The three angles per
+  request, the pick, the brief census and the T8 cost go to `<out>.angles.json`. The T8 spend counts against the same
+  `--max-usd` cap (reserve $0.10 a request). The run id (`aa790_run`, printed as `AA790 run=…` and stored on every row
+  and call) is the eval run id the PR records (D-23).
+
+### Changed (vs the brief)
+
+- The brief asked for "the change behind a flag/route": it is an env mode switch read per call, not an
+  `llm_role_config` route, because the change is a prompt, not a model. The harness passes the mode, so the A/B needs
+  no env change and no Terraform.
+- The brief asked for "control r6 vs r8". The stored r6 texts were written from the pre-#690 briefs (D8-a), so the
+  control that isolates the T8 change is a fresh-angle arm with the live round-6 brief (`r8c`, mode off). The stored r6
+  texts stay in the panel as the link to rounds 1-7. The r6b / r7 texts of S254 are not on disk any more (the private
+  `S254/aa790r7-panel/` folder is gone and nothing is left in the S3 scripts bucket), so they cannot be re-scored.
+- `service.py` refactor: not asked; needed so the harness uses the live inputs (R8-D5).
+
+### Tradeoffs
+
+- **Cost vs a clean control.** Two fresh-angle arms (r8c + r8) cost about 2 × ($0.9 writes + ~10 T8 calls × ~$0.03,
+  plus retries) ≈ $2.2-2.5, over the $2 cap. The run plan is sequential: r8 first (cap $1.40); only if r8 passes the
+  bars against r6 does the orchestrator spend the r8c control (cap $1.30, a second approval), because a pass is what
+  needs the attribution. A fail needs no control.
+- **A label format in the brief.** The writer sees "Reader: … Brand: … Lead with: … Shape: …" as its brief. The labels
+  could leak into copy; the T9 F13 leak checks and the panel will show it. The tenant UI shows the same brief in the
+  angle picker, which reads well as four short parts.
+- **The retry can double T8 cost** for a request whose briefs break the contract (about +$0.03); the limits are lenient
+  (120 words, 5 figures) so the retry is the exception.
+- **Brand: from the style guide again.** Round 7 failed with style-guide points in the T9 prompt. Here T8 picks one or
+  two per angle and ties each to a seed fact, so it is specific, and T9's prompt is not touched; if the panel shows the
+  round-7 reader-value drop again, the `Brand:` part is the first thing to drop.
+- **Live pack vs stored pack.** The harness's T8 step reads the live brand pack (as the live job would), while its T9
+  step uses the pack stored in `writer_input`. For the four demo tenants they are the same unless a pack was edited
+  after S251.
+
+### Should know
+
+- Code: `services/acp_angle_gate/prompts.py` (`BRIEF_MODE_*`, `R8_BRIEF_*`, `_BRIEF_SPEC_OFF/_R8`, `_BRAND_FIRST_R8`,
+  `SYSTEM_PROMPT_R8`, `brief_mode`, `system_prompt`), `generate.py` (`T8_STAGE`, `r8_brief_problems`, the mode in
+  `_generate_once` / `angle_contract_violations` / `generate_angles`), `service.py` (`AngleInputs`, `angle_inputs`,
+  `measurable_rank`, `sanitize_briefs`), `scripts/aa790/t9_writer_repanel.py` (`--arm`, `--angles`, `--t8-mode`,
+  `regen_angles`, `request_keys`, `chosen_angle`, `brief_census`).
+- Tests: new `tests/unit/test_aa790_t8_round8.py` (off = round-6 sha; the two replacements are the only difference;
+  label order; round-6 rules kept; new rules present; no tenant / place name or em-dash in the additions; env switch
+  values; explicit mode beats env; brief check cases incl. figure counting; violations by mode; LLMRequest and log row
+  unchanged in off; r8 switches only the system prompt; harness stage / model / arm pass-through; one retry on an
+  outline in r8, none in off; unusable reply logged under the given stage; `AngleInputs.generate_kwargs` single atom
+  and Route; ranking and sanitiser helpers; harness helpers and the `--t8-mode` without `--angles regen` error).
+- Ship path if round 8 passes: set `T8_ANGLE_BRIEF_MODE=r8` on the worker (t8_angles runs there) and the api (admin
+  regenerate-angles), or a one-line PR that makes `r8` the default; existing requests keep their stored angles.
+- Not in this PR: the paid A/B, the blind panel and the decision (orchestrator, plan in the lane result).
+
+### Round 8 review fixes (S255, independent review)
+
+- **R8-D8: a failed T8 regen skips the piece, it does not fall back to the stored angle.** Before the fix a request
+  whose regen raised (atom gone from `v_active_tour_atoms` after a wave, a parse error twice) or was skipped by the
+  cost cap was still written, from its old pre-#690 brief, and scored as part of the r8 / r8c arm (and paid for). Now
+  `main` reports those pieces with `error: t8_regen: …` and writes nothing for them, so an arm is all regenerated
+  angles. The panel helper must pair arms by `piece_id` and drop pieces an arm lacks.
+- **R8-D9: `seed_match` on every regen row ($0).** `angle_inputs` reads the CURRENT atom seed / Route digest, while
+  the T9 step writes from the seed stored in `writer_input` at S251. If an atom or Route changed since (S1 waves,
+  place cards, AA-997 geocode), the new brief can tell the writer to lead with a detail the writer's seed does not
+  have, which the panel would score as a fidelity or brand-voice loss of round 8 when it is seed drift.
+  `stored_t8_seed(writer_input)` rebuilds the T8 seed the stored input implies (the same `route_moments` +
+  `render_digest` for a Route, the atom seed otherwise) and the row gets `seed_match` = its sha equals the sha of the
+  seed T8 read (`t8_seed_sha` in `<out>.angles.json`). The dry run prints it per piece: check it is True for every
+  piece before the paid run; a False piece should be dropped from both arms (or the brief census read with care).
+- **Brief word count is one function.** `generate.brief_words` is the count the contract check uses; the harness
+  census used `str.split()` before, so its `words` could disagree with the "is N words long" problem it printed.
+- **Should know (not changed):** piece history in the regen reads every OTHER request's pieces for the same tenant +
+  atom (`exclude_request_id` is only this request), so a request whose atom was also written by another pilot request
+  sees that piece as prior history, which the live job at S251 did not. Both regen arms see the same history, so the
+  r8 vs r8c comparison stays fair; r8 vs the stored r6 texts does not isolate the contract (D8-a, and the A / A'
+  lesson: only trust r8 − r8c when it is clearly larger than the run-to-run noise), so the flag decision needs r8c.
+  Rows carry `arm`, `t8_mode`, `angle_source` and `angle_used`: strip them before the blind panel sees a row.

@@ -22,7 +22,7 @@ nullable per migration 126, subject_id migration 133).
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from uuid import UUID
 
 import structlog
@@ -158,18 +158,126 @@ async def set_goal_and_generate(tenant_id: UUID, request_id: UUID, goal_key: str
     goal = get_goal(goal_key)
     if goal is None:
         raise InvalidGoalError(f"Unknown goal key: {goal_key!r}")
-    # AA-914 — the stored Route snapshot can hold ids that now belong to another tour's Segment (or
-    # none): only the Segments the trip has a live atom in reach the digest and the question chain.
-    if req["route_segment_ids"]:
-        req = {**dict(req), "route_segment_ids": await request_route_segment_ids(
-            pool, req, tenant_id=tenant_id, consumer="t8_angles")}
-
     # AA-772 (S233) — the atom's place card (built here in the t8_angles job if missing) is part
     # of the seed the angles are written from. Soft-fail: no card → the plain seed.
     try:
         await ensure_place_cards([req["atom_id"]], pool)
     except Exception as e:  # noqa: BLE001
         logger.warning("t8_place_cards_failed", request_id=str(request_id), error=str(e)[:200])
+    inputs = await angle_inputs(tenant_id, req, goal, pool)
+    brand_audience, search_demand, tour_paa = inputs.brand_audience, inputs.search_demand, inputs.tour_paa
+
+    angles, recommended_index, reason, cost_usd = await generate_angles(
+        **inputs.generate_kwargs(),
+        tenant_id=tenant_id, request_id=request_id, pool=pool,  # AA-505
+    )
+
+    # AA-512 — measurable ranking (ADR 0004), replacing the LLM's own opinion, ONLY when channel
+    # is already known (a Subject-driven request — channel fixed from the Subject at creation).
+    # Avoid-list violations are channel-scoped and genuinely can't be computed before a channel is
+    # known — never true for the legacy atom-picker path (channel picked at step 8, AFTER angles
+    # already exist) — so that path keeps the LLM's own recommended_index unchanged, no
+    # regression. See docs/claude_audit/AA-512-step0-investigation.md §2.
+    ranking_evidence = None
+    if inputs.channel:
+        ranking_evidence, recommended_index = measurable_rank(angles, inputs)
+        ranking_evidence, recommended_index, jev_dropped = await verify_answers(   # AA-700 T8-1
+            angles, ranking_evidence, tenant_id,
+        )
+        logger.info(
+            "angle_gate_measurable_ranking", request_id=str(request_id),
+            recommended_index=recommended_index, jev_dropped=jev_dropped,
+            scores=[e.score for e in ranking_evidence],
+        )
+
+    # AA-501 (migration 127) — snapshot, not a live re-fetch: persist exactly the
+    # SearchDemandSignal the LLM saw for THIS request, so a later T2 DFS re-run on the same tour
+    # can never silently change what the review screen shows for an already-generated angle. None
+    # (no trip_id, or no seo_context row) stays NULL, not an empty object — same "absent means no
+    # signal" convention fetch_search_demand_signal() itself uses.
+    # S245 (AA-779) — a blog snapshot also keeps the tour-level list on its own, so T9 can tell the
+    # tour's questions from the Segment/place ones it reads again (texts only: the tenant sees this).
+    snapshot = asdict(search_demand) if search_demand else None
+    if snapshot is not None and tour_paa is not None:
+        snapshot["tour_people_also_ask"] = tour_paa
+    dfs_paa_snapshot = json.dumps(snapshot) if snapshot is not None else None
+
+    # AA-771 (S234, C7) — the brief may not set a voice against the brand's, prescribe the opening,
+    # or (non-editorial brands) address travel professionals. Stripped in code, never retried, so
+    # the tenant and the writer both see the clean brief.
+    sanitize_briefs(angles, brand_audience, request_id=request_id)
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                """
+                UPDATE acp_shared.angle_gate_request
+                SET goal = $2, status = 'pending_choice', updated_at = now(),
+                    dfs_paa_snapshot = $3::jsonb
+                WHERE request_id = $1
+                """,
+                request_id, goal_key, dfs_paa_snapshot,
+            )
+            for i, a in enumerate(angles):
+                evidence = ranking_evidence[i] if ranking_evidence else None
+                await conn.execute(
+                    """
+                    INSERT INTO acp_shared.angle_gate_option
+                        (request_id, idx, name, why_it_works, formula_fit, best_final_style,
+                         recommended, answers, violations)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb)
+                    """,
+                    request_id, i, a["name"], a["why_it_works"], a["formula_fit"],
+                    a["best_final_style"], i == recommended_index,
+                    json.dumps(evidence.answers) if evidence else None,
+                    json.dumps(evidence.violations) if evidence else None,
+                )
+    logger.info(
+        "angle_gate_goal_set", request_id=str(request_id), goal=goal_key,
+        recommended_index=recommended_index, recommendation_reason=reason, cost_usd=cost_usd,
+    )
+    return await fetch_request(tenant_id, request_id, pool)
+
+
+@dataclass
+class AngleInputs:
+    """Everything T8 reads for one request before its one LLM call (angle_inputs). AA-790 round 8 (S255): the live
+    job and the A/B harness (scripts/aa790/t9_writer_repanel.py --angles regen) build the angle call from this one
+    object, so the A/B writes its angles from exactly the seed, brand, channel, questions and history the live job
+    would use."""
+    request: dict
+    goal: dict
+    content_seed: str
+    moments: list[dict] | None
+    brand_audience: dict
+    channel: str | None
+    channel_style: dict | None
+    trip_name: str | None
+    destination: str | None
+    search_demand: SearchDemandSignal | None
+    tour_paa: list[str] | None
+    piece_history: list
+
+    def generate_kwargs(self) -> dict:
+        """generate_angles' arguments, without the attribution (tenant_id / request_id / pool) or the brief mode."""
+        return {
+            "content_seed": self.content_seed, "goal": self.goal,
+            "brand_audience": self.brand_audience, "destination": self.destination, "trip_name": self.trip_name,
+            "search_demand": self.search_demand, "piece_history": self.piece_history,
+            # AA-771 (S233) — the angle is shaped for the request's channel (always set by the Slate)
+            "channel_style": self.channel_style,
+            **({"moments": self.moments, "is_route": True} if self.moments else {}),
+        }
+
+
+async def angle_inputs(tenant_id: UUID, req, goal: dict, pool) -> AngleInputs:
+    """The angle call's inputs for one request row ($0: DB reads only, no LLM call, no write). The place card build
+    (ensure_place_cards, an LLM step) stays with the caller."""
+    # AA-914 — the stored Route snapshot can hold ids that now belong to another tour's Segment (or
+    # none): only the Segments the trip has a live atom in reach the digest and the question chain.
+    if req["route_segment_ids"]:
+        req = {**dict(req), "route_segment_ids": await request_route_segment_ids(
+            pool, req, tenant_id=tenant_id, consumer="t8_angles")}
     atom = await _fetch_atom_for_tenant(tenant_id, req["atom_id"], pool)
     brand_audience = await fetch_brand_audience(tenant_id, pool)
     # S234 (C7) — a Route request writes its angles from the whole walk (day order, fact counts,
@@ -214,98 +322,41 @@ async def set_goal_and_generate(tenant_id: UUID, request_id: UUID, goal_key: str
     # atom is being written, or no prior piece produced a summary yet) — see fetch_piece_history's
     # own docstring for why that's not an error.
     piece_history = await fetch_piece_history(
-        tenant_id, req["atom_id"], pool, exclude_request_id=request_id,
+        tenant_id, req["atom_id"], pool, exclude_request_id=req["request_id"],
+    )
+    return AngleInputs(
+        request=req, goal=goal, content_seed=content_seed, moments=moments, brand_audience=brand_audience,
+        channel=req["channel"], channel_style=channel_style, trip_name=trip_name, destination=destination,
+        search_demand=search_demand, tour_paa=tour_paa, piece_history=piece_history,
     )
 
-    angles, recommended_index, reason, cost_usd = await generate_angles(
-        content_seed=content_seed, goal=goal,
-        brand_audience=brand_audience, destination=destination, trip_name=trip_name,
-        search_demand=search_demand, piece_history=piece_history,
-        tenant_id=tenant_id, request_id=request_id, pool=pool,  # AA-505
-        # AA-771 (S233) — the angle is shaped for the request's channel (always set by the Slate)
-        channel_style=channel_style,
-        **({"moments": moments, "is_route": True} if moments else {}),
+
+def measurable_rank(angles: list[dict], inputs: AngleInputs):
+    """AA-512 measurable ranking before the Jev answer check ($0): (evidence per angle, recommended idx). Only for a
+    request with a channel (the caller checks)."""
+    channel_style, brand_audience = inputs.channel_style, inputs.brand_audience
+    avoid_text = channel_style["avoid"] if channel_style else ""
+    # AA-771 (S233) — the tenant's own forbidden words count as avoid-list hits too.
+    tenant_forbidden = [w for w in (brand_audience.get("forbidden_words") or []) if "," not in w]
+    if tenant_forbidden:
+        avoid_text = ", ".join(p for p in (avoid_text, ", ".join(tenant_forbidden)) if p)
+    asked_questions = inputs.search_demand.people_also_ask if inputs.search_demand else []
+    return rank_angles(
+        angles, claimed_answers=[a.get("answers", []) for a in angles],
+        asked_questions=asked_questions, avoid_text=avoid_text,
+        thin_anchors=[a.get("thin_anchor") for a in angles] if inputs.moments else None,  # S234 C7
     )
 
-    # AA-512 — measurable ranking (ADR 0004), replacing the LLM's own opinion, ONLY when channel
-    # is already known (a Subject-driven request — channel fixed from the Subject at creation).
-    # Avoid-list violations are channel-scoped and genuinely can't be computed before a channel is
-    # known — never true for the legacy atom-picker path (channel picked at step 8, AFTER angles
-    # already exist) — so that path keeps the LLM's own recommended_index unchanged, no
-    # regression. See docs/claude_audit/AA-512-step0-investigation.md §2.
-    ranking_evidence = None
-    if req["channel"]:
-        avoid_text = channel_style["avoid"] if channel_style else ""
-        # AA-771 (S233) — the tenant's own forbidden words count as avoid-list hits too.
-        tenant_forbidden = [w for w in (brand_audience.get("forbidden_words") or []) if "," not in w]
-        if tenant_forbidden:
-            avoid_text = ", ".join(p for p in (avoid_text, ", ".join(tenant_forbidden)) if p)
-        asked_questions = search_demand.people_also_ask if search_demand else []
-        ranking_evidence, recommended_index = rank_angles(
-            angles, claimed_answers=[a.get("answers", []) for a in angles],
-            asked_questions=asked_questions, avoid_text=avoid_text,
-            thin_anchors=[a.get("thin_anchor") for a in angles] if moments else None,  # S234 C7
-        )
-        ranking_evidence, recommended_index, jev_dropped = await verify_answers(   # AA-700 T8-1
-            angles, ranking_evidence, tenant_id,
-        )
-        logger.info(
-            "angle_gate_measurable_ranking", request_id=str(request_id),
-            recommended_index=recommended_index, jev_dropped=jev_dropped,
-            scores=[e.score for e in ranking_evidence],
-        )
 
-    # AA-501 (migration 127) — snapshot, not a live re-fetch: persist exactly the
-    # SearchDemandSignal the LLM saw for THIS request, so a later T2 DFS re-run on the same tour
-    # can never silently change what the review screen shows for an already-generated angle. None
-    # (no trip_id, or no seo_context row) stays NULL, not an empty object — same "absent means no
-    # signal" convention fetch_search_demand_signal() itself uses.
-    # S245 (AA-779) — a blog snapshot also keeps the tour-level list on its own, so T9 can tell the
-    # tour's questions from the Segment/place ones it reads again (texts only: the tenant sees this).
-    snapshot = asdict(search_demand) if search_demand else None
-    if snapshot is not None and tour_paa is not None:
-        snapshot["tour_people_also_ask"] = tour_paa
-    dfs_paa_snapshot = json.dumps(snapshot) if snapshot is not None else None
-
-    # AA-771 (S234, C7) — the brief may not set a voice against the brand's, prescribe the opening,
-    # or (non-editorial brands) address travel professionals. Stripped in code, never retried, so
-    # the tenant and the writer both see the clean brief.
+def sanitize_briefs(angles: list[dict], brand_audience: dict, *, request_id=None) -> None:
+    """AA-771 (S234, C7) — the brief may not set a voice against the brand's, prescribe the opening, or
+    (non-editorial brands) address travel professionals. Stripped in code (in place), never retried, so the tenant
+    and the writer both see the clean brief."""
     for i, a in enumerate(angles):
         clean, stripped = sanitize_best_final_style(a["best_final_style"], brand_audience)
         if stripped:
             logger.info("angle_gate_style_sanitized", request_id=str(request_id), idx=i, stripped=stripped[:5])
             a["best_final_style"] = clean
-
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            await conn.execute(
-                """
-                UPDATE acp_shared.angle_gate_request
-                SET goal = $2, status = 'pending_choice', updated_at = now(),
-                    dfs_paa_snapshot = $3::jsonb
-                WHERE request_id = $1
-                """,
-                request_id, goal_key, dfs_paa_snapshot,
-            )
-            for i, a in enumerate(angles):
-                evidence = ranking_evidence[i] if ranking_evidence else None
-                await conn.execute(
-                    """
-                    INSERT INTO acp_shared.angle_gate_option
-                        (request_id, idx, name, why_it_works, formula_fit, best_final_style,
-                         recommended, answers, violations)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb)
-                    """,
-                    request_id, i, a["name"], a["why_it_works"], a["formula_fit"],
-                    a["best_final_style"], i == recommended_index,
-                    json.dumps(evidence.answers) if evidence else None,
-                    json.dumps(evidence.violations) if evidence else None,
-                )
-    logger.info(
-        "angle_gate_goal_set", request_id=str(request_id), goal=goal_key,
-        recommended_index=recommended_index, recommendation_reason=reason, cost_usd=cost_usd,
-    )
-    return await fetch_request(tenant_id, request_id, pool)
 
 
 # S245 (AA-779) — how many questions a blog's angle prompt / ranking reads (real ones first).
