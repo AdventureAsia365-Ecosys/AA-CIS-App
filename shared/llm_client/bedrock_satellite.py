@@ -94,9 +94,9 @@ _SESSION_REFRESH_MARGIN_SECONDS = 300  # refresh 5 phút trước khi hết hạ
 
 
 class BedrockUnavailable(Exception):
-    """Caller (pipeline node) bắt exception này → gọi fallback GPT-4.1 hiện có.
-    KHÔNG để lỗi satellite (AssumeRole fail, InvokeModel fail, network...)
-    làm crash request người dùng — luôn có đường lui GPT-4.1."""
+    """The satellite call failed (AssumeRole, InvokeModel, network...). LLMClient, the only caller,
+    re-raises it as that model's failure; the stage route's fallback chain (shared.llm_role_config)
+    decides what is tried next. No fixed fallback model is assumed here."""
     pass
 
 
@@ -213,9 +213,8 @@ def invoke_claude(
       Không nối system vào đầu prompt (user message) — Anthropic xử lý
       system khác ưu tiên/ngữ nghĩa so với user turn, nối vào sẽ giảm độ
       tuân thủ brand rules so với cách acc2/T1 đang làm.
-    Raise BedrockUnavailable khi lỗi — caller ở lớp trên (pipeline node)
-    chịu trách nhiệm bắt exception này và gọi fallback GPT-4.1 hiện có
-    (KHÔNG sửa code GPT-4.1 đang chạy, chỉ thêm nhánh gọi hàm này trước).
+    Raise BedrockUnavailable khi lỗi — LLMClient (the only caller) re-raises it as that model's
+    failure; the stage route's fallback chain decides what is tried next.
     """
     if account not in _SATELLITE_ACCOUNTS:
         raise ValueError(f"Unknown satellite account: {account!r} (valid: {list(_SATELLITE_ACCOUNTS)})")

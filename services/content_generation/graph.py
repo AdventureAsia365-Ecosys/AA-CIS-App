@@ -370,7 +370,7 @@ class ContentState(TypedDict):
     # flag fix tracking (AA-134)
     fix_pass_applied:       bool
     fix_pass_fields:        list
-    # AA-206: GPT-4.1 two-model judge fields (set by judge_node when a brand profile is present)
+    # AA-206: two-model judge fields (set by judge_node when a brand profile is present)
     judge_brand_fit:            float
     judge_cross_brand_distinct: float
     judge_mission_present:      bool
@@ -1349,7 +1349,7 @@ def revalidate_node(state: ContentState) -> ContentState:
       - clean pass (no fix): already validated/judged, still publishable — untouched.
       - flagged/manual_check but NOT fixed: already blocked by _is_publishable (AA-211) — untouched.
     Re-validate (rule-based, free) catches structural/SEO regressions from the fix; re-judge
-    (GPT-4.1) re-confirms brand-fit. On fail -> manual_check so the existing export gate blocks it
+    (the s1_judge route) re-confirms brand-fit. On fail -> manual_check so the existing export gate blocks it
     and _enqueue_review routes it to HITL.
     """
     # AA-738: strip again after every LLM edit (grounding repair, flag_fix, the seo_meta re-repair
@@ -1459,8 +1459,8 @@ def build_graph(t2_drafts: bool = False) -> StateGraph:
 
     graph.set_entry_point("generate")
     graph.add_edge("generate", "validate")
-    # AA-206: GPT-4.1 judge sits between validate and the retry decision so should_retry routes on
-    # the judge-adjusted quality_score (Bedrock fixes against judge feedback via the retry loop).
+    # AA-206: the judge sits between validate and the retry decision so should_retry routes on
+    # the judge-adjusted quality_score (the writer fixes against judge feedback via the retry loop).
     graph.add_edge("validate", "llm_judge")
     if t2_drafts:
         graph.add_node("track_best", track_best_node)

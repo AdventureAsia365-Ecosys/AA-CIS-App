@@ -406,7 +406,7 @@ def pre_audit_checks(generated: dict, tour: dict | None = None, *, tenant_id: st
     return list(set(codes))
 
 
-# ── GPT-4.1 strict JSON schema ────────────────────────────────────────────────
+# ── brand-audit strict JSON schema ────────────────────────────────────────────────
 
 BRAND_AUDIT_SCHEMA = {
     "type": "object",
@@ -518,7 +518,7 @@ def _v2_report_only_voice(all_codes: list[str], pre_codes: list[str], model_stat
 
 
 def _audit_from_judge(state: dict, generated: dict) -> dict:
-    """AA-206: build the brand-audit result from the GPT-4.1 judge fields instead of a second LLM
+    """AA-206: build the brand-audit result from the brand-fit judge fields instead of a second LLM
     call. Deterministic pre-audit codes still fire (they drive flag_fix's field targeting) and the
     judge's feedback is surfaced as an issue so flag_fix has context for the repair pass."""
     pre_codes = pre_audit_checks(generated, state.get("tour"), tenant_id=state.get("tenant_id"),
@@ -575,9 +575,9 @@ def _audit_deterministic_only(state: dict, generated: dict) -> dict:
 def brand_audit_node(state: dict) -> dict:
     """AA-133: LLM-as-Judge brand audit. Runs after validate when score >= 7.0.
 
-    AA-206: when the GPT-4.1 judge ran earlier in the graph (branded tours with a differentiation
-    profile), reuse its result instead of making a second GPT call. Falls through to the standalone
-    OpenAI audit only when the judge did not run (legacy/no-profile brands)."""
+    AA-206: when the brand-fit judge ran earlier in the graph (branded tours with a differentiation
+    profile), reuse its result instead of making a second LLM call. Falls through to the standalone
+    audit call (stage `s1_brand_audit`) only when the judge did not run (legacy/no-profile brands)."""
     generated = state.get("generated", {})
     if not generated:
         return {

@@ -1,14 +1,16 @@
-"""AA-206 [AA-193·F1]: GPT-4.1 brand-fit judge for the S1 content graph.
+"""AA-206 [AA-193·F1]: brand-fit judge for the S1 content graph.
 
-Two-model generate–judge: Bedrock writes the content (generate_node); GPT-4.1 scores it for
-brand fit and cross-brand distinctiveness here. The judge does NOT edit content — it only sets
-``quality_score`` + ``feedback`` so the existing retry loop (should_retry → increment_retry →
-generate) lets Bedrock fix the content against the judge's feedback.
+Two-model generate–judge: the writer route writes the content (generate_node); the judge route
+(stage `s1_judge`, T2 `t2_judge` — models in shared.llm_role_config, a different vendor than the
+writer per ADR-2026-014/027) scores it for brand fit and cross-brand distinctiveness here. The
+judge does NOT edit content — it only sets ``quality_score`` + ``feedback`` so the existing retry
+loop (should_retry → increment_retry → generate) lets the writer fix the content against the
+judge's feedback.
 
-Pure scoring node. All failure modes are non-blocking: any GPT error or parse failure logs and
+Pure scoring node. All failure modes are non-blocking: any LLM error or parse failure logs and
 leaves validate's ``quality_score`` untouched so the pipeline never stalls on the judge.
 
-AA-631 — the actual GPT-4.1 brand-fit call (system prompt, prompt-building, score-combining)
+AA-631 — the actual brand-fit call (system prompt, prompt-building, score-combining)
 now lives in `services/content_generation/brand_fit.py::score_brand_fit()`, shared with
 Debate's slate.py brand-fit cut (AA-631's own design decision: reuse the EXISTING judge rather
 than build a second, parallel LLM mechanism). This node keeps everything T2-graph-specific:
@@ -303,7 +305,7 @@ def _billed_rows_of(stage: str, result, error: str) -> list[dict]:
 
 
 def judge_node(state: dict) -> dict:
-    """AA-206: GPT-4.1 brand-fit judge. Runs after validate, before should_retry.
+    """AA-206: brand-fit judge. Runs after validate, before should_retry.
 
     Sets ``quality_score`` = min(validate score, judge score) so the brand gate stacks on top of
     validate's structural gate, and merges judge ``feedback`` into ``feedback`` for the retry.
