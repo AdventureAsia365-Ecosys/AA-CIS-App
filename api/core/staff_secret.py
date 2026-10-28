@@ -1,4 +1,4 @@
-"""S241 — staff-only guard for /v1 routers that act on every tenant's data (/v1/rules, /v1/social).
+"""S241 — staff-only guard for /v1 routers that act on every tenant's data (/v1/rules; /v1/social until AA-850).
 
 Before S241 those routers used a local `_get_admin` that accepted the X-Admin-Secret OR any valid
 JWT. A tenant can trade its API key for a JWT (POST /auth/tenant-login, role='tenant'), so any

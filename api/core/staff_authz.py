@@ -341,7 +341,6 @@ POLICY: dict[tuple[str, str], str] = {
     ("POST", "/v1/pipeline/review-queue/{review_id}/approve"): REVIEW_ACT,
     ("POST", "/v1/pipeline/review-queue/{review_id}/reject"): REVIEW_ACT,
     ("PATCH", "/v1/rules/{rule_id}"): CONTENT_SETTINGS_WRITE,      # global output rules, every tenant
-    ("POST", "/v1/social/batch-review"): ATOMS_WRITE,              # A3 social HITL, every tenant
 
     # ── admin_platform (AA-816 C7) — staff directory health: the reconcile report (WORKFORCE vs the
     # directory) and an on-demand run. Report only, so staff.read (not the owner-only staff.write).
@@ -456,7 +455,9 @@ POLICY: dict[tuple[str, str], str] = {
 # /admin/platform/staff routes landed.
 AWAITING_ROUTE: dict[tuple[str, str], str] = {}
 
-# Path prefixes where the staff secret is accepted and POLICY applies (route-policy test scope).
+# Path prefixes where the staff secret is accepted and POLICY applies (route-policy test scope). /v1/social has no
+# route since AA-850 (its router read acp_silver_s4, dropped by CIS 299); the prefix stays staff-only (fail closed,
+# and the BFF list in frontend/lib/auth-server.ts mirrors this tuple).
 STAFF_PATH_PREFIXES: tuple[str, ...] = ("/admin", "/v1/pipeline", "/v1/rules", "/v1/social")
 
 # Machine callers send the secret and no x-admin-role. (method, route) -> who calls it. Of the GETs only

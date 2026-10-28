@@ -25,10 +25,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
-# The 11 CIS runtime schemas (X1, tests/integration/conftest.py X1_CIS_SCHEMAS). `catalog` holds views only.
+# The 7 CIS runtime schemas: the 11 of X1 (CIS 244) less the four empty legacy ones CIS 299 dropped (AA-850,
+# tests/integration/conftest.py X1_LEGACY_EMPTY_SCHEMAS). `catalog` holds views only.
 CIS_SCHEMAS: tuple[str, ...] = (
-    "acp_contract", "acp_deliver", "acp_gold_output", "acp_shared", "acp_silver_s2", "acp_silver_s3",
-    "acp_silver_s4", "geo", "gold_aa_internal", "shared", "silver_aa_internal",
+    "acp_contract", "acp_deliver", "acp_shared", "geo", "gold_aa_internal", "shared", "silver_aa_internal",
 )
 
 # AA-850 (CIS 294, data standards DM-3.9): dead CIS tables wait here for their drop, with no grant to any role. Not a
@@ -156,7 +156,8 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     # The account row goes last (plan.py orders deletes children-first, and every table above points at it).
     _d("shared.tenants", "the tenant account row"),
     # ── legacy tables: absent on Dev (schema reference 22/10/2026), still created by the CI migration replay
-    # (conftest X1_CI_ONLY_LEGACY_RLS + two competitor tables). Registered so a database that has them erases them.
+    # (conftest X1_CI_ONLY_LEGACY_RLS + the competitor cache). Registered so a database that has them erases them.
+    # (acp_silver_s2.competitor_inputs left with its schema, CIS 299, AA-850; 208 had dropped the table.)
     _d("acp_deliver.packets", "legacy ACP v1 delivery packets (absent on Dev)"),
     _d("acp_deliver.pieces", "legacy ACP v1 delivery pieces (absent on Dev)"),
     _d("acp_shared.acp_v2_runs", "legacy ACP v2 runs (absent on Dev)"),
@@ -164,7 +165,6 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     _d("acp_shared.competitor_index_cache", "legacy competitor cache (absent on Dev)"),
     _d("acp_shared.content_metric_snapshot", "legacy content metrics (absent on Dev)"),
     _d("acp_shared.unknown_ledger", "legacy unknown ledger (absent on Dev)"),
-    _d("acp_silver_s2.competitor_inputs", "legacy competitor inputs (absent on Dev)"),
     # ── platform cost history: keep the totals, drop the link to the tenant
     TenantTable("shared.llm_call_log", "detach", "LLM cost history; the totals stay, the tenant link goes",
                 null_also=("content_piece_id", "angle_gate_request_id", "job_id")),

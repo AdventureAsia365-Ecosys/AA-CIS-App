@@ -708,6 +708,9 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   `v_batch_stats`, `v_pipeline_summary` — none of these exists any more, do not rebuild on them. The tenant erasure
   skips `retired` (`services/erasure/inventory.py` `QUARANTINE_SCHEMAS`; an FK child there is a `quarantined_child`
   information line). Registry: AA-Ecosys `docs/audits/2026-10-28-S255-aa850-dead-tables/registry.md`.
+- **The ACP v1 stage schemas are gone (CIS 299, AA-850)**: `acp_gold_output`, `acp_silver_s2`, `acp_silver_s3`,
+  `acp_silver_s4`, empty since 121 / 208, were dropped (no quarantine: no object to wait). The `/v1/social` router
+  over `acp_silver_s4.social_content` (every call had failed since 121) went with them. Do not recreate them.
 - **ACP v1 run model is gone (AA-751, 16/10)**: `acp_shared.acp_runs` was dropped by migration 121;
   its last readers (`GET /admin/acp/stuck-runs`, `POST /admin/acp/runs/{run_id}/force-fail`,
   `services/acp_shared/cost_utils.py`, `services/acp_canary/`) are deleted. Stuck or long work is a
@@ -1011,8 +1014,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   AA-specific on purpose: SEO buyer markets, `booking.countries`, `geo.place_dedupe_country` approvals, brand rules, the
   hand-tuned zone splits and bounding boxes, `dedupe.COUNTRY_WORDS`, the SEO keyword filter's `COUNTRY_MASTER` words.
 - **The CIS runtime role is `cis_app` (X1, AA-860; api + worker switch in S18).** Migration 244 grants it
-  DML / sequences / non-trigger function EXECUTE in the 11 CIS runtime schemas (not `catalog`, `booking`,
-  `tripplanner`, `public`), default privileges for later objects (`FOR ROLE aa_cis_admin` in 244, restated
+  DML / sequences / non-trigger function EXECUTE in the CIS runtime schemas (11 then, 7 since CIS 299; not
+  `catalog`, `booking`, `tripplanner`, `public`), default privileges for later objects (`FOR ROLE aa_cis_admin` in 244, restated
   `FOR ROLE cis_owner` by 245: the approved exception XD3, data standards Part A §9), read-only
   `shared.schema_versions`, and a permissive `<table>_cis_app_all FOR ALL TO cis_app USING (true) WITH CHECK
   (true)` policy on every RLS table, ENABLE-only **and** FORCE (the master reads FORCE tables unfiltered

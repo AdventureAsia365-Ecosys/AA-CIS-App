@@ -59,13 +59,16 @@ TTV_STANDIN_DDL = """
 # isolation the runtime gets after X1 S18). Never a Dev secret: Dev's comes from aa-cis/dev/rds-cis-app.
 CIS_APP_CI_PASSWORD = "cis-app-ci-only-not-a-secret"
 
-# AA-860 (X1 S16): the RLS tables of the 11 CIS runtime schemas on Dev (schema reference 18/10), which CIS
-# 244's guards require exactly. The CI DB differs: 008 (FORCE on content_exports / webhook_deliveries) is
-# skipped, tenant_tour_versions and acp_output_rules do not exist (001 / 020 are skipped or fail here), and a
-# few legacy tables dropped on Dev keep RLS. x1_244_ci_shape() brings the CI DB to the Dev shape around 244
-# (the replay skips 244; the X1 tests apply it after the full replay, the Dev order, and x1_244_undo it).
+# AA-860 (X1 S16): the 11 schemas CIS 244 grants on (Dev, schema reference 18/10); the RLS tables below are those of
+# these schemas, which CIS 244's guards require exactly. AA-850: CIS 299 dropped four of them, empty since 121 / 208
+# (X1_LEGACY_EMPTY_SCHEMAS); x1_244_ci_shape recreates them so 244 / 245 run as on Dev, x1_244_undo drops them again.
+# The CI DB differs: 008 (FORCE on content_exports / webhook_deliveries) is skipped, tenant_tour_versions and
+# acp_output_rules do not exist (001 / 020 are skipped or fail here), and a few legacy tables dropped on Dev keep RLS.
+# x1_244_ci_shape() brings the CI DB to the Dev shape around 244 (the replay skips 244; the X1 tests apply it after the
+# full replay, the Dev order, and x1_244_undo it).
 X1_CIS_SCHEMAS = ("acp_contract", "acp_deliver", "acp_gold_output", "acp_shared", "acp_silver_s2",
                   "acp_silver_s3", "acp_silver_s4", "geo", "gold_aa_internal", "shared", "silver_aa_internal")
+X1_LEGACY_EMPTY_SCHEMAS = ("acp_gold_output", "acp_silver_s2", "acp_silver_s3", "acp_silver_s4")
 X1_ENABLE_ONLY_RLS = ("acp_shared.acp_output_rules", "acp_shared.angle_gate_option", "acp_shared.angle_gate_request",
                       "acp_shared.content_piece", "acp_shared.facts", "acp_shared.publish_log",
                       "gold_aa_internal.tenant_tour_versions", "shared.tenant_integrations")
@@ -135,12 +138,13 @@ _X1_STANDIN_MARK = "zz-ci-standin (AA-860, conftest x1_244_ci_shape)"
 
 def x1_244_ci_shape(cur):
     """Make the CI DB look like Dev where CIS 244's guards look. Idempotent. Kept after 244 (Dev shape):
-    the four empty CIS schemas and FORCE on content_exports / webhook_deliveries (008). Undone by
+    the four empty CIS schemas X1_LEGACY_EMPTY_SCHEMAS (until x1_244_undo: CIS 299 dropped them after 244 / 245) and
+    FORCE on content_exports / webhook_deliveries (008). Undone by
     x1_244_ci_unshape (lesson S237: a global stand-in changes other code): RLS off on the CI-only legacy
     tables X1_CI_ONLY_LEGACY_RLS (absent on Dev; 241's tests need their RLS back), the tenant_tour_versions
     stand-in and an acp_output_rules stand-in, both with RLS on and no FORCE, as on Dev; RLS off on the post-244
     tables X1_POST_244_RLS (CIS 262) and their cis_app policy, which did not exist yet when 244 ran on Dev."""
-    for schema in ("acp_gold_output", "acp_silver_s2", "acp_silver_s3", "acp_silver_s4"):
+    for schema in X1_LEGACY_EMPTY_SCHEMAS:
         cur.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
     cur.execute("ALTER TABLE gold_aa_internal.content_exports FORCE ROW LEVEL SECURITY; "
                 "ALTER TABLE gold_aa_internal.webhook_deliveries FORCE ROW LEVEL SECURITY")
@@ -177,7 +181,9 @@ def x1_244_ci_unshape(cur):
 
 def x1_244_undo(cur):
     """Remove everything CIS 244 gives cis_app (policies, grants, default privileges, registry row), so the
-    shared test DB is back to the replay state (conftest skips 244) for the modules that run after."""
+    shared test DB is back to the replay state (conftest skips 244) for the modules that run after. AA-850: the
+    replay state has no X1_LEGACY_EMPTY_SCHEMAS (CIS 299), so the empty ones x1_244_ci_shape made go too (RESTRICT:
+    an object a test left in one fails loudly)."""
     for table in X1_ENABLE_ONLY_RLS + X1_FORCE_RLS:
         cur.execute("SELECT to_regclass(%s) IS NOT NULL", (table,))
         if cur.fetchone()[0]:
@@ -193,6 +199,8 @@ def x1_244_undo(cur):
         for kind in ("TABLES", "SEQUENCES", "FUNCTIONS"):
             cur.execute(f"ALTER DEFAULT PRIVILEGES FOR ROLE aa_cis_admin IN SCHEMA {s} "
                         f"REVOKE ALL ON {kind} FROM cis_app")
+    for s in X1_LEGACY_EMPTY_SCHEMAS:
+        cur.execute(f"DROP SCHEMA IF EXISTS {s} RESTRICT")
     cur.execute("DELETE FROM shared.schema_versions WHERE version = '244'")
 
 
@@ -235,12 +243,12 @@ def _apply_schema(conn):
     # A persisted acp_shared kept angle_gate_option under 241's RLS, which 239's guard refuses on the next
     # session (and 241's then fails on 147's re-grant): both errors are swallowed below. One statement
     # per schema, tolerant: a non-superuser local runner may not own every object in them.
-    # AA-860 (X1 S21): also the four schemas x1_244_ci_shape creates and keeps (empty on Dev). Left over, they let
-    # 019 create acp_silver_s4.social_content (RLS on) on the next session's replay, which CI's fresh DB never has
-    # and the 244 / 245 exact RLS-set guards refuse.
+    # AA-860 (X1 S21): also the four schemas x1_244_ci_shape creates (X1_LEGACY_EMPTY_SCHEMAS; dropped on Dev by CIS
+    # 299, AA-850). Left over (a session stopped before x1_244_undo), they let 019 create acp_silver_s4.social_content
+    # (RLS on) on the next session's replay, which CI's fresh DB never has and the 244 / 245 exact RLS-set guards
+    # refuse.
     # AA-850: also `retired` (CIS 294 quarantine): left over, the next replay's 294 finds the wave-1 names taken.
-    for schema in ("acp_shared", "acp_contract", "acp_deliver", "catalog", "geo",
-                   "acp_gold_output", "acp_silver_s2", "acp_silver_s3", "acp_silver_s4", "retired"):
+    for schema in ("acp_shared", "acp_contract", "acp_deliver", "catalog", "geo", *X1_LEGACY_EMPTY_SCHEMAS, "retired"):
         try:
             cur.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
         except psycopg2.Error as e:
