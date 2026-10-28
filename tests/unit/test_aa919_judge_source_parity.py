@@ -45,13 +45,16 @@ def _ctx(**over) -> dict:
 
 def test_t9_judge_source_holds_the_whole_writer_input_the_panel_read():
     src = ej.judge_source_text("t9_social", {"context": _ctx()})
-    for needle in ("Zz place background fact.", "day 4 only.", "Zz the angle reasoning.", "zz invented retreat",
+    for needle in ("Zz place background fact.", "day 4 only.", "Zz the angle reasoning.",
                    "Zz build trust in how the brand plans trips.", "Zz private journeys with expert guiding.",
                    "Invented couples", "Zz use slow sentences.", "Zz an on-brand line.", "Zz Pass; Zz Lake",
-                   "Zz hook then one brand sentence.", "Ask Zzbrand.", "Zz invented question?", "Zz fact block."):
+                   "Zz hook then one brand sentence.", "Ask Zzbrand.", "Zz fact block."):
         assert needle in src, needle
     # writer-internal or out-of-scope keys stay out (the brand's own system prompt, other pieces' openers, ids)
     assert "ZZ SHOULD NOT APPEAR" not in src and "ZZ SIBLING OPENER" not in src and "zz-opt" not in src
+    # nor what the writer never got: the angle's `answers` (T8's ranking claim) and, off the blog channel, the
+    # tour's raw search questions (S256 review: a LinkedIn source carried 4 questions its writer never saw)
+    assert "zz invented retreat" not in src and "Zz invented question?" not in src
     heads = [ln[:-1] for ln in src.splitlines() if ln.endswith(":") and ln[:-1] in dict(ej.T9_SOURCE_SECTIONS)]
     assert heads == ["SEED", "SCOPE", "TRIP", "ANGLE BRIEF", "GOAL", "BRAND PACK", "CHANNEL", "WRITER ASKS", "FACTS"]
 
@@ -63,6 +66,18 @@ def test_t9_judge_source_reads_the_live_writer_input_shape_too():
     src = ej.judge_source_text("t9_social", live)
     assert "Zz the angle reasoning." in src and "Zz private journeys" in src and "Zz live fact." in src
     assert "ROUTE:\nZz another moment." in src
+
+
+def test_search_questions_are_the_blog_writers_own_only():
+    """The writer prompt shows search questions on a blog only; a live writer_input's `search_questions` (what the
+    writer got) wins over the context's `people_also_ask`, and the unfiltered `real_questions` chain is never read."""
+    ctx = _ctx(channel="blog", real_questions=[{"q": "Zz unfiltered candidate?", "source": "tour"}])
+    blog = ej.judge_source_text("t9_blog", {"context": ctx})
+    assert "Search questions: Zz invented question?" in blog and "Zz unfiltered candidate?" not in blog
+    live = {"writer_input": {"channel": "blog", "seed": "Zz seed.", "angle": ANGLE, "goal": GOAL, "brand_pack": BRAND,
+                             "search_questions": [{"question": "Zz the writer's question?", "source": "tour"}]}}
+    assert "Search questions: Zz the writer's question?" in ej.judge_source_text("t9_blog", live)
+    assert "Search questions" not in ej.judge_source_text("t9_social", {"context": ctx})
 
 
 def test_route_moments_the_seed_already_holds_are_not_repeated():

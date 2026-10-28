@@ -59,8 +59,10 @@ CUT_MARK = " [... cut for length]"
 # max ~19.5k chars), so ROUTE only adds a moment the seed does not already hold; the brief + brand run to ~5k.
 T9_SOURCE_SECTIONS = (("SEED", 16000), ("ROUTE", 4000), ("SCOPE", 800), ("TRIP", 1200), ("ANGLE BRIEF", 4000),
                       ("GOAL", 800), ("BRAND PACK", 3500), ("CHANNEL", 800), ("WRITER ASKS", 1200), ("FACTS", None))
+# The angle fields the T9 writer prompt shows (acp_content_writing.prompts.build_user_prompt). Not `answers`: that is
+# T8's ranking claim (the search questions the angle says it answers), never given to the writer.
 _BRIEF_KEYS = (("name", "Angle"), ("formula_fit", "Formula"), ("why_it_works", "Why it works"),
-               ("best_final_style", "How to write it"), ("answers", "Questions it answers"))
+               ("best_final_style", "How to write it"))
 _GOAL_KEYS = (("name", "Goal"), ("description", "What it is for"), ("logic", "Logic"))
 _BRAND_KEYS = (("brand_name", "Brand"), ("brand_type", "Type"), ("core_idea", "Core idea"),
                ("customer_segment", "Audience"), ("customer_mindset", "Audience mindset"), ("voice", "Voice"),
@@ -166,7 +168,8 @@ def _source_layout() -> str:
     change of what the judge reads is a new judge even when the system prompt stays the same."""
     return json.dumps({"source_chars": SOURCE_CHARS, "output_chars": OUTPUT_CHARS, "t9": T9_SOURCE_SECTIONS,
                        "brief": _BRIEF_KEYS, "goal": _GOAL_KEYS, "brand": _BRAND_KEYS, "channel": _CHANNEL_KEYS,
-                       "cut": CUT_MARK, "schema": JUDGE_SCHEMA, "max_claims": MAX_CLAIMS}, sort_keys=True)
+                       "cut": CUT_MARK, "schema": JUDGE_SCHEMA, "max_claims": MAX_CLAIMS,
+                       "questions": "t9_blog:search_questions|people_also_ask"}, sort_keys=True)
 
 
 def judge_version() -> str:
@@ -207,7 +210,19 @@ def clip(text: str, cap: int) -> str:
     return (cut.rstrip() + CUT_MARK)[:cap]
 
 
-def _t9_sections(ctx: dict) -> dict[str, str]:
+def _search_questions(ctx: dict, writer: str) -> str:
+    """The search questions the writer got: a blog only (the writer prompt shows none on another channel, while a
+    social job's context still carries the tour's raw People Also Ask). `search_questions` (a live writer_input: what
+    the writer got) wins over `people_also_ask` (a golden context: select_samples sets it to the writer's questions).
+    `real_questions` is the unfiltered candidate chain behind them, so it is not read."""
+    if writer != "t9_blog":
+        return ""
+    raw = ctx.get("search_questions") or ctx.get("people_also_ask") or []
+    return _flat(list(dict.fromkeys(q.get("question") if isinstance(q, dict) else q for q in raw
+                                    if isinstance(q, str) or (isinstance(q, dict) and q.get("question")))))
+
+
+def _t9_sections(ctx: dict, writer: str = "t9_social") -> dict[str, str]:
     seed = _flat(ctx.get("atom_text"))
     route = [seg[1] for seg in ctx.get("route_segments") or []                  # a moment the seed lacks only
              if isinstance(seg, (list, tuple)) and len(seg) > 1 and seg[1] and _flat(seg[1]) not in seed]
@@ -217,10 +232,7 @@ def _t9_sections(ctx: dict) -> dict[str, str]:
              if t]
     asks = [f"{label}: {t}" for k, label in (("cta", "CTA"), ("keyword", "Keyword"), ("lead_focus", "Lead focus"))
             for t in [_flat(ctx.get(k))] if t]
-    questions = _flat(list(dict.fromkeys(
-        q.get("question") if isinstance(q, dict) else q
-        for k in ("search_questions", "people_also_ask", "real_questions") for q in (ctx.get(k) or [])
-        if isinstance(q, str) or (isinstance(q, dict) and q.get("question")))))
+    questions = _search_questions(ctx, writer)
     if questions:
         asks.append(f"Search questions: {questions}")
     channel = _fields(ctx.get("channel_style"), _CHANNEL_KEYS) or _flat(ctx.get("channel"))
@@ -239,7 +251,7 @@ def judge_source_text(writer: str, inp: dict, shared_inputs: Optional[dict] = No
     from services.writing_memory import eval_writers as ew
     if writer not in ew.T9_WRITERS:
         return ew.source_text(writer, inp, shared_inputs)
-    sections = _t9_sections(ew._t9_context(inp))
+    sections = _t9_sections(ew._t9_context(inp), writer)
     parts, used = [], 0
     for name, cap in T9_SOURCE_SECTIONS:
         body = sections.get(name) or ""
