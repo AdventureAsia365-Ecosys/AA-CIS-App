@@ -66,7 +66,7 @@ def account_name(key: Optional[str]) -> Optional[str]:
 
 
 def account_label(key: Optional[str]) -> Optional[str]:
-    """account_name() with the account's role, e.g. "111111111111 (LLM)"; "Retired account" alone."""
+    """account_name() with the account's role, e.g. "123456789012 (LLM)"; "Retired account" alone."""
     name = account_name(key)
     if name is None or key not in LIVE_ACCOUNT_KEYS:
         return name

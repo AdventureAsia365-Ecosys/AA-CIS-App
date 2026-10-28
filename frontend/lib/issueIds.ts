@@ -8,7 +8,10 @@
 // "AA-123 — ", "AA-123 C3 — ", "AA-916 WM-06 — ", "AA-646/650: " at the start of a text or a line.
 const LEAD = /(^|\n)[ \t]*AA-[0-9]+(?:\/[0-9]+)?(?:[ \t]+(?:[A-Z][A-Za-z0-9.-]*|\([^()\n]*\)))*[ \t]*(?:—|–|:)[ \t]*/g;
 // "(AA-123)", "(AA-123, AA-456)", "(AA-123 C2 / AA-456)": a parenthesis that holds only references.
-const PAREN = /[ \t]*\((?:[ \t]*(?:AA-[0-9]+(?:\/[0-9]+)?(?:[ \t]+[A-Z][A-Za-z0-9.]*)*)[ \t]*(?:[,/;]|and)?)+\)/g;
+const REF = String.raw`AA-[0-9]+(?:\/[0-9]+)?(?:[ \t]+[A-Z][A-Za-z0-9.]*)*`;
+// One reference, then (separator, reference) pairs: the separator is required between two references, so the
+// pattern cannot split a run of references in more than one way (no exponential backtracking, CodeQL js/redos).
+const PAREN = new RegExp(String.raw`[ \t]*\([ \t]*${REF}(?:[ \t]*(?:[,/;]|and)[ \t]*${REF})*[ \t]*\)`, "g");
 // ", AA-123" or "; AA-123 C2" at the end of a parenthesis or a clause.
 const TAIL = /[ \t]*[,;][ \t]*AA-[0-9]+(?:\/[0-9]+)?(?:[ \t]+[A-Z][A-Za-z0-9.]*)*(?=[)\].,;\n]|$)/g;
 // Anything left: the bare reference.

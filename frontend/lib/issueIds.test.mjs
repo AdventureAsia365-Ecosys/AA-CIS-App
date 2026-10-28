@@ -32,3 +32,12 @@ test("deep strip touches only text keys", () => {
   assert.equal(out.components.schemas.S.description, "a");
   assert.deepEqual(out.components.schemas.S.properties.description, { type: "string" });
 });
+
+test("a long run of references does not hang (no exponential backtracking)", () => {
+  const evil = "(AA-0" + "\tAA-0".repeat(5000) + "!";
+  const t0 = Date.now();
+  stripIssueIds(evil);
+  assert.ok(Date.now() - t0 < 500, "stripIssueIds took too long");
+  assert.equal(stripIssueIds("x (AA-1 C2 / AA-2) y"), "x y");
+  assert.equal(stripIssueIds("x (AA-1 and AA-2) y"), "x y");
+});
