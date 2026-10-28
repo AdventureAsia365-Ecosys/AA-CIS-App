@@ -395,6 +395,10 @@ def _apply_schema(conn):
         # catalog recipe; both are skipped here. test_aa990_migration_289 applies 253 + 256 + 257 + 258 + 273 + 289
         # the DB Migrate way on the RDS-like state and rolls back.
         and not f.startswith('289')
+        # AA-996 (S256): 298 creates catalog.v_tour_place_name through the catalog recipe and compares it with 256's
+        # v_tour_place (needs 253 / 256 / 289). test_aa996_migration_298 applies 253 + 256 + 257 + 258 + 273 + 289 +
+        # 298 the DB Migrate way on the RDS-like state and rolls back.
+        and not f.startswith('298')
     ])
 
     for mf in migration_files:
