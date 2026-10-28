@@ -80,7 +80,7 @@ const CSS = `
 .aa-md th { background: ${K.neutralBg}; font-weight: 700; color: ${K.ink}; }
 .aa-md tr:last-child td { border-bottom: none; }
 .aa-md .aa-md-img { color: ${K.muted}; font-style: italic; }
-/* AA-697: the diagrams are drawn on white (Graphviz canvas), so the frame stays white in dark mode too. */
+/* The diagrams are drawn on white (Graphviz canvas), so the frame stays white in dark mode too. */
 .aa-md .aa-md-figure { display: block; margin: 12px 0; padding: 8px; background: #fff; border: 1px solid ${K.line};
   border-radius: ${RADIUS.md}px; overflow-x: auto; }
 .aa-md .aa-md-figure img { display: block; max-width: 100%; height: auto; margin: 0 auto; }

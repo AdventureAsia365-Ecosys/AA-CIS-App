@@ -99,8 +99,11 @@ _SVG_FORBIDDEN = (
     re.compile(r"<!ENTITY|<!DOCTYPE[^>]*\[", re.I),
 )
 _SVG_REF = re.compile(r"\s(?:xlink:)?href\s*=\s*(?:\"([^\"]*)\"|'([^']*)')", re.I)
-_SVG_START = re.compile(
-    r"\s*(?:<\?xml[^>]*>\s*)?(?:<!--.*?-->\s*)*(?:<!DOCTYPE svg[^>\[]*>\s*)?(?:<!--.*?-->\s*)*<svg[\s>]", re.S)
+# The prolog before <svg: an optional XML declaration, then comments and at most one internal-subset-free DOCTYPE.
+# Walked by _svg_starts_ok() instead of one regex: a repeated lazy comment group backtracks exponentially (ReDoS).
+_SVG_PROLOG_XML = re.compile(r"\s*<\?xml[^>]*>")
+_SVG_PROLOG_DOCTYPE = re.compile(r"<!DOCTYPE svg[^>\[]*>")
+_SVG_ROOT_OPEN = re.compile(r"<svg[\s>]")
 # Parsed re-check (root svg_tree_problems): a namespace prefix (<s:script>, x:href) or an XML character reference
 # (u&#114;l(...)) slips past the raw-text regexes, so the parsed document must hold only SVG-namespace elements from
 # _SVG_ELEMENTS, attributes without a namespace (plus xlink:href / xlink:title / xml:space), no on* attribute, every
@@ -176,9 +179,32 @@ def _valid_key(key: Any, repo: str, path: str) -> bool:
             and key == f"pages/{repo}/{path}")
 
 
+def _svg_starts_ok(text: str) -> bool:
+    """True when the text is an optional XML declaration, comments and at most one DOCTYPE, then <svg."""
+    m = _SVG_PROLOG_XML.match(text)
+    i = m.end() if m else 0
+    doctype_seen = False
+    while True:
+        while i < len(text) and text[i].isspace():
+            i += 1
+        if text.startswith("<!--", i):
+            end = text.find("-->", i + 4)
+            if end < 0:
+                return False
+            i = end + 3
+            continue
+        if not doctype_seen:
+            m = _SVG_PROLOG_DOCTYPE.match(text, i)
+            if m:
+                doctype_seen = True
+                i = m.end()
+                continue
+        return _SVG_ROOT_OPEN.match(text, i) is not None
+
+
 def svg_is_safe(text: str) -> bool:
     """Rule 9: True when the SVG can be shown (see the module docstring)."""
-    if not _SVG_START.match(text) or any(p.search(text) for p in _SVG_FORBIDDEN):
+    if not _svg_starts_ok(text) or any(p.search(text) for p in _SVG_FORBIDDEN):
         return False
     for m in _SVG_REF.finditer(text):
         ref = (m.group(1) if m.group(1) is not None else m.group(2)).strip()
