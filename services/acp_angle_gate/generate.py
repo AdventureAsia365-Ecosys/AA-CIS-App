@@ -197,6 +197,11 @@ _FIGURE_RE = re.compile(r"\d[\d,.]*(?:\s*[-\u2013]\s*\d[\d,.]*)?")
 _WORD_RE = re.compile(r"[^\W_][\w'\u2019-]*")
 
 
+def brief_words(brief: str | None) -> int:
+    """Words in a brief as the round-8 contract counts them (labels count, a bare dash does not)."""
+    return len(_WORD_RE.findall(brief or ""))
+
+
 def r8_brief_problems(brief: str | None) -> list[str]:
     """The round-8 brief contract, deterministic ($0): the four labelled parts (R8_BRIEF_LABELS, any case), at most
     R8_BRIEF_MAX_WORDS words, at most R8_BRIEF_MAX_FIGURES figures. Returns plain problem phrases ([] = kept). Used as
@@ -204,7 +209,7 @@ def r8_brief_problems(brief: str | None) -> list[str]:
     text = (brief or "").strip()
     lower = text.lower()
     out = [f"has no '{label}' part" for label in R8_BRIEF_LABELS if label.lower() not in lower]
-    words = len(_WORD_RE.findall(text))
+    words = brief_words(text)
     if words > R8_BRIEF_MAX_WORDS:
         out.append(f"is {words} words long (at most {R8_BRIEF_MAX_WORDS}; aim for about 90)")
     figures = len(_FIGURE_RE.findall(text))
@@ -274,5 +279,5 @@ async def generate_angles(*, brand_audience: BrandAudience, moments: list[dict] 
     return angles, idx, reason, cost
 
 
-__all__ = ["AngleGenerationError", "T8_STAGE", "generate_angles", "angle_contract_violations", "r8_brief_problems",
-           "sanitize_best_final_style"]
+__all__ = ["AngleGenerationError", "T8_STAGE", "angle_contract_violations", "brief_words", "generate_angles",
+           "r8_brief_problems", "sanitize_best_final_style"]

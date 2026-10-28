@@ -304,7 +304,67 @@ class TestHarness:
         from scripts.aa790 import t9_writer_repanel as rp
         census = rp.brief_census(_angles(GOOD_BRIEF)[:1] + _angles(OUTLINE_BRIEF)[:1])
         assert census[0]["problems"] == [] and census[1]["problems"]
-        assert census[0]["words"] == len(GOOD_BRIEF.split())
+        # the census counts words exactly as the round-8 contract check does
+        assert census[0]["words"] == gen_mod.brief_words(GOOD_BRIEF)
+        assert gen_mod.brief_words("Reader: a ride — then a swim.") == 6
+
+    def test_stored_t8_seed_single_atom_and_route(self):
+        from scripts.aa790 import t9_writer_repanel as rp
+        from services.acp_angle_gate.route_digest import render_digest, route_moments
+        assert rp.stored_t8_seed({"seed": "Atom seed"}) == "Atom seed"
+        # one route moment is not a Route (service._route_moments needs more than one segment)
+        assert rp.stored_t8_seed({"seed": "S", "route_moments": [{"atom_id": "a", "seed": "A"}]}) == "S"
+        blocks = [("a1", "Falls — swim\nLocation: Luang Prabang, Laos\nSource itinerary: A swim."),
+                  ("a2", "Night market — visit\nLocation: Luang Prabang, Laos\nSource itinerary: A walk.")]
+        wi = {"seed": "S", "route_moments": [{"atom_id": a, "seed": b} for a, b in blocks]}
+        assert rp.stored_t8_seed(wi) == render_digest(route_moments(blocks))
+        assert rp.seed_sha(" x ") == rp.seed_sha("x") != rp.seed_sha("y")
+
+    def _main(self, monkeypatch, regen, tmp_path):
+        from scripts.aa790 import t9_writer_repanel as rp
+        rows = [{"piece_id": "p1" * 8, "tenant_id": "t", "request_id": "r1", "channel": "linkedin",
+                 "status": "approved", "created_at": "x", "content_text": "Old.", "atom_id": "a", "tenant": "T",
+                 "writer_input": {"seed": "Atom seed. A swim.", "goal": "introduction_awareness",
+                                  "channel": "linkedin", "brand_pack": {}, "cta": "Write to us.",
+                                  "angle": {"name": "Stored", "why_it_works": "w", "formula_fit": "f",
+                                            "best_final_style": "s"}}}]
+        written = []
+
+        async def _load(ids):
+            return rows
+
+        async def _regen(rows, **kw):
+            return regen, 0.05
+
+        def _write(row, args, tier, run_id, arm=""):
+            written.append(args["angle"]["name"])
+            return {"text": "A swim at the falls. Write to us.", "cost_usd": 0.03, "model": "m", "stop_reason": "end"}
+
+        monkeypatch.setattr(rp, "load_rows", _load)
+        monkeypatch.setattr(rp, "regen_angles", _regen)
+        monkeypatch.setattr(rp, "stage_model", lambda stage="t9_write": "model-x")
+        monkeypatch.setattr(rp, "call_writer", _write)
+        out = tmp_path / "o.json"
+        monkeypatch.setattr("sys.argv", ["x", "--ids", "p1", "--angles", "regen", "--t8-mode", "r8", "--arm", "r8",
+                                         "--out", str(out)])
+        assert rp.main() == 0
+        return written, json.loads(out.read_text())
+
+    def test_a_failed_regen_skips_the_piece_instead_of_writing_the_stored_angle(self, monkeypatch, tmp_path):
+        written, out = self._main(monkeypatch, {"r1": {"error": "AtomNotFoundError: gone"}}, tmp_path)
+        assert written == []
+        assert out[0]["error"].startswith("t8_regen: AtomNotFoundError") and out[0]["arm"] == "r8"
+
+    def test_a_regen_angle_is_written_and_the_seed_match_recorded(self, monkeypatch, tmp_path):
+        from scripts.aa790 import t9_writer_repanel as rp
+        chosen = {"name": "Fresh", "why_it_works": "w", "formula_fit": "f", "best_final_style": GOOD_BRIEF}
+        same = rp.seed_sha("Atom seed. A swim.")
+        written, out = self._main(monkeypatch, {"r1": {"chosen": chosen, "t8_seed_sha": same}}, tmp_path)
+        assert written == ["Fresh"]
+        assert out[0]["angle_source"] == "regen" and out[0]["seed_match"] is True
+        _, drifted = self._main(monkeypatch, {"r1": {"chosen": chosen, "t8_seed_sha": rp.seed_sha("New seed")}},
+                                tmp_path)
+        assert drifted[0]["seed_match"] is False
 
     def test_t8_mode_needs_regen(self, monkeypatch):
         from scripts.aa790 import t9_writer_repanel as rp

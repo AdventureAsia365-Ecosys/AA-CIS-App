@@ -1892,3 +1892,27 @@ round 7 stands: change the T8 angle generator, leave the round-6 T9 prompt (`b59
 - Ship path if round 8 passes: set `T8_ANGLE_BRIEF_MODE=r8` on the worker (t8_angles runs there) and the api (admin
   regenerate-angles), or a one-line PR that makes `r8` the default; existing requests keep their stored angles.
 - Not in this PR: the paid A/B, the blind panel and the decision (orchestrator, plan in the lane result).
+
+### Round 8 review fixes (S255, independent review)
+
+- **R8-D8: a failed T8 regen skips the piece, it does not fall back to the stored angle.** Before the fix a request
+  whose regen raised (atom gone from `v_active_tour_atoms` after a wave, a parse error twice) or was skipped by the
+  cost cap was still written, from its old pre-#690 brief, and scored as part of the r8 / r8c arm (and paid for). Now
+  `main` reports those pieces with `error: t8_regen: …` and writes nothing for them, so an arm is all regenerated
+  angles. The panel helper must pair arms by `piece_id` and drop pieces an arm lacks.
+- **R8-D9: `seed_match` on every regen row ($0).** `angle_inputs` reads the CURRENT atom seed / Route digest, while
+  the T9 step writes from the seed stored in `writer_input` at S251. If an atom or Route changed since (S1 waves,
+  place cards, AA-997 geocode), the new brief can tell the writer to lead with a detail the writer's seed does not
+  have, which the panel would score as a fidelity or brand-voice loss of round 8 when it is seed drift.
+  `stored_t8_seed(writer_input)` rebuilds the T8 seed the stored input implies (the same `route_moments` +
+  `render_digest` for a Route, the atom seed otherwise) and the row gets `seed_match` = its sha equals the sha of the
+  seed T8 read (`t8_seed_sha` in `<out>.angles.json`). The dry run prints it per piece: check it is True for every
+  piece before the paid run; a False piece should be dropped from both arms (or the brief census read with care).
+- **Brief word count is one function.** `generate.brief_words` is the count the contract check uses; the harness
+  census used `str.split()` before, so its `words` could disagree with the "is N words long" problem it printed.
+- **Should know (not changed):** piece history in the regen reads every OTHER request's pieces for the same tenant +
+  atom (`exclude_request_id` is only this request), so a request whose atom was also written by another pilot request
+  sees that piece as prior history, which the live job at S251 did not. Both regen arms see the same history, so the
+  r8 vs r8c comparison stays fair; r8 vs the stored r6 texts does not isolate the contract (D8-a, and the A / A'
+  lesson: only trust r8 − r8c when it is clearly larger than the run-to-run noise), so the flag decision needs r8c.
+  Rows carry `arm`, `t8_mode`, `angle_source` and `angle_used`: strip them before the blind panel sees a row.

@@ -5,9 +5,10 @@ the re-panel against AI-tells 4.08 / brand voice 6.53. PAID (one T9 writer call 
 Runs in the CIS api container AFTER the AA-790 writer PR is deployed (it imports the deployed ``services``: the new
 SYSTEM_PROMPT, ``ai_tells``), uploaded alone (the image has no ``scripts/`` folder) and started detached with the
 root runbook's ``run_bg.sh`` (20 sequential calls take ~10–15 min; a foreground ECS exec drops). Reads with the
-container ``DATABASE_URL`` (role cis_app): SELECT on ``acp_shared.content_piece`` (+ its request and tenant) only.
-Writes nothing to the app tables: one ``shared.llm_call_log`` row per call (stage ``adhoc_aa790``, role writer),
-and the JSON result to ``--out`` (+ ``--s3``).
+container ``DATABASE_URL`` (role cis_app): SELECT on ``acp_shared.content_piece`` (+ its request and tenant) only;
+with ``--angles regen`` also the T8 job's own $0 reads (see below). Writes nothing to the app tables: one
+``shared.llm_call_log`` row per call (stage ``adhoc_aa790``, role writer; T8 and T9 calls told apart by
+``quality_signal->>'mode'``), and the JSON result to ``--out`` (+ ``--s3``).
 
 Per piece it rebuilds the writer prompt from the piece's stored ``writer_input`` (AA-769 / AA-916 snapshot: seed,
 route moments, Facts, scope, brand pack, angle, goal, channel, keyword, CTA, trip), calls the writer on the SAME model
@@ -35,16 +36,21 @@ channel spec, trip, search demand + real questions, piece history), the brief mo
 round-6 brief, ``r8`` = the round-8 brief contract) and the live ``t8_angle_gen`` model id, logged under
 ``adhoc_aa790``. The angles are ranked as live (``measurable_rank``; the Jev answer check is skipped: it only moves
 the pick when Jev rejects a claimed PAA answer) and sanitised as live (``sanitize_briefs``); the recommended one
-replaces the stored angle in every piece of that request. Nothing is written to the app tables (no
-``angle_gate_option`` row). The three angles of each request, the pick, the round-8 brief census
-(``r8_brief_problems``) and the T8 cost go to ``<out>.angles.json`` (+ ``<s3>.angles.json``). ``--arm`` is stored on
-every row and in the ``shared.llm_call_log`` quality signal of every call (T8 and T9), so cost per arm is
-``quality_signal->>'arm'``. With ``--dry-run`` the T8 step builds the angle prompts only and prints their size ($0).
+replaces the stored angle in every piece of that request. A request whose regen fails (or is skipped by the cap) has
+its pieces reported with ``error`` and NOT written, so an arm never mixes regenerated and stored angles. Every row
+carries ``seed_match``: whether the seed T8 read now equals the seed T9 writes from (the stored ``writer_input``;
+False = the atom or Route changed since the pilot, so the brief may lead with a detail the writer does not see).
+Nothing is written to the app tables (no ``angle_gate_option`` row). The three angles of each request, the pick,
+the round-8 brief census (``r8_brief_problems``), the T8 seed hash and the T8 cost go to ``<out>.angles.json``
+(+ ``<s3>.angles.json``). ``--arm`` is stored on every row and in the ``shared.llm_call_log`` quality signal of every
+call (T8 and T9), so cost per arm is ``quality_signal->>'arm'``. With ``--dry-run`` the T8 step builds the angle
+prompts only and prints their size and ``seed_match`` ($0).
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 import sys
@@ -230,14 +236,30 @@ def chosen_angle(angles: list[dict], idx: int) -> dict:
 
 
 def brief_census(angles: list[dict]) -> list[dict]:
-    """Per angle: brief word count, figures and the round-8 contract problems ($0, pure) — the same check
-    ``generate.r8_brief_problems`` the round-8 retry uses, so the control arm's briefs are measured on it too."""
-    from services.acp_angle_gate.generate import r8_brief_problems
+    """Per angle: brief word count and the round-8 contract problems ($0, pure) — the same count and check
+    (``generate.brief_words`` / ``r8_brief_problems``) the round-8 retry uses, so the control arm's briefs are measured
+    on it too."""
+    from services.acp_angle_gate.generate import brief_words, r8_brief_problems
     out = []
     for a in angles:
         brief = a.get("best_final_style") or ""
-        out.append({"words": len(brief.split()), "problems": r8_brief_problems(brief)})
+        out.append({"words": brief_words(brief), "problems": r8_brief_problems(brief)})
     return out
+
+
+def seed_sha(text: Optional[str]) -> str:
+    return hashlib.sha256((text or "").strip().encode()).hexdigest()[:16]
+
+
+def stored_t8_seed(writer_input: dict) -> str:
+    """The T8 content seed the stored ``writer_input`` implies (pure): the Route digest of its route moments when it
+    has more than one (``service._route_moments`` builds the same digest from the same (atom_id, seed) blocks), else
+    the atom seed — so ``seed_sha(stored_t8_seed(wi)) == t8_seed_sha`` means T8 and T9 read the same seed."""
+    from services.acp_angle_gate.route_digest import render_digest, route_moments
+    segs = [(m.get("atom_id"), m.get("seed") or "") for m in writer_input.get("route_moments") or []
+            if isinstance(m, dict)]
+    moments = route_moments(segs) if len(segs) > 1 else None
+    return render_digest(moments) if moments else (writer_input.get("seed") or "")
 
 
 async def regen_angles(rows: list[dict], *, mode: str, dry_run: bool, model_tier: Optional[str], run_id: str,
@@ -265,16 +287,17 @@ async def regen_angles(rows: list[dict], *, mode: str, dry_run: bool, model_tier
                     raise ValueError(f"unknown goal {req['goal']!r}")
                 inputs = await t8.angle_inputs(tid, req, goal, pool)
                 kwargs = inputs.generate_kwargs()
+                seed_info = {"t8_seed_sha": seed_sha(inputs.content_seed), "t8_seed_chars": len(inputs.content_seed)}
                 if dry_run:
                     prompt_kwargs = {k: v for k, v in kwargs.items() if k != "moments"}
                     user = t8_user_prompt(**prompt_kwargs)
-                    out[request_id] = {"dry": True, "t8_user_chars": len(user),
+                    out[request_id] = {"dry": True, "t8_user_chars": len(user), **seed_info,
                                        "t8_system_chars": len(system_prompt(mode)), "route": bool(inputs.moments)}
                     print(f"AA790 t8dry {request_id[:8]} mode={mode} user_chars={len(user)} "
                           f"system_chars={len(system_prompt(mode))} route={bool(inputs.moments)}", flush=True)
                     continue
                 if spent + EST_T8_USD > max_usd:
-                    out[request_id] = {"error": "skipped_cost_cap"}
+                    out[request_id] = {"error": "skipped_cost_cap", **seed_info}
                     print(f"AA790 t8skip {request_id[:8]}: cap (${spent:.3f} spent)", flush=True)
                     continue
                 angles, idx, _reason, cost = await t8_generate.generate_angles(
@@ -287,11 +310,12 @@ async def regen_angles(rows: list[dict], *, mode: str, dry_run: bool, model_tier
                 t8.sanitize_briefs(angles, inputs.brand_audience, request_id=request_id)
                 census = brief_census(angles)
                 out[request_id] = {"angles": angles, "recommended_index": idx, "chosen": chosen_angle(angles, idx),
-                                   "census": census, "cost_usd": round(float(cost or 0.0), 6), "mode": mode}
+                                   "census": census, "cost_usd": round(float(cost or 0.0), 6), "mode": mode,
+                                   **seed_info}
                 print(f"AA790 t8 {request_id[:8]} mode={mode} ${float(cost or 0.0):.4f} t8_total=${spent:.3f} "
                       f"pick={idx} words={[c['words'] for c in census]} "
                       f"r8_problems={[len(c['problems']) for c in census]}", flush=True)
-            except Exception as e:  # noqa: BLE001 — that request keeps its stored angle; the run goes on
+            except Exception as e:  # noqa: BLE001 — that request's pieces are skipped (main); the run goes on
                 out[request_id] = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
                 print(f"AA790 t8fail {request_id[:8]} {out[request_id]['error']}", flush=True)
     finally:
@@ -344,6 +368,14 @@ def main() -> int:
                                                 run_id=run_id, arm=a.arm, max_usd=a.max_usd))
     for r in rows:
         got = regen.get(r["request_id"]) or {}
+        if a.angles == "regen" and not a.dry_run and not got.get("chosen"):
+            # No regenerated angle for this request: writing it from the stored angle would mix old briefs into the
+            # arm (and spend on it), so the piece is reported and skipped.
+            err = got.get("error") or "no_regen_result"
+            print(f"AA790 skip {r['piece_id'][:8]}: t8 regen {err}", flush=True)
+            out.append({"id": r["piece_id"][:8], "piece_id": r["piece_id"], "arm": a.arm, "aa790_run": run_id,
+                        "error": f"t8_regen: {err}"})
+            continue
         try:
             args = writer_args(r, index[r["piece_id"]], got.get("chosen"))
             if args["goal"] is None or args["channel_style"] is None:
@@ -360,11 +392,13 @@ def main() -> int:
                "ai_tells_before": ai_tells.census(r["content_text"] or "", tell),
                "lead_focus": args.get("lead_focus"), "writer_prompt_version": WRITER_PROMPT_VERSION, "arm": a.arm,
                "angle_source": "regen" if got.get("chosen") else "stored", "t8_mode": a.t8_mode, "aa790_run": run_id,
-               "angle_used": {k: args["angle"].get(k) for k in ANGLE_FIELDS}}
+               "angle_used": {k: args["angle"].get(k) for k in ANGLE_FIELDS},
+               "seed_match": (seed_sha(stored_t8_seed(r["writer_input"])) == got["t8_seed_sha"]
+                              if got.get("t8_seed_sha") else None)}
         if a.dry_run:
             from services.acp_content_writing.prompts import build_user_prompt
             rec["prompt_chars"] = len(build_user_prompt(**args))
-            print(f"AA790 dry {rec['id']} {channel} prompt_chars={rec['prompt_chars']} "
+            print(f"AA790 dry {rec['id']} {channel} prompt_chars={rec['prompt_chars']} seed_match={rec['seed_match']} "
                   f"lead={bool(rec['lead_focus'])} before={rec['ai_tells_before']['fixable_total']}"
                   f"+{rec['ai_tells_before']['residue']}", flush=True)
             out.append(rec)
