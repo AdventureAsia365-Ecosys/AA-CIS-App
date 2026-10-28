@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.14.0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/compare/v0.13.0...v0.14.0) (2026-10-28)
+
+
+### Features
+
+* /admin/docs docs reader (API + page) ([#1100](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1100)) ([b874e30](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/b874e3007d375f1b3cac0c8626e741fb23968283))
+* add shared.dfs_call_log.job_id (migration 293) ([#1094](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1094)) ([0350c79](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/0350c79547944e66fa80b690cce2b89405880d62))
+* Cost Operations page (AWS bill, Jev, DataForSEO runs by job, month-end forecast) ([#1097](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1097)) ([d24fdd3](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/d24fdd3526003f4e46451a0c1dd6b4817ab39387))
+* docs reader EN/VI switch, Mermaid diagrams, callouts and Dev owner-page read ([#1104](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1104)) ([a427e40](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/a427e40cb808c48aeadd09b191b0ddcd550dbb25))
+* geocoder-only coordinates, route guard and non-place filter for places ([#1092](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1092)) ([2076d58](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/2076d58352645f2893a40393a34371c8de68d959))
+* inject approved writing rules into the four writers with a post-activation check ([#1099](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1099)) ([172e463](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/172e4632d809aa98cb49b6bebf892e676ca07f48))
+* run LLM on acc3 only and drop acc1 from the gateway, cost reads and admin UI ([#1102](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1102)) ([9d919f0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/9d919f0f9cf3f2a451fdb1f3d065088637af5ade))
+* T8 angle brief contract behind T8_ANGLE_BRIEF_MODE (AA-790 round 8) ([#1095](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1095)) ([646c2bd](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/646c2bdd8f2f90c8fc16f7b929f93109422c21c6))
+
+
+### Bug Fixes
+
+* R2 judge uses the golden-label rubric; calibration needs both label classes ([#1096](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1096)) ([8d2a6bf](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/8d2a6bff56aa25756b57f84015ea3cfd1d0b9d4e))
+* route transit tours on their legs (tour-level transit rule) ([#1091](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1091)) ([9c6dcc7](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/9c6dcc703d57c70a27eefa6cd412a99cdfb1e0ce))
+
 ## [0.13.0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/compare/v0.12.0...v0.13.0) (2026-10-28)
 
 
