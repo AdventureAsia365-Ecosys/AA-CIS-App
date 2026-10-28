@@ -5,7 +5,8 @@ no model call — atoms already carry place + activity_type.
 Changes vs TripPlanner (design §2.3 / §3):
   - one filter for "not a place to pin": `skip_reason()` = the place-card rule `card_skip_reason()`
     (unnamed places, logistics nouns on stay/transit/food atoms) plus TripPlanner's lodging/transit
-    words under the same activity gate; transit atoms are never pinned (map_activity);
+    words under the same activity gate; transit atoms are never pinned (map_activity) — except a
+    self-propelled journey (AA-990 N1: "cycle Seoul to Siheung" on a cycling tour, `journey_activity`);
   - one component per (day, place, activity) instead of one per atom: `atom_ids` keeps every atom,
     `text_extract` is the longest atom text; its id is uuid5(source_id, day, name_norm, country,
     activity) — stable across re-atomize and re-upload (names.component_id);
@@ -14,6 +15,7 @@ Changes vs TripPlanner (design §2.3 / §3):
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -51,15 +53,71 @@ _INTENSITY_BY_ACTIVITY = {
     "local_immersion": "leisurely",
 }
 TEXT_MAX = 280
+# Bump when a rule here changes which atoms become components (skip / activity): it is in components_hash, so every
+# built tour is stale once and its next place_extract (backfill only_stale, or any automatic trigger) rebuilds the
+# components; days and vectors are reused, so the rebuild pays only for new names and new texts.
+# 2 = AA-990 N1 (S254): self-propelled transit journeys are pinned.
+COMPONENTS_RULE_VERSION = 2
 ALL_MONTHS = list(range(1, 13))
 _LOGISTICS_TYPES = frozenset({"stay", "transit", "food", ""})
 
 
-def map_activity(activity_type: Optional[str], text: str) -> Optional[str]:
-    """Atom activity_type -> taxonomy value; None for 'transit' (caller skips)."""
+# AA-990 N1 (S254): on a cycling, walking or paddling tour the ride between two towns IS the day's activity, and A3
+# atomize types it 'transit' (its prompt files "getting from one place to another" under transit). Skipping every
+# transit atom left the 14-day "Seoul to Busan" cycling tour with 1 place out of 11 atoms and the 2-day Oze-Nikko walk
+# with none, so TripPlanner had no route for either although every overnight town was resolved. A transit-typed atom
+# whose ACTION is self-propelled ("cycle", "hike", "walk from A to B", "travel by bike", "paddle") is pinned like a
+# bike / trek atom; motorised transport (drive, transfer, fly, train, bus, ferry) stays skipped. The action is read,
+# not the place: "Gurye to Hadong" names a ride or a drive alike.
+_JOURNEY_WORDS = (
+    ("adventure_sport", r"cycl\w*|bicycl\w*|(?:mountain[- ]?|e-?)?bik(?:e|es|ed|ing)|pedal\w*|ski|skis|skied|skiing"),
+    ("trekking", r"walk\w*|hik(?:e|es|ed|ing)|trek\w*|snowshoe\w*|scrambl\w*"),
+    ("water_activities", r"paddl\w*|kayak\w*|canoe\w*|raft(?:s|ed|ing)?"),
+)
+# "cycle …", "continue cycling …", "set off hiking …", "then walk …" (the action is a short infinitive phrase)
+_JOURNEY_OPENER = tuple(
+    (value, re.compile(rf"^(?:(?:then|and|continue|keep|set off|start|begin|go)\s+)?(?:by\s+)?(?:{words})\b"))
+    for value, words in _JOURNEY_WORDS)
+# "travel by bike", "ride the bikes to …", "continue on foot", "cross the lake by kayak"
+_JOURNEY_MEANS = (
+    ("adventure_sport", re.compile(r"\b(?:by|on)\s+(?:a\s+|the\s+|your\s+)?(?:e-?)?(?:bikes?|bicycles?|cycles?)\b"
+                                   r"|\bride\b[^.;]*\b(?:e-?)?(?:bikes?|bicycles?)\b")),
+    ("trekking", re.compile(r"\bon\s+foot\b")),
+    ("water_activities", re.compile(r"\bby\s+(?:kayak|canoe|raft|paddle ?board)s?\b")),
+)
+
+
+def atom_action(atom: dict) -> str:
+    """The atom's action: the `action` column, else what tour_atoms.text carries after "place — " (derive_atom_text)."""
+    action = (atom.get("action") or "").strip()
+    if action:
+        return action
+    text, place = (atom.get("text") or "").strip(), (atom.get("place") or "").strip()
+    if place and text.startswith(place + " — "):
+        return text[len(place) + 3:].strip()
+    return ""
+
+
+def journey_activity(action: Optional[str]) -> Optional[str]:
+    """Taxonomy value of a self-propelled journey action ("cycle", "hike", "travel by bike"), else None."""
+    a = " ".join((action or "").lower().replace("’", "'").split())
+    if not a:
+        return None
+    for value, rx in _JOURNEY_OPENER:
+        if rx.search(a):
+            return value
+    for value, rx in _JOURNEY_MEANS:
+        if rx.search(a):
+            return value
+    return None
+
+
+def map_activity(activity_type: Optional[str], text: str, action: Optional[str] = None) -> Optional[str]:
+    """Atom activity_type -> taxonomy value; None for 'transit' (caller skips) unless `action` is a self-propelled
+    journey (journey_activity)."""
     at = (activity_type or "").strip().lower()
     if at == "transit":
-        return None
+        return journey_activity(action)
     if at in _ACTIVITY_TYPE_MAP:
         return _ACTIVITY_TYPE_MAP[at]
     if at in ("other", ""):
@@ -71,9 +129,10 @@ def map_activity(activity_type: Optional[str], text: str) -> Optional[str]:
     return "local_immersion"
 
 
-def skip_reason(place: Optional[str], activity_type: Optional[str]) -> Optional[str]:
+def skip_reason(place: Optional[str], activity_type: Optional[str], action: Optional[str] = None) -> Optional[str]:
     """Why an atom's place is not pinned, or None. The place-card rule first (one rule set with
-    cards, design §3), then TripPlanner's lodging/transit words under the same activity gate."""
+    cards, design §3), then TripPlanner's lodging/transit words under the same activity gate; a transit atom whose
+    `action` is a self-propelled journey is pinned (AA-990 N1)."""
     from services.acp_shared.place_cards import card_skip_reason
     reason = card_skip_reason(place, activity_type)
     if reason:
@@ -81,7 +140,7 @@ def skip_reason(place: Optional[str], activity_type: Optional[str]) -> Optional[
     at = (activity_type or "").strip().lower()
     if at in _LOGISTICS_TYPES and (days_mod.is_lodging(place) or days_mod.is_transit(place)):
         return "logistics_place"
-    if at == "transit":
+    if at == "transit" and journey_activity(action) is None:
         return "transit"
     return None
 
@@ -122,7 +181,8 @@ def components_hash(atoms: list[dict]) -> str:
     AA-989: the atom id too — a re-upload (new tour_id → new atom ids, same text) or an action-only re-atomize
     left `geo.tour_place.atom_ids` on replaced atoms (rebase / skipped_unchanged). A changed id set now rebuilds
     the components; days and vectors are reused (days_hash / text_hash), so the rebuild is free unless names are
-    new. One-time effect of this change: the next place_extract of every built tour rebuilds once."""
+    new. One-time effect of this change: the next place_extract of every built tour rebuilds once.
+    COMPONENTS_RULE_VERSION is in the hash for the same reason (AA-990 N1: a skip-rule change)."""
     rows = sorted(
         (int(a["itinerary_day"]) if a.get("itinerary_day") is not None else -1, (a.get("place") or "").strip(),
          (a.get("activity_type") or "").strip().lower(), (a.get("text") or "").strip()[:TEXT_MAX],
@@ -131,7 +191,8 @@ def components_hash(atoms: list[dict]) -> str:
          str(a.get("card_destination_id") or ""), str(a.get("atom_id") or ""))
         for a in atoms)
     blob = "\n".join("\t".join(str(x) for x in r) for r in rows)
-    return hashlib.sha256(f"{days_mod.RULE_VERSION}\n{blob}".encode("utf-8")).hexdigest()
+    rule = f"{days_mod.RULE_VERSION}\ncomponents_rule={COMPONENTS_RULE_VERSION}"
+    return hashlib.sha256(f"{rule}\n{blob}".encode("utf-8")).hexdigest()
 
 
 def build_components(source_id: str, tour_country: str, atoms: list[dict],
@@ -141,17 +202,21 @@ def build_components(source_id: str, tour_country: str, atoms: list[dict],
     overnight anchor, the locality fallback of a generic name."""
     day_towns = day_towns or {}
     merged: dict[tuple, Component] = {}
-    counters = {"atoms": len(atoms), "skipped": {}, "generic_without_locality": 0, "linked_to_feature": 0}
+    counters = {"atoms": len(atoms), "skipped": {}, "generic_without_locality": 0, "linked_to_feature": 0,
+                "transit_journeys": 0}
     for a in sorted(atoms, key=lambda x: (x.get("itinerary_day") or 0, str(x.get("atom_id")))):
         place = (a.get("place") or "").strip()
         day = a.get("itinerary_day")
-        reason = "no_day" if day is None else skip_reason(place, a.get("activity_type"))
-        activity = map_activity(a.get("activity_type"), a.get("text") or "") if reason is None else None
+        action = atom_action(a)
+        reason = "no_day" if day is None else skip_reason(place, a.get("activity_type"), action)
+        activity = map_activity(a.get("activity_type"), a.get("text") or "", action) if reason is None else None
         if reason is None and activity is None:
             reason = "transit"
         if reason is not None:
             counters["skipped"][reason] = counters["skipped"].get(reason, 0) + 1
             continue
+        if (a.get("activity_type") or "").strip().lower() == "transit":
+            counters["transit_journeys"] += 1      # AA-990 N1: a self-propelled journey kept
         day = int(day)
         key = (day, name_norm(place), activity)
         text = (a.get("text") or "").strip()[:TEXT_MAX] or place

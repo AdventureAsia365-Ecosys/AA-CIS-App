@@ -76,7 +76,7 @@ async def live_tours_by_ids(conn, ids: list[str]) -> list[dict]:
 
 
 ATOMS_SQL = """
-    SELECT a.atom_id, a.itinerary_day, btrim(a.place) AS place, a.activity_type, a.text,
+    SELECT a.atom_id, a.itinerary_day, btrim(a.place) AS place, a.action, a.activity_type, a.text,
            pc.card_id::text AS card_id, pc.display_name AS card_display_name, pc.country AS card_country,
            pc.locality AS card_locality, pc.destination_id::text AS card_destination_id
       FROM acp_contract.v_active_tour_atoms a
