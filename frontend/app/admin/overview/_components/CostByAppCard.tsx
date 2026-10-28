@@ -111,7 +111,7 @@ export function CostByAppCard({ section }: { section: Section<CostData> | undefi
       title={section && section.status === "ok" ? `Cost per app — ${monthName(section.month)} so far` : "Cost per app"}
       subtitle="What each app costs to run this month, with last month for comparison (US dollars)"
       source={COST_SRC.card}
-      link={{ href: "/admin/llm-usage", label: "External Spend detail" }}
+      link={{ href: "/admin/cost-ops", label: "Cost Operations detail" }}
     >
       {!section ? null : section.status !== "ok" ? (
         <UnavailableNote section={section} />

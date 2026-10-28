@@ -1,14 +1,21 @@
 "use client";
-// app/admin/llm-usage/page.tsx — AA-622 External Spend: real LLM + DataForSEO cost, viewable by
-// TENANT and by ACCOUNT (both are first-class filter/group dimensions), model, stage. Extends the
-// AA-505/AA-617 LLM tree (account/fallback/tokens) + AA-618 DFS log. Path kept /admin/llm-usage.
+// app/admin/cost-ops/page.tsx — AA-665 Cost Operations (was AA-622 "External Spend" at /admin/llm-usage, which now
+// redirects here; ?tab= carries over). Real LLM + DataForSEO cost, viewable by TENANT and by ACCOUNT (both are
+// first-class filter/group dimensions), model, stage; the AA-505/AA-617 LLM tree (account/fallback/tokens) + AA-618 DFS
+// log. Tabs: Overview (+ AA-665 C3 month-end forecast vs budget, ForecastPanel), LLM, DataForSEO (+ C2 runs by job,
+// DfsRunsPanel), AWS bill (the AA-623 Cost Explorer reconciliation), Jev (JevPanel, the Jev Decisions endpoints),
+// Budgets. Deep link: /admin/cost-ops?tab=<key>.
 
-import { useState, useEffect, useCallback, useMemo, type CSSProperties } from "react";
+import { Suspense, useState, useEffect, useCallback, useMemo, type CSSProperties } from "react";
+import { useSearchParams } from "next/navigation";
 import { AlertTriangle, ChevronRight, ChevronDown, Cpu, Search, Wallet, Building2 } from "lucide-react";
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
 } from "recharts";
 import BudgetsPanel from "./BudgetsPanel";
+import DfsRunsPanel from "./DfsRunsPanel";
+import ForecastPanel from "./ForecastPanel";
+import JevPanel from "./JevPanel";
 import {
   A, serif, sans, mono, Card, SLabel, Badge, Btn, LoadingScreen, StatCard, TabBar, TH, TD,
   CHART_TOOLTIP,
@@ -452,9 +459,26 @@ function FallbackModal({ tenantId, tenantLabel, rangeQs, rangeLabel, onClose }: 
 
 // ═══════════════════════ PAGE ═══════════════════════════════════════════════
 
-export default function ExternalSpendPage() {
+const TABS = [
+  { key: "overview", label: "Overview" }, { key: "llm", label: "LLM" }, { key: "dfs", label: "DataForSEO" },
+  { key: "aws", label: "AWS bill" }, { key: "jev", label: "Jev" }, { key: "budgets", label: "Budgets" },
+];
+// Tabs that load their own data (the page's spend fetch, its loading and error states do not apply).
+const SELF_LOADING_TABS = new Set(["budgets", "jev"]);
+
+export default function CostOperationsPage() {
+  // useSearchParams() needs a Suspense boundary in the App Router.
+  return (
+    <Suspense fallback={null}>
+      <CostOperationsInner />
+    </Suspense>
+  );
+}
+
+function CostOperationsInner() {
+  const wanted = useSearchParams().get("tab");
   const [days, setDays] = useState(30);
-  const [tab, setTab] = useState("overview");
+  const [tab, setTab] = useState(() => (TABS.some(t => t.key === wanted) ? wanted! : "overview"));
   const [branches, setBranches] = useState<Branch[] | null>(null);
   const [dfs, setDfs] = useState<{ summary: DfsSummary; branches: DfsBranch[] } | null>(null);
   const [countries, setCountries] = useState<DfsCountry[] | null>(null);
@@ -482,16 +506,23 @@ export default function ExternalSpendPage() {
   // One time window for the whole page (LLM, DFS, trend, fallback drill-down AND Cost Explorer):
   // a rolling preset, or a custom from/to date range (UTC calendar days, "to" inclusive) — e.g.
   // "from the day X shipped". Both sides of the AWS-actual vs estimated comparison use it.
-  const [custom, setCustom] = useState<{ start: string; end: string } | null>(null);
+  // `days` of a custom window = its start to today (the Jev summary takes a rolling day count), set when applied.
+  const [custom, setCustom] = useState<{ start: string; end: string; days: number } | null>(null);
   const [draftStart, setDraftStart] = useState("");
   const [draftEnd, setDraftEnd] = useState("");
   const rangeQs = custom ? `start=${custom.start}&end=${custom.end}` : `days=${days}`;
   const rangeLabel = custom ? `${custom.start} → ${custom.end}` : `last ${days} days`;
+  const windowDays = custom ? custom.days : days;
+  // Days the window spans (a custom window: start to end, inclusive), for the DFS runs time match (max 31 days).
+  const windowSpanDays = custom
+    ? Math.round((Date.parse(`${custom.end}T00:00:00Z`) - Date.parse(`${custom.start}T00:00:00Z`)) / 86400000) + 1
+    : days;
   const applyCustom = () => {
     if (!draftStart) return;
     const end = draftEnd || new Date().toISOString().slice(0, 10);
     if (draftStart > end) return;
-    setCustom({ start: draftStart, end });
+    const sinceStart = Math.ceil((Date.now() - new Date(`${draftStart}T00:00:00Z`).getTime()) / 86400000);
+    setCustom({ start: draftStart, end, days: Math.max(1, sinceStart) });
   };
 
   const load = useCallback((qs: string) => {
@@ -666,8 +697,8 @@ export default function ExternalSpendPage() {
   return (
       <AdminMain>
         <PageHeader
-          title="External Spend"
-          description="Real LLM + DataForSEO cost — by tenant, account, model, stage"
+          title="Cost Operations"
+          description="What the platform spends — LLM, DataForSEO, Jev and the AWS bill — against budget"
           actions={
             <>
               {DAY_OPTIONS.map(d => (
@@ -712,11 +743,7 @@ export default function ExternalSpendPage() {
         </Card>
 
         <div style={{ marginBottom: 20 }}>
-          <TabBar
-            tabs={[{ key: "overview", label: "Overview" }, { key: "llm", label: "LLM" }, { key: "dfs", label: "DataForSEO" },
-                   { key: "budgets", label: "Budgets" }]}
-            active={tab} onChange={setTab}
-          />
+          <TabBar tabs={TABS} active={tab} onChange={setTab} />
         </div>
 
         {/* AA-627 — low DFS balance banner (all tabs). The daily check writes the snapshot; this
@@ -740,20 +767,24 @@ export default function ExternalSpendPage() {
 
         {/* AA-665 — budgets load on their own; the page's time window and filters do not apply. */}
         {tab === "budgets" && <BudgetsPanel />}
+        {/* AA-665 C1 — Jev spend and credit from the Jev Decisions endpoints; the page's window (max 90 days) applies. */}
+        {tab === "jev" && <JevPanel days={windowDays} />}
 
-        {tab !== "budgets" && loading && <LoadingScreen msg="Loading spend…" />}
-        {tab !== "budgets" && !loading && error && (
+        {!SELF_LOADING_TABS.has(tab) && loading && <LoadingScreen msg="Loading spend…" />}
+        {!SELF_LOADING_TABS.has(tab) && !loading && error && (
           <Card style={{ textAlign: "center", padding: 40 }}>
             <div style={{ color: A.red, marginBottom: 12 }}>{error}</div>
             <Btn variant="secondary" onClick={() => load(rangeQs)}>Retry</Btn>
           </Card>
         )}
 
-        {tab !== "budgets" && !loading && !error && (
+        {!SELF_LOADING_TABS.has(tab) && !loading && !error && (
           <>
             {/* ═══════════ OVERVIEW ═══════════ */}
             {tab === "overview" && (
               <>
+                {/* AA-665 C3 — this month's forecast vs budget (its own fetch; the date window does not apply). */}
+                <ForecastPanel />
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))", gap: 14, marginBottom: 20 }}>
                   <StatCard label="Total external spend" value={fmtUsd2(totalSpend)} sub={`${rangeLabel} · LLM + DFS${filterActive ? " · filtered" : ""}`} icon={<Wallet size={16} />} />
                   <StatCard label="LLM cost" value={fmtUsd2(llmCost)} sub={`${fmtInt(llmCalls)} calls · ${fmtInt(llmTokens)} tok`} accent={A.gold} icon={<Cpu size={16} />} />
@@ -809,6 +840,20 @@ export default function ExternalSpendPage() {
                   )}
                 </Card>
 
+                <Card dark>
+                  <SLabel light>Reconcile note</SLabel>
+                  <div style={{ fontSize: 12.5, color: "rgba(255,255,255,0.75)", lineHeight: 1.6 }}>
+                    Computed from per-call cost in <code style={{ fontFamily: mono }}>llm_call_log</code> + <code style={{ fontFamily: mono }}>dfs_call_log</code> — NOT the AWS invoice.
+                    Claude on Bedrock runs on the satellite accounts (<b>acc3</b> primary, acc1 fallback); acc2 is the infra account and only calls non-Claude Bedrock models (Cohere Embed / Palmyra). DataForSEO is 3rd-party (never in Cost Explorer).
+                    See the AWS bill tab for the reconciliation against the real AWS invoice.
+                  </div>
+                </Card>
+              </>
+            )}
+
+            {/* ═══════════ AWS BILL (AA-665 C1: the AA-623 Cost Explorer panel, moved off the Overview) ═══════════ */}
+            {tab === "aws" && (
+              <>
                 {/* AA-623 — AWS actual (Cost Explorer) vs estimated (token) reconciliation. Reads
                     the latest stored snapshot only (never a live CE call on page load — CE pricing
                     itself costs ~$0.01/request); "Refresh from AWS" triggers a fresh fetch on demand. */}
@@ -899,14 +944,6 @@ export default function ExternalSpendPage() {
                   )}
                 </Card>
 
-                <Card dark>
-                  <SLabel light>Reconcile note</SLabel>
-                  <div style={{ fontSize: 12.5, color: "rgba(255,255,255,0.75)", lineHeight: 1.6 }}>
-                    Computed from per-call cost in <code style={{ fontFamily: mono }}>llm_call_log</code> + <code style={{ fontFamily: mono }}>dfs_call_log</code> — NOT the AWS invoice.
-                    Claude on Bedrock runs on the satellite accounts (<b>acc3</b> primary, acc1 fallback); acc2 is the infra account and only calls non-Claude Bedrock models (Cohere Embed / Palmyra). DataForSEO is 3rd-party (never in Cost Explorer).
-                    See the &quot;AWS actual (Cost Explorer)&quot; panel above for reconciliation against the real AWS invoice.
-                  </div>
-                </Card>
               </>
             )}
 
@@ -986,6 +1023,9 @@ export default function ExternalSpendPage() {
                   <StatCard label="Cache hits" value={fmtInt(dfsCacheHits)} accent={A.gold} />
                   <StatCard label="Cache hit rate" value={pct(dfsCacheRate)} sub="DFS-attributable" />
                 </div>
+
+                {/* AA-665 C2 — DataForSEO spend by the job that made the calls (not tenant-filtered). */}
+                <DfsRunsPanel rangeQs={rangeQs} rangeLabel={rangeLabel} windowDays={windowSpanDays} />
 
                 <Card style={{ padding: 0, overflow: "hidden", marginBottom: 20 }}>
                   <div style={{ padding: "14px 18px" }}><SLabel style={{ marginBottom: 0 }}>Spend by tenant</SLabel></div>

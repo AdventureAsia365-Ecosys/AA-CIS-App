@@ -133,11 +133,13 @@ POLICY: dict[tuple[str, str], str] = {
     ("POST", "/admin/cost-explorer/check"): SPEND_WRITE,
     ("POST", "/admin/jev-canary/check"): OPS_WRITE,
     ("POST", "/admin/jev/402-sweep"): OPS_WRITE,
-    # admin_llm_ops — money reads (External Spend page, admin-only)
+    # admin_llm_ops — money reads (Cost Operations page, admin-only)
     ("GET", "/admin/cost-explorer"): SPEND_READ,
     ("GET", "/admin/dfs-balance"): SPEND_READ,
     ("GET", "/admin/dfs-usage"): SPEND_READ,
     ("GET", "/admin/dfs-usage/by-country"): SPEND_READ,
+    ("GET", "/admin/dfs-usage/runs"): SPEND_READ,          # AA-665 C2 — DFS spend by job
+    ("GET", "/admin/cost-ops/forecast"): SPEND_READ,       # AA-665 C3 — month-end forecast vs budget
     ("GET", "/admin/llm-usage/calls"): SPEND_READ,
     ("GET", "/admin/llm-usage/tree"): SPEND_READ,
     ("GET", "/admin/spend/daily"): SPEND_READ,

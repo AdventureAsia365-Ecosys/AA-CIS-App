@@ -1,7 +1,7 @@
 "use client";
 // app/admin/decisions/page.tsx — AA-660 Jev (TypeSafe) decision layer, v2 (S203 feedback: explain every
 // term, filters + sort, sticky tabs/headers, one column per fact, solid status colours, fuller stats).
-// API: /admin/decisions/{summary,log,questions/{key}}. Jev spend also appears in External Spend.
+// API: /admin/decisions/{summary,log,questions/{key}}. Jev spend also appears in Cost Operations (Jev tab).
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { BookOpen, ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
@@ -170,7 +170,7 @@ function Guide() {
         {term("Verdict", "Jev's answer to one question about one subject (a keyword, a row, a sentence). Every Verdict is kept.")}
         {term("Cached", "A Verdict reused from an earlier answer to the same question wording and subject — no new Jev call, no cost. The zone is recomputed with today's floors. Changing a question's wording starts fresh.")}
         {term("Acted", "How many Verdicts actually changed what the stage did (Enforce + Accept/Reject).")}
-        {term("Cost", "TypeSafe charges $0.042 per 1M input tokens (output free). Every call is also in External Spend under “Jev · TypeSafe”.")}
+        {term("Cost", "TypeSafe charges $0.042 per 1M input tokens (output free). Every call is also in Cost Operations under “Jev · TypeSafe”.")}
       </Card>
     </div>
   );
@@ -346,7 +346,7 @@ export default function DecisionsPage() {
             <>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 18 }}>
                 <Kpi label={`Jev calls · ${data.days}d`} value={data.total_calls.toLocaleString()} sub="billed API calls" />
-                <Kpi label={`Cost · ${data.days}d`} value={usd(data.total_cost_usd)} sub="also in External Spend" />
+                <Kpi label={`Cost · ${data.days}d`} value={usd(data.total_cost_usd)} sub="also in Cost Operations" />
                 <Kpi label="Verdicts" value={verdictTotal.toLocaleString()} sub={`one per question asked · ${(data.stages ?? []).reduce((n, s) => n + (s.cached ?? 0), 0)} from cache`} />
                 <Kpi label="Acted on" value={acted.toLocaleString()} sub={`${pct(acted, verdictTotal)} of verdicts changed a stage`} color={acted ? MODE_META.enforce.color : A.ink} />
                 <Kpi label="Errors" value={totals.error.toLocaleString()} sub={`${pct(totals.error, verdictTotal)} — fail-open`} color={totals.error ? ZONE_META.error.color : A.ink} />

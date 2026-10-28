@@ -63,7 +63,7 @@ const ADMIN_PAGES: PageSpec[] = [
   { id: 'jobs', label: 'Jobs', path: '/admin/jobs', viewerRefused: true },
   // AA-839 — Jobs › Data erasure (admin only; DRY RUN by default, apply needs the env flag + a Cognito sign-in).
   { id: 'data-erasure', label: 'Data erasure', path: '/admin/data-erasure', readySelector: '[data-testid="data-erasure-ready"]', viewerRefused: true },
-  { id: 'llm-usage', label: 'External Spend', path: '/admin/llm-usage', viewerRefused: true },
+  { id: 'cost-ops', label: 'Cost Operations', path: '/admin/cost-ops', viewerRefused: true },
   { id: 'master-content', label: 'Master Content', path: '/admin/master-content' },
   { id: 'overview', label: 'Overview', path: '/admin/overview', viewerRefused: true },
   // AA-883 — Platform › People & access › Staff (backend live on Dev since CIS main c2f9e919).

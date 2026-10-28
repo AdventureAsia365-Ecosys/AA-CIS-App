@@ -6,6 +6,8 @@ Two concerns, one router (they share the same `stage` vocabulary, see migration 
   - GET /admin/llm-usage/calls      — AA-505, flat recent-calls list (reused by AA-501's own
                                         AA/A4 piece view via ?content_piece_id=, and by the tree
                                         page's own "show recent calls for this branch" drill-in).
+  - GET /admin/dfs-usage/runs       — AA-665 C2, DataForSEO spend by job (Cost Operations › DataForSEO).
+  - GET /admin/cost-ops/forecast    — AA-665 C3, month-end forecast vs budget (Cost Operations › Overview).
 
 Auth: the admin secret on every route (router-level Depends(verify_admin_secret), S241). Until
 S241 the reads relied on the BFF alone (frontend/app/api/admin/[...path]/route.ts), which left them
@@ -799,6 +801,28 @@ async def get_dfs_usage(
     return {**_window_meta(days, since, until), "summary": s, "branches": branches}
 
 
+# ── AA-665 C2 — DataForSEO spend by the job that made the calls (shared.dfs_call_log.job_id, CIS 293) ─────────────
+# (No /dfs-usage/{param} route exists, so route order does not matter.) infer_unlinked: best-effort match of rows
+# without a job to the jobs running at the time (api/services/cost_ops.py), windows of at most 31 days.
+
+
+@router.get("/dfs-usage/runs", summary="AA-665 — DataForSEO spend grouped by the job that made the calls")
+async def get_dfs_usage_runs(
+    request: Request, days: int = Query(30, ge=1, le=365),
+    start: Optional[date] = None, end: Optional[date] = None,
+    infer_unlinked: bool = False, limit: int = Query(200, ge=1, le=1000),
+):
+    from api.services.cost_ops import dfs_runs
+
+    since, until = _resolve_window(days, start, end)
+    try:
+        out = await dfs_runs(request.app.state.pool, since, until, infer_unlinked=infer_unlinked, limit=limit)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    logger.info("admin_dfs_runs_queried", days=days, runs=len(out["runs"]), infer_unlinked=infer_unlinked)
+    return {**_window_meta(days, since, until), **out}
+
+
 # ── AA-622 — DFS spend by DataForSEO location_code -> country name ──────────────────────────────
 # dfs_call_log stores location_code (INTEGER, DFS's buyer-market code) not a country string, so
 # the External Spend UI maps the codes we actually target here. Unknown/NULL codes fall through to
@@ -1078,6 +1102,19 @@ async def get_cost_explorer(
         return {**window, "accounts": [], "services": [], "total_usd": None, "bedrock_usd": None,
                 "fetched_at": None, "has_data": False}
     return {**window, **data, "has_data": True}
+
+
+# ── AA-665 C3 — Cost Operations › Overview: month-end forecast vs budget (DB only, no live CE call) ────────────────
+
+
+@router.get("/cost-ops/forecast", summary="AA-665 — month-end spend forecast vs budget per provider and AWS account")
+async def get_cost_ops_forecast(request: Request, month: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}$")):
+    from api.services.cost_ops import cost_forecast
+
+    try:
+        return await cost_forecast(request.app.state.pool, month)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
 
 @router.get(

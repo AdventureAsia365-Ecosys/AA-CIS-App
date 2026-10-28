@@ -11669,6 +11669,86 @@
         ]
       }
     },
+    "/admin/cost-ops/forecast": {
+      "get": {
+        "operationId": "get_cost_ops_forecast_admin_cost_ops_forecast_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "month",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^\\d{4}-\\d{2}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Month"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "AA-665 — month-end spend forecast vs budget per provider and AWS account",
+        "tags": [
+          "admin-llm-ops"
+        ]
+      }
+    },
     "/admin/dashboard/hubs": {
       "get": {
         "description": "acp_contract.hub — AA-554 mục G: a genuine Hub table, split out from the single Route table\nit used to be folded into (`list_routes` above only ever exposed `route.hub_name`, a\nper-route denormalized placeholder, never a real `acp_contract.hub` row). A Hub row only\nexists once `route_detection.py`'s `families()` finds 2+ tours sharing enough Segments to\ngroup (\"a family of one is not a family\") — see `list_routes`' own docstring above for the\nfull correction. Real prod data has exactly 0 Hub rows today for that reason, which is why the\nfrontend's empty-state here reads \"No Hub yet — needs 2+ tours sharing a route segment\"\ninstead of implying anything is broken.\n\nOnly CURRENT routes (`superseded_at IS NULL`) count toward a Hub's `route_count`/`tour_names`\n— same \"no historical-version noise in a platform-wide view\" convention `list_routes` uses in\n\"All tours\" mode. `market` filters the same way `list_routes` does: through the joined\n`atom_ranking` rows for each member Route's Segments, applied as a HAVING (it's not a Hub\ncolumn).",
@@ -14005,6 +14085,137 @@
           }
         },
         "summary": "AA-622 — DataForSEO spend grouped by target market (location_code)",
+        "tags": [
+          "admin-llm-ops"
+        ]
+      }
+    },
+    "/admin/dfs-usage/runs": {
+      "get": {
+        "operationId": "get_dfs_usage_runs_admin_dfs_usage_runs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 365,
+              "minimum": 1,
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End"
+            }
+          },
+          {
+            "in": "query",
+            "name": "infer_unlinked",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Infer Unlinked",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "AA-665 — DataForSEO spend grouped by the job that made the calls",
         "tags": [
           "admin-llm-ops"
         ]

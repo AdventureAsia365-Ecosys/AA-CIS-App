@@ -559,7 +559,7 @@ export default function OverviewPage() {
               <Section
                 icon={<CircleDollarSign size={16} />}
                 title="AI and data providers — today and this month vs daily budget"
-                href="/admin/llm-usage"
+                href="/admin/cost-ops"
               >
                 <ScrollX testId="overview-provider-cost-table">
                   <table style={{ width: "100%", minWidth: 480, borderCollapse: "collapse" }}>
