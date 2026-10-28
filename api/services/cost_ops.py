@@ -12,8 +12,10 @@ handler reported (``shared.job.cost_usd``) and the job's LLM spend (``shared.llm
 job (a request handler, a script, or any row written before 293) are one ``job_id = None`` group. With
 ``infer_unlinked`` those rows are matched, best effort, to the jobs whose run window [started_at, finished_at or
 updated_at] contains the call: one candidate = "window" attribution, several = "ambiguous" (the candidate kinds are
-listed), none = "none". started_at is the LAST attempt's start, and succeeded jobs are deleted after 30 days
-(retention_job), so this only explains recent rows; it is a hint, never a fact.
+listed), none = "incident" when the call falls inside a recorded cost incident (``api/services/cost_incidents.py``)
+and "none" otherwise. started_at is the LAST attempt's start, and succeeded jobs are deleted after 30 days
+(retention_job), so a job match only explains recent rows; it is a hint, never a fact. Every response also carries
+``incidents``: the recorded incidents overlapping the window, with their numbers read live from the logs.
 
 Forecast (C3). Per provider family of the AI / third-party spend — Bedrock (with the acc3 / acc2 split), OpenAI,
 Jev (TypeSafe), DataForSEO — and per AWS account bill (acc2, acc3). AA-998: the former LLM fallback account left the
@@ -45,6 +47,7 @@ from typing import Any, Iterable, Optional
 
 import structlog
 
+from api.services.cost_incidents import CostIncident, incident_view, incidents_overlapping
 from api.services.platform_cost import month_window, provider_family
 from shared.aws_client import cost_explorer as ce
 from shared.aws_client.accounts import account_label
@@ -118,25 +121,31 @@ DFS_INFER_SQL = """
         SELECT id, kind, started_at, coalesce(finished_at, updated_at) AS ended_at
           FROM shared.job
          WHERE started_at IS NOT NULL AND started_at < $2 AND coalesce(finished_at, updated_at) >= $1
+    ), i AS (
+        SELECT * FROM unnest($3::text[], $4::timestamptz[], $5::timestamptz[]) AS i(incident_id, started_at, ended_at)
     ), m AS (
         SELECT u.id, u.created_at, u.cost_usd, u.fetched_live,
                count(j.id) AS candidates,
                (array_agg(j.id ORDER BY j.started_at DESC) FILTER (WHERE j.id IS NOT NULL))[1] AS job_id,
-               coalesce(array_agg(DISTINCT j.kind) FILTER (WHERE j.id IS NOT NULL), '{}') AS kinds
+               coalesce(array_agg(DISTINCT j.kind) FILTER (WHERE j.id IS NOT NULL), '{}') AS kinds,
+               (SELECT i.incident_id FROM i WHERE u.created_at >= i.started_at AND u.created_at < i.ended_at
+                 ORDER BY i.started_at LIMIT 1) AS incident_id
           FROM u LEFT JOIN j ON u.created_at >= j.started_at AND u.created_at <= j.ended_at
          GROUP BY u.id, u.created_at, u.cost_usd, u.fetched_live
     )
     SELECT CASE WHEN candidates = 1 THEN job_id END                       AS job_id,
-           CASE WHEN candidates = 0 THEN 'none'
-                WHEN candidates = 1 THEN 'window' ELSE 'ambiguous' END     AS attribution,
+           CASE WHEN candidates = 1 THEN 'window'
+                WHEN candidates > 1 THEN 'ambiguous'
+                WHEN incident_id IS NOT NULL THEN 'incident' ELSE 'none' END AS attribution,
            CASE WHEN candidates > 1 THEN kinds ELSE '{}'::text[] END       AS candidate_kinds,
+           CASE WHEN candidates = 0 THEN incident_id END                   AS incident_id,
            count(*)                                                        AS calls,
            count(*) FILTER (WHERE fetched_live)                            AS live_calls,
            coalesce(sum(cost_usd), 0)::float                               AS dfs_cost_usd,
            min(created_at)                                                 AS first_call_at,
            max(created_at)                                                 AS last_call_at
       FROM m
-     GROUP BY 1, 2, 3
+     GROUP BY 1, 2, 3, 4
      ORDER BY dfs_cost_usd DESC
 """
 
@@ -229,14 +238,20 @@ async def dfs_runs(pool: Any, since: datetime, until: datetime, *, infer_unlinke
         "runs": runs,
         "truncated": len(runs) >= limit,
         "inferred": None,
+        "incidents": [],
     }
+    incidents = incidents_overlapping(since, until, provider="dfs")
+    out["incidents"] = [await incident_view(pool, i) for i in incidents]
     if infer_unlinked:
-        out["inferred"] = await _infer_unlinked(pool, since, until)
+        out["inferred"] = await _infer_unlinked(pool, since, until, incidents)
     return out
 
 
-async def _infer_unlinked(pool: Any, since: datetime, until: datetime) -> list[dict[str, Any]]:
-    rows = await pool.fetch(DFS_INFER_SQL, since, until)
+async def _infer_unlinked(pool: Any, since: datetime, until: datetime,
+                          incidents: list[CostIncident]) -> list[dict[str, Any]]:
+    rows = await pool.fetch(DFS_INFER_SQL, since, until, [i.id for i in incidents],
+                            [i.started_at for i in incidents], [i.ended_at for i in incidents])
+    titles = {i.id: i.title for i in incidents}
     ids = [r["job_id"] for r in rows if r["job_id"] is not None]
     jobs = {}
     if ids:
@@ -248,6 +263,7 @@ async def _infer_unlinked(pool: Any, since: datetime, until: datetime) -> list[d
             "job_id": str(job_id) if job_id is not None else None,
             "attribution": r["attribution"],
             "candidate_kinds": sorted(r["candidate_kinds"] or []),
+            "incident_id": r["incident_id"], "incident_title": titles.get(r["incident_id"]),
             "calls": int(r["calls"]), "live_calls": int(r["live_calls"]),
             "dfs_cost_usd": round(float(r["dfs_cost_usd"]), 6),
             "first_call_at": _iso(r["first_call_at"]), "last_call_at": _iso(r["last_call_at"]),

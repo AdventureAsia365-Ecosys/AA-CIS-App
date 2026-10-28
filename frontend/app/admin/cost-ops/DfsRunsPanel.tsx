@@ -3,7 +3,8 @@
 // run. API: GET /api/admin/dfs-usage/runs?{window}[&infer_unlinked=true] (backend api/services/cost_ops.py dfs_runs;
 // spend.read = admin). Rows carry shared.dfs_call_log.job_id since CIS 293; calls made outside a job (and every older
 // row) are one "No job" row. "Match calls without a job" asks the backend for a best-effort match by the jobs' run
-// windows (windows of at most 31 days).
+// windows (windows of at most 31 days); calls inside a recorded cost incident with no job running are matched to the
+// incident. A recorded incident overlapping the window is shown above the runs (IncidentCard).
 
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
@@ -12,6 +13,7 @@ import {
   Badge, Button, DataTable, ErrorState, K, SkeletonBar, apiGet, formatDateTime, mono, type ColumnDef, type Tone,
 } from "../../_kit";
 import { PanelTitle, Stat, int, noteStyle, numStyle, panelStyle, statGrid, usd } from "./costOpsUi";
+import IncidentCard, { type IncidentView } from "./IncidentCard";
 
 interface JobView {
   kind: string | null;
@@ -40,8 +42,10 @@ interface Run {
 }
 interface Inferred {
   job_id: string | null;
-  attribution: "window" | "ambiguous" | "none";
+  attribution: "window" | "ambiguous" | "incident" | "none";
   candidate_kinds: string[];
+  incident_id: string | null;
+  incident_title: string | null;
   calls: number;
   live_calls: number;
   dfs_cost_usd: number;
@@ -54,6 +58,7 @@ interface RunsResp {
   runs: Run[];
   truncated: boolean;
   inferred: Inferred[] | null;
+  incidents?: IncidentView[];
 }
 
 const STATUS_TONE: Record<string, Tone> = {
@@ -63,6 +68,7 @@ const STATUS_TONE: Record<string, Tone> = {
 const ATTRIBUTION: Record<Inferred["attribution"], { tone: Tone; label: string }> = {
   window: { tone: "info", label: "One job running" },
   ambiguous: { tone: "warning", label: "Several jobs running" },
+  incident: { tone: "danger", label: "Recorded incident" },
   none: { tone: "neutral", label: "No job running" },
 };
 
@@ -164,6 +170,9 @@ export default function DfsRunsPanel({ rangeQs, rangeLabel, windowDays }: {
         if (r.attribution === "ambiguous") {
           return <span style={{ fontSize: 12, color: K.ink3 }}>{r.candidate_kinds.join(", ")}</span>;
         }
+        if (r.attribution === "incident") {
+          return <span style={{ fontSize: 12, color: K.ink }}>{r.incident_title ?? r.incident_id}</span>;
+        }
         return <JobCell jobId={r.job_id} job={r.job} fallback="—" />;
       },
     },
@@ -197,6 +206,7 @@ export default function DfsRunsPanel({ rangeQs, rangeLabel, windowDays }: {
       {isError && <ErrorState message={`Could not load the runs. ${(error as Error)?.message ?? ""}`} onRetry={() => refetch()} />}
       {data && (
         <>
+          {(data.incidents ?? []).map((inc) => <IncidentCard key={inc.id} incident={inc} />)}
           <div style={statGrid}>
             <Stat label="DataForSEO spend" value={usd(data.summary.dfs_cost_usd)} sub={rangeLabel} />
             <Stat label="Linked to a job" value={usd(data.summary.linked_cost_usd)}
@@ -223,15 +233,16 @@ export default function DfsRunsPanel({ rangeQs, rangeLabel, windowDays }: {
             <div style={{ marginTop: 16 }}>
               <PanelTitle>Calls without a job, matched by time (best effort)</PanelTitle>
               <div style={{ ...noteStyle, marginBottom: 8 }}>
-                A call is matched to the job(s) running when it was made. A job&apos;s start is its last attempt&apos;s,
-                and finished jobs are deleted after 30 days (failed ones after 90), so this is a hint, not a fact.
+                A call is matched to the job(s) running when it was made, or to a recorded incident when no job ran.
+                A job&apos;s start is its last attempt&apos;s, and finished jobs are deleted after 30 days (failed ones
+                after 90), so a job match is a hint, not a fact.
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)" }}>
                 <DataTable<Inferred>
                   tableId="cost-ops-dfs-inferred"
                   data={data.inferred}
                   columns={inferredColumns}
-                  getRowId={(r) => `${r.attribution}-${r.job_id ?? r.candidate_kinds.join(",")}`}
+                  getRowId={(r) => `${r.attribution}-${r.job_id ?? r.incident_id ?? r.candidate_kinds.join(",")}`}
                   pageSize={20}
                   tableMinWidth={820}
                   compact

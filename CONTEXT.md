@@ -386,7 +386,11 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     - DataForSEO › Runs: `shared.dfs_call_log.job_id` (migration 293) is the job running when the call was made
       (`call_log.current_job_id()`, as for `llm_call_log`); `GET /admin/dfs-usage/runs` groups spend by job with its
       kind, starter, payload scope, status, error and the job's LLM cost; `infer_unlinked=true` matches rows without a
-      job (older rows) to the jobs running at the time, best effort.
+      job (older rows) to the jobs running at the time, best effort, or to a recorded cost incident when no job ran.
+    - Recorded cost incidents (`api/services/cost_incidents.py`): the reviewed findings of a spend investigation
+      (trigger, scope, failure point, cause, what changed since) kept as code records; the DataForSEO tab shows each
+      one overlapping the window, with its numbers read live from `dfs_call_log` / `llm_call_log` (rollup
+      `llm_call_daily` after the raw retention). First record: the 25/09/2026 research sweep.
     - Jev: the Jev Decisions endpoints (`/admin/decisions/summary`, `/admin/decisions/jev-credit`).
   - Rule for manual scripts that call an LLM: go through `LLMClient.generate()` and log to
     `llm_call_log` with `stage="adhoc_<issue>"` (steering rule, from AA-635).
