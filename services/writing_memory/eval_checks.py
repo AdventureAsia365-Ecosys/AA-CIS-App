@@ -398,6 +398,6 @@ def shadow_probe_count(scope: str, other_tenants: int) -> int:
 
 
 __all__ = ["cohen_kappa", "compare_item", "control_mode", "criterion_met", "flatten_text", "injection_violations",
-           "isolation_probe", "judge_counts", "paired_stats", "plan_phases", "qa_artefacts", "result_phase",
-           "selected_tiers", "shadow_probe_count", "shadow_quota", "shadow_size", "shingles", "tenant_fingerprint",
-           "too_many_errors", "tune_decision"]
+           "isolation_probe", "judge_counts", "label_counts", "paired_stats", "plan_phases", "qa_artefacts",
+           "result_phase", "selected_tiers", "shadow_probe_count", "shadow_quota", "shadow_size", "shingles",
+           "tenant_fingerprint", "too_many_errors", "tune_decision"]

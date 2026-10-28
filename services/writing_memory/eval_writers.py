@@ -80,15 +80,10 @@ def source_text(writer: str, inp: dict, shared_inputs: Optional[dict] = None) ->
         return out
     ctx = _t9_context(inp)
     parts = [f"SEED: {ctx.get('atom_text') or ''}"]
-    for seg in ctx.get("route_segments") or []:
-        if isinstance(seg, (list, tuple)) and len(seg) > 1:
-            parts.append(f"SEED: {seg[1]}")
-    for k in ("facts_text", "trip_name", "destination", "cta", "keyword"):
-        if ctx.get(k):
-            parts.append(f"{k.upper()}: {flatten_text(ctx.get(k))}")
     # The scope line and the angle brief the writer was told to follow (S255, AA-919 kappa diagnosis): the golden
     # labels were made on the full writer input, which includes them; without them the judge flags brief wording and
-    # cannot check scope.
+    # cannot check scope. They (and the brand) come BEFORE the facts: the judge reads the first
+    # eval_judge.SOURCE_CHARS of this text, and a T9 blog's facts run to 15-40k chars, so at the end they were cut.
     if ctx.get("scope"):
         parts.append(f"SCOPE: {flatten_text(ctx.get('scope'))}")
     angle = ctx.get("chosen")
@@ -99,6 +94,12 @@ def source_text(writer: str, inp: dict, shared_inputs: Optional[dict] = None) ->
     ba = ctx.get("brand_audience") or {}
     if ba.get("brand_name"):
         parts.append(f"BRAND: {ba['brand_name']}")
+    for seg in ctx.get("route_segments") or []:
+        if isinstance(seg, (list, tuple)) and len(seg) > 1:
+            parts.append(f"SEED: {seg[1]}")
+    for k in ("trip_name", "destination", "cta", "keyword", "facts_text"):
+        if ctx.get(k):
+            parts.append(f"{k.upper()}: {flatten_text(ctx.get(k))}")
     return "\n".join(parts)
 
 
