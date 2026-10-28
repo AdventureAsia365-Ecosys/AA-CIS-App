@@ -44,6 +44,10 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
 
 ## Architecture at a glance
 
+Architecture diagram (AWS icons): `AA-Ecosys/docs/architecture/diagrams/cis.svg`, drawn from `cis.py` in the
+same folder; the catalog page `AA-Ecosys/docs/architecture/diagrams/README.md` holds every view and is shown in the CIS
+admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
+
 - **Backend**: Python (FastAPI-style routers under `api/routers/`, services under `services/`),
   running on **ECS** (cluster `aa-cis-dev-cluster`, service `aa-cis-dev-api`) fronted by ALB +
   API Gateway. Postgres (RDS) holds the schemas; some steps use Bedrock for LLM work.
