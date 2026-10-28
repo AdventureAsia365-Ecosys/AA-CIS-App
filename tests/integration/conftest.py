@@ -114,6 +114,7 @@ X284_STANDIN_SQL = ("INSERT INTO shared.schema_versions (version, applied_at, de
 X287_PREDECESSORS = ("284", "285", "286")
 X287_STANDIN_MARK = "zz-ci-standin (AA-919, conftest: 287 needs 284-286 registered)"
 
+
 def _post_244_rls(cur, on):
     for table in X1_POST_244_RLS:
         cur.execute("SELECT to_regclass(%s) IS NOT NULL", (table,))
