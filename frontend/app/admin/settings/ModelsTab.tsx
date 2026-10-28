@@ -35,6 +35,8 @@ import {
   withVia,
 } from "./llmShared";
 import { StageRouteEditor } from "./StageRouteEditor";
+import { useAwsAccounts } from "../_components/useAwsAccounts";
+import { accountName } from "@/lib/awsAccounts";
 import { CatalogTab } from "./CatalogTab";
 import { ShadowReportTab } from "./ShadowReportTab";
 
@@ -91,7 +93,10 @@ function ModelRow({ row }: { row: StageConfigRow }) {
     const o = row.options.find((x) => x.model_id === id);
     return o ? withVia(o.label, o.via) : id;
   };
-  const acctLabel = (v: string) => row.account_route_options.find((o: AccountOption) => o.value === v)?.label ?? v;
+  const awsAccounts = useAwsAccounts();
+  // A route outside the options (a non-Claude stage has none) still shows the account ID, never the key (AA-998).
+  const acctLabel = (v: string) =>
+    row.account_route_options.find((o: AccountOption) => o.value === v)?.label ?? accountName(v, awsAccounts);
 
   const mut = useMutation({
     mutationFn: (body: { model_id: string; account_route: string | null }) =>
