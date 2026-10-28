@@ -11,20 +11,46 @@
 //     shown: the reader never loads remote resources (that would leak the viewer's address).
 //   - Never blocks the page: any parse or render error (or a source over the cap) shows the source instead, labelled.
 //   - Follows the admin theme (light / dark) and redraws when it flips.
+//   - Draws only once the brand font (Poppins) is loaded, and draws again if it arrives later: mermaid sizes the
+//     boxes from label widths it measures while drawing, so a diagram measured with the fallback face breaks its
+//     labels mid-word once Poppins swaps in (lib/fontReady.ts).
 // Mermaid keeps global config, so renders are serialised through one queue.
 
 import React from "react";
 import { K, RADIUS, mono, sans } from "./core/tokens";
 import { useResolvedTheme } from "./useTheme";
 import { MERMAID_SECURE_KEYS, svgIsSelfContained } from "@/lib/mermaidSafety";
+import { fontIsReady, waitForFont } from "@/lib/fontReady";
 
 export const MAX_SOURCE = 20_000;
 
 let queue: Promise<unknown> = Promise.resolve();
 let seq = 0;
 
+function fontSet() {
+  return typeof document !== "undefined" ? document.fonts : undefined;
+}
+
+// Subscribes to font loads so a diagram drawn before Poppins arrived is drawn again once it is in.
+function subscribeFonts(onChange: () => void): () => void {
+  const fonts = fontSet();
+  if (!fonts?.addEventListener) return () => {};
+  fonts.addEventListener("loadingdone", onChange);
+  fonts.addEventListener("loadingerror", onChange);
+  return () => {
+    fonts.removeEventListener("loadingdone", onChange);
+    fonts.removeEventListener("loadingerror", onChange);
+  };
+}
+const brandFontReady = () => fontIsReady(fontSet(), sans);
+const serverFontReady = () => false;
+
 async function draw(source: string, theme: "light" | "dark"): Promise<string> {
-  const [{ default: mermaid }, { default: DOMPurify }] = await Promise.all([import("mermaid"), import("dompurify")]);
+  const [{ default: mermaid }, { default: DOMPurify }] = await Promise.all([
+    import("mermaid"),
+    import("dompurify"),
+    waitForFont(fontSet(), sans),
+  ]);
   mermaid.initialize({
     startOnLoad: false,
     securityLevel: "strict",
@@ -59,30 +85,37 @@ function render(source: string, theme: "light" | "dark"): Promise<string> {
   return job;
 }
 
-// The result of one render, keyed by what was drawn; a different key means "still drawing".
-type Drawn = { key: string; svg: string | null };
+// The result of one render, keyed by what was drawn; a different key means "still drawing". `base` leaves the font
+// state out, so a redraw for a font that just arrived keeps the previous drawing on screen instead of flashing.
+type Drawn = { key: string; base: string; svg: string | null };
 
 export function MermaidDiagram({ source }: { source: string }) {
   const theme = useResolvedTheme();
+  const fontReady = React.useSyncExternalStore(subscribeFonts, brandFontReady, serverFontReady);
   const tooBig = source.length > MAX_SOURCE;
-  const key = `${theme}\u0000${source}`;
+  const base = `${theme}\u0000${source}`;
+  const key = `${base}\u0000${fontReady ? "font" : "fallback"}`;
   const [drawn, setDrawn] = React.useState<Drawn | null>(null);
 
   React.useEffect(() => {
     if (tooBig) return;
     let live = true;
     render(source, theme).then(
-      (svg) => live && setDrawn({ key, svg: svg.trim() ? svg : null }),
-      () => live && setDrawn({ key, svg: null }),
+      (svg) => live && setDrawn({ key, base, svg: svg.trim() ? svg : null }),
+      () => live && setDrawn({ key, base, svg: null }),
     );
     return () => {
       live = false;
     };
-  }, [source, theme, tooBig, key]);
+  }, [source, theme, tooBig, key, base]);
 
-  const state = drawn && drawn.key === key
+  const current = drawn && drawn.key === key;
+  const stale = drawn && !current && drawn.base === base && drawn.svg; // font redraw in progress
+  const state = current
     ? (drawn.svg ? { kind: "ok" as const, svg: drawn.svg } : { kind: "error" as const })
-    : { kind: "loading" as const };
+    : stale
+      ? { kind: "ok" as const, svg: drawn.svg as string }
+      : { kind: "loading" as const };
 
   if (tooBig || state.kind === "error") {
     return (
