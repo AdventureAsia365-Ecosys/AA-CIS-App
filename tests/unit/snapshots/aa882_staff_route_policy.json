@@ -1195,6 +1195,10 @@
     "capability": "ai.admin",
     "module": "api.routers.admin_writing_memory"
   },
+  "POST /admin/writing-memory/releases/{release_id}/post-activation-check": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_writing_memory"
+  },
   "POST /admin/writing-memory/releases/{release_id}/reject": {
     "capability": "ai.admin",
     "module": "api.routers.admin_writing_memory"

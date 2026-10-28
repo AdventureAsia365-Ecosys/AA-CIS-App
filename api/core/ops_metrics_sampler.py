@@ -43,6 +43,10 @@ samples fire the `*-sampling-stopped` alarms, so a dead api (or a dead loop) is 
   while signals wait as `pending` (one count; idempotency key per day). The filter queues an automatic mining run only
   when its trigger holds (services/writing_memory/mining.decide_run). Field `writing_memory_fact_filter` (the job
   id) or `writing_memory_error`.
+- AA-920: each tick also queues the writing-memory post-activation check (`writing_memory_post_activation`, $0) once
+  per hour while an active release with content exists (one EXISTS; idempotency key per hour; release 0 is empty, so
+  nothing is queued today). Field `writing_memory_post_activation` (the job id) or
+  `writing_memory_post_activation_error`.
 - AA-913: each tick also reconciles the platform alert recipients with SNS
   (shared/alert_recipients.periodic_reconcile: one ListSubscriptionsByTopic, throttled like a page view; a no-op
   when ALERTS_TOPIC_ARN / ALERT_BOOTSTRAP_EMAIL are unset). An address removed on the admin page while its
@@ -238,6 +242,30 @@ async def _writing_memory_part(pool, kinds: dict, ts: datetime, out: dict) -> No
         out["writing_memory_fact_filter"] = job_id
 
 
+_CONTENT_RELEASE_SQL = """
+    SELECT EXISTS (SELECT 1 FROM shared.writing_memory_release
+                    WHERE status = 'active' AND (content_class <> 'empty' OR cardinality(rule_ids) > 0))
+"""
+
+
+async def _writing_memory_post_activation_part(pool, kinds: dict, ts: datetime, out: dict) -> None:
+    """AA-920 WM-26: one post-activation check job an hour while a release with content is active ($0; release 0 is
+    empty, so today this queues nothing). Only while the kind is registered."""
+    from services.jobs.writing_memory_job import POST_ACTIVATION
+    from services.writing_memory.config import POST_ACTIVATION_EVERY_S
+    from shared.jobs.registry import enqueue
+
+    if POST_ACTIVATION not in kinds:
+        return
+    if not await pool.fetchval(_CONTENT_RELEASE_SQL):
+        return
+    bucket = int(ts.timestamp()) // int(POST_ACTIVATION_EVERY_S)
+    job_id, created = await enqueue(pool, POST_ACTIVATION, {"apply": True},
+                                    idempotency_key=f"{POST_ACTIVATION}:{bucket}", created_by="scheduler:aa-920")
+    if created:
+        out["writing_memory_post_activation"] = job_id
+
+
 async def _alert_recipients_part(pool, redis, out: dict) -> None:
     from shared import alert_recipients
 
@@ -300,6 +328,12 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
         await asyncio.wait_for(_writing_memory_part(pool, kinds, ts, out), timeout=part_timeout_s)
     except Exception as e:
         out["writing_memory_error"] = _err(e)
+    # AA-920: a single EXISTS + at most one idempotent INSERT an hour; it shares the writing-memory part's budget, so a
+    # tick keeps its 6 timed parts (<= 300 s)
+    try:
+        await asyncio.wait_for(_writing_memory_post_activation_part(pool, kinds, ts, out), timeout=5.0)
+    except Exception as e:
+        out["writing_memory_post_activation_error"] = _err(e)
 
     try:
         await asyncio.wait_for(_jobs_part(pool, client, kinds, ts, out), timeout=part_timeout_s)

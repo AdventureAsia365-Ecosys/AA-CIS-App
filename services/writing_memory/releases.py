@@ -7,8 +7,12 @@ The double check of ADR 0010 decision 1: `evidence_problem()` is the API's half 
 locked row inside the write transaction, answered as a readable 409. The DB refuses the same activation even when the
 API is bypassed or wrong (`DBRefused`, 409 `db_refused`: proof that the second layer fired).
 
-Policy of this issue (not a DB rule): the writers render only the `empty` content class today, so `activate` refuses
-any other class with 409 `content_not_wired` until WM-23 / WM-24 / WM-25 wire the slots (WIRED_CLASSES).
+Policy (not a DB rule, `wiring_problem`): `activate` refuses a class the writer does not render with 409
+`content_not_wired` (WIRED_CLASSES). AA-920 wired `rules` and `repair_hint_only` for A1 (WM-23) and T9 (WM-24) through
+the one builder of `insertion.py`. T2 stays `empty` only until WM-25 lands (the `generation_meta` migration with the
+tenant projection denylist in the same PR). `lexicon_only` is not rendered by any writer: its evidence is an R0 replay
+only (no R2 / shadow), which is not enough for a prompt change; a lexicon rule reaches T9 through L0 (`l0.py`) or
+inside a `rules` release.
 
 Rollback moves the active pointer back to the release the current one superseded (`previous_release_id`), with no
 deploy: the current release becomes `retired` with `rollback: <reason>` and can never be re-activated (a fix is a new
@@ -42,7 +46,10 @@ JUDGE_STAGE = "writing_memory_eval"          # WM-19's judge stage (fingerprinte
 GOLDEN_SET = "aa729"
 MIN_R0_INPUTS = 20                           # WM-20: >= 20 stored inputs per writer
 MAX_RULES = 40
-WIRED_CLASSES = frozenset({"empty"})          # what the writers render today (WM-23 / 24 / 25 extend it)
+# What each writer renders (AA-920: A1 = WM-23, T9 = WM-24; T2 waits for WM-25, see the module docstring).
+WIRED_CLASSES = {"a1": frozenset({"empty", "rules", "repair_hint_only"}), "t2": frozenset({"empty"}),
+                 "t9_blog": frozenset({"empty", "rules", "repair_hint_only"}),
+                 "t9_social": frozenset({"empty", "rules", "repair_hint_only"})}
 TRANSITIONS = {("draft", "evaluated"), ("draft", "rejected"), ("evaluated", "approved"), ("evaluated", "rejected"),
                ("evaluated", "draft"), ("approved", "active"), ("approved", "rejected"), ("active", "retired"),
                ("retired", "active")}
@@ -233,10 +240,14 @@ def evidence_problem(release: dict, runs: dict[str, Optional[dict]], rules: list
 
 
 def wiring_problem(release: dict) -> Optional[tuple[str, str]]:
-    """This issue's policy: only the classes the writers render may go active (WM-23 / 24 / 25 wire the others)."""
-    if release["content_class"] not in WIRED_CLASSES:
-        return "content_not_wired", (f"the writers do not render {release['content_class']} releases yet "
-                                     "(WM-23 / WM-24 / WM-25)")
+    """Only a class the writer renders may go active (WIRED_CLASSES; T2 content waits for WM-25, lexicon_only for no
+    writer)."""
+    wired = WIRED_CLASSES.get(release["writer"], frozenset({"empty"}))
+    if release["content_class"] not in wired:
+        why = ("T2 renders rules only after WM-25 (generation_meta + tenant projection)" if release["writer"] == "t2"
+               else "a lexicon-only release has R0 evidence only; use the L0 path or a rules release"
+               if release["content_class"] == "lexicon_only" else "not wired")
+        return "content_not_wired", f"{release['writer']} does not render {release['content_class']} releases ({why})"
     return None
 
 
@@ -688,6 +699,32 @@ async def rollback(conn, release_id: str, *, actor: str, reason: str) -> dict:
     return out
 
 
+async def retire_without_previous(conn, release_id: str, *, actor: str, reason: str) -> dict:
+    """active -> retired (`rollback: <reason>`, never re-activated) with nothing put in its place: the owner then
+    writes with no release of its own (a tenant: the platform release only). The post-activation check's fallback
+    for a TENANT release that superseded nothing (409 no_previous from `rollback`). A platform release always has
+    one (release 0); without it the check turns the writer's memory off instead."""
+    rel = await get_release(conn, release_id, for_update=True)
+    if rel is None:
+        raise ReleaseError(404, "not_found", "Unknown release")
+    if rel["status"] != "active":
+        raise ReleaseError(409, "not_active", f"a {rel['status']} release is not the active one")
+    if rel["scope"] != "tenant" or rel["previous_release_id"]:
+        raise ReleaseError(409, "use_rollback", "only a tenant release with no previous release is retired alone")
+    try:
+        row = await conn.fetchrow(f"UPDATE shared.writing_memory_release SET status = 'retired', retired_reason = $2 "
+                                  f"WHERE release_id = $1::uuid RETURNING {_COLUMNS}", str(release_id),
+                                  f"{ROLLBACK_PREFIX} {reason}"[:500])
+    except Exception as e:  # noqa: BLE001
+        if type(e).__name__ in ("CheckViolationError", "RaiseError", "RestrictViolationError"):
+            raise _db_refused(e)
+        raise
+    out = dict(row)
+    await _audit(conn, rel, actor, "retired_alone", {"reason": "rollback"})
+    logger.info("wm_release_retired_alone", writer=rel["writer"], scope=rel["scope"], release_no=rel["release_no"])
+    return out
+
+
 async def set_memory_enabled(conn, writer: str, enabled: bool, *, actor: str) -> dict:
     """The kill switch: memory on needs an active platform release (the trigger checks it too)."""
     if writer not in WRITERS:
@@ -733,5 +770,6 @@ __all__ = ["CONTENT_CLASSES", "DBRefused", "EMERGENCY_REASONS", "MIN_R0_INPUTS",
            "TRAIN_KINDS", "WIRED_CLASSES", "WRITERS", "WRITER_STAGES", "activate", "active_releases", "approve",
            "attach_evidence", "check", "close_month", "content_class_of", "create_draft", "current_fingerprint",
            "evidence_problem", "get_release", "is_human", "items_sha256", "list_releases", "reject",
-           "release_link_problem", "reverify_reasons", "reverify_scan", "reverify_scan_safe", "rollback", "serialise",
+           "release_link_problem", "retire_without_previous", "reverify_reasons", "reverify_scan",
+           "reverify_scan_safe", "rollback", "serialise",
            "set_memory_enabled", "transition_problem", "wiring_problem", "writers"]

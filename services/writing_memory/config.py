@@ -68,6 +68,10 @@ SHADOW_SIZE_WIDE = 50            # T2 and Facebook: the golden set cannot gate t
 SHADOW_SIZE_REPAIR_HINT = 10     # repair_hint-only release: <= 10 inputs where its gate fired
 SHADOW_PROBE_INPUTS = 2          # a tenant release: + 1-2 inputs of another tenant (the isolation probe)
 SHADOW_WINDOW_DAYS = 90          # "most recent" real inputs
+# AA-920 WM-26: the post-activation check of an active release with content ($0, no model call)
+POST_ACTIVATION_N = 20           # "pass" once this many writes carry the release and none violates
+POST_ACTIVATION_SCAN_MAX = 200   # writes read per release per check (oldest first after the activation)
+POST_ACTIVATION_EVERY_S = 3600   # the api sampler queues one check job per hour while such a release is active
 
 # ── the rule store (CIS 280; the DB enforces the same numbers) ─────────────────────────────────────────────────────
 RULE_TTL_DAYS = 60

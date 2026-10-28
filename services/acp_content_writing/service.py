@@ -1621,7 +1621,9 @@ async def start_write(
         "scope": scope,  # S233
         "trip_places": trip_places,  # S234 round 3 — the full trip's places outside the scope
         **({"writing_rules": writing_rules} if writing_rules else {}),  # AA-918 — L0 rules applied / skipped
-        **({"writing_memory": writing_memory} if writing_memory else {}),  # AA-919 — the release view (ids only)
+        # AA-919 / AA-920 — the release view: ids, the items hash and the checked rule items (JSON-safe, so the
+        # t9_write job writes with the rules resolved here; the stamp in writer_input keeps ids and the hash only)
+        **({"writing_memory": writing_memory} if writing_memory else {}),
         "tenant_id": str(tenant_id),  # AA-505 — attribution for llm_call_log
         "facts_text": None,  # AA-529 — filled by resolve_facts() in the job ("" when none exist)
         "facts_pending": True,  # AA-764
@@ -2045,7 +2047,12 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     content_text, cost, seo_meta, summary = await asyncio.to_thread(
                         rewrite_with_feedback, content_seed=atom_text, goal=goal, channel_style=channel_style,
                         brand_audience=brand_audience, angle=chosen, cta=cta,
-                        revision_feedback=repair_log[-1].get("feedback") or repair_log[-1]["violations"],
+                        # AA-920 (WM-24 scope 3): the release's repair hints of the failed gates only (the same
+                        # list when there is none, so the prompt is unchanged without memory / for release 0)
+                        revision_feedback=wm_insertion.with_repair_hints(
+                            context.get("writing_memory"),
+                            repair_log[-1].get("feedback") or repair_log[-1]["violations"],
+                            sorted(_blocking_failures(gate_ledger)), channel=channel),
                         destination=destination, trip_name=writer_trip, atom_id=atom_id, scope=context.get("scope"),
                         route_segments=route_segments, keyword=keyword,
                         tenant_id=tenant_id, angle_gate_request_id=str(request_id),

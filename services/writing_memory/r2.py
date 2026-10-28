@@ -177,10 +177,10 @@ def seed(output: dict, fault: str) -> dict:
 
 
 def _part(row: Optional[dict]) -> Optional[dict]:
-    if not row:
-        return None
-    return {"release_id": row["release_id"], "release_no": int(row["release_no"]),
-            "content_class": row["content_class"], "rule_ids": list(row.get("rule_ids") or [])}
+    """A view part of a release row: the insertion path's own constructor (AA-920: with the rule items when the store
+    loaded them, so the candidate is written with its rules through the same builder as production)."""
+    from services.writing_memory.insertion import part_of
+    return part_of(row)
 
 
 def build_views(writer: str, active: dict, candidate: Optional[dict]) -> tuple[Optional[dict], Optional[dict]]:
@@ -594,21 +594,24 @@ class PgStore:
         self.stages = stages
 
     async def get_release(self, release_id):
-        from services.writing_memory import releases
+        from services.writing_memory import insertion, releases
         async with self.pool.acquire() as conn:
-            return await releases.get_release(conn, release_id)
+            rel = await releases.get_release(conn, release_id)
+            # AA-920: the candidate's checked rule items (insertion.load_items), so its view renders its rules
+            return await insertion.attach_items(conn, rel, rel["writer"]) if rel else rel
 
     async def active_parts(self, writer, tenant_id):
+        from services.writing_memory import insertion
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
                 """SELECT release_id::text AS release_id, scope, tenant_id::text AS tenant_id, release_no,
-                          content_class, rule_ids::text[] AS rule_ids, eval_run_id::text AS eval_run_id
+                          content_class, rule_ids::text[] AS rule_ids, items_sha256, eval_run_id::text AS eval_run_id
                      FROM shared.writing_memory_release
                     WHERE writer = $1 AND status = 'active'
                       AND (scope = 'platform' OR (scope = 'tenant' AND tenant_id = $2::uuid))""", writer, tenant_id)
-        out = {"platform": None, "tenant": None}
-        for r in rows:
-            out[r["scope"]] = dict(r)
+            out = {"platform": None, "tenant": None}
+            for r in rows:
+                out[r["scope"]] = await insertion.attach_items(conn, dict(r), writer)
         return out
 
     async def golden_set(self):

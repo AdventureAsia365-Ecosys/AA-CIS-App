@@ -753,6 +753,31 @@ async def rollback_release(release_id: str, body: ReleaseReasonBody, request: Re
     return rel.serialise(row)
 
 
+class PostActivationBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    n: int = Field(20, ge=1, le=200)
+    apply: bool = False
+
+
+@router.post("/releases/{release_id}/post-activation-check")
+async def post_activation_check(release_id: str, request: Request, body: Optional[PostActivationBody] = None,
+                                x_admin_user_id: Optional[str] = Header(None)):
+    """AA-920 WM-26: read back the writes made since the release went active ($0, no model call) and check that they
+    carry its fingerprint and hold no QA trace and no other tenant's text. DRY RUN by default; `apply: true` rolls the
+    writer's pointer back on a violation (as the hourly job does) and alerts. Counts, codes and ids only."""
+    from services.writing_memory import post_activation as pa
+    from services.writing_memory import releases as rel
+    rid = _uuid(release_id, "release")
+    body = body or PostActivationBody()
+    actor = f"admin:{_need_actor(x_admin_user_id)}" if body.apply else "admin:dry_run"
+    try:
+        return await pa.check_release(_pool(request), rid, n=body.n, apply=body.apply, actor=actor)
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    except rel.ReleaseError as e:
+        raise _release_error(e)
+
+
 @router.post("/releases/{release_id}/reject")
 async def reject_release(release_id: str, body: ReleaseReasonBody, request: Request,
                          x_admin_user_id: Optional[str] = Header(None)):

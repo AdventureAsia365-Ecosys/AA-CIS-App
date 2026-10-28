@@ -19,6 +19,11 @@
   writing_memory_shadow       AA-919 WM-21: one targeted shadow run of a release on recent real inputs (paid, <= $7).
                               Payload = services.writing_memory.shadow.ShadowConfig.
 
+  writing_memory_post_activation  AA-920 WM-26: the post-activation check ($0, no model call) of every active release
+                              with content, or of one ({"release_id": ...}); a violation rolls the writer's pointer back
+                              (`apply`, default true) and alerts. Queued hourly by the api ops sampler while such a
+                              release exists. Payload {"release_id"?: str, "n"?: int, "apply"?: bool}.
+
 All of them are background kinds (they never take the worker's reserve slots of a wave) with concurrency 1. The paid
 kinds (mine, r2, shadow) have max_attempts 1: a paid run is never retried by the runner (an admin starts a new one).
 """
@@ -171,4 +176,24 @@ async def run_shadow_job(ctx: JobContext) -> dict:
     return out
 
 
-__all__ = ["BACKFILL", "FACT_FILTER", "MINE", "R0", "R2", "SHADOW"]
+POST_ACTIVATION = "writing_memory_post_activation"
+
+
+# AA-920 WM-26: $0 and idempotent (a second run finds the release already moved back, or the same verdict), so it may
+# retry; concurrency 1 keeps two runs from moving the same pointer at once (the rollback also locks the rows).
+@job_kind(POST_ACTIVATION, concurrency=1, max_attempts=2, expected_seconds=300, background=True)
+async def run_post_activation_job(ctx: JobContext) -> dict:
+    from services.writing_memory import config as wm_cfg
+    from services.writing_memory.post_activation import check_all, check_release
+    n = int(ctx.payload.get("n") or wm_cfg.POST_ACTIVATION_N)
+    apply = bool(ctx.payload.get("apply", True))
+    actor = f"job:{ctx.job_id}"
+    if ctx.payload.get("release_id"):
+        report = await check_release(ctx.pool, str(ctx.payload["release_id"]), n=n, apply=apply, actor=actor)
+        return {"releases": 1, "reports": [report], "cost_usd": 0.0}
+    out = await check_all(ctx.pool, n=n, apply=apply, actor=actor)
+    logger.info("aa920_post_activation_done", releases=out["releases"], verdicts=out["verdicts"])
+    return out
+
+
+__all__ = ["BACKFILL", "FACT_FILTER", "MINE", "POST_ACTIVATION", "R0", "R2", "SHADOW"]
