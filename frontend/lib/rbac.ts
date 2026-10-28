@@ -54,7 +54,7 @@ export const PAGE_RULES: PageRule[] = [
   { prefix: "/admin/overview", roles: ["admin"] },          // AA-664
   { prefix: "/admin/data-coverage", roles: ["admin"] },     // AA-992 — counts from raw upload to CRM (incl. CRM)
   { prefix: "/admin/tenants", roles: ["admin"] },
-  { prefix: "/admin/llm-usage", roles: ["admin"] },         // AA-505
+  { prefix: "/admin/cost-ops", roles: ["admin"] },         // AA-505; AA-665 (was /admin/llm-usage, redirected)
   { prefix: "/admin/jobs", roles: ["admin"] },              // AA-650
   { prefix: "/admin/data-erasure", roles: ["admin"] },      // AA-839 — DSAR / tenant erasure (DRY RUN, apply)
   { prefix: "/admin/decisions", roles: ["admin"] },         // AA-660

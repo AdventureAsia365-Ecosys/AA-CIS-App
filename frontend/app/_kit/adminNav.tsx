@@ -70,7 +70,7 @@ export const NAV_GROUPS: NavGroup[] = [
     { href: "/admin/data-erasure", icon: <Eraser size={16} />, label: "Data erasure" },  // AA-839
   ] },
   { label: "AI & spend", section: "platform", items: [
-    { href: "/admin/llm-usage", icon: <Wallet size={16} />, label: "External Spend" },
+    { href: "/admin/cost-ops", icon: <Wallet size={16} />, label: "Cost Operations" },
     { href: "/admin/platform/cost", icon: <ChartPie size={16} />, label: "Cost per app" },  // AA-884
     { href: "/admin/decisions", icon: <Scale size={16} />,  label: "Jev Decisions" },
   ] },

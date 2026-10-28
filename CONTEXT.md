@@ -66,14 +66,14 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     server-side filter/sort/paginate + filter-aware stat cards + windowed cost + derived pipeline
     status, via react-query — see A3 note below), `atom-curation` (Social Content tabs
     01-05), `tenant-activity` (tabs 06-08), `platform-stats` (includes gate telemetry per tenant
-    and channel, AA-615), `llm-usage` (the **External Spend** page, AA-622/623), `tenants`,
+    and channel, AA-615), `cost-ops` (the **Cost Operations** page, AA-622/623/665; the old `/admin/llm-usage` redirects to it), `tenants`,
     `jobs`, `decisions` (**Jev Decisions**, AA-660), `photos` (**Photos**, AA-708 — Drive photo sync, unmatched queue), `api-docs` (**API Docs**,
     admin-only read-only OpenAPI reader built on the kit: `GET /admin/openapi.json` through the BFF, since the
     AA-577 `/docs`, `/redoc`, `/openapi.json` need the X-Admin-Secret header on ECS), `settings` (pipeline gates, **Brand
     Identity** editor, SEO config, LLM model per stage + read-only Jev questions per stage). `run-health` was removed with N7/N8 (AA-603).
   - Admin navigation (AA-663): **Overview** (Dashboard) · **Content** (Upload, Rewrite S1,
     Review Queue, Master Content) · **Intelligence** (Social Content) · **Tenants** ·
-    **Operations** (External Spend, Jobs, Jev Decisions, API Docs) · **Settings**. Admin-only items are hidden for other
+    **Operations** (Cost Operations, Jobs, Jev Decisions, API Docs) · **Settings**. Admin-only items are hidden for other
     roles (same list as `lib/rbac.ts` PAGE_RULES, enforced by `proxy.ts`). The legacy `(internal)` route group
     (`/upload`, `/review`, `/catalog`, `/brand`) is deleted; those URLs and `/admin/brand`
     redirect in `next.config.ts`.
@@ -351,7 +351,7 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   - Tenant content goes to TypeSafe only for tenants in `shared.jev_tenant_allowlist` (the AA test
     tenants) until the DPA/ZDR is confirmed.
   - Every verdict is logged in `shared.decision_log`, and each call in `llm_call_log` (provider
-    `typesafe`, role `validate`), so Jev shows in External Spend. Admin page: `/admin/decisions`.
+    `typesafe`, role `validate`), so Jev shows in Cost Operations (Jev tab). Admin page: `/admin/decisions`.
     Key: secret `aa-cis/dev/typesafe`. Migration 181.
 - **Cost observability (epic AA-616)**:
   - `shared.llm_call_log` records account (acc1/acc3), provider and `fallback_used` per call
@@ -362,8 +362,20 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   - `shared.cost_explorer_snapshot` holds real AWS Cost Explorer figures for acc1/acc2/acc3,
     fetched on demand through `POST /admin/cost-explorer/check` (AA-623). acc2 calls CE
     directly; acc1/acc3 via assume-role (`shared/aws_client/cost_explorer.py`).
-  - The admin **External Spend** page compares estimated spend (token logs) with the real AWS
-    bill, splitting Bedrock from infrastructure per account, over any date range.
+  - The admin **Cost Operations** page (`/admin/cost-ops`, AA-665; was External Spend at `/admin/llm-usage`, which
+    redirects) has the tabs Overview, LLM, DataForSEO, AWS bill, Jev and Budgets. It compares estimated spend (token
+    logs) with the real AWS bill (AWS bill tab), splitting Bedrock from infrastructure per account, over any date range.
+    - Overview: the **month-end forecast vs budget** (`GET /admin/cost-ops/forecast`, `api/services/cost_ops.py`):
+      per provider family (Bedrock with the acc3/acc1/acc2 split, OpenAI, Jev, DataForSEO) and per AWS account,
+      month to date + mean of the last 7 complete days x days left. DB only: the AI rows read
+      `llm_call_daily`/`llm_call_log` like Cost per app, the AWS rows the STORED Cost Explorer snapshots (never a live
+      CE call). Budgets: `spend_budget` global daily cap x days in the month; AWS from `cost_ops.AWS_MONTHLY_BUDGET_USD`
+      (env `COST_OPS_AWS_BUDGETS_USD` overrides) until the AWS Budgets are read live (AA-665 C5).
+    - DataForSEO › Runs: `shared.dfs_call_log.job_id` (migration 293) is the job running when the call was made
+      (`call_log.current_job_id()`, as for `llm_call_log`); `GET /admin/dfs-usage/runs` groups spend by job with its
+      kind, starter, payload scope, status, error and the job's LLM cost; `infer_unlinked=true` matches rows without a
+      job (older rows) to the jobs running at the time, best effort.
+    - Jev: the Jev Decisions endpoints (`/admin/decisions/summary`, `/admin/decisions/jev-credit`).
   - Rule for manual scripts that call an LLM: go through `LLMClient.generate()` and log to
     `llm_call_log` with `stage="adhoc_<issue>"` (steering rule, from AA-635).
 - **Cost guard (AA-649, migration 168)**: `shared/cost_guard.py` checks `shared.spend_budget`
@@ -1498,7 +1510,7 @@ fetched about once a day.
 |---|---|---|---|---|---|
 | Content work pages: Upload, Rewrite (S1) | ✓ | ✓ | ✓ | — | — |
 | Content pages: Review Queue, Master Content, Settings (viewer: read only, write controls hidden by `can()`) | ✓ | ✓ | ✓ | read | — |
-| Overview, Photos, Social Content (atom curation), Content Trace, A4 Quality (`/admin/platform-stats`), Content Quality, SEO Intelligence, Tenants, External Spend, Jobs, Jev Decisions, API Docs | ✓ | — | — | — | — |
+| Overview, Photos, Social Content (atom curation), Content Trace, A4 Quality (`/admin/platform-stats`), Content Quality, SEO Intelligence, Tenants, Cost Operations, Jobs, Jev Decisions, API Docs | ✓ | — | — | — | — |
 | Platform pages `/admin/platform/*` (AA-883 Staff directory; writes need `staff.write`, owners only; AA-913 Alert recipients, changes need `alerts.write` + Cognito) | ✓ | — | — | — | — |
 | BFF `/api/admin/openapi.json` and `/api/admin/platform/*` (any method; `lib/rbac.ts` API_READ_RULES, backend re-checks the role) | ✓ | — | — | — | — |
 | Backend docs `openapi.json`, `docs`, `redoc` through the staff branch of `/api/tenant/*` (`lib/rbac.ts` isApiDocsPath) | ✓ | — | — | — | — |
@@ -2664,7 +2676,7 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     tour list was a client-side filter over a fixed `LIMIT 200`, which dropped the newest rows
     past 200). The summary now carries a filter-aware `catalog_total` + `avg_quality` (true
     `COUNT`/`AVG` over the same WHERE), a 30-day-windowed `llm_cost_window_usd` (reconciles with
-    External Spend) alongside the all-time figure, and a `pagination` block. Each pipeline run
+    Cost Operations) alongside the all-time figure, and a `pagination` block. Each pipeline run
     gets a read-only derived `display_status` (`_derive_run_display_status`): a stored
     `ingesting` run that is actually finished shows **completed**, an ingest-only batch shows
     **ingested**, a partial one shows **running** — the stored column is never written from this

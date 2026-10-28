@@ -15,7 +15,7 @@
 // right-aligned numeric headers (kit DataTable meta.align), and data sources in a collapsed "Data sources" block.
 //   - The GET may refresh a stale month itself (one CE request, ~$0.01, at most about once a day per window,
 //     behind a Redis lock); "Refresh from AWS" is the explicit POST /api/admin/cost-explorer/check (spend.write,
-//     admin; the same call as External Spend, plus the App-tag request) for this month's window.
+//     admin; the same call as Cost Operations, plus the App-tag request) for this month's window.
 // No polling: one load per month viewed.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -115,7 +115,7 @@ export default function CostByApp() {
             What each app cost in one UTC month: the AWS bill of the main account split by each resource&apos;s App
             tag, plus each app&apos;s AI spend outside that bill. The same numbers as the Overview card. Provider-level
             detail is on{" "}
-            <Link href="/admin/llm-usage" style={{ color: K.accentDeep, fontWeight: 600 }}>External Spend</Link>.
+            <Link href="/admin/cost-ops" style={{ color: K.accentDeep, fontWeight: 600 }}>Cost Operations</Link>.
           </>
         }
         actions={
@@ -476,8 +476,8 @@ function LlmByApp({ data }: { data: CostResp }) {
           )}
         </div>
       )}
-      <Link href="/admin/llm-usage" style={{ color: K.accentDeep, fontWeight: 600, fontSize: 12.5, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4 }}>
-        Per provider and stage on External Spend <ArrowRight size={11} />
+      <Link href="/admin/cost-ops" style={{ color: K.accentDeep, fontWeight: 600, fontSize: 12.5, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4 }}>
+        Per provider and stage on Cost Operations <ArrowRight size={11} />
       </Link>
     </section>
   );

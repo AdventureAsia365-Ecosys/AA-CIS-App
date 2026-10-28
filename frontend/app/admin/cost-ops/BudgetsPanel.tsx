@@ -1,5 +1,5 @@
 "use client";
-// app/admin/llm-usage/BudgetsPanel.tsx — AA-665 (KAN-90 follow-up): the spend-budget settings
+// app/admin/cost-ops/BudgetsPanel.tsx — AA-665 (KAN-90 follow-up): the spend-budget settings
 // screen. Reads/writes shared.spend_budget through GET/PUT /admin/budgets (AA-649). Each cap stops
 // or only alerts according to its own row (#472): e.g. the DFS daily cap on `global` is alert-only
 // while `job:segment_research`'s per-run cap still stops a run.

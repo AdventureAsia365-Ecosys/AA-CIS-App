@@ -41,6 +41,9 @@ const nextConfig: NextConfig = {
       { source: "/catalog", destination: "/admin/master-content", permanent: false },
       { source: "/brand", destination: "/admin/settings?tab=brand", permanent: false },
       { source: "/admin/brand", destination: "/admin/settings?tab=brand", permanent: false },
+      // AA-665 — External Spend became Cost Operations. 307 (not 308) so the old URL can be reused; the query string
+      // (?tab=…) carries over.
+      { source: "/admin/llm-usage", destination: "/admin/cost-ops", permanent: false },
       // AA-885 — the tenant portal moved to its own app and host (Vercel aa-cis-portal). Old portal
       // URLs answer 308 to the same path there (the query string carries over); the admin app serves
       // no portal page any more.

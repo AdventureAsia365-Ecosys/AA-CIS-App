@@ -45,7 +45,7 @@ test.describe('Admin pages — structural check (clientHeight capped at viewport
     ['/admin/dashboard', 'main'],
     ['/admin/tenants', 'main'],
     ['/admin/settings', 'main'],
-    ['/admin/llm-usage', 'main'],
+    ['/admin/cost-ops', 'main'],
     ['/admin/run-health', 'div'],
     ['/admin/review', 'main'],
     ['/admin/a4-oversight', 'div'],
