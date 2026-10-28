@@ -166,3 +166,34 @@ def test_a_to_b():
 
 def test_rule_version_bumped_for_the_leg_rule():
     assert cm.COMPONENTS_RULE_VERSION >= 3
+
+
+def test_tour_day_count_is_tripplanners_denominator():
+    """TripPlanner counts GREATEST(v_tour.duration_days, day rows): the duration text's number wins over a shorter
+    itinerary, the highest canonical day is the fallback, and the day records are a floor."""
+    from services.places.pipeline import tour_day_count
+    six_days = "\n".join(f"Day {d} — Stage {d}\nRide on." for d in range(1, 7))
+    assert tour_day_count("10 Days 9 Nights", six_days, 6) == 10
+    assert tour_day_count(None, six_days, 0) == 6
+    assert tour_day_count("", "", 4) == 4
+    assert tour_day_count("2 days", six_days, 6) == 6
+
+
+def test_legs_are_not_pinned_when_the_duration_text_makes_the_tour_longer():
+    """A '10 days' tour whose itinerary text stops at day 6: 1 sight + 2 legs reach half of 6 days but not half of the
+    10 days TripPlanner counts, so the legs stay skipped (they would add experiences without giving a route)."""
+    from services.places.pipeline import tour_day_count
+    atoms = [_atom(1, 1, "Hanoi", "explore", at="culture"), _atom(2, 2, "Hanoi to Ninh Binh", "drive"),
+             _atom(3, 3, "Ninh Binh to Ha Long Bay", "drive")]
+    six_days = "\n".join(f"Day {d} — Stage {d}\nRide on." for d in range(1, 7))
+    comps, counters = cm.build_components("src", "Vietnam", atoms, {}, tour_days=tour_day_count(None, six_days, 6))
+    assert counters["transit_route_legs"] == 2
+    comps, counters = cm.build_components("src", "Vietnam", atoms, {},
+                                          tour_days=tour_day_count("10 days", six_days, 6))
+    assert [c.day_index for c in comps] == [1]
+    assert counters["transit_route_legs"] == 0 and counters["skipped"] == {"transit": 2}
+
+
+def test_the_live_tour_read_carries_the_duration_text():
+    from services.places import store
+    assert "rt.duration" in store._LIVE_SQL
