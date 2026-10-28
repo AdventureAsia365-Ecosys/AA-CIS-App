@@ -421,6 +421,31 @@ def test_no_previous_platform_release_turns_memory_off(monkeypatch):
     assert out["action"] == "memory_off" and calls[0] == ("memory", "t9_social", False)
 
 
+def test_a_refused_rollback_turns_memory_off_instead_of_leaving_the_release_live(monkeypatch):
+    # review S255: the previous release failing its own check (or the DB refusing the swap) must not leave the
+    # violating release serving; the writer's kill switch goes off
+    async def refused(conn, rid, *, actor, reason):
+        raise rel.ReleaseError(409, "reverify", "the previous release needs a reverify")
+    w = _write("a", text="Travel with Zephyrine Voyages.")
+    w["stamp"] = {**w["stamp"], "tenant": w["stamp"]["platform"], "platform": None}
+    calls = _wire(monkeypatch, _rel(scope="tenant", tenant_id=TENANT_A, previous_release_id="prev"), [w],
+                  rollback=refused)
+    out = asyncio.run(pa.check_release(_Pool(), P_ID, apply=True))
+    assert out["action"] == "memory_off" and out["rollback_refused"] == "reverify"
+    assert calls[0] == ("memory", "t9_social", False) and [c[0] for c in calls] == ["memory", "audit", "alert"]
+
+
+def test_items_without_a_release_hash_render_nothing():
+    row = {"release_id": "r", "scope": "platform", "tenant_id": None, "rule_ids": ["r-1"], "items_sha256": None}
+
+    class _Db:
+        async def fetch(self, sql, ids):
+            return [{"rule_id": "r-1", "kind": "writer_instruction", "writer": "a1", "scope": "platform",
+                     "tenant_id": None, "applies_to": [], "gate_class": None, "rule_text": "Cut it.",
+                     "replacement": None}]
+    assert asyncio.run(insertion.load_items(_Db(), row, "a1")) is None
+
+
 def test_pass_and_release0_move_nothing(monkeypatch):
     calls = _wire(monkeypatch, _rel(), [_write(str(i)) for i in range(20)])
     assert asyncio.run(pa.check_release(_Pool(), P_ID, apply=True))["verdict"] == "pass"

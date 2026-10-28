@@ -2451,12 +2451,12 @@ Each write records a stamp (ids, numbers and the release fingerprint `items_sha2
 `content_piece.writer_input.writing_release`. **Post-activation check** (AA-920 WM-26,
 `services/writing_memory/post_activation.py`, job `writing_memory_post_activation`, $0, queued hourly by the api ops
 sampler while a release with content is active; or POST `/admin/writing-memory/releases/{id}/post-activation-check`,
-DRY RUN unless `apply`): the writes since the activation must carry the release's fingerprint and hold no QA trace
-(`eval_checks.qa_artefacts`, the rule texts included) and no other tenant's text (`isolation_probe`); `pass` after
-20 carried writes. A violation rolls the pointer back at once (a tenant release with no previous is retired alone; a
-platform one without a previous turns the writer's memory off), writes one audit row (ids, codes) and alerts (admin
-bell + `ops_alert_email` template `writing_memory_rollback`). Routes `/admin/writing-memory/releases*` and
-`/writers*` (admin only).
+DRY RUN unless `apply`): the writes since the activation (the newest 200 per run) must carry the release's
+fingerprint and hold no QA trace (`eval_checks.qa_artefacts`, the rule texts included) and no other tenant's text
+(`isolation_probe`); `pass` after 20 carried writes. A violation rolls the pointer back at once (a tenant release
+with no previous is retired alone; a platform one without a previous, or any refused rollback, turns the writer's
+memory off), writes one audit row (ids, codes) and alerts (admin bell + `ops_alert_email` template
+`writing_memory_rollback`). Routes `/admin/writing-memory/releases*` and `/writers*` (admin only).
 **R2** (AA-919 WM-19, `services/writing_memory/r2.py`, job `writing_memory_r2`, CLI DRY RUN + `--enqueue`): a
 candidate release (or today's writers) against the golden set: the judge calibrated on the frozen labelled items
 (every run) and the stored controls re-judged by the current judge (stage `writing_memory_eval`, CIS 291; regenerated

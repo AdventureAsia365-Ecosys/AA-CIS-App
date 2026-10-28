@@ -19,7 +19,8 @@ after activation is this check: the writes made since a release went active are 
 Verdict per release: `violation` (any carried write fails one of the last three), `pass` (>= N carried writes, none
 failing), `pending` (fewer than N yet), `not_applicable` (release 0 / an empty release renders nothing). With
 `apply`, a violation moves the writer's pointer back at once (`releases.rollback`; a tenant release with no previous
-is retired alone; a platform release with no previous turns the writer's memory off), writes one audit row (ids,
+is retired alone; a platform release with no previous, or any release whose rollback is refused, turns the writer's
+memory off: a violating release never keeps serving), writes one audit row (ids,
 codes, counts; never text) and alerts (admin bell + the `ops_alert_email` job, template `writing_memory_rollback`).
 The offending writes are named by id in the audit row and the result; no app row is changed (the piece keeps its
 own gate verdicts).
@@ -70,7 +71,7 @@ _T9_SQL = """
        AND (CASE WHEN $3 THEN cp.writer_input->>'channel' = 'blog'
                  ELSE coalesce(cp.writer_input->>'channel', '') <> 'blog' END)
        AND ($4::uuid IS NULL OR cp.tenant_id = $4::uuid)
-     ORDER BY cp.created_at, cp.piece_id
+     ORDER BY cp.created_at DESC, cp.piece_id DESC
      LIMIT $5
 """
 
@@ -83,7 +84,7 @@ _A1_SQL = """
       LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = gc.tour_id
      WHERE gc.created_at >= $1 AND ($2::timestamptz IS NULL OR gc.created_at < $2)
        AND gc.metadata->>'writer_version' = 'v2'
-     ORDER BY gc.created_at, gc.id
+     ORDER BY gc.created_at DESC, gc.id DESC
      LIMIT $3
 """
 
@@ -94,7 +95,7 @@ _T2_SQL = """
       JOIN shared.job j ON j.id = v.job_id AND j.kind = 't2_rewrite'
      WHERE v.created_at >= $1 AND ($2::timestamptz IS NULL OR v.created_at < $2)
        AND ($3::uuid IS NULL OR v.tenant_id = $3::uuid)
-     ORDER BY v.created_at, v.id
+     ORDER BY v.created_at DESC, v.id DESC
      LIMIT $4
 """
 
@@ -104,8 +105,10 @@ def _owner(release: dict) -> Optional[str]:
 
 
 async def writes_since(conn, release: dict, *, limit: int = cfg.POST_ACTIVATION_SCAN_MAX) -> list[dict]:
-    """The writes of the release's writer (and owner, for a tenant release) since its activation, oldest first:
-    {ref, source, tenant_id, created_at, stamp, text, allowed_text}. A retired release: up to its retirement."""
+    """The writes of the release's writer (and owner, for a tenant release) since its activation, NEWEST first (up to
+    `limit`): {ref, source, tenant_id, created_at, stamp, text, allowed_text}. A retired release: up to its retirement.
+    Newest first so every hourly run reads the latest writes: oldest first, a release with more than `limit` writes
+    would re-read the same first ones forever and never see a later violation (review S255)."""
     writer, since, until = release["writer"], release["activated_at"], release.get("retired_at")
     owner = _owner(release)
     out: list[dict] = []
@@ -284,18 +287,22 @@ async def _move_pointer(pool, release: dict, report: dict, *, actor: str) -> dic
         async with pool.acquire() as conn:
             async with conn.transaction():
                 try:
-                    now = await rel.rollback(conn, release["release_id"], actor=actor, reason=reason)
+                    # a savepoint: a refused rollback (its previous release fails its own check, or the DB refuses
+                    # the swap) leaves the outer transaction usable for the kill-switch fallback below
+                    async with conn.transaction():
+                        now = await rel.rollback(conn, release["release_id"], actor=actor, reason=reason)
                     out = {"action": "rolled_back", "active_release_id": now["release_id"],
                            "active_release_no": now["release_no"]}
                 except rel.ReleaseError as e:
-                    if e.code != "no_previous":
-                        raise
-                    if release["scope"] == "tenant":
+                    if e.code == "no_previous" and release["scope"] == "tenant":
                         await rel.retire_without_previous(conn, release["release_id"], actor=actor, reason=reason)
                         out = {"action": "retired_alone", "active_release_id": None}
                     else:
+                        # a platform release without a previous one, or ANY refused rollback: a violating release
+                        # never keeps serving, so the writer's kill switch goes off (review S255)
                         await rel.set_memory_enabled(conn, release["writer"], False, actor=actor)
-                        out = {"action": "memory_off", "active_release_id": release["release_id"]}
+                        out = {"action": "memory_off", "active_release_id": release["release_id"],
+                               **({"rollback_refused": e.code} if e.code != "no_previous" else {})}
                 await write_audit_log(
                     conn, tenant_id=release.get("tenant_id") or rel.PLATFORM_TENANT_ID, actor=actor[:128],
                     action="writing_memory.release_post_activation_failed", resource_type="writing_memory_release",

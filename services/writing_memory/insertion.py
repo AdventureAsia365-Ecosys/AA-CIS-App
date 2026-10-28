@@ -122,7 +122,7 @@ async def load_items(db, row: dict, writer: str) -> Optional[list[dict]]:
     elif any(r["writer"] != writer or r["scope"] != row.get("scope")
              or (r.get("tenant_id") or None) != (row.get("tenant_id") or None) for r in rows):
         problem = "rule_isolation"
-    elif row.get("items_sha256") and items_sha256(rows) != row["items_sha256"]:
+    elif not row.get("items_sha256") or items_sha256(rows) != row["items_sha256"]:   # no hash, no render
         problem = "items_changed"
     if problem:
         logger.warning("wm_release_items_refused", writer=writer, release_id=row.get("release_id"), problem=problem)
