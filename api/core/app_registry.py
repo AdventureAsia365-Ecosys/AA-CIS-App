@@ -58,6 +58,9 @@ class AppInfo:
 TP_ONLINE_STAGES: tuple[str, ...] = ("tp_compose", "tp_search_embed")
 # AA-TripPlanner-Web backend/config.py TP_DAILY_SPEND_CAP_USD default (mirrored; the live value may differ).
 TP_DEFAULT_DAILY_CAP_USD = 5.0
+# The CIS API's public origin (API Gateway custom domain): the OPS-12 digest probes /health + /health/ready from the
+# worker the way an outside caller sees them (AA-1003 R2).
+CIS_API_ORIGIN = "https://api-cis.lumiguides.it.com"
 # AA-Partner's Dev partner host (CloudFront, AA-CIS-Infra crm_edge.tf).
 CRM_PARTNER_ORIGIN = "https://partner-dev.lumiguides.it.com"
 

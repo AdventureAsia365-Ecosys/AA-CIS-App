@@ -724,13 +724,13 @@ reports:
   owner_role: ops staff
   decision: Did every customer inquiry reach Booking and become a trip case; which ones are parked or failed?
   cadence: hourly check (cheap view reads) + daily summary 01:00 UTC (08:00 ICT)
-  schedule: hourly
+  schedule: daily
   channel: Line in OPS-12 and BK-01; bell (shared.notifications) + ops alert e-mail only when a gap exists
   automation: auto
-  status: missing
+  status: partial
   priority: P0
   template: docs/audits/2026-10-29-S258-report-catalog/templates/data-quality-report.md
-  generator: null
+  generator: cis
   kpis:
   - K-TP-HANDOFFGAP
   - K-BK-PARKED
@@ -1153,10 +1153,10 @@ reports:
   schedule: daily
   channel: SES e-mail to subscribers + Daily tile on /admin/reports
   automation: auto
-  status: missing
+  status: partial
   priority: P0
   template: null
-  generator: null
+  generator: cis
   kpis:
   - K-OPS-APPSGREEN
   - K-OPS-ALARMS
@@ -1263,12 +1263,12 @@ reports:
   decision: What broke or overspent, is it stopped, which guard prevents a repeat?
   cadence: 'event: write within 5 working days of a SEV1-2 (2 days for the Linear note); monthly roll-up in EX-02 and DEV-01'
   schedule: event
-  channel: docs/ops/postmortems/<YYYY-MM-DD>-<slug>.md (folder does not exist yet; create it); SEV3 as a session-log line;
+  channel: docs/ops/postmortems/<YYYY-MM-DD>-<slug>.md (index docs/ops/postmortems/README.md); SEV3 as a session-log line;
     summary line in EX-01
   automation: manual
-  status: partial
+  status: exists
   priority: P0
-  template: docs/audits/2026-10-29-S258-report-catalog/templates/incident-postmortem.md
+  template: docs/templates/postmortem.md
   generator: null
   kpis:
   - K-INC-COUNT
@@ -1533,7 +1533,8 @@ reports:
   cadence: nightly (02:17-05:13 UTC); reported in the next OPS-12 digest at 01:00 UTC (results about 20 h old, run time
     printed)
   schedule: daily
-  channel: Each workflow uploads a summary JSON to the reports bucket; section of OPS-12; weekly roll-up in CIS-01
+  channel: Section of OPS-12 (CIS reads the verdict lines of the ECS probes from CloudWatch Logs into shared.kpi_daily);
+    each workflow uploading a summary JSON to the reports bucket is a later step; weekly roll-up in CIS-01
   automation: auto
   status: partial
   priority: P1

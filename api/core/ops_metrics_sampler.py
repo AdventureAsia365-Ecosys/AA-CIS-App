@@ -55,8 +55,9 @@ samples fire the `*-sampling-stopped` alarms, so a dead api (or a dead loop) is 
 - AA-1003: each tick also queues the daily KPI snapshot (`kpi_snapshot_daily`, $0, DB reads only) for the ICT day the
   daily chain covers (services/reports/periods.snapshot_day: day D from 00:30 UTC of D + 1); idempotency key per day,
   so only the first tick of the day creates a row. The snapshot job then queues `report_generate` for the daily
-  reports (EX-04, EX-06). Only while the kind is registered. Field `kpi_snapshot` (the job id, when created) or
-  `reports_error`.
+  reports (EX-04, EX-06; R2: OPS-12, TP-03). Only while the kind is registered. Field `kpi_snapshot` (the job id,
+  when created) or `reports_error`. R2: the same part queues the TP-03 inquiry handoff check once per UTC hour
+  (`inquiry_handoff_check`, idempotency key per hour), field `inquiry_handoff_check`.
 - AA-845: every JEV_CREDIT_CHECK_EVERY_S (shared/jev_credit.py, 30 min) the loop also runs the Jev low-credit
   check (estimated TypeSafe credit below the threshold -> throttled bell + operator e-mail). It runs after the
   tick, outside sample_once, under its own PART_TIMEOUT_S, and logs its own line (`jev_credit_low_checked` /
@@ -276,11 +277,17 @@ async def _reports_part(pool, kinds: dict, ts: datetime, out: dict) -> None:
     registered; one idempotent INSERT a tick (the first tick of the day creates the row)."""
     from services.jobs.report_jobs import SNAPSHOT_KIND, enqueue_scheduled_snapshot
 
-    if SNAPSHOT_KIND not in kinds:
-        return
-    job_id, created, day = await enqueue_scheduled_snapshot(pool, now=ts)
-    if created:
-        out["kpi_snapshot"] = {"job_id": job_id, "day": day.isoformat()}
+    if SNAPSHOT_KIND in kinds:
+        job_id, created, day = await enqueue_scheduled_snapshot(pool, now=ts)
+        if created:
+            out["kpi_snapshot"] = {"job_id": job_id, "day": day.isoformat()}
+    # AA-1003 R2: the TP-03 inquiry handoff check, once per UTC hour (one indexed EXISTS a tick)
+    from services.jobs.report_ops_jobs import CHECK_KIND, enqueue_hourly_check
+
+    if CHECK_KIND in kinds:
+        check_id, check_created, hour = await enqueue_hourly_check(pool, now=ts)
+        if check_created:
+            out["inquiry_handoff_check"] = {"job_id": check_id, "hour": hour.isoformat()}
 
 
 async def _alert_recipients_part(pool, redis, out: dict) -> None:

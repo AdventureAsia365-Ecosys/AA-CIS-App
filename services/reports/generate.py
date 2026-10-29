@@ -5,6 +5,8 @@ Generators (catalog.yaml `generator: cis`):
          the day before and the median of the 7 days before, coloured by the kpis.yaml `alert` bounds. The KPIs EX-04
          lists come first, then every other KPI the snapshot measures; KPIs nothing measures yet are named.
   EX-06  Report register: every catalog report with its schedule, priority, last run and due state.
+  OPS-12 Daily platform health digest (R2, services/reports/digest.py; e-mailed to its opt-in list).
+  TP-03  Inquiry handoff reconciliation, TripPlanner to Booking (R2, services/reports/handoff.py).
 
 Each renderer is pure (data in, (summary, output JSON, Markdown) out); the loaders read the DB. Reports read stored
 rows only: no LLM, no paid API, no recomputation of history (automation-plan.md §5).
@@ -257,7 +259,20 @@ async def _register(conn, reg: Registry, report: Report, first: date, last: date
 
 
 Renderer = Callable[..., Awaitable[Rendered]]
-RENDERERS: dict[str, Renderer] = {"EX-04": _scorecard, "EX-06": _register}
+async def _digest(conn, reg: Registry, report: Report, first: date, last: date, now: datetime) -> Rendered:
+    from services.reports import digest      # lazy: digest imports this module
+
+    return await digest.render(conn, reg, report, first, last, now)
+
+
+async def _handoff(conn, reg: Registry, report: Report, first: date, last: date, now: datetime) -> Rendered:
+    from services.reports import handoff
+
+    return await handoff.render(conn, reg, report, first, last, now)
+
+
+# AA-1003 R2: OPS-12 daily digest (services/reports/digest.py), TP-03 inquiry handoff (services/reports/handoff.py).
+RENDERERS: dict[str, Renderer] = {"EX-04": _scorecard, "EX-06": _register, "OPS-12": _digest, "TP-03": _handoff}
 
 
 def default_period(report: Report, now: Optional[datetime] = None) -> tuple[date, date]:

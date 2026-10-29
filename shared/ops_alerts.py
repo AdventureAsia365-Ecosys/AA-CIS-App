@@ -354,3 +354,57 @@ def render_jev_credit(payload: dict, *, to: Recipients, base_url: Optional[str] 
             f"<p><a href=\"{html.escape(link)}\">Open Settings / Jev Credit</a></p>"
             f"<p style=\"color:#777;font-size:12px\">{html.escape(footer)}</p></div>")
     return Message(to=to, subject=subject, text=text, html=body)
+
+
+# ── AA-1003 R2 (TP-03) — TripPlanner inquiries that did not reach the Booking inbox ──────────────────
+
+TEMPLATE_INQUIRY_HANDOFF_GAP = "inquiry_handoff_gap"
+REPORTS_PAGE_PATH = "/admin/reports"
+
+
+def inquiry_handoff_key(day: str) -> str:
+    return f"{KIND}:{TEMPLATE_INQUIRY_HANDOFF_GAP}:{day}"
+
+
+async def enqueue_inquiry_handoff_email(conn, *, details: dict, now: Optional[datetime] = None) -> Optional[str]:
+    """Queue the operator e-mail for a handoff gap the hourly check found twice in a row (services/reports/
+    handoff.py). At most one e-mail per UTC day (the bell may repeat when the gap grows). None when e-mail is not
+    configured or today's e-mail is queued already."""
+    if sender_config() is None:
+        logger.info("ops_alert_email_not_configured", template=TEMPLATE_INQUIRY_HANDOFF_GAP)
+        return None
+    from shared.jobs import queue  # lazy: shared.jobs.worker imports shared.cost_guard
+
+    day = utc_day(now)
+    payload = {"template": TEMPLATE_INQUIRY_HANDOFF_GAP, "period": day, **details}
+    job_id, created = await queue.enqueue(conn, KIND, payload, max_attempts=MAX_ATTEMPTS,
+                                          idempotency_key=inquiry_handoff_key(day), created_by="inquiry_handoff_check")
+    logger.info("ops_alert_email_queued" if created else "ops_alert_email_already_queued",
+                job_id=job_id, template=TEMPLATE_INQUIRY_HANDOFF_GAP, period=day)
+    return job_id if created else None
+
+
+def render_inquiry_handoff_gap(payload: dict, *, to: Recipients, base_url: Optional[str] = None,
+                               environment: Optional[str] = None) -> Message:
+    """AA-1003 TP-03: TripPlanner inquiries missing from the Booking inbox at two hourly checks in a row."""
+    env = environment or os.environ.get("ENVIRONMENT", "dev")
+    link = f"{base_url or admin_base_url()}{REPORTS_PAGE_PATH}"
+    window = payload.get("window") or {}
+    gap = payload.get("gap")
+    subject = f"[AA-CIS {env}] Inquiry handoff: {gap} TripPlanner inquiries not in the Booking inbox"
+    rows = [("Not delivered", str(gap)),
+            ("Sent by TripPlanner", str(payload.get("sent"))),
+            ("Received by Booking from TripPlanner", str(payload.get("received"))),
+            ("Window", f"{window.get('first')} to {window.get('last')} (UTC days)"),
+            ("Parked or failed in the Booking inbox", f"{payload.get('parked')} / {payload.get('failed')}"),
+            ("Checked", str(payload.get("checked_at") or "-"))]
+    text = "\n".join(["Customer inquiries sent from TripPlanner have not reached the Booking inbox, and the gap was "
+                      "still there an hour after the previous check (hourly check, report TP-03).", ""]
+                     + [f"{k}: {v}" for k, v in rows]
+                     + ["", "Look at the TripPlanner outbox delivery and the Booking inbox (parked / failed rows); "
+                            f"TP-03 on Platform › Reports shows the days: {link}"])
+    body = ("<div style=\"font-family:Arial,sans-serif;font-size:14px;color:#222\">"
+            "<p><strong>Inquiry handoff gap</strong>: TripPlanner inquiries are missing from the Booking inbox.</p>"
+            f"<table style=\"border-collapse:collapse\">{_jev_rows_html(rows)}</table>"
+            f"<p><a href=\"{html.escape(link)}\">Open Platform › Reports (TP-03)</a></p></div>")
+    return Message(to=to, subject=subject, text=text, html=body)
