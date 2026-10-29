@@ -63,6 +63,7 @@ from services.acp_shared.offered import STATUS_PREFIX
 from services.acp_shared.real_questions import is_off_meaning, single_word_places
 from shared.llm_client.call_log import record_billed_failure_sync, record_call_sync
 from services.quality import registry as qr
+from services.acp_content_writing.seed_align import modes as seed_align
 
 logger = structlog.get_logger()
 
@@ -2380,6 +2381,11 @@ def never_holds(g: dict) -> bool:
         return all(never_holds(p) for p in expand_ledger([g]) if not p["passed"] and p.get("blocking", True))
     if g.get("gate") in STYLE_ONLY_GATES:
         return True
+    # AA-789 tier 1 — a result failing on seed-alignment findings ('sa:<class>: …') alone never holds unless one of
+    # them may (seed_align.finding_may_hold: a promoted hold-capable class in hold mode; none before ~18/11)
+    vs = [str(v) for v in g.get("violations") or []]
+    if vs and all(v.startswith(seed_align.FINDING_PREFIX) for v in vs):
+        return not any(seed_align.finding_may_hold(v) for v in vs)
     return g.get("gate") == F14_GATE and not any(_F14_FAR_OVER in str(v) for v in g.get("violations") or [])
 
 
@@ -2628,11 +2634,17 @@ def gate_lexicon(content_text: str, f2_source: str, brand_pack: Optional[dict] =
 
 # ---------------------------------------------------------------- orchestration
 
-class QualityCheckOutcome(TypedDict):
+class _QualityCheckOutcomeBase(TypedDict):
     passed: bool
     gate_ledger: list[GateResultLite]
     first_failure: Optional[GateResultLite]
     flags: list[GateResultLite]
+
+
+class QualityCheckOutcome(_QualityCheckOutcomeBase, total=False):
+    # AA-789 tier 1 — only when a seed-alignment class is not off: its modes and every candidate (shadow included),
+    # for writer_input. Absent when every class is off, so the outcome is what it was.
+    seed_align: dict
 
 
 def run_quality_gates(
@@ -2770,6 +2782,11 @@ def run_quality_gates(
         sources.append(gate_faq_contract(content_text))
     if spec is not None:
         sources.append(gate_first_line(content_text, spec))
+    # AA-789 tier 1 — seed alignment (spaCy + the seed's typed facts + a trigger word). Per class: off (does not run;
+    # the ledger is unchanged), shadow (recorded in outcome["seed_align"] only), repair / hold ('sa:<class>: …'
+    # findings appended to F17_trip_fact / F18_rarity / F13_leak / F13_repeat before the ledger is merged). Fails open.
+    sa_run = seed_align.run(content_text, trip_ctx=trip_ctx, hygiene_ctx=hygiene_ctx, brief_texts=brief_texts)
+    sources = seed_align.apply(sources, sa_run)
     # AA-924 — the stored ledger: F2_banned_patterns + F2_brand_forbidden + the F15 stock findings → F2_lexicon,
     # F15_voice + F15_voice_warn → F15_voice, each finding with its own severity (26 → 24 distinct results).
     gate_ledger = merge_ledger(sources)
@@ -2782,12 +2799,15 @@ def run_quality_gates(
     legacy = expand_ledger(gate_ledger)
     first_failure = next((g for g in legacy if not g["passed"] and g["blocking"]), None)
     flags = reshape_like([g for g in legacy if not g["passed"] and not g["blocking"]], gate_ledger, flags=True)
-    return {
+    outcome: QualityCheckOutcome = {
         "passed": first_failure is None,
         "gate_ledger": gate_ledger,
         "first_failure": first_failure,
         "flags": flags,
     }
+    if sa_run is not None:
+        outcome["seed_align"] = sa_run.record
+    return outcome
 
 
 __all__ = [

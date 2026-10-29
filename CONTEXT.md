@@ -2135,6 +2135,17 @@ mention, deletes a family-brand reassurance that plays down a seed hazard, and r
 made the reader's gateway / base (FAQ included); the rest is F17. A trip place the seed's place background names
 is not out of scope. The blog SEO title may not repeat a title of the tenant's last 50 blog pieces (F4); only the
 blog gets an SEO title/meta (the fit no longer runs for other channels).
+S258 (AA-789 tier 1) — **seed alignment** (`services/acp_content_writing/seed_align/`): deterministic checks that
+compare a sentence with the typed facts of its seed (`seed_graph.SeedGraph`: offered items, planned moments, 'near'
+relations, world figures, the seed's own superlatives, brief lines). A finding needs a spaCy dependency structure
+(`en_core_web_sm`, pinned, loaded lazily), a seed relation and a trigger word; any missing key abstains. Nine classes
+(optional told as planned, planned told as optional, near told as at, difficulty promise, world share, scopeless
+superlative, brief recipe, naming note, orphan opener). Each class has a mode (`T10_SA_MODE`, `T10_SA_MODE_<CLASS>`:
+off / shadow / repair / hold, default off): shadow records candidates in `writer_input.seed_align` only; repair adds
+`sa:<class>: …` findings to the existing F17_trip_fact / F18_rarity / F13_leak / F13_repeat results (no new gate);
+`quality_gates.never_holds` keeps an `sa:`-only result from holding unless its class is in
+`seed_align.modes.HOLD_PROMOTED` (empty: a promotion PR with shadow evidence, only the four fact classes). With every
+class off the ledger is byte for byte what it was.
 S245 (AA-779) — **FAQ from People Also Ask, every answer names its subject.** The request's
 `dfs_paa_snapshot.people_also_ask` (per tour) rides in the T9 context; the job keeps the questions of the
 piece's own places (`quality_gates.paa_for_scope`: no out-of-scope place, no topic the source cannot answer,

@@ -45,6 +45,12 @@ moto[s3,dynamodb,sqs,lambda]==5.0.3
 sentry-sdk[fastapi]>=1.40.0
 langfuse==2.26.0
 
+# NLP — AA-789 tier 1 seed alignment (services/acp_content_writing/seed_align). Loaded lazily, only when a
+# T10_SA_MODE* class is not off. The model is a pinned wheel checked by hash; nlp.NLP_VERSION goes into every record.
+# Adds ~220 MB to the image (spacy, thinc, blis, srsly + the 12.8 MB model); numpy stays at pandas' version.
+spacy==3.8.16
+en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl#sha256=1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85
+
 # Utils
 json-repair==0.61.0
 python-dotenv==1.2.2
