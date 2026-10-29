@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.16.0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/compare/v0.15.0...v0.16.0) (2026-10-29)
+
+
+### Features
+
+* acp_shared.facts kind, valid_until, updated_by and tenant delete (migration 302) ([#1138](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1138)) ([bd8df50](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/bd8df505f62b16fffc49f019f09d4361bc97e208))
+* Deploy Dev schema-gate and CI Migration preflight ([#1145](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1145)) ([b1d209e](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/b1d209e63c019e8fd850358bd63db0532955603e))
+* Facts Entry API, writer precedence and admin Facts page ([#1141](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1141)) ([d8fce64](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/d8fce643f676bc6a6eb0686196b71d7dcbd54667))
+* geocode accuracy v2 - stricter acceptance (switch), query variants, relocate recheck, hide policy ([#1139](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1139)) ([070dd7b](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/070dd7ba9febe6889ccc6e06f45dc597798e241d))
+* judge kappa per stratum, kappa diag fix, judge-model comparison harness ([#1132](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1132)) ([eba2ab7](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/eba2ab7faef82002d9112eab525ce5a1bed22d12))
+* kit sync bot, Kit Consumers check and kit freshness report ([#1133](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1133)) ([715582f](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/715582fddae24f0473cfef78208f9f035962b231))
+* LLM prompt register, eval runbook and adhoc_aa900 label for R2 change evals ([#1136](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1136)) ([22d1b70](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/22d1b7046deeff37913ec3e980365657bb47754f))
+* match tour photos to the destination of their own tour ([#1144](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1144)) ([2e8e10a](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/2e8e10a3eed22b9b75ca92a7313deca97189e230))
+* pool cover falls back to a photo of the tour's primary place ([#1131](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1131)) ([978ea46](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/978ea46cad8f332c5ce527086521e63852a0efea))
+* record who set a photo's destination (migration 303) ([#1143](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1143)) ([b683b24](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/b683b241ef5271ac20c78cc9d5bea863e0ab203e))
+* T10 gate recall tuning from the S234 panel defect classes ([#1140](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1140)) ([0c4dd6a](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/0c4dd6a6640cb6d7b87724480288dc1e38b283e2))
+* T9 reader checklist built from the seed, behind a default-off flag ([#1135](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1135)) ([d085620](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/d085620efc30e5fd17e741d5d69048d107a94ef8))
+* upstream Booking layout, filter, menu, confirm and format parts into the kit core ([#1137](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1137)) ([fc224ff](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/fc224ff6e80caea0b6b331788479a0746b265d00))
+
+
+### Bug Fixes
+
+* membership feed sorts by the xid8 column, not its text output ([#1130](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1130)) ([e886d86](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/e886d865eb2e0bf8d1317a5a9a2a0521af2702e2))
+
 ## [0.15.0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/compare/v0.14.0...v0.15.0) (2026-10-29)
 
 
