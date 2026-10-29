@@ -44,7 +44,8 @@ def test_ok_when_an_answered_call_is_newer_than_the_last_refusal():
 
 def test_degraded_on_a_recent_throttle():
     out = av.build([_calls(ok_at=NOW - timedelta(hours=1))],
-                   [_job("RuntimeError: ThrottlingException: Too many requests", NOW - timedelta(minutes=5),
+                   [_job("RuntimeError: ThrottlingException when calling the InvokeModel operation: Too many requests",
+                         NOW - timedelta(minutes=5),
                          status="queued")], hours=24, now=NOW)
     assert out["status"] == "degraded" and out["cause"]["error_class"] == "throttled"
 
@@ -84,3 +85,23 @@ async def test_read_passes_the_window_and_row_limit():
     since = NOW - timedelta(hours=6)
     assert conn.fetch.await_args_list[0].args[1:] == (since,)
     assert conn.fetch.await_args_list[1].args[1:] == (since, av.JOB_ROW_LIMIT)
+
+
+@pytest.mark.parametrize("error", [
+    "ClientError: An error occurred (AccessDenied) when calling the DeleteObject operation: Access Denied",
+    "AccessDeniedException: User is not authorized to perform: cognito-idp:AdminGetUser",
+    "MessageRejected: Maximum sending rate exceeded.",
+    "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.geoapify.com/v1/geocode/search'",
+])
+def test_non_llm_job_errors_do_not_move_the_card(error):
+    """S3 / Cognito / SES / Geoapify failures classify as access_denied or throttled but are not LLM failures."""
+    now = datetime(2026, 10, 29, 12, tzinfo=timezone.utc)
+    rows = [{"id": "j1", "kind": "supply_media_purge", "status": "failed", "error": error,
+             "updated_at": now - timedelta(minutes=5)}]
+    assert not av.is_llm_failure(error)
+    assert av.summarize_failures(rows) == []
+
+
+def test_llm_prefixed_and_bedrock_errors_still_count():
+    assert av.is_llm_failure("llm_access_denied: every model refused at account level")
+    assert av.is_llm_failure("AccessDeniedException when calling the InvokeModel operation: Error 002")

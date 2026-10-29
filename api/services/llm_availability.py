@@ -8,7 +8,8 @@ Two sources, both real outcomes inside the window:
 - ``shared.llm_call_log``: per provider / account (and embeddings apart), how many calls were answered and when the
   last answered one was. A row is written only for a billed call (AA-927), so a call the provider refused leaves no
   row here: this side can only say "the last success was at ...".
-- ``shared.job``: the errors of jobs that failed (or wait for a retry) in the window, each classified with
+- ``shared.job``: the LLM errors of jobs that failed (or wait for a retry) in the window (``is_llm_failure``: the
+  ``llm_access_denied`` prefix, or older text that names an LLM call), each classified with
   ``shared.llm_client.errors.classify_text`` — ``access_denied`` (Bedrock "Error 002", AccessDenied, IAM),
   ``quota_exhausted`` (no OpenAI credit) or ``throttled``. Since AA-900 a job ended by an account-level refusal has an
   error that starts with ``llm_access_denied``; older rows are classified by their text (an older S1 job only says
@@ -20,6 +21,7 @@ text call (embeddings run on another account and do not clear it), ``degraded`` 
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, Optional
 
@@ -69,10 +71,24 @@ def _latest(values: Iterable[Optional[datetime]]) -> Optional[datetime]:
     return max(present) if present else None
 
 
+# Only LLM failures count: S3 / Cognito AccessDenied, SES rate limits and Geoapify 429s also classify as
+# access_denied / throttled, but they say nothing about the LLM route (S258 review of #1148).
+LLM_ERROR_PREFIX = "llm_access_denied"
+_LLM_MARKER_RE = re.compile(r"bedrock|invokemodel|converse|anthropic|openai|llm|error 002", re.I)
+
+
+def is_llm_failure(error: Optional[str]) -> bool:
+    """True for a job error written by the LLM gateway path: the AA-900 prefix, or older text naming an LLM call."""
+    text = error or ""
+    return text.startswith(LLM_ERROR_PREFIX) or bool(_LLM_MARKER_RE.search(text))
+
+
 def summarize_failures(job_rows: Iterable[dict]) -> list[dict]:
-    """One entry per failure class seen (count, newest time, newest job), newest class first."""
+    """One entry per LLM failure class seen (count, newest time, newest job), newest class first."""
     by_class: dict[str, dict] = {}
     for row in job_rows:
+        if not is_llm_failure(row.get("error")):
+            continue
         cls = classify_text(row.get("error"))
         if cls not in FAILURE_CLASSES:
             continue
