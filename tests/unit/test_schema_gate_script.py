@@ -268,3 +268,17 @@ def test_deploy_dev_runs_the_gate_before_the_rollout() -> None:
     assert "schema-gate" in deploy.split("steps:", 1)[0], "deploy must need schema-gate"
     result = text.split("\n  result:\n", 1)[1]
     assert "schema-gate" in result.split("steps:", 1)[0], "the result job must read schema-gate"
+
+
+def test_github_get_retries_anonymously_when_the_token_cannot_read() -> None:
+    calls = []
+
+    def fetch(url: str, token: str) -> tuple:
+        calls.append(token)
+        return (404, None) if token else (200, {"ok": True})
+
+    assert sg.github_get("/repos/o/r", "tok", fetch) == (200, {"ok": True})
+    assert calls == ["tok", ""]
+    calls.clear()
+    assert sg.github_get("/repos/o/r", "", fetch) == (200, {"ok": True})
+    assert calls == [""]

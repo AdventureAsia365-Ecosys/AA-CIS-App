@@ -287,6 +287,16 @@ def http_json(url: str, token: str = "", timeout: float = 15.0) -> tuple:
         return status, None
 
 
+def github_get(path: str, token: str, fetch: Callable = http_json) -> tuple:
+    """GitHub REST GET. A 401/403/404 with this run's token is retried anonymously: the token of an app repo may not
+    reach another repo, while the Infra Actions API is public. Only an anonymous 403/404 means "not readable"."""
+    url = "https://api.github.com" + path
+    status, data = fetch(url, token)
+    if token and status in (401, 403, 404):
+        status, data = fetch(url, "")
+    return status, data
+
+
 def main(argv: list | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--app", required=True, choices=sorted(PREFIX))
@@ -314,7 +324,7 @@ def main(argv: list | None = None) -> int:
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
     infra = None
     if a.infra_repo:
-        infra = Infra(a.infra_repo, lambda path: http_json("https://api.github.com" + path, token))
+        infra = Infra(a.infra_repo, lambda path: github_get(path, token))
     out = run_gate(a.app, required, lambda: http_json(a.ready_url), infra, timeout=a.timeout,
                    interval=a.interval, unreachable_grace=a.unreachable_grace)
     head = "passed" if out.code == 0 else "failed (nothing deployed)"
