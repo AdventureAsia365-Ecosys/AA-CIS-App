@@ -295,6 +295,10 @@
     "capability": null,
     "module": "api.routers.admin_pipeline"
   },
+  "GET /admin/llm-availability": {
+    "capability": null,
+    "module": "api.routers.admin_llm_ops"
+  },
   "GET /admin/llm-catalog": {
     "capability": null,
     "module": "api.routers.admin_llm_ops"

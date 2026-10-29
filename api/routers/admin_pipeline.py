@@ -27,6 +27,7 @@ from api.routers.admin import verify_admin_secret
 from api.routers.auth import verify_tenant_jwt
 from api.middleware import tenant_role as _tenant_role  # AA-979 csr check in the dependency
 from api.routers.v1_pipeline import _rewrite_tour
+from shared.llm_client.errors import is_llm_access_denied
 from services.content_generation.pipeline_lessons import load_s1_lessons_block
 from services.content_generation import s1_checkpoint as _ckpt  # AA-993 G2
 from shared.aws_client.bronze import bronze_bucket
@@ -1089,6 +1090,8 @@ async def _run_tour_safe(tour_req: TourRunRequest, job_id: str | None = None,
                 last_exc = exc
                 logger.warning("run_tour_attempt_failed", tour_id=tour_req.tour_id,
                                attempt=attempt + 1, error=str(exc))
+                if is_llm_access_denied(exc):
+                    break  # AA-900: refused at account level; the next attempt would be refused the same way
         logger.error("background_run_tour_failed", tour_id=tour_req.tour_id,
                      batch_id=tour_req.batch_id, error=str(last_exc))
         if not _is_uuid(tour_req.batch_id):
@@ -1096,6 +1099,8 @@ async def _run_tour_safe(tour_req: TourRunRequest, job_id: str | None = None,
             # uuid-cast UPDATE rather than crash the failure handler.
             logger.info("pipeline_runs_fail_mark_skipped",
                         batch_id=tour_req.batch_id, reason="batch_id is not a valid uuid")
+            if is_llm_access_denied(last_exc):
+                raise last_exc  # AA-900: see the end of this function
             return
         try:
             conn = await asyncpg.connect(get_database_url())
@@ -1107,6 +1112,10 @@ async def _run_tour_safe(tour_req: TourRunRequest, job_id: str | None = None,
             await conn.close()
         except Exception as db_exc:
             logger.error("failed_to_mark_pipeline_failed", error=str(db_exc))
+        if is_llm_access_denied(last_exc):
+            # AA-900: the one failure the job must see typed (fails at once, reason llm_access_denied) — every other
+            # final failure is still swallowed (return None), as before.
+            raise last_exc
 
 
 def _build_s1_progress_sink(redis, job_id: str):

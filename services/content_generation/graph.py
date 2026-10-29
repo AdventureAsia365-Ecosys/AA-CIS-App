@@ -11,6 +11,7 @@ from langgraph.graph import StateGraph, END
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 from shared.llm_client.call_log import record_call_sync, record_unusable_sync
+from shared.llm_client.errors import is_llm_access_denied
 from services.quality.registry import threshold
 from .prompts import parse_source_day_word_counts
 from .batch_prompt import (
@@ -693,6 +694,10 @@ def generate_node(state: ContentState) -> ContentState:
         }
     except Exception as e:
         logger.error("generation_failed", error=str(e))
+        if resp is None and is_llm_access_denied(e):
+            # AA-900: every model was refused at account level; no retry or revise round can help, so the error
+            # leaves the graph and the job fails at once (shared/jobs/worker.failure_outcome).
+            raise
         if resp is not None and not logged:
             # AA-927: billed, then the post-call code raised — a billed_unusable row (no json_parsed).
             record_unusable_sync(resp, stage=gen_stage, role="writer", error=e, tenant_id=tenant_id)

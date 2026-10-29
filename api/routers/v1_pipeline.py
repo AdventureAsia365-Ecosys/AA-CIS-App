@@ -23,6 +23,7 @@ from shared.tour_liveness import (
     source_state,
 )
 from services.content_generation.graph import build_graph
+from shared.llm_client.errors import is_llm_access_denied
 from pydantic import BaseModel
 import asyncpg
 import boto3 as _boto3
@@ -399,6 +400,11 @@ async def _rewrite_tour(
         if released is not None:   # AA-993 G2: a release inside a node is not a rewrite failure
             logger.info("rewrite_released", idx=idx, node=getattr(e, "node", None))
             raise released   # its __context__ is the wrapper, for the traceback
+        if is_llm_access_denied(e):
+            # AA-900: the writer was refused at account level (graph.generate_node / s1_writer_v2_live re-raise it);
+            # a "failed" dict would let the caller retry or upgrade into the same refusal.
+            logger.error("rewrite_llm_access_denied", idx=idx, error=str(e)[:300])
+            raise
         logger.error("rewrite_failed", idx=idx, error=str(e))
         return {
             "idx": idx,

@@ -31,6 +31,7 @@ import structlog
 
 from shared.cost_guard import BudgetExceeded
 from shared.llm_client import call_log
+from shared.llm_client.errors import LLM_ACCESS_DENIED_REASON, LLMAccessDenied, is_llm_access_denied
 from shared.sentry_init import release  # AA-884: APP_GIT_SHA of this image, written to shared.job_worker
 
 from . import queue
@@ -105,6 +106,22 @@ def job_tenant_id(payload: Optional[dict]) -> Optional[str]:
         logger.warning("job_tenant_not_uuid", tenant_id=raw[:64])
         return None
     return None if tid == call_log.PLATFORM_TENANT_ID else tid
+
+
+def failure_outcome(exc: BaseException) -> tuple[str, bool, Optional[str]]:
+    """How a handler exception ends its attempt: (shared.job.error text, may the runner retry, reason).
+
+    AA-900: when the LLM gateway decided that every model was refused at account level (a typed LLMAccessDenied
+    anywhere in the cause chain: Bedrock "Error 002", AccessDenied, no OpenAI credit), a retry minutes later is
+    refused the same way, so the job fails at once and its error starts with ``llm_access_denied`` (the admin LLM
+    availability card and the Jobs page read that prefix). Any other exception keeps the old rule: retry unless
+    NonRetryable."""
+    if is_llm_access_denied(exc):
+        body = str(exc) if isinstance(exc, LLMAccessDenied) else f"{type(exc).__name__}: {exc}"
+        if not body.startswith(LLM_ACCESS_DENIED_REASON):
+            body = f"{LLM_ACCESS_DENIED_REASON}: {body}"
+        return body[:900 + len(LLM_ACCESS_DENIED_REASON) + 2], False, LLM_ACCESS_DENIED_REASON
+    return f"{type(exc).__name__}: {str(exc)[:900]}", not isinstance(exc, NonRetryable), None
 
 
 class Worker:
@@ -292,12 +309,11 @@ class Worker:
             await run_terminal_hook(self.pool, job.id)
             log.warning("job_stopped_budget", reason=str(e))
         except Exception as e:
-            status = await queue.fail(self.pool, job, self.worker_id,
-                                      f"{type(e).__name__}: {str(e)[:900]}",
-                                      retryable=not isinstance(e, NonRetryable),
+            error, retryable, reason = failure_outcome(e)
+            status = await queue.fail(self.pool, job, self.worker_id, error, retryable=retryable,
                                       cost_usd=round(ctx.cost_usd, 6), result=ctx.result)
             # .exception: the traceback reaches Sentry with the event (event name unchanged: metric filters).
-            log.exception("job_failed", next_status=status, error=str(e)[:300])
+            log.exception("job_failed", next_status=status, error=str(e)[:300], reason=reason)
             if status == "failed":
                 await run_terminal_hook(self.pool, job.id)
 

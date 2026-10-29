@@ -28,6 +28,7 @@ import structlog
 
 from shared.llm_client.call_log import record_call_sync, record_unusable_sync
 from shared.llm_client.client import LLMClient, _billed_usage_of
+from shared.llm_client.errors import is_llm_access_denied
 from shared.llm_client.models import LLMRequest
 
 from . import s1_writer_v2 as v2
@@ -87,6 +88,8 @@ def _call(client: LLMClient, state: dict, *, call: str, system: str, user: str, 
         if parsed is None:
             out["error"] = f"{call}: reply is not a JSON object"
     except Exception as e:  # noqa: BLE001 — a failed call ends the draft, never the graph
+        if resp is None and is_llm_access_denied(e):
+            raise  # AA-900: refused at account level; the job fails at once (worker.failure_outcome)
         if resp is not None and not logged:
             record_unusable_sync(resp, stage=stage, role="writer", error=e, tenant_id=state.get("tenant_id"))
             out["cost_usd"] = resp.cost_usd or 0.0

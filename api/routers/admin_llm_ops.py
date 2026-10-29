@@ -1114,6 +1114,16 @@ async def get_aws_accounts():
     return {"accounts": aws_accounts.account_directory()}
 
 
+# AA-900 — LLM availability from recent real outcomes (llm_call_log successes + classified job failures), never a
+# probe call. Every staff role may read it (no POLICY entry), like /llm-config on the same page.
+@router.get("/llm-availability", summary="LLM availability from recent real outcomes (no probe call)")
+async def get_llm_availability(request: Request, hours: int = Query(24, ge=1, le=168)):
+    from api.services import llm_availability
+
+    async with request.app.state.pool.acquire() as conn:
+        return await llm_availability.read(conn, hours=hours)
+
+
 @router.get("/cost-explorer", summary="Stored AWS Cost Explorer spend for a window (no live CE call)")
 async def get_cost_explorer(
     request: Request, days: int = Query(7, ge=1, le=365),

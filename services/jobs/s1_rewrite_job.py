@@ -30,10 +30,13 @@ below — a job-level retry would otherwise write a fresh version per attempt.
 """
 from __future__ import annotations
 
+from typing import Optional
+
 import structlog
 
 from services.content_generation.s1_checkpoint import BULKY_KEYS, S1Checkpoint, clear_fields
 from shared.jobs.registry import JobContext, NonRetryable, job_kind
+from shared.llm_client.errors import is_llm_access_denied
 
 logger = structlog.get_logger()
 
@@ -85,17 +88,25 @@ async def run(ctx: JobContext) -> dict:
         await ctx.progress(current_stage=node_name)
 
     result = None
-    if progress is not None:
-        progress.start()
-        try:
-            with stream_sink.bind(progress):
-                result = await _run_tour_safe(req, job_id=ctx.job_id, stage_cb=_stage_cb, checkpoint=checkpoint)
-        finally:
-            await progress.finish(ok=result is not None)
-    else:
-        result = await _run_tour_safe(req, job_id=ctx.job_id, stage_cb=_stage_cb, checkpoint=checkpoint)
+    denied: Optional[BaseException] = None
+    try:
+        if progress is not None:
+            progress.start()
+            try:
+                with stream_sink.bind(progress):
+                    result = await _run_tour_safe(req, job_id=ctx.job_id, stage_cb=_stage_cb, checkpoint=checkpoint)
+            finally:
+                await progress.finish(ok=result is not None)
+        else:
+            result = await _run_tour_safe(req, job_id=ctx.job_id, stage_cb=_stage_cb, checkpoint=checkpoint)
+    except Exception as e:
+        # AA-900: _run_tour_safe raises only an account-level LLM refusal; it still takes the failed-job path below
+        # (checkpoint cleared), then reaches the worker typed, so the job fails at once with llm_access_denied.
+        if not is_llm_access_denied(e):
+            raise
+        denied = e
 
-    # _run_tour_safe swallows the final failure and returns None after 3 internal attempts.
+    # _run_tour_safe swallows any other final failure and returns None after 3 internal attempts.
     if result is None:
         # AA-993 G2 review: a failed job leaves no resume state. `queue.retry` (Jobs page Retry) keeps `progress`, so a
         # stale checkpoint would replay the same failing result; clearing it also drops the bulky keys from the
@@ -104,6 +115,8 @@ async def run(ctx: JobContext) -> dict:
             await ctx.progress(**clear_fields())
         except Exception as e:  # noqa: BLE001 — the run failure below is the error that matters
             logger.warning("s1_checkpoint_clear_failed", job_id=ctx.job_id, error=str(e)[:200])
+        if denied is not None:
+            raise denied
         raise RuntimeError("run_tour failed after retries (see logs)")
 
     version_id = result.get("version_id")
