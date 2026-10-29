@@ -301,6 +301,7 @@ POLICY: dict[tuple[str, str], str] = {
     ("POST", "/admin/photos/sync"): PHOTOS_WRITE,
     ("POST", "/admin/photos/sync/schedule"): PHOTOS_WRITE,   # AA-844, daily (MACHINE_ROUTES)
     ("POST", "/admin/photos/medium-backfill"): PHOTOS_WRITE,   # AA-995, 960 w rendition backfill
+    ("POST", "/admin/photos/destination-match"): PHOTOS_WRITE,   # AA-671 S257, photo -> place of its tour
     ("POST", "/admin/photos/{photo_id}/assign"): PHOTOS_WRITE,
     # ── admin_places — place_extract backfill (paid geocoder jobs)
     ("POST", "/admin/places/backfill"): OPS_WRITE,

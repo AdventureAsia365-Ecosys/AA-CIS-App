@@ -1,0 +1,61 @@
+"""AA-671 S257 — give a tour-matched photo the destination it shows (shared.place_photo.destination_id).
+
+Why: the photo read views by place (shared.v_destination_photos, catalog.v_destination_photo) need destination_id,
+which no photo had (the sync only matched destinations on request, and the request was never made after the S207
+reset). Without it the pool cover fallback (api/routers/v1_tours.py _POOL_COVER_SQL) and the TripPlanner destination
+pages find no photo of a place.
+
+Rule: a photo is compared only with the places of ITS OWN tour — the geo.tour_place rows of the tour's source key
+(COALESCE(source_group_id, tour_id), like the catalog) plus the stops of the current graph build, on a destination
+that is not a merged duplicate. services.photos.match.resolve_destination decides; only an unambiguous answer is
+written. Used by the photo sync (new photos, at sync time) and by the photo_destination_match backfill job.
+
+Reads raw_tours with app.tenant_id pinned to the AA master tenant for its own transaction (services.places.store
+_catalog_fetch, like the AA-860 read it replaces): raw_tours is FORCE-RLS, and cis_app's USING-true policy (244) is
+not the only way this runs (the CI replay skips 244; a plain reader role sees the master rows through the pin).
+"""
+from __future__ import annotations
+
+from typing import Iterable
+
+# Per photo tour id: (destination id, a name of it). Two names per destination when the itinerary spelling differs
+# from the destination name ("Tiger's Nest" vs "Paro Taktsang"); a stop of the graph build carries the destination
+# name only.
+CANDIDATES_SQL = """
+    WITH tours AS (
+        SELECT rt.tour_id, (COALESCE(rt.source_group_id, rt.tour_id))::text AS source_id
+          FROM silver_aa_internal.raw_tours rt
+         WHERE rt.tour_id = ANY($1::uuid[])
+    ), cand AS (
+        SELECT t.tour_id, tp.destination_id, tp.name AS place_name
+          FROM tours t
+          JOIN geo.tour_place tp ON tp.source_id = t.source_id
+         WHERE tp.destination_id IS NOT NULL
+        UNION
+        SELECT t.tour_id, ts.destination_id, NULL::text
+          FROM tours t
+          JOIN geo.tour_stop ts ON ts.source_id = t.source_id
+          JOIN geo.graph_build gb ON gb.build_id = ts.build_id AND gb.is_current
+    )
+    SELECT c.tour_id::text AS tour_id, d.id::text AS destination_id, d.name AS destination_name, c.place_name
+      FROM cand c
+      JOIN shared.destinations d ON d.id = c.destination_id AND d.duplicate_of IS NULL
+     ORDER BY 1, 2, 4
+"""
+
+
+async def tour_candidates(conn, tour_ids: Iterable[str]) -> dict[str, list[tuple[str, str]]]:
+    """tour id -> [(destination id, name)] of that tour's places. `conn` is a connection (the read runs in its own
+    transaction or savepoint). Raises on a DB error (the caller decides whether to fail open)."""
+    from services.places.store import _catalog_fetch
+
+    ids = sorted({str(t) for t in tour_ids if t})
+    if not ids:
+        return {}
+    out: dict[str, set[tuple[str, str]]] = {}
+    for r in await _catalog_fetch(conn, CANDIDATES_SQL, ids):
+        pairs = out.setdefault(r["tour_id"], set())
+        pairs.add((r["destination_id"], r["destination_name"]))
+        if r["place_name"]:
+            pairs.add((r["destination_id"], r["place_name"]))
+    return {t: sorted(p) for t, p in out.items()}

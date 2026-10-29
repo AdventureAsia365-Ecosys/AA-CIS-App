@@ -41,7 +41,9 @@ def test_match_destination_longest_whole_word_unique():
     assert M.match_destination("Olkhon Island sunset", dests) == "d1"
     assert M.match_destination("Lake Baikal", dests) == "d3"
     assert M.match_destination("Ulaanbaatar", dests) is None
-    assert M.match_destination("Paro", [("a", "Paro"), ("b", "paro")]) == "a"   # exact wins first
+    # AA-671 S257: two places of one tour with the same name -> ambiguous, never the first one listed
+    assert M.match_destination("Paro", [("a", "Paro"), ("b", "paro")]) is None
+    assert M.match_destination("Paro", [("a", "Paro"), ("a", "paro")]) == "a"   # one place, two spellings
 
 
 class _FakeDrive:
@@ -95,13 +97,15 @@ class _Conn:
     def __init__(self, existing=()):
         self.existing, self.writes = list(existing), []
 
-    def transaction(self):          # itinerary_places pins app.tenant_id in its own transaction (AA-860)
+    def transaction(self):          # the candidate read pins app.tenant_id in its own transaction
         return _Tx()
 
     async def fetch(self, sql, *a):
-        if "geo.tour_place" in sql:     # AA-860: itinerary from the CIS place pipeline (was tripplanner.*)
+        if "geo.tour_place" in sql:     # AA-671 S257: the places of the photo's own tour (services.photos.destinations)
+            self.candidate_tours = a[0]
             return [{"tour_id": "11111111-1111-1111-1111-111111111111",
-                     "id": "22222222-2222-2222-2222-222222222222", "name": "Tango Monastery"}]
+                     "destination_id": "22222222-2222-2222-2222-222222222222",
+                     "destination_name": "Tango Monastery", "place_name": "Tango Lhakhang"}]
         if "raw_tours" in sql:
             return [{"tour_id": "11111111-1111-1111-1111-111111111111", "src_name": "THE DRUK PATH", "aa_name": None}]
         if "shared.destinations" in sql:
@@ -111,7 +115,7 @@ class _Conn:
         return []
 
     async def execute(self, sql, *a):
-        if "set_config('app.tenant_id'" in sql:      # the itinerary read's tenant pin, not a write
+        if "set_config('app.tenant_id'" in sql:      # the candidate read's tenant pin, not a write
             return
         self.writes.append(a)
 
@@ -133,19 +137,21 @@ class _S3:
 
 
 @pytest.mark.asyncio
-async def test_sync_matches_tour_only_by_default_and_uploads_three_sizes():
+async def test_sync_matches_tour_and_destination_and_uploads_three_sizes():
     tree = {"root": [DriveFile("sup", "Wangchuk Tour&Trek", FOLDER_MIME, None, None)],
             "sup": [DriveFile("f1", "The Druk Path - 8 days", FOLDER_MIME, None, None)],
             "f1": [_img("i1", "Tango Monastery1.jpg")]}
     conn, s3 = _Conn(), _S3()
     res = await S.sync_folder(conn, _FakeDrive(tree, {"i1": _jpeg()}), s3, country="Bhutan", root_id="root")
-    assert res["matched_tour"] == 1 and res["matched_destination"] == 0 and res["downloaded"] == 1
+    # AA-671 S257: the destination is matched on every sync (was only on request)
+    assert res["matched_tour"] == 1 and res["matched_destination"] == 1 and res["downloaded"] == 1
     assert sorted(s3.keys) == ["photos/bhutan/i1-1600.webp", "photos/bhutan/i1-600.webp", "photos/bhutan/i1-960.webp",
                                "photos/bhutan/i1-orig.jpg"]
     a = conn.writes[0]
     assert a[4] == "The Druk Path - 8 days" and a[2] == "Wangchuk Tour&Trek › The Druk Path - 8 days"
-    assert a[7] == "11111111-1111-1111-1111-111111111111" and a[8] is None and a[9] == "matched"
-    assert a[-3] is False                                   # match_destinations off
+    assert a[7] == "11111111-1111-1111-1111-111111111111" and a[9] == "matched"
+    assert a[8] == "22222222-2222-2222-2222-222222222222"
+    assert a[-3] is False                                   # match_destinations off: an existing destination kept
     assert a[-2] == "photos/bhutan/i1-orig.jpg"             # original kept (migration 202)
     assert a[-1] == "photos/bhutan/i1-960.webp"             # 960 w kept (migration 301, AA-995)
 
@@ -163,6 +169,7 @@ async def test_sync_matches_destination_when_asked_and_skips_unchanged_download(
                               match_destinations=True)
     assert res["unchanged"] == 1 and res["downloaded"] == 0 and s3.keys == []
     assert conn.writes[0][8] == "22222222-2222-2222-2222-222222222222"
+    assert conn.writes[0][19] is True                        # re-match: the tour's places were read
 
 
 @pytest.mark.asyncio
@@ -331,3 +338,130 @@ def test_migration_290_view_path_is_the_canonical_row():
     view = sql[sql.index("CREATE OR REPLACE VIEW shared.v_destination_photos"):]
     assert "'/content/photos/' || COALESCE(c.id, p.id)::text AS path" in view
     assert "ORDER BY q.created_at, q.id LIMIT 1" in view
+
+
+# ── AA-671 S257: destination at sync time ─────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_manual_row_without_destination_is_matched_with_its_kept_tour():
+    """A photo whose tour was assigned by hand keeps that tour, and its destination is looked up among THAT tour's
+    places (not the folder's automatic match, here none)."""
+    from datetime import datetime, timezone
+    tree = {"root": [DriveFile("f1", "Unknown Folder", FOLDER_MIME, None, None)],
+            "f1": [_img("i1", "Tango Monastery1.jpg")]}
+    existing = [{"drive_file_id": "i1", "drive_modified_at": datetime(2026, 9, 1, tzinfo=timezone.utc),
+                 "s3_key_small": "photos/bhutan/i1-600.webp", "s3_key_original": "photos/bhutan/i1-orig.jpg",
+                 "match_source": "manual", "status": "matched",
+                 "tour_id": "11111111-1111-1111-1111-111111111111", "destination_id": None}]
+    conn = _Conn(existing)
+    res = await S.sync_folder(conn, _FakeDrive(tree, {}), _S3(), country="Bhutan", root_id="root")
+    assert conn.candidate_tours == ["11111111-1111-1111-1111-111111111111"]
+    assert res["matched_tour"] == 0 and res["matched_destination"] == 1
+    a = conn.writes[0]
+    assert a[8] == "22222222-2222-2222-2222-222222222222" and a[18] is True      # keep_match: tour kept by SQL
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_label_matches_no_destination_and_is_counted():
+    class _TwoPlaces(_Conn):
+        async def fetch(self, sql, *a):
+            if "geo.tour_place" in sql:
+                return [{"tour_id": "11111111-1111-1111-1111-111111111111", "destination_id": d,
+                         "destination_name": "Night Market", "place_name": None} for d in ("d-a", "d-b")]
+            return await super().fetch(sql, *a)
+
+    tree = {"root": [DriveFile("f1", "THE DRUK PATH", FOLDER_MIME, None, None)],
+            "f1": [_img("i1", "Night Market (2).jpg")]}
+    conn = _TwoPlaces()
+    res = await S.sync_folder(conn, _FakeDrive(tree, {"i1": _jpeg()}), _S3(), country="Bhutan", root_id="root")
+    assert res["matched_destination"] == 0 and res["destination_ambiguous"] == 1
+    assert conn.writes[0][8] is None
+
+
+@pytest.mark.asyncio
+async def test_candidate_read_failure_fails_open_and_logs_an_error():
+    from structlog.testing import capture_logs
+
+    class _Broken(_Conn):
+        async def fetch(self, sql, *a):
+            if "geo.tour_place" in sql:
+                raise RuntimeError("permission denied for schema geo")
+            return await super().fetch(sql, *a)
+
+    tree = {"root": [DriveFile("f1", "THE DRUK PATH", FOLDER_MIME, None, None)],
+            "f1": [_img("i1", "Tango Monastery1.jpg")]}
+    with capture_logs() as logs:
+        res = await S.sync_folder(_Broken(), _FakeDrive(tree, {"i1": _jpeg()}), _S3(), country="Bhutan",
+                                  root_id="root")
+    assert res["matched_tour"] == 1 and res["matched_destination"] == 0
+    errors = [e for e in logs if e["event"] == "photo_sync_destination_candidates_unavailable"]
+    assert errors and errors[0]["log_level"] == "error" and "permission denied" in errors[0]["error"]
+
+
+@pytest.mark.asyncio
+async def test_rematch_is_off_when_the_candidate_read_fails():
+    """review S257: match_destinations=True and a failed place read must not clear the existing destinations (the
+    re-match branch takes this run's answer, here "none" for every row)."""
+    class _Broken(_Conn):
+        async def fetch(self, sql, *a):
+            if "geo.tour_place" in sql:
+                raise RuntimeError("canceling statement due to statement timeout")
+            return await super().fetch(sql, *a)
+
+    tree = {"root": [DriveFile("f1", "THE DRUK PATH", FOLDER_MIME, None, None)],
+            "f1": [_img("i1", "Tango Monastery1.jpg")]}
+    conn = _Broken()
+    res = await S.sync_folder(conn, _FakeDrive(tree, {"i1": _jpeg()}), _S3(), country="Bhutan", root_id="root",
+                              match_destinations=True)
+    assert res["destination_candidates_unavailable"] is True and res["matched_destination"] == 0
+    a = conn.writes[0]
+    assert a[8] is None and a[19] is False                   # no answer, and no re-match: the SQL keeps the old one
+
+
+@pytest.mark.asyncio
+async def test_rematch_is_off_for_a_tour_without_places():
+    """A tour whose places are being re-extracted (no geo rows right now) keeps its photos' destinations."""
+    class _NoPlaces(_Conn):
+        async def fetch(self, sql, *a):
+            if "geo.tour_place" in sql:
+                return []
+            return await super().fetch(sql, *a)
+
+    tree = {"root": [DriveFile("f1", "THE DRUK PATH", FOLDER_MIME, None, None)],
+            "f1": [_img("i1", "Tango Monastery1.jpg")]}
+    conn = _NoPlaces()
+    res = await S.sync_folder(conn, _FakeDrive(tree, {"i1": _jpeg()}), _S3(), country="Bhutan", root_id="root",
+                              match_destinations=True)
+    assert res["destination_candidates_unavailable"] is False and res["matched_tour"] == 1
+    assert conn.writes[0][19] is False
+
+
+@pytest.mark.asyncio
+async def test_weak_label_is_counted_never_written():
+    class _Landmark(_Conn):
+        async def fetch(self, sql, *a):
+            if "geo.tour_place" in sql:
+                return [{"tour_id": "11111111-1111-1111-1111-111111111111", "destination_id": "d-tk",
+                         "destination_name": "Paro Taktsang", "place_name": None}]
+            return await super().fetch(sql, *a)
+
+    tree = {"root": [DriveFile("f1", "THE DRUK PATH", FOLDER_MIME, None, None)],
+            "f1": [_img("i1", "Paro (3).jpg")]}
+    conn = _Landmark()
+    res = await S.sync_folder(conn, _FakeDrive(tree, {"i1": _jpeg()}), _S3(), country="Bhutan", root_id="root")
+    assert res["destination_weak"] == 1 and res["matched_destination"] == 0
+    assert conn.writes[0][8] is None
+
+
+def test_upsert_destination_rules_in_order():
+    """The rules themselves run on real Postgres in tests/integration/test_aa671_photo_destination_match.py."""
+    import inspect
+    assert "UPSERT_SQL" in inspect.getsource(S.sync_folder)
+    flat = " ".join(S.UPSERT_SQL.split())
+    assert ("destination_id = CASE WHEN place_photo.status = 'rejected' "
+            "OR (place_photo.destination_match_source = 'manual' AND place_photo.destination_id IS NOT NULL) "
+            "THEN place_photo.destination_id "
+            "WHEN NOT $19 AND place_photo.tour_id IS DISTINCT FROM EXCLUDED.tour_id THEN EXCLUDED.destination_id "
+            "WHEN $20 THEN EXCLUDED.destination_id "
+            "ELSE coalesce(place_photo.destination_id, EXCLUDED.destination_id) END") in flat
+    assert "CASE WHEN $9::uuid IS NULL THEN NULL ELSE 'auto' END" in flat

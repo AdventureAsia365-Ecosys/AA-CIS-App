@@ -10,6 +10,7 @@ Admin (`/admin/photos`, behind the admin BFF):
   - POST /sync                    — enqueue a `photo_sync` job (admin secret).
   - POST /sync/schedule           — AA-844, the daily schedule (ops-probe Lambda, machine caller):
                                      one incremental photo_sync job per country, idempotent per day.
+  - POST /destination-match       — AA-671 S257: enqueue a `photo_destination_match` job (DRY RUN by default).
   - POST /{photo_id}/assign       — set tour / destination by hand, or reject (admin secret).
 
 Public (`/content/photos/{photo_id}?size=large|medium|small|original`): the stable path the catalog views,
@@ -240,7 +241,7 @@ class SyncRequest(BaseModel):
     countries: Optional[list[str]] = None   # subset of the CON folders; None = all
     limit: Optional[int] = None             # images per folder (trial runs)
     dry_run: bool = False
-    match_destinations: bool = False        # off until destinations are re-extracted after the rerun
+    match_destinations: bool = False        # True: also re-match the automatic rows that have a destination
 
 
 @router.post("/sync", summary="Enqueue a photo_sync job")
@@ -303,6 +304,54 @@ async def medium_backfill(body: MediumBackfillRequest, request: Request, x_admin
     return {"job_id": job_id, "created": created, "status": "queued"}
 
 
+class DestinationMatchRequest(BaseModel):
+    dry_run: bool = True            # DRY RUN by default: counts and samples only; false writes destination_id
+    country: Optional[str] = None   # one country; None = all
+    limit: Optional[int] = None     # rows this run (default and max 5000)
+    fill_covers: bool = False       # apply only: also fill empty / job-set shared.destinations covers (TripPlanner)
+
+
+@router.post("/destination-match", summary="Enqueue a photo_destination_match job (photo -> place of its tour)")
+async def destination_match(body: DestinationMatchRequest, request: Request, x_admin_secret: str = Header(None),
+                            x_admin_user_id: Optional[str] = Header(None)):
+    """AA-671 S257: gives every tour-matched photo without a destination the place of its own tour that its label
+    names, when exactly one matches (services/jobs/photo_destination_match_job.py). DRY RUN unless dry_run is false.
+    One queued or running job at a time: a second call returns that job."""
+    verify_admin_secret(x_admin_secret)
+    from services.jobs.photo_destination_match_job import KIND, MAX_LIMIT
+    from shared.jobs.registry import enqueue
+    if body.limit is not None and not 1 <= body.limit <= MAX_LIMIT:
+        raise HTTPException(status_code=422, detail=f"limit must be from 1 to {MAX_LIMIT}")
+    payload: dict = {"dry_run": body.dry_run, "country": body.country, "fill_covers": body.fill_covers}
+    if body.limit is not None:
+        payload["limit"] = body.limit
+    # The check and the insert hold one transaction-scoped advisory lock, so two calls at once queue one job.
+    async with request.app.state.pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", KIND)
+            active = await conn.fetchrow(
+                "SELECT id::text AS id, status FROM shared.job WHERE kind = $1 AND status IN ('queued', 'running') "
+                "ORDER BY created_at DESC LIMIT 1", KIND)
+            if active:
+                return {"job_id": active["id"], "created": False, "status": active["status"]}
+            job_id, created = await enqueue(conn, KIND, payload,
+                                            created_by=f"admin:{x_admin_user_id or 'unknown'}")
+    return {"job_id": job_id, "created": created, "status": "queued", "dry_run": body.dry_run}
+
+
+FOLDER_ASSIGN_SQL = """
+    UPDATE shared.place_photo
+       SET tour_id = $3::uuid, status = 'matched', match_source = 'manual', updated_at = now(),
+           destination_id = CASE WHEN tour_id IS DISTINCT FROM $3::uuid
+                                      AND destination_match_source IS DISTINCT FROM 'manual'
+                                 THEN NULL ELSE destination_id END,
+           destination_match_source = CASE WHEN tour_id IS DISTINCT FROM $3::uuid
+                                                AND destination_match_source IS DISTINCT FROM 'manual'
+                                           THEN NULL ELSE destination_match_source END
+     WHERE country = $1 AND folder_path = $2 AND status <> 'rejected' AND id <> $4::uuid
+"""
+
+
 class AssignRequest(BaseModel):
     tour_id: Optional[str] = None
     destination_id: Optional[str] = None
@@ -332,18 +381,20 @@ async def assign(photo_id: str, body: AssignRequest, request: Request, x_admin_s
                 "SELECT 1 FROM shared.destinations WHERE id = $1::uuid AND country = $2", dest_id, photo["country"]):
             raise HTTPException(status_code=422, detail="destination not found in this photo's country")
         status = "rejected" if body.reject else "matched"
+        # A destination given here is a person's choice ('manual', CIS 303): the sync and the destination job never
+        # change it. Without one the photo's destination is emptied, and the sync fills it from the (new) tour.
         await conn.execute(
             """UPDATE shared.place_photo SET tour_id = $2::uuid, destination_id = $3::uuid, status = $4,
+                      destination_match_source = CASE WHEN $3::uuid IS NULL THEN NULL ELSE 'manual' END,
                       match_source = 'manual', updated_at = now() WHERE id = $1::uuid""",
             pid, None if body.reject else tour_id, None if body.reject else dest_id, status)
         folder_count = 1
         if tour_id and not body.reject and body.whole_folder:
-            # Same tour for the rest of the folder; their own destination and rejections are kept.
+            # Same tour for the rest of the folder; rejections and hand-set destinations are kept. An automatic
+            # destination was matched against the OLD tour: where the tour changes it is emptied, and the next sync
+            # (or photo_destination_match run) matches it against the new tour (AA-671 S257 review).
             res = await conn.execute(
-                """UPDATE shared.place_photo SET tour_id = $3::uuid, status = 'matched', match_source = 'manual',
-                          updated_at = now()
-                    WHERE country = $1 AND folder_path = $2 AND status <> 'rejected' AND id <> $4::uuid""",
-                photo["country"], photo["folder_path"], tour_id, pid)
+                FOLDER_ASSIGN_SQL, photo["country"], photo["folder_path"], tour_id, pid)
             folder_count += int(res.split()[-1])
         covers = 0
         if not body.reject and dest_id:

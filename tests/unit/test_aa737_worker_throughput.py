@@ -69,6 +69,8 @@ def test_background_kind_never_claimed_with_two_or_fewer_free_slots(free):
                           "supply_media_purge",
                           # AA-995 960 w rendition of the stored catalog photos ($0, manual, bounded)
                           "photo_medium_backfill",
+                          # AA-671 S257 photo -> destination of its tour ($0, manual, DRY RUN by default)
+                          "photo_destination_match",
                           # AA-917 writing memory: backfill, fact filter, mining (cap 1 each); AA-918 the R0 replay
                           "writing_signal_backfill", "writing_signal_fact_filter", "writing_memory_mine",
                           "writing_memory_r0",
