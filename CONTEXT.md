@@ -513,7 +513,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     sampler queues the snapshot once a day for the day `periods.snapshot_day` names (day D from 00:30 UTC of D + 1;
     days are ICT, UTC+7). Manual runs and the register: `/admin/reports` (Platform › Overview › Reports, admin;
     `GET /admin/reports`, `GET /admin/reports/{id}/runs`, `GET /admin/reports/runs/{run_id}`,
-    `POST /admin/reports/{id}/run`, 409 for a report not generated here). $0: DB reads only.
+    `POST /admin/reports/{id}/run`, 409 for a report not generated here; `POST /admin/reports/snapshots` {day?}
+    re-computes one day's snapshot, the back-fill path, 90 days max). $0: DB reads only.
   - **Ops metrics sampler (AA-832, AA-751)**: `api/core/ops_metrics_sampler.py`, a background task of
     the **api** (not the worker) started in `api/main.py`'s lifespan after the main pool, cancelled
     before it closes, off when `ENVIRONMENT=test`, never raises. Every 300 s (first tick 30 s after

@@ -6,6 +6,9 @@
   GET  /admin/reports/{report_id}/runs        one report: its catalogue entry (sections, KPIs with definitions) and
                                               its runs, newest first (?page=&page_size=, server-side paging)
   GET  /admin/reports/runs/{run_id}           one run with its output (JSON) and rendered Markdown
+  POST /admin/reports/snapshots               {day?} (ICT day, default the day the daily chain covers): queue a manual
+                                              kpi_snapshot_daily (re-computes that day's values; a back-fill of up to
+                                              90 days, one call per day; never chains reports)
   POST /admin/reports/{report_id}/run         {period_start?, period_end?} (ICT days): queue report_generate for a
                                               report the CIS engine renders (EX-04, EX-06); 409 for any other, 202
                                               with the run and job ids. Default period: the day the daily chain covers.
@@ -28,6 +31,7 @@ from pydantic import BaseModel, ConfigDict
 
 from api.core.staff_authz import staff_policy
 from services.jobs import report_jobs
+from shared.jobs.registry import NonRetryable, enqueue
 from services.reports import generate, periods, store
 from services.reports.registry import load
 
@@ -172,3 +176,25 @@ async def run_report(report_id: str, request: Request, body: Optional[RunRequest
     logger.info("admin_report_run_queued", report_id=report.id, run_id=out["run_id"], job_id=out["job_id"],
                 period_start=out["period_start"], period_end=out["period_end"], admin_user=x_admin_user_id)
     return out
+
+
+class SnapshotRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    day: Optional[date] = None
+
+
+@router.post("/admin/reports/snapshots", status_code=202, summary="Re-compute the KPI snapshot of one day (admin)")
+async def run_snapshot(request: Request, body: Optional[SnapshotRequest] = None,
+                       x_admin_user_id: Optional[str] = Header(None)) -> dict:
+    payload: dict = {"trigger": "manual"}
+    if body is not None and body.day is not None:
+        payload["day"] = body.day.isoformat()
+    try:
+        day = report_jobs.resolve_day(payload)
+    except NonRetryable as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    payload["day"] = day.isoformat()
+    job_id, _ = await enqueue(_pool(request), report_jobs.SNAPSHOT_KIND, payload,
+                              created_by=_actor(x_admin_user_id))
+    logger.info("admin_kpi_snapshot_queued", day=payload["day"], job_id=job_id, admin_user=x_admin_user_id)
+    return {"job_id": job_id, "kind": report_jobs.SNAPSHOT_KIND, "day": payload["day"]}

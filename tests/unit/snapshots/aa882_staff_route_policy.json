@@ -1083,6 +1083,10 @@
     "capability": "content.write",
     "module": "api.routers.admin_pipeline"
   },
+  "POST /admin/reports/snapshots": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_reports"
+  },
   "POST /admin/reports/{report_id}/run": {
     "capability": "ops.write",
     "module": "api.routers.admin_reports"

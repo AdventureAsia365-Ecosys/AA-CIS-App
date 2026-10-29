@@ -335,6 +335,7 @@ POLICY: dict[tuple[str, str], str] = {
     ("GET", "/admin/reports/runs/{run_id}"): OPS_READ,
     ("GET", "/admin/reports/{report_id}/runs"): OPS_READ,
     ("POST", "/admin/reports/{report_id}/run"): OPS_WRITE,
+    ("POST", "/admin/reports/snapshots"): OPS_WRITE,
     # ── v1_trip_page admin_router — public trip pages of AA content
     ("POST", "/admin/trip-pages/{tour_id}/publish"): MASTER_ADMIN,
     ("POST", "/admin/trip-pages/recheck"): OPS_WRITE,

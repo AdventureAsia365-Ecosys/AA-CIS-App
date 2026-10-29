@@ -125,3 +125,16 @@ def test_run_refusals(api):
                     headers=_staff()).status_code == 422
     assert api.post("/admin/reports/EX-04/run", json={"bogus": 1}, headers=_staff()).status_code == 422
     api.enqueue.assert_not_awaited()
+
+
+def test_snapshot_route_queues_a_manual_snapshot(api, monkeypatch):
+    assert staff_authz.POLICY[("POST", "/admin/reports/snapshots")] == staff_authz.OPS_WRITE
+    enqueue = AsyncMock(return_value=("job-9", True))
+    monkeypatch.setattr(admin_reports, "enqueue", enqueue)
+    day = periods.latest_closed_day().isoformat()
+    r = api.post("/admin/reports/snapshots", json={"day": day}, headers=_staff())
+    assert r.status_code == 202 and r.json() == {"job_id": "job-9", "kind": "kpi_snapshot_daily", "day": day}
+    assert enqueue.await_args.args[2] == {"trigger": "manual", "day": day}
+    assert api.post("/admin/reports/snapshots", json={"day": periods.today_ict().isoformat()},
+                    headers=_staff()).status_code == 422
+    assert api.post("/admin/reports/snapshots", json={}, headers=_staff("viewer")).status_code == 403
