@@ -7,7 +7,8 @@ quote the panel word for word are marked "quote"; the others are marked "synthet
 with the same shape (never stored copy, AA-919 golden-text guard).
 
 Negative cases: every clean sentence the S257 independent verifier ran through the first version and saw flagged
-(`verifier`), plus near-misses of our own. The widened patterns feed gates that block and can hold (F13_leak,
+(`verifier`), every clean sentence the second reviewer found flagged by revision 2 (`reviewer`), plus near-misses
+of our own. The widened patterns feed gates that block and can hold (F13_leak,
 F13_repeat, F17_trip_fact, F18_rarity), so a pattern that could not be made precise was dropped (the notes list them)
 and its panel example is pinned here as a known miss.
 
@@ -146,6 +147,10 @@ def test_linkedin_only_stock_lines_stay_linkedin_only():
 @pytest.mark.parametrize("sentence", [
     "Families cross the lake by boat, and walk the shore, and optionally ride horses.",  # synthetic, r4 #14
     "Families travel by boat and on foot, with only horse riding optional.",          # synthetic, r4 #5
+    "Families travel by boat and on foot, with horse riding on request.",       # a verbless hedge is the item's own
+    "Families travel by boat, and horse riding can be arranged.",               # the boat item is its own statement
+    ("Hours on the lake — by boat — and walks along the shore are part of how this stage of the journey unfolds, "
+     "with horse riding available as an extra."),                               # synthetic, r4 #5 (a plan statement)
 ])
 def test_optional_boat_written_as_planned(sentence):
     found = _trip(sentence)["trip_fact"]
@@ -157,6 +162,11 @@ def test_optional_boat_written_as_planned(sentence):
     "Boat rides on the water, horse riding and trekking are all optional.",
     "The day includes the boundary walk and, if you wish, a boat ride on the water.",
     "Across the lake days, active options include trekking, horseback riding and boat rides on the water.",
+    "Boat rides, horse riding and visits to nomadic families can be arranged on request.",   # reviewer
+    "Boat rides and horse riding cost extra.",
+    "Supplies for the lakeside camps still arrive by boat in summer.",          # reviewer: freight, not travellers
+    "The camp's own supplies come in by boat once a week.",
+    "Supplies arrive by boat, which is part of life on the lake.",
 ])
 def test_hedged_lists_are_not_flagged(sentence):
     assert not any("as part of the plan" in v for v in _trip(sentence)["trip_fact"])
@@ -166,6 +176,7 @@ def test_hedged_lists_are_not_flagged(sentence):
     "An optional day with the Tsaatan reindeer herders is possible.",       # synthetic, r4 #18 (day made optional)
     "Visiting the Tsaatan herders is optional on day five.",                # synthetic, r4 #18
     "The Tsaatan visit is optional.",                                       # synthetic, r4 #18
+    "An optional excursion to the Tsaatan reindeer herders is possible.",   # synthetic, r4 #18
 ])
 def test_planned_moment_called_optional(sentence):
     assert any(v.startswith("calls Tsaatan") for v in _trip(sentence)["trip_fact"])
@@ -179,6 +190,9 @@ def test_planned_moment_called_optional(sentence):
     "Sod Camp has a mountain range nearby for optional trekking and a mineral spring.",  # optional names trekking
     "Optional boat rides on Lake Khövsgöl fill the fifth day.",             # mixed moment: forward check's job
     "Children can feed the reindeer at the Tsaatan settlements.",          # 'can' is what a planned day allows
+    "Sod Camp staff can arrange optional excursions to the mineral spring.",                 # reviewer (side place)
+    "An optional stop at Uran Togoo's crater rim viewpoint is possible for older children.",  # reviewer
+    "Visiting the mineral spring near Sod Camp is optional.",
 ])
 def test_reverse_flip_near_misses(sentence):
     assert not any(v.startswith("calls ") for v in _trip(sentence)["trip_fact"])
@@ -191,6 +205,7 @@ def test_time_idiom_is_not_a_schedule():
 
 def test_difficulty_promise_is_a_pace_finding():
     assert any("'technical'" in v for v in _trip("The caldera walk is not a technical climb.")["trip_fact"])  # r4 #14
+    assert any("'technical'" in v for v in _trip("It isn't a technical hike.")["trip_fact"])  # synthetic, r4 #14
     assert _trip("The guides carry technical fabric jackets for the wind.")["trip_fact"] == []
     assert _trip("The caldera walk is not a technical climb.", channel="linkedin")["trip_fact"] == []  # blogs only
 
@@ -198,6 +213,9 @@ def test_difficulty_promise_is_a_pace_finding():
 @pytest.mark.parametrize("sentence", [
     "The hike is strenuous in places, so good boots matter.",              # verifier (a safety caveat)
     "The last stretch is gruelling in the heat, so start early.",
+    "No technical climbing gear is needed on the caldera walk.",               # reviewer (a packing fact)
+    "Helmets are provided for the short technical scramble below the summit.",  # reviewer (a route fact)
+    "The route has one technical section, which guides rope up.",
 ])
 def test_difficulty_caveats_are_not_pace_promises(sentence):
     assert not any("pace or rest promise" in v for v in _trip(sentence)["trip_fact"])
@@ -207,6 +225,17 @@ def test_lunch_at_a_place_the_source_puts_it_near():
     found = _trip("Lunch is at Mörön, the provincial capital.")["trip_fact"]   # synthetic, r4 #4/#5/#14/#15/#16/#18/#19
     assert any("but the source says near it" in v for v in found)
     assert _trip("Lunch is near Mörön, the provincial capital.")["trip_fact"] == []
+    found = _trip("A stop in Mörön breaks the drive.")["trip_fact"]              # synthetic, r3 'A stop in Mörön'
+    assert any("but the source says near it" in v for v in found)
+
+
+@pytest.mark.parametrize("sentence", [
+    "After lunch, the drive continues to the airport in Mörön for those flying back.",   # reviewer (clause boundary)
+    "The bus does not stop in Mörön.",                                                   # a negated stop
+    "Lunch is a picnic; the evening is in Mörön.",
+])
+def test_near_as_at_near_misses(sentence):
+    assert not any("but the source says near it" in v for v in _trip(sentence)["trip_fact"]), sentence
 
 
 # ---------------------------------------------------------------- F18 superlatives and overclaims (§1.3 row 5)
@@ -217,7 +246,6 @@ def test_lunch_at_a_place_the_source_puts_it_near():
     "It is a landscape most of the world has never considered.",               # quote, r4 #17
     "A way of life that most of the world has never seen survives here.",      # synthetic, r3 #17 quote
     "The lake holds a significant fraction of the world's fresh water.",        # synthetic, r4 #19 (0.4%)
-    "The scale of the lake is hard to overstate.",                             # synthetic, r4 #4
 ])
 def test_superlatives_and_overclaims(sentence):
     assert _trip(sentence)["rarity"], sentence
@@ -228,6 +256,8 @@ def test_superlatives_and_overclaims(sentence):
     "A considerable share of the walk is on flat ground beside the lake.",                 # verifier
     "A substantial portion of the day is spent on the road between camps.",                # verifier
     "A significant share of the trip is spent outdoors.",
+    "The importance of sun protection at this altitude is hard to overstate.",   # reviewer (a safety caveat)
+    "The scale of the lake is hard to overstate.",            # r4 #4 shape: known miss ('hard to overstate' dropped)
     "The Tsaatan are one of the most distinct ethnic groups you can meet.",    # a superlative the source makes
 ])
 def test_rarity_near_misses(sentence):
@@ -253,6 +283,14 @@ def test_paraphrased_descriptor_repeat(text):
     ("The ecological boundary runs along the lake. The camp is on the shore. "
      "Families can discuss the ecological boundary itself over dinner."),
     "The camp is a traditional nomadic ger camp. The lodge is a traditional nomadic guesthouse.",  # two subjects
+    ("Our day-two lodge is a comfortable rural guesthouse. Dinner is at seven. "
+     "Our day-four lodge is a comfortable rural farmstay."),                                        # reviewer
+    ("The first camp is a seasonal nomadic site. Dinner is at seven. "
+     "The second camp is a seasonal nomadic settlement."),                                          # reviewer
+    ("The monastery remains a working religious community. "
+     "It is also a working religious school for young monks."),                                   # reviewer (additive)
+    ("The dzong is a living religious seat. The monks are friendly. "
+     "They are a living religious community."),                                    # a pronoun with another antecedent
 ])
 def test_paraphrase_near_misses(text):
     assert h.paraphrased_repeats(text, ROUTE_SEED) == []
@@ -279,8 +317,9 @@ def test_section_openers_are_not_repeat_findings(text):
 
 @pytest.mark.parametrize("text", [
     "## Ruins\n\nOne old wall, one year, one fact.",                                       # synthetic, r2 #19
-    "## Mörön\n\nThe city has one phonetic approximation in English that locals dislike.",  # synthetic, r3 #14
-    "## Mörön\n\nThe city is correctly spelled with two umlauts.",           # synthetic, the seed's Naming note
+    "## Mörön\n\nMörön has one phonetic approximation in English that locals dislike.",  # synthetic, r3 #14
+    "## Mörön\n\nThe city is correctly spelled Mörön, with two umlauts.",   # synthetic, the seed's Naming note
+    "## Mörön\n\nMurun is correctly spelled with two umlauts.",              # synthetic, another spelling of the note
 ])
 def test_brief_and_naming_note_leaks(text):
     assert _issues(text)["leak"], text
@@ -296,9 +335,25 @@ def test_brief_and_naming_note_leaks(text):
     "## Camp\n\nEach family gets one tent, one stove and one lantern.",
     "## Camp\n\nOne tent, one stove, one lantern.",
     "## Distances\n\nThe 3.5 km figure is a common approximation.",
+    # reviewer
+    "## Visas\n\nMake sure your name is correctly spelled on the visa application, exactly as in your passport.",
+    "## Paro\n\nThe Dzongkha greeting kuzuzangpo is written here as a phonetic approximation.",   # reviewer
+    "## Mörön\n\nWhen flying to Mörön, make sure your name is correctly spelled on the ticket.",
+    "## Mörön\n\nThe city has one phonetic approximation in English that locals dislike.",   # names no Naming place
 ])
 def test_leak_near_misses(text):
     assert _issues(text)["leak"] == [], text
+
+
+def test_naming_note_terms_need_a_seed_naming_note():
+    text = "## Paro\n\nThe Dzongkha greeting kuzuzangpo is written here as a phonetic approximation."   # reviewer
+    assert _issues(text, PUNAKHA_SEED)["leak"] == []
+
+
+def test_naming_note_terms_are_not_trimmed_by_autofix():
+    text = "## Mörön\n\nMörön has one phonetic approximation in English.\n\nThe courtyards are open."
+    fixed, _ = h.autofix(text, h.HygieneContext(seed=ROUTE_SEED, brand_name="Pretend Brand", cta=None))
+    assert "Mörön has one phonetic approximation in English." in fixed
 
 
 def test_brief_wording_is_reported_not_deleted_by_autofix():
