@@ -19,7 +19,7 @@ import structlog
 
 from services.photos.drive import DriveClient, walk
 from shared.aws_client.bronze import bronze_bucket
-from services.photos.match import match_destination, match_tour, place_label
+from services.photos.match import AMBIGUOUS, match_tour, place_label, resolve_destination
 
 logger = structlog.get_logger()
 
@@ -129,41 +129,20 @@ def make_sizes(data: bytes, sizes: Optional[dict[str, int]] = None) -> tuple[dic
     return out, w, h
 
 
-async def itinerary_places(conn, country: str) -> dict[str, list[tuple[str, str]]]:
-    """tour_id → [(destination id, name)] of the places on that tour's itinerary, from the CIS place
-    pipeline (schema geo, migration 226): geo.tour_place (the extracted places, keyed by the live tour)
-    UNION geo.tour_stop of the CURRENT graph build (keyed by source_id, mapped to every live tour of
-    that source by the catalog liveness rule of services.places.store). Empty when nothing is
-    extracted yet.
+async def destination_candidates(conn, tour_ids) -> dict[str, list[tuple[str, str]]]:
+    """tour id -> [(destination id, name)] of that tour's places (services.photos.destinations, AA-671 S257: the
+    geo.tour_place rows of the tour's source key + the current graph build's stops). Fails open — a sync must not stop
+    because the place pipeline is unreadable — but loudly, and then matches no destination this run.
 
-    AA-860 (X1 S15): this replaced the read of the frozen tripplanner.itinerary_components /
-    tripplanner.tour_stop (ADR 0007). That read was the last CIS query on the TripPlanner schema;
-    once the CIS runtime runs as cis_app (X1 S18) it would get 42501 there and the fail-open path
-    below would silently return {}. The read runs with app.tenant_id pinned to the AA master tenant
-    (published_tours / raw_tours are FORCE-RLS)."""
-    from services.places.store import _LIVE_SQL, _catalog_fetch
-    sql = f"""
-        WITH live AS ({_LIVE_SQL})
-        SELECT DISTINCT x.tour_id, d.id, d.name
-          FROM (SELECT tp.tour_id::text AS tour_id, tp.destination_id
-                  FROM geo.tour_place tp
-                 WHERE tp.destination_id IS NOT NULL
-                UNION
-                SELECT l.tour_id, ts.destination_id
-                  FROM geo.tour_stop ts
-                  JOIN geo.graph_build gb ON gb.build_id = ts.build_id AND gb.is_current
-                  JOIN live l ON l.source_id = ts.source_id) x
-          JOIN shared.destinations d ON d.id = x.destination_id
-         WHERE d.country = $1"""
+    AA-860 (X1 S15) replaced the read of the frozen tripplanner.* tables with the CIS place pipeline (schema geo);
+    S257 keys the read by the photo's own raw tour (its source key) instead of the live tour of the country, so a
+    photo matched to a tour variant still finds the places of its source."""
+    from services.photos.destinations import tour_candidates
     try:
-        rows = await _catalog_fetch(conn, sql, country)
-    except Exception as e:  # fail open (destinations are matched on request only), but loudly
-        logger.error("photo_sync_itinerary_places_unavailable", country=country, error=str(e)[:200])
+        return await tour_candidates(conn, tour_ids)
+    except Exception as e:
+        logger.error("photo_sync_destination_candidates_unavailable", error=str(e)[:200])
         return {}
-    out: dict[str, list[tuple[str, str]]] = {}
-    for r in rows:
-        out.setdefault(str(r["tour_id"]), []).append((str(r["id"]), r["name"]))
-    return out
 
 
 def _ts(value: Optional[str]) -> Optional[datetime]:
@@ -184,29 +163,40 @@ async def sync_folder(conn, client: DriveClient, s3, *, country: str, root_id: s
                     WHERE gc.tour_id = rt.tour_id ORDER BY gc.created_at DESC LIMIT 1) AS aa_name
              FROM silver_aa_internal.raw_tours rt
             WHERE rt.country = $1 AND rt.source_status = 'active' AND rt.deleted_at IS NULL""", country)]
-    # Destinations are matched only on request: on 01/10/2026 shared.destinations still held the
-    # places extracted from the tours published BEFORE the S207 reset. Match again (no re-download)
-    # once the rerun tours are rewritten, atomized and re-extracted (Nghiệp, S207).
-    # A photo is compared only with the places on ITS tour's itinerary (CIS place pipeline:
-    # geo.tour_place / geo.tour_stop, AA-860) — never with every place in the country.
-    tour_places = await itinerary_places(conn, country) if match_destinations else {}
     existing = {r["drive_file_id"]: r for r in await conn.fetch(
-        """SELECT drive_file_id, drive_modified_at, s3_key_small, s3_key_original, match_source, status
+        """SELECT drive_file_id, drive_modified_at, s3_key_small, s3_key_original, match_source, status,
+                  tour_id
              FROM shared.place_photo WHERE drive_file_id = ANY($1::text[])""", [f.id for _, f in images])}
+    # The tour each photo will carry: the folder's match, or the kept one of a manual / rejected row.
+    plan = []
+    for path, f in images:
+        tour_folder = path[-1] if path else None       # the folder holding the image is the tour (Bhutan has a
+        auto_tour = match_tour(tour_folder, tours)     # supplier level above it)
+        old = existing.get(f.id)
+        keep_match = bool(old and (old["match_source"] == "manual" or old["status"] == "rejected"))
+        kept_tour = str(old["tour_id"]) if keep_match and old.get("tour_id") else None
+        plan.append((path, f, tour_folder, auto_tour, kept_tour if keep_match else auto_tour, keep_match))
+    # AA-671 S257: destinations are matched on every sync, against the places of the photo's OWN tour only (CIS place
+    # pipeline, services.photos.destinations — never every place in the country), and only an unambiguous answer
+    # counts (match.resolve_destination). A photo that already has a destination keeps it, unless
+    # match_destinations=True asks to match the automatic rows again. (S207 had switched matching off because
+    # shared.destinations still held the places of the tours published before the reset; the candidates now come
+    # from the tour's current geo.tour_place rows.)
+    tour_places = await destination_candidates(conn, {p[4] for p in plan if p[4]})
     c = {"country": country, "images": len(images), "downloaded": 0, "unchanged": 0, "matched_tour": 0,
-         "matched_destination": 0, "unmatched": 0, "errors": 0, "tour_folders": len({p[-1] for p, _ in images if p})}
+         "matched_destination": 0, "destination_ambiguous": 0, "unmatched": 0, "errors": 0,
+         "tour_folders": len({p[-1] for p, _ in images if p})}
     bucket = photo_bucket()
     consecutive_errors = 0
 
-    for n, (path, f) in enumerate(images, 1):
-        # The folder holding the image is the tour (Bhutan has a supplier level above it).
-        tour_folder = path[-1] if path else None
+    for n, (path, f, tour_folder, tour_id, photo_tour, keep_match) in enumerate(plan, 1):
         label = place_label(f.name)
-        tour_id = match_tour(tour_folder, tours)
-        dest_id = match_destination(label, tour_places.get(tour_id, [])) if tour_id else None
+        found = resolve_destination(label, tour_places.get(photo_tour, [])) if photo_tour else None
+        dest_id = found.destination_id if found else None
         status = "matched" if (tour_id or dest_id) else "unmatched"
         c["matched_tour"] += bool(tour_id)
         c["matched_destination"] += bool(dest_id)
+        c["destination_ambiguous"] += bool(found and found.outcome == AMBIGUOUS)
         c["unmatched"] += status == "unmatched"
         old = existing.get(f.id)
         modified = _ts(f.modified_time)
@@ -246,7 +236,6 @@ async def sync_folder(conn, client: DriveClient, s3, *, country: str, root_id: s
                 logger.warning("photo_sync_file_failed", file_id=f.id, name=f.name, error=error)
         if dry_run:
             continue
-        keep_match = bool(old and (old["match_source"] == "manual" or old["status"] == "rejected"))
         await conn.execute(
             """
             INSERT INTO shared.place_photo (drive_file_id, drive_root_id, folder_path, country, tour_folder,
@@ -259,8 +248,12 @@ async def sync_folder(conn, client: DriveClient, s3, *, country: str, root_id: s
                 folder_path = EXCLUDED.folder_path, tour_folder = EXCLUDED.tour_folder,
                 file_name = EXCLUDED.file_name, place_label = EXCLUDED.place_label,
                 tour_id = CASE WHEN $19 THEN place_photo.tour_id ELSE EXCLUDED.tour_id END,
-                destination_id = CASE WHEN $19 OR NOT $20 THEN place_photo.destination_id
-                                      ELSE EXCLUDED.destination_id END,
+                destination_id = CASE WHEN place_photo.status = 'rejected'
+                                           OR (place_photo.match_source = 'manual'
+                                               AND place_photo.destination_id IS NOT NULL)
+                                           THEN place_photo.destination_id
+                                      WHEN $20 THEN EXCLUDED.destination_id
+                                      ELSE coalesce(place_photo.destination_id, EXCLUDED.destination_id) END,
                 status = CASE WHEN $19 THEN place_photo.status
                               WHEN NOT $20 AND EXCLUDED.status = 'unmatched'
                                    AND place_photo.destination_id IS NOT NULL THEN 'matched'

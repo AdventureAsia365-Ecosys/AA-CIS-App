@@ -2,7 +2,9 @@
 match them to tours and destinations (services/photos/sync.py). No paid model calls.
 
 Payload: {"folders": [{"country", "folder_id"}] (default: sync.CON_FOLDERS), "limit": int|None,
-          "dry_run": bool, "match_destinations": bool (default False — see sync.sync_folder),
+          "dry_run": bool, "match_destinations": bool (default False: a photo without a destination gets one
+          when its label names exactly one place of its tour; True also re-matches the automatic rows that have
+          one — see sync.sync_folder, AA-671 S257),
           "trigger": "schedule" | "manual" (default "manual"; copied into the result)}
 
 AA-844: a daily schedule (AA-CIS-Infra ops-probe Lambda, 21:00 UTC = 04:00 ICT) calls
@@ -61,7 +63,8 @@ async def run(ctx: JobContext) -> dict:
         await conn.close()
         await client.aclose()
     totals = {k: sum(r[k] for r in summary["folders"]) for k in
-              ("images", "downloaded", "unchanged", "matched_tour", "matched_destination", "unmatched", "errors")}
+              ("images", "downloaded", "unchanged", "matched_tour", "matched_destination", "destination_ambiguous",
+               "unmatched", "errors")}
     summary["totals"] = totals
     ctx.set_result(summary)
     await ctx.progress(phase="done", **totals)

@@ -2361,6 +2361,39 @@
         "title": "DedupeRunRequest",
         "type": "object"
       },
+      "DestinationMatchRequest": {
+        "properties": {
+          "country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country"
+          },
+          "dry_run": {
+            "default": true,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit"
+          }
+        },
+        "title": "DestinationMatchRequest",
+        "type": "object"
+      },
       "DraftBody": {
         "additionalProperties": false,
         "properties": {
@@ -19347,6 +19380,96 @@
           }
         },
         "summary": "List synced photos",
+        "tags": [
+          "admin-photos"
+        ]
+      }
+    },
+    "/admin/photos/destination-match": {
+      "post": {
+        "description": "AA-671 S257: gives every tour-matched photo without a destination the place of its own tour that its label\nnames, when exactly one matches (services/jobs/photo_destination_match_job.py). DRY RUN unless dry_run is false.\nOne queued or running job at a time: a second call returns that job.",
+        "operationId": "destination_match_admin_photos_destination_match_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DestinationMatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Enqueue a photo_destination_match job (photo -> place of its tour)",
         "tags": [
           "admin-photos"
         ]

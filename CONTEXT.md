@@ -396,7 +396,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     autovacuum `scale_factor 0.02`, `threshold 50` (C5.1b as amended by AA-751). Changing the template =
     copy it to AA-Booking in the same session + one migration per owner.
   - Job kinds live in `services/jobs/` (`segment_research`, `t2_rewrite`, `t9_write`, `a3_atomize`,
-    `s1_seo_prefetch`, `photo_sync`, `photo_medium_backfill` — AA-995, `s1_rewrite`, `s1_batch_ingest`, `revalidate`, `recompute`,
+    `s1_seo_prefetch`, `photo_sync`, `photo_medium_backfill` — AA-995, `photo_destination_match` — AA-671, `s1_rewrite`, `s1_batch_ingest`, `revalidate`, `recompute`,
     `place_cards_build`, `t7_slate`, `t8_angles`, and the place pipeline `place_extract`,
     `place_geocode`, `tour_graph_build` — AA-712, `place_shape`, `place_dedupe` — AA-847, `place_relocate` — AA-997, the five `retention_*` kinds — AA-825,
     `ops_alert_email` — AA-828, `data_erasure` — AA-839, the writing-memory kinds `writing_signal_backfill`,
@@ -689,7 +689,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
 - **Photos (AA-708, migration 198)**: the `photo_sync` job copies the Jira CON board's PHOTOS
   Drive folders (public, read with a Google API key from `aa-cis/dev/gdrive-photo-reader`) to S3
   (`photos/<country>/<file id>-{1600,960,600}.webp` + the original) and records `shared.place_photo`, matched to a tour
-  (folder name) and, on request, to a `shared.destinations` place (file name). Images are public via
+  (folder name) and to a `shared.destinations` place (file name; see below). Images are public via
   `GET /content/photos/{id}?size=`, the stable path every consumer stores (catalog photo views,
   TripPlanner covers and `og:image`, Booking `CisPhoto`). AA-844: it answers a 302 to the photos CDN
   (CloudFront `img.lumiguides.it.com`, AA-CIS-Infra `photos_cdn.tf`, in front of the bucket's
@@ -701,9 +701,18 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   21:00 UTC = 04:00 ICT) calls `POST /admin/photos/sync/schedule`: one incremental `photo_sync` job
   per CON country, idempotent per UTC day, skipped while another `photo_sync` job is queued or
   running (not skipped during a rerun wave: no LLM work); `/admin/photos/summary` reports it as
-  `last_scheduled`. (Before AA-993 G5 those serial jobs held the deploy gate around 04:00 ICT; they no longer do.) With
-  `match_destinations` it fills empty `shared.destinations.cover_image_url` (read by the TripPlanner)
-  — off until the destinations are re-extracted from the rerun tours (the schedule never sets it).
+  `last_scheduled`. (Before AA-993 G5 those serial jobs held the deploy gate around 04:00 ICT; they no longer do.)
+  AA-671 S257 — **photo → destination**: a photo is compared only with the places of ITS OWN tour (the `geo.tour_place`
+  rows of the tour's source key + the current graph build's stops, non-duplicate destinations;
+  `services/photos/destinations.py`), and only an unambiguous answer is written (`match.resolve_destination`: exact
+  name, core name, a place name inside the label, a distinctive label inside one place name; a tie = ambiguous). Every
+  sync now fills an empty `destination_id` (a manual or rejected row's set destination is never changed);
+  `match_destinations` additionally re-matches the automatic rows that have one, and fills empty
+  `shared.destinations.cover_image_url` (read by the TripPlanner). The photos synced before get theirs from the
+  `photo_destination_match` job (`POST /admin/photos/destination-match`, DRY RUN by default, background, $0: counts
+  matched / ambiguous / no_match / no_candidate / no_label per country with samples; an apply writes in one guarded
+  UPDATE and fills empty covers). `destination_id` feeds `shared.v_destination_photos` / `catalog.v_destination_photo`
+  and so the pool cover fallback (`_POOL_COVER_SQL`) and the TripPlanner destination pages.
   AA-995 (migration 301): `size=medium` is the 960 w file (`s3_key_medium`, phone heroes of the TripPlanner); a row
   without it answers the 1600 w file (never the original). The sync writes it for every file it downloads; files stored
   before 301 get it from the `photo_medium_backfill` job (`POST /admin/photos/medium-backfill`, background, $0: S3 +

@@ -10,6 +10,7 @@ Admin (`/admin/photos`, behind the admin BFF):
   - POST /sync                    — enqueue a `photo_sync` job (admin secret).
   - POST /sync/schedule           — AA-844, the daily schedule (ops-probe Lambda, machine caller):
                                      one incremental photo_sync job per country, idempotent per day.
+  - POST /destination-match       — AA-671 S257: enqueue a `photo_destination_match` job (DRY RUN by default).
   - POST /{photo_id}/assign       — set tour / destination by hand, or reject (admin secret).
 
 Public (`/content/photos/{photo_id}?size=large|medium|small|original`): the stable path the catalog views,
@@ -240,7 +241,7 @@ class SyncRequest(BaseModel):
     countries: Optional[list[str]] = None   # subset of the CON folders; None = all
     limit: Optional[int] = None             # images per folder (trial runs)
     dry_run: bool = False
-    match_destinations: bool = False        # off until destinations are re-extracted after the rerun
+    match_destinations: bool = False        # True: also re-match the automatic rows that have a destination
 
 
 @router.post("/sync", summary="Enqueue a photo_sync job")
@@ -301,6 +302,36 @@ async def medium_backfill(body: MediumBackfillRequest, request: Request, x_admin
         payload["limit"] = body.limit
     job_id, created = await enqueue(pool, KIND, payload, created_by=f"admin:{x_admin_user_id or 'unknown'}")
     return {"job_id": job_id, "created": created, "status": "queued"}
+
+
+class DestinationMatchRequest(BaseModel):
+    dry_run: bool = True            # DRY RUN by default: counts and samples only; false writes destination_id
+    country: Optional[str] = None   # one country; None = all
+    limit: Optional[int] = None     # rows this run (default and max 5000)
+
+
+@router.post("/destination-match", summary="Enqueue a photo_destination_match job (photo -> place of its tour)")
+async def destination_match(body: DestinationMatchRequest, request: Request, x_admin_secret: str = Header(None),
+                            x_admin_user_id: Optional[str] = Header(None)):
+    """AA-671 S257: gives every tour-matched photo without a destination the place of its own tour that its label
+    names, when exactly one matches (services/jobs/photo_destination_match_job.py). DRY RUN unless dry_run is false.
+    One queued or running job at a time: a second call returns that job."""
+    verify_admin_secret(x_admin_secret)
+    from services.jobs.photo_destination_match_job import KIND, MAX_LIMIT
+    from shared.jobs.registry import enqueue
+    if body.limit is not None and not 1 <= body.limit <= MAX_LIMIT:
+        raise HTTPException(status_code=422, detail=f"limit must be from 1 to {MAX_LIMIT}")
+    pool = request.app.state.pool
+    active = await pool.fetchrow(
+        "SELECT id::text AS id, status FROM shared.job WHERE kind = $1 AND status IN ('queued', 'running') "
+        "ORDER BY created_at DESC LIMIT 1", KIND)
+    if active:
+        return {"job_id": active["id"], "created": False, "status": active["status"]}
+    payload: dict = {"dry_run": body.dry_run, "country": body.country}
+    if body.limit is not None:
+        payload["limit"] = body.limit
+    job_id, created = await enqueue(pool, KIND, payload, created_by=f"admin:{x_admin_user_id or 'unknown'}")
+    return {"job_id": job_id, "created": created, "status": "queued", "dry_run": body.dry_run}
 
 
 class AssignRequest(BaseModel):
