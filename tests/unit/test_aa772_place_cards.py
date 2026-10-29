@@ -101,7 +101,7 @@ class TestSeed:
         seed = compose_seed("Pawangka Monastery — visit", "Visit it.", None, None, [], place="Pawangka Monastery",
                             country="China", day=4, card=dict(CARD, facts=json.dumps(CARD["facts"][:1])))
         assert "Location: Pabongka Monastery, Lhasa, Tibet, China (the itinerary calls it Pawangka Monastery)" in seed
-        assert "Naming: Also written Pawangka." in seed
+        assert "Naming: use the name 'Pabongka Monastery'; also written 'Pawangka'." in seed
         assert "- It sits on a hillside north of Lhasa." in seed
         assert "Day 4 of the trip" in seed
 

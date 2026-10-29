@@ -57,8 +57,8 @@ what the angle really covers: an angle answering 2 questions well beats one list
 touches. Empty list if none of the given questions fit this angle, or if no questions were given.
 
 If the CONTENT SEED is a ROUTE with ANCHOR CANDIDATES and THIN MOMENTS, every angle leads with \
-an anchor candidate. A thin moment has almost no source facts: it may appear in one sentence at \
-most and is never the hook, the title (name) or the climax of an angle.
+an anchor candidate. A thin moment has almost no source facts: it may only be named in passing \
+and is never the hook, the title (name) or the climax of an angle.
 
 Never invent facts, statistics, testimonials, scene detail or claims not present in the content \
 seed given to you. If the content seed lacks a concrete detail a strong angle would want, build \

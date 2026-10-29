@@ -21,7 +21,10 @@ from shared.llm_client.models import LLMResponse
 
 GOAL = get_goal("introduction_awareness")
 # sha256 of the T8 SYSTEM_PROMPT on origin/main b665382f (unchanged since #749): mode 'off' must keep these bytes.
-ROUND6_SYSTEM_SHA = "df5bd75e54608e21"
+# AA-789 tier 0 (S258): the thin-moment sentence says "only be named in passing", not "in one sentence at most" (the
+# angle brief carried the count to the writer, which copied it: 'The monastery ruins get one sentence here').
+# Was df5bd75e54608e21.
+ROUND6_SYSTEM_SHA = "0a26c260a0fc0717"
 
 GOOD_BRIEF = ("Reader: you ride the valley road on day two and stop for a swim at the falls. "
               "Brand: pace, the seed says the ride is short and on tarmac. "

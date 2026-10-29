@@ -477,7 +477,10 @@ class TestT9Prompt:
         BRAND TEXTURE block (ai_tells.brand_texture_rule), and SYSTEM_PROMPT's style-guide rule says that block sets
         sentence shape and where the reader stands, never content: writer_prompt_version 79cd046a → b5978839. The
         Trail Pulse fixture is energetic, so `single` and `route` gain the MOMENTUM block; without it they are the
-        round-5 bytes (30305b79… / c212a3a2…)."""
+        round-5 bytes (30305b79… / c212a3a2…).
+        Updated AA-789 tier 0 (S258, 29/10/2026): the route blog's "Thin moment" line no longer says "ONE plain
+        sentence" (the writer copied the shape: '## A Single Sentence on …'); a thin moment is named in passing,
+        with only what its source line states. Only `route` changes; SYSTEM_PROMPT and `single` do not."""
         pack = {"brand_name": "Trail Pulse", "brand_type": "Young active adventure travel brand",
                 "core_idea": "Active trips for people who like to move.", "customer_segment": "25-40 years old",
                 "voice": ["Energetic", "Fresh", "Direct", "Friendly", "Modern", "Confident", "Lightly playful"],
@@ -500,7 +503,7 @@ class TestT9Prompt:
         assert GOAL["key"] == GOALS[0]["key"]
         assert sha(SYSTEM_PROMPT) == "b5978839f7b24efec987aa89e4ffa77a50af2023d1c8ce14b734e9eb9b0ad17f"
         assert sha(single) == "58f9c85f586ebec43d0b77c853a38163dd852b0d29384652e681d507a8a13e76"
-        assert sha(route) == "0aeab9e9bde2c7b6f7a286d01f673b817e483924cbeaf3e1fcad11028e84a29c"
+        assert sha(route) == "2fb376a81acb40f4f99137a74cbb67238bce144b774216a93fd34cceb2ca26ad"
 
     def test_prompts_carry_no_em_dash_but_the_rule(self):
         """AA-778 — our own prompt text primed the habit (S234: 78 in the writer prompts). The one em-dash
