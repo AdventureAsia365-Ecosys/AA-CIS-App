@@ -277,6 +277,162 @@ jobs:
             --ignore=tests/integration/test_007_rls_isolation.py \
             -v --tb=short -p no:cacheprovider
 
+  # AA-993 M4b (root ADR 0017 d1, design D2.1; critic 7, 17): "Migration preflight". Tells the author of a PR that
+  # adds a migration whether it will be auto-applied (header `-- migrate: expand`, lint clean, classify evidence
+  # expand) or needs a person (contract / destructive: MIG-4), and refuses: an edit/delete of a file already copied to
+  # AA-CIS-Infra, a number other than main max + 1 (label migration:out-of-order for a reserved one), a readiness raise
+  # to a non-expand file or to a key with no file, a runner/ownership lint error, an expand header the classify replay
+  # contradicts. Tools: AA-CIS-Infra db/run_migration.py --inspect, db/check_migration_ownership.py and
+  # db/expand_check.py --classify at the pinned INFRA_TOOLS_SHA (public repo, anonymous clone; bump the pin when the
+  # Infra runner changes). The Infra copy PR's required "Expand classify" and Migration Apply's re-classify stay the
+  # authority. Runs on pull_request and merge_group (the queue re-checks the number on the latest main); exits at once
+  # when the PR touches no migration and no readiness key. Logic: .github/scripts/migration_preflight.py.
+  # Same steps in AA-CIS-App, AA-Booking and AA-Partner; only the env block differs.
+  migration-preflight:
+    name: Migration preflight
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      pull-requests: read    # the PR's labels (migration:out-of-order), read live
+    defaults:
+      run:
+        working-directory: .
+    env:
+      OWNER: cis
+      MIG_DIR: api/migrations
+      READINESS_FILE: api/core/readiness.py
+      # Public readiness of Dev: registered_keys tell whether a lower key of this owner still waits for a person.
+      READY_URL: https://api-cis.lumiguides.it.com/health/ready
+      INFRA_REPO: AdventureAsia365-Ecosys/AA-CIS-Infra
+      # AA-CIS-Infra main after M3 (#493/#494): run_migration.py with the expand lint, expand_check.py --classify.
+      INFRA_TOOLS_SHA: 3b999913ba990e5e2ca8d3fbd8efb4d44980ca76
+      # pgvector/pgvector:0.8.1-pg15, the image of the Infra classify and DB Schema Dump replay.
+      REPLAY_IMAGE: pgvector/pgvector@sha256:94aee7e88f98125114657cab98e28c5dfa8dd517a6bf83fd98b503439f1e3de6
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: What the PR changes
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          GROUP_BASE: ${{ github.event.merge_group.base_sha }}
+          GROUP_REF: ${{ github.event.merge_group.head_ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # The label is read live in both cases (not from the event payload): adding migration:out-of-order and
+          # "Re-run jobs" is enough, no empty commit needed.
+          if [ "$EVENT" = "merge_group" ]; then
+            BASE="$GROUP_BASE"
+            git fetch --quiet --depth=1 origin "$BASE"
+            PR=$(sed -nE 's#.*/pr-([0-9]+)-[0-9a-f]+$#\1#p' <<<"$GROUP_REF")
+          else
+            BASE=$(git rev-parse HEAD^1)    # the merge commit's first parent = the base this PR is tested on
+            PR="$PR_NUMBER"
+          fi
+          OOO=false
+          if [ -n "$PR" ] && gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name' \
+              | grep -qx 'migration:out-of-order'; then OOO=true; fi
+          git diff --name-status --no-renames "$BASE" HEAD -- "$MIG_DIR" "$READINESS_FILE" | tee changes.txt
+          ADDED=$(grep -cE "^A[[:space:]]+${MIG_DIR}/[0-9]{3}_[^/]*\.sql$" changes.txt || true)
+          {
+            echo "base=$BASE"
+            echo "ooo=$OOO"
+            echo "relevant=$([ -s changes.txt ] && echo true || echo false)"
+            echo "added=$ADDED"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Pinned AA-CIS-Infra tools and the Infra copy list
+        id: infra
+        if: steps.scope.outputs.relevant == 'true'
+        run: |
+          set -uo pipefail
+          git init -q infra && git -C infra remote add origin "https://github.com/$INFRA_REPO.git"
+          if git -C infra fetch -q --depth 1 origin "$INFRA_TOOLS_SHA" && git -C infra checkout -q FETCH_HEAD; then
+            echo "tools=infra" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::AA-CIS-Infra $INFRA_TOOLS_SHA not readable (private?): header only, no runner lint"
+          fi
+          mkdir -p infra-main
+          if git -C infra fetch -q --depth 1 origin main && git -C infra archive FETCH_HEAD db/migrations | tar -x -C infra-main; then
+            echo "copies=infra-main/db/migrations/$OWNER" >> "$GITHUB_OUTPUT"
+            echo "AA-CIS-Infra main: $(git -C infra rev-parse --short FETCH_HEAD)"
+          else
+            echo "::warning::AA-CIS-Infra main not readable: every migration on main counts as copied"
+          fi
+
+      - name: Classify the added files (expand post-check on a replay of Dev)
+        id: classify
+        if: steps.scope.outputs.added != '0' && steps.infra.outputs.tools == 'infra' && steps.infra.outputs.copies != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          python -m pip install --quiet asyncpg==0.30.0 pyyaml==6.0.2
+          # Each owner's main with the Infra copies laid over it (as Migration Apply does); this PR's folder for its owner.
+          declare -A SRC=([cis]="AA-CIS-App api/migrations" [booking]="AA-Booking migrations"
+                          [tripplanner]="AA-TripPlanner-Web migrations" [crm]="AA-Partner api/migrations")
+          ARGS=(--source roles=infra-main/db/migrations/roles)
+          for o in cis booking tripplanner crm; do
+            mkdir -p "replay/$o"
+            if [ "$o" = "$OWNER" ]; then
+              cp "$MIG_DIR"/*.sql "replay/$o/"
+            else
+              read -r repo dir <<<"${SRC[$o]}"
+              git clone --quiet --depth 1 --filter=blob:none --sparse "https://github.com/AdventureAsia365-Ecosys/$repo.git" "owners/$o"
+              git -C "owners/$o" sparse-checkout set "$dir"
+              cp "owners/$o/$dir"/*.sql "replay/$o/"
+              cp infra-main/db/migrations/"$o"/*.sql "replay/$o/" 2>/dev/null || true
+            fi
+            ARGS+=(--source "$o=replay/$o")
+          done
+          RUN=$(gh run list -R "$INFRA_REPO" --workflow db-schema-dump.yml --branch main --status success \
+            --limit 1 --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null || true)
+          if [ -n "$RUN" ] && gh run download "$RUN" -R "$INFRA_REPO" -n "db-schema-dump-$RUN" -D dump 2>/dev/null \
+              && [ -s dump/schema.json ]; then
+            ARGS+=(--live dump/schema.json); echo "replay order: the live dump of AA-CIS-Infra DB Schema Dump run $RUN"
+          else
+            echo "::notice::no AA-CIS-Infra DB Schema Dump artifact readable: the replay falls back to number order"
+          fi
+          ARGS+=(--files)
+          while read -r f; do ARGS+=("$OWNER/$(basename "$f")"); done \
+            < <(grep -E "^A[[:space:]]+${MIG_DIR}/[0-9]{3}_[^/]*\.sql$" changes.txt | cut -f2)
+          PW="$(openssl rand -hex 16)"
+          docker run -d --name classify-db -e POSTGRES_PASSWORD="$PW" -p 127.0.0.1:55432:5432 "$REPLAY_IMAGE" >/dev/null
+          for _ in $(seq 1 60); do docker exec classify-db pg_isready -h 127.0.0.1 -U postgres -q && break; sleep 2; done
+          python3 infra/db/expand_check.py --classify "${ARGS[@]}" \
+            --admin-dsn "postgresql://postgres:${PW}@127.0.0.1:55432/postgres" \
+            --out classify.json --summary "$GITHUB_STEP_SUMMARY" > classify.log 2>&1
+          STATUS=$?
+          grep -v '^REPLAY ok' classify.log || true
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          docker rm -f classify-db >/dev/null 2>&1 || true
+
+      - name: Preflight verdict
+        env:
+          BASE: ${{ steps.scope.outputs.base }}
+          TOOLS: ${{ steps.infra.outputs.tools }}
+          COPIES: ${{ steps.infra.outputs.copies }}
+          CLASSIFY_STATUS: ${{ steps.classify.outputs.status }}
+          OOO: ${{ steps.scope.outputs.ooo }}
+        run: |
+          ARGS=(--app "$OWNER" --migrations-dir "$MIG_DIR" --readiness-file "$READINESS_FILE" --base "$BASE")
+          [ -n "$TOOLS" ] && ARGS+=(--infra-tools "$TOOLS")
+          [ -n "$COPIES" ] && ARGS+=(--infra-copies "$COPIES")
+          [ -s classify.json ] && ARGS+=(--classify-json classify.json)
+          [ -n "$CLASSIFY_STATUS" ] && ARGS+=(--classify-status "$CLASSIFY_STATUS")
+          [ "$OOO" = "true" ] && ARGS+=(--allow-out-of-order)
+          python3 .github/scripts/migration_preflight.py "${ARGS[@]}" --ready-url "$READY_URL"
+
   docker-build:
     name: Docker Build Check
     runs-on: ubuntu-latest
