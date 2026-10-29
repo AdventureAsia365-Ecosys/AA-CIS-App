@@ -173,12 +173,90 @@ def _location_lines(place: Optional[str], country: Optional[str], card: Optional
         if place and place.strip() and place.strip().lower() != card["display_name"].lower():
             where += f" (the itinerary calls it {place.strip()})"
         lines.append(f"Location: {where} (do not place it in any other town, region or country)")
-        if card.get("naming_note"):
-            lines.append(f"Naming: {card['naming_note']}")
+        # the card's naming note as a use-this-name line (names only, never the note's prose)
+        naming = naming_line(card.get("naming_note"), card["display_name"])
+        if naming:
+            lines.append(naming)
     elif country and country.strip():
         where = f"{place.strip()}, {country.strip()}" if place and place.strip() else country.strip()
         lines.append(f"Location: {where} (do not name any other country or region for it)")
     return lines
+
+
+# AA-789 tier 0 (S258) — the writer gets the card's naming note as a use-this-name line, never the note's prose. The
+# prose (why one spelling is preferred, which readers it suits, what reading it avoids, whether variants exist) was
+# copied into the copy as sentences (S234 r3 #14). Only the names survive: each one in single quotes
+# (trip_facts._moment_tokens and hygiene.build_scope_lexicon read quoted spellings as other names of the place),
+# sorted into the ones a clause of the note tells the writer to avoid and
+# the ones it lists as other spellings. A name is a quoted one, or a capitalised run after a naming word ('spelled',
+# 'known as'); a place the note only mentions ('near Port Ansel', 'in Dolmar Province') is not a name of this one.
+# A clause that explains a meaning ("'Vellin' means 'Heron's Perch'") adds no name, and neither does a pronunciation
+# ("pronounced 'KAL-der'"): the comma-separated part that gives one is dropped, the rest of its clause is kept.
+_NAMING_CLAUSE_RE = re.compile(r"[;.](?:\s+|$)")
+_NAMING_QUOTED_RE = re.compile(r"(?<![\w’'])['‘](.+?)['’](?![\w’'])")
+_NAMING_CUE_RE = re.compile(r"(?:\b|(?<=mis))(?:spelled|spelt|spelling|written|known as|romani[sz]ed(?: as)?"
+                            r"|transliterated(?: as)?|call(?:s|ed)?|referred to as|seen as|rendered as|nickname"
+                            r"|name is)\b", re.I)
+_NAMING_PRONOUNCE_RE = re.compile(r"\bprono?unc", re.I)
+_NAMING_AVOID_RE = re.compile(r"\b(?:approximation|avoid|connotation|misspel|incorrect|wrong|unfortunate|offensive"
+                              r"|outdated|old-fashioned|best not)", re.I)
+_NAMING_MEANING_RE = re.compile(r"\b(?:means?|meaning|translat(?:es|ed|ion)|translates? as)\b", re.I)
+_NAME_RUN_RE = re.compile(r"[A-ZÀ-ÖØ-Þ][\w’'-]*(?:(?:\s+(?:of|the|de|la|el|al|and|y)\s+|\s+)[A-ZÀ-ÖØ-Þ][\w’'-]*)*")
+# Capitalised words of a naming note that are not names: grammar at a clause start, languages, audience words.
+_NAMING_NOT_NAMES = frozenset({
+    "a", "also", "an", "both", "commonly", "correctly", "for", "formally", "in", "international", "internationally",
+    "it", "its", "locally", "locals", "many", "most", "no", "officially", "older", "some", "the", "these", "this",
+    "use", "usually", "widely", "written",
+    "bhutanese", "burmese", "chinese", "dzongkha", "english", "french", "hindi", "indonesian", "japanese", "khmer",
+    "korean", "ladakhi", "lao", "malay", "mongolian", "nepali", "pali", "russian", "sanskrit", "thai", "tibetan",
+    "vietnamese"})
+
+
+def _trim_name(name: str) -> str:
+    words = name.strip(" '’‘").split()
+    while words and fold(words[0]) in _NAMING_NOT_NAMES:
+        words = words[1:]
+    while words and fold(words[-1]) in _NAMING_NOT_NAMES:
+        words = words[:-1]
+    return " ".join(words).strip(" '’‘")
+
+
+def _naming_names(clause: str) -> list[str]:
+    """The names in one clause of a naming note: the quoted ones, then the capitalised runs after its naming word."""
+    names = [m.group(1) for m in _NAMING_QUOTED_RE.finditer(clause)]
+    cue = _NAMING_CUE_RE.search(clause)
+    if cue:
+        rest = _NAMING_QUOTED_RE.sub(" ", clause[cue.end():])
+        names += [m.group(0) for m in _NAME_RUN_RE.finditer(rest)]
+    return [n for n in (_trim_name(x) for x in names) if n]
+
+
+def naming_line(note: Optional[str], display_name: Optional[str]) -> Optional[str]:
+    """'Naming: use the name 'Vélkar', not 'Velkar'; also written 'Velcar', 'Welkar'.' from a card's naming note, or
+    None when there is no note or no display name. The names come from the note; its explanation never does. Names
+    are compared case-folded but not accent-folded: 'Velkar' is not 'Vélkar'."""
+    if not (note or "").strip() or not (display_name or "").strip():
+        return None
+    display = display_name.strip()
+    avoid: list[str] = []
+    also: list[str] = []
+    for clause in _NAMING_CLAUSE_RE.split(note.strip()):
+        if _NAMING_PRONOUNCE_RE.search(clause):
+            clause = ", ".join(part for part in clause.split(",") if not _NAMING_PRONOUNCE_RE.search(part))
+        if not clause.strip() or _NAMING_MEANING_RE.search(clause):
+            continue
+        bucket = avoid if _NAMING_AVOID_RE.search(clause) else also
+        for name in _naming_names(clause):
+            key = name.casefold()
+            if key in display.casefold() or key in {n.casefold() for n in avoid + also}:
+                continue
+            bucket.append(name)
+    line = f"Naming: use the name '{display}'"
+    if avoid:
+        line += ", not " + " or ".join(f"'{n}'" for n in avoid)
+    if also:
+        line += "; also written " + ", ".join(f"'{n}'" for n in also)
+    return line + "."
 
 
 def _background_block(fact_lines: list[str]) -> str:
@@ -279,8 +357,13 @@ def moment_fact_count(seed_block: str) -> int:
 
 
 def thin_note(fact_count: int) -> str:
-    return (f"Thin moment: only {fact_count} source fact{'s' if fact_count != 1 else ''} — mention it in "
-            "one sentence at most; never make it the hook, the title or the climax.")
+    """AA-789 tier 0 (S258) — the note says what to do with a moment the source says little about, never as a count or
+    a shape the writer can copy: the old note printed the fact count and a one-sentence limit, and both came back as
+    copy (facts counted aloud, a heading built on the sentence limit; S234 r1 #10, r2 #19). The 'Thin moment:'
+    prefix is a parsing contract (trip_facts, claim_rules). `fact_count` stays in the signature for the callers; the
+    number is no longer shown."""
+    return ("Thin moment: the source says little about this stop — name it in passing inside a neighbouring "
+            "section, with only what its source line states; never make it the hook, the title or the climax.")
 
 
 def merge_keys(parts: dict) -> list[str]:

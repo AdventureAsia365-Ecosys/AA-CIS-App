@@ -99,8 +99,10 @@ def render_digest(moments: list[dict]) -> str:
         lines.append("ANCHOR CANDIDATES (3 or more source facts — every angle leads with one of these): "
                      + "; ".join(anchors))
     if thin:
-        lines.append("THIN MOMENTS (almost no source facts — mention in one sentence at most; never the hook, the "
-                     "title or the climax): " + "; ".join(thin))
+        # AA-789 tier 0 (S258) — no count or shape the writer can copy ('one sentence at most' came back as
+        # '## A Single Sentence on …', S234 r1 #10)
+        lines.append("THIN MOMENTS (the source says little about them — name them only in passing; never the hook, "
+                     "the title or the climax): " + "; ".join(thin))
     return "\n".join(lines)
 
 

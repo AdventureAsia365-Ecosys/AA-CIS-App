@@ -7,6 +7,9 @@ written by the first commit of the AA-919 WM-18/20 branch on the unchanged write
 state-builder extraction). The test compares the code of the tree with that file, never with itself (AA-919
 critic 2). Regenerate only on purpose (a deliberate prompt change), never to make this test pass:
     AA919_WRITE_PINS=1 pytest tests/unit/test_aa919_release0_replay.py
+Regenerated AA-789 tier 0 (S258, 29/10/2026): the route blog's "Thin moment" rule no longer says "ONE plain sentence"
+(a thin moment is named in passing, with only what its source line states). Only the 5 route-blog user prompts change
+(t9-blog-fake-00/04/08/12/16); every system prompt and the other 75 user prompts keep their pins.
 """
 from __future__ import annotations
 
