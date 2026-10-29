@@ -627,13 +627,5 @@
     "aa-kit/no-raw-aa-var": {
       "count": 4
     }
-  },
-  "app/trip/[tourId]/page.tsx": {
-    "aa-kit/no-hex-colour": {
-      "count": 9
-    },
-    "aa-kit/no-raw-main": {
-      "count": 1
-    }
   }
 }

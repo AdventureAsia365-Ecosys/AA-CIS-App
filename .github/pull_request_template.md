@@ -43,7 +43,7 @@ Refs AA-
 
 ## Verification
 
-- [ ] CI green (Lint, Security Audit, Unit Tests, Integration Tests, Docker Build Check, Frontend Lint, Portal Lint)
+- [ ] CI green (Lint, Security Audit, Unit Tests, Integration Tests, Docker Build Check, Frontend Lint, Frontend Build)
 - [ ] Migration: identical copy in AA-CIS-Infra `db/migrations/cis/`, applied on Dev by DB Migrate before this merges; or N/A
 - [ ] LLM calls go through `LLMClient` and land in `shared.llm_call_log`; or N/A
 - [ ] UI change: Vercel preview checked on desktop and mobile, light and dark, console clean; or N/A

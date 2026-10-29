@@ -12,7 +12,6 @@ every token minted before AA-760) is metered exactly as before. Each portal call
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -31,7 +30,6 @@ from api.routers.auth import (
 )
 from tests.unit.test_aa871_request_id_json_logs import json_lines  # noqa: F401  (pytest fixture)
 
-REPO = Path(__file__).resolve().parents[2]
 TENANT_ID = "9fb0a3db-59aa-468a-a082-ded01ac50bee"
 
 
@@ -179,14 +177,5 @@ def test_every_portal_call_is_still_logged_with_its_client(monkeypatch, json_lin
     structlog.contextvars.clear_contextvars()
 
 
-# --- the portal asks for a portal session ----------------------------------------------------------------------------
-
-
-def test_portal_sign_in_bff_requests_a_portal_session():
-    src = (REPO / "portal/app/api/auth/tenant-login/route.ts").read_text()
-    assert 'JSON.stringify({ api_key: apiKey, client: "portal" })' in src
-
-
-def test_billing_page_says_what_api_calls_count():
-    src = (REPO / "portal/app/portal/_components/PlaceholderTabs.tsx").read_text()
-    assert "Using this" in src and "portal, including the API playground, is not counted" in src
+# The portal-side checks (its sign-in asks for client="portal"; the billing page says what counts) live with the
+# portal in AA-Partner (api/tests/unit/test_portal_guards.py) since AA-979.

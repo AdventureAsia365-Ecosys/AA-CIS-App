@@ -1,7 +1,7 @@
 ---
 id: ARCH-06-cis
 title: "AA-CIS-App — Repo Context"
-description: Stack, boundaries, ownership, domain terms and working rules of AA-CIS-App (API incl. the Content studio API, job worker, admin app; the frozen tenant portal copy); read it before designing or changing code in this repo.
+description: Stack, boundaries, ownership, domain terms and working rules of AA-CIS-App (API incl. the Content studio API, job worker, admin app); read it before designing or changing code in this repo.
 type: explanation
 status: active
 owner: nghiep
@@ -51,19 +51,16 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
 - **Backend**: Python (FastAPI-style routers under `api/routers/`, services under `services/`),
   running on **ECS** (cluster `aa-cis-dev-cluster`, service `aa-cis-dev-api`) fronted by ALB +
   API Gateway. Postgres (RDS) holds the schemas; some steps use Bedrock for LLM work.
-- **Frontend**: two Next.js apps (AA-885, S243), each its own Vercel project. Only the admin is deployed from
-  this repo (CI, not one of the 5 required checks — see Deploy & CI); the portal is deployed from AA-Partner
-  since AA-979:
-  - `frontend/` = the **Admin** console (`app/admin/*`), Vercel `aa-cis-frontend`,
-    `https://aa-cis.lumiguides.it.com`, workflow `Vercel Deploy` (job "Vercel deploy").
-  - `portal/` = the **Tenant portal** (`portal/app/portal/*`), Vercel `aa-cis-portal` (Root Directory
-    `portal`), `https://portal.lumiguides.it.com`. **Since AA-979 (CRM-P2a) its source lives in
-    `AdventureAsia365-Ecosys/AA-Partner/portal`** (moved with its history; same Vercel project, host, env and
-    tenant API-key sign-in; deployed by AA-Partner's `Vercel Deploy (portal)`). The `portal/` folder here is a
-    **frozen, undeployed copy** (`tests/unit/test_aa885_portal_split.py` `test_portal_copy_is_frozen` fails on any
-    change) until it is deleted at P2b + 7 days (root ADR 0010 §6). Make portal changes in AA-Partner. The Content
-    studio API (`/v1/*`, `/auth/tenant-login`) stays here (ADR 0010 §7). The description of the portal app below is
-    kept for the API side and as the state of the frozen copy.
+- **Frontend**: one Next.js app here, `frontend/` = the **Admin** console (`app/admin/*`), Vercel `aa-cis-frontend`,
+  `https://aa-cis.lumiguides.it.com`, workflow `Vercel Deploy` (job "Vercel deploy"; CI, not one of the required
+  checks — see Deploy & CI).
+  - The **Tenant portal** (Content studio, `https://portal.lumiguides.it.com`) is NOT in this repo: it split off the
+    admin as its own app in AA-885 (S243), moved to `AdventureAsia365-Ecosys/AA-Partner/portal` with its history
+    in AA-979 (CRM-P2a), runs on Fargate behind CloudFront since the P2b cutover (27/10/2026), and the frozen copy
+    left here was deleted at the P2b clean-up (runbook §4.5; `tests/unit/test_aa885_portal_split.py` keeps it
+    gone). Read AA-Partner `CONTEXT.md` ("Portal") for its pages, shell, gate and sign-in. The Content studio API
+    (`/v1/*`, `/auth/tenant-session`, `/auth/tenant-memberships`, `/auth/tenant-login` for machines) stays here
+    (root ADR 0010 §7, ADR 0010a).
   - Admin pages: `dashboard`, `upload` (A0), `s1-rewrite`, `review` (A2 Review Queue — table
     view with a Dismiss action, AA-626; migrated to the UI kit + react-query with multi-select
     bulk regenerate and non-blocking regenerate, AA-662 PR 2 / AA-719), `master-content` (AA-718:
@@ -81,104 +78,30 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     roles (same list as `lib/rbac.ts` PAGE_RULES, enforced by `proxy.ts`). The legacy `(internal)` route group
     (`/upload`, `/review`, `/catalog`, `/brand`) is deleted; those URLs and `/admin/brand`
     redirect in `next.config.ts`.
-  - Portal pages (`portal/app/portal/*`, AA-759 — no T-number slugs): `dashboard`; **Tours** —
-    `tours` (Browse Tours, T1), `tours/mine` (My Tours, T4 / `CatalogTab`, kit + react-query, AA-662 PR 3),
-    `tours/marketplace` (Tour overview, AA-760: was labelled Marketplace); **Brand** — `brand` (T0); **Create** — `create/social` (Social Posts: the Slate on
-    every Channel but blog, + trip reallocation), `create/article` (Articles: the Slate on the blog
-    Channel), `create/write` (T8+T9 wizard, deep link only); **Content** — `content` (My Content, with a
-    Publish action), `content/publish` (T11); **Account** — `account/billing`, `account/activity`,
-    `account/settings` (Account settings, AA-760), `account/api`, `account/integrations` (WordPress / Facebook
-    connections); `help/facebook`. Every old slug (`t0-brand`, `t1-rewrite`, `t4-pool`, `t7-planning`,
-    `t8-angle-gate`, `t10-review`, `t11-publish[/connection]`, `marketplace`, `activity`, `billing`,
-    `settings`, `api`) answers **308** to its new path (`portal/next.config.ts` `OLD_SLUG_REDIRECTS`, query
-    string kept). Route constants: `ROUTES` in `portal/app/portal/_shell/portalNav.tsx`.
-  - **PortalShell (AA-759, `portal/app/portal/_shell/`)**: the one portal shell, on the kit — sidebar grouped
-    by workflow (Tours → Brand → Create → Content → Account) with a collapse rail (`[` key), topbar
-    (breadcrumb, search pill, theme switch light → dark → system, notifications bell, account menu with the
-    Privacy / Terms links and Sign out), a real ⌘K palette on the kit `Modal` (Pages · My tours · My
-    content · Tours; tours from `GET /v1/tours/pool?search=`, the rest from the cached `my-versions` /
-    `content-reviews` queries) and a phone bottom bar (Dashboard · Tours · Create · Content · More).
-    Shell data through react-query (`_shell/useShellData.ts`; the My Tours badge shares the page's
-    `["my-versions"]` query). Toasts: kit `ToastProvider`. Responsive rules are CSS on `data-pshell`
-    attributes in `portal/app/globals.css` (drawer < 900 px, bottom bar < 768 px), no className.
-  - **Portal work status (AA-760, `portal/app/portal/_components/workStatus.tsx`)**: one model for tenant-visible
-    work — `queued / writing / checking / done / failed` + `WorkStatusBadge` — read from what the API takes off
-    the job (tour version `status` + `job_status`, piece `ready_state`, the live snapshot's active step for
-    `checking`), never inferred from row flags. Browse Tours, My Tours, My Content, the Writer panel, the live
-    view, the dashboard feed, the Activity page and the bell all use it. Lists poll with react-query
-    `refetchInterval` only while a row is active and stop on terminal states (the AngleGate wizard and the
-    Slate refresh too — no `setInterval` left in the portal's data polling). The activity feed is joined to
-    the shared `["my-versions"]` query for its job state.
-  - **Portal theme (AA-759)**: no longer pinned light. The root layout restores `cis_theme` / `cis_sidebar`
-    before paint (same scripts as the admin; the portal origin has its own localStorage); the portal `T`
-    tokens (`_components/ui.tsx`) read the `--aa-*` CSS variables like the kit `K`. `/tenant-login` and the
-    legal pages still pin `data-theme="light"`.
-  - **Tenant portal app (AA-885)**: `portal/` is a second Next.js app (same Next/React versions, its own
-    `package-lock.json`, dev port 3004). Paths keep the `/portal/*` prefix on the new host (`/` → `/portal/dashboard`);
-    the admin host answers `/portal`, `/portal/*` and `/tenant-login` with **308** to the same path on
-    `https://portal.lumiguides.it.com` (`frontend/next.config.ts`, `PORTAL_BASE_URL` in `frontend/lib/apps.ts`)
-    and serves no portal page or tenant BFF any more.
-    - The "My Catalog Tours" XLSX export runs in the browser with SheetJS `xlsx`, installed from the SheetJS CDN
-      tarball (`https://cdn.sheetjs.com/xlsx-<ver>/xlsx-<ver>.tgz`, pinned 0.20.3): SheetJS stopped publishing
-      to npm at 0.18.5, which carries open advisories. Dependabot cannot bump a tarball dep — upgrade by hand.
-      The admin app (`frontend/`) has no `xlsx` dependency: its XLSX exports are built server-side.
-    - Its own tenant-only BFF: `app/api/auth/tenant-login` + `tenant-logout` (the 5 httpOnly cookies
-      `cis_role`, `cis_tenant_token`, `cis_tenant_id`, `cis_tenant_name`, `cis_tenant_plan`, **host-only** on the
-      portal host — no `Domain`), `app/api/tenant/me`, `app/api/tenant/[...path]` (verified tenant Bearer only),
-      `app/api/playground/proxy`. **No admin secret**: the portal project has no `ADMIN_SECRET`,
-      `INTERNAL_API_KEY` or `COGNITO_*` (a test checks the source). `API_URL` defaults to the Dev API, so the
-      Vercel project needs no env var. No CORS is needed: the browser only calls its own origin, the BFF
-      calls the API server to server. The API itself sends no CORS grant on a deployed task (AA-876,
-      `cors_allow_origins()` in `api/main.py`: empty when `AWS_EXECUTION_ENV` is set, only `localhost:3000/3001`
-      off ECS); a browser preflight from any origin gets no `Access-Control-Allow-Origin`.
-    - Page gate `portal/proxy.ts` (Next 16 Proxy): `/tenant-login` public; `/portal/*` needs a token
-      `/auth/verify-tenant` accepts (tenant tokens only: `role = tenant`, a staff token gets 403; a body that is
-      not a JSON object gets 401, never 500; cached ≤ 20 s, `portal/lib/auth-server.ts`); refused → cookies cleared,
-      back to `/tenant-login`; backend unreachable → fail closed outside development.
-    - Security headers on every response (`portal/next.config.ts`): HSTS, `nosniff`, `Referrer-Policy`,
-      `X-Frame-Options: DENY`, a minimal CSP (`frame-ancestors 'none'; base-uri 'self'; form-action 'self';
-      object-src 'none'`), `Permissions-Policy`.
-    - The admin app (`frontend/next.config.ts`) sends the same six headers on every response, plus
-      `poweredByHeader: false` (AA-876). This covers the public white-label `/trip/[tourId]` pages too: nothing
-      embeds them in an iframe today; a partner embed needs an explicit `frame-ancestors` allow-list first.
-    - Legal pages (AA-886): `/privacy` and `/terms` are public portal pages (outside the `proxy.ts`
-      matcher), **drafts pending legal review**: the shell `portal/app/_legal/LegalPage.tsx` always shows a
-      "Draft — pending legal review" banner, and both are `noindex`. The privacy notice describes portal
-      data and links `https://adventure.asia/privacy-policy` as the company-wide policy (the AA-885 redirect
-      is gone); `/terms` §3 carries the plain-English summary of the AI acceptable-use Schedule (AA-820, Draft v0.2;
-      the full Schedule is attached to the partner agreement). Factual sentences must match
-      the code; open legal points stay `[to be confirmed]`. Links in the portal account menu (AA-759; was the
-      sidebar footer) and on `/tenant-login`.
-    - Staff have **no** access to the tenant portal (no staff session there; a support view is future
-      work). Staff sign in on the admin host (the tenant-login "← Staff login" link).
-    - **Vendored UI kit** (byte copies; since AA-979 guarded by AA-Partner's "Vendored CIS copies" check against
-      `frontend/` on this repo's main, not here). **Being replaced by the kit core (root ADR 0016, AA-994):** since
-      S1a the kit files below live in `frontend/app/_kit/core/` (brand tokens in `core/brand.ts`), so the Partner
-      check reports them "not found" until AA-994 S2a swaps it for `kit-sync.sh` + `check-kit-copy.mjs`; the list is
-      the pre-S1a one. Until then, after a change to any of these admin files, copy it into
-      AA-Partner `portal/` (the frozen copy here is not updated) —
-      `portal/app/_kit/tokens.ts`, `portal/app/_kit/primitives.tsx`, `portal/app/_kit/Modal.tsx`,
-      `portal/app/_kit/Drawer.tsx`, `portal/app/_kit/Toast.tsx`, `portal/app/_kit/api.ts`,
-      `portal/app/_kit/useMediaQuery.ts`, `portal/app/_kit/Providers.tsx`, `portal/app/_kit/DataTable.tsx`,
-      `portal/app/_kit/csv.ts`, `portal/app/_kit/savedViews.ts`, `portal/app/_kit/theme.ts`,
-      `portal/app/_kit/useTheme.ts`, `portal/app/_kit/sidebarStore.ts`, `portal/app/_kit/useSidebar.ts`,
-      `portal/app/_kit/useHydrated.ts` (AA-759), `portal/app/_brand/tokens.ts`,
-      `portal/lib/bffPath.ts`, `portal/lib/proxyResponse.ts`, `portal/lib/sameOrigin.ts`,
-      `portal/lib/crossSiteGuard.ts` (each copied from the same path under `frontend/`). `portal/app/_kit/index.ts` (barrel of just these), `portal/app/globals.css` and
-      `portal/lib/auth-server.ts` are portal-owned.
-    - **Cross-site writes (AA-911, admin and portal):** every BFF write route (any method but GET/HEAD/OPTIONS)
+  - **The admin host and the portal (AA-885, AA-979)**: the admin answers `/portal`, `/portal/*` and `/tenant-login`
+    with **308** to the same path on `https://portal.lumiguides.it.com` (`frontend/next.config.ts`, `PORTAL_BASE_URL`
+    in `frontend/lib/apps.ts`) and serves no portal page or tenant BFF. Staff have **no** access to the tenant portal
+    (no staff session there; a support view is future work); the staff login does not link to it.
+    - No CORS is needed for the portal: its BFF calls the API server to server. The API sends no CORS grant on a
+      deployed task (AA-876, `cors_allow_origins()` in `api/main.py`: empty when `AWS_EXECUTION_ENV` is set, only
+      `localhost:3000/3001` off ECS); a browser preflight from any origin gets no `Access-Control-Allow-Origin`.
+    - The admin app (`frontend/next.config.ts`) sends six security headers on every response (HSTS, `nosniff`,
+      `Referrer-Policy`, `X-Frame-Options: DENY`, a minimal CSP `frame-ancestors 'none'; base-uri 'self';
+      form-action 'self'; object-src 'none'`, `Permissions-Policy`), plus `poweredByHeader: false` (AA-876).
+    - **Cross-site writes (AA-911):** every admin BFF write route (any method but GET/HEAD/OPTIONS)
       first calls `lib/crossSiteGuard.ts` `refuseCrossSiteWrite()` and answers 403 when `Origin` (or, without it,
       `Sec-Fetch-Site`) is not this origin. `it.com` is a public suffix, so every `*.lumiguides.it.com` host,
       including the fixed Preview hosts that serve unmerged PR code, is the same site and its requests carry the
       Lax session cookies. `tests/unit/test_aa911_bff_cross_site.py` keeps every write route on the guard.
-    - AA-979 P2b §4.3: the public white-label page `/trip/[tourId]` moved to the AA-Partner CRM web on the client
-      host (Dev `go-dev.`). The admin host answers `/trip/:path*` with a **307** there (`next.config.ts`,
-      `lib/apps.ts` `TRIP_PAGE_BASE_URL`; 301 only at the P2b clean-up, critic S5); `app/trip/[tourId]` stays here
-      as the rollback target until then. The CRM page still reads `GET /v1/trip/{id}` here, which keeps `url_alive`
-      fresh. Published `trip_url`s are built on env `TRIP_PAGE_BASE_URL` (default the admin host, which forwards).
+    - AA-979: the public white-label page `/trip/[tourId]` lives on the AA-Partner CRM web on the client host (Dev
+      `go-dev.`). The admin host answers `/trip/:path*` with a **permanent 308** there (`next.config.ts`,
+      `lib/apps.ts` `TRIP_PAGE_BASE_URL`; a 307 during the P2b rollback window, made permanent and the CIS page
+      `app/trip/[tourId]` deleted at the clean-up, runbook §4.5). The CRM page reads `GET /v1/trip/{id}` here, which
+      keeps `url_alive` fresh. Published `trip_url`s are built on env `TRIP_PAGE_BASE_URL` (default the admin
+      host, which forwards).
   - Shared brand tokens (adventure.asia: Fahkwang/Poppins, gold `#DB9628`, pill buttons, logo)
     live in `frontend/app/_kit/core/brand.ts` (was `app/_brand/tokens.ts` until AA-994 S1a) and are used by admin,
-    portal and login pages (AA-605; the portal has a guarded byte copy). New pages should reuse them.
+    login pages (AA-605; the AA-Partner portal and CRM web vendor them through the kit core). New pages should reuse them.
   - **UI kit core (AA-994 S1a, root ADR 0016)**: the portable part of the kit lives in `frontend/app/_kit/core/`,
     the **canonical copy** for all five frontends (AA-Partner portal and CRM web, AA-Booking admin vendor it byte for
     byte; AA-TripPlanner-Web takes the `tokens` profile). It holds `tokens.ts`, `brand.ts`, `primitives.tsx`,
@@ -888,8 +811,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   `dev-<sha>`, `/health` git_sha/version or `/health/ready` (required schema of the commit) off, an admin row failing
   after 3 tries, no live worker on the SHA serving every registered kind, or `ADMIN_SECRET` missing. The job
   **Deploy Dev result** is red when any job (verify included) did not succeed, skipped included.
-- **CI gate parity (AA-879)**: `ci.yml` also runs **Frontend Build** and **Portal Build** (`tsc --noEmit` +
-  `next build` of `frontend/` and `portal/`, no secret needed; meant to be required checks next to the 5).
+- **CI gate parity (AA-879)**: `ci.yml` also runs **Frontend Build** (`tsc --noEmit` + `next build` of `frontend/`,
+  no secret needed; a required check). The **Portal Build** / **Portal Lint** jobs went with the frozen `portal/`
+  copy at the AA-979 P2b clean-up (Portal Build was also removed from the required checks).
 - **Secret scan (AA-981 follow-up)**: `secret-scan.yml`, check **gitleaks** on every PR (lines the PR adds, rules
   and baseline from the base branch; a change to `.gitleaks.toml` / `.gitleaksignore` / either secret scan workflow /
   `.github/CODEOWNERS` / any `.gitattributes`, or a new inline `gitleaks:allow`, needs the label `secret-scan-baseline-reviewed`, added after the last push: any later
@@ -919,7 +843,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   `shared/llm_client/bedrock_satellite.py`.
 - **No acc1 in runtime code (AA-998)**: `tests/unit/test_aa998_no_acc1_runtime.py` fails when `acc1`, its account
   ID, its IAM roles, its account env var or its CLI profile appears in api/ (not migrations), services/,
-  shared/, worker/, scripts/, frontend/ or portal/ — comments included.
+  shared/, worker/, scripts/ or frontend/ — comments included.
 - **Quality registry lint (AA-926)**: the required **Lint** job also runs `python -m services.quality.lint --report`
   (PyYAML only): no gate-name or 7.0 pass-line literal outside `services/quality/` (api/, services/, shared/,
   worker/, scripts/aa729/ and the frontend/portal TS; docstrings, comments, `__all__`, tests and migrations
@@ -939,10 +863,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   production (production only from `main`). Needs the repo secret `VERCEL_TOKEN` (team-scoped);
   without it the job fails red on every target (nothing else deploys the frontend). A PR
   that touches no frontend file gets no preview. The check to look at is "Vercel deploy".
-- **Portal (Vercel)**: since AA-979 (CRM-P2a) no workflow here deploys the portal: AA-Partner's
-  `vercel-deploy-portal.yml` deploys the same Vercel project (`aa-cis-portal`) from `AA-Partner/portal`, and its
-  `ui-smoke-portal.yml` runs the portal smoke. The frozen `portal/` here is still built by "Portal Build" (required
-  check) and linted by "Portal Lint" until it is deleted. `portal/**` is not in `deploy-dev.yml`.
+- **Portal**: no workflow here deploys, builds or tests the portal. It deploys from AA-Partner (`deploy-portal-dev.yml`,
+  ECS `aa-crm-dev-portal` behind CloudFront since the P2b cutover); its Vercel project was deleted at the P2b
+  clean-up (AA-979, runbook §4.5).
 - **UI smoke (AA-732, `.github/workflows/ui-smoke.yml`)**: called by `vercel-deploy.yml` after a
   successful deploy (`workflow_call`, inputs `base_url` + `sha` + `staff_session`), or run by hand
   (`workflow_dispatch`); Vercel's `deployment_status` no longer arrives. A Playwright suite (`tests/e2e/smoke/`)
@@ -965,11 +888,10 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   has no password mode (locally, run `--project=smoke-public`; agents have no mailbox access). The admin suite also checks that the old portal URLs answer 308
   to the portal host (`aa885-portal-redirect.spec.ts`). Not a required check.
 - **Portal UI smoke**: moved to AA-Partner with the portal (AA-979: `e2e/smoke-portal/`, `ui-smoke-portal.yml`).
-  Lint: `portal-lint` CI job (non-required); `tsc` + `next build` in the `portal-build` job (AA-879). e2e specs carry no hardcoded credentials (shared helper
+  e2e specs carry no hardcoded credentials (shared helper
   `tests/e2e/helpers/auth.ts` reads the env). ESLint enforces UI-kit conventions in
   `frontend/eslint.config.mjs` (`frontend-lint` CI job, the kit preset at `error` with a shrinking suppressions file
-  since AA-994 S1c, see "Kit lint") and `portal/eslint.config.mjs` (AA-759/AA-760: `error`
-  for every portal file except the 3 legacy ones listed in `KIT_LEGACY_FILES`, which stay `warn` until migrated).
+  since AA-994 S1c, see "Kit lint").
 - **Cognito E2E (AA-816 E1, `.github/workflows/e2e-cognito.yml`)**: `workflow_dispatch` on `main` only,
   GitHub environment `e2e`, OIDC role from secret `E2E_MAIL_ROLE_ARN` (Infra `aa-cis-dev-e2e-mail-reader`,
   read-only: List + Get on `s3://aa-cis-dev-e2e-mail-<acc2>/inbound/`, no delete; 1-day expiry). Playwright
@@ -1243,7 +1165,8 @@ relays the e-mail once to the CRM (`crm.ops.v1` `POST /tenants/{id}/studio-invit
 `api/services/crm_console.py`); CIS stores no e-mail; `.../members/{membership_id}/invitation/send` sends again. The
 CRM binds the accepted identity with `POST /tenant/membership/v1/invitations/{invitation_id}/activate` (M2M scope
 `cis.tenant/activate`, contract 1.1; idempotent for the same identity, 409 otherwise). API-key sign-in
-(`/auth/tenant-login`) is unchanged for machines; the portal keeps it during the P2b window only.
+(`/auth/tenant-login`) is unchanged for machines; the portal stopped offering it at the P2b clean-up
+(`PORTAL_API_KEY_SIGNIN=false`: its `/tenant-login` answers 308 to the partner sign-in).
 
 ## Staff roles and permissions (AA-656)
 
@@ -1593,7 +1516,7 @@ fetched about once a day.
 | Platform pages `/admin/platform/*` (AA-883 Staff directory; writes need `staff.write`, owners only; AA-913 Alert recipients, changes need `alerts.write` + Cognito) | ✓ | — | — | — | — |
 | BFF `/api/admin/openapi.json` and `/api/admin/platform/*` (any method; `lib/rbac.ts` API_READ_RULES, backend re-checks the role) | ✓ | — | — | — | — |
 | Backend docs `openapi.json`, `docs`, `redoc` through the staff branch of `/api/tenant/*` (`lib/rbac.ts` isApiDocsPath) | ✓ | — | — | — | — |
-| Tenant portal `/portal/*` — **portal app** (`portal.lumiguides.it.com`, AA-885; no staff access) | — | — | — | — | ✓ |
+| Tenant portal `/portal/*` — **portal app** (AA-Partner `portal/`, `portal.lumiguides.it.com`, AA-885 / AA-979; no staff access) | — | — | — | — | ✓ |
 | BFF proxies `/api/admin`, `/api/pipeline`, `/api/tour-full`, `/api/tenant/pipeline/brand-identity`, `/api/tenant/*` (admin app; `/api/tenant/*` is staff-only since AA-885) | ✓ | ✓ | ✓ | GET only | — |
 | AA-Booking token `POST /auth/booking-token` | ✓ | ✓ | ✓ | 403 | — |
 | `/api/tenant/*`, `/api/tenant/me`, `/api/playground/proxy` — **portal app** BFF, tenant JWT only | — | — | — | — | ✓ |

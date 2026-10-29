@@ -409,42 +409,6 @@ jobs:
         if: ${{ !cancelled() }}
         run: node app/_kit/core/check-kit-copy.mjs --no-kit-disable app --ignore _kit
 
-  # AA-885 — ESLint for the tenant portal app (portal/, same UI-kit rules as the admin). NON-required,
-  # AA-979: lints the frozen copy only; the portal is developed in AA-Partner now.
-  # same shape as frontend-lint. The 9 errors it starts with came over with the moved portal files
-  # (set-state-in-effect, no-explicit-any, one unescaped quote) — not new code.
-  portal-lint:
-    name: Portal Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Set up Node 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Install portal dependencies
-        working-directory: portal
-        run: npm ci
-
-      - name: Run ESLint (write summary to the job summary)
-        working-directory: portal
-        continue-on-error: true
-        run: |
-          set +e
-          npm run lint 2>&1 | tee lint-output.txt
-          STATUS=${PIPESTATUS[0]}
-          SUMMARY_LINE=$(grep -E "problems \(" lint-output.txt | tail -n1)
-          {
-            echo "### Portal ESLint"
-            echo ""
-            echo "${SUMMARY_LINE:-No summary line (lint produced no problems)}"
-            echo ""
-            echo "_Non-required job; the pre-existing errors moved here from the admin app with the portal files (AA-885)._"
-          } >> "$GITHUB_STEP_SUMMARY"
-          exit $STATUS
-
   # AA-879 — type-check and production build of the admin app (frontend/). NEW job, meant to become a
   # required check: tsc catches prop/type errors ESLint misses, and `next build` catches what only a build
   # sees (server/client boundaries, route config, Turbopack). Builds without any secret or env var (the
@@ -476,36 +440,6 @@ jobs:
           node app/_kit/core/check-kit-copy.mjs --self
           node app/_kit/core/check-kit-copy.mjs --css .
           node --test --experimental-strip-types --no-warnings lib/kitCore.test.mjs lib/tokensContrast.test.mjs
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Type-check (tsc --noEmit)
-        run: npx tsc --noEmit -p .
-
-      - name: Build (next build)
-        env:
-          NEXT_TELEMETRY_DISABLED: "1"
-        run: npm run build
-
-  # AA-879 — the same for the tenant portal (portal/, AA-885). Its tsc step moved here from "Portal Lint".
-  # AA-979: the portal source now lives in AA-Partner; this job builds the frozen copy until it is deleted (P2b + 7
-  # days, together with this job and its required-check entry).
-  portal-build:
-    name: Portal Build
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: portal
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Set up Node 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-          cache-dependency-path: portal/package-lock.json
 
       - name: Install dependencies
         run: npm ci

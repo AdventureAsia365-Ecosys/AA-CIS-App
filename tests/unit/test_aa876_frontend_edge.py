@@ -1,7 +1,8 @@
 """AA-876 — static checks on the front-end side of the edge hardening.
 
-- The admin app sends the same security headers as the portal on every response (and no x-powered-by).
-- The admin and portal login BFFs turn the API's 429 into a 429 (not the generic 502), before the !res.ok branch.
+- The admin app sends the security headers on every response (and no x-powered-by).
+- The admin login BFF turns the API's 429 into a 429 (not the generic 502), before the !res.ok branch.
+  (The portal's own checks moved to AA-Partner with the portal, AA-979.)
 """
 from pathlib import Path
 
@@ -9,7 +10,6 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 FRONTEND = REPO / "frontend"
-PORTAL = REPO / "portal"
 
 SECURITY_HEADERS = [
     "Strict-Transport-Security",
@@ -34,7 +34,6 @@ def test_admin_sets_security_headers():
 
 @pytest.mark.parametrize("route", [
     FRONTEND / "app" / "api" / "auth" / "login" / "route.ts",
-    PORTAL / "app" / "api" / "auth" / "tenant-login" / "route.ts",
 ])
 def test_login_bff_maps_429_before_the_502_branch(route):
     src = route.read_text()
