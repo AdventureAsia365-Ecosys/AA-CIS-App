@@ -14,6 +14,9 @@
 //   - Draws only once the brand font (Poppins) is loaded, and draws again if it arrives later: mermaid sizes the
 //     boxes from label widths it measures while drawing, so a diagram measured with the fallback face breaks its
 //     labels mid-word once Poppins swaps in (lib/fontReady.ts).
+//   - Never breaks a word: with SVG labels mermaid cuts any word wider than flowchart.wrappingWidth per character
+//     ("AA-TripPlanne|r-Web"), and CSS can not change that, so the width is set per diagram to fit its widest word
+//     (measured in the label font), while multi-word labels still wrap at spaces (lib/mermaidWrap.ts).
 // Mermaid keeps global config, so renders are serialised through one queue.
 
 import React from "react";
@@ -21,6 +24,7 @@ import { K, RADIUS, mono, sans } from "./core/tokens";
 import { useResolvedTheme } from "./useTheme";
 import { MERMAID_SECURE_KEYS, svgIsSelfContained } from "@/lib/mermaidSafety";
 import { fontIsReady, waitForFont } from "@/lib/fontReady";
+import { LABEL_FONT_PX, estimateWidth, wrappingWidthFor } from "@/lib/mermaidWrap";
 
 export const MAX_SOURCE = 20_000;
 
@@ -45,6 +49,25 @@ function subscribeFonts(onChange: () => void): () => void {
 const brandFontReady = () => fontIsReady(fontSet(), sans);
 const serverFontReady = () => false;
 
+let measureCtx: CanvasRenderingContext2D | null | undefined;
+
+// Width of one word in mermaid's label font (normal weight), measured on a canvas; an estimate without one.
+function measureLabelWord(word: string): number {
+  if (measureCtx === undefined) {
+    try {
+      measureCtx = typeof document !== "undefined" ? document.createElement("canvas").getContext("2d") : null;
+    } catch {
+      measureCtx = null;
+    }
+  }
+  if (!measureCtx) return estimateWidth(word);
+  measureCtx.font = `400 ${LABEL_FONT_PX}px ${sans}`;
+  // Bold (class / ER titles) is wider than normal text; measure the wider of the two.
+  const normal = measureCtx.measureText(word).width;
+  measureCtx.font = `700 ${LABEL_FONT_PX}px ${sans}`;
+  return Math.max(normal, measureCtx.measureText(word).width);
+}
+
 async function draw(source: string, theme: "light" | "dark"): Promise<string> {
   const [{ default: mermaid }, { default: DOMPurify }] = await Promise.all([
     import("mermaid"),
@@ -58,7 +81,7 @@ async function draw(source: string, theme: "light" | "dark"): Promise<string> {
     fontFamily: sans,
     maxTextSize: MAX_SOURCE,
     htmlLabels: false,
-    flowchart: { htmlLabels: false },
+    flowchart: { htmlLabels: false, wrappingWidth: wrappingWidthFor(source, measureLabelWord) },
     suppressErrorRendering: true,
     secure: MERMAID_SECURE_KEYS,
   });
