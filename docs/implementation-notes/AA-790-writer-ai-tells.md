@@ -2010,3 +2010,93 @@ No paid call. The $0 analysis scripts are in the private root `.tmp-session/S256
   dash asides; FACTS as source; writer_input marker; harness pass-through and angles file).
 - Ship path if the panel passes: set `T9_BRIEF_GROUNDING_MODE=r9` on the worker (t9 runs there) and the api (admin
   regenerate). Not in this PR: the paid A/B and the panel (orchestrator; plan in the lane result).
+
+### Round 9 outcome (S256): failed on reader value, flag off
+
+Blind panel (root `docs/audits/2026-10-29-S256-aa790-r9-panel/`): source_fidelity r9 − r9c +0.50 (pass), brand voice
++0.38, AI tells 5.62 / +0.31 (pass), reader value −0.25 against a −0.19 bar (fail). `T9_BRIEF_GROUNDING_MODE` stays off.
+
+## Round 10 (S257, 29/10/2026): keep the grounding, add a reader checklist built from the seed
+
+Input: the round-9 panel scores and reasons (private root `.tmp-session/S256/aa790/panel-r9/`), the round-9 texts and
+the S251 stored writer inputs. No paid call in this lane. $0 analysis: root `.tmp-session/S257/aa790/coverage_r9.py`.
+
+### Diagnosis
+
+- **D10-a, what the judges asked for.** The reader-value reasons of the r9 arm, piece by piece: "never says when or
+  where in the trip the visit happens" / "nothing practical about the visit itself" (the three family LinkedIn posts;
+  their seed has a "Day 6 of the trip" line and a label action), "the falls facts are repeated three times", filler meta
+  lines ("This is the longest and richest section … it earns its length"), "the visa appears only inside an FAQ
+  answer", "lacks the family-specific practical information parents need (ages, difficulty, rest time)" (not in the
+  seed: must stay out).
+- **D10-b, not fewer facts.** Plan-fact coverage of the blogs (the S256 `coverage.py` measure): r9c 0.86, r9c2 0.86,
+  r9 0.90; a day named: 7/8, 7/8, 6/8; the visa in the blog body: 1/5, 2/5, 4/5. Same reading as D9-c: the writer
+  already uses the seed's plan facts. So round 10 does not ask for "more facts"; it gives the questions a traveller
+  asks with the seed's answers next to them, says which questions the seed cannot answer (left out, never guessed),
+  and two shape rules the r9 reasons name (each fact once; no sentence about the piece).
+
+### Decisions
+
+- **R10-D1: the block is built in code from the seed, quoted word for word.** `reader_checklist.checklist_block`
+  reads the moments with `trip_facts.parse_moments` (per route segment when the blog renders labelled moments) and the
+  FACTS entries. Blog form: When and where (day numbers + moment names; no day line → "do not give one"), What the
+  traveller does at each stop (its Source itinerary lines, at most two, thin moments left out), Included or a choice
+  (the quotes of the OFFERED Status lines), five practical questions (getting there, how long and how hard, meals and
+  nights, costs / visas / booking, best time to go) each with up to three quoted itinerary sentences or FACTS entries
+  that answer it or "not in the seed: leave it out, never guess it", a FACTS-in-the-body line, a SEARCH QUESTIONS line
+  (when the blog has them) and the two shape rules. A sentence goes under every question it answers ('a gauge of
+  fitness levels' is both a ride and an effort cue): a question must never read "not in the seed" while the seed
+  answers it. Place background is never quoted (the seed's own heading: it says nothing about what the trip does).
+- **R10-D2: the social form is one line with the label action, not the itinerary line.** A LinkedIn post is scoped to
+  one moment, and its itinerary line often lists the day's other stops ("visit the Takin Zoo, National Library, and
+  …"), which the SCOPE line forbids; the label action ("visit", "cycle by bicycle on the mountain road") is the
+  moment's own.
+- **R10-D3: placement.** Appended after the CONTENT SEED (and the blog's SEARCH QUESTIONS), before the revision
+  feedback, as its own paragraph; every `lines.insert(-2, …)` position is unchanged.
+- **R10-D4: the switch.** api/worker env `T9_READER_CHECKLIST_MODE`: only `r10` turns it on; unset (default) or any
+  other value is `off` and `checklist_block` returns '' (nothing appended). `build_user_prompt(reader_checklist=...)`
+  overrides it (the harness). SYSTEM_PROMPT untouched (`writer_prompt_version` stays `b5978839`). When on, the piece's
+  `writer_input` carries `reader_checklist: r10` (absent when off). Independent of `T9_BRIEF_GROUNDING_MODE`; the
+  round-10 arm turns both on.
+- **R10-D5: the harness.** `--reader-checklist off|r10` next to `--brief-grounding`; rows carry `reader_checklist`,
+  `checklist_seen` (the block read back from the built prompt), `checklist_quotes`, `checklist_not_in_seed`; the call's
+  quality signal carries the mode.
+- **R10-D6: the A/B reuses the round-9 angles** (the S256 control's live T8 angles file, re-uploaded): $0 of T8, every
+  arm writes from the same briefs as round 9, so the stored r9 texts are a fair $0 panel arm (r10 − r9 = the checklist
+  alone, both grounded). Arms: r10c (flags as live: both off), r10c2 (repeat: noise), r10 (both on); panel adds the
+  stored r6 and r9. Bars are fixed in the root harness `aggregate_r10.py` before the run (the round-9 bars with reader
+  value as the target, plus "at least one lens gains beyond noise").
+
+### Changed (vs the brief)
+
+- The lane brief mentioned People Also Ask / search-demand questions. They reach only the blog prompt (the live T9
+  job and the stored `writer_input` keep `search_questions` for blogs only), so the blog block points at the SEARCH
+  QUESTIONS already in the prompt rather than copying them; the social form has none.
+- "Duration, difficulty, what's included, costs / booking facts" are asked as questions with the seed's own answer or
+  "not in the seed"; nothing is inferred.
+
+### Tradeoffs
+
+- **Longer prompt.** Blog +2.9–3.2k characters (~800 tokens, ~$0.002 a blog at the t9_write route), LinkedIn +100.
+- **Duplication inside the prompt.** The quoted itinerary sentences also appear in the CONTENT SEED and may be quoted
+  under two questions. Accepted: the block's value is the question → answer pairing; the writer is told to rephrase,
+  and to say each fact once in the piece.
+- **Keyword topics.** The five practical questions are matched by small word lists (transport / distance words, hours
+  and effort words, meals and stays, prices / visas / booking, seasons and months). A miss only says "not in the seed"
+  for a question the seed answers in other words; the CONTENT SEED stays the source either way.
+
+### Should know
+
+- Code: `services/acp_content_writing/reader_checklist.py` (new), `prompts.build_user_prompt(reader_checklist=...)`,
+  `service.writer_input_snapshot` (marker), `scripts/aa790/t9_writer_repanel.py` (`--reader-checklist`,
+  `checklist_seen`).
+- Tests: `tests/unit/test_aa790_round10_reader_checklist.py` (the round-9 fixture hash for env unset / other values /
+  explicit off; off leaves the grounded prompt unchanged; on adds only the block, as its own paragraph, after the
+  seed and search questions and before the revision; blog quotes, multi-topic sentences, OFFERED quotes, no-day,
+  thin moment, place background never quoted, quote cut; social one line with the label action; writer_input marker;
+  harness pass-through and read-back).
+- $0 preview on the 8 round-10 pieces (root `.tmp-session/S257/aa790/preview_r10.py`): blog blocks 21 quotes, one
+  "not in the seed" (best time); LinkedIn one line naming Day 6 and the label action; grounding changes 8/8 briefs.
+- Ship path if the panel passes: set `T9_BRIEF_GROUNDING_MODE=r9` and `T9_READER_CHECKLIST_MODE=r10` on the worker
+  and the api. Not in this PR: the paid A/B and the panel (orchestrator; harness and commands in root
+  `.tmp-session/S257/aa790/`).

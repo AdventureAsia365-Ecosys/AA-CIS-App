@@ -87,6 +87,7 @@ from services.writing_memory import insertion as wm_insertion  # AA-919 (WM-18 /
 from services.writing_memory import signals as wm_signals  # AA-916
 from services.acp_content_writing.prompts import SYSTEM_PROMPT  # AA-916 WM-08 (writer_prompt_version)
 from services.acp_content_writing import brief_grounding  # AA-790 round 9 (writer_input marker)
+from services.acp_content_writing import reader_checklist  # AA-790 round 10 (writer_input marker)
 from services.content_generation.batch_prompt import prompt_version_of
 from services.quality.registry import threshold
 
@@ -2554,6 +2555,9 @@ def writer_input_snapshot(context: dict) -> dict:
         # AA-790 round 9 — the brief-grounding mode the writer prompt was built with; absent when it is off.
         **({"brief_grounding": brief_grounding.MODE_R9}
            if brief_grounding.brief_grounding_mode() == brief_grounding.MODE_R9 else {}),
+        # AA-790 round 10 — the reader-checklist mode the writer prompt was built with; absent when it is off.
+        **({"reader_checklist": reader_checklist.MODE_R10}
+           if reader_checklist.reader_checklist_mode() == reader_checklist.MODE_R10 else {}),
     }
 
 

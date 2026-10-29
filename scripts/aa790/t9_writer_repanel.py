@@ -27,7 +27,7 @@ private root ``.tmp-session/``, never in this repo.
 
   python3 /tmp/s.py --ids <id,id,...> [--dry-run] [--max-usd 2.0] [--out /tmp/aa790-repanel.json] [--s3 s3://b/k]
                     [--arm r8] [--angles stored|regen] [--t8-mode off|r8] [--angles-file <out>.angles.json]
-                    [--brief-grounding off|r9]
+                    [--brief-grounding off|r9] [--reader-checklist off|r10]
 
 ``--dry-run`` builds every prompt and prints its size, the lead fact and the stored text's census; no model call, $0.
 
@@ -55,6 +55,12 @@ write from the SAME live T8 briefs (a fresh regen per arm would change the brief
 ``brief_grounding`` and ``brief_seen`` (the ANGLE'S BEST FINAL STYLE line the writer actually got, read from the built
 prompt) and ``brief_changed`` (whether it differs from the brief the 'off' prompt shows); the call's quality signal
 carries the mode.
+
+AA-790 round 10 (S257): ``--reader-checklist r10`` adds the round-10 READER CHECKLIST block to the writer prompt
+(``services.acp_content_writing.reader_checklist``: the traveller's practical questions with the seed's and FACTS' own
+answers quoted); ``off`` (default) adds nothing, byte for byte. It combines with ``--brief-grounding`` (round 10's arm
+is ``--brief-grounding r9 --reader-checklist r10``). Every row carries ``reader_checklist`` and ``checklist_seen`` (the
+block the writer got, read from the built prompt; '' when off); the call's quality signal carries the mode.
 """
 from __future__ import annotations
 
@@ -126,7 +132,8 @@ def write_indexes(rows: list[dict]) -> dict[str, int]:
     return out
 
 
-def writer_args(row: dict, index: int, angle_override: Optional[dict] = None, brief_grounding: str = "off") -> dict:
+def writer_args(row: dict, index: int, angle_override: Optional[dict] = None, brief_grounding: str = "off",
+                reader_checklist: str = "off") -> dict:
     """build_user_prompt's arguments from the stored writer_input (pure). ``angle_override`` (round 8, ``--angles
     regen``): the regenerated T8 angle used in place of the stored one."""
     from services.acp_angle_gate.channel_style import get_channel_style
@@ -146,7 +153,7 @@ def writer_args(row: dict, index: int, angle_override: Optional[dict] = None, br
         "cta": wi.get("cta") or "", "destination": wi.get("destination"),
         "trip_name": wi.get("writer_trip") or wi.get("trip"), "atom_id": row.get("atom_id"),
         "route_segments": route or None, "keyword": wi.get("keyword"), "facts_text": wi.get("facts") or None,
-        "scope": wi.get("scope"), "brief_grounding": brief_grounding,
+        "scope": wi.get("scope"), "brief_grounding": brief_grounding, "reader_checklist": reader_checklist,
     }
     if search:
         args["search_questions"] = search
@@ -208,7 +215,8 @@ def call_writer(row: dict, args: dict, model_tier: Optional[str], run_id: str, a
     user = build_user_prompt(**args)
     signal = {"aa790_run": run_id, "piece": row["piece_id"], "channel": channel, "mode": "repanel_write",
               "lead_focus": bool(args.get("lead_focus")), "arm": arm,
-              "brief_grounding": args.get("brief_grounding") or "off"}
+              "brief_grounding": args.get("brief_grounding") or "off",
+              "reader_checklist": args.get("reader_checklist") or "off"}
     resp = LLMClient().generate(LLMRequest(system_prompt=SYSTEM_PROMPT, user_prompt=user, stage=STAGE,
                                            model_tier=model_tier, max_tokens=generate.max_tokens_for(channel)))
     try:
@@ -269,6 +277,23 @@ def brief_seen(prompt: str) -> str:
         return ""
     rest = prompt[start + len(BRIEF_LINE):]
     return rest.split("\n\n", 1)[0]  # a brief may span lines (labelled parts); a blank line ends it
+
+
+CHECKLIST_HEAD = "READER CHECKLIST ("
+
+
+def checklist_seen(prompt: str) -> str:
+    """The READER CHECKLIST block the writer got, read from the built user prompt (pure); '' when there is none. The
+    block is its head line plus its '- ' lines; the first other line (a blank line, the next rule block) ends it."""
+    start = prompt.find(CHECKLIST_HEAD)
+    if start < 0:
+        return ""
+    out = []
+    for i, line in enumerate(prompt[start:].split("\n")):
+        if i and not line.startswith("- "):
+            break
+        out.append(line)
+    return "\n".join(out)
 
 
 def load_angles_file(path: str) -> dict[str, dict]:
@@ -379,6 +404,8 @@ def main() -> int:
                                           "no T8 call (round 9: every arm writes from the same briefs)")
     ap.add_argument("--brief-grounding", choices=("off", "r9"), default="off",
                     help="T9 brief grounding: off = live round-6 prompt, r9 = round-9 grounded brief")
+    ap.add_argument("--reader-checklist", choices=("off", "r10"), default="off",
+                    help="T9 reader checklist: off = no block, r10 = round-10 READER CHECKLIST block")
     a = ap.parse_args()
     if a.angles == "stored" and a.t8_mode != "off":
         ap.error("--t8-mode needs --angles regen")
@@ -394,7 +421,8 @@ def main() -> int:
     print(f"AA790 rows={len(rows)} missing={missing} writer_prompt_version={WRITER_PROMPT_VERSION}", flush=True)
     model_tier = None if a.dry_run else stage_model()
     print(f"AA790 model_tier={model_tier} stage={STAGE} cap=${a.max_usd} arm={a.arm or '-'} angles={a.angles} "
-          f"t8_mode={a.t8_mode} angles_file={a.angles_file or '-'} brief_grounding={a.brief_grounding}", flush=True)
+          f"t8_mode={a.t8_mode} angles_file={a.angles_file or '-'} brief_grounding={a.brief_grounding} "
+          f"reader_checklist={a.reader_checklist}", flush=True)
     index = write_indexes(rows)
     run_id = uuid.uuid4().hex[:12]
     print(f"AA790 run={run_id} (quality_signal aa790_run; the eval run id to record, D-23)", flush=True)
@@ -421,7 +449,7 @@ def main() -> int:
                         "error": f"t8_regen: {err}"})
             continue
         try:
-            args = writer_args(r, index[r["piece_id"]], got.get("chosen"), a.brief_grounding)
+            args = writer_args(r, index[r["piece_id"]], got.get("chosen"), a.brief_grounding, a.reader_checklist)
             if args["goal"] is None or args["channel_style"] is None:
                 raise ValueError("writer_input has an unknown goal or channel")
         except Exception as e:  # noqa: BLE001 — a piece without a usable writer_input is reported, not fatal
@@ -444,10 +472,14 @@ def main() -> int:
         seen = brief_seen(build_user_prompt(**args))
         rec.update(brief_grounding=a.brief_grounding, brief_seen=seen,
                    brief_changed=seen != brief_seen(build_user_prompt(**{**args, "brief_grounding": "off"})))
+        block = checklist_seen(build_user_prompt(**args))
+        rec.update(reader_checklist=a.reader_checklist, checklist_seen=block,
+                   checklist_quotes=block.count("\"") // 2, checklist_not_in_seed=block.count("not in the seed:"))
         if a.dry_run:
             rec["prompt_chars"] = len(build_user_prompt(**args))
             print(f"AA790 dry {rec['id']} {channel} prompt_chars={rec['prompt_chars']} seed_match={rec['seed_match']} "
-                  f"brief_changed={rec['brief_changed']} "
+                  f"brief_changed={rec['brief_changed']} checklist_quotes={rec['checklist_quotes']} "
+                  f"not_in_seed={rec['checklist_not_in_seed']} "
                   f"lead={bool(rec['lead_focus'])} before={rec['ai_tells_before']['fixable_total']}"
                   f"+{rec['ai_tells_before']['residue']}", flush=True)
             out.append(rec)
