@@ -34,12 +34,15 @@ import {
   SkeletonBar,
   SkeletonStyle,
   apiGet,
-  formatDateTime,
   mono,
   sans,
+  useFormat,
+  useLang,
+  useT,
   type Tone, AdminMain, ScrollX,
 } from "../../../_kit";
-import { APP_REGISTRY, PLATFORM_APP_IDS, isPlatformAppId } from "@/lib/apps";
+import { APP_REGISTRY, PLATFORM_APP_IDS, isPlatformAppId, type PlatformAppId } from "@/lib/apps";
+import { APP_MESSAGES } from "@/lib/apps.messages";
 import {
   shortSha,
   usd,
@@ -54,12 +57,22 @@ import {
   type CrmJobsResp,
   type TripPlannerCard,
 } from "@/lib/platform";
+import { APP_STATUS_MESSAGES, BASIS_MESSAGES } from "@/lib/platform.messages";
+import { APPS } from "./messages";
+
+/** The admin link label of a registered app in the UI language (lib/apps.messages.ts). */
+function useAdminLabel(): (id: PlatformAppId) => string {
+  const t = useT(APP_MESSAGES);
+  return (id) => t(`${id}Admin`);
+}
 
 const APPS_KEY = ["platform-apps"] as const;
 const APPS_PATH = "/api/admin/platform/apps";
 
 
 export default function AppsBoard() {
+  const t = useT(APPS);
+  const { formatDateTime } = useFormat();
   const qc = useQueryClient();
   const apps = useQuery({
     queryKey: APPS_KEY,
@@ -80,25 +93,25 @@ export default function AppsBoard() {
     <AdminMain>
       <SkeletonStyle />
       <PageHeader
-        title="Apps"
-        description="Health and the running commit of each app in the ecosystem, read only. An app's status is the worse of its own health check and its traffic over the last 24 hours — the same rule as the Overview page. Built when you open the page (cached 60 s); nothing polls in the background."
+        title={t("title")}
+        description={t("description")}
         actions={
           <Button variant="secondary" size="sm" onClick={() => refresh.mutate()} disabled={busy}
-            title="Ask every app again now (skips the 60 s cache)">
-            <RefreshCw size={13} /> {refresh.isPending ? "Checking…" : "Refresh"}
+            title={t("refreshTitle")}>
+            <RefreshCw size={13} /> {refresh.isPending ? t("checking") : t("refresh")}
           </Button>
         }
       />
 
       {error && !data ? (
-        <ErrorState message={error.message || "Could not load the apps"} onRetry={() => apps.refetch()} />
+        <ErrorState message={error.message || t("loadError")} onRetry={() => apps.refetch()} />
       ) : !data ? (
         <CardsSkeleton />
       ) : (
         <>
           {refresh.isError && (
             <div style={{ ...noteStyle, color: K.danger, marginBottom: 12 }}>
-              Refresh failed: {(refresh.error as Error)?.message || "unknown error"}. Showing the previous answer.
+              {t("refreshFailed", (refresh.error as Error)?.message || t("unknownError"))}
             </div>
           )}
           <div data-testid="platform-apps-ready" style={gridStyle}>
@@ -106,7 +119,7 @@ export default function AppsBoard() {
           </div>
           <FrontendsRow />
           <div style={{ ...noteStyle, marginTop: 14 }}>
-            Built {formatDateTime(data.generated_at)}{data._cached ? " (from the 60 s cache)" : ""}.
+            {t("built", formatDateTime(data.generated_at))}{data._cached ? t("fromCache") : ""}.
           </div>
         </>
       )}
@@ -161,13 +174,14 @@ function ExtLink({ href, children, title }: { href: string; children: React.Reac
 
 /** Short SHA linked to its GitHub commit (the backend's commit_url, else the frontend registry). */
 function ShaLink({ appId, sha, commitUrl }: { appId: string; sha: string | null | undefined; commitUrl?: string | null }) {
+  const t = useT(APPS);
   const href = commitUrl ?? (isPlatformAppId(appId) ? APP_REGISTRY[appId].commitUrl(sha) : null);
   const text = shortSha(sha);
   if (!href) {
-    return <span style={{ fontFamily: mono, color: K.muted }} title={sha ?? "no commit reported"}>{text}</span>;
+    return <span style={{ fontFamily: mono, color: K.muted }} title={sha ?? t("noCommit")}>{text}</span>;
   }
   return (
-    <a href={href} target="_blank" rel="noopener noreferrer" title={`${sha} — open the commit on GitHub`}
+    <a href={href} target="_blank" rel="noopener noreferrer" title={t("openCommit", sha ?? "")}
       style={{ ...linkStyle, fontFamily: mono, fontWeight: 500 }}>
       <GitCommitHorizontal size={12} /> {text}
     </a>
@@ -209,8 +223,13 @@ function Problems({ items }: { items: string[] }) {
 // ── cards ───────────────────────────────────────────────────────────────────────────────────
 
 function AppCardView({ card }: { card: AppCard }) {
+  const t = useT(APPS);
+  const status = useT(APP_STATUS_MESSAGES);
+  const lang = useLang();
+  const adminLabel = useAdminLabel();
   const reg = isPlatformAppId(card.id) ? APP_REGISTRY[card.id] : null;
-  const st = APP_STATUS_LABEL[card.status] ?? APP_STATUS_LABEL.unknown;
+  const code = Object.hasOwn(APP_STATUS_LABEL, card.status) ? card.status : "unknown";
+  const st = { ...APP_STATUS_LABEL[code], label: status(code) };
   return (
     <section data-testid={`platform-app-${card.id}`} style={cardStyle}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -221,7 +240,7 @@ function AppCardView({ card }: { card: AppCard }) {
         <div data-testid={`platform-app-${card.id}-health`} style={{ fontSize: 12.5, color: K.body, lineHeight: 1.45 }}>
           {card.overall.reason}
           {card.overall.basis.length > 0 && (
-            <span style={{ color: K.muted }}> · {basisText(card.overall.basis)}</span>
+            <span style={{ color: K.muted }}> · {basisText(card.overall.basis, BASIS_MESSAGES[lang])}</span>
           )}
         </div>
       )}
@@ -231,22 +250,23 @@ function AppCardView({ card }: { card: AppCard }) {
       {card.id === "crm" && <CrmBody card={card} />}
       {card.id === "tripplanner" && <TripPlannerBody card={card} />}
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", borderTop: `1px solid ${K.line}`, paddingTop: 10 }}>
-        {reg && <ExtLink href={reg.adminUrl}>{reg.adminLabel}</ExtLink>}
-        <ExtLink href={card.repo_url}>Repository</ExtLink>
+        {reg && isPlatformAppId(card.id) && <ExtLink href={reg.adminUrl}>{adminLabel(card.id)}</ExtLink>}
+        <ExtLink href={card.repo_url}>{t("repository")}</ExtLink>
       </div>
     </section>
   );
 }
 
 function CisBody({ card }: { card: CisCard }) {
+  const t = useT(APPS);
   const workers = card.workers ?? [];
   let parity: { tone: Tone; label: string; title: string };
   if (card.parity === true) {
-    parity = { tone: "success", label: "Same commit", title: "Every live worker runs the API's commit" };
+    parity = { tone: "success", label: t("sameCommit"), title: t("sameCommitTitle") };
   } else if (card.parity === false) {
-    parity = { tone: "danger", label: "Mismatch", title: "A live worker runs another commit than the API, or no worker is live" };
+    parity = { tone: "danger", label: t("mismatch"), title: t("mismatchTitle") };
   } else {
-    parity = { tone: "neutral", label: "Not compared", title: "The API reports no commit (local / CI process) or the workers could not be read" };
+    parity = { tone: "neutral", label: t("notCompared"), title: t("notComparedTitle") };
   }
   const gate = card.deploy_gate;
   // AA-993 G5: the jobs a deploy releases (info); the gate blocks only on an open wave or a deploy-blocking kind.
@@ -257,44 +277,44 @@ function CisBody({ card }: { card: CisCard }) {
   return (
     <>
       <Fields>
-        <Field label="API commit" title="APP_GIT_SHA of the image this API task runs (the merge commit)">
+        <Field label={t("apiCommit")} title={t("apiCommitTitle")}>
           <ShaLink appId="cis" sha={card.api.git_sha} commitUrl={card.api.commit_url} />
           {card.api.task_revision != null && (
-            <span style={{ color: K.muted, fontSize: 12 }}>task def rev {card.api.task_revision}</span>
+            <span style={{ color: K.muted, fontSize: 12 }}>{t("taskRev", card.api.task_revision)}</span>
           )}
         </Field>
-        <Field label="Workers" title="Live job workers (shared.job_worker, seen in the last 60 s)">
+        <Field label={t("workers")} title={t("workersTitle")}>
           <Badge tone={parity.tone} dot={false} style={{ cursor: "help" }}>
             <span title={parity.title}>{parity.label}</span>
           </Badge>
           <span style={{ color: K.muted, fontSize: 12 }}>
-            {card.workers === null ? "unreadable" : `${workers.length} live`}
+            {card.workers === null ? t("unreadable") : t("live", workers.length)}
           </span>
         </Field>
-        <Field label="Deploy gate" title="Same answer as the CI guard: a deploy waits only while a rerun wave is open or a deploy-blocking job runs; other queued / running jobs are released and picked up by the new revision">
+        <Field label={t("deployGate")} title={t("deployGateTitle")}>
           {gate === null ? (
-            <span style={{ color: K.muted }}>unreadable</span>
+            <span style={{ color: K.muted }}>{t("unreadable")}</span>
           ) : gate.safe_to_deploy ? (
             <>
-              <Badge tone="success" dot={false}>Safe to deploy</Badge>
+              <Badge tone="success" dot={false}>{t("safeToDeploy")}</Badge>
               {gateDetail && (
-                <span style={{ color: K.muted, fontSize: 12 }} title="Released on deploy and re-claimed by the new revision">
-                  {gateDetail} (released on deploy)
+                <span style={{ color: K.muted, fontSize: 12 }} title={t("releasedTitle")}>
+                  {t("released", gateDetail)}
                 </span>
               )}
             </>
           ) : (
             <>
-              <Badge tone="warning" dot={false}>Deploy waits</Badge>
+              <Badge tone="warning" dot={false}>{t("deployWaits")}</Badge>
               <span style={{ color: K.muted, fontSize: 12 }}>
-                {gateReasons || `${gate.active} active job${gate.active === 1 ? "" : "s"}`}
+                {gateReasons || t("activeJobs", gate.active)}
               </span>
             </>
           )}
         </Field>
-        <Field label="Schema" title="Newest numeric CIS migration in shared.schema_versions vs the one this code needs">
+        <Field label={t("schema")} title={t("schemaTitle")}>
           <span style={{ fontFamily: mono }}>{card.schema.version ?? "—"}</span>
-          <span style={{ color: K.muted, fontSize: 12 }}>needs ≥ {card.schema.required ?? "—"}</span>
+          <span style={{ color: K.muted, fontSize: 12 }}>{t("needs", card.schema.required ?? "—")}</span>
           {card.schema.status && card.schema.status !== "ok" && (
             <Badge tone="danger" dot={false}>{card.schema.status.replace(/_/g, " ")}</Badge>
           )}
@@ -314,10 +334,10 @@ function CisBody({ card }: { card: CisCard }) {
               }}>{w.worker_id}</span>
               <ShaLink appId="cis" sha={w.git_sha} commitUrl={w.commit_url} />
               {w.git_sha && card.api.git_sha !== "unknown" && w.git_sha !== card.api.git_sha && (
-                <Badge tone="danger" dot={false}>differs</Badge>
+                <Badge tone="danger" dot={false}>{t("differs")}</Badge>
               )}
-              {w.task_revision != null && <span style={{ color: K.muted }}>rev {w.task_revision}</span>}
-              <span style={{ color: K.muted }}>{w.running_jobs ?? 0} running</span>
+              {w.task_revision != null && <span style={{ color: K.muted }}>{t("rev", w.task_revision)}</span>}
+              <span style={{ color: K.muted }}>{t("running", w.running_jobs ?? 0)}</span>
             </li>
           ))}
         </ul>
@@ -334,24 +354,25 @@ function fmtMs(ms: number | null): string {
 
 /** The CloudWatch traffic the status is partly based on — the same numbers as the Overview tile. */
 function TrafficLine({ traffic }: { traffic: AppTraffic | null }) {
+  const t = useT(APPS);
   if (!traffic) {
-    return <div style={noteStyle}>Traffic numbers (AWS CloudWatch) are not available right now.</div>;
+    return <div style={noteStyle}>{t("noTraffic")}</div>;
   }
   const src = traffic.kind === "lambda" ? "Lambda" : "API Gateway";
   return (
     <div data-testid="platform-app-traffic" style={{
       display: "flex", flexWrap: "wrap", gap: "2px 12px", fontSize: 12, color: K.muted, padding: "6px 8px",
       borderRadius: RADIUS.md, background: K.bg, minWidth: 0,
-    }} title={`AWS CloudWatch, ${src} ${(traffic.resources ?? []).join(" + ")}, last ${traffic.window_hours ?? 24} hours`}>
-      <span style={{ color: K.body, fontWeight: 600 }}>Last {traffic.window_hours ?? 24} h</span>
-      <span>{(traffic.requests ?? 0).toLocaleString("en-US")} requests</span>
+    }} title={t("trafficTitle", src, (traffic.resources ?? []).join(" + "), traffic.window_hours ?? 24)}>
+      <span style={{ color: K.body, fontWeight: 600 }}>{t("lastHours", traffic.window_hours ?? 24)}</span>
+      <span>{t("requests", (traffic.requests ?? 0).toLocaleString("en-US"))}</span>
       <span style={{ color: traffic.errors ? K.danger : K.muted }}>
-        {(traffic.errors ?? 0).toLocaleString("en-US")} server errors
+        {t("serverErrors", (traffic.errors ?? 0).toLocaleString("en-US"))}
       </span>
-      <span>95% within {fmtMs(traffic.p95_ms)}</span>
+      <span>{t("within95", fmtMs(traffic.p95_ms))}</span>
       {traffic.alarms_total != null && (
         <span style={{ color: traffic.alarms_firing ? K.danger : K.muted }}>
-          {traffic.alarms_firing ? `${traffic.alarms_firing} alarm${traffic.alarms_firing > 1 ? "s" : ""} firing` : `${traffic.alarms_total} alarms quiet`}
+          {traffic.alarms_firing ? t("alarmsFiring", traffic.alarms_firing) : t("alarmsQuiet", traffic.alarms_total)}
         </span>
       )}
     </div>
@@ -364,22 +385,21 @@ function httpTone(code: number | undefined, status: string | null | undefined): 
   return code >= 500 || code === 0 ? "danger" : "warning";
 }
 
-function BookingBody({ card, name = "Booking", base = "/booking" }: { card: BookingCard | CrmCard; name?: string; base?: string }) {
+function BookingBody({ card, name: nameIn, base = "/booking" }: { card: BookingCard | CrmCard; name?: string; base?: string }) {
+  const t = useT(APPS);
+  const name = nameIn ?? t("nameBooking");
   if (card.status === "unknown" && card.error) {
     return (
       <>
-        <div style={noteStyle}>
-          Could not reach {name}&apos;s health endpoint ({card.error}). The card says unknown, not down: the probe
-          has a 2 s timeout.
-        </div>
-        <ExtLink href={card.health_url} title={`${name}'s public health endpoint`}>{base}/health</ExtLink>
+        <div style={noteStyle}>{t("unreachable", name, card.error)}</div>
+        <ExtLink href={card.health_url} title={t("publicHealth", name)}>{base}/health</ExtLink>
       </>
     );
   }
   return (
     <>
       <Fields>
-        <Field label="Commit" title={`git_sha from GET ${base}/health`}>
+        <Field label={t("commit")} title={t("commitTitle", base)}>
           <ShaLink appId={card.id} sha={card.git_sha} commitUrl={card.commit_url} />
         </Field>
         <Field label="/health" title={`GET ${base}/health`}>
@@ -387,17 +407,17 @@ function BookingBody({ card, name = "Booking", base = "/booking" }: { card: Book
             {card.health?.http_status ?? "—"} {card.health?.status ?? ""}
           </Badge>
         </Field>
-        <Field label="/health/ready" title={`GET ${base}/health/ready (DB + schema)`}>
+        <Field label="/health/ready" title={t("readyTitle", base)}>
           <Badge tone={httpTone(card.ready?.http_status, card.ready?.status)} dot={false}>
             {card.ready?.http_status ?? "—"} {card.ready?.status ?? ""}
           </Badge>
-          {card.ready?.db && <span style={{ color: K.muted, fontSize: 12 }}>db {card.ready.db}</span>}
+          {card.ready?.db && <span style={{ color: K.muted, fontSize: 12 }}>{t("db", card.ready.db)}</span>}
         </Field>
-        <Field label="Schema" title={`${name}'s newest applied migration`}>
+        <Field label={t("schema")} title={t("newestMigration", name)}>
           <span style={{ fontFamily: mono }}>{card.ready?.schema_version ?? "—"}</span>
         </Field>
       </Fields>
-      <ExtLink href={card.health_url} title={`${name}'s public health endpoint`}>{base}/health</ExtLink>
+      <ExtLink href={card.health_url} title={t("publicHealth", name)}>{base}/health</ExtLink>
     </>
   );
 }
@@ -405,9 +425,10 @@ function BookingBody({ card, name = "Booking", base = "/booking" }: { card: Book
 const CRM_JOBS_KEY = ["platform-apps", "crm-jobs"] as const;
 
 function CrmBody({ card }: { card: CrmCard }) {
+  const t = useT(APPS);
   return (
     <>
-      <BookingBody card={card} name="the CRM" base="/crm" />
+      <BookingBody card={card} name={t("nameCrm")} base="/crm" />
       <CrmJobs />
     </>
   );
@@ -415,6 +436,7 @@ function CrmBody({ card }: { card: CrmCard }) {
 
 /** AA-936 — the CRM's job backlog per kind, read with the staff member's own token (no cache, no polling). */
 function CrmJobs() {
+  const t = useT(APPS);
   const jobs = useQuery({
     queryKey: CRM_JOBS_KEY,
     queryFn: () => apiGet<CrmJobsResp>(`${APPS_PATH}/crm/jobs`),
@@ -425,28 +447,28 @@ function CrmJobs() {
   return (
     <div data-testid="platform-app-crm-jobs" style={{ display: "grid", gap: 6 }}>
       <div style={{ fontSize: 12, fontWeight: 600, color: K.muted, letterSpacing: "0.06em", textTransform: "uppercase" }}>
-        CRM jobs (crm.job)
+        {t("crmJobs")}
       </div>
       {jobs.isLoading && <SkeletonBar w="60%" />}
-      {jobs.isError && <div style={noteStyle}>The CRM jobs could not be read.</div>}
+      {jobs.isError && <div style={noteStyle}>{t("crmJobsError")}</div>}
       {data && data.status !== "ok" && (
         <div style={noteStyle}>
           {data.reason === "cognito_session_required"
-            ? "Sign in with your company email (Cognito) to see the CRM jobs: the CRM accepts staff tokens only."
-            : `The CRM did not answer the jobs request (${data.http_status ?? data.reason ?? data.status}).`}
+            ? t("crmSignIn")
+            : t("crmNoAnswer", String(data.http_status ?? data.reason ?? data.status))}
         </div>
       )}
-      {data && data.status === "ok" && data.kinds.length === 0 && <div style={noteStyle}>No queued, running or recently failed job.</div>}
+      {data && data.status === "ok" && data.kinds.length === 0 && <div style={noteStyle}>{t("noJobs")}</div>}
       {data && data.status === "ok" && data.kinds.length > 0 && (
         <ScrollX>
         <table style={{ borderCollapse: "collapse", fontSize: 12.5, fontFamily: sans }}>
           <thead>
             <tr style={{ color: K.muted, textAlign: "left" }}>
-              <th style={{ padding: "2px 8px 2px 0" }}>Kind</th>
-              <th style={{ padding: "2px 8px" }}>Queued</th>
-              <th style={{ padding: "2px 8px" }}>Running</th>
-              <th style={{ padding: "2px 8px" }}>Failed 24 h</th>
-              <th style={{ padding: "2px 8px" }}>Oldest queued</th>
+              <th style={{ padding: "2px 8px 2px 0" }}>{t("colKind")}</th>
+              <th style={{ padding: "2px 8px" }}>{t("colQueued")}</th>
+              <th style={{ padding: "2px 8px" }}>{t("colRunning")}</th>
+              <th style={{ padding: "2px 8px" }}>{t("colFailed")}</th>
+              <th style={{ padding: "2px 8px" }}>{t("colOldest")}</th>
             </tr>
           </thead>
           <tbody>
@@ -467,42 +489,42 @@ function CrmJobs() {
   );
 }
 
-const LEVEL: Record<string, { tone: Tone; color: string; label: string }> = {
-  ok: { tone: "success", color: K.success, label: "Under 80 % of the cap" },
-  warn: { tone: "warning", color: K.amber, label: "Over 80 % of the cap" },
-  cap_reached: { tone: "danger", color: K.danger, label: "Cap reached" },
+const LEVEL: Record<string, { tone: Tone; color: string; label: "levelOk" | "levelWarn" | "levelCap" }> = {
+  ok: { tone: "success", color: K.success, label: "levelOk" },
+  warn: { tone: "warning", color: K.amber, label: "levelWarn" },
+  cap_reached: { tone: "danger", color: K.danger, label: "levelCap" },
 };
 
 function TripPlannerBody({ card }: { card: TripPlannerCard }) {
+  const t = useT(APPS);
   const s = card.spend_today;
   return (
     <>
       {card.note && <div style={noteStyle}>{card.note}</div>}
       {!s ? (
         <div style={{ ...noteStyle, color: K.danger }}>
-          Spend unreadable{card.error ? ` (${card.error})` : ""}.
+          {t("spendUnreadable", card.error ?? "")}
         </div>
       ) : (
         <div data-testid="platform-tp-spend" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 12.5, color: K.muted }}>LLM spend today</span>
+            <span style={{ fontSize: 12.5, color: K.muted }}>{t("spendToday")}</span>
             <span style={{ fontSize: 18, fontWeight: 600 }}>{usd(s.cost_usd)}</span>
-            <span style={{ fontSize: 12.5, color: K.muted }}>of {usd(s.cap_usd)}</span>
+            <span style={{ fontSize: 12.5, color: K.muted }}>{t("ofCap", usd(s.cap_usd))}</span>
             <Badge tone={(LEVEL[s.level] ?? LEVEL.ok).tone} dot={false}>
               {s.pct_of_cap == null ? "—" : `${s.pct_of_cap} %`}
             </Badge>
           </div>
-          <SpendBar pct={s.pct_of_cap} color={(LEVEL[s.level] ?? LEVEL.ok).color} label={(LEVEL[s.level] ?? LEVEL.ok).label} />
+          <SpendBar pct={s.pct_of_cap} color={(LEVEL[s.level] ?? LEVEL.ok).color} label={t((LEVEL[s.level] ?? LEVEL.ok).label)} />
           <div style={noteStyle}>
-            {s.calls} call{s.calls === 1 ? "" : "s"} since {s.since} on the customer-facing stages
-            ({s.stages.join(", ")}). {capitalize(s.cap_label)}.
+            {t("callsSince", s.calls, s.since, s.stages.join(", "))} {capitalize(s.cap_label)}.
           </div>
           {s.by_stage.length > 0 && (
             <ul style={{ margin: 0, padding: 0, listStyle: "none", fontSize: 12, display: "flex", flexDirection: "column", gap: 3 }}>
               {s.by_stage.map((b) => (
                 <li key={b.stage} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <span style={{ fontFamily: mono, color: K.ink2 }}>{b.stage}</span>
-                  <span style={{ color: K.muted }}>{b.calls} calls</span>
+                  <span style={{ color: K.muted }}>{t("calls", b.calls)}</span>
                   <span>{usd(b.cost_usd)}</span>
                 </li>
               ))}
@@ -531,19 +553,19 @@ function SpendBar({ pct, color, label }: { pct: number | null; color: string; la
 // ── frontends ───────────────────────────────────────────────────────────────────────────────
 
 function FrontendsRow() {
+  const t = useT(APPS);
+  const adminLabel = useAdminLabel();
   return (
     <section data-testid="platform-frontends" style={{ ...cardStyle, marginTop: 16, gap: 8 }}>
-      <div style={{ fontWeight: 600, fontSize: 14 }}>Frontends</div>
-      <div style={noteStyle}>
-        The three web frontends (Vercel) do not report their version yet, so only links are shown here.
-      </div>
+      <div style={{ fontWeight: 600, fontSize: 14 }}>{t("frontends")}</div>
+      <div style={noteStyle}>{t("frontendsNote")}</div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 20px" }}>
         {PLATFORM_APP_IDS.map((id) => {
           const app = APP_REGISTRY[id];
           return (
             <span key={id} style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <ExtLink href={app.adminUrl}>{app.adminLabel}</ExtLink>
-              <span style={{ fontSize: 12, color: K.muted }}>version not reported yet</span>
+              <ExtLink href={app.adminUrl}>{adminLabel(id)}</ExtLink>
+              <span style={{ fontSize: 12, color: K.muted }}>{t("noVersion")}</span>
             </span>
           );
         })}

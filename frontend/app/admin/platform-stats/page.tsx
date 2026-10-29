@@ -30,7 +30,8 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import SocialContentSubNav from "../_components/SocialContentSubNav";
 import { TenantSelect } from "../_components/TenantSelect";
 import { A, serif, mono, sans, Card, Badge, LoadingScreen } from "../_components/adminUi";
-import { AdminMain, AdminPaneBody, AdminPaneHeader, PageHeader, formatDateTime } from "../../_kit";
+import { AdminMain, AdminPaneBody, AdminPaneHeader, PageHeader, useFormat, useT } from "../../_kit";
+import { STATS } from "./messages";
 import { fetchJson, EmptyState, ErrorState } from "../_components/auditPanels";
 
 // ── Types — match GET /admin/a4/review-log, /admin/a4/platform-stats ───────────────────────────
@@ -89,12 +90,6 @@ interface GateTelemetryGateFailure {
 interface GateTelemetry {
   by_tenant_channel: GateTelemetryTenantChannel[];
   top_gate_failures_by_channel: GateTelemetryGateFailure[];
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function fmtDate(s: string | null): string {
-  return formatDateTime(s);
 }
 
 // ── Sort — same mechanism as Content Trace (06), AA-572/575 ─────────────────────
@@ -174,6 +169,7 @@ function SortableTh<K extends string>({ label, sortKey, sort, onSort, style }: {
 // ── Review Log section — moved verbatim from a4-oversight/page.tsx, sort added ──────────────────
 
 function ReviewLogSection() {
+  const t = useT(STATS);
   const [rows, setRows] = useState<ReviewLogRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -214,18 +210,15 @@ function ReviewLogSection() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
         <div style={{ flex: "1 1 320px", minWidth: 0 }}>
           <h2 style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: A.ink, margin: "0 0 4px" }}>
-            Review Log — T3 / A3 atomize Escalations
+            {t("reviewTitle")}
           </h2>
           <div style={{ fontSize: 12, color: A.muted }}>
-            T3 QA-gate failures (auto-passed to the tenant, logged here for pattern review) and A3
-            atomize failures (check_id prefixed t5_atomize: — the historical stage key, filterable
-            via the Checks badges below) — neither is a queue to action, both are post-hoc pattern
-            review.
+            {t("reviewIntro")}
           </div>
         </div>
         {/* AA-919 S254: pick the tenant by name (shared admin picker) instead of typing its id. Inactive tenants
             stay offered: their old escalations are still in the log. */}
-        <TenantSelect inline includeInactive value={tenantFilter} onChange={setTenantFilter} placeholder="All tenants" />
+        <TenantSelect inline includeInactive value={tenantFilter} onChange={setTenantFilter} placeholder={t("allTenants")} />
       </div>
 
       {checkIdCounts.length > 0 && (
@@ -239,23 +232,23 @@ function ReviewLogSection() {
       )}
 
       {loading ? (
-        <div style={{ padding: 24, textAlign: "center", color: A.muted }}>Loading…</div>
+        <div style={{ padding: 24, textAlign: "center", color: A.muted }}>{t("loading")}</div>
       ) : error ? (
         <div style={{ padding: 24, textAlign: "center", color: A.red }}>{error}</div>
       ) : rows.length === 0 ? (
         // AA-601 — deterministic "content rendered" signal for the UI smoke: appears only after the
         // review-log load resolves (never on the Loading… state), so a blank/broken page still fails.
-        <div data-testid="admin-content-ready" style={{ padding: 24, textAlign: "center", color: A.muted2 }}>No escalations found.</div>
+        <div data-testid="admin-content-ready" style={{ padding: 24, textAlign: "center", color: A.muted2 }}>{t("noEscalations")}</div>
       ) : (
         <div data-testid="admin-content-ready" style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ background: A.bg }}>
-                <SortableTh label="Tenant" sortKey="tenant" sort={sort} onSort={toggle} />
-                <SortableTh label="Failure Summary" sortKey="failure" sort={sort} onSort={toggle} />
-                <SortableTh label="Checks" sortKey="checks" sort={sort} onSort={toggle} />
-                <SortableTh label="Status" sortKey="status" sort={sort} onSort={toggle} />
-                <SortableTh label="Created" sortKey="created_at" sort={sort} onSort={toggle} />
+                <SortableTh label={t("colTenant")} sortKey="tenant" sort={sort} onSort={toggle} />
+                <SortableTh label={t("colFailure")} sortKey="failure" sort={sort} onSort={toggle} />
+                <SortableTh label={t("colChecks")} sortKey="checks" sort={sort} onSort={toggle} />
+                <SortableTh label={t("colStatus")} sortKey="status" sort={sort} onSort={toggle} />
+                <SortableTh label={t("colCreated")} sortKey="created_at" sort={sort} onSort={toggle} />
                 <SortableTh label="" sort={sort} onSort={toggle} />
               </tr>
             </thead>
@@ -276,6 +269,8 @@ function ReviewLogSection() {
 function RowLine({ row, expanded, onToggle }: {
   row: ReviewLogRow; expanded: boolean; onToggle: () => void;
 }) {
+  const t = useT(STATS);
+  const { formatDateTime } = useFormat();
   const td: React.CSSProperties = { padding: "10px 12px", borderBottom: `1px solid ${A.line}`, fontSize: 12.5, color: A.body, verticalAlign: "top" };
   return (
     <>
@@ -293,7 +288,7 @@ function RowLine({ row, expanded, onToggle }: {
           </div>
         </td>
         <td style={td}><Badge color={row.review_status === "pending" ? "amber" : "gray"}>{row.review_status}</Badge></td>
-        <td style={{ ...td, fontFamily: mono, fontSize: 11, color: A.muted }}>{fmtDate(row.created_at)}</td>
+        <td style={{ ...td, fontFamily: mono, fontSize: 11, color: A.muted }}>{formatDateTime(row.created_at)}</td>
         <td style={{ ...td, textAlign: "center" }}>{expanded ? "▲" : "▼"}</td>
       </tr>
       {expanded && (
@@ -306,7 +301,7 @@ function RowLine({ row, expanded, onToggle }: {
               {(row.escalate_detail || []).map((item, i) => (
                 <div key={i} style={{ marginBottom: 4 }}>
                   <strong>{item.check_id}</strong>
-                  {item.field && <> · field: {item.field}</>}
+                  {item.field && <> · {t("field")} {item.field}</>}
                   {item.description && <> — {item.description}</>}
                   {item.source_span && <div style={{ color: A.muted2, marginTop: 2 }}>“{item.source_span}”</div>}
                 </div>
@@ -322,6 +317,7 @@ function RowLine({ row, expanded, onToggle }: {
 // ── Platform Stats aggregate section — NEW, real backend GROUP BY (AA-560) ──────────────────────
 
 function PlatformStatsSection() {
+  const t = useT(STATS);
   const [stats, setStats] = useState<PlatformStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -345,45 +341,42 @@ function PlatformStatsSection() {
     <Card style={{ marginBottom: 24 }}>
       <div style={{ marginBottom: 16 }}>
         <h2 style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: A.ink, margin: "0 0 4px" }}>
-          A4 Quality — Gate/Error Aggregate
+          {t("aggTitle")}
         </h2>
         <div style={{ fontSize: 12, color: A.muted }}>
-          Real backend aggregate across EVERY content piece ever written, platform-wide — not a
-          client-side rollup limited to the most recently loaded page (the old Cross-Tenant
-          Oversight page's "F1_GROUNDING × 4" tags only ever counted the last 200 rows loaded).
-          Platform-level totals only — per-tour/Segment/Route lineage detail lives in{" "}
-          <a href="/admin/tenant-activity" style={{ color: A.ink }}>Content Trace</a>.
+          {t("aggIntro")}{" "}
+          <a href="/admin/tenant-activity" style={{ color: A.ink }}>{t("contentTrace")}</a>.
         </div>
       </div>
 
       {loading ? (
-        <div style={{ padding: 24, textAlign: "center", color: A.muted }}>Loading…</div>
+        <div style={{ padding: 24, textAlign: "center", color: A.muted }}>{t("loading")}</div>
       ) : error ? (
         <ErrorState message={error} onRetry={load} />
       ) : !stats ? (
-        <EmptyState title="No stats available" body="Nothing on record yet." />
+        <EmptyState title={t("noStats")} body={t("nothingYet")} />
       ) : (
         <>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 20 }}>
-            <StatTile label="Total pieces" value={stats.total_pieces} />
-            <StatTile label="Published" value={stats.published_count} />
+            <StatTile label={t("totalPieces")} value={stats.total_pieces} />
+            <StatTile label={t("published")} value={stats.published_count} />
             {stats.by_status.map(s => (
-              <StatTile key={s.status} label={`Status: ${s.status}`} value={s.count} />
+              <StatTile key={s.status} label={t("statusTile", s.status)} value={s.count} />
             ))}
           </div>
 
-          <SectionLabel>By channel</SectionLabel>
+          <SectionLabel>{t("byChannel")}</SectionLabel>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 20 }}>
             {stats.by_channel.length === 0 ? (
-              <span style={{ fontSize: 12, color: A.muted2 }}>No channel data yet.</span>
+              <span style={{ fontSize: 12, color: A.muted2 }}>{t("noChannel")}</span>
             ) : stats.by_channel.map(c => (
               <Badge key={c.channel} color="gray">{c.channel} × {c.count}</Badge>
             ))}
           </div>
 
-          <SectionLabel>Top gate failures — platform-wide, all history</SectionLabel>
+          <SectionLabel>{t("topGatesAll")}</SectionLabel>
           {stats.top_gate_failures.length === 0 ? (
-            <div style={{ fontSize: 12, color: A.muted2 }}>No gate failures on record.</div>
+            <div style={{ fontSize: 12, color: A.muted2 }}>{t("noGateFailures")}</div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {stats.top_gate_failures.map(g => (
@@ -429,6 +422,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 // ── Gate Telemetry section — NEW (AA-615), per-tenant/channel gate/severity/retry/publish ───────
 
 function GateTelemetrySection() {
+  const t = useT(STATS);
   const [data, setData] = useState<GateTelemetry | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -487,27 +481,24 @@ function GateTelemetrySection() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, gap: 12, flexWrap: "wrap" }}>
         <div>
           <h2 style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: A.ink, margin: "0 0 4px" }}>
-            Gate Telemetry — by Tenant / Channel
+            {t("telemetryTitle")}
           </h2>
           <div style={{ fontSize: 12, color: A.muted, maxWidth: 720 }}>
-            The gate/severity/retry/publish signal the tenant never sees (their view is flat —
-            just &ldquo;ready&rdquo;). <strong>Warn</strong> = shipped with a non-blocking gate
-            note; <strong>Held</strong> = blocked after retry, delivered but publish-gated;{" "}
-            <strong>Retry</strong> = took a 2nd write attempt. Use this to spot &ldquo;gate X keeps
-            failing on channel Y&rdquo; or &ldquo;tenant Z keeps shipping warn content&rdquo; and
-            decide what prompt/gate/rubric to improve.
+            {t("telemetryIntro1")} <strong>{t("warn")}</strong> {t("warnMeans")}{" "}
+            <strong>{t("held")}</strong> {t("heldMeans")}{" "}
+            <strong>{t("retry")}</strong> {t("retryMeans")}
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <input
             type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-            aria-label="From date"
+            aria-label={t("fromDate")}
             style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 12, fontFamily: mono, outline: "none" }}
           />
           <span style={{ fontSize: 12, color: A.muted2 }}>→</span>
           <input
             type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
-            aria-label="To date"
+            aria-label={t("toDate")}
             style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 12, fontFamily: mono, outline: "none" }}
           />
           {(dateFrom || dateTo) && (
@@ -515,7 +506,7 @@ function GateTelemetrySection() {
               onClick={() => { setDateFrom(""); setDateTo(""); }}
               style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${A.line}`, background: "transparent", color: A.muted, fontSize: 11, cursor: "pointer" }}
             >
-              Clear
+              {t("clear")}
             </button>
           )}
         </div>
@@ -523,7 +514,7 @@ function GateTelemetrySection() {
 
       {channels.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
-          <FilterPill label="All channels" active={channelFilter === "all"} onClick={() => setChannelFilter("all")} />
+          <FilterPill label={t("allChannels")} active={channelFilter === "all"} onClick={() => setChannelFilter("all")} />
           {channels.map(c => (
             <FilterPill key={c} label={c} active={channelFilter === c} onClick={() => setChannelFilter(c)} />
           ))}
@@ -531,26 +522,26 @@ function GateTelemetrySection() {
       )}
 
       {loading ? (
-        <div style={{ padding: 24, textAlign: "center", color: A.muted }}>Loading…</div>
+        <div style={{ padding: 24, textAlign: "center", color: A.muted }}>{t("loading")}</div>
       ) : error ? (
         <ErrorState message={error} onRetry={load} />
       ) : !data || data.by_tenant_channel.length === 0 ? (
-        <EmptyState title="No telemetry yet" body="No content pieces in this window." />
+        <EmptyState title={t("noTelemetry")} body={t("noPieces")} />
       ) : (
         <>
           <div style={{ overflowX: "auto", marginBottom: 24 }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr style={{ background: A.bg }}>
-                  <SortableTh label="Tenant" sortKey="tenant" sort={sort} onSort={toggle} />
-                  <SortableTh label="Channel" sortKey="channel" sort={sort} onSort={toggle} />
-                  <SortableTh label="Total" sortKey="total" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
-                  <SortableTh label="Warn" sortKey="warn" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
-                  <SortableTh label="Held" sortKey="held" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
-                  <SortableTh label="Failed" sortKey="failed" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
-                  <SortableTh label="Retry" sortKey="retry" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
-                  <SortableTh label="Publish" sortKey="publish" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
-                  <SortableTh label="Export" sortKey="export" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
+                  <SortableTh label={t("colTenant")} sortKey="tenant" sort={sort} onSort={toggle} />
+                  <SortableTh label={t("colChannel")} sortKey="channel" sort={sort} onSort={toggle} />
+                  <SortableTh label={t("colTotal")} sortKey="total" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
+                  <SortableTh label={t("warn")} sortKey="warn" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
+                  <SortableTh label={t("held")} sortKey="held" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
+                  <SortableTh label={t("colFailed")} sortKey="failed" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
+                  <SortableTh label={t("retry")} sortKey="retry" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
+                  <SortableTh label={t("colPublish")} sortKey="publish" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
+                  <SortableTh label={t("colExport")} sortKey="export" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
                 </tr>
               </thead>
               <tbody>
@@ -574,9 +565,9 @@ function GateTelemetrySection() {
             </table>
           </div>
 
-          <SectionLabel>Top gate failures{channelFilter !== "all" ? ` — ${channelFilter}` : " — by channel"}</SectionLabel>
+          <SectionLabel>{channelFilter !== "all" ? t("topGatesFor", channelFilter) : t("topGatesByChannel")}</SectionLabel>
           {visibleGates.length === 0 ? (
-            <div style={{ fontSize: 12, color: A.muted2 }}>No gate failures on record for this window.</div>
+            <div style={{ fontSize: 12, color: A.muted2 }}>{t("noGateFailuresWindow")}</div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {visibleGates.map((g, i) => (
@@ -585,8 +576,8 @@ function GateTelemetrySection() {
                   <div style={{ width: 150, flexShrink: 0, fontSize: 12, fontFamily: mono, color: A.body, display: "flex", alignItems: "center", gap: 5 }}>
                     {g.gate}
                     {g.blocking
-                      ? <Badge color="red">block</Badge>
-                      : <Badge color="amber">warn</Badge>}
+                      ? <Badge color="red">{t("block")}</Badge>
+                      : <Badge color="amber">{t("warnBadge")}</Badge>}
                   </div>
                   <div style={{ flex: 1, background: A.bg, borderRadius: 4, height: 14, overflow: "hidden" }}>
                     <div style={{
@@ -621,12 +612,13 @@ function FilterPill({ label, active, onClick }: { label: string; active: boolean
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function PlatformStatsPage() {
+  const t = useT(STATS);
   return (
     <AdminMain variant="split">
         <AdminPaneHeader>
           <PageHeader
-            title="07 · A4 Quality"
-            description="Post-hoc, cross-tenant monitoring — AA does not gate tenant content at any T0-T11 step. Review Log is read-only pattern review; the aggregate below is a real platform-wide backend rollup, not a per-page-load client-side count."
+            title={t("pageTitle")}
+            description={t("pageDescription")}
           />
         </AdminPaneHeader>
 

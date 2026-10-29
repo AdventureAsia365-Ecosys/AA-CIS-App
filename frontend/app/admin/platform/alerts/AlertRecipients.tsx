@@ -31,13 +31,16 @@ import {
   PageHeader,
   RADIUS,
   apiGet,
-  formatDateTime,
   mono,
   sans,
+  useFormat,
+  useLang,
+  useT,
   useToast,
   type ColumnDef, AdminMain,
 } from "../../../_kit";
 import { staffErrorMessage } from "@/lib/rbac";
+import { RBAC_MESSAGES } from "@/lib/rbac.messages";
 import {
   emailLooksValid,
   formatWait,
@@ -52,14 +55,32 @@ import {
   type AlertRecipientsPage,
   type SnsState,
 } from "@/lib/alertRecipients";
+import { ALERT_WORDS_MESSAGES } from "@/lib/alertRecipients.messages";
+import { ALERTS } from "./messages";
 
 const API = "/api/admin/platform/alert-recipients";
 const KEY = ["platform-alert-recipients"] as const;
 
 type WriteResult = { ok: true; data: Record<string, unknown> } | { ok: false; message: string; retryAfter?: number };
 
+/** The refusal words of send(), in the UI language. */
+interface SendWords {
+  network: string;
+  formRefused: string;
+  failed: (status: number) => string;
+  adminOnly: string;
+}
+
+function useSendWords(): SendWords {
+  const t = useT(ALERTS);
+  const r = useT(RBAC_MESSAGES);
+  return useMemo(() => ({
+    network: t("network"), formRefused: t("formRefused"), failed: (s: number) => t("failed", s), adminOnly: r("adminOnly"),
+  }), [t, r]);
+}
+
 /** One change through the BFF. Never throws. */
-async function send(method: "POST" | "DELETE", path: string, body?: unknown): Promise<WriteResult> {
+async function send(method: "POST" | "DELETE", path: string, w: SendWords, body?: unknown): Promise<WriteResult> {
   let res: Response;
   try {
     res = await fetch(path, {
@@ -68,7 +89,7 @@ async function send(method: "POST" | "DELETE", path: string, body?: unknown): Pr
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch {
-    return { ok: false, message: "Network error: nothing was sent. Check your connection and try again." };
+    return { ok: false, message: w.network };
   }
   let data: Record<string, unknown> = {};
   try {
@@ -79,9 +100,9 @@ async function send(method: "POST" | "DELETE", path: string, body?: unknown): Pr
   if (res.ok) return { ok: true, data };
   let message: string;
   if (Array.isArray(data.detail)) {
-    message = "Check the address and the note (the server refused the form).";
+    message = w.formRefused;
   } else {
-    message = staffErrorMessage(res.status, data.detail, `Request failed (${res.status})`);
+    message = staffErrorMessage(res.status, data.detail, w.failed(res.status), w.adminOnly);
   }
   return { ok: false, message, retryAfter: retryAfterSeconds(data, res.headers.get("Retry-After")) };
 }
@@ -121,13 +142,15 @@ function Section({ title, children, right }: { title: string; children: React.Re
 }
 
 function LockedRow({ email, label, state }: { email: string; label: string; state?: SnsState | null }) {
+  const t = useT(ALERTS);
+  const lang = useLang();
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "8px 0", borderTop: `1px solid ${K.line}` }}>
-      <Lock size={14} style={{ color: K.muted, flex: "none" }} aria-label="Locked" />
+      <Lock size={14} style={{ color: K.muted, flex: "none" }} aria-label={t("locked")} />
       <span style={{ fontFamily: mono, fontSize: 13, color: K.ink, overflowWrap: "anywhere" }}>{email}</span>
       {state !== undefined && (
         <Badge tone={state === "confirmed" ? "success" : state === "pending" ? "warning" : "danger"} dot={false}>
-          {snsStateLabel(state)}
+          {snsStateLabel(state, ALERT_WORDS_MESSAGES[lang])}
         </Badge>
       )}
       <span style={{ fontSize: 12.5, color: K.muted }}>{label}</span>
@@ -142,6 +165,8 @@ function AddModal({ open, onClose, onAdded, limits, active }: {
   limits: AlertRecipientsPage["limits"] | undefined;
   active: number;
 }) {
+  const t = useT(ALERTS);
+  const sw = useSendWords();
   const [email, setEmail] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -168,7 +193,7 @@ function AddModal({ open, onClose, onAdded, limits, active }: {
     if (!valid || noteTooLong || busy || blockedByTypo) return;
     setBusy(true);
     setError(null);
-    const out = await send("POST", API, { email: trimmed, note: note.trim() || undefined });
+    const out = await send("POST", API, sw, { email: trimmed, note: note.trim() || undefined });
     setBusy(false);
     if (!out.ok) {
       setError(out.message);
@@ -183,25 +208,24 @@ function AddModal({ open, onClose, onAdded, limits, active }: {
     <Modal
       open={open}
       onClose={close}
-      title="Add alert recipient"
+      title={t("addTitle")}
       width={480}
       footer={
         <>
-          <Button variant="ghost" onClick={close} disabled={busy}>Cancel</Button>
+          <Button variant="ghost" onClick={close} disabled={busy}>{t("cancel")}</Button>
           <Button variant="primary" onClick={submit} disabled={!valid || noteTooLong || busy || blockedByTypo}>
-            <MailPlus size={13} /> {busy ? "Adding…" : "Add and send confirmation"}
+            <MailPlus size={13} /> {busy ? t("adding") : t("addAndSend")}
           </Button>
         </>
       }
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 12, fontFamily: sans }}>
         <p style={{ margin: 0, fontSize: 13, color: K.body, lineHeight: 1.5 }}>
-          AWS sends a confirmation e-mail to this address (from <span style={{ fontFamily: mono }}>no-reply@sns.amazonaws.com</span>,
-          subject &ldquo;AWS Notification - Subscription Confirmation&rdquo;). Alerts start only after the link in it is clicked;
-          the link expires after 3 days. {limits ? `${active} of ${limits.max_active} recipients used.` : ""}
+          {t("awsSendsFrom")} <span style={{ fontFamily: mono }}>no-reply@sns.amazonaws.com</span>{t("awsSubject")}{" "}
+          {limits ? t("used", active, limits.max_active) : ""}
         </p>
         <label style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 12.5, fontWeight: 600, color: K.ink3 }}>
-          E-mail address
+          {t("email")}
           <input
             type="email"
             autoComplete="off"
@@ -215,23 +239,22 @@ function AddModal({ open, onClose, onAdded, limits, active }: {
         </label>
         {trimmed.length > 0 && !valid && (
           <div style={{ fontSize: 12.5, color: K.danger }}>
-            One address only: no spaces, commas or angle brackets, and a domain with a dot.
+            {t("badEmail")}
           </div>
         )}
         {suggestion && (
           <Notice tone="danger">
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <span>
-                Did you mean <strong style={{ fontFamily: mono }}>{suggestion}</strong>? A mistyped domain never receives
-                the AWS confirmation e-mail.
+                {t("didYouMean")} <strong style={{ fontFamily: mono }}>{suggestion}</strong>{t("typoNote")}
               </span>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
                 <Button variant="secondary" onClick={() => { setEmail(suggestion); setKeepTypo(false); }}>
-                  Use {suggestion}
+                  {t("use", suggestion)}
                 </Button>
                 <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12.5 }}>
                   <input id="alert-keep-typo" type="checkbox" checked={keepTypo} onChange={(e) => setKeepTypo(e.target.checked)} />
-                  Keep the address as typed
+                  {t("keepTyped")}
                 </label>
               </div>
             </div>
@@ -239,17 +262,16 @@ function AddModal({ open, onClose, onAdded, limits, active }: {
         )}
         {outside && !suggestion && (
           <Notice tone="warning">
-            This address is outside {"adventure.asia"}. Alerts include security details (who read a secret, from which IP
-            address). Add an outside mailbox only if you trust it.
+            {t("outside", "adventure.asia")}
           </Notice>
         )}
         <label style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 12.5, fontWeight: 600, color: K.ink3 }}>
-          Note (optional)
+          {t("note")}
           <input
             type="text"
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            placeholder="e.g. on-call phone"
+            placeholder={t("notePlaceholder")}
             style={inputStyle}
           />
           <span style={{ fontWeight: 400, color: noteTooLong ? K.danger : K.muted }}>
@@ -268,6 +290,11 @@ const inputStyle: React.CSSProperties = {
 };
 
 export default function AlertRecipients() {
+  const t = useT(ALERTS);
+  const lang = useLang();
+  const aw = ALERT_WORDS_MESSAGES[lang];
+  const sw = useSendWords();
+  const { formatDateTime } = useFormat();
   const qc = useQueryClient();
   const toast = useToast();
   const list = useQuery({
@@ -300,7 +327,7 @@ export default function AlertRecipients() {
   const refresh = async () => {
     setRefreshing(true);
     setPageError(null);
-    const out = await send("POST", `${API}/refresh`);
+    const out = await send("POST", `${API}/refresh`, sw);
     setRefreshing(false);
     if (!out.ok) {
       setPageError(out.message);
@@ -312,14 +339,14 @@ export default function AlertRecipients() {
   const resend = async (r: AlertRecipient) => {
     setBusy(r.id);
     setPageError(null);
-    const out = await send("POST", `${API}/${encodeURIComponent(r.id)}/resend`);
+    const out = await send("POST", `${API}/${encodeURIComponent(r.id)}/resend`, sw);
     setBusy(null);
     if (!out.ok) {
       if (out.retryAfter) setBlockedUntil((prev) => ({ ...prev, [r.id]: Date.now() + out.retryAfter! * 1000 }));
       setPageError(out.message);
       return;
     }
-    toast.success(`AWS sent the confirmation e-mail to ${r.email} again. Ask them to check spam too.`, 6000);
+    toast.success(t("resentToast", r.email), 6000);
     void reload();
   };
 
@@ -328,7 +355,7 @@ export default function AlertRecipients() {
     if (!r) return;
     setBusy(r.id);
     setPageError(null);
-    const out = await send("DELETE", `${API}/${encodeURIComponent(r.id)}`);
+    const out = await send("DELETE", `${API}/${encodeURIComponent(r.id)}`, sw);
     setBusy(null);
     setRemoving(null);
     if (!out.ok) {
@@ -336,27 +363,27 @@ export default function AlertRecipients() {
       return;
     }
     toast.success(out.data.sns === "pending_left_to_expire"
-      ? `Removed ${r.email}. Its unconfirmed AWS subscription expires on its own within 3 days; if the link is clicked first, the automatic status check (every 5 minutes) unsubscribes it again.`
-      : `Removed ${r.email}. It gets no more alerts.`, 7000);
+      ? t("removedPending", r.email)
+      : t("removed", r.email), 7000);
     void reload();
   };
 
   const sendTest = async () => {
     setBusy("test");
     setPageError(null);
-    const out = await send("POST", `${API}/test-email`);
+    const out = await send("POST", `${API}/test-email`, sw);
     setBusy(null);
     if (!out.ok) {
       setPageError(out.message);
       return;
     }
-    toast.success(`Test e-mail queued for ${String(out.data.recipients_count ?? "")} recipient(s). It arrives in about a minute.`, 6000);
+    toast.success(t("testQueued", String(out.data.recipients_count ?? "")), 6000);
   };
 
   const columns = useMemo<ColumnDef<AlertRecipient, unknown>[]>(() => [
     {
       accessorKey: "email",
-      header: "E-mail",
+      header: t("colEmail"),
       cell: (c) => (
         <div style={{ minWidth: 0 }}>
           <div style={{ fontFamily: mono, fontSize: 13, color: K.ink, overflowWrap: "anywhere" }}>{c.row.original.email}</div>
@@ -367,15 +394,15 @@ export default function AlertRecipients() {
     {
       id: "status",
       accessorFn: (r) => r.status,
-      header: "Status",
+      header: t("colStatus"),
       cell: (c) => {
         const r = c.row.original;
         return (
           <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-            <Badge tone={statusTone(r)} dot={false}>{statusLabel(r)}</Badge>
+            <Badge tone={statusTone(r)} dot={false}>{statusLabel(r, aw)}</Badge>
             {r.status === "pending" && (
               <span style={{ fontSize: 11.5, color: K.muted, maxWidth: 240 }}>
-                AWS sent a confirmation e-mail; the link expires after 3 days.
+                {t("pendingNote")}
               </span>
             )}
           </div>
@@ -385,7 +412,7 @@ export default function AlertRecipients() {
     {
       id: "added",
       accessorFn: (r) => r.created_at ?? "",
-      header: "Added",
+      header: t("colAdded"),
       cell: (c) => (
         <div style={{ fontSize: 12.5 }}>
           <div>{c.row.original.created_at ? formatDateTime(c.row.original.created_at) : "—"}</div>
@@ -395,7 +422,7 @@ export default function AlertRecipients() {
     },
     {
       accessorKey: "confirmed_at",
-      header: "Confirmed",
+      header: t("colConfirmed"),
       cell: (c) => (c.row.original.confirmed_at ? formatDateTime(c.row.original.confirmed_at) : <span style={{ color: K.muted }}>—</span>),
     },
     {
@@ -411,93 +438,89 @@ export default function AlertRecipients() {
           <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }} onClick={(e) => e.stopPropagation()}>
             {r.status === "pending" && (
               <Button size="sm" variant="secondary" disabled={busy !== null || wait > 0} onClick={() => void resend(r)}
-                title={wait > 0 ? `Available in ${formatWait(wait)}` : "Send the AWS confirmation e-mail again"}>
-                <Send size={12} /> {wait > 0 ? `Resend (${formatWait(wait)})` : "Resend"}
+                title={wait > 0 ? t("availableIn", formatWait(wait, aw)) : t("resendTitle")}>
+                <Send size={12} /> {wait > 0 ? t("resendIn", formatWait(wait, aw)) : t("resend")}
               </Button>
             )}
-            <Button size="sm" variant="danger" disabled={busy !== null} onClick={() => setRemoving(r)} ariaLabel={`Remove ${r.email}`}>
-              <Trash2 size={12} /> Remove
+            <Button size="sm" variant="danger" disabled={busy !== null} onClick={() => setRemoving(r)} ariaLabel={t("removeAria", r.email)}>
+              <Trash2 size={12} /> {t("remove")}
             </Button>
           </div>
         );
       },
     },
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [canWrite, now, blockedUntil, busy]);
+  ], [canWrite, now, blockedUntil, busy, t, aw, formatDateTime]);
 
   const historyColumns = useMemo<ColumnDef<AlertRecipient, unknown>[]>(() => [
-    { accessorKey: "email", header: "E-mail", cell: (c) => <span style={{ fontFamily: mono, fontSize: 12.5 }}>{c.row.original.email}</span> },
-    { id: "status", accessorFn: (r) => r.removed_reason ?? "", header: "Why", cell: (c) => <Badge tone={statusTone(c.row.original)} dot={false}>{statusLabel(c.row.original)}</Badge> },
-    { id: "removed", accessorFn: (r) => r.removed_at ?? "", header: "When", cell: (c) => (c.row.original.removed_at ? formatDateTime(c.row.original.removed_at) : "—") },
-    { id: "by", accessorFn: (r) => r.removed_by ?? "", header: "By", cell: (c) => c.row.original.removed_by ?? "—" },
-  ], []);
+    { accessorKey: "email", header: t("colEmail"), cell: (c) => <span style={{ fontFamily: mono, fontSize: 12.5 }}>{c.row.original.email}</span> },
+    { id: "status", accessorFn: (r) => r.removed_reason ?? "", header: t("colWhy"), cell: (c) => <Badge tone={statusTone(c.row.original)} dot={false}>{statusLabel(c.row.original, aw)}</Badge> },
+    { id: "removed", accessorFn: (r) => r.removed_at ?? "", header: t("colWhen"), cell: (c) => (c.row.original.removed_at ? formatDateTime(c.row.original.removed_at) : "—") },
+    { id: "by", accessorFn: (r) => r.removed_by ?? "", header: t("colBy"), cell: (c) => c.row.original.removed_by ?? "—" },
+  ], [t, aw, formatDateTime]);
 
   const description = (
     <>
-      Everyone here gets every platform alert by e-mail: CloudWatch alarms (CIS, Booking, TripPlanner, shared), security
-      alerts, cost anomalies, AWS Budgets and CIS spend e-mails.{" "}
-      {data && !canWrite && data.configured && (data.viewer?.auth === "legacy"
-        ? "Read-only on a password session: sign in with your company e-mail to change the list."
-        : "Read-only.")}
+      {t("intro")}{" "}
+      {data && !canWrite && data.configured && (data.viewer?.auth === "legacy" ? t("readOnlyLegacy") : t("readOnly"))}
     </>
   );
 
   return (
     <AdminMain>
       <PageHeader
-        title={<span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><BellRing size={18} /> Alert recipients</span>}
+        title={<span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><BellRing size={18} /> {t("title")}</span>}
         description={description}
         actions={
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {canWrite && (
               <Button variant="primary" size="sm" onClick={() => setAdding(true)}
                 disabled={!data || data.limits.active >= data.limits.max_active || data.limits.adds_left_today <= 0}>
-                <MailPlus size={13} /> Add recipient
+                <MailPlus size={13} /> {t("addRecipient")}
               </Button>
             )}
             {canWrite && (
               <Button variant="secondary" size="sm" onClick={() => void sendTest()} disabled={busy !== null || !data?.ops_mail_configured}
-                title="Queue a test e-mail through the CIS spend alert path (SES) to every confirmed recipient">
-                <Send size={13} /> Send test e-mail
+                title={t("testTitle")}>
+                <Send size={13} /> {t("sendTest")}
               </Button>
             )}
             <Button variant="secondary" size="sm" onClick={() => void refresh()} disabled={refreshing || list.isFetching}
-              title="Ask AWS for the current subscription status">
-              <RefreshCw size={13} /> {refreshing ? "Checking…" : "Refresh status"}
+              title={t("refreshTitle")}>
+              <RefreshCw size={13} /> {refreshing ? t("checking") : t("refreshStatus")}
             </Button>
           </div>
         }
       />
 
       {list.isError && (
-        <ErrorState message={list.error instanceof Error ? list.error.message : "Could not load the alert recipients."} onRetry={() => list.refetch()} />
+        <ErrorState message={list.error instanceof Error ? list.error.message : t("loadError")} onRetry={() => list.refetch()} />
       )}
 
       {data && (
         <div data-testid="alert-recipients-ready" style={{ minWidth: 0 }}>
           {!data.configured && (
             <Notice tone="info">
-              Alert recipients are not set up on this environment (ALERTS_TOPIC_ARN or ALERT_BOOTSTRAP_EMAIL is not set).
-              The list is read-only.
+              {t("notSetUp")}
             </Notice>
           )}
           {data.reconcile_error && (
             <Notice tone="warning">
-              Could not read the current status from AWS ({data.reconcile_error}). The list below is the last known state.
+              {t("reconcileError", data.reconcile_error)}
             </Notice>
           )}
           {pageError && <Notice tone="danger">{pageError}</Notice>}
 
           <Section
-            title={data.topic_name ? `Recipients (topic ${data.topic_name})` : "Recipients"}
-            right={<span style={{ fontSize: 12.5, color: K.muted }}>{data.limits.active} of {data.limits.max_active} · {data.limits.adds_left_today} add(s) left today{data.reconciled_at ? ` · checked ${formatDateTime(data.reconciled_at)}` : ""}</span>}
+            title={data.topic_name ? t("recipientsTopic", data.topic_name) : t("recipients")}
+            right={<span style={{ fontSize: 12.5, color: K.muted }}>{t("counts", data.limits.active, data.limits.max_active, data.limits.adds_left_today)}{data.reconciled_at ? t("checkedAt", formatDateTime(data.reconciled_at)) : ""}</span>}
           >
             {data.bootstrap && (
               <LockedRow email={data.bootstrap.email} state={data.bootstrap.state}
-                label="Bootstrap: set in Terraform (alert_email); always receives every alert and cannot be removed here." />
+                label={t("bootstrap")} />
             )}
             {data.ops_fallback_email && (
-              <LockedRow email={data.ops_fallback_email} label="CIS spend e-mails only: set in Terraform (cis_ops_alert_email)." />
+              <LockedRow email={data.ops_fallback_email} label={t("opsFallback")} />
             )}
             <div style={{ marginTop: 10 }}>
               <DataTable<AlertRecipient>
@@ -507,41 +530,39 @@ export default function AlertRecipients() {
                 getRowId={(r) => r.id}
                 paginate={false}
                 tableMinWidth={680}
-                emptyTitle="No other recipients"
-                emptyDescription={canWrite ? "Add a recipient: AWS e-mails them a confirmation link." : "Only the locked recipient above receives alerts."}
+                emptyTitle={t("noOthers")}
+                emptyDescription={canWrite ? t("emptyWrite") : t("emptyRead")}
               />
             </div>
           </Section>
 
           {(data.leaving ?? []).length > 0 && (
             <details style={{ marginBottom: 16 }}>
-              <summary style={summaryStyle}>Removed, waiting for AWS to drop the unconfirmed subscription ({(data.leaving ?? []).length})</summary>
+              <summary style={summaryStyle}>{t("leavingTitle", (data.leaving ?? []).length)}</summary>
               <p style={{ fontSize: 12.5, color: K.muted, margin: "8px 0" }}>
-                Removed on this page before the confirmation link was clicked. AWS deletes the unconfirmed subscription within
-                3 days; if the link is clicked first, the automatic status check (every 5 minutes) unsubscribes it again.
-                Nothing to do here.
+                {t("leavingNote")}
               </p>
               {(data.leaving ?? []).map((u) => (
-                <LockedRow key={u.email} email={u.email} state={u.state} label="Removed here, unconfirmed" />
+                <LockedRow key={u.email} email={u.email} state={u.state} label={t("leavingLabel")} />
               ))}
             </details>
           )}
 
           {data.unmanaged.length > 0 && (
             <details style={{ marginBottom: 16 }}>
-              <summary style={summaryStyle}>Unmanaged subscriptions ({data.unmanaged.length})</summary>
+              <summary style={summaryStyle}>{t("unmanagedTitle", data.unmanaged.length)}</summary>
               <p style={{ fontSize: 12.5, color: K.muted, margin: "8px 0" }}>
-                Added outside this page (AWS console or CLI). They receive alerts too; change them where they were added.
+                {t("unmanagedNote")}
               </p>
               {data.unmanaged.map((u) => (
-                <LockedRow key={u.email} email={u.email} state={u.state} label="Added outside the admin page" />
+                <LockedRow key={u.email} email={u.email} state={u.state} label={t("unmanagedLabel")} />
               ))}
             </details>
           )}
 
           {data.history.length > 0 && (
             <details>
-              <summary style={summaryStyle}>History ({data.history.length})</summary>
+              <summary style={summaryStyle}>{t("history", data.history.length)}</summary>
               <div style={{ marginTop: 8 }}>
                 <DataTable<AlertRecipient>
                   tableId="platform-alert-recipients-history"
@@ -565,8 +586,8 @@ export default function AlertRecipients() {
         onAdded={(email, state) => {
           setAdding(false);
           toast.success(state === "confirmed"
-            ? `${email} was already confirmed on AWS: it receives alerts now.`
-            : `Added ${email}. AWS sent a confirmation e-mail from no-reply@sns.amazonaws.com; alerts start after the link is clicked (check spam).`, 8000);
+            ? t("alreadyConfirmed", email)
+            : t("added", email), 8000);
           void reload();
         }}
       />
@@ -576,12 +597,11 @@ export default function AlertRecipients() {
         onConfirm={() => void remove()}
         destructive
         busy={busy !== null}
-        title="Remove alert recipient"
-        confirmLabel="Remove"
+        title={t("removeTitle")}
+        confirmLabel={t("remove")}
         body={
           <p style={{ margin: 0, fontSize: 13, lineHeight: 1.5, fontFamily: sans }}>
-            Remove <strong style={{ fontFamily: mono }}>{removing?.email}</strong>? It stops getting platform alerts and
-            CIS spend e-mails. You can add it again later (AWS then sends a new confirmation).
+            {t("removeQ")} <strong style={{ fontFamily: mono }}>{removing?.email}</strong>{t("removeBody")}
           </p>
         }
       />

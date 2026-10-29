@@ -215,6 +215,37 @@ export const LOCALES = ["en-AU", "en-GB", "en-US", "vi-VN"] as const;
 
 export const RETRYABLE_KINDS = ["crm_intake_process", "crm_dispatch", "crm_offboard"] as const;
 
+// ── words ──────────────────────────────────────────────────────────────────────────────────────
+
+/** AA-994: the phrases the helpers below build (English). The page passes the UI language's words
+ * (lib/crmConsole.messages.ts CRM_WORDS_MESSAGES) through app/admin/platform/agencies/useCrmText.ts; a call without
+ * them stays English, so node --test loads this module as it is. */
+export const CRM_WORDS = {
+  lagNone: "no successful pull yet",
+  lagS: (n: number) => `${n} s`,
+  lagMin: (n: number) => `${n} min`,
+  lagH: (h: number) => `${h} h`,
+  lagHMin: (h: number, m: number) => `${h} h ${m} min`,
+  lagD: (d: number) => `${d} d`,
+  lagDH: (d: number, h: number) => `${d} d ${h} h`,
+  pullNone: "none yet",
+  pullAgo: (lag: string) => `${lag} ago`,
+  lockNoSourceLabel: "Locked (source not reported)",
+  lockNoSourceShort: "source not reported",
+  lockNoSourceDetail: "The CRM did not say who locked it.",
+  lockOtherLabel: (src: string) => `Locked (${src})`,
+  lockOtherShort: (src: string) => `by ${src}`,
+  checkForm: (msgs: string) => `Check the form: ${msgs}`,
+  refused: (status: number) => `Request refused (${status}).`,
+  adminOnly: "Admin only: your CIS role cannot do this.",
+  failed: (status: number) => `Request failed (${status}).`,
+  network: "Network error: nothing was sent. Try again.",
+};
+export type CrmWords = typeof CRM_WORDS;
+
+type LockSourceLabels = Record<LockSource, { label: string; short: string; detail: string }>;
+type FeedStateLabels = Record<MembershipFeedState, { label: string; tone: Tone; detail: string }>;
+
 // ── labels ─────────────────────────────────────────────────────────────────────────────────────
 
 export type Tone = "neutral" | "accent" | "success" | "warning" | "danger" | "info" | "purple";
@@ -231,7 +262,7 @@ export function stateLabel(state: string): { label: string; tone: Tone } {
 }
 
 // AA-978 follow-up (crm.ops.v1 1.2): who locked a locked agency, and the CIS membership feed's health.
-export const LOCK_SOURCE_LABEL: Record<LockSource, { label: string; short: string; detail: string }> = {
+export const LOCK_SOURCE_LABEL: LockSourceLabels = {
   aa_ops: {
     label: "Locked by AA",
     short: "by AA staff",
@@ -254,18 +285,19 @@ export const LOCK_SOURCE_LABEL: Record<LockSource, { label: string; short: strin
  * puts next to the State badge ("by AA staff", "by CIS tenant lifecycle", …). */
 export function lockSourceText(
   summary: Pick<TenantSummary, "state" | "lock_source">,
+  w: CrmWords = CRM_WORDS,
+  labels: LockSourceLabels = LOCK_SOURCE_LABEL,
 ): { code: string | null; label: string; short: string; detail: string } | null {
   if (summary.state !== "locked") return null;
   const src = summary.lock_source;
   if (!src) {
-    return { code: null, label: "Locked (source not reported)", short: "source not reported",
-      detail: "The CRM did not say who locked it." };
+    return { code: null, label: w.lockNoSourceLabel, short: w.lockNoSourceShort, detail: w.lockNoSourceDetail };
   }
-  const known = Object.hasOwn(LOCK_SOURCE_LABEL, src) ? LOCK_SOURCE_LABEL[src as LockSource] : undefined;
-  return known ? { code: src, ...known } : { code: src, label: `Locked (${src})`, short: `by ${src}`, detail: "" };
+  const known = Object.hasOwn(labels, src) ? labels[src as LockSource] : undefined;
+  return known ? { code: src, ...known } : { code: src, label: w.lockOtherLabel(src), short: w.lockOtherShort(src), detail: "" };
 }
 
-export const FEED_STATE_LABEL: Record<MembershipFeedState, { label: string; tone: Tone; detail: string }> = {
+export const FEED_STATE_LABEL: FeedStateLabels = {
   ok: { label: "OK", tone: "success", detail: "The CRM is pulling CIS membership changes." },
   pending: {
     label: "Pending",
@@ -278,36 +310,40 @@ export const FEED_STATE_LABEL: Record<MembershipFeedState, { label: string; tone
 };
 
 /** Seconds as "45 s", "12 min", "3 h 5 min", "2 d 4 h"; null → "no successful pull yet". */
-export function formatLag(seconds: number | null | undefined): string {
-  if (seconds == null || !Number.isFinite(seconds)) return "no successful pull yet";
+export function formatLag(seconds: number | null | undefined, w: CrmWords = CRM_WORDS): string {
+  if (seconds == null || !Number.isFinite(seconds)) return w.lagNone;
   const s = Math.max(0, Math.floor(seconds));
-  if (s < 60) return `${s} s`;
+  if (s < 60) return w.lagS(s);
   const m = Math.floor(s / 60);
-  if (m < 60) return `${m} min`;
+  if (m < 60) return w.lagMin(m);
   const h = Math.floor(m / 60);
-  if (h < 24) return m % 60 ? `${h} h ${m % 60} min` : `${h} h`;
+  if (h < 24) return m % 60 ? w.lagHMin(h, m % 60) : w.lagH(h);
   const d = Math.floor(h / 24);
-  return h % 24 ? `${d} d ${h % 24} h` : `${d} d`;
+  return h % 24 ? w.lagDH(d, h % 24) : w.lagD(d);
 }
 
 /** The CIS membership feed's health word, tone and last successful pull ("12 min ago" / "none yet"). An absent or
  * unrecognised state reads "unknown". */
 export function membershipFeed(
   summary: Pick<TenantSummary, "membership_feed_state" | "membership_feed_lag_s">,
+  w: CrmWords = CRM_WORDS,
+  labels: FeedStateLabels = FEED_STATE_LABEL,
 ): { state: MembershipFeedState; label: string; tone: Tone; detail: string; lastPull: string } {
   const raw = summary.membership_feed_state;
   const state: MembershipFeedState = raw && Object.hasOwn(FEED_STATE_LABEL, raw) ? raw : "unknown";
   const lag = summary.membership_feed_lag_s;
-  const lastPull = lag == null || !Number.isFinite(lag) ? "none yet" : `${formatLag(lag)} ago`;
-  return { state, ...FEED_STATE_LABEL[state], lastPull };
+  const lastPull = lag == null || !Number.isFinite(lag) ? w.pullNone : w.pullAgo(formatLag(lag, w));
+  return { state, ...labels[state], lastPull };
 }
 
 /** The membership feed health for the whole page: the CRM reports the same platform-wide value on every agency, so the
  * first loaded agency carries it. Null when no agency is loaded (the CRM then reported nothing). */
 export function platformMembershipFeed(
   items: ReadonlyArray<Pick<TenantSummary, "membership_feed_state" | "membership_feed_lag_s">>,
+  w: CrmWords = CRM_WORDS,
+  labels: FeedStateLabels = FEED_STATE_LABEL,
 ): ReturnType<typeof membershipFeed> | null {
-  return items.length ? membershipFeed(items[0]) : null;
+  return items.length ? membershipFeed(items[0], w, labels) : null;
 }
 
 export const DATA_REQUEST_STATUS_LABEL: Record<DataRequestStatus, { label: string; tone: Tone }> = {
@@ -337,7 +373,7 @@ export function kindLabel(code: string): string {
 
 /** Plain words for the CRM's (and the relay's) error codes. The code itself is always shown next to them, so
  * "has_travellers" or "owner_exists" reaches the reader verbatim. */
-const ERROR_TEXT: Record<string, string> = {
+export const CRM_ERROR_TEXT: Record<string, string> = {
   cognito_session_required: "Sign in with your staff account (Cognito) to use the CRM console.",
   missing_group: "Your staff account is not in the crm-platform-admin group.",
   wrong_audience: "This sign-in cannot call the CRM console (wrong app client).",
@@ -374,19 +410,26 @@ const ERROR_TEXT: Record<string, string> = {
 
 /** One readable line for a failed call: plain words + the code. `detail` may be a code string or FastAPI's 422
  * list of {loc, msg}. */
-export function crmErrorText(status: number, detail: unknown, message?: unknown): string {
+export function crmErrorText(
+  status: number,
+  detail: unknown,
+  message?: unknown,
+  w: CrmWords = CRM_WORDS,
+  errors: Record<string, string> = CRM_ERROR_TEXT,
+): string {
   if (Array.isArray(detail)) {
     const msgs = detail
       .map((d) => (d && typeof d === "object" && "msg" in d ? String((d as { msg: unknown }).msg) : ""))
       .filter(Boolean);
-    return msgs.length ? `Check the form: ${msgs.join("; ")}` : `Request refused (${status}).`;
+    return msgs.length ? w.checkForm(msgs.join("; ")) : w.refused(status);
   }
   if (typeof detail === "string" && detail) {
-    if (status === 403 && detail.startsWith("Role '")) return "Admin only: your CIS role cannot do this.";
-    const plain = ERROR_TEXT[detail] ?? (typeof message === "string" && message ? message : null);
+    if (status === 403 && detail.startsWith("Role '")) return w.adminOnly;
+    const known = Object.hasOwn(errors, detail) ? errors[detail] : undefined;
+    const plain = known ?? (typeof message === "string" && message ? message : null);
     return plain ? `${plain} (${detail})` : detail;
   }
-  return `Request failed (${status}).`;
+  return w.failed(status);
 }
 
 export type WriteResult<T = Record<string, unknown>> =
@@ -398,6 +441,8 @@ export async function crmWrite<T = Record<string, unknown>>(
   method: "POST" | "PUT",
   path: string,
   body?: unknown,
+  w: CrmWords = CRM_WORDS,
+  errors: Record<string, string> = CRM_ERROR_TEXT,
 ): Promise<WriteResult<T>> {
   let res: Response;
   try {
@@ -407,7 +452,7 @@ export async function crmWrite<T = Record<string, unknown>>(
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch {
-    return { ok: false, status: 0, message: "Network error: nothing was sent. Try again.", code: null };
+    return { ok: false, status: 0, message: w.network, code: null };
   }
   let data: Record<string, unknown> = {};
   try {
@@ -419,7 +464,7 @@ export async function crmWrite<T = Record<string, unknown>>(
   return {
     ok: false,
     status: res.status,
-    message: crmErrorText(res.status, data.detail, data.message),
+    message: crmErrorText(res.status, data.detail, data.message, w, errors),
     code: typeof data.detail === "string" ? data.detail : null,
   };
 }

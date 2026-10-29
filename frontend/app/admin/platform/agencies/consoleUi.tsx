@@ -6,8 +6,9 @@
 
 import { AlertTriangle } from "lucide-react";
 import { useState } from "react";
-import { Button, K, Modal, RADIUS, sans } from "../../../_kit";
+import { Button, K, Modal, RADIUS, sans, useT } from "../../../_kit";
 import { isTicket, type WriteResult } from "@/lib/crmConsole";
+import { AGENCIES } from "./messages";
 
 export const fieldStyle: React.CSSProperties = {
   fontSize: 13.5, padding: "8px 10px", border: `1px solid ${K.line}`, borderRadius: RADIUS.sm, background: K.card,
@@ -59,9 +60,7 @@ export function InlineError({ message }: { message: string }) {
 
 /** The confirm dialog of every L1 write: what will happen, the action's own fields, the ticket reference. */
 export function WriteModal<T>({
-  open, onClose, title, children, confirmLabel, destructive = false, canSubmit = true, ticketLabel = "Ticket reference",
-  ticketHint = "The support or Jira ticket this action belongs to, for example SUP-1024. It goes into the agency's access log.",
-  submit, onDone,
+  open, onClose, title, children, confirmLabel, destructive = false, canSubmit = true, ticketLabel, ticketHint, submit, onDone,
 }: {
   open: boolean;
   onClose: () => void;
@@ -75,6 +74,7 @@ export function WriteModal<T>({
   submit: (ticketRef: string) => Promise<WriteResult<T>>;
   onDone: (result: Extract<WriteResult<T>, { ok: true }>) => void;
 }) {
+  const t = useT(AGENCIES);
   const [ticket, setTicket] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -110,18 +110,18 @@ export function WriteModal<T>({
       ) : title}
       footer={
         <>
-          <Button variant="ghost" onClick={close} disabled={busy}>Cancel</Button>
+          <Button variant="ghost" onClick={close} disabled={busy}>{t("cancel")}</Button>
           <Button variant={destructive ? "danger" : "primary"} onClick={() => void go()}
             disabled={!ticketOk || !canSubmit || busy}>
-            {busy ? "Working…" : confirmLabel}
+            {busy ? t("working") : confirmLabel}
           </Button>
         </>
       }>
       <form onSubmit={(e) => { e.preventDefault(); void go(); }}
         style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         {children}
-        <Field label={ticketLabel} htmlFor="crm-write-ticket"
-          hint={ticket && !ticketOk ? "Use a project key, a dash and a number, for example SUP-1024." : ticketHint}>
+        <Field label={ticketLabel ?? t("ticketLabel")} htmlFor="crm-write-ticket"
+          hint={ticket && !ticketOk ? t("ticketBad") : ticketHint ?? t("ticketHint")}>
           <input id="crm-write-ticket" data-testid="crm-write-ticket" type="text" autoComplete="off" value={ticket}
             maxLength={27} placeholder="SUP-1024" onChange={(e) => setTicket(e.target.value)} style={fieldStyle}
             aria-invalid={!!ticket && !ticketOk} />

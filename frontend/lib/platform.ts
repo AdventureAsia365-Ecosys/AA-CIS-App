@@ -28,17 +28,27 @@ export interface AppHealthVerdict {
   basis: string[];
 }
 
-/** "based on its health check and its traffic …" — one phrasing of `overall.basis` for both pages. */
+/** The phrasings basisText() picks from (English; the Vietnamese side is lib/platform.messages.ts BASIS_MESSAGES). */
+export const BASIS_WORDS = {
+  noAnswerTraffic: "its health check did not answer; its traffic of the last 24 hours is shown too",
+  noAnswer: "its health check did not answer (no traffic numbers right now)",
+  probeTraffic: "based on its health check and its traffic of the last 24 hours",
+  traffic: "based on its traffic of the last 24 hours (AWS CloudWatch); it has no health check",
+  probe: "based on its health check (no traffic numbers right now)",
+};
+
+/** "based on its health check and its traffic …" — one phrasing of `overall.basis` for both pages. `words`: the UI
+ * language's phrasings (AA-994), English when left out. */
 // basis strings: api/services/app_health.py PROBE_BASIS / PROBE_NO_ANSWER_BASIS / TRAFFIC_BASIS.
-export function basisText(basis: string[]): string {
+export function basisText(basis: string[], words: typeof BASIS_WORDS = BASIS_WORDS): string {
   const noAnswer = basis.includes("Health check (did not answer)");
   const probe = basis.includes("Health check");
   const traffic = basis.some((b) => b.startsWith("Traffic"));
-  if (noAnswer && traffic) return "its health check did not answer; its traffic of the last 24 hours is shown too";
-  if (noAnswer) return "its health check did not answer (no traffic numbers right now)";
-  if (probe && traffic) return "based on its health check and its traffic of the last 24 hours";
-  if (traffic) return "based on its traffic of the last 24 hours (AWS CloudWatch); it has no health check";
-  if (probe) return "based on its health check (no traffic numbers right now)";
+  if (noAnswer && traffic) return words.noAnswerTraffic;
+  if (noAnswer) return words.noAnswer;
+  if (probe && traffic) return words.probeTraffic;
+  if (traffic) return words.traffic;
+  if (probe) return words.probe;
   return "";
 }
 

@@ -35,23 +35,17 @@ import {
   SkeletonStyle,
   apiGet,
   apiSend,
-  formatDate,
-  formatDateTime,
   mono,
   sans,
+  useFormat,
+  useLang,
+  useT,
   type ColumnDef,
   type Tone, AdminMain,
 } from "../../../_kit";
-import {
-  AI_ESTIMATE_LABEL,
-  AI_ON_BILL_LABEL,
-  AI_ON_BILL_SRC,
-  AI_OUTSIDE_LABEL,
-  AI_OUTSIDE_SRC,
-  AWS_BILL_LABEL,
-  AWS_BILL_SRC,
-  shownSum,
-} from "@/lib/costWording";
+import { shownSum } from "@/lib/costWording";
+import { COST_WORDING } from "@/lib/costWording.messages";
+import type { Lang } from "../../../_kit/core/i18n";
 import {
   currentUtcMonth,
   lastIncludedDay,
@@ -62,23 +56,28 @@ import {
   type CostRowKind,
   type SatelliteLine,
 } from "@/lib/platform";
+import { COST } from "./messages";
 
-const KIND_TONE: Record<CostRowKind, { tone: Tone; label: string }> = {
-  app: { tone: "accent", label: "App" },
-  llm_app: { tone: "purple", label: "LLM only" },
-  shared_tag: { tone: "info", label: "Shared" },
-  other_tag: { tone: "neutral", label: "Other tag" },
-  untagged: { tone: "warning", label: "No App tag" },
+type KindWord = "kindApp" | "kindLlm" | "kindShared" | "kindOther" | "kindUntagged";
+const KIND_TONE: Record<CostRowKind, { tone: Tone; label: KindWord }> = {
+  app: { tone: "accent", label: "kindApp" },
+  llm_app: { tone: "purple", label: "kindLlm" },
+  shared_tag: { tone: "info", label: "kindShared" },
+  other_tag: { tone: "neutral", label: "kindOther" },
+  untagged: { tone: "warning", label: "kindUntagged" },
 };
 
 const MONTH_RE = /^\d{4}-\d{2}$/;
 
-function monthLabel(month: string): string {
+function monthLabel(month: string, lang: Lang = "en"): string {
   const d = new Date(`${month}-01T00:00:00Z`);
-  return Number.isNaN(d.getTime()) ? month : d.toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+  return Number.isNaN(d.getTime())
+    ? month
+    : d.toLocaleString(lang === "vi" ? "vi-VN" : "en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 }
 
 export default function CostByApp() {
+  const t = useT(COST);
   const qc = useQueryClient();
   const [thisMonth] = useState(() => currentUtcMonth());
   const [month, setMonth] = useState(thisMonth);
@@ -109,25 +108,23 @@ export default function CostByApp() {
     <AdminMain>
       <SkeletonStyle />
       <PageHeader
-        title="Cost per app"
+        title={t("title")}
         description={
           <>
-            What each app cost in one UTC month: the AWS bill of the main account split by each resource&apos;s App
-            tag, plus each app&apos;s AI spend outside that bill. The same numbers as the Overview card. Provider-level
-            detail is on{" "}
-            <Link href="/admin/cost-ops" style={{ color: K.accentDeep, fontWeight: 600 }}>Cost Operations</Link>.
+            {t("description")}{" "}
+            <Link href="/admin/cost-ops" style={{ color: K.accentDeep, fontWeight: 600 }}>{t("costOps")}</Link>.
           </>
         }
         actions={
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: K.muted, fontFamily: sans }}>
-              Month
+              {t("month")}
               <input
                 type="month"
                 value={month}
                 max={thisMonth}
                 onChange={(e) => { if (MONTH_RE.test(e.target.value) && e.target.value <= thisMonth) setMonth(e.target.value); }}
-                aria-label="Month (UTC)"
+                aria-label={t("monthAria")}
                 style={{
                   padding: "5px 8px", borderRadius: RADIUS.md, border: `1px solid ${K.line}`, background: K.card,
                   color: K.ink, fontSize: 13, fontFamily: sans, maxWidth: "100%", minWidth: 0,
@@ -135,8 +132,8 @@ export default function CostByApp() {
               />
             </label>
             <Button variant="secondary" size="sm" onClick={refreshFromAws} disabled={!data || check.isPending}
-              title="Fetch this month again from AWS Cost Explorer (both accounts by service + the main account by App tag): 3 requests, about $0.03">
-              <CloudDownload size={13} /> {check.isPending ? "Fetching…" : "Refresh from AWS"}
+              title={t("refreshTitle")}>
+              <CloudDownload size={13} /> {check.isPending ? t("fetching") : t("refreshAws")}
             </Button>
           </div>
         }
@@ -144,13 +141,13 @@ export default function CostByApp() {
 
       {check.isError && (
         <div style={{ ...noteStyle, color: K.danger, marginBottom: 12 }}>
-          Refresh from AWS failed: {(check.error as Error)?.message || "unknown error"}
+          {t("refreshFailed", (check.error as Error)?.message || t("unknownError"))}
         </div>
       )}
       {check.data && <CheckOutcome r={check.data} />}
 
       {cost.isError ? (
-        <ErrorState message={(cost.error as Error)?.message || "Could not load cost per app"} onRetry={() => cost.refetch()} />
+        <ErrorState message={(cost.error as Error)?.message || t("loadError")} onRetry={() => cost.refetch()} />
       ) : !data ? (
         <CostSkeleton />
       ) : (
@@ -187,12 +184,14 @@ function CostSkeleton() {
 }
 
 function CheckOutcome({ r }: { r: CeCheckResp }) {
+  const t = useT(COST);
+  const { formatDate } = useFormat();
   const errs = Object.entries(r.errors ?? {});
   return (
     <div style={{ ...noteStyle, marginBottom: 12, color: errs.length ? K.amber : K.success }}>
-      Fetched {formatDate(r.period_start)} – {formatDate(lastIncludedDay(r.period_end_exclusive))}: {r.row_count} service
-      row{r.row_count === 1 ? "" : "s"}, {r.app_tag_row_count ?? 0} App-tag row{r.app_tag_row_count === 1 ? "" : "s"}.
-      {errs.length > 0 && ` Errors: ${errs.map(([k, v]) => `${k}: ${v}`).join("; ")}`}
+      {t("fetched", formatDate(r.period_start), formatDate(lastIncludedDay(r.period_end_exclusive)), r.row_count,
+        r.app_tag_row_count ?? 0)}
+      {errs.length > 0 && t("errors", errs.map(([k, v]) => `${k}: ${v}`).join("; "))}
     </div>
   );
 }
@@ -219,6 +218,9 @@ function Stat({ label, value, title, testId, op, strong }: {
 
 /** The KPI strip adds up on screen: AWS bill + AI estimate − AI already on the AWS bill = Total. */
 function Summary({ data }: { data: CostResp }) {
+  const t = useT(COST);
+  const cw = useT(COST_WORDING);
+  const lang = useLang();
   const aws = data.aws.total_usd;
   const untaggedPct = aws ? Math.round((100 * data.aws.untagged_usd) / aws) : null;
   return (
@@ -226,18 +228,18 @@ function Summary({ data }: { data: CostResp }) {
       <div data-testid="platform-cost-kpis" style={{
         display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 170px), 1fr))", gap: 10,
       }}>
-        <Stat label={AWS_BILL_LABEL} value={aws == null ? "—" : usd(shownSum(aws))} title={AWS_BILL_SRC} testId="platform-cost-aws" />
-        <Stat op="+" label={AI_ESTIMATE_LABEL} value={usd(shownSum(data.totals.ai_usd))}
-          title="Estimate from our AI gateway's call log, every provider and account" testId="platform-cost-ai" />
-        <Stat op="−" label={AI_ON_BILL_LABEL} value={usd(shownSum(data.totals.ai_in_aws_acc2_usd))} title={AI_ON_BILL_SRC}
+        <Stat label={cw("awsBill")} value={aws == null ? "—" : usd(shownSum(aws))} title={cw("awsBillSrc")} testId="platform-cost-aws" />
+        <Stat op="+" label={cw("aiEstimate")} value={usd(shownSum(data.totals.ai_usd))}
+          title={t("aiEstimateTitle")} testId="platform-cost-ai" />
+        <Stat op="−" label={cw("aiOnBill")} value={usd(shownSum(data.totals.ai_in_aws_acc2_usd))} title={cw("aiOnBillSrc")}
           testId="platform-cost-ai-on-bill" />
-        <Stat op="=" strong label={`Total · ${monthLabel(data.month)}`}
+        <Stat op="=" strong label={t("total", monthLabel(data.month, lang))}
           value={usd(shownSum(data.aws.total_usd, data.totals.ai_usd, -(data.totals.ai_in_aws_acc2_usd ?? 0)))}
           testId="platform-cost-total" />
       </div>
       {untaggedPct != null && (
-        <div style={noteStyle} title="AWS spend on the main account whose resources carry no App tag">
-          Not assigned to an app: {usd(data.aws.untagged_usd)} ({untaggedPct} % of the AWS bill).
+        <div style={noteStyle} title={t("untaggedTitle")}>
+          {t("untagged", usd(data.aws.untagged_usd), untaggedPct)}
         </div>
       )}
     </div>
@@ -245,30 +247,31 @@ function Summary({ data }: { data: CostResp }) {
 }
 
 function DataStatus({ data }: { data: CostResp }) {
+  const t = useT(COST);
+  const lang = useLang();
+  const { formatDate, formatDateTime } = useFormat();
   const r = data.refresh;
   let refreshLine: React.ReactNode = null;
   if (r.attempted && r.ok) {
-    refreshLine = <span style={{ color: K.success }}>Fetched from Cost Explorer on this view ({r.ce_requests ?? 1} request, about {usd(r.est_cost_usd ?? 0.01)}).</span>;
+    refreshLine = <span style={{ color: K.success }}>{t("ceFetched", r.ce_requests ?? 1, usd(r.est_cost_usd ?? 0.01))}</span>;
   } else if (r.attempted && r.ok === false) {
-    refreshLine = <span style={{ color: K.danger }}>Automatic refresh failed: {r.error ?? "unknown error"}. Showing stored data.</span>;
+    refreshLine = <span style={{ color: K.danger }}>{t("autoFailed", r.error ?? t("unknownError"))}</span>;
   } else if (r.stale) {
-    refreshLine = <span style={{ color: K.amber }}>Stored data may be out of date ({r.stale_reason ?? r.reason}). {r.skipped ? "" : "Use Refresh from AWS to fetch it now."}</span>;
+    refreshLine = <span style={{ color: K.amber }}>{t("stale", r.stale_reason ?? r.reason ?? "")} {r.skipped ? "" : t("useRefresh")}</span>;
   }
   return (
     <div style={{ ...noteStyle, display: "flex", flexDirection: "column", gap: 2 }}>
       {data.aws.has_data ? (
         <span>
-          AWS data covers {formatDate(data.aws.covered_from)} – {formatDate(data.aws.covered_to)} (UTC days, Cost Explorer
-          lags about 2 days), last fetched {formatDateTime(data.aws.fetched_at)}.
+          {t("covers", formatDate(data.aws.covered_from), formatDate(data.aws.covered_to), formatDateTime(data.aws.fetched_at))}
         </span>
       ) : (
-        <span style={{ color: K.amber }}>No AWS data stored for {monthLabel(data.month)} yet: the AWS column is empty until a fetch succeeds.</span>
+        <span style={{ color: K.amber }}>{t("noAws", monthLabel(data.month, lang))}</span>
       )}
       {refreshLine}
       {data.crm_llm && data.crm_llm.status !== "ok" && data.crm_llm.status !== "not_requested" && (
         <span style={{ color: K.amber }} data-testid="cost-crm-llm-missing">
-          Partner CRM AI spend not included ({data.crm_llm.reason ?? data.crm_llm.status}); it needs a staff Cognito
-          sign-in and the CRM reachable.
+          {t("crmMissing", data.crm_llm.reason ?? data.crm_llm.status)}
         </span>
       )}
     </div>
@@ -286,25 +289,28 @@ function hasBreakdown(r: CostRow): boolean {
 }
 
 function CostTable({ data }: { data: CostResp }) {
+  const t = useT(COST);
+  const cw = useT(COST_WORDING);
+  const lang = useLang();
   const [openApp, setOpenApp] = useState<string | null>(null);
   const open = data.apps.find((r) => r.app === openApp) ?? null;
   const columns = useMemo<ColumnDef<CostRow, unknown>[]>(() => [
     {
       id: "app",
       accessorFn: (r) => r.label,
-      header: "App",
+      header: t("colApp"),
       cell: (c) => {
         const r = c.row.original;
         return (
           <span style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
               <span style={{ fontWeight: 600 }}>{r.label}</span>
-              {r.kind !== "app" && <Badge tone={KIND_TONE[r.kind].tone} dot={false}>{KIND_TONE[r.kind].label}</Badge>}
+              {r.kind !== "app" && <Badge tone={KIND_TONE[r.kind].tone} dot={false}>{t(KIND_TONE[r.kind].label)}</Badge>}
             </span>
             {r.hint && <span style={{ ...noteStyle, whiteSpace: "normal" }}>{r.hint}</span>}
             {hasBreakdown(r) && (
               <span style={{ fontSize: 11.5, color: K.accentDeep, display: "inline-flex", alignItems: "center", gap: 3 }}>
-                Breakdown <ChevronRight size={11} />
+                {t("breakdown")} <ChevronRight size={11} />
               </span>
             )}
           </span>
@@ -313,21 +319,21 @@ function CostTable({ data }: { data: CostResp }) {
     },
     {
       accessorKey: "aws_usd",
-      header: AWS_BILL_LABEL,
+      header: cw("awsBill"),
       meta: { align: "right" },
-      cell: (c) => <span style={num} title={AWS_BILL_SRC}>{usd(shownSum(c.row.original.aws_usd))}</span>,
+      cell: (c) => <span style={num} title={cw("awsBillSrc")}>{usd(shownSum(c.row.original.aws_usd))}</span>,
     },
     {
       accessorKey: "ai_outside_aws_usd",
-      header: AI_OUTSIDE_LABEL,
+      header: cw("aiOutside"),
       meta: { align: "right" },
       cell: (c) => {
         const r = c.row.original;
         return (
           <span style={{ ...num, color: r.ai_outside_aws_usd ? K.body : K.muted }}
             title={r.ai_in_aws_acc2_usd
-              ? `${AI_ESTIMATE_LABEL} ${usd(r.ai_usd)} − ${usd(r.ai_in_aws_acc2_usd)} already on the AWS bill`
-              : AI_OUTSIDE_SRC}>
+              ? t("outsideTitle", cw("aiEstimate"), usd(r.ai_usd), usd(r.ai_in_aws_acc2_usd))
+              : cw("aiOutsideSrc")}>
             {usd(shownSum(r.ai_usd, -r.ai_in_aws_acc2_usd))}
           </span>
         );
@@ -335,22 +341,22 @@ function CostTable({ data }: { data: CostResp }) {
     },
     {
       accessorKey: "total_usd",
-      header: "Total",
+      header: t("colTotal"),
       meta: { align: "right" },
       cell: (c) => {
         const r = c.row.original;
         return (
-          <span style={{ ...num, fontWeight: 600 }} title={`${AWS_BILL_LABEL} + ${AI_OUTSIDE_LABEL.toLowerCase()}`}>
+          <span style={{ ...num, fontWeight: 600 }} title={`${cw("awsBill")} + ${cw("aiOutside").toLowerCase()}`}>
             {usd(shownSum(r.aws_usd, r.ai_usd, -r.ai_in_aws_acc2_usd))}
           </span>
         );
       },
     },
-  ], []);
+  ], [t, cw]);
 
   return (
     <section style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      <div style={{ fontWeight: 600, fontSize: 14, fontFamily: sans }}>By app</div>
+      <div style={{ fontWeight: 600, fontSize: 14, fontFamily: sans }}>{t("byApp")}</div>
       <DataTable<CostRow>
         tableId="platform-cost"
         data={data.apps}
@@ -359,19 +365,19 @@ function CostTable({ data }: { data: CostResp }) {
         pageSize={50}
         enableCsv
         csvFilename={`cis-cost-per-app-${data.month}.csv`}
-        emptyTitle="No cost data"
-        emptyDescription={`Nothing recorded for ${monthLabel(data.month)} yet.`}
+        emptyTitle={t("noCost")}
+        emptyDescription={t("nothingFor", monthLabel(data.month, lang))}
         onRowClick={(r) => setOpenApp(hasBreakdown(r) ? r.app : null)}
         tableMinWidth={640}
       />
       <div data-testid="platform-cost-totals" style={{
         ...panelStyle, display: "flex", flexWrap: "wrap", gap: "4px 18px", justifyContent: "flex-end", fontSize: 12.5,
       }}>
-        <span><span style={{ color: K.muted }}>{AWS_BILL_LABEL}</span> <strong>{data.totals.aws_usd == null ? "—" : usd(shownSum(data.totals.aws_usd))}</strong></span>
-        <span><span style={{ color: K.muted }}>+ {AI_OUTSIDE_LABEL}</span> <strong>{usd(shownSum(data.totals.ai_usd, -(data.totals.ai_in_aws_acc2_usd ?? 0)))}</strong></span>
-        <span><span style={{ color: K.muted }}>= Total</span> <strong>{usd(shownSum(data.totals.aws_usd, data.totals.ai_usd, -(data.totals.ai_in_aws_acc2_usd ?? 0)))}</strong></span>
+        <span><span style={{ color: K.muted }}>{cw("awsBill")}</span> <strong>{data.totals.aws_usd == null ? "—" : usd(shownSum(data.totals.aws_usd))}</strong></span>
+        <span><span style={{ color: K.muted }}>+ {cw("aiOutside")}</span> <strong>{usd(shownSum(data.totals.ai_usd, -(data.totals.ai_in_aws_acc2_usd ?? 0)))}</strong></span>
+        <span><span style={{ color: K.muted }}>{t("totalEq")}</span> <strong>{usd(shownSum(data.totals.aws_usd, data.totals.ai_usd, -(data.totals.ai_in_aws_acc2_usd ?? 0)))}</strong></span>
       </div>
-      <Drawer open={!!open} onClose={() => setOpenApp(null)} title={open ? `${open.label} · ${monthLabel(data.month)}` : "Breakdown"}>
+      <Drawer open={!!open} onClose={() => setOpenApp(null)} title={open ? `${open.label} · ${monthLabel(data.month, lang)}` : t("breakdown")}>
         {open && <Breakdown r={open} />}
       </Drawer>
     </section>
@@ -379,12 +385,13 @@ function CostTable({ data }: { data: CostResp }) {
 }
 
 function Breakdown({ r }: { r: CostRow }) {
+  const t = useT(COST);
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: 16 }}>
       {r.services.length > 0 && (
         <div>
           <div style={{ ...noteStyle, marginBottom: 4 }}>
-            AWS services{r.aws_tags.length > 0 && r.aws_tags.some((t) => t) ? ` (tag ${r.aws_tags.filter(Boolean).join(", ")})` : ""}
+            {t("awsServices")}{r.aws_tags.length > 0 && r.aws_tags.some(Boolean) ? t("tag", r.aws_tags.filter(Boolean).join(", ")) : ""}
           </div>
           <ul style={listStyle}>
             {r.services.map((s, i) => (
@@ -400,15 +407,15 @@ function Breakdown({ r }: { r: CostRow }) {
       )}
       {r.ai_by_source.length > 0 && (
         <div>
-          <div style={{ ...noteStyle, marginBottom: 4 }}>AI by provider / account ({r.ai_calls.toLocaleString("en-US")} calls)</div>
+          <div style={{ ...noteStyle, marginBottom: 4 }}>{t("aiBySource", r.ai_calls.toLocaleString("en-US"))}</div>
           <ul style={listStyle}>
             {r.ai_by_source.map((s, i) => (
               <li key={`${s.provider}-${s.account}-${i}`} style={lineStyle}>
                 <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
-                  <span style={{ fontFamily: mono, fontSize: 12 }}>{s.provider ?? "unknown"}</span>
+                  <span style={{ fontFamily: mono, fontSize: 12 }}>{s.provider ?? t("unknown")}</span>
                   {s.account_name && <span style={{ color: K.muted, fontFamily: mono }}> · {s.account_name}</span>}
-                  <span style={{ color: K.muted }}> · {s.calls.toLocaleString("en-US")} calls</span>
-                  {s.billed_in_aws_acc2 && <span style={{ color: K.muted }} title="Billed on the main AWS account: already in the AWS column"> · on the AWS bill</span>}
+                  <span style={{ color: K.muted }}>{t("calls", s.calls.toLocaleString("en-US"))}</span>
+                  {s.billed_in_aws_acc2 && <span style={{ color: K.muted }} title={t("onBillTitle")}>{t("onBill")}</span>}
                 </span>
                 <span style={num}>{usd(s.cost_usd)}</span>
               </li>
@@ -426,18 +433,18 @@ const lineStyle: React.CSSProperties = { display: "flex", flexWrap: "wrap", just
 // ── LLM spend by app ────────────────────────────────────────────────────────────────────────
 
 function LlmByApp({ data }: { data: CostResp }) {
+  const t = useT(COST);
+  const lang = useLang();
+  const { formatDateTime } = useFormat();
   const rows = data.apps.filter((r) => r.ai_usd > 0 || r.ai_calls > 0).sort((a, b) => b.ai_usd - a.ai_usd);
   const max = Math.max(0, ...rows.map((r) => r.ai_usd));
   const sats: SatelliteLine[] = data.llm_satellites.lines ?? [];
   return (
     <section data-testid="platform-cost-llm" style={{ ...panelStyle, display: "flex", flexDirection: "column", gap: 10 }}>
-      <div style={{ fontWeight: 600, fontSize: 14 }}>AI spend by app</div>
-      <div style={noteStyle}>
-        The full AI estimate per app, from our AI gateway&apos;s call log and its price table (every provider and
-        account, OpenAI and Jev included). The table above counts only the part outside the AWS bill.
-      </div>
+      <div style={{ fontWeight: 600, fontSize: 14 }}>{t("aiByApp")}</div>
+      <div style={noteStyle}>{t("aiByAppNote")}</div>
       {rows.length === 0 ? (
-        <div style={noteStyle}>No LLM call recorded for {monthLabel(data.month)}.</div>
+        <div style={noteStyle}>{t("noLlm", monthLabel(data.month, lang))}</div>
       ) : (
         <ul style={{ ...listStyle, gap: 8, fontSize: 13 }}>
           {rows.map((r) => (
@@ -445,7 +452,7 @@ function LlmByApp({ data }: { data: CostResp }) {
               <div style={lineStyle}>
                 <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
                   <span style={{ fontWeight: 600 }}>{r.label}</span>
-                  <span style={{ color: K.muted, fontSize: 12 }}> · {r.ai_calls.toLocaleString("en-US")} calls</span>
+                  <span style={{ color: K.muted, fontSize: 12 }}>{t("calls", r.ai_calls.toLocaleString("en-US"))}</span>
                 </span>
                 <span style={{ ...num, fontWeight: 600 }}>{usd(r.ai_usd)}</span>
               </div>
@@ -459,23 +466,23 @@ function LlmByApp({ data }: { data: CostResp }) {
       {sats.length > 0 && (
         <div style={{ borderTop: `1px solid ${K.line}`, paddingTop: 10, display: "flex", flexDirection: "column", gap: 4 }}>
           <div style={{ ...noteStyle, display: "inline-flex", alignItems: "center", gap: 4 }} title={data.sources.llm_satellites}>
-            Other AI accounts — the AWS bill of each vs our estimate (a cross-check; already counted above by app) <Info size={11} />
+            {t("otherAccounts")} <Info size={11} />
           </div>
           {sats.map((s, i) => (
             <div key={s.key ?? i} style={{ ...lineStyle, fontSize: 12.5 }}>
-              <span style={{ fontFamily: mono }}>{s.label ?? s.account_id ?? "AWS account"}</span>
+              <span style={{ fontFamily: mono }}>{s.label ?? s.account_id ?? t("awsAccount")}</span>
               <span style={num}>
-                AWS {s.ce_bedrock_usd == null ? "not fetched" : usd(s.ce_bedrock_usd)} · estimate {usd(s.llm_log_estimate_usd)}
+                {t("satLine", s.ce_bedrock_usd == null ? t("notFetched") : usd(s.ce_bedrock_usd), usd(s.llm_log_estimate_usd))}
               </span>
             </div>
           ))}
           {data.llm_satellites.ce_fetched_at && (
-            <div style={noteStyle}>Cost Explorer data from {formatDateTime(data.llm_satellites.ce_fetched_at)}.</div>
+            <div style={noteStyle}>{t("ceFrom", formatDateTime(data.llm_satellites.ce_fetched_at))}</div>
           )}
         </div>
       )}
       <Link href="/admin/cost-ops" style={{ color: K.accentDeep, fontWeight: 600, fontSize: 12.5, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4 }}>
-        Per provider and stage on Cost Operations <ArrowRight size={11} />
+        {t("perProvider")} <ArrowRight size={11} />
       </Link>
     </section>
   );
@@ -483,19 +490,20 @@ function LlmByApp({ data }: { data: CostResp }) {
 
 // ── data sources (collapsed) ────────────────────────────────────────────────────────────────
 
-const SOURCE_LABEL: Record<string, string> = {
-  aws_usd: AWS_BILL_LABEL,
-  ai_usd: AI_ESTIMATE_LABEL,
-  ai_outside_aws_usd: AI_OUTSIDE_LABEL,
-  total_usd: "Total",
-  llm_satellites: "Other AI accounts",
-};
-
 /** Where each number comes from, for whoever needs the exact tables — out of the way of the plain copy (S243). */
 function DataSources({ sources }: { sources: Record<string, string> }) {
+  const t = useT(COST);
+  const cw = useT(COST_WORDING);
+  const SOURCE_LABEL: Record<string, string> = {
+    aws_usd: cw("awsBill"),
+    ai_usd: cw("aiEstimate"),
+    ai_outside_aws_usd: cw("aiOutside"),
+    total_usd: t("colTotal"),
+    llm_satellites: t("otherAiAccounts"),
+  };
   return (
     <details data-testid="platform-cost-sources" style={{ ...noteStyle }}>
-      <summary style={{ cursor: "pointer", fontWeight: 600 }}>Data sources</summary>
+      <summary style={{ cursor: "pointer", fontWeight: 600 }}>{t("dataSources")}</summary>
       <ul style={{ margin: "6px 0 0", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2 }}>
         {Object.entries(sources).map(([k, v]) => (
           <li key={k} style={{ overflowWrap: "anywhere" }}>

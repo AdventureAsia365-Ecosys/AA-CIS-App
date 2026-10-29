@@ -3,9 +3,12 @@
 // Plain business words + the system the number is read from, how far back it looks and how often it refreshes.
 // No table, view or column names, migration numbers, account names or internal codes (S243 finding 11 rule; guarded
 // by tests/unit/test_aa858_overview_sources.py). The engineering detail (tables, metrics) stays in CONTEXT.md.
+// AA-994: English here; the Vietnamese twin is sources.vi.ts. Components read both through useSources().
 
+import { useLocalized } from "../../../_kit";
 import { AI_ON_BILL_SRC, AI_OUTSIDE_LABEL, AWS_BILL_LABEL } from "../../../../lib/costWording";
 import type { AppHealth } from "./opsTypes";
+import { SOURCES_VI } from "./sources.vi";
 
 // The ops cards (health, TripPlanner, Booking, cost) are not polled by the page (AWS-backed, cached on the server):
 // the server renews them on a timer, the screen shows the new numbers after Refresh or a reload.
@@ -153,3 +156,23 @@ export const PROVIDER_COST_SRC = {
   aiMonth: "AI calls log, all AI providers, this month (UTC)",
   dfsBalance: "DataForSEO account balance from the last stored balance check (not a live call)",
 };
+
+// ── AA-994: both languages ────────────────────────────────────────────────────────────────────────────────────────
+/** Every source text of the page; sources.vi.ts is its Vietnamese twin (the same shape, checked by tsc). */
+export const SOURCES = {
+  HEALTH_SRC,
+  TP_SRC,
+  BOOKING_SRC,
+  COST_SRC,
+  PIPELINE_SRC,
+  INTEL_SRC,
+  TENANT_SRC,
+  JOBS_SRC,
+  PROVIDER_COST_SRC,
+};
+export type Sources = typeof SOURCES;
+
+/** The source texts in the UI language. */
+export function useSources(): Sources {
+  return useLocalized({ en: SOURCES, vi: SOURCES_VI });
+}

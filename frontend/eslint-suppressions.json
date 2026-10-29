@@ -385,9 +385,6 @@
     },
     "react-hooks/set-state-in-effect": {
       "count": 3
-    },
-    "react/no-unescaped-entities": {
-      "count": 3
     }
   },
   "app/admin/platform/apps/AppsBoard.tsx": {

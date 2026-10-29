@@ -9,24 +9,26 @@
 // column stays on a phone (the table scrolls in its own box, kit ScrollX).
 import { useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { K, useIsPhone } from "../../../_kit";
-import {
-  AI_OUTSIDE_LABEL,
-  AI_OUTSIDE_SRC,
-  AWS_BILL_LABEL,
-  AWS_BILL_SRC,
-  aiOnBillNote,
-  shownSum,
-} from "../../../../lib/costWording";
+import { K, useIsPhone, useLang, useT } from "../../../_kit";
+import type { Lang } from "../../../_kit/core/i18n";
+import { aiOnBillNote, shownSum } from "../../../../lib/costWording";
+import { COST_WORDING } from "../../../../lib/costWording.messages";
+import { OPS } from "./ops.messages";
 import { SourceHint } from "./SourceHint";
-import { COST_SRC } from "./sources";
+import { useSources } from "./sources";
 import { fmtUsd, OpsCard, PHONE_CELL, TableWrap, TD as TD_BASE, TH as TH_BASE, UnavailableNote } from "./opsUi";
 import type { CostData, CostRow, Section } from "./opsTypes";
 
 
-function monthName(ym: string): string {
+function monthName(ym: string, lang: Lang = "en"): string {
   const d = new Date(`${ym}-01T00:00:00Z`);
-  return d.toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+  return d.toLocaleDateString(lang === "vi" ? "vi-VN" : "en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+}
+
+/** The column head for last month: "September" / "tháng 9" (the month name without the year). */
+function monthOnly(ym: string, lang: Lang): string {
+  const d = new Date(`${ym}-01T00:00:00Z`);
+  return d.toLocaleDateString(lang === "vi" ? "vi-VN" : "en-US", { month: "long", timeZone: "UTC" });
 }
 
 function ShareBar({ value, max }: { value: number; max: number }) {
@@ -105,13 +107,16 @@ function Row({ r, max, cells }: { r: CostRow; max: number; cells: Cells }) {
 }
 
 export function CostByAppCard({ section }: { section: Section<CostData> | undefined }) {
+  const t = useT(OPS);
+  const lang = useLang();
+  const { COST_SRC } = useSources();
   return (
     <OpsCard
       testId="ops-cost"
-      title={section && section.status === "ok" ? `Cost per app — ${monthName(section.month)} so far` : "Cost per app"}
-      subtitle="What each app costs to run this month, with last month for comparison (US dollars)"
+      title={section && section.status === "ok" ? t("costTitleMonth", monthName(section.month, lang)) : t("costTitle")}
+      subtitle={t("costSubtitle")}
       source={COST_SRC.card}
-      link={{ href: "/admin/cost-ops", label: "Cost Operations detail" }}
+      link={{ href: "/admin/cost-ops", label: t("costOpsLink") }}
     >
       {!section ? null : section.status !== "ok" ? (
         <UnavailableNote section={section} />
@@ -123,6 +128,10 @@ export function CostByAppCard({ section }: { section: Section<CostData> | undefi
 }
 
 function CostBody({ data }: { data: CostData }) {
+  const t = useT(OPS);
+  const cw = useT(COST_WORDING);
+  const lang = useLang();
+  const { COST_SRC } = useSources();
   const phone = useIsPhone();
   const TH: React.CSSProperties = phone ? { ...TH_BASE, ...PHONE_CELL, fontSize: 11 } : TH_BASE;
   const TD: React.CSSProperties = phone ? { ...TD_BASE, ...PHONE_CELL } : TD_BASE;
@@ -137,29 +146,29 @@ function CostBody({ data }: { data: CostData }) {
     <>
       {!data.has_aws_data && (
         <div style={{ fontSize: 12, color: K.amber, marginBottom: 10 }}>
-          The AWS bill for this month has not been fetched yet; only AI usage is shown.
+          {t("noAwsYet")}
         </div>
       )}
       <TableWrap testId="ops-cost-table">
         <table style={{ width: "100%", minWidth: 520, borderCollapse: "collapse" }}>
           <thead>
             <tr>
-              <th style={{ ...TH, whiteSpace: "normal" }}>App</th>
+              <th style={{ ...TH, whiteSpace: "normal" }}>{t("colApp")}</th>
               <th data-num-col="" style={{ ...TH, textAlign: "right", whiteSpace: "normal" }}>
-                {AWS_BILL_LABEL}
-                <SourceHint source={AWS_BILL_SRC} size={11} />
+                {cw("awsBill")}
+                <SourceHint source={cw("awsBillSrc")} size={11} />
               </th>
               <th data-num-col="" style={{ ...TH, textAlign: "right", whiteSpace: "normal" }}>
-                {AI_OUTSIDE_LABEL}
-                <SourceHint source={AI_OUTSIDE_SRC} size={11} />
+                {cw("aiOutside")}
+                <SourceHint source={cw("aiOutsideSrc")} size={11} />
               </th>
               <th data-num-col="" style={{ ...TH, textAlign: "right", whiteSpace: "normal" }}>
-                Total
+                {t("colTotal")}
                 <SourceHint source={COST_SRC.total} size={11} />
               </th>
               <th data-num-col="" style={{ ...TH, textAlign: "right", whiteSpace: "normal" }}>
-                {monthName(data.prev_month).split(" ")[0]}
-                <SourceHint source={COST_SRC.prevMonth(monthName(data.prev_month))} size={11} />
+                {monthOnly(data.prev_month, lang)}
+                <SourceHint source={COST_SRC.prevMonth(monthName(data.prev_month, lang))} size={11} />
               </th>
             </tr>
           </thead>
@@ -168,7 +177,7 @@ function CostBody({ data }: { data: CostData }) {
               <Row key={r.key} r={r} max={max} cells={cells} />
             ))}
             <tr data-testid="ops-cost-total">
-              <td style={{ ...TD, fontWeight: 700, color: K.ink, borderBottom: "none" }}>All apps</td>
+              <td style={{ ...TD, fontWeight: 700, color: K.ink, borderBottom: "none" }}>{t("allApps")}</td>
               <td style={{ ...TD, textAlign: "right", fontWeight: 600, borderBottom: "none" }}>
                 {fmtUsd(shownSum(data.totals.aws_usd))}
               </td>
@@ -191,11 +200,11 @@ function CostBody({ data }: { data: CostData }) {
         ))}
         {data.totals.ai_usd != null && (
           <li data-testid="ops-cost-ai-note">
-            {aiOnBillNote(data.totals.ai_usd, data.totals.ai_in_aws_usd ?? 0, fmtUsd)}
+            {aiOnBillNote(data.totals.ai_usd, data.totals.ai_in_aws_usd ?? 0, fmtUsd, COST_WORDING[lang])}
             <SourceHint source={COST_SRC.aiNote} size={11} />
           </li>
         )}
-        {data.aws_covered_to && <li>AWS numbers include days up to {data.aws_covered_to}.</li>}
+        {data.aws_covered_to && <li>{t("awsUpTo", data.aws_covered_to)}</li>}
       </ul>
     </>
   );
