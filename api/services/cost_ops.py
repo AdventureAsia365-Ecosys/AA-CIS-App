@@ -57,9 +57,10 @@ logger = structlog.get_logger()
 RUN_RATE_DAYS = 7
 DEFAULT_ALERT_PCT = 80
 INFER_MAX_DAYS = 31
-# AWS Budgets of each account (AA-CIS-Infra accounts/aa365/observability.tf total budget, accounts/acc3-bedrock
-# cost_guard.tf). Presentation only; C5 will read the live budgets.
-AWS_MONTHLY_BUDGET_USD: dict[str, float] = {"acc2": 250.0, "acc3": 250.0}
+# AWS Budgets of each account (AA-CIS-Infra accounts/aa365/variables.tf total_monthly_budget_usd, 300 since AA-896
+# S255; accounts/acc3-bedrock cost_guard.tf acc3_budget_monthly_usd, 250). Presentation only; C5 will read the live
+# budgets. A test pins these to the Terraform defaults when the Infra checkout is next to this repo.
+AWS_MONTHLY_BUDGET_USD: dict[str, float] = {"acc2": 300.0, "acc3": 250.0}
 AWS_BUDGET_ENV = "COST_OPS_AWS_BUDGETS_USD"
 
 PROVIDER_LABELS = {
