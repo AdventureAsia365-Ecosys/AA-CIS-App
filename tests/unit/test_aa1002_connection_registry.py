@@ -55,7 +55,7 @@ def test_secret_name_inside_aa_llm_is_accepted(name):
     "aa-cis/dev/rds", "aa-cis/dev/openai-key", "aa-cis/dev/typesafe", "booking/dev/database-url",
     "aa-llm/", "aa-llm/dev/", "aa-llm/dev", "aa-llm/dev/../rds", "aa-llm/dev/a/b", "aa-llm//x",
     "AA-LLM/dev/x", " aa-llm/dev/x", "aa-llm/dev/x\n",
-    "arn:aws:secretsmanager:us-west-1:000000000000:secret:aa-llm/dev/x",
+    "arn:aws:secretsmanager:us-west-1:<account>:secret:aa-llm/dev/x",
 ])
 def test_secret_name_outside_aa_llm_is_refused(name):
     with pytest.raises(ConnectionPolicyError):
