@@ -211,3 +211,69 @@ def test_dependency_refuses_with_a_request_whatever_the_fastapi_version():
                                                 req("POST", "/admin/brand-identity"))
     assert exc.value.status_code == 403
     assert v1_tours.get_tenant(SimpleNamespace(credentials=_token("viewer")), req("GET", "/v1/tours/pool"))["sub"]
+
+
+# ── Read-only POSTs (S256 portal smoke: a viewer opening the brand page got 403 on the live CTA check) ─────────
+
+@pytest.mark.parametrize("method,path,allowed", [
+    ("POST", "/v1/content-writing/cta-check", True),     # allow-listed: checks the text, stores nothing
+    ("PUT", "/v1/content-writing/cta-check", False),     # exact method, not "any method on the path"
+    ("POST", "/v1/content-writing/cta-check/x", False),  # exact path, not a prefix
+    ("POST", "/v1/content-writing/cta-checker", False),
+    ("POST", "/v1/content-writing/requests/r1/write", False),
+    ("PATCH", "/v1/content-writing/pieces/1", False),
+])
+def test_viewer_read_only_post_allow_list_is_exact(client, method, path, allowed):
+    r = _call(client, method, path, "viewer")
+    assert r.status_code == (200 if allowed else 403), r.text
+
+
+def test_read_only_posts_are_only_known_no_write_routes():
+    assert tenant_role.READ_ONLY_POSTS == frozenset({("POST", "/v1/content-writing/cta-check")})
+    assert all(m not in tenant_role.READ_METHODS for m, _ in tenant_role.READ_ONLY_POSTS)
+
+
+@pytest.fixture
+def writing_client() -> TestClient:
+    """The real content-writing router (real ``cta_check`` and ``get_tenant``) behind the real middleware."""
+    from api.routers import v1_content_writing
+
+    app = FastAPI()
+    app.middleware("http")(tenant_role.tenant_role_middleware)
+    app.include_router(v1_content_writing.router)
+    return TestClient(app)
+
+
+@pytest.mark.parametrize("role", ["viewer", "editor", "owner", None])
+def test_every_studio_role_gets_200_on_cta_check(writing_client, role):
+    r = writing_client.post("/v1/content-writing/cta-check", json={"cta": "Rated 4.9 on TripAdvisor"},
+                            headers={"Authorization": f"Bearer {_token(role)}"})
+    assert r.status_code == 200, r.text
+    assert r.json()["cta_warning"]  # the real check ran (the route, not a stub)
+
+
+def test_viewer_still_refused_on_a_real_content_write(writing_client):
+    headers = {"Authorization": f"Bearer {_token('viewer')}"}
+    r = writing_client.patch(f"/v1/content-writing/pieces/{uuid.uuid4()}", json={"content_text": "x"}, headers=headers)
+    assert r.status_code == 403
+    assert r.json()["detail"] == "studio_role_forbidden"
+    r = writing_client.post(f"/v1/content-writing/requests/{uuid.uuid4()}/write", json={}, headers=headers)
+    assert r.status_code == 403
+    assert r.json()["detail"] == "studio_role_forbidden"
+
+
+def test_dependency_side_check_allows_cta_check_for_a_viewer():
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    from api.routers import v1_tours
+
+    def req(method, path):
+        return SimpleNamespace(method=method, url=SimpleNamespace(path=path))
+
+    creds = SimpleNamespace(credentials=_token("viewer"))
+    assert v1_tours.get_tenant(creds, req("POST", "/v1/content-writing/cta-check"))["csr"] == "viewer"
+    with pytest.raises(HTTPException) as exc:
+        v1_tours.get_tenant(creds, req("POST", "/v1/content-writing/requests/r1/write"))
+    assert (exc.value.status_code, exc.value.detail) == (403, "studio_role_forbidden")
