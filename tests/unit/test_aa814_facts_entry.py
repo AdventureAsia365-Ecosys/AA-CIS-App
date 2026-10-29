@@ -296,6 +296,63 @@ async def test_writer_read_drops_expired_and_applies_precedence():
     assert "scope = 'tenant' AND tenant_id = $1" in sql
 
 
+def _max_fact(i, scope="tenant", country=None):
+    """A tenant fact at the API limits (title 200, body 1200, source 500 characters)."""
+    f = _f(f"fact_{scope[0]}{i:03d}", scope, title=f"Fact {i:03d} ".ljust(fs.MAX_TITLE, "x"), country=country,
+           provenance="s" * fs.MAX_PROVENANCE)
+    f["body"] = "b" * fs.MAX_BODY
+    return f
+
+
+def test_a_tenant_with_the_most_facts_gets_a_bounded_seed():
+    flood = [_max_fact(i) for i in range(fs.MAX_TENANT_FACTS)]
+    platform = [_f(f"fact_p{i}", "platform", title=f"Platform {i}") for i in range(60)]
+    kept = writer_facts.budget_facts(writer_facts.pick_facts(platform + flood))
+    block = writer_facts.format_facts_block(kept)
+    assert 0 < len(block) <= writer_facts.SEED_MAX_CHARS
+    assert len(kept) <= writer_facts.SEED_MAX_FACTS
+    unbudgeted = writer_facts.format_facts_block(platform + flood)
+    assert len(unbudgeted) > 20 * writer_facts.SEED_MAX_CHARS            # what the review measured (~380 KB)
+
+
+def test_budget_prefers_country_facts_then_own_facts_and_keeps_input_order():
+    plat_country = _f("fact_p1", "platform", title="Laos visa", kind="visa_entry", country="Laos")
+    plat_any = _f("fact_p2", "platform", title="Tipping")
+    own_any = _f("fact_t1", "tenant", title="Deposit", kind="booking_terms")
+    facts = [plat_any, own_any, plat_country]
+    room = len(writer_facts.format_facts_block([plat_country, own_any]))
+    kept = writer_facts.budget_facts(facts, max_chars=room)
+    assert [f["fact_id"] for f in kept] == ["fact_t1", "fact_p1"]       # plat_any dropped, input order kept
+    assert len(writer_facts.format_facts_block(kept)) <= room
+    assert [f["fact_id"] for f in writer_facts.budget_facts(facts, max_facts=1)] == ["fact_p1"]
+
+
+def test_budget_skips_a_fact_too_long_for_the_room_left_but_keeps_shorter_ones():
+    big = _max_fact(1)
+    small = _f("fact_t2", "tenant", title="Deposit", kind="booking_terms", edited=T0 - timedelta(days=1))
+    room = len(writer_facts.format_facts_block([small])) + 10
+    assert writer_facts.budget_facts([big, small], max_chars=room) == [small]
+
+
+def test_a_seed_under_the_budget_is_unchanged():
+    facts = [_f("fact_p1", "platform", title="A"), _f("fact_t1", "tenant", title="B", country="Laos")]
+    assert writer_facts.budget_facts(facts) == facts
+
+
+@pytest.mark.asyncio
+async def test_writer_read_applies_the_budget():
+    conn = AsyncMock()
+    conn.fetch.return_value = [_max_fact(i) for i in range(fs.MAX_TENANT_FACTS)]
+    ctx = AsyncMock()
+    ctx.__aenter__ = AsyncMock(return_value=conn)
+    ctx.__aexit__ = AsyncMock(return_value=False)
+    pool = MagicMock()
+    pool.acquire = MagicMock(return_value=ctx)
+    facts = await writer_facts.fetch_facts_for_writing(uuid.UUID(TENANT_A), pool, country="Laos")
+    assert 0 < len(facts) < fs.MAX_TENANT_FACTS
+    assert len(writer_facts.format_facts_block(facts)) <= writer_facts.SEED_MAX_CHARS
+
+
 # ── /v1/facts: isolation, roles, audit ───────────────────────────────────────────────────────────
 
 def test_list_shows_own_and_valid_platform_facts_only(tenant_api):

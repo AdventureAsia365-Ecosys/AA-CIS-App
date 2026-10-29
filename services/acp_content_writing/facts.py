@@ -23,13 +23,25 @@ required before a tenant can write.
 AA-814 (S257): the write side is services/acp_shared/facts_store.py (admin page /admin/facts for platform facts,
 Content studio /v1/facts for a tenant's own). This module is the read side for the writers: expired facts are left
 out in SQL, and pick_facts() keeps a tenant's fact over the platform facts on the same subject (kind, title,
-country). Each seed entry names its source and owner.
+country). Each seed entry names its source and owner. budget_facts() caps the seed (SEED_MAX_CHARS / SEED_MAX_FACTS):
+since AA-814 a tenant writes rows that reach every T9 prompt, so the input size must not grow with what a tenant keeps.
 """
 from __future__ import annotations
 
 from uuid import UUID
 
+import structlog
+
 from services.acp_shared.facts_store import subject_key
+
+logger = structlog.get_logger()
+
+# AA-814 review: the facts block of one T9 seed is at most SEED_MAX_CHARS characters (about 4k input tokens) and
+# SEED_MAX_FACTS entries. Before AA-814 only staff wrote facts (about 60 platform rows, spread over countries); a tenant
+# may now keep MAX_TENANT_FACTS (200) facts of up to ~1.9k characters each, which unbudgeted is ~380 KB per prompt.
+SEED_MAX_CHARS = 16_000
+SEED_MAX_FACTS = 48
+_ENTRY_SEPARATOR = "\n\n"
 
 # S233 — facts.country (migration 220): a fact about one country is offered only to pieces about
 # that country (the S232 Laos e-visa fact reached Tibet posts). NULL = any country. Replaces the
@@ -58,7 +70,13 @@ async def fetch_facts_for_writing(tenant_id: UUID, pool, country: str | None = N
     signal (DFS keyword, brand rubric) already follows."""
     async with pool.acquire() as conn:
         rows = await conn.fetch(_FACTS_QUERY, tenant_id, country)
-    return pick_facts([dict(r) for r in rows])
+    picked = pick_facts([dict(r) for r in rows])
+    kept = budget_facts(picked)
+    if len(kept) < len(picked):
+        logger.info("t9_facts_budget_dropped", tenant_id=str(tenant_id), country=country, offered=len(picked),
+                    kept=len(kept), dropped=len(picked) - len(kept),
+                    chars=len(format_facts_block(kept)), max_chars=SEED_MAX_CHARS, max_facts=SEED_MAX_FACTS)
+    return kept
 
 
 def _rank(fact: dict) -> tuple:
@@ -85,6 +103,28 @@ def pick_facts(facts: list[dict]) -> list[dict]:
     return [f for f in facts if id(f) in kept]
 
 
+def _budget_rank(fact: dict) -> tuple:
+    """Budget order, best first: a fact about one country (the query already matched it to the piece) before an
+    any-country fact, then _rank (the writing tenant's own fact first, then the latest)."""
+    return (0 if str(fact.get("country") or "").strip() else 1,) + _rank(fact)
+
+
+def budget_facts(facts: list[dict], *, max_chars: int = SEED_MAX_CHARS, max_facts: int = SEED_MAX_FACTS) -> list[dict]:
+    """AA-814 review: keep the facts block within max_chars (as format_facts_block renders it, separators counted) and
+    max_facts entries. Facts are taken in _budget_rank order; one that does not fit the room left is skipped and a
+    shorter one may still fit. The kept facts stay in input order, so a seed under the budget is unchanged."""
+    room = max_chars
+    kept: set[int] = set()
+    for f in sorted(facts, key=_budget_rank):
+        if len(kept) >= max_facts:
+            break
+        cost = len(_fact_entry(f)) + (len(_ENTRY_SEPARATOR) if kept else 0)
+        if cost <= room:
+            kept.add(id(f))
+            room -= cost
+    return [f for f in facts if id(f) in kept]
+
+
 def format_facts_block(facts: list[dict]) -> str:
     """Renders fetched facts as a labeled block prompts.py can append to the CONTENT SEED, one
     `[Fact id=<fact_id>]` per entry — same labeling shape service.py::_fetch_route_segments()'s
@@ -93,7 +133,7 @@ def format_facts_block(facts: list[dict]) -> str:
     safely do `if facts_text:` without a None-check."""
     if not facts:
         return ""
-    return "\n\n".join(_fact_entry(f) for f in facts)
+    return _ENTRY_SEPARATOR.join(_fact_entry(f) for f in facts)
 
 
 def _fact_entry(f: dict) -> str:
@@ -109,4 +149,5 @@ def _fact_entry(f: dict) -> str:
     return entry
 
 
-__all__ = ["fetch_facts_for_writing", "format_facts_block", "pick_facts"]
+__all__ = ["SEED_MAX_CHARS", "SEED_MAX_FACTS", "budget_facts", "fetch_facts_for_writing", "format_facts_block",
+           "pick_facts"]
