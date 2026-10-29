@@ -4317,7 +4317,7 @@
         "properties": {
           "accept_rule": {
             "default": "v1",
-            "pattern": "^(v1|aa997\\.2)$",
+            "pattern": "^(v1|aa997\\.[23])$",
             "title": "Accept Rule",
             "type": "string"
           },

@@ -2311,6 +2311,10 @@ _Avoid_: platform, network (Channel is this project's own term for the publishin
 One hand-written, sourced claim a tenant writes for themselves only (their own pricing,
 cancel/rebook terms, deals) — visible only to that tenant, never to others. Same table as the
 platform-scope entry above; `tenant_id` is required here, NULL there (enforced by a DB CHECK).
+Writers read both scopes for the trip's country, a tenant entry replacing the platform entries on
+its subject (`facts.pick_facts`): T9 always (the FACTS seed, each entry with a `Source:` line the
+leak checks know); T2 only with the worker env `T2_FACTS=on` (default off: a FACTS block in the
+T2 user prompt, also read as T3 grounding source; `services/content_generation/t2_facts.py`).
 _Avoid_: Fact (bare) — always say which scope.
 
 ### Model operations (platform)

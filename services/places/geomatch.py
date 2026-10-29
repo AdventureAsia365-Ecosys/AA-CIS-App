@@ -301,9 +301,14 @@ ACCEPT_KM = 25.0
 # default (accept(strict=False)); it is switched on per job (place_relocate payload `accept_rule`) or for new names
 # (env GEOCODER_ACCEPT_RULE, geocoder.default_accept_rule) after the relocate re-audit shows it refuses no more
 # correct pins than it saves. Answers stored before AA-997 v2 carry no `rule`.
+# "aa997.3" (S258 P4 tune) = the same checks with route evidence limited to routes that have the place's own day stop
+# and the homonym distance for the re-judge's off-route check (StrictParams / STRICT_PARAMS below): aa997.2 refused
+# 34 / 251 verified-correct Geoapify pins in the S257 re-audit (P4), mostly on routes that miss the day's own stop.
 ACCEPT_RULE_V1 = "v1"
 ACCEPT_RULE = "aa997.2"
-ACCEPT_RULES = (ACCEPT_RULE_V1, ACCEPT_RULE)
+ACCEPT_RULE_V3 = "aa997.3"
+STRICT_RULES = (ACCEPT_RULE, ACCEPT_RULE_V3)
+ACCEPT_RULES = (ACCEPT_RULE_V1, ACCEPT_RULE, ACCEPT_RULE_V3)
 LONG_FEATURE_KM = 50.0
 TOP_N = 3
 
@@ -471,7 +476,10 @@ def accept(query: str, cands: list[Candidate], lat: Optional[float], lng: Option
     AA-997 v2: `strict` (default OFF, rule ACCEPT_RULE; it only ever refuses more) adds strict_reason's checks — a check
     that needs the model's point is skipped when there is none (not judgeable is not refused); `compact` (strategy v2)
     measures the name with name_sim_v2 (transliteration joins, "Mt" / "in" ignored). `query` is the bare name: a
-    context query ("X, Town") is searched with the context but judged on X (geocoder.confirm)."""
+    context query ("X, Town") is searched with the context but judged on X (geocoder.confirm). `strict` is True (=
+    ACCEPT_RULE) or a rule name of STRICT_RULES (strict_rule)."""
+    rule = strict_rule(strict)
+    params = strict_params(rule)
     sim_fn = name_sim_v2 if compact else name_sim
     n_tok = len(tokens_v2(query) if compact else tokens(query))
     forced_town = bool(settlement)          # the town fallback asks for a town: no site rule then
@@ -489,9 +497,9 @@ def accept(query: str, cands: list[Candidate], lat: Optional[float], lng: Option
             reasons.append(f"{i}:type")
         else:
             dist, why = reference_km(c.lat, c.lng, lat, lng, query, routes)
-            if strict and why in (None, DAY_TRIP):
+            if rule and why in (None, DAY_TRIP):
                 why = strict_reason(query, c, sim, lat, lng, routes, settlement=settlement,
-                                    forced_town=forced_town, day_trip=why == DAY_TRIP) or why
+                                    forced_town=forced_town, day_trip=why == DAY_TRIP, params=params) or why
             if why == DAY_TRIP and fallback is None:
                 fallback = Verdict(c, i, round(sim, 3), round(dist, 2))
             if why:
@@ -548,6 +556,60 @@ AMBIGUOUS_ROUTE_KM = 300.0
 STRICT_REASONS = frozenset({"site_type", "match", "kind", "ambiguous_route", "hint_disagree"})
 
 
+@dataclass(frozen=True)
+class StrictParams:
+    """The knobs of a strict rule (AA-997, S258 P4 tune). The defaults are aa997.2 exactly.
+      anchored_only   route evidence for the strict checks (ambiguous_route, hint_disagree, the re-judge's off-route
+                      check) only from routes whose use day has its OWN located overnight stop (store.route_anchors
+                      marks them `anchored`; a plain tuple counts as anchored). A route without it is the stops of the
+                      days before / after — an arrival or departure day, a flight, a trek night at an unlocated hut,
+                      or the place itself being that night's stop (excluded from its own route) — so a correct pin
+                      can be hundreds of km from it;
+      per_tour        ambiguous_route counts tours, not (tour, day) uses (a tour is near when any of its days is);
+      ambiguous_km    the homonym distance of ambiguous_route (AMBIGUOUS_ROUTE_KM);
+      ambiguous_miss_div  misses allowed = routes // this (5 = one per 5; 2 = a minority);
+      rejudge_off_route_km  relocate.rejudge refuses a stored answer this far off the route (aa997.2: the day-trip
+                      distance, 150 km);
+      rejudge_v1_checks  relocate.rejudge re-applies v1's name / type checks (aa997.2). They were passed when the
+                      answer was accepted; a re-judge can fail them only because it cannot rebuild the judged text
+                      (a native-script query, an older normalisation), so aa997.3 lists them as `unjudged` instead;
+      site_admin_named  a site query answered by a city / suburb / district whose own name carries the query's site
+                      word ("Horombo Hut" mapped as a locality) is the site, not refused as `site_type`."""
+    anchored_only: bool = False
+    per_tour: bool = False
+    ambiguous_km: float = AMBIGUOUS_ROUTE_KM
+    ambiguous_miss_div: int = 5
+    rejudge_off_route_km: float = 150.0          # guards.DAY_TRIP_KM (not imported here: guards imports this module)
+    rejudge_v1_checks: bool = True
+    site_admin_named: bool = False
+
+
+STRICT_PARAMS = {
+    ACCEPT_RULE: StrictParams(),
+    ACCEPT_RULE_V3: StrictParams(anchored_only=True, rejudge_off_route_km=500.0, rejudge_v1_checks=False,
+                                 site_admin_named=True),
+}
+
+
+def strict_rule(strict) -> Optional[str]:
+    """The strict rule a `strict` argument names: True → ACCEPT_RULE (aa997.2), a name in STRICT_RULES → that rule,
+    anything else (False, None, "v1") → None (rule v1)."""
+    if strict is True:
+        return ACCEPT_RULE
+    return strict if isinstance(strict, str) and strict in STRICT_RULES else None
+
+
+def strict_params(rule: Optional[str]) -> StrictParams:
+    return STRICT_PARAMS.get(rule or ACCEPT_RULE, STRICT_PARAMS[ACCEPT_RULE])
+
+
+def evidence_routes(routes, params: Optional[StrictParams] = None) -> tuple:
+    """The routes a strict check may use as evidence (StrictParams.anchored_only); all of them otherwise."""
+    if params is None or not params.anchored_only:
+        return tuple(routes or ())
+    return tuple(r for r in routes or () if getattr(r, "anchored", True))
+
+
 def is_site(query: str) -> bool:
     """A query that names a point-like site (temple, airport, museum, peak, pass …), not a town / area / long feature:
     an admin area (city / suburb / district) or a fallback match is never its answer."""
@@ -567,24 +629,31 @@ def kind_conflict(query: str, candidate: Optional[str]) -> Optional[str]:
     return None
 
 
-def route_cover(lat: float, lng: float, routes, radius: float) -> tuple[int, int]:
+def route_cover(lat: float, lng: float, routes, radius: float, *, per_tour: bool = False) -> tuple[int, int]:
     """(routes the point is within `radius` km of, routes with a stop). One destination serves every tour that uses
-    the name (the key has no town on ~99 % of rows), so its point must not be a homonym for any of them."""
+    the name (the key has no town on ~99 % of rows), so its point must not be a homonym for any of them. `per_tour`
+    counts tours instead (a route's `tour` attribute; a route without one is its own tour)."""
     from services.places import guards
-    near = total = 0
-    for r in routes or ():
+    groups: dict = {}
+    for i, r in enumerate(routes or ()):
         d = guards.route_km(lat, lng, [r])
         if d is None:
             continue
-        total += 1
-        near += d <= radius
-    return near, total
+        key = (getattr(r, "tour", None) or ("route", i)) if per_tour else ("route", i)
+        groups[key] = groups.get(key, False) or d <= radius
+    return sum(groups.values()), len(groups)
+
+
+def _site_named(query: str, candidate: Optional[str]) -> bool:
+    """The candidate's own name carries every site word of the query ("Horombo Hut" for "Horombo Hut")."""
+    site = _words(query) & SITE_WORDS
+    return bool(site) and site <= _words(candidate or "")
 
 
 def strict_reason(query: str, c: Candidate, sim: float, lat: Optional[float], lng: Optional[float], routes=(), *,
                   settlement: bool = False, forced_town: bool = False, day_trip: bool = False,
                   check_kind: bool = True, unjudged: Optional[list] = None,
-                  hint_km: Optional[float] = None) -> Optional[str]:
+                  hint_km: Optional[float] = None, params: Optional[StrictParams] = None) -> Optional[str]:
     """Why a candidate that passed name / type / distance is still refused (AA-997 v2, rule ACCEPT_RULE), else None:
       `site_type`  a site query answered by a city / suburb / district, or by a street away from the model's point;
       `match`  a fallback match (the containing city / state / postcode) for anything but a settlement query;
@@ -597,15 +666,18 @@ def strict_reason(query: str, c: Candidate, sim: float, lat: Optional[float], ln
     The street / kind checks need the model's point: with none (lat / lng None — a model null, a stored answer
     re-judged without its hint) they use `hint_km` (the candidate's distance from that point when only the distance is
     known: an aa997.1 relocate stamp's moved_km), else they are NOT judged, never refused; their names are appended to
-    `unjudged` when given."""
+    `unjudged` when given. `params` (default aa997.2) are the rule's knobs (StrictParams): the route checks use only
+    evidence_routes."""
     from services.places import guards
+    p = params or STRICT_PARAMS[ACCEPT_RULE]
+    routes = evidence_routes(routes, p)
     # `settlement`: the query names a town (no feature word) or a town is asked for; `forced_town`: the town fallback
     site = is_site(query) and not forced_town
     rtype, mtype = c.result_type or "", c.match_type or ""
     has_hint = lat is not None and lng is not None
     hint_dist = _km(lat, lng, c.lat, c.lng) if has_hint else hint_km
     road_query = bool(_words(query) & _ROAD_WORDS)
-    if site and rtype in ADMIN_TYPES:
+    if site and rtype in ADMIN_TYPES and not (p.site_admin_named and _site_named(query, c.name)):
         return "site_type"
     if site and rtype == "street" and not road_query:
         if hint_dist is None:
@@ -624,8 +696,8 @@ def strict_reason(query: str, c: Candidate, sim: float, lat: Optional[float], ln
         elif hint_dist > STREET_NEAR_HINT_KM:
             return "kind"       # a POI named after the place right next to the model's point is its access point
     if guards.has_route(routes):
-        near, total = route_cover(c.lat, c.lng, routes, AMBIGUOUS_ROUTE_KM)
-        if total >= 2 and total - near > total // 5:
+        near, total = route_cover(c.lat, c.lng, routes, p.ambiguous_km, per_tour=p.per_tour)
+        if total >= 2 and total - near > total // p.ambiguous_miss_div:
             return "ambiguous_route"
         if has_hint and not day_trip:
             hint_on = (guards.route_km(lat, lng, routes) or 0.0) <= guards.route_radius(query)

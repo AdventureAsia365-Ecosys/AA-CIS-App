@@ -222,7 +222,8 @@ def recheck_list(value) -> list[str]:
 
 
 def is_strict(accept_rule: Optional[str]) -> bool:
-    return accept_rule == geomatch.ACCEPT_RULE
+    """aa997.2 or aa997.3 (geomatch.STRICT_RULES)."""
+    return accept_rule in geomatch.STRICT_RULES
 
 
 def recheck_for(value, accept_rule: Optional[str]) -> list[str]:
@@ -350,13 +351,19 @@ def _hint_of(row: dict) -> tuple[Optional[tuple], Optional[float]]:
     return None, None
 
 
-def rejudge(row: dict, routes: tuple) -> dict:
+def rejudge(row: dict, routes: tuple, accept_rule: str = geomatch.ACCEPT_RULE,
+            params: Optional[geomatch.StrictParams] = None) -> dict:
     """The stored confirmation of a row against the strict rule (AA-997 v2), with no call: {'ok': bool, 'reason': why
     refused | None, 'unjudged': [checks that could not be judged], 'hint': the model's point | None}. The candidate is
     rebuilt from geocoder_meta (name, result_type, match_type) at the row's point and judged with the model's point
     when it is known (_hint_of). A check that needs the model's point and has no hint is NOT judged (`unjudged`, kept
     — review fix: it used to refuse rows accepted under the access-point exemption); no stored candidate name
-    → ok with unjudged ['no_meta'] (no paid re-search for a row that cannot be judged)."""
+    → ok with unjudged ['no_meta'] (no paid re-search for a row that cannot be judged).
+    `accept_rule` picks the strict rule (aa997.2 | aa997.3); `params` overrides its knobs (the S258 P4 tune script
+    sweeps them over the labelled sample). aa997.3: the route checks use only routes with the use day's own stop
+    (geomatch.evidence_routes), the off-route check the homonym distance, and v1's name / type checks are listed as
+    unjudged (`v1_name` / `v1_type`) instead of refusing — they were passed when the answer was accepted."""
+    p = params or geomatch.strict_params(accept_rule)
     meta = _meta(row)
     query = meta.get("judged") or meta.get("query") or row["name"]    # v2 stores the bare name judged as `judged`
     cname = meta.get("name")
@@ -370,18 +377,24 @@ def rejudge(row: dict, routes: tuple) -> dict:
     compact = meta.get("strategy") == "v2"
     sim = (geomatch.name_sim_v2 if compact else geomatch.name_sim)(query, cname)
     n_tok = len(geomatch.tokens_v2(query) if compact else geomatch.tokens(query))
-    if not (sim >= 0.999 or (sim >= 0.5 and n_tok >= 2)):
-        return {"ok": False, "reason": "name", "unjudged": [], "hint": hint}
-    if c.result_type in geomatch.REJECT_TYPES or (c.result_type == "city" and not settlement):
-        return {"ok": False, "reason": "type", "unjudged": [], "hint": hint}
-    # an aa997.1 day-trip accept (off the route radius, within DAY_TRIP_KM): judged with the day-trip radius as v2 does
-    day_trip = guards.has_route(routes) and guards.on_route(c.lat, c.lng, routes, query) is False
-    if day_trip and (guards.route_km(c.lat, c.lng, routes) or 0.0) > guards.DAY_TRIP_KM:
-        return {"ok": False, "reason": "off_route", "unjudged": [], "hint": hint}
     unjudged: list = []
-    why = geomatch.strict_reason(query, c, sim, hint[0] if hint else None, hint[1] if hint else None, routes,
-                                 settlement=settlement, day_trip=day_trip, unjudged=unjudged, hint_km=hint_km)
-    if hint is None and guards.has_route(routes):
+    if not (sim >= 0.999 or (sim >= 0.5 and n_tok >= 2)):
+        if p.rejudge_v1_checks:
+            return {"ok": False, "reason": "name", "unjudged": [], "hint": hint}
+        unjudged.append("v1_name")
+    if c.result_type in geomatch.REJECT_TYPES or (c.result_type == "city" and not settlement):
+        if p.rejudge_v1_checks:
+            return {"ok": False, "reason": "type", "unjudged": [], "hint": hint}
+        unjudged.append("v1_type")
+    ev = geomatch.evidence_routes(routes, p)
+    # an aa997.1 day-trip accept (off the route radius, within DAY_TRIP_KM): judged with the day-trip radius as v2 does
+    day_trip = guards.has_route(ev) and guards.on_route(c.lat, c.lng, ev, query) is False
+    if day_trip and (guards.route_km(c.lat, c.lng, ev) or 0.0) > p.rejudge_off_route_km:
+        return {"ok": False, "reason": "off_route", "unjudged": [], "hint": hint}
+    why = geomatch.strict_reason(query, c, sim, hint[0] if hint else None, hint[1] if hint else None, ev,
+                                 settlement=settlement, day_trip=day_trip, unjudged=unjudged, hint_km=hint_km,
+                                 params=p)
+    if hint is None and guards.has_route(ev):
         unjudged.append("hint_disagree")       # needs the model's point's own position: never judged without it
     return {"ok": why is None, "reason": why, "unjudged": unjudged, "hint": hint}
 
@@ -420,7 +433,7 @@ async def dry_run(conn, *, located_by: list[str], country: Optional[str], cost_p
         by_prev[prev] = by_prev.get(prev, 0) + 1
         r_routes = routes.get(row["id"], ())
         if is_confirmed_recheck(row):
-            j = rejudge(row, r_routes)
+            j = rejudge(row, r_routes, accept_rule)
             judged["rows"] += 1
             verdict = rejudge_outcome(j)
             for u in j.get("unjudged") or ():
@@ -507,7 +520,7 @@ def _prev(row: dict) -> list:
 def _rule_kw(strategy: str, context: Optional[str], accept_rule: str) -> dict:
     kw = {"strategy": strategy, "context": context} if strategy != "v1" else {}
     if is_strict(accept_rule):
-        kw["strict"] = True
+        kw["strict"] = accept_rule
     return kw
 
 
@@ -518,7 +531,7 @@ async def _apply_confirmed_recheck(conn, row: dict, routes: tuple, geocoder, *, 
     stored) — both with no call; else searched again (the route, and the stored model's point or the current point as
     hint) — a passing answer within the move cap is written (`reconfirmed`), else `weak_confirm` (the point stays;
     hidden too with hide_unconfirmed)."""
-    j = rejudge(row, routes)
+    j = rejudge(row, routes, accept_rule)
     verdict = rejudge_outcome(j)
     if verdict != "refused":
         async with conn.transaction():
