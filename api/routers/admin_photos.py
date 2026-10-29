@@ -12,12 +12,14 @@ Admin (`/admin/photos`, behind the admin BFF):
                                      one incremental photo_sync job per country, idempotent per day.
   - POST /{photo_id}/assign       — set tour / destination by hand, or reject (admin secret).
 
-Public (`/content/photos/{photo_id}?size=large|small|original`): the stable path the catalog views,
+Public (`/content/photos/{photo_id}?size=large|medium|small|original`): the stable path the catalog views,
 the TripPlanner (`cover_image_url`, `og:image`) and the Booking admin use (API Gateway `/content/*`
 has no auth). AA-844: it answers a 302 to the photos CDN (`https://img.lumiguides.it.com/<slug>/<file>
 ?v=<sha256[:12]>`, CloudFront in front of the bucket's photos/ prefix), cacheable for a day; with
 PHOTO_CDN_BASE=off it falls back to a 1-hour presigned S3 URL (cacheable 50 min). A rejected photo is
 404 here, but a CDN URL handed out before the reject keeps working (the object stays in S3).
+AA-995: `medium` is the 960 w file (phone heroes); a photo stored before it exists falls back to the large file until
+photo_medium_backfill has rendered it (sync.SIZE_FALLBACK).
 """
 from __future__ import annotations
 
@@ -96,6 +98,7 @@ async def summary(request: Request):
                    count(DISTINCT tour_folder) AS tour_folders,
                    count(DISTINCT tour_id) FILTER (WHERE status = 'matched') AS tours_covered,
                    count(*) FILTER (WHERE s3_key_small IS NOT NULL) AS with_file,
+                   count(*) FILTER (WHERE s3_key_medium IS NOT NULL) AS with_medium,
                    coalesce(sum(bytes) FILTER (WHERE s3_key_small IS NOT NULL), 0) AS source_bytes,
                    count(*) FILTER (WHERE match_source = 'manual') AS manual,
                    max(synced_at) AS last_synced
@@ -114,7 +117,7 @@ async def summary(request: Request):
     # S207 redesign: every country with active tours is listed, with or without photos yet.
     by_country = {r["country"]: dict(r) for r in rows}
     empty = {"photos": 0, "with_tour": 0, "with_destination": 0, "unmatched": 0, "rejected": 0, "errors": 0,
-             "tour_folders": 0, "tours_covered": 0, "with_file": 0, "source_bytes": 0, "manual": 0,
+             "tour_folders": 0, "tours_covered": 0, "with_file": 0, "with_medium": 0, "source_bytes": 0, "manual": 0,
              "last_synced": None}
     from services.photos.sync import CON_FOLDERS
     countries = []
@@ -126,7 +129,7 @@ async def summary(request: Request):
         d["active_tours"] = tours.get(c, 0)
         d["has_drive_folder"] = any(f["country"] == c for f in CON_FOLDERS)
         countries.append(d)
-    keys = ("photos", "with_file", "with_tour", "unmatched", "rejected", "errors", "tours_covered",
+    keys = ("photos", "with_file", "with_medium", "with_tour", "unmatched", "rejected", "errors", "tours_covered",
             "active_tours", "source_bytes", "destinations", "destinations_with_cover", "manual", "tour_folders")
     totals = {k: sum(int(d[k] or 0) for d in countries) for k in keys}
     last_job = None
@@ -271,6 +274,35 @@ async def sync_schedule(request: Request, x_admin_secret: str = Header(None)):
     return {"day": day, **out}
 
 
+class MediumBackfillRequest(BaseModel):
+    limit: Optional[int] = None     # rows this run (default 1500, max 5000); a new run resumes with the rest
+    country: Optional[str] = None   # one country; None = all
+    dry_run: bool = False           # count the photos still missing the 960 w file, write nothing
+
+
+@router.post("/medium-backfill", summary="Enqueue a photo_medium_backfill job (960 w renditions)")
+async def medium_backfill(body: MediumBackfillRequest, request: Request, x_admin_secret: str = Header(None),
+                          x_admin_user_id: Optional[str] = Header(None)):
+    """AA-995: renders the 960 w WebP of the photos stored before it existed, from the files already in S3 (no Drive
+    download, no model call). One queued or running backfill at a time: a second call returns that job."""
+    verify_admin_secret(x_admin_secret)
+    from services.jobs.photo_medium_backfill_job import KIND, MAX_LIMIT
+    from shared.jobs.registry import enqueue
+    if body.limit is not None and not 1 <= body.limit <= MAX_LIMIT:
+        raise HTTPException(status_code=422, detail=f"limit must be from 1 to {MAX_LIMIT}")
+    pool = request.app.state.pool
+    active = await pool.fetchrow(
+        "SELECT id::text AS id, status FROM shared.job WHERE kind = $1 AND status IN ('queued', 'running') "
+        "ORDER BY created_at DESC LIMIT 1", KIND)
+    if active:
+        return {"job_id": active["id"], "created": False, "status": active["status"]}
+    payload = {"dry_run": body.dry_run, "country": body.country}
+    if body.limit is not None:
+        payload["limit"] = body.limit
+    job_id, created = await enqueue(pool, KIND, payload, created_by=f"admin:{x_admin_user_id or 'unknown'}")
+    return {"job_id": job_id, "created": created, "status": "queued"}
+
+
 class AssignRequest(BaseModel):
     tour_id: Optional[str] = None
     destination_id: Optional[str] = None
@@ -323,15 +355,15 @@ async def assign(photo_id: str, body: AssignRequest, request: Request, x_admin_s
 
 @public_router.get("/{photo_id}", summary="Photo image (redirect to S3)", include_in_schema=False)
 async def photo_image(photo_id: str, request: Request,
-                      size: str = Query("large", pattern="^(large|small|original)$")):
+                      size: str = Query("large", pattern="^(large|medium|small|original)$")):
+    from services.photos.sync import SIZE_FALLBACK, cdn_url, photo_bucket
     pid = _uuid(photo_id, "photo_id")
     row = await request.app.state.pool.fetchrow(
-        """SELECT s3_key_large, s3_key_small, s3_key_original, sha256 FROM shared.place_photo
+        """SELECT s3_key_large, s3_key_medium, s3_key_small, s3_key_original, sha256 FROM shared.place_photo
             WHERE id = $1::uuid AND status <> 'rejected'""", pid)
-    key = row and row[f"s3_key_{size}"]
+    key = next((row[f"s3_key_{s}"] for s in SIZE_FALLBACK[size] if row and row[f"s3_key_{s}"]), None)
     if not key:
         raise HTTPException(status_code=404, detail="photo not found")
-    from services.photos.sync import cdn_url, photo_bucket
     target = cdn_url(key, row["sha256"])
     if target:
         # AA-844: the CDN URL does not expire, so the redirect is cached for a day (fewer API hops per

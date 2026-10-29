@@ -445,7 +445,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     autovacuum `scale_factor 0.02`, `threshold 50` (C5.1b as amended by AA-751). Changing the template =
     copy it to AA-Booking in the same session + one migration per owner.
   - Job kinds live in `services/jobs/` (`segment_research`, `t2_rewrite`, `t9_write`, `a3_atomize`,
-    `s1_seo_prefetch`, `photo_sync`, `s1_rewrite`, `s1_batch_ingest`, `revalidate`, `recompute`,
+    `s1_seo_prefetch`, `photo_sync`, `photo_medium_backfill` — AA-995, `s1_rewrite`, `s1_batch_ingest`, `revalidate`, `recompute`,
     `place_cards_build`, `t7_slate`, `t8_angles`, and the place pipeline `place_extract`,
     `place_geocode`, `tour_graph_build` — AA-712, `place_shape`, `place_dedupe` — AA-847, `place_relocate` — AA-997, the five `retention_*` kinds — AA-825,
     `ops_alert_email` — AA-828, `data_erasure` — AA-839, the writing-memory kinds `writing_signal_backfill`,
@@ -737,7 +737,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
 
 - **Photos (AA-708, migration 198)**: the `photo_sync` job copies the Jira CON board's PHOTOS
   Drive folders (public, read with a Google API key from `aa-cis/dev/gdrive-photo-reader`) to S3
-  (`photos/<country>/<file id>-{1600,600}.webp`) and records `shared.place_photo`, matched to a tour
+  (`photos/<country>/<file id>-{1600,960,600}.webp` + the original) and records `shared.place_photo`, matched to a tour
   (folder name) and, on request, to a `shared.destinations` place (file name). Images are public via
   `GET /content/photos/{id}?size=`, the stable path every consumer stores (catalog photo views,
   TripPlanner covers and `og:image`, Booking `CisPhoto`). AA-844: it answers a 302 to the photos CDN
@@ -753,6 +753,11 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   `last_scheduled`. (Before AA-993 G5 those serial jobs held the deploy gate around 04:00 ICT; they no longer do.) With
   `match_destinations` it fills empty `shared.destinations.cover_image_url` (read by the TripPlanner)
   — off until the destinations are re-extracted from the rerun tours (the schedule never sets it).
+  AA-995 (migration 301): `size=medium` is the 960 w file (`s3_key_medium`, phone heroes of the TripPlanner); a row
+  without it answers the 1600 w file (never the original). The sync writes it for every file it downloads; files stored
+  before 301 get it from the `photo_medium_backfill` job (`POST /admin/photos/medium-backfill`, background, $0: S3 +
+  Pillow on the worker, rendered from the stored original, no Drive download; bounded by `limit`, resumes with what is
+  still missing, stops while a `photo_sync` runs). `/admin/photos/summary` counts `with_medium`.
 - **Place pipeline (AA-712, ADR 0007, migration 226)**: CIS — not TripPlanner — computes each live
   tour's day skeleton (start / end / overnight), places (= itinerary components; id = uuid5(source, day, itinerary spelling, country, activity) at a place's first build, and AA-989: a rebuild keeps the previous row's id for the same place respelt, retyped or moved a day — `components.carry_over_ids`, unambiguous one-to-one pairs only — because TripPlanner trips pin components by id; AA-990: a generic name ("Night Market") keys the carry-over only together with its town; every other dropped id gets a redirect to the component of the same place (destination → card → spelling + country → link name, nearest day; generic names in the same town only), written to `geo.component_redirect` (CIS 285) in the transaction of the `geo.tour_place` rewrite (ids served again are cleared) and served to TripPlanner as `catalog.v_component_redirect`, whose readers follow the chain together with `tripplanner.component_id_map`; `components_hash` includes the atom ids),
   geocoded destinations and the tour graph (stops, nodes, edges, legs, junctions) into the CIS-internal

@@ -146,7 +146,8 @@ async def copy_rights_cleared(pool, entity_id: str, source_id: str, *, s3=None) 
             if hashlib.sha256(data).hexdigest() != sha:
                 raise PhotoRefused("bytes do not match the sha256 Booking recorded")
             await asyncio.to_thread(check_pixels, data)
-            sizes, _, _ = await asyncio.to_thread(make_sizes, data)
+            # Only the two sizes a supply copy stores (the CON sync's 960 w is not part of the supply contract).
+            sizes, _, _ = await asyncio.to_thread(make_sizes, data, {name: int(w) for w, name in SIZES.items()})
             keys = {w: cis_key(row["entity_type"], media_id, w) for w in SIZES}
             for w, name in SIZES.items():
                 await asyncio.to_thread(s3.put_object, Bucket=bucket, Key=keys[w], Body=sizes[name],
