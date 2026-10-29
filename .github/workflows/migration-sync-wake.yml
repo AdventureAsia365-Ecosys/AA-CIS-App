@@ -1,0 +1,55 @@
+name: Migration sync wake-up
+# AA-993 (root ADR 0017 decision 2, ADR 0011a decision 3 as amended in S258): after a push to main that touches
+# api/migrations/, ring the AA-CIS-Infra Migration Sync doorbell, so the byte copy of the new file is opened (and, once its
+# checks are green, merged and applied) without waiting for the sync's best-effort */10 cron, which stays the backstop.
+#
+# The doorbell is one comment, as aa-ecosys-ci-bot, on the open AA-CIS-Infra issue labelled migration-sync-wake (a
+# scheduled or manual Migration Sync run creates it; this workflow never does). Infra runs the sync on a ci-bot
+# comment on that issue only, never reads the comment text, and still pulls this repo's main anonymously: nothing
+# here is a payload Infra trusts (critic 1).
+#
+# Token: minted in the main-only environment "release" (it holds AA_CI_BOT_PRIVATE_KEY, as release-please.yml),
+# narrowed to AA-CIS-Infra and to Issues write only: no Contents, Pull requests, Actions or Workflows, so it cannot
+# change Infra code, open or merge a PR, or dispatch an Infra workflow. No checkout, no GITHUB_TOKEN permission.
+# No open wake-up issue = a warning and a green run: the cron still copies the file.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "api/migrations/**"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  wake:
+    name: Wake AA-CIS-Infra Migration Sync
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: release
+    steps:
+      - name: Mint an aa-ecosys-ci-bot token (AA-CIS-Infra, Issues write only)
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.AA_CI_BOT_APP_ID }}
+          private-key: ${{ secrets.AA_CI_BOT_PRIVATE_KEY }}
+          owner: AdventureAsia365-Ecosys
+          repositories: AA-CIS-Infra
+          permission-issues: write
+
+      - name: Comment on the wake-up issue
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          INFRA: AdventureAsia365-Ecosys/AA-CIS-Infra
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          N=$(gh api "repos/$INFRA/issues?state=open&labels=migration-sync-wake&per_page=1" --jq '.[0].number // empty')
+          if [ -z "$N" ]; then
+            echo "::warning::no open migration-sync-wake issue on AA-CIS-Infra yet (a scheduled or manual Migration Sync run opens it); the sync cron copies this migration instead"
+            exit 0
+          fi
+          gh issue comment "$N" --repo "$INFRA" --body "$GITHUB_REPOSITORY main ${GITHUB_SHA:0:12} touched api/migrations/ ($RUN_URL)" >/dev/null
+          echo "- rang the Migration Sync doorbell: AA-CIS-Infra#$N" >> "$GITHUB_STEP_SUMMARY"
