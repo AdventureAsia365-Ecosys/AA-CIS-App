@@ -114,3 +114,11 @@ def test_non_llm_job_errors_do_not_move_the_card(error):
 def test_llm_prefixed_and_bedrock_errors_still_count():
     assert av.is_llm_failure("llm_access_denied: every model refused at account level")
     assert av.is_llm_failure("AccessDeniedException when calling the InvokeModel operation: Error 002")
+
+
+def test_an_old_success_with_no_newer_outcome_is_unknown_not_ok():
+    """S258 live: the last answer was 9 h old and nothing ran after the refusal; the card must not say ok."""
+    out = av.build([_calls(ok_at=NOW - timedelta(hours=9))], [], hours=72, now=NOW)
+    assert out["status"] == "unknown" and out["last_ok_at"]
+    fresh = av.build([_calls(ok_at=NOW - timedelta(hours=2))], [], hours=72, now=NOW)
+    assert fresh["status"] == "ok"
