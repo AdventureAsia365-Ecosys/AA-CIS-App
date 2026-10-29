@@ -27,12 +27,17 @@ _PREFIX = "v1"
 _MAX_TXID = 2 ** 64 - 1
 _MAX_SEQ = 2 ** 63 - 1
 
+# The xid8 goes out as text (asyncpg has no xid8 codec) under its own name, ``txid_text``, and every column the
+# WHERE and ORDER BY use is qualified (``e.``). An unqualified ``ORDER BY txid`` next to ``txid::text AS txid`` sorts
+# by the TEXT output column (Postgres resolves a bare ORDER BY name to an output column first), so '10' < '9': a page
+# then ends on a cursor that is not its numeric maximum, the next page serves rows again and ``limit=1`` skips rows
+# (the flaky test_feed_cursor_pages_one_by_one of S256). Guarded by the unit test on this statement.
 FEED_SQL = """
-    SELECT seq, txid::text AS txid, event_id, type, tenant_id, membership, occurred_at
-      FROM shared.tenant_membership_event
-     WHERE txid < pg_snapshot_xmin(pg_current_snapshot())
-       AND (txid, seq) > ($1::text::xid8, $2::bigint)
-     ORDER BY txid, seq
+    SELECT e.seq, e.txid::text AS txid_text, e.event_id, e.type, e.tenant_id, e.membership, e.occurred_at
+      FROM shared.tenant_membership_event e
+     WHERE e.txid < pg_snapshot_xmin(pg_current_snapshot())
+       AND (e.txid, e.seq) > ($1::text::xid8, $2::bigint)
+     ORDER BY e.txid, e.seq
      LIMIT $3
 """
 
@@ -78,7 +83,7 @@ def _json(value: Any) -> Any:
 def event_body(row: Any) -> dict:
     return {
         "event_id": str(row["event_id"]),
-        "cursor": encode_cursor(int(row["txid"]), int(row["seq"])),
+        "cursor": encode_cursor(int(row["txid_text"]), int(row["seq"])),
         "type": row["type"],
         "occurred_at": iso_utc(row["occurred_at"]),
         "tenant_id": str(row["tenant_id"]),
