@@ -4,7 +4,9 @@ One check for every route that accepts a tenant JWT (``/v1/*`` and the tenant br
 instead of one per dependency: a tenant JWT minted by ``POST /auth/tenant-session`` carries ``csr`` (the person's
 Content studio role from ``shared.tenant_members``) and this middleware enforces it before the route runs:
 
-- ``csr = viewer``: read only. Any method other than GET / HEAD / OPTIONS -> 403 ``studio_role_forbidden``.
+- ``csr = viewer``: read only. Any method other than GET / HEAD / OPTIONS -> 403 ``studio_role_forbidden``, except the
+  few read-only POSTs in :data:`READ_ONLY_POSTS` (they check input and store nothing, and the studio pages call them on
+  load, e.g. the brand page's live CTA check). The list is exact (method + full path), never a blanket POST exemption.
 - ``csr = editor``: everything except account writes: a non-read method on :data:`ACCOUNT_WRITE_PREFIXES`
   (channel connections, the API key, members, webhooks) -> 403 ``studio_role_forbidden``.
 - ``csr = owner`` and every API-key token (no ``csr``; machines and the window's API-key sign-in): unchanged.
@@ -36,6 +38,11 @@ from api.routers.auth import studio_role_of, verify_jwt
 logger = structlog.get_logger()
 
 READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+# Non-GET routes that only read: they validate the body and store nothing, so every studio role may call them. Exact
+# (method, path) pairs; a new entry needs a route that writes nothing (no DB write, no notification, no job).
+READ_ONLY_POSTS = frozenset({
+    ("POST", "/v1/content-writing/cta-check"),  # live review/rating-claim check of a CTA (no DB, nothing stored)
+})
 # Account writes an editor may not make (design Q5): channel connections and tests, the API key, members, webhooks.
 ACCOUNT_WRITE_PREFIXES = ("/v1/integrations", "/v1/account", "/v1/webhooks")
 # Paths that accept a tenant JWT (the rest ignore it, or refuse it in their own dependency).
@@ -49,7 +56,7 @@ def _matches(path: str, prefix: str) -> bool:
 
 def refusal(method: str, path: str, role: str | None) -> bool:
     """True when a token with Content studio role ``role`` may not make this request."""
-    if role is None or role == "owner" or method in READ_METHODS:
+    if role is None or role == "owner" or method in READ_METHODS or (method, path) in READ_ONLY_POSTS:
         return False
     if role == "editor":
         return any(_matches(path, p) for p in ACCOUNT_WRITE_PREFIXES)
