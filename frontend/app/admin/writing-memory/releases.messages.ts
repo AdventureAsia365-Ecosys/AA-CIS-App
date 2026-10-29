@@ -77,6 +77,15 @@ export const R = defineMessages(
     factCompared: (n: number) => `${n} compared with the pre-deploy reference`,
     factHashes: (match: number, all: number) => `${match}/${all} stored hashes reproduced`,
     factErrors: (n: number) => `${n} errors`,
+    kappaLine: (kappa: string, pairs: number, pass: number, fail: number) =>
+      `Judge kappa ${kappa} on ${pairs} labelled pairs (${pass} pass / ${fail} fail labels)`,
+    kappaCounts: "the judge counts (kappa >= 0.6)",
+    kappaNotCounts: "the judge does not count (needs kappa >= 0.6 on >= 10 pairs, >= 3 of each label)",
+    kappaStrataTitle: "Kappa per stratum",
+    kappaStratumRow: (label: string, kappa: string, n: number, pass: number, fail: number) =>
+      `${label}: ${kappa} (n ${n}, ${pass}/${fail})`,
+    kappaTooFew: "too few to measure",
+    kappaBelow: (list: string) => `Under 0.6 in a measurable stratum: ${list}`,
     prompt: "prompt",
     code: (sha: string) => ` · code ${sha}`,
     // post-activation check
@@ -233,6 +242,15 @@ export const R = defineMessages(
     factCompared: (n: number) => `${n} đã so với bản tham chiếu trước deploy`,
     factHashes: (match: number, all: number) => `${match}/${all} mã băm đã lưu tái tạo được`,
     factErrors: (n: number) => `${n} lỗi`,
+    kappaLine: (kappa: string, pairs: number, pass: number, fail: number) =>
+      `Kappa của judge ${kappa} trên ${pairs} cặp có nhãn (${pass} nhãn đạt / ${fail} nhãn trượt)`,
+    kappaCounts: "judge được tính (kappa >= 0,6)",
+    kappaNotCounts: "judge chưa được tính (cần kappa >= 0,6 trên >= 10 cặp, mỗi loại nhãn >= 3)",
+    kappaStrataTitle: "Kappa theo nhóm",
+    kappaStratumRow: (label: string, kappa: string, n: number, pass: number, fail: number) =>
+      `${label}: ${kappa} (n ${n}, ${pass}/${fail})`,
+    kappaTooFew: "quá ít để đo",
+    kappaBelow: (list: string) => `Dưới 0,6 ở nhóm đo được: ${list}`,
     prompt: "prompt",
     code: (sha: string) => ` · mã nguồn ${sha}`,
     checkTitle: "Kiểm tra sau kích hoạt",

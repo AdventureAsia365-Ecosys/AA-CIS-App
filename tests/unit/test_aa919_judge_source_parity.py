@@ -172,13 +172,16 @@ _IMPORT = re.compile(r"^\s*(from\s+services\.writing_memory\.eval_judge\s+import
 
 def test_only_the_r2_runner_imports_the_eval_judge():
     """Live pipelines never call the eval judge: the only non-test module that imports it is the R2 runner (the
-    writing_memory_r2 job / CLI). A new importer must be a deliberate change of this test."""
+    writing_memory_r2 job / CLI), plus the AA-919 operator scripts (S257: the $0 kappa diag and the judge-model
+    comparison, both exec'd by hand, never imported by a pipeline). A new importer must be a deliberate change of
+    this test."""
     importers = set()
     for top in ("api", "services", "shared", "worker", "scripts"):
         for f in (REPO / top).rglob("*.py"):
             if _IMPORT.search(f.read_text(encoding="utf-8", errors="ignore")):
                 importers.add(f.relative_to(REPO).as_posix())
-    assert importers == {"services/writing_memory/r2.py"}
+    assert importers == {"services/writing_memory/r2.py", "scripts/aa919/kappa_diag.py",
+                         "scripts/aa919/judge_compare.py"}
 
 
 def test_r2_judges_with_the_parity_source_and_stores_the_claims(monkeypatch):
