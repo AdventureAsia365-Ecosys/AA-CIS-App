@@ -28,7 +28,7 @@ from typing import Iterator, Optional
 
 from services.acp_shared.citation_tags import TAG as _TAG
 from services.acp_shared.citation_tags import strip_citation_tags
-from services.acp_shared.channel_spec import STOCK_PATTERNS
+from services.acp_shared.channel_spec import CROSS_CHANNEL_STOCK_PATTERNS, STOCK_PATTERNS
 
 
 def fold(text: Optional[str]) -> str:
@@ -1146,7 +1146,12 @@ def copies(a: str, b: str, ignore: frozenset = frozenset()) -> bool:
 # this as a 15-day journey…", "The content seed for this journey notes that…").
 LEAK_RE = re.compile(
     r"\b(?:content seed|the seed|this seed|source itinerary|place background|the itinerary calls it"
-    r"|other trips that include|for context only|source notes)\b|\[moment\b|\bscope:", re.I)
+    r"|other trips that include|for context only|source notes)\b|\[moment\b|\bscope:"
+    # AA-789 (S234 r3 #14: the seed's 'Naming:' note in the copy, 'one phonetic approximation… best avoided') — the
+    # naming note's own vocabulary, never a plain 'also spelled' a reader can use
+    r"|\b(?:phonetic(?:al)?|common|loose)\s+approximation\b|\bcorrectly\s+spelled\b"
+    r"|\bshould\s+be\s+referred\s+to\s+as\b"
+    r"|\b(?:spelling|name|form|approximation|version)\s+(?:is\s+)?best\s+avoided\b", re.I)
 _LEAK_FRAME_RE = re.compile(
     r"^(?:(?:the|this|our) (?:content )?seed(?: (?:for|of) this (?:journey|trip|route|piece))?"
     r" (?:notes|says|mentions|states|records|lists|explains|adds|confirms)(?: that)?,?"
@@ -1230,6 +1235,13 @@ INSTRUCTION_LEAK_RE = re.compile(
     rf"|\bthis\s+(?:guide|post)\s+(?:{_SELF_VERBS})\b"
     r"|\bin\s+this\s+(?:piece|post|article|guide)\b"
     r"|\bwhat\s+follows\s+is\s+(?:a|an|the)\b", re.I)
+# AA-789 — brief wording the S234 panel found in copy that INSTRUCTION_LEAK_RE missed. Reported by find_issues
+# (F13_leak, sentence repair) only, never deleted by autofix: the sentence can carry a fact ('The two named rivers
+# meet below the walls.'). 'One ruined site, one date, one fact.' (r2 #19) is the brief's 'one X, one Y, one Z'
+# recipe; 'the two named rivers' (r3 #7) the angle's 'named' as an adjective on a plural noun.
+BRIEF_WORDING_RE = re.compile(
+    r"\bone\s+[a-z]+(?:\s+[a-z]+)?,\s+one\s+[a-z]+(?:\s+[a-z]+)?,\s+(?:and\s+)?one\s+[a-z]+\b"
+    r"|\b(?:the\s+)?(?:two|three|four|both|several)\s+named\s+(?-i:[a-z]+s)\b", re.I)
 _DAY_RANGE_RE = re.compile(rf"\bdays\s+({NUM_TOKEN}){_RANGE_SEP}({NUM_TOKEN})\b", re.I)
 _SCOPE_DAYS_RE = re.compile(r"\bdays?\s+(\d+)(?:\s*[–—-]\s*(\d+))?", re.I)
 
@@ -1831,6 +1843,70 @@ def near_duplicates(text: str, ignore: frozenset = frozenset(), cta: Optional[st
     return out
 
 
+# AA-789 (S234 r4 #1: 'a living religious seat' … 'a living religious institution'; r3 #19's repair duplicates) — the
+# same two-word descriptor told twice with the head noun swapped. `_restatement` reads only the sentence just before;
+# this reads the whole piece but is narrow: the shared pair ends in an adjective-like word, is not the source's own
+# wording (a seed phrase told twice is a 'fact' / 'copy' matter), the nouns after it differ, and the later sentence
+# shares another content word with the earlier one or opens on a pronoun. Reported (F13_repeat, sentence repair),
+# never deleted by autofix.
+# adjective endings only: '-ary', '-ent', '-ant', '-ed', '-ing' are left out ('boundary', 'settlement', 'hundred',
+# 'understanding' are nouns; replay on the 40 S234 pieces)
+_DESCRIPTOR_END_RE = re.compile(r"(?:ou|al|ic|ive|ful|ible|able|ish|less|ern)$")
+_PRONOUN_OPEN_RE = re.compile(r"^\W*(?:it|its|this|that|they|these|those)\b", re.I)
+
+
+def paraphrased_repeats(text: str, source: str = "", ignore: frozenset = frozenset(),
+                        cta: Optional[str] = None) -> list[tuple[str, str]]:
+    """[(later sentence, the shared descriptor)] for prose sentences outside the FAQ (see above)."""
+    spans = [sp for sp in _dup_spans(text, cta) if sp["kind"] == "prose"]
+    src = _grams(_p5(content_words(source or "", ignore)), 2)
+    full = [content_words(sp["clean"], ignore) for sp in spans]
+    words = [_p5(w) for w in full]
+    out = []
+    for j in range(1, len(spans)):
+        cj = words[j]
+        hit = None
+        for i in range(j):
+            ci = words[i]
+            for k in range(len(cj) - 2):
+                pair = (cj[k], cj[k + 1])
+                if pair in src or not _DESCRIPTOR_END_RE.search(full[j][k + 1]):
+                    continue
+                heads = {ci[n + 2] for n in range(len(ci) - 2) if (ci[n], ci[n + 1]) == pair}
+                if not heads or cj[k + 2] in heads:
+                    continue
+                others = (set(cj) & set(ci)) - set(pair)
+                if others or _PRONOUN_OPEN_RE.match(spans[j]["clean"]):
+                    hit = f"{full[j][k]} {full[j][k + 1]}"
+                    break
+            if hit:
+                break
+        if hit:
+            out.append((spans[j]["clean"], hit))
+    return out
+
+
+# AA-789 (S234 r4 #16: 'Access requires a multi-hour horse or reindeer ride.' opened the Tsaatan section, a repair
+# left it with no subject) — a section that opens on a relational noun with no complement: access / entry / the
+# approach … to WHAT is in the sentence before it, which is a heading.
+_SUBJECTLESS_OPENER_RE = re.compile(
+    r"^(?:the\s+)?(?:access|entry|admission|approach|way\s+in|getting\s+there|reaching\s+(?:it|them|there))\b"
+    r"(?!\s+(?:to|into|from|for|of|via|at|on)\b)", re.I)
+
+
+def subjectless_section_openers(text: str) -> list[str]:
+    """The first prose sentence under a heading when it opens on a relational noun with no complement
+    (`_SUBJECTLESS_OPENER_RE`): 'Access requires …' right after '## The Tsaatan'."""
+    spans = sentence_spans(text or "")
+    out = []
+    for k, sp in enumerate(spans[:-1]):
+        nxt = spans[k + 1]
+        if sp["kind"] == "heading" and nxt["kind"] == "prose" and _SUBJECTLESS_OPENER_RE.match(
+                strip_tags(nxt["clean"]).strip().lstrip("\"'“‘*")):
+            out.append(nxt["clean"])
+    return out
+
+
 def orphan_lines(text: str, ignore: frozenset = frozenset(), cta: Optional[str] = None) -> list[str]:
     """One-sentence paragraphs of ≤ 8 words whose every content word is already in the sentence
     before or after them — a line a repair left behind ('The itinerary builds it in.' between 'The
@@ -2215,6 +2291,26 @@ CONTRAST_FRAME_RES = tuple(re.compile(p, re.I) for p in (
     r"\b(?:this|that|it)\s+is\s+not\s+(?:a\s+)?metaphor\b",
     r"\bnot\s+(?:a\s+|an\s+|the\s+)?\w+(?:\s+\w+){0,3}\s+but\s+(?!also\b)\w+",
     r"[—–,;]\s*not\s+(?:just|only|merely|simply)\s+\w+",
+    # AA-789 (Report 12 §1.3: the panel saw frames on 16-19 of 20 pieces, the check flagged 3) — the shapes it missed.
+    # 8: the reversed frame, the clause-final 'Y, not X.' ('The annual return is institutional, not ceremonial
+    # sentiment.', 'a working monastery, not a site frozen for visitors', 'a founding argument, not a scenic
+    # preference'). A word, never a number ('aged 9, not 7'), not an additive or limiting 'not' ('…, not least
+    # the monks', 'not far', 'not yet', 'not only'), and not a prepositional practical contrast ('Rest before lunch,
+    # not after exhaustion sets in.', 'by boat, not on foot').
+    r"(?:,|\s[—–])\s*not\s+(?:a\s+|an\s+|the\s+)?(?!(?:least|only|just|yet|far|long|much|many|all|every|always"
+    r"|necessarily|quite|counting|including|unlike|to|for|in|on|at|by|with|from|until|since|so|too|even|once"
+    r"|after|before|during|over|under|inside|outside|near|around|through|into|via|without)\b)"
+    r"[a-z][\w'’-]*(?:\s+[a-z][\w'’-]*){0,5}\s*(?=[.!?]|$)",
+    # 9: a verb negation answered after a semicolon / colon / dash ('The dzong does not perform for visitors; it
+    # simply continues its year.'). Never a comma: '…doesn't rain much, it is said' is not a frame.
+    r"\b(?:does|do|did)(?:\s+not|n['’]t)\b[^.!?;\n]{1,80}?[;:—–]\s*(?:it|this|that|they)\s+(?!is\b|was\b|are\b"
+    r"|were\b)[a-z]+",
+    # 10: a fragment that opens on 'Not' ('Not squeezed in. Planned in.', 'Not as filler.'). Capital N at a sentence
+    # start only; 'Not far from…', 'Not all / every…', 'Not until 1955…' are sentences, not frames.
+    r"(?:^|(?<=[.!?]\s)|(?<=\n))(?-i:N)ot\s+(?!(?:far|all|every|only|until|much|many|least|long|once|surprisingly"
+    r"|quite|everyone|everything|one|a\s+single)\b)[^.!?\n]{1,40}[.!?]",
+    # 11: 'less X, more Y' ('The camp is less a hotel, more a home.'), the comma form of index 4
+    r"\bless\s+(?:a\s+|an\s+|about\s+)?\w+(?:\s+\w+){0,3}\s*[,;—–]\s*more\s+(?:a\s+|an\s+|about\s+)?\w+",
 ))
 CONTRAST_WORDS_PER_FRAME = 150
 
@@ -2356,7 +2452,7 @@ TEMPLATE_LINE_RES = tuple(re.compile(p, re.I) for p in (
     # only as the sentence's opener with a plural pronoun (r2 #2 'Knowing them in advance —' had no
     # antecedent); 'and knowing that in advance changes how you plan' (r1 #13, clean) is fine
     r"^knowing\s+(?:them|these|those)\s+in\s+advance\b",
-))
+)) + CROSS_CHANNEL_STOCK_PATTERNS  # AA-789 — 'does not perform', 'tolerates them' in blogs too (S234 r4 #15, #17)
 
 
 # AA-790 (S251 T9 pilot, AI-tells 4.08) — the AI tells the writer-side pass (ai_tells.rewrite) cannot fix in code:
@@ -3334,7 +3430,8 @@ def find_issues(content_text: str, ctx: HygieneContext, *, seo_title: Optional[s
     for s in spans:  # S234 round 2 — headings too ('A Sentence on Loss')
         if s["kind"] not in ("prose", "bullet", "faq_a", "faq_q", "heading"):
             continue
-        for leak in instruction_leaks(s["clean"], ctx.scope):
+        for leak in instruction_leaks(s["clean"], ctx.scope) + [m.group(0) for m in BRIEF_WORDING_RE.finditer(
+                s["clean"])]:
             leaks.append(f"leaks the writer's instructions ('{leak}'): '{s['clean'][:200]}'")
         for leak in audience_leaks(s["clean"], ctx.audience, ctx.source_text):
             leaks.append(f"leaks the brand's audience definition ('{leak}'), not a fact about this trip: "
@@ -3366,6 +3463,11 @@ def find_issues(content_text: str, ctx: HygieneContext, *, seo_title: Optional[s
         repeats.append(f"{d['why']} — cut it or say something new: '{d['later']['clean'][:200]}'")
     repeats += [f"adds nothing to the sentences around it — cut it: '{o[:200]}'"
                 for o in orphan_lines(text, ignore, ctx.cta)]
+    repeats += [f"opens its section with nothing it refers to — name what it is about: '{o[:200]}'"
+                for o in subjectless_section_openers(text)]  # AA-789 (S234 r4 #16)
+    repeats += [f"tells the same thing again in other words ('{pair}…') — cut it or say something new: '{o[:200]}'"
+                for o, pair in paraphrased_repeats(text, ctx.source_text, ignore, ctx.cta)
+                if f"{o[:200]}'" not in {r.rsplit(": '", 1)[-1] for r in repeats}]  # AA-789 (S234 r4 #1)
     from services.acp_content_writing.trip_facts import misplaced_sentences
     repeats += [f"repeats a moment under another moment's heading — cut it or move its fact: '{m[:200]}'"
                 for m in misplaced_sentences(text, ctx.moments, ctx.cta)]
