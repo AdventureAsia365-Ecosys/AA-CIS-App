@@ -3,7 +3,7 @@
 
 import { AlertTriangle, Copy } from "lucide-react";
 import { useState } from "react";
-import { Badge, Button, K, RADIUS, mono, sans, useLang, useT } from "../../_kit";
+import { Badge, Button, K, RADIUS, Section as KitSection, mono, sans, useLang, useT } from "../../_kit";
 import { ERASURE_WORDS_MESSAGES, ACTION_HELP_MESSAGES } from "@/lib/dataErasure.messages";
 import { actionTone, orderedTotals, type ErasureWords } from "@/lib/dataErasure";
 import { ER } from "./messages";
@@ -17,6 +17,7 @@ function useActionHelp(): Record<string, string> {
   return ACTION_HELP_MESSAGES[useLang()];
 }
 
+/** The page's card region: the kit Section (AA-994 S4a) with the page's 16px gap below it; `right` is its actions. */
 export function Section({ title, children, right, testId }: {
   title: React.ReactNode;
   children: React.ReactNode;
@@ -24,19 +25,9 @@ export function Section({ title, children, right, testId }: {
   testId?: string;
 }) {
   return (
-    <section
-      data-testid={testId}
-      style={{
-        background: K.card, border: `1px solid ${K.line}`, borderRadius: RADIUS.lg, padding: "16px 18px",
-        marginBottom: 16, minWidth: 0, fontFamily: sans,
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-        <h2 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: K.ink }}>{title}</h2>
-        {right}
-      </div>
+    <KitSection title={title} actions={right} testId={testId} style={{ marginBottom: 16 }}>
       {children}
-    </section>
+    </KitSection>
   );
 }
 

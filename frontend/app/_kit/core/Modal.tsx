@@ -5,9 +5,16 @@
 //
 // Controlled: parent owns `open`. Renders nothing when closed. Clicking the backdrop or pressing
 // Escape calls onClose. `ConfirmModal` is the common confirm/destructive case built on Modal.
+//
+// AA-994 S4a: ConfirmModal absorbed AA-Booking's `ConfirmDialog` (one confirm dialog in every app): the Figma layout
+// (a round icon at the left, the title and the message beside it, a footer band with Cancel + the action, no header
+// bar), an optional reason field (`reason`, `required` blocks the action until one is typed; onConfirm receives the
+// trimmed text), an inline `error`, "Working…" while `busy`, and no closing while busy. Booking's prop names are
+// accepted as aliases (`message` = `body`, `danger` = `destructive`), so `ConfirmDialog` becomes a plain alias.
 
-import { useEffect } from "react";
-import { AlertTriangle, X } from "lucide-react";
+import { useEffect, useState, type CSSProperties } from "react";
+import { AlertTriangle, Info, X } from "lucide-react";
+import { Button } from "./primitives";
 import { K, RADIUS, sans, serif } from "./tokens";
 import { KIT_MESSAGES } from "./kit.messages";
 import { useT } from "./useI18n";
@@ -19,6 +26,9 @@ export function Modal({
   children,
   footer,
   width = 460,
+  ariaLabel,
+  testId,
+  footerStyle,
 }: {
   open: boolean;
   onClose: () => void;
@@ -26,6 +36,11 @@ export function Modal({
   children: React.ReactNode;
   footer?: React.ReactNode;
   width?: number;
+  /** Accessible name of the dialog when it has no string `title`. */
+  ariaLabel?: string;
+  /** On the dialog box (body and footer). */
+  testId?: string;
+  footerStyle?: CSSProperties;
 }) {
   const t = useT(KIT_MESSAGES);
   useEffect(() => {
@@ -58,6 +73,8 @@ export function Modal({
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
+        aria-label={ariaLabel ?? (typeof title === "string" ? title : undefined)}
+        data-testid={testId}
         style={{
           width,
           maxWidth: "100%",
@@ -110,6 +127,7 @@ export function Modal({
               gap: 8,
               padding: "14px 20px",
               borderTop: `1px solid ${K.line}`,
+              ...footerStyle,
             }}
           >
             {footer}
@@ -120,83 +138,112 @@ export function Modal({
   );
 }
 
+type ConfirmReason = { label: string; required?: boolean; placeholder?: string; maxLength?: number };
+
+const NO_CLOSE = () => {};
+
 export function ConfirmModal({
   open,
   onClose,
   onConfirm,
   title,
   body,
+  message,
   confirmLabel,
   cancelLabel,
-  destructive = false,
+  destructive,
+  danger,
+  reason,
   busy = false,
+  error,
+  testId = "confirm-dialog",
 }: {
   open: boolean;
   onClose: () => void;
-  onConfirm: () => void;
+  /** Receives the trimmed reason text ("" without a `reason` field). */
+  onConfirm: (reason: string) => void;
   title: string;
-  body: React.ReactNode;
+  /** What happens; name the entity ("Retire tour Angkor at Dawn"). `message` is the same (Booking name). */
+  body?: React.ReactNode;
+  message?: React.ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
+  /** Danger styling (red icon and action). `danger` is the same (Booking name). */
   destructive?: boolean;
+  danger?: boolean;
+  /** Ask for a reason; `required` blocks the action until one is typed; `maxLength` defaults to 2000. */
+  reason?: ConfirmReason;
   busy?: boolean;
+  error?: string | null;
+  testId?: string;
 }) {
   const t = useT(KIT_MESSAGES);
-  const confirmColor = destructive ? K.danger : K.accent;
+  const isDanger = !!(destructive ?? danger);
+  // The reason starts empty each time the dialog opens (state adjusted during render, no effect).
+  const [text, setText] = useState("");
+  const [wasOpen, setWasOpen] = useState(open);
+  if (wasOpen !== open) {
+    setWasOpen(open);
+    if (open) setText("");
+  }
+  const blocked = busy || (!!reason?.required && !text.trim());
   return (
     <Modal
       open={open}
-      onClose={onClose}
-      title={
-        destructive ? (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-            <AlertTriangle size={17} style={{ color: K.danger }} /> {title}
-          </span>
-        ) : (
-          title
-        )
-      }
+      onClose={busy ? NO_CLOSE : onClose}
+      width={520}
+      ariaLabel={title}
+      testId={testId}
+      footerStyle={{ flexWrap: "wrap", background: K.panel }}
       footer={
         <>
-          <button
-            onClick={onClose}
-            disabled={busy}
-            style={{
-              padding: "8px 16px",
-              borderRadius: RADIUS.pill,
-              border: `1px solid ${K.line}`,
-              background: K.card,
-              color: K.ink3,
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: busy ? "not-allowed" : "pointer",
-              fontFamily: sans,
-            }}
-          >
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
             {cancelLabel ?? t("cancel")}
-          </button>
-          <button
-            onClick={onConfirm}
-            disabled={busy}
-            style={{
-              padding: "8px 16px",
-              borderRadius: RADIUS.pill,
-              border: `1px solid ${confirmColor}`,
-              background: destructive ? K.dangerSoft : confirmColor,
-              color: destructive ? K.danger : "var(--aa-on-solid)",
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: busy ? "not-allowed" : "pointer",
-              opacity: busy ? 0.6 : 1,
-              fontFamily: sans,
-            }}
-          >
-            {confirmLabel ?? t("confirm")}
-          </button>
+          </Button>
+          <Button variant={isDanger ? "danger" : "primary"} onClick={() => onConfirm(text.trim())} disabled={blocked}>
+            {busy ? t("working") : (confirmLabel ?? t("confirm"))}
+          </Button>
         </>
       }
     >
-      {body}
+      <div style={{ display: "flex", gap: 16, fontFamily: sans }}>
+        <span
+          aria-hidden="true"
+          style={{
+            display: "grid", placeItems: "center", width: 44, height: 44, flexShrink: 0, borderRadius: "50%",
+            background: isDanger ? K.dangerSoft : K.accentTint, color: isDanger ? K.danger : K.accentDeep,
+          }}
+        >
+          {isDanger ? <AlertTriangle size={20} /> : <Info size={20} />}
+        </span>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0, flex: 1 }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: 17, fontWeight: 600, color: K.ink, fontFamily: sans }}>{title}</h2>
+            <div style={{ marginTop: 6, fontSize: 14, color: K.body, overflowWrap: "anywhere" }}>{body ?? message}</div>
+          </div>
+          {reason && (
+            <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <span style={{ fontSize: 13, fontWeight: 500, color: K.ink }}>
+                {reason.label}
+                {reason.required && <span style={{ color: K.danger }}> *</span>}
+              </span>
+              <textarea
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                rows={3}
+                maxLength={reason.maxLength ?? 2000}
+                placeholder={reason.placeholder}
+                style={{
+                  borderRadius: RADIUS.md, border: `1px solid ${K.line}`, background: K.card, padding: "8px 12px",
+                  fontSize: 14, fontFamily: sans, color: K.ink, resize: "vertical", boxSizing: "border-box",
+                  width: "100%",
+                }}
+              />
+            </label>
+          )}
+          {error && <p role="alert" style={{ margin: 0, fontSize: 13, color: K.danger }}>{error}</p>}
+        </div>
+      </div>
     </Modal>
   );
 }

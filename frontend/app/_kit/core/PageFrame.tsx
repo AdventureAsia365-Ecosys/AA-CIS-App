@@ -16,13 +16,36 @@
 // and the same 16px phone inset, so the header band can run edge to edge with its border while the text lines
 // up with every other page. The split frame keeps the 84px phone gap above the BottomNav.
 //
+// `width` and the header props (AA-994 S4a, upstreamed from AA-Booking `ui/booking/PageFrame.tsx`): a "page" frame
+// may centre its content in a column ("wide" 1440px, "narrow" 880px for forms and settings) and draw the kit
+// PageHeader on top (`title`, `description`, `actions`, `breadcrumbs`). With either set, the children stack in a
+// flex column with a 20px gap, so sections need no margins of their own. Without them (the default, "full") the
+// frame renders its children as before, so existing pages do not change.
+//
 // `data-kit-frame` marks the frame for the automated visual job (root ADR 0016 decision 9: a page without it fails).
 import type { CSSProperties, ReactNode } from "react";
+import { PageHeader } from "./primitives";
 import { K } from "./tokens";
 
 type FrameProps = { children: ReactNode; style?: CSSProperties; testId?: string; className?: string };
 
-export function PageFrame({ children, style, testId, variant = "page" }: FrameProps & { variant?: "page" | "split" }) {
+/** "full": no column (the content uses the frame's width); "wide": centred, at most 1440px; "narrow": at most 880px;
+ *  a number: at most that many px. */
+export type PageFrameWidth = "full" | "wide" | "narrow" | number;
+
+const FRAME_MAX: Record<"wide" | "narrow", number> = { wide: 1440, narrow: 880 };
+
+type PageHeaderProps = {
+  /** Draws the kit PageHeader at the top of the column. */
+  title?: ReactNode;
+  description?: ReactNode;
+  actions?: ReactNode;
+  breadcrumbs?: { label: string; href?: string }[];
+};
+
+export function PageFrame({
+  children, style, testId, className, variant = "page", width = "full", title, description, actions, breadcrumbs,
+}: FrameProps & PageHeaderProps & { variant?: "page" | "split"; width?: PageFrameWidth }) {
   if (variant === "split") {
     return (
       <main className="aa-admin-split" data-testid={testId} data-kit-frame="split"
@@ -31,10 +54,21 @@ export function PageFrame({ children, style, testId, variant = "page" }: FramePr
       </main>
     );
   }
+  const column = width !== "full" || title != null;
+  const maxWidth = typeof width === "number" ? width : width === "full" ? undefined : FRAME_MAX[width];
   return (
-    <main className="aa-admin-main" data-testid={testId} data-kit-frame="page"
+    <main className={`aa-admin-main${className ? ` ${className}` : ""}`} data-testid={testId} data-kit-frame="page"
       style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: "auto", padding: "28px 36px 56px", ...style }}>
-      {children}
+      {column ? (
+        <div data-kit-frame-column="" style={{
+          display: "flex", flexDirection: "column", gap: 20, minWidth: 0, maxWidth, margin: "0 auto", width: "100%",
+        }}>
+          {title != null && (
+            <PageHeader title={title} description={description} actions={actions} breadcrumbs={breadcrumbs} />
+          )}
+          {children}
+        </div>
+      ) : children}
     </main>
   );
 }

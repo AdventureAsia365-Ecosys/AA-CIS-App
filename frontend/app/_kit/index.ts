@@ -20,7 +20,7 @@ export * from "./core/savedViews";
 export { Providers } from "./core/Providers";
 // S252 page frame; `PageFrame*` is the AA-994 name, `AdminMain` / `AdminPane*` the aliases pages use today.
 export {
-  PageFrame, PageFrameHeader, PageFrameBody, AdminMain, AdminPaneHeader, AdminPaneBody,
+  PageFrame, PageFrameHeader, PageFrameBody, AdminMain, AdminPaneHeader, AdminPaneBody, type PageFrameWidth,
 } from "./core/PageFrame";
 // AA-919 — the Guide tab pattern: every admin page with a Guide tab keeps a GuideContent in
 // app/admin/<page>/guide.ts and renders it with GuidePanel; the shape is core/guide.ts, the CIS checks are
@@ -28,6 +28,21 @@ export {
 export * from "./guideContent";
 export { GuidePanel } from "./core/GuidePanel";
 export { useMediaQuery, useIsPhone, PHONE_QUERY } from "./core/useMediaQuery";
+// AA-994 S4a — upstreamed from AA-Booking: card region, KPI tile, URL-backed filter bar, row action menu, date field,
+// money / date text and their pure formatters, and the gallery that shows them (admin Settings → UI kit).
+export { Section } from "./core/Section";
+export { KpiTile } from "./core/KpiTile";
+export {
+  FilterBar, FilterField, useUrlFilters, filterControlStyle, FILTER_CONTROL_CLASS, type FilterSelect,
+} from "./core/FilterBar";
+export { RowMenu, type RowMenuItem } from "./core/RowMenu";
+export { DateField } from "./core/DateField";
+export { Money } from "./core/Money";
+export { DateText, relativeTime } from "./core/DateText";
+export {
+  formatMoney, minorUnits, formatDay, isIsoDay, parseDayInput, relativeParts, type RelativeParts,
+} from "./core/format";
+export { KitGallery } from "./core/KitGallery";
 export { useSidebarCollapsed } from "./core/useSidebar";
 // AA-994 — UI language (EN default, VI second): one typed catalogue per area (`messages.ts`), `useT(M)` in components.
 export {

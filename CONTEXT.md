@@ -110,6 +110,13 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     itself `data-kit-frame`), `GuidePanel.tsx` + `guide.ts` (the content shape; the page passes its content as a
     prop), `theme.ts` (`createThemeStore({ storageKey })` + its restore script) and `useTheme.ts`
     (`createThemeHooks(store)`), `useHydrated.ts`, `useMediaQuery.ts`, `sidebarStore.ts`, `useSidebar.ts`,
+    **AA-994 S4a (upstreamed from AA-Booking):** `Section.tsx` (card region with a header band), `KpiTile.tsx`,
+    `FilterBar.tsx` (`FilterBar` / `FilterField` / `useUrlFilters`: filters in the URL query), `DateField.tsx` (en-GB
+    day field over the native picker), `RowMenu.tsx`, `Money.tsx`, `DateText.tsx`, `format.ts` (pure, import-free:
+    `formatMoney`, `formatDay`, `parseDayInput`, `relativeParts`), the one confirm dialog `ConfirmModal` (absorbed
+    Booking's `ConfirmDialog`: Figma layout, optional reason, `message` / `danger` aliases), `PageFrame` `width`
+    ("full" default, "wide" 1440, "narrow" 880) + header props, and `KitGallery.tsx` (every S4a component in its states,
+    admin Settings → UI kit → Gallery; the gated gallery route of the visual job, S1d, will render it too),
     `check-kit-copy.mjs`, **`eslint-kit.mjs`** (AA-994 S1c, see "Kit lint" below), `MANIFEST.json` and **`tokens.css`** (AA-994 S1b: the one `--aa-*` token set of every
     frontend — light and dark palettes, `--aa-scrim` / `--aa-hero-bg`, shadows, `--aa-font-*` as
     `var(--font-*, "<family>")`, and the type / radius / space / z / motion scales from TripPlanner AA-995;

@@ -8,8 +8,8 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { A, mono, serif } from "../../_components/adminUi";
-import { Badge, DataTable, ErrorState, Spinner, apiGet, useT, type Translator } from "../../../_kit";
+import { A, mono } from "../../_components/adminUi";
+import { Badge, DataTable, ErrorState, KpiTile, Spinner, apiGet, useT, type Translator } from "../../../_kit";
 import { type TenantCost, pct, usd } from "./tenant360";
 import { T360 } from "./tenant360.messages";
 
@@ -36,16 +36,6 @@ const stageColumns = (t: T): ColumnDef<StageRow, unknown>[] => [
   { accessorKey: "share", header: t("colShare"), cell: c => <span style={{ ...tabular, color: A.muted }}>{pct(c.getValue() as number | null)}</span> },
 ];
 
-function Kpi({ label, value, hint, color }: { label: string; value: string; hint?: string; color?: string }) {
-  return (
-    <div style={{ padding: "10px 14px", background: A.card, border: `1px solid ${A.line}`, borderRadius: 8, minWidth: 0 }}>
-      <div style={{ fontSize: 10, color: A.muted2, marginBottom: 3 }}>{label}</div>
-      <div style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: color ?? A.ink, fontVariantNumeric: "tabular-nums" }}>{value}</div>
-      {hint && <div style={{ fontSize: 10.5, color: A.muted2, marginTop: 2 }}>{hint}</div>}
-    </div>
-  );
-}
-
 function H({ children }: { children: React.ReactNode }) {
   return <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: A.muted, margin: "18px 0 8px" }}>{children}</div>;
 }
@@ -67,7 +57,7 @@ export function Tenant360Cost({ tenantId }: { tenantId: string }) {
   if (q.isError || !q.data) return <ErrorState message={t("costLoadError", (q.error as Error)?.message ?? t("unknownError"))} onRetry={() => q.refetch()} />;
   const c = q.data;
   const mg = c.margin;
-  const marginColor = mg.margin_usd == null ? A.muted : mg.margin_usd < 0 ? A.red : A.green;
+  const marginTone = mg.margin_usd == null ? "neutral" : mg.margin_usd < 0 ? "danger" : "success";
   const kind = (k: string) => c.by_kind.find(x => x.kind === k);
   const blog = kind("blog");
   const social = kind("social");
@@ -75,16 +65,16 @@ export function Tenant360Cost({ tenantId }: { tenantId: string }) {
   return (
     <div style={{ minWidth: 0 }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
-        <Kpi label={t("llmCostMtd", c.billing_month ?? t("thisMonth"))} value={usd(c.total_cost_usd)} />
-        <Kpi label={t("planRevenue")} value={mg.plan_attached ? usd(mg.revenue_usd) : t("noPlan")}
+        <KpiTile size="sm" label={t("llmCostMtd", c.billing_month ?? t("thisMonth"))} value={usd(c.total_cost_usd)} />
+        <KpiTile size="sm" label={t("planRevenue")} value={mg.plan_attached ? usd(mg.revenue_usd) : t("noPlan")}
           hint={mg.plan_attached ? t("planPlusOverage", usd(mg.plan_price_usd), usd(mg.overage_usd)) : undefined} />
-        <Kpi label={t("llmMargin")} value={mg.margin_usd == null ? "—" : usd(mg.margin_usd)} color={marginColor}
+        <KpiTile size="sm" label={t("llmMargin")} value={mg.margin_usd == null ? "—" : usd(mg.margin_usd)} valueTone={marginTone}
           hint={mg.margin_pct == null ? undefined : t("ofRevenue", mg.margin_pct.toFixed(1))} />
-        <Kpi label={t("perTour")} value={usd(c.per_tour.cost_per_tour_usd, 4)}
+        <KpiTile size="sm" label={t("perTour")} value={usd(c.per_tour.cost_per_tour_usd, 4)}
           hint={t("overTours", usd(c.per_tour.t2_cost_usd), c.per_tour.tours_rewritten)} />
-        <Kpi label={t("perBlog")} value={usd(blog?.cost_per_piece_usd, 4)}
+        <KpiTile size="sm" label={t("perBlog")} value={usd(blog?.cost_per_piece_usd, 4)}
           hint={blog ? t("pieces", blog.pieces) : t("noBlog")} />
-        <Kpi label={t("perSocial")} value={usd(social?.cost_per_piece_usd, 4)}
+        <KpiTile size="sm" label={t("perSocial")} value={usd(social?.cost_per_piece_usd, 4)}
           hint={social ? t("pieces", social.pieces) : t("noSocial")} />
       </div>
 

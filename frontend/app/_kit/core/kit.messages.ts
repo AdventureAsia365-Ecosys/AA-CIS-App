@@ -1,7 +1,7 @@
 // UI kit core (root ADR 0016). Canonical: AA-CIS-App frontend/app/_kit/core. Edit only there; copies are checked byte for byte (kit.lock.json).
 // app/_kit/core/kit.messages.ts
-// AA-994 — the kit core components' own text (DataTable, Modal, Drawer, Toast, primitives, GuidePanel, LangSwitch),
-// English and Vietnamese. Every app that renders an I18nProvider gets these in its UI language; outside a provider
+// AA-994 — the kit core components' own text (DataTable, Modal, Drawer, Toast, primitives, GuidePanel, LangSwitch,
+// and since S4a FilterBar, DateField, RowMenu, ConfirmModal, KpiTile, DateText), English and Vietnamese. Every app that renders an I18nProvider gets these in its UI language; outside a provider
 // they are English.
 
 import { defineMessages } from "./i18n";
@@ -62,6 +62,22 @@ export const KIT_MESSAGES = defineMessages(
     stRejected: "Rejected",
     stDismissed: "Dismissed",
     stRegenerating: "Regenerating",
+    rowActions: "Row actions",
+    resetFilters: "Reset filters",
+    dateFrom: "From",
+    dateTo: "To",
+    rangeFrom: (label: string) => `${label} from`,
+    rangeTo: (label: string) => `${label} to`,
+    datePlaceholder: "dd/mm/yyyy",
+    pickDate: "Pick a date",
+    pickDateFor: (label: string) => `Pick a date (${label})`,
+    invalidDate: "Not a valid date: use dd/mm/yyyy",
+    invalidDateRange: "Not a valid date in the allowed range: use dd/mm/yyyy",
+    working: "Working…",
+    justNow: "just now",
+    minutesAgo: (n: number) => `${n} min ago`,
+    hoursAgo: (n: number) => `${n} h ago`,
+    daysAgo: (n: number) => `${n} d ago`,
   },
   {
     language: "Ngôn ngữ",
@@ -118,5 +134,21 @@ export const KIT_MESSAGES = defineMessages(
     stRejected: "Bị từ chối",
     stDismissed: "Đã bỏ qua",
     stRegenerating: "Đang viết lại",
+    rowActions: "Thao tác với dòng",
+    resetFilters: "Đặt lại bộ lọc",
+    dateFrom: "Từ",
+    dateTo: "Đến",
+    rangeFrom: (label: string) => `${label} từ`,
+    rangeTo: (label: string) => `${label} đến`,
+    datePlaceholder: "dd/mm/yyyy",
+    pickDate: "Chọn ngày",
+    pickDateFor: (label: string) => `Chọn ngày (${label})`,
+    invalidDate: "Ngày không hợp lệ: nhập dd/mm/yyyy",
+    invalidDateRange: "Ngày không hợp lệ hoặc ngoài khoảng cho phép: nhập dd/mm/yyyy",
+    working: "Đang xử lý…",
+    justNow: "vừa xong",
+    minutesAgo: (n: number) => `${n} phút trước`,
+    hoursAgo: (n: number) => `${n} giờ trước`,
+    daysAgo: (n: number) => `${n} ngày trước`,
   },
 );

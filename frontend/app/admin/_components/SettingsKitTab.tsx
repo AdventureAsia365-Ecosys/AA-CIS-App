@@ -3,7 +3,8 @@
 // AA-662 — the UI-kit "living reference" rendered as a tab inside admin Settings (not a standalone
 // nav page). Shows every kit primitive with static data so the design system can be reviewed in
 // the running admin shell without hitting the backend; one section proves the app-wide
-// QueryClientProvider via a fake async query.
+// QueryClientProvider via a fake async query. AA-994 S4a: the "Gallery" tab renders the shared kit gallery
+// (core/KitGallery.tsx: Section, KpiTile, FilterBar, RowMenu, ConfirmModal, Money, DateText), the same in every app.
 
 import { useQuery } from "@tanstack/react-query";
 import { Trash2, Wand2 } from "lucide-react";
@@ -19,6 +20,7 @@ import {
   ErrorState,
   GuidePanel,
   InfoTip,
+  KitGallery,
   Modal,
   SkeletonBar,
   SkeletonStyle,
@@ -124,11 +126,14 @@ function KitTabInner() {
             { key: "table", label: t("tabTable") },
             { key: "overlays", label: t("tabOverlays") },
             { key: "guide", label: t("tabGuide") },
+            { key: "gallery", label: t("tabGallery") },
           ]}
           active={tab}
           onChange={setTab}
         />
       </div>
+
+      {tab === "gallery" && <KitGallery />}
 
       {tab === "guide" && (
         <Section title={t("secGuide")}>

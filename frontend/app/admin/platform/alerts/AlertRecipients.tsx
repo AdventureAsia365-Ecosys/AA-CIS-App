@@ -30,6 +30,7 @@ import {
   Modal,
   PageHeader,
   RADIUS,
+  Section,
   apiGet,
   mono,
   sans,
@@ -121,23 +122,6 @@ function Notice({ tone, children }: { tone: "warning" | "info" | "danger"; child
       <AlertTriangle size={16} style={{ flex: "none", marginTop: 2 }} />
       <div style={{ color: K.ink, minWidth: 0 }}>{children}</div>
     </div>
-  );
-}
-
-function Section({ title, children, right }: { title: string; children: React.ReactNode; right?: React.ReactNode }) {
-  return (
-    <section
-      style={{
-        background: K.card, border: `1px solid ${K.line}`, borderRadius: RADIUS.lg, padding: "16px 18px",
-        marginBottom: 16, minWidth: 0,
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-        <h2 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: K.ink, fontFamily: sans }}>{title}</h2>
-        {right}
-      </div>
-      {children}
-    </section>
   );
 }
 
@@ -512,8 +496,9 @@ export default function AlertRecipients() {
           {pageError && <Notice tone="danger">{pageError}</Notice>}
 
           <Section
+            style={{ marginBottom: 16 }}
             title={data.topic_name ? t("recipientsTopic", data.topic_name) : t("recipients")}
-            right={<span style={{ fontSize: 12.5, color: K.muted }}>{t("counts", data.limits.active, data.limits.max_active, data.limits.adds_left_today)}{data.reconciled_at ? t("checkedAt", formatDateTime(data.reconciled_at)) : ""}</span>}
+            actions={<span style={{ fontSize: 12.5, color: K.muted }}>{t("counts", data.limits.active, data.limits.max_active, data.limits.adds_left_today)}{data.reconciled_at ? t("checkedAt", formatDateTime(data.reconciled_at)) : ""}</span>}
           >
             {data.bootstrap && (
               <LockedRow email={data.bootstrap.email} state={data.bootstrap.state}

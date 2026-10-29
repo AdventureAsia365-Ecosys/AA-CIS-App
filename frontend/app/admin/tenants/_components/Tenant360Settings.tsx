@@ -15,7 +15,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle } from "lucide-react";
 import { A, mono, sans } from "../../_components/adminUi";
 import {
-  Badge, Button, ErrorState, Spinner, ToastProvider, apiGet, apiSend, useLang, useT, useToast,
+  Badge, Button, ErrorState, Section, Spinner, ToastProvider, apiGet, apiSend, useLang, useT, useToast,
 } from "../../../_kit";
 import {
   DAILY_PUBLISH_LIMIT_DEFAULT, DAILY_PUBLISH_LIMIT_MAX, PLANNING_CHANNELS, RATE_LIMIT_RPM_MAX,
@@ -42,16 +42,6 @@ function FieldError({ msg }: { msg?: string | null }) {
     <div role="alert" style={{ marginTop: 5, fontSize: 11.5, color: A.red, display: "flex", alignItems: "center", gap: 5 }}>
       <AlertCircle size={12} /> {msg}
     </div>
-  );
-}
-
-function Section({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <section style={{ padding: "14px 16px", border: `1px solid ${A.line}`, borderRadius: 10, background: A.card, minWidth: 0 }}>
-      <div style={{ fontSize: 13, fontWeight: 700, color: A.ink, marginBottom: hint ? 2 : 12 }}>{title}</div>
-      {hint && <div style={{ fontSize: 11.5, color: A.muted2, marginBottom: 12 }}>{hint}</div>}
-      {children}
-    </section>
   );
 }
 
@@ -103,7 +93,7 @@ function PlanForm({ tenantId, planTier, rateLimitRpm, locked, onChanged }: {
   }
 
   return (
-    <Section title={t("planTitle")} hint={t("planHint")}>
+    <Section title={t("planTitle")} description={t("planHint")}>
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
         <div>
           <label style={labelStyle} htmlFor={`plan-${tenantId}`}>{t("plan")}</label>
@@ -181,7 +171,7 @@ function PublishLimitForm({ tenantId, dailyPublishLimit, locked, onChanged }: {
 
   return (
     <Section title={t("dplTitle")}
-      hint={supported ? t("dplHint", DAILY_PUBLISH_LIMIT_DEFAULT) : t("dplUnsupported")}>
+      description={supported ? t("dplHint", DAILY_PUBLISH_LIMIT_DEFAULT) : t("dplUnsupported")}>
       <div>
         <label style={labelStyle} htmlFor={`dpl-${tenantId}`}>{t("dplLabel")}</label>
         <input id={`dpl-${tenantId}`} type="number" min={1} max={DAILY_PUBLISH_LIMIT_MAX} value={value}
@@ -253,7 +243,7 @@ function ConfigForm({ tenantId, server, locked }: { tenantId: string; server: Te
   }
 
   return (
-    <Section title={t("configTitle")} hint={t("configHint")}>
+    <Section title={t("configTitle")} description={t("configHint")}>
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <div>
           <label style={labelStyle} htmlFor={`markets-${tenantId}`}>{t("marketsLabel")}</label>

@@ -8,8 +8,8 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { A, mono, serif } from "../../_components/adminUi";
-import { DataTable, ErrorState, Spinner, apiGet, useT, type Translator } from "../../../_kit";
+import { A, mono } from "../../_components/adminUi";
+import { DataTable, ErrorState, KpiTile, Spinner, apiGet, useT, type Translator } from "../../../_kit";
 import { type TenantQuality, pct } from "./tenant360";
 import { T360 } from "./tenant360.messages";
 
@@ -32,16 +32,6 @@ const gateColumns = (t: Translator<typeof T360.en>): ColumnDef<GateRow, unknown>
   { accessorKey: "failed_warn", header: t("colWarn"), cell: count(A.amber) },
   { accessorKey: "held_pieces", header: t("colHeld"), cell: count(A.amber) },
 ];
-
-function Kpi({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  return (
-    <div style={{ padding: "10px 14px", background: A.card, border: `1px solid ${A.line}`, borderRadius: 8, minWidth: 0 }}>
-      <div style={{ fontSize: 10, color: A.muted2, marginBottom: 3 }}>{label}</div>
-      <div style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: A.ink, fontVariantNumeric: "tabular-nums" }}>{value}</div>
-      {hint && <div style={{ fontSize: 10.5, color: A.muted2, marginTop: 2 }}>{hint}</div>}
-    </div>
-  );
-}
 
 function H({ children }: { children: React.ReactNode }) {
   return <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: A.muted, margin: "18px 0 8px" }}>{children}</div>;
@@ -88,10 +78,10 @@ function QualityBody({ data }: { data: TenantQuality }) {
   return (
     <>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
-        <Kpi label={t("piecesWritten")} value={String(p.total)}
+        <KpiTile size="sm" label={t("piecesWritten")} value={String(p.total)}
           hint={Object.entries(p.by_status).map(([s, n]) => `${n} ${s}`).join(" · ") || undefined} />
-        <Kpi label={t("heldRate")} value={pct(p.held_rate, 1)} hint={t("heldOf", p.by_status.held ?? 0, p.shipped)} />
-        <Kpi label={t("editRate")} value={pct(e.edit_rate, 1)}
+        <KpiTile size="sm" label={t("heldRate")} value={pct(p.held_rate, 1)} hint={t("heldOf", p.by_status.held ?? 0, p.shipped)} />
+        <KpiTile size="sm" label={t("editRate")} value={pct(e.edit_rate, 1)}
           hint={t("editRateHint", e.tours_edited, e.tours_generated, e.tenant_edits)} />
       </div>
 
