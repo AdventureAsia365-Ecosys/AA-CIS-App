@@ -7,6 +7,16 @@ name: Kit Consumers
 # --pass-on-unpruned-suppressions, because a core change that fixes a frozen violation must not fail here), and the
 # app's own unit tests (`test:unit`, else `test`): they hold the consumer guards a new core file can trip, such as the
 # TripPlanner and Booking "no issue IDs" tests that scan every source file (lesson S256, kit sync section).
+# The app's dependencies are installed (`npm ci`, Node 22, npm cache keyed on the consumer's lockfile) right after the
+# overlay, before any check, and lint / tsc / tests run only when that install succeeded: a failing check must not
+# leave later steps running without node_modules (run 40815951299: `eslint: not found`).
+#
+# Pre-migration consumers: the matrix carries `migrated` (and `migrates_in`) per consumer from PRE_MIGRATION in
+# .github/scripts/kit_sync_bot.py. portal and crm-web are migrated; booking and tripplanner still define `--aa-*`
+# tokens in their own frontend/ui/tokens.css (planned: AA-994 S4b for Booking, S5a for TripPlanner). For those the
+# `check-kit-copy.mjs --css` step is report-only: a warning annotation and a summary line "pre-migration: N --aa-*
+# definitions outside core". The copy check, tsc, lint and the unit tests stay strict for every consumer. S4b / S5a
+# flip the flag by deleting the app's PRE_MIGRATION entry in the same CIS PR, which makes the step strict for it.
 #
 # Non-required until the Booking catch-up (plan S4b); the stable check name is the "Kit consumers" job below. Before
 # it is made required, drop the `paths:` filter (required checks and merge_group ignore it): the plan job already
@@ -63,6 +73,8 @@ jobs:
       NAME: ${{ matrix.consumer.name }}
       APP: ${{ matrix.consumer.app_dir }}
       DEST: ${{ matrix.consumer.dest }}
+      MIGRATED: ${{ matrix.consumer.migrated }}
+      MIGRATES_IN: ${{ matrix.consumer.migrates_in }}
       NEXT_TELEMETRY_DISABLED: "1"
     steps:
       - name: Check out this PR
@@ -89,30 +101,57 @@ jobs:
       - name: Overlay this PR's kit core
         run: bash cis/.github/scripts/kit-sync.sh "$NAME" --from-local --cis cis --dest-repo consumer
 
-      - name: Kit core integrity in the app
-        working-directory: consumer/${{ matrix.consumer.app_dir }}
-        run: |
-          core="${DEST#"$APP"/}"
-          node "$core/check-kit-copy.mjs"
-          node "$core/check-kit-copy.mjs" --css .
-
-      - name: Install (lockfile only)
+      - name: Install the app's dependencies (npm ci, lockfile only)
+        id: install
         working-directory: consumer/${{ matrix.consumer.app_dir }}
         run: npm ci --no-audit --no-fund
 
+      - name: Kit core copy integrity in the app
+        if: ${{ !cancelled() }}
+        working-directory: consumer/${{ matrix.consumer.app_dir }}
+        run: node "${DEST#"$APP"/}/check-kit-copy.mjs"
+
+      - name: No --aa-* definition outside the core (report only before migration)
+        if: ${{ !cancelled() }}
+        working-directory: consumer/${{ matrix.consumer.app_dir }}
+        run: |
+          check="${DEST#"$APP"/}/check-kit-copy.mjs"
+          if [ "$MIGRATED" = "true" ]; then
+            node "$check" --css .
+            exit 0
+          fi
+          # Pre-migration (PRE_MIGRATION in kit_sync_bot.py): report the count, do not fail; a usage error still fails.
+          rc=0
+          out=$(node "$check" --css . 2>&1) || rc=$?
+          printf '%s\n' "$out"
+          case "$rc" in
+            0)
+              echo "::notice::$NAME defines no --aa-* outside the core any more: drop it from PRE_MIGRATION (AA-994 $MIGRATES_IN) to make this strict"
+              echo "$NAME: pre-migration flag set but already clean (AA-994 $MIGRATES_IN can flip it)" >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            1)
+              n=$(printf '%s\n' "$out" | sed -n 's/^check-kit-copy: --aa-\* definitions outside the kit core under .*: \([0-9][0-9]*\)$/\1/p')
+              n=${n:-unknown}
+              echo "::warning::$NAME pre-migration: $n --aa-* definitions outside core (report only until AA-994 $MIGRATES_IN)"
+              echo "$NAME: pre-migration: $n --aa-* definitions outside core (report only until AA-994 $MIGRATES_IN)" >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            *) exit "$rc" ;;
+          esac
+
       - name: Type check (tsc --noEmit)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: consumer/${{ matrix.consumer.app_dir }}
         run: |
           npx --no-install next typegen || echo "::notice::next typegen failed; type-checking without generated route types"
           npx --no-install tsc --noEmit
 
       - name: Kit lint (the app's own ESLint config)
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: consumer/${{ matrix.consumer.app_dir }}
         run: npm run lint -- --pass-on-unpruned-suppressions
 
       - name: Consumer unit tests (the app's own guards)
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         timeout-minutes: 8
         working-directory: consumer/${{ matrix.consumer.app_dir }}
         run: |

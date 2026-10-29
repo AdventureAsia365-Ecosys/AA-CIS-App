@@ -55,6 +55,12 @@ KIT_SYNC = HERE / "kit-sync.sh"
 BOT_NAME = "aa-ecosys-ci-bot[bot]"
 BOT_EMAIL = "aa-ecosys-ci-bot[bot]@users.noreply.github.com"
 LOG_LIMIT = 50
+# Consumers whose own CSS still defines `--aa-*` tokens (ADR 0016 decisions 3c and 4 not yet applied in that app),
+# with the AA-994 plan slice that migrates them. kit-consumers.yml runs the `check-kit-copy.mjs --css` check on these
+# in report-only mode (a warning plus a summary count) instead of failing the leg; the copy check, tsc, lint and the
+# app's unit tests stay strict for every consumer. The slice that removes an app's own `--aa-*` definitions deletes
+# its entry here, in the same CIS PR, which makes the check strict for it (S4b: Booking, S5a: TripPlanner).
+PRE_MIGRATION = {"booking": "S4b", "tripplanner": "S5a"}
 
 
 class BotError(Exception):
@@ -148,7 +154,8 @@ def cmd_plan(args: argparse.Namespace) -> int:
         "repos": repos,
         "consumers": [
             {"name": c.name, "repo": c.repo, "dest": c.dest, "lock": c.lock, "profile": c.profile,
-             "app_dir": c.app_dir}
+             "app_dir": c.app_dir, "migrated": c.name not in PRE_MIGRATION,
+             "migrates_in": PRE_MIGRATION.get(c.name, "")}
             for c in table
         ],
     }

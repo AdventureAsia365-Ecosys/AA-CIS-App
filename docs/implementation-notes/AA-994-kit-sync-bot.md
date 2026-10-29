@@ -53,6 +53,21 @@ CIS merge, the "Kit consumers" check on CIS PRs, and the nightly freshness repor
   `npm run lint` plus `--pass-on-unpruned-suppressions` (a core fix that removes a frozen violation must not fail
   here; the consumer's own CI prunes later). `next typegen` runs before `tsc --noEmit` so route types exist as in
   `next build` (portal has no `typecheck` script); its failure is only a notice.
+- **Kit Consumers install first, then gate on it** (fix after PR run 40815951299): `npm ci` (Node 22, npm cache keyed
+  on the consumer's `package-lock.json`, dev dependencies included) runs in the consumer app folder right after the
+  overlay and before any check; `tsc`, lint and the unit tests carry
+  `if: !cancelled() && steps.install.outcome == 'success'`. Before, a red integrity step skipped the install and the
+  `!cancelled()` lint step then ran without `node_modules` (`eslint: not found`, exit 127, booking + tripplanner).
+- **Pre-migration consumers are report-only for the `--css` check, nothing else.** `PRE_MIGRATION` in
+  `kit_sync_bot.py` (`booking: S4b`, `tripplanner: S5a`) feeds `migrated` / `migrates_in` into each matrix row
+  (portal, crm-web: `migrated: true`). Booking and TripPlanner still define `--aa-*` in their own
+  `frontend/ui/tokens.css` (174 and 110 definitions on 29/10), the known state until those slices. For them the step
+  prints the full list, adds a warning annotation and a summary line `<app>: pre-migration: N --aa-* definitions
+  outside core (report only until AA-994 S4b|S5a)` and exits 0; a usage error (exit 2) still fails. The copy check,
+  `tsc`, lint and the unit tests stay strict for every consumer. **S4b and S5a flip the flag** by deleting the app's
+  entry in `PRE_MIGRATION` in the same CIS PR (the unit test pins the table, so the flip is a visible diff); if an app
+  is already clean while still flagged, the step says so in a notice. The flag lives in the bot, not as a sixth column
+  of the `kit-sync.sh --list` table: it is a CI gate state, not part of ADR 0016's consumer table.
 - **Freshness** counts CIS commits that touch the consumer's profile paths since its lock ref (tokens profile: the
   token files, not `MANIFEST.json`), and lists the open sync PR. It runs nightly and after every sync, with
   `github.token` only (the consumer repos are public).
@@ -63,7 +78,7 @@ CIS merge, the "Kit consumers" check on CIS PRs, and the nightly freshness repor
   `.github/workflows/kit-consumers.yml` (Plan, Kit consumers (<consumer>) ×4, Kit consumers),
   `.github/scripts/kit-sync.sh` (canonical copy script), `.github/scripts/kit_sync_bot.py` (plan / sync / report),
   `.github/scripts/test_kit_sync.sh` (the root fixture suite, moved with the script; every call passes `--cis`),
-  `tests/unit/test_aa994_kit_sync_bot.py` (23 tests, real git repos in tmp_path, no network; the push-path tests
+  `tests/unit/test_aa994_kit_sync_bot.py` (29 tests, real git repos in tmp_path, no network; the push-path tests
   load the bot in-process with a fake `gh` that applies the refs API to the bare origin, and a pre-receive hook that
   refuses like GitHub does without the Workflows permission).
 - `CONTEXT.md`: the kit core paragraph names the new scripts and workflows.
@@ -92,7 +107,10 @@ CIS merge, the "Kit consumers" check on CIS PRs, and the nightly freshness repor
 - Verified locally: the bot's dry run against fresh clones of AA-Partner, AA-Booking and AA-TripPlanner-Web at CIS
   `origin/main` is a no-op for all three (they carry core `3994a1a8`, and no core commit landed since); `report`
   against GitHub prints 0 commits behind and no open sync PR. The portal leg of Kit Consumers ran locally end to end
-  (overlay, integrity, `npm ci`, `next typegen`, `tsc --noEmit` clean, lint 0 errors).
+  (overlay, integrity, `npm ci`, `next typegen`, `tsc --noEmit` clean, lint 0 errors). After the install/flag fix the
+  booking and tripplanner legs were replayed locally from the workflow YAML against fresh clones of their `main`:
+  install, copy check OK, `--css` report-only (174 / 110, exit 0), `tsc` clean, lint 0 errors, unit tests 41 / 234
+  passed.
 - Not runnable before merge: a new workflow file can only be dispatched once it is on `main` (lesson S220). After the
   merge: Actions → Kit Sync → Run workflow (main, dry_run true) must end green with "no-op" per repo, then the first
   real sync PR appears with the next core merge (ADR 0016 Done-when: one real sync PR in Partner with CI + preview).

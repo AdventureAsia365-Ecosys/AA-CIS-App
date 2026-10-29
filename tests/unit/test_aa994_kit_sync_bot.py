@@ -21,6 +21,10 @@ No network and no `gh`: --dry-run never calls it, --offline skips the PR step bu
 - The workflows: the sync job is main-only, in the `release` environment, mints a token narrowed to one consumer repo
   with Contents + Pull requests only; the PR check reads no secret and has a stable "Kit consumers" result job that is
   green when the plan says unchanged.
+- The consumer legs install the app's dependencies before any check and run tsc / lint / tests only when that install
+  succeeded (run 40815951299: `eslint: not found`); the plan matrix carries `migrated` per consumer (portal, crm-web
+  true; booking, tripplanner false until AA-994 S4b / S5a) and the `--css` check is report-only (warning + summary
+  count, exit 0) for a pre-migration consumer, strict for a migrated one, and fails on a usage error either way.
 """
 from __future__ import annotations
 
@@ -167,8 +171,12 @@ def test_plan_unchanged_when_no_core_file_changed(tmp_path, cis):
     outputs = dict(line.split("=", 1) for line in out_file.read_text().splitlines())
     assert outputs["changed"] == "false"
     assert json.loads(outputs["repos"]) == ["AA-Booking", "AA-Partner", "AA-TripPlanner-Web"]
-    assert {c["name"]: c["app_dir"] for c in json.loads(outputs["consumers"])} == {
+    matrix = json.loads(outputs["consumers"])
+    assert {c["name"]: c["app_dir"] for c in matrix} == {
         "portal": "portal", "crm-web": "web", "booking": "frontend", "tripplanner": "frontend"}
+    # Pre-migration consumers (their own CSS still defines --aa-*): S4b flips Booking, S5a TripPlanner.
+    assert {c["name"]: (c["migrated"], c["migrates_in"]) for c in matrix} == {
+        "portal": (True, ""), "crm-web": (True, ""), "booking": (False, "S4b"), "tripplanner": (False, "S5a")}
 
 
 def test_plan_changed_on_core_change_or_without_base(cis):
@@ -460,11 +468,75 @@ def test_consumers_workflow_reads_no_secret_and_has_a_stable_result_job():
     assert wf["jobs"]["consumer"]["timeout-minutes"] <= 30
 
 
+INSTALLED = "${{ !cancelled() && steps.install.outcome == 'success' }}"
+
+
+def test_consumers_workflow_installs_before_checks_and_gates_on_the_install():
+    """Run 40815951299: a red integrity step skipped `npm ci`, then lint ran anyway and hit `eslint: not found`."""
+    steps = _wf(CONSUMERS_WF)["jobs"]["consumer"]["steps"]
+    names = [s["name"] for s in steps]
+    install = next(i for i, s in enumerate(steps) if s.get("id") == "install")
+    assert steps[install]["run"].startswith("npm ci") and "--omit" not in steps[install]["run"]
+    assert steps[install]["working-directory"] == "consumer/${{ matrix.consumer.app_dir }}"
+    assert names.index("Overlay this PR's kit core") < install
+    for prefix in ("Kit core copy integrity", "No --aa-* definition", "Type check", "Kit lint", "Consumer unit tests"):
+        assert next(i for i, n in enumerate(names) if n.startswith(prefix)) > install, prefix
+    for prefix in ("Type check", "Kit lint", "Consumer unit tests"):
+        assert next(s for s in steps if s["name"].startswith(prefix))["if"] == INSTALLED, prefix
+    node = next(s for s in steps if "setup-node" in s.get("uses", ""))
+    assert node["with"]["node-version"] == "22"
+    assert node["with"]["cache-dependency-path"] == "consumer/${{ matrix.consumer.app_dir }}/package-lock.json"
+    env = _wf(CONSUMERS_WF)["jobs"]["consumer"]["env"]
+    assert env["MIGRATED"] == "${{ matrix.consumer.migrated }}"
+    assert env["MIGRATES_IN"] == "${{ matrix.consumer.migrates_in }}"
+
+
+@pytest.mark.parametrize(
+    "migrated,rc,want_rc,want_summary",
+    [
+        ("false", 1, 0, "booking: pre-migration: 174 --aa-* definitions outside core (report only until AA-994 S4b)"),
+        ("false", 0, 0, "already clean"),
+        ("false", 2, 2, ""),  # a usage error is never report-only
+        ("true", 1, 1, ""),
+        ("true", 0, 0, ""),
+    ],
+)
+def test_css_check_is_report_only_before_migration(tmp_path, migrated, rc, want_rc, want_summary):
+    """Runs the step's shell with a stand-in check-kit-copy.mjs that prints what the real one prints."""
+    if not shutil.which("node"):
+        pytest.skip("needs node")
+    steps = _wf(CONSUMERS_WF)["jobs"]["consumer"]["steps"]
+    step = next(s for s in steps if s["name"].startswith("No --aa-* definition"))
+    assert step["if"] == "${{ !cancelled() }}"
+    app = tmp_path / "frontend"
+    (app / "ui" / "core").mkdir(parents=True)
+    lines = {1: ["check-kit-copy: --aa-* definitions outside the kit core under /x/frontend: 174",
+                 "  - ui/tokens.css:37: defines --aa-accent"],
+             0: [], 2: ["check-kit-copy: --css . is not a folder"]}[rc]
+    (app / "ui" / "core" / "check-kit-copy.mjs").write_text(
+        "if (process.argv[2] !== '--css') process.exit(9);\n"
+        + "".join(f"console.error({json.dumps(line)});\n" for line in lines)
+        + f"process.exit({rc});\n")
+    summary = tmp_path / "summary.md"
+    env = {**os.environ, "NAME": "booking", "APP": "frontend", "DEST": "frontend/ui/core", "MIGRATED": migrated,
+           "MIGRATES_IN": "S4b" if migrated == "false" else "", "GITHUB_STEP_SUMMARY": str(summary)}
+    res = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", step["run"]], cwd=app, env=env, capture_output=True,
+                         text=True)
+    assert res.returncode == want_rc, res.stdout + res.stderr
+    got = summary.read_text() if summary.exists() else ""
+    if want_summary:
+        assert want_summary in got
+    else:
+        assert "pre-migration" not in got
+    if migrated == "false" and rc == 1:
+        assert "::warning::booking pre-migration: 174 --aa-* definitions outside core" in res.stdout
+
+
 def test_consumers_workflow_runs_each_consumer_unit_tests(tmp_path):
     """Lesson S256: a first-time core file trips a consumer's own guard tests, so every leg runs them, time-bounded."""
     steps = _wf(CONSUMERS_WF)["jobs"]["consumer"]["steps"]
     step = next(s for s in steps if s["name"].startswith("Consumer unit tests"))
-    assert step["if"] == "${{ !cancelled() }}" and step["timeout-minutes"] <= 10
+    assert step["if"] == INSTALLED and step["timeout-minutes"] <= 10
     script = step["run"]
 
     def pick(scripts: dict) -> str:
