@@ -4277,6 +4277,17 @@
       },
       "RelocateRequest": {
         "properties": {
+          "accept_rule": {
+            "default": "v1",
+            "pattern": "^(v1|aa997\\.2)$",
+            "title": "Accept Rule",
+            "type": "string"
+          },
+          "confirm": {
+            "default": false,
+            "title": "Confirm",
+            "type": "boolean"
+          },
           "country": {
             "anyOf": [
               {
@@ -4310,10 +4321,52 @@
             "title": "Located By",
             "type": "array"
           },
+          "max_requests": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Requests"
+          },
           "mode": {
             "default": "dry_run",
-            "pattern": "^(dry_run|apply)$",
+            "pattern": "^(dry_run|apply|hide|unhide)$",
             "title": "Mode",
+            "type": "string"
+          },
+          "reasons": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 8,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasons"
+          },
+          "recheck": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 4,
+            "title": "Recheck",
+            "type": "array"
+          },
+          "strategy": {
+            "default": "v1",
+            "pattern": "^(v1|v2)$",
+            "title": "Strategy",
             "type": "string"
           }
         },

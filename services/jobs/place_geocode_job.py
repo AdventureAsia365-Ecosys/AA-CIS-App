@@ -63,13 +63,14 @@ class BudgetedGeocoder:
         fn = getattr(self.inner, "credits_left", None)
         return fn() if fn is not None else 1
 
-    async def confirm(self, name, lat, lng, country, *, native_name=None, routes=(), settlement=False):
+    async def confirm(self, name, lat, lng, country, *, native_name=None, routes=(), settlement=False, **kw):
+        """`kw`: AA-997 v2 strategy / context / max_queries, passed through only when given."""
         if self.budget is not None:
             self.budget.check(self.cost_per_request)
         before = self.inner.requests
         try:
             return await self.inner.confirm(name, lat, lng, country, native_name=native_name, routes=routes,
-                                            settlement=settlement)
+                                            settlement=settlement, **kw)
         finally:
             if self.budget is not None:   # charge what was really sent (0 for a skipped generic name)
                 self.budget.charge(self.cost_per_request * (self.inner.requests - before))

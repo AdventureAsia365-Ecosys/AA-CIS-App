@@ -296,6 +296,14 @@ def _proper_head(head: str) -> bool:
 
 
 ACCEPT_KM = 25.0
+# AA-997 v2: the acceptance rules. geocoder_meta.rule of every accepted answer records which one judged it
+# ("v1" = the S236 bake-off rule + the S255 route rule; "aa997.2" = v1 + the strict_reason checks). Strict is OFF by
+# default (accept(strict=False)); it is switched on per job (place_relocate payload `accept_rule`) or for new names
+# (env GEOCODER_ACCEPT_RULE, geocoder.default_accept_rule) after the relocate re-audit shows it refuses no more
+# correct pins than it saves. Answers stored before AA-997 v2 carry no `rule`.
+ACCEPT_RULE_V1 = "v1"
+ACCEPT_RULE = "aa997.2"
+ACCEPT_RULES = (ACCEPT_RULE_V1, ACCEPT_RULE)
 LONG_FEATURE_KM = 50.0
 TOP_N = 3
 
@@ -456,17 +464,23 @@ def reference_km(c_lat: float, c_lng: float, lat: Optional[float], lng: Optional
 
 def accept(query: str, cands: list[Candidate], lat: Optional[float], lng: Optional[float], iso2: str = "",
            top_n: int = TOP_N, *, routes=(), iso_codes: Optional[tuple] = None,
-           settlement: Optional[bool] = None) -> Verdict:
+           settlement: Optional[bool] = None, strict: bool = False, compact: bool = False) -> Verdict:
     """The first of the top `top_n` candidates passing (a) name, (b) type, (c) distance (reference_km); country must
     match `iso2` (or one of `iso_codes`, AA-997: China covers hk / mo) when given (the request filters by country
-    already — this is the hard guard). `settlement` forces the `city` rule (the town fallback asks for a town)."""
-    n_tok = len(tokens(query))
+    already — this is the hard guard). `settlement` forces the `city` rule (the town fallback asks for a town).
+    AA-997 v2: `strict` (default OFF, rule ACCEPT_RULE; it only ever refuses more) adds strict_reason's checks — a check
+    that needs the model's point is skipped when there is none (not judgeable is not refused); `compact` (strategy v2)
+    measures the name with name_sim_v2 (transliteration joins, "Mt" / "in" ignored). `query` is the bare name: a
+    context query ("X, Town") is searched with the context but judged on X (geocoder.confirm)."""
+    sim_fn = name_sim_v2 if compact else name_sim
+    n_tok = len(tokens_v2(query) if compact else tokens(query))
+    forced_town = bool(settlement)          # the town fallback asks for a town: no site rule then
     settlement = is_settlement(query) if settlement is None else settlement
     codes = set(iso_codes or ()) | ({iso2} if iso2 else set())
     reasons = []
     fallback: Optional[Verdict] = None      # the first `day_trip` candidate: taken only when none passes outright
     for i, c in enumerate(cands[:top_n]):
-        sim = name_sim(query, c.name)
+        sim = sim_fn(query, c.name)
         if codes and c.iso2 and c.iso2 not in codes:
             reasons.append(f"{i}:country")
         elif not (sim >= 0.999 or (sim >= 0.5 and n_tok >= 2)):
@@ -475,6 +489,9 @@ def accept(query: str, cands: list[Candidate], lat: Optional[float], lng: Option
             reasons.append(f"{i}:type")
         else:
             dist, why = reference_km(c.lat, c.lng, lat, lng, query, routes)
+            if strict and why in (None, DAY_TRIP):
+                why = strict_reason(query, c, sim, lat, lng, routes, settlement=settlement,
+                                    forced_town=forced_town, day_trip=why == DAY_TRIP) or why
             if why == DAY_TRIP and fallback is None:
                 fallback = Verdict(c, i, round(sim, 3), round(dist, 2))
             if why:
@@ -482,6 +499,259 @@ def accept(query: str, cands: list[Candidate], lat: Optional[float], lng: Option
             else:
                 return Verdict(c, i, round(sim, 3), round(dist, 2), reasons)
     return with_fallback(fallback, reasons)
+
+
+# ── AA-997 v2: stricter acceptance (S257 interim audit: relocate `confirmed` only 18/29 right) ─────────────────────
+# Site words for the admin-type rule only (FEATURE_WORDS is shared with dedupe / is_settlement and stays as measured):
+# a query naming a site (temple, airport, museum, peak …) is never answered by a town / suburb / district. Long and
+# area features (lake, valley, park, island, bay …) are left out: an admin area may carry their name and their point.
+_SITE_EXTRA = frozenset({
+    "airport", "terminal", "station", "museum", "gallery", "monument", "memorial", "mausoleum", "tomb", "cemetery",
+    "stadium", "zoo", "aquarium", "theatre", "theater", "observatory", "lighthouse", "pier", "jetty", "square",
+    "plaza", "masjid", "mandir", "wat", "lhakhang", "goemba", "chorten", "castle", "haveli", "mahal", "ghat",
+    "bazaar", "hut", "gurudwara", "dargah", "kovil", "minaret", "grotto", "grottoes", "pavilion"})
+SITE_WORDS = (FEATURE_WORDS | _SITE_EXTRA) - LONG_FEATURE_WORDS - frozenset({
+    "island", "islands", "bay", "beach", "reef", "reefs", "estuary", "hill", "hills", "street", "road", "highway",
+    "hot", "spring", "springs", "farm", "dairy", "hotel", "lodge", "resort", "rock", "rocks", "mountains"})
+ADMIN_TYPES = frozenset({"city", "suburb", "district"})
+# Geoapify rank.match_type values that mean "the place was not found, a containing area / street was returned"
+# (Geoapify spells the city one "disrict"; both spellings are listed).
+FALLBACK_MATCH_TYPES = frozenset({"match_by_city_or_disrict", "match_by_city_or_district", "match_by_country_or_state",
+                                  "match_by_postcode"})
+_ROAD_WORDS = frozenset({"street", "road", "avenue", "boulevard", "lane", "highway", "expressway", "path", "trail"})
+# Words that make a candidate a DIFFERENT kind of POI than the queried place when the query does not carry the same
+# group ("Terelj Hotel" for "Terelj valley", "Phi Phi Natural Resort" for "Koh Phi Phi village", "Tingtibi - Panbang
+# Highway" for "Tingtibi"): the geocoder matched the name inside another POI's name.
+_OTHER_POI_GROUPS = {
+    "lodging": frozenset({"hotel", "hostel", "inn", "motel", "resort", "guesthouse", "homestay", "villa", "apartment",
+                          "apartments", "condo", "suites", "lodge", "hotels", "resorts", "bnb"}),
+    "food": frozenset({"restaurant", "cafe", "coffee", "bar", "pub", "bistro", "bakery", "eatery", "kitchen",
+                       "canteen"}),
+    "shop": frozenset({"shop", "store", "mart", "mall", "supermarket", "boutique", "souvenir", "gift", "showroom",
+                       "pharmacy"}),
+    "office": frozenset({"bank", "atm", "office", "branch", "agency", "travel", "tours", "rental", "company",
+                         "headquarters", "hq", "clinic", "hospital"}),
+    "school": frozenset({"school", "college", "university", "kindergarten", "academy", "institute"}),
+    "transport": frozenset({"parking", "garage", "bus", "stop", "toilet", "toilets", "petrol", "gas"}),
+    "road": _ROAD_WORDS,
+}
+# A query word of the same group allows the candidate word ("hotel in Seoul" never gets here: name_filter drops it).
+_OTHER_POI_WORD = {w: g for g, ws in _OTHER_POI_GROUPS.items() for w in ws}
+STREET_NEAR_HINT_KM = 5.0     # a street for a site is only its access road: taken only right next to the model's point
+# ambiguous_route: a tour route counts as MISSED only when the candidate is farther than this from it — the homonym
+# distance (Beijing's Bell Tower for a Xi'an tour ~900 km, Mumbai's Princess Street for a Kochi tour ~1,000 km). Nearer
+# routes are the same place seen from another itinerary: a day trip from a base town (Ayutthaya ~65 km from a Bangkok
+# stay), a flight leg passing ~130 km away (Siem Reap on a Bangkok → Phnom Penh leg). Review fix: counting a route as
+# covered only within the 50 km site radius refused such correct candidates when they were near one route.
+AMBIGUOUS_ROUTE_KM = 300.0
+# the reasons only the strict rule gives (Verdict.reasons "<i>:<reason>"; locate records them in last_error)
+STRICT_REASONS = frozenset({"site_type", "match", "kind", "ambiguous_route", "hint_disagree"})
+
+
+def is_site(query: str) -> bool:
+    """A query that names a point-like site (temple, airport, museum, peak, pass …), not a town / area / long feature:
+    an admin area (city / suburb / district) or a fallback match is never its answer."""
+    words = _words(query)
+    return bool(words & SITE_WORDS) and not (words & LONG_FEATURE_WORDS) and feature_kind(query) != AREA
+
+
+def kind_conflict(query: str, candidate: Optional[str]) -> Optional[str]:
+    """The group of an other-POI word the candidate's name carries and the query does not ('lodging' for "Terelj Hotel"
+    asked as "Terelj valley"); None when the candidate is the same kind of thing."""
+    q_words = _words(query)
+    q_groups = {_OTHER_POI_WORD[w] for w in q_words if w in _OTHER_POI_WORD}
+    for w in _words(candidate or "") - q_words:
+        g = _OTHER_POI_WORD.get(w)
+        if g and g not in q_groups:
+            return g
+    return None
+
+
+def route_cover(lat: float, lng: float, routes, radius: float) -> tuple[int, int]:
+    """(routes the point is within `radius` km of, routes with a stop). One destination serves every tour that uses
+    the name (the key has no town on ~99 % of rows), so its point must not be a homonym for any of them."""
+    from services.places import guards
+    near = total = 0
+    for r in routes or ():
+        d = guards.route_km(lat, lng, [r])
+        if d is None:
+            continue
+        total += 1
+        near += d <= radius
+    return near, total
+
+
+def strict_reason(query: str, c: Candidate, sim: float, lat: Optional[float], lng: Optional[float], routes=(), *,
+                  settlement: bool = False, forced_town: bool = False, day_trip: bool = False,
+                  check_kind: bool = True, unjudged: Optional[list] = None,
+                  hint_km: Optional[float] = None) -> Optional[str]:
+    """Why a candidate that passed name / type / distance is still refused (AA-997 v2, rule ACCEPT_RULE), else None:
+      `site_type`  a site query answered by a city / suburb / district, or by a street away from the model's point;
+      `match`  a fallback match (the containing city / state / postcode) for anything but a settlement query;
+      `kind`   the candidate is another kind of POI carrying the name (kind_conflict), farther than
+               STREET_NEAR_HINT_KM from the model's point (next to it, it is the place's access point);
+      `ambiguous_route`  ≥ 2 tour routes use the name and the candidate is farther than AMBIGUOUS_ROUTE_KM from more
+               of them than one per 5 (a homonym: one pin cannot serve tours in two distant cities);
+      `hint_disagree`  route reference, the model's point is ON the route and the candidate is beyond the bake-off
+               radius of it: only an exact-name, full-match POI may overrule an on-route model point.
+    The street / kind checks need the model's point: with none (lat / lng None — a model null, a stored answer
+    re-judged without its hint) they use `hint_km` (the candidate's distance from that point when only the distance is
+    known: an aa997.1 relocate stamp's moved_km), else they are NOT judged, never refused; their names are appended to
+    `unjudged` when given."""
+    from services.places import guards
+    # `settlement`: the query names a town (no feature word) or a town is asked for; `forced_town`: the town fallback
+    site = is_site(query) and not forced_town
+    rtype, mtype = c.result_type or "", c.match_type or ""
+    has_hint = lat is not None and lng is not None
+    hint_dist = _km(lat, lng, c.lat, c.lng) if has_hint else hint_km
+    road_query = bool(_words(query) & _ROAD_WORDS)
+    if site and rtype in ADMIN_TYPES:
+        return "site_type"
+    if site and rtype == "street" and not road_query:
+        if hint_dist is None:
+            if unjudged is not None:
+                unjudged.append("street")
+        elif hint_dist > STREET_NEAR_HINT_KM:
+            return "site_type"
+    if mtype in FALLBACK_MATCH_TYPES and (site or not settlement):
+        return "match"
+    if site and mtype == "match_by_street" and not road_query:
+        return "match"
+    if check_kind and kind_conflict(query, c.name):
+        if hint_dist is None:
+            if unjudged is not None:
+                unjudged.append("kind")
+        elif hint_dist > STREET_NEAR_HINT_KM:
+            return "kind"       # a POI named after the place right next to the model's point is its access point
+    if guards.has_route(routes):
+        near, total = route_cover(c.lat, c.lng, routes, AMBIGUOUS_ROUTE_KM)
+        if total >= 2 and total - near > total // 5:
+            return "ambiguous_route"
+        if has_hint and not day_trip:
+            hint_on = (guards.route_km(lat, lng, routes) or 0.0) <= guards.route_radius(query)
+            far = _km(lat, lng, c.lat, c.lng) > radius_km(query)
+            strong = (sim >= 0.999 and rtype not in ADMIN_TYPES and rtype != "street"
+                      and mtype in ("", "full_match"))
+            if hint_on and far and not strong:
+                return "hint_disagree"
+    return None
+
+
+def strict_refusals(reasons) -> list[str]:
+    """The strict-only reasons in a Verdict / tried list ("0:ambiguous_route" → "ambiguous_route"), in order, once."""
+    out = []
+    for r in reasons or ():
+        why = str(r).split(":", 1)[-1]
+        if why in STRICT_REASONS and why not in out:
+            out.append(why)
+    return out
+
+
+# ── AA-997 v2: name similarity that survives transliteration joins (strategy v2 only) ─────────────────────────────
+# "Konglor" = "Kong Lor", "Pingan" = "Ping'an": the bake-off's per-token difflib ≥ 0.85 misses a joined / split
+# transliteration. "Mt" / "Mount" and the context prepositions never decide a match ("Mt Palay-Palay" vs "Mount
+# Palay-Palay"; "Kumbum Monastery in Qinghai" vs "Kumbum Monastery").
+V2_EXTRA_STOP = frozenset({"mt", "mount", "in", "at", "near", "by"})
+
+
+def tokens_v2(query: str) -> list[str]:
+    return [t for t in tokens(query) if t not in V2_EXTRA_STOP]
+
+
+def name_sim_v2(query: str, candidate: Optional[str]) -> float:
+    """name_sim with V2_EXTRA_STOP dropped and compact matching: a query token equal to 2–3 consecutive candidate
+    tokens joined, or 2–3 consecutive query tokens joined equal to a candidate token, count as matched."""
+    qt = tokens_v2(query)
+    if not qt:
+        return name_sim(query, candidate)
+    cl = _TOKENS.findall(_strip(_PARENS.sub(" ", (candidate or "").lower())))
+    ct = set(cl)
+    joined_c = {"".join(cl[i:i + n]) for n in (2, 3) for i in range(len(cl) - n + 1)}
+    matched = [t in ct or t in joined_c or any(difflib.SequenceMatcher(None, t, c).ratio() >= 0.85 for c in ct)
+               for t in qt]
+    for n in (2, 3):
+        for i in range(len(qt) - n + 1):
+            if "".join(qt[i:i + n]) in ct:
+                for k in range(i, i + n):
+                    matched[k] = True
+    return sum(matched) / len(qt)
+
+
+# ── AA-997 v2: query variants (strategy v2) ─────────────────────────────────────────────────────────────────────────
+_CONTEXT_SPLIT = re.compile(r"\s+(?:in|near|at)\s+(?=[A-Z])")
+_OR_SPLIT = re.compile(r"\s+or\s+", re.I)
+
+
+_DIRECTION_WORDS = frozenset({"north", "south", "east", "west", "northern", "southern", "eastern", "western",
+                              "upper", "lower", "inner", "outer", "old", "new", "main", "central", "side", "entrance",
+                              "gate", "area", "part"})
+
+
+def _clean_part(text: Optional[str]) -> str:
+    """A context / alias part worth searching: altitudes stripped, and at least one proper word (not only generic /
+    kind / direction words: "north square", "fort", "4820 m" are not)."""
+    t = " ".join(_ALTITUDE.sub(" ", text or "").split()).strip(" ,;:-–—.")
+    proper = {w for w in _TOKENS.findall(_strip(t.lower())) if len(w) > 1} - GENERIC_WORDS - FEATURE_WORDS \
+        - _SITE_EXTRA - SIM_STOP - _DIRECTION_WORDS
+    return t if t and proper else ""
+
+
+def _first_of_or(text: str) -> str:
+    """'Tham Xang or Tham Hoi caves' → 'Tham Xang caves' (the shared kind word kept); other text unchanged."""
+    if not _OR_SPLIT.search(text) or _TO_SPLIT.search(text):
+        return text
+    first = _OR_SPLIT.split(text)[0]
+    tail_kind = [w for w in _TOKENS.findall(_strip(text.lower()))[-1:] if w in FEATURE_WORDS]
+    return first + (" " + tail_kind[0] if tail_kind and tail_kind[0] not in _words(first) else "")
+
+
+def query_plan(name: str, *, context: Optional[str] = None, max_queries: int = 3) -> list[tuple[str, str]]:
+    """(text to search, bare name to judge) pairs for strategy v2, in order, at most `max_queries`. The judged name
+    never includes a context town, so a candidate matching only the town ("Andong Folk Village" for "Hahoe Folk
+    Village, Andong") fails.
+      1. "X in / near / at <Proper>": the name's own disambiguator goes first ("Gandhi Ashram, Sabarmati"), then the
+         bare X. When X alone is generic ("Great Wall at Mutianyu") the full name is searched and judged (as v1), then
+         "<Context> X" ("Mutianyu Great Wall").
+      2. Otherwise the normalised name(s) first (as v1).
+      3. A parenthetical naming a site ("Palace of the Winds (Hawa Mahal)", "the White Temple (Wat Rong Khun)") is an
+         alias: searched and judged on its own. Any other parenthetical / ", part" is a context ("Hanok Village
+         (Jeonju)" → "Hanok Village, Jeonju").
+      4. `context` (relocate: the day's overnight town) when the name gave none — tried last.
+    " or " compounds are judged on their first part ("Tham Xang or Tham Hoi caves" → "Tham Xang caves")."""
+    raw = " ".join(_ALTITUDE.sub(" ", name or "").split())
+    paren = " ".join(m.strip() for m in re.findall(r"\(([^)]*)\)", raw))
+    flat = " ".join(_PARENS.sub(" ", raw).split())
+    head, _, comma_tail = flat.partition(",")
+    head = head.strip()
+    plan: list[tuple[str, str]] = []
+    ctx = ""
+    m = _CONTEXT_SPLIT.search(head)
+    if m:
+        base, inline = _first_of_or(head[:m.start()].strip()), _clean_part(head[m.end():])
+        if inline and normalise(base):
+            b = normalise(base)[0]
+            plan += [(f"{b}, {inline}", b), (b, b)]
+        else:       # a generic X: only the whole name identifies the place
+            whole = _first_of_or(head)
+            plan += [(q, q) for q in normalise(whole)]
+            if inline and plan:
+                plan.append((f"{inline} {_CONTEXT_SPLIT.split(head)[0].strip()}", plan[0][1]))
+    else:
+        plan += [(q, q) for q in normalise(_first_of_or(head))]
+    alias = _clean_part(_first_of_or(paren)) if paren else ""
+    if alias and (_words(paren) & (FEATURE_WORDS | _SITE_EXTRA)) and not _TO_SPLIT.search(alias):
+        a = normalise(alias)
+        if a:
+            plan.insert(1 if plan else 0, (a[0], a[0]))
+        alias_used = True
+    else:
+        alias_used = False
+    if not m:
+        ctx = _clean_part(comma_tail) or ("" if alias_used else _clean_part(paren))
+    ctx = ctx or ("" if m else " ".join((context or "").split()))
+    if plan and ctx and name_sim(ctx, plan[0][1]) < 0.999:
+        plan.append((f"{plan[0][1]}, {ctx}", plan[0][1]))
+    return list(dict.fromkeys(plan))[:max(1, max_queries)]
 
 
 def with_fallback(fallback: Optional[Verdict], reasons: list[str]) -> Verdict:

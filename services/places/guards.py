@@ -160,6 +160,23 @@ def route_bias(routes: Iterable[Route]) -> Optional[tuple[float, float]]:
     return None
 
 
+def search_bias(routes: Iterable[Route], lat: Optional[float], lng: Optional[float],
+                name: Optional[str] = None) -> Optional[tuple[float, float]]:
+    """AA-997 v2 (strategy v2): where to bias a search. The model's point when there is no route (it is the only
+    reference — v1 sent no bias at all then) or when it lies on the route (closer to the site than a route stop);
+    else the stop of the routes nearest to the model's point (the model put the place in another town: search the
+    tour's own town), else route_bias."""
+    has_hint = lat is not None and lng is not None
+    if not has_route(routes):
+        return (lat, lng) if has_hint else None
+    if not has_hint:
+        return route_bias(routes)
+    if (route_km(lat, lng, routes) or 0.0) <= route_radius(name):
+        return (lat, lng)
+    stops = [p for r in routes or () for p in r if p is not None]
+    return min(stops, key=lambda p: km(lat, lng, p[0], p[1])) if stops else route_bias(routes)
+
+
 # ── AA-997: Hong Kong / Macao inside "China", and lenient country text ──────────────────────────────────────────────
 # The model (and the tour) says "China" for Hong Kong and Macao; the audit found all 13 HK and 7 MO rows stored as CN.
 # Geoapify codes them hk / mo, so a China search must include them, and a point inside their polygon is theirs.

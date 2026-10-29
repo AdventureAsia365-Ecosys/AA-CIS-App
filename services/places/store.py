@@ -813,6 +813,16 @@ async def geocoder_requests_today(conn, provider: str) -> int:
         provider) or 0)
 
 
+async def chain_requests(conn, kind: str, chain_id: str) -> int:
+    """AA-997 v2: geocoder requests logged (geo.geocode_call) by the jobs of one apply chain — every job of `kind`
+    whose payload carries `chain_id` (the place_relocate request cap)."""
+    return int(await conn.fetchval(
+        """SELECT coalesce(sum(gc.requests), 0) FROM geo.geocode_call gc
+             JOIN shared.job j ON j.id = gc.job_id
+            WHERE j.kind = $1 AND j.payload ->> 'chain_id' = $2""",
+        kind, str(chain_id)) or 0)
+
+
 async def log_geocode_calls(conn, provider: str, requests: int, cost_usd: float, job_id: Optional[str], *,
                             credits: Optional[int] = None, endpoint: str = "search") -> None:
     """One row per run and endpoint. `credits` defaults to `requests` (a geocode search is 1 credit)."""
