@@ -417,6 +417,35 @@ test("--suppressions CLI: exit 0 when it shrinks, 1 when it grows, 2 without a b
   assert.equal(quiet(() => main(["--suppressions", base, head, "--base-files", join(d, "nope.txt")])), 2);
 });
 
+test("suppressions: a rule switched on by the change (--new-rules) starts its baseline once, only from zero", (t) => {
+  const d = scratch(t);
+  mkdirSync(join(d, "app"));
+  for (const f of ["a.tsx", "b.tsx"]) writeFileSync(join(d, "app", f), "x");
+  const base = readSuppressions(JSON.stringify(supp({ "app/a.tsx": { R: 2 } })));
+  const head = readSuppressions(JSON.stringify(supp({ "app/a.tsx": { R: 2, F: 3 }, "app/b.tsx": { F: 1 } })));
+  const baseFiles = new Set(["app/a.tsx", "app/b.tsx"]);
+  const strict = suppressionProblems(base, head, { root: d, baseFiles });
+  assert.match(strict.join("\n"), /F: 0 -> 4 suppressed in total/, "without --new-rules a new rule's entries are growth");
+  assert.deepEqual(suppressionProblems(base, head, { root: d, baseFiles, newRules: new Set(["F"]) }), []);
+  // A listed rule that the base already suppressed is not new: it still only shrinks.
+  const grown = readSuppressions(JSON.stringify(supp({ "app/a.tsx": { R: 3 } })));
+  assert.match(suppressionProblems(base, grown, { root: d, baseFiles, newRules: new Set(["R"]) }).join("\n"),
+    /app\/a\.tsx: R suppressed 2 -> 3/);
+  // --new-rules on the CLI.
+  const basePath = join(d, "base.json");
+  const headPath = join(d, "eslint-suppressions.json");
+  writeFileSync(basePath, JSON.stringify(supp({ "app/a.tsx": { R: 2 } })));
+  writeFileSync(headPath, JSON.stringify(supp({ "app/a.tsx": { R: 2, F: 3 } })));
+  const quiet = (fn) => {
+    const [log, err] = [console.log, console.error];
+    console.log = console.error = () => {};
+    try { return fn(); } finally { [console.log, console.error] = [log, err]; }
+  };
+  assert.equal(quiet(() => main(["--suppressions", basePath, headPath])), 1);
+  assert.equal(quiet(() => main(["--suppressions", basePath, headPath, "--new-rules", "F"])), 0);
+  assert.equal(quiet(() => main(["--suppressions", basePath, headPath, "--new-rules", "X,Y"])), 1);
+});
+
 test("eslint-kit.mjs is core, in the tokens profile, and the committed suppressions file parses", () => {
   const manifest = buildManifest(CORE);
   assert.ok("eslint-kit.mjs" in manifest.files);
@@ -469,6 +498,16 @@ test("relativeParts: now / minutes / hours / days, null after 7 days or when unr
   assert.deepEqual(relativeParts(new Date(now - 2 * 86_400_000), now), { unit: "d", n: 2 });
   assert.equal(relativeParts(ago(8 * 86_400_000), now), null);
   assert.equal(relativeParts("nonsense", now), null);
+});
+
+test("S6a form controls are a core file outside the tokens profile, exported by the barrel", () => {
+  const manifest = buildManifest(CORE);
+  assert.ok("FormControls.tsx" in manifest.files);
+  assert.ok(!manifest.profiles.tokens.includes("FormControls.tsx"));
+  const barrel = readFileSync(join(CORE, "..", "index.ts"), "utf8");
+  for (const name of ["Field", "Input", "Select", "Textarea", "Checkbox", "Radio"]) {
+    assert.match(barrel, new RegExp(`\\b${name}\\b[^;]*from "\\./core/FormControls"`), `${name} is exported`);
+  }
 });
 
 test("S4a components are core files, outside the tokens profile", () => {

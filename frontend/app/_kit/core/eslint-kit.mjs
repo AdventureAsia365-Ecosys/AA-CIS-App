@@ -14,7 +14,7 @@
 // (ESLint >= 9.24 bulk suppressions), which CI only lets shrink (check-kit-copy.mjs --suppressions).
 // An app turns a rule off with `rules`, e.g. TripPlanner: { "aa-kit/no-raw-table": "off" } (ADR 0016 plan G2, G5).
 //
-// Rules (ADR 0016 decision 7; rule 8 `no-raw-form-control` ships with the form controls, AA-994 S6a):
+// Rules (ADR 0016 decision 7):
 //   1 no-raw-main            no <main> in pages: PageFrame (alias AdminMain) owns the page frame
 //   2 no-raw-table           no <table> outside DataTable
 //   3 no-raw-dialog          no <dialog> / role="dialog" outside Drawer / Modal
@@ -23,6 +23,12 @@
 //   6 no-raw-aa-var          no `var(--aa-…)` string in page code: K (inline) or the Tailwind token
 //   7 no-aa-var-definition   no `--aa-*` custom property set from JS (style key, setProperty, CSS text); CSS files are
 //                            checked by check-kit-copy.mjs --css, since ESLint does not lint CSS
+//   8 no-raw-form-control    no <input> / <select> / <textarea> in pages: Field + Input, Select, Textarea, Checkbox,
+//                            Radio, DateField (AA-994 S6a). <input type="hidden"> and type="file" stay allowed (no
+//                            visible control / no kit file picker yet). STAGED: in no preset yet, an app turns it on
+//                            with `rules: STAGED_RULES` once its suppressions hold the existing uses (CIS S6a, Partner
+//                            S6c, Booking S6d); the close-out (S6f) moves it into the presets. Adding it to a preset
+//                            now would turn every consumer's lint red on the next kit sync.
 //   9 no-legacy-kit          no import of a legacy primitive module the kit replaces (CIS adminUi, portal ui.tsx)
 //   - no-class-name          (inline preset only) no `className` on JSX in pages
 
@@ -321,6 +327,29 @@ export const RULES = {
     },
   },
 
+  "no-raw-form-control": {
+    meta: {
+      type: "problem",
+      docs: { description: "No raw <input> / <select> / <textarea> in page code; use the kit form controls" },
+      messages: {
+        kit: `No raw <{{tag}}> in page code: use the kit form controls (Field with Input, Select, Textarea, Checkbox, Radio or DateField) from ${KIT}. ${REF}`,
+      },
+      schema: [],
+    },
+    create: (context) => ({
+      JSXOpeningElement(node) {
+        const tag = jsxName(node.name);
+        if (tag !== "input" && tag !== "select" && tag !== "textarea") return;
+        if (tag === "input") {
+          const typeAttr = node.attributes.find((a) => a.type === "JSXAttribute" && jsxName(a.name) === "type");
+          const type = typeAttr ? attrString(typeAttr.value) : null;
+          if (type === "hidden" || type === "file") return;
+        }
+        context.report({ node, messageId: "kit", data: { tag } });
+      },
+    }),
+  },
+
   "no-class-name": rule(
     "No className on JSX in pages (inline preset: inline style + K tokens)",
     `No className on JSX in page code: use inline style with K.<token> and the kit components from ${KIT}. ${REF}`,
@@ -333,7 +362,7 @@ export const RULES = {
   ),
 };
 
-export const plugin = { meta: { name: "aa-kit", version: "1.0.0" }, rules: RULES };
+export const plugin = { meta: { name: "aa-kit", version: "1.1.0" }, rules: RULES };
 
 const SHARED = [
   "no-raw-main", "no-raw-table", "no-raw-dialog", "no-hex-colour", "no-hand-styled-button", "no-raw-aa-var",
@@ -341,6 +370,10 @@ const SHARED = [
 ];
 /** ADR 0016 decision 7: `inline` = CIS admin, portal, CRM web; `tailwind` = Booking, TripPlanner. */
 export const PRESETS = { inline: [...SHARED, "no-class-name"], tailwind: SHARED };
+
+/** Rules in the plugin but in no preset yet (see rule 8 above): an app opts in with `kitConfig({ …, rules: STAGED_RULES })`
+ *  in the same PR that freezes its existing uses in eslint-suppressions.json. */
+export const STAGED_RULES = { "aa-kit/no-raw-form-control": "error" };
 
 /** The rule map of a preset, every rule at `severity` (default "error"). */
 export function kitRules(preset, severity = "error") {

@@ -19,6 +19,10 @@
 //                                             (paths are relative to <head.json>'s folder). With --base-files <list>
 //                                             (the base commit's paths, one per line, relative to the same folder) a
 //                                             new entry must also be in a file the base did not have.
+//                                             With --new-rules <rule,rule> (the rules the change switches on, which the
+//                                             base did not run; AA-994 S6a) a listed rule with no suppression at the
+//                                             base may start its baseline: its entries are not growth. Once merged
+//                                             the rule has a base total, so from the next change on it only shrinks.
 //   node <core>/check-kit-copy.mjs --no-kit-disable <dir> [--ignore <path>]...
 //                                             no code file under <dir> (minus the --ignore paths, relative to <dir>)
 //                                             switches a kit rule off inline: no bare eslint-disable[-line|-next-line]
@@ -361,8 +365,11 @@ const FIX_SUPP = "fix the new violation instead of suppressing it (never `eslint
  *  that are gone carried (gone = missing under root; without root, absent from head), and with `baseFiles` (the base
  *  commit's paths) a new entry must be in a file the base did not have. So fixing one old violation never buys a
  *  new one elsewhere. */
-export function suppressionProblems(base, head, { root, baseFiles } = {}) {
+export function suppressionProblems(base, head, { root, baseFiles, newRules } = {}) {
   const out = [];
+  const bt = suppressionTotals(base);
+  // A rule switched on by this change (not run at the base) starts its baseline: only when the base suppressed none.
+  const starts = (rule) => !!newRules && newRules.has(rule) && !bt[rule];
   const gone = (file) => (root ? !existsSync(join(root, file)) : !(file in head));
   const added = {};
   const vanished = {};
@@ -375,6 +382,7 @@ export function suppressionProblems(base, head, { root, baseFiles } = {}) {
       const was = base[file] && base[file][rule];
       if (was !== undefined && n > was) out.push(`${file}: ${rule} suppressed ${was} -> ${n}`);
       if (was === undefined) {
+        if (starts(rule)) continue;
         added[rule] = (added[rule] || 0) + n;
         if (baseFiles && baseFiles.has(file)) {
           out.push(`${file}: new ${rule} suppression in a file that already existed at the base (fix it instead)`);
@@ -386,9 +394,9 @@ export function suppressionProblems(base, head, { root, baseFiles } = {}) {
         "delete the entry, or move it with a rename)");
     }
   }
-  const bt = suppressionTotals(base);
   const ht = suppressionTotals(head);
   for (const rule of Object.keys(ht).sort()) {
+    if (starts(rule)) continue;
     if (ht[rule] > (bt[rule] || 0)) out.push(`${rule}: ${bt[rule] || 0} -> ${ht[rule]} suppressed in total`);
     else if ((added[rule] || 0) > (vanished[rule] || 0)) {
       out.push(`${rule}: ${added[rule]} new suppressed entries but only ${vanished[rule] || 0} came from ` +
@@ -462,7 +470,7 @@ export function kitDisableProblems(root, { ignore = [] } = {}) {
   return out;
 }
 
-function suppressionMain(basePath, headPath, baseFilesPath) {
+function suppressionMain(basePath, headPath, baseFilesPath, newRules) {
   for (const [what, p] of [["base file", basePath], ["--base-files list", baseFilesPath]]) {
     if (p && !existsSync(p)) {
       console.error(`check-kit-copy: --suppressions ${what} ${p} does not exist`);
@@ -479,13 +487,18 @@ function suppressionMain(basePath, headPath, baseFilesPath) {
   }
   const baseFiles = baseFilesPath ? readFileList(readFileSync(baseFilesPath, "utf8")) : undefined;
   const sum = (s) => Object.values(suppressionTotals(s)).reduce((a, b) => a + b, 0);
-  const problems = suppressionProblems(base, head, { root: dirname(resolve(headPath)), baseFiles });
+  const problems = suppressionProblems(base, head, { root: dirname(resolve(headPath)), baseFiles, newRules });
   if (problems.length) {
     console.error(`check-kit-copy: ESLint suppressions grew or are stale (${headPath} vs ${basePath}): ` +
       `${problems.length} problem(s)`);
     for (const p of problems) console.error(`  - ${p}`);
     console.error(`  fix: ${FIX_SUPP}`);
     return 1;
+  }
+  const bt = suppressionTotals(base);
+  const ht = suppressionTotals(head);
+  for (const rule of [...(newRules || [])].sort()) {
+    if (!bt[rule] && ht[rule]) console.log(`check-kit-copy: ${rule} is switched on by this change: baseline of ${ht[rule]}`);
   }
   console.log(`check-kit-copy: ESLint suppressions did not grow: ${sum(base)} -> ${sum(head)} suppressed violations ` +
     `in ${Object.keys(head).length} file(s): OK`);
@@ -510,7 +523,7 @@ function noKitDisableMain(root, ignore) {
 
 function parseArgs(argv) {
   const opts = {
-    supp: null, baseFiles: null, noDisable: null, ignore: [], self: false, css: null,
+    supp: null, baseFiles: null, newRules: null, noDisable: null, ignore: [], self: false, css: null,
     dir: dirname(fileURLToPath(import.meta.url)), profile: null, lock: undefined,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -523,6 +536,7 @@ function parseArgs(argv) {
     else if (a === "--css") opts.css = resolve(val());
     else if (a === "--suppressions") opts.supp = [resolve(val()), resolve(val())];
     else if (a === "--base-files") opts.baseFiles = resolve(val());
+    else if (a === "--new-rules") opts.newRules = new Set(val().split(",").map((r) => r.trim()).filter(Boolean));
     else if (a === "--no-kit-disable") opts.noDisable = resolve(val());
     else if (a === "--ignore") opts.ignore.push(val());
     else if (a === "--dir") opts.dir = resolve(val());
@@ -539,7 +553,7 @@ export function main(argv) {
     console.error(`check-kit-copy: ${e.message}`);
     return 2;
   }
-  if (opts.supp) return suppressionMain(...opts.supp, opts.baseFiles);
+  if (opts.supp) return suppressionMain(...opts.supp, opts.baseFiles, opts.newRules);
   if (opts.noDisable) return noKitDisableMain(opts.noDisable, opts.ignore);
   if (opts.css) {
     if (!existsSync(opts.css) || !statSync(opts.css).isDirectory()) {

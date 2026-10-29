@@ -9,6 +9,9 @@
     "aa-kit/no-raw-aa-var": {
       "count": 10
     },
+    "aa-kit/no-raw-form-control": {
+      "count": 9
+    },
     "react-hooks/set-state-in-effect": {
       "count": 1
     }
@@ -30,6 +33,9 @@
     },
     "aa-kit/no-legacy-kit": {
       "count": 1
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 2
     }
   },
   "app/admin/_components/Pagination.tsx": {
@@ -62,6 +68,11 @@
       "count": 1
     }
   },
+  "app/admin/_components/TenantSelect.tsx": {
+    "aa-kit/no-raw-form-control": {
+      "count": 2
+    }
+  },
   "app/admin/_components/TourDetailPanelV2.tsx": {
     "aa-kit/no-hand-styled-button": {
       "count": 10
@@ -74,6 +85,9 @@
     },
     "aa-kit/no-raw-aa-var": {
       "count": 6
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 2
     },
     "aa-kit/no-raw-table": {
       "count": 2
@@ -108,18 +122,32 @@
     "aa-kit/no-legacy-kit": {
       "count": 1
     },
+    "aa-kit/no-raw-form-control": {
+      "count": 1
+    },
     "aa-kit/no-raw-table": {
       "count": 1
+    }
+  },
+  "app/admin/aa-content/AaContentConsole.tsx": {
+    "aa-kit/no-raw-form-control": {
+      "count": 5
     }
   },
   "app/admin/aa-content/AaContentEditor.tsx": {
     "aa-kit/no-hand-styled-button": {
       "count": 2
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 4
     }
   },
   "app/admin/api-docs/page.tsx": {
     "aa-kit/no-hand-styled-button": {
       "count": 3
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 1
     }
   },
   "app/admin/atom-curation/page.tsx": {
@@ -134,6 +162,9 @@
     },
     "aa-kit/no-legacy-kit": {
       "count": 1
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 12
     },
     "aa-kit/no-raw-table": {
       "count": 1
@@ -156,16 +187,25 @@
     },
     "aa-kit/no-legacy-kit": {
       "count": 1
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 3
     }
   },
   "app/admin/content-quality/PlaceCardFactsDrawer.tsx": {
     "aa-kit/no-legacy-kit": {
       "count": 1
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 3
     }
   },
   "app/admin/content-quality/SentenceActions.tsx": {
     "aa-kit/no-legacy-kit": {
       "count": 1
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 2
     }
   },
   "app/admin/content-quality/Severity.tsx": {
@@ -184,11 +224,17 @@
     },
     "aa-kit/no-legacy-kit": {
       "count": 1
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 12
     }
   },
   "app/admin/cost-ops/BudgetsPanel.tsx": {
     "aa-kit/no-legacy-kit": {
       "count": 1
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 6
     },
     "aa-kit/no-raw-table": {
       "count": 1
@@ -204,6 +250,9 @@
     "aa-kit/no-legacy-kit": {
       "count": 1
     },
+    "aa-kit/no-raw-form-control": {
+      "count": 3
+    },
     "aa-kit/no-raw-table": {
       "count": 6
     }
@@ -213,9 +262,22 @@
       "count": 2
     }
   },
+  "app/admin/data-erasure/ApplyPanel.tsx": {
+    "aa-kit/no-raw-form-control": {
+      "count": 4
+    }
+  },
+  "app/admin/data-erasure/SubjectForm.tsx": {
+    "aa-kit/no-raw-form-control": {
+      "count": 2
+    }
+  },
   "app/admin/data-model/page.tsx": {
     "aa-kit/no-hand-styled-button": {
       "count": 4
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 2
     }
   },
   "app/admin/decisions/page.tsx": {
@@ -228,8 +290,21 @@
     "aa-kit/no-raw-aa-var": {
       "count": 12
     },
+    "aa-kit/no-raw-form-control": {
+      "count": 14
+    },
     "aa-kit/no-raw-table": {
       "count": 3
+    }
+  },
+  "app/admin/docs/page.tsx": {
+    "aa-kit/no-raw-form-control": {
+      "count": 2
+    }
+  },
+  "app/admin/facts/FactsConsole.tsx": {
+    "aa-kit/no-raw-form-control": {
+      "count": 10
     }
   },
   "app/admin/jobs/JobDrawer.tsx": {
@@ -254,6 +329,9 @@
   "app/admin/jobs/JobsTable.tsx": {
     "aa-kit/no-legacy-kit": {
       "count": 1
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 6
     }
   },
   "app/admin/jobs/WorkerHealth.tsx": {
@@ -293,6 +371,9 @@
     },
     "aa-kit/no-raw-aa-var": {
       "count": 42
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 10
     },
     "aa-kit/no-raw-table": {
       "count": 3
@@ -339,6 +420,9 @@
     "aa-kit/no-legacy-kit": {
       "count": 1
     },
+    "aa-kit/no-raw-form-control": {
+      "count": 6
+    },
     "aa-kit/no-raw-table": {
       "count": 2
     }
@@ -349,6 +433,9 @@
     },
     "aa-kit/no-legacy-kit": {
       "count": 1
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 3
     }
   },
   "app/admin/places/MergesTab.tsx": {
@@ -357,6 +444,9 @@
     },
     "aa-kit/no-legacy-kit": {
       "count": 1
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 2
     }
   },
   "app/admin/places/page.tsx": {
@@ -365,6 +455,9 @@
     },
     "aa-kit/no-legacy-kit": {
       "count": 1
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 3
     }
   },
   "app/admin/platform-stats/page.tsx": {
@@ -377,10 +470,33 @@
     "aa-kit/no-legacy-kit": {
       "count": 1
     },
+    "aa-kit/no-raw-form-control": {
+      "count": 2
+    },
     "aa-kit/no-raw-table": {
       "count": 2
     },
     "react-hooks/set-state-in-effect": {
+      "count": 3
+    }
+  },
+  "app/admin/platform/agencies/AgenciesConsole.tsx": {
+    "aa-kit/no-raw-form-control": {
+      "count": 7
+    }
+  },
+  "app/admin/platform/agencies/AgencyDrawer.tsx": {
+    "aa-kit/no-raw-form-control": {
+      "count": 6
+    }
+  },
+  "app/admin/platform/agencies/consoleUi.tsx": {
+    "aa-kit/no-raw-form-control": {
+      "count": 1
+    }
+  },
+  "app/admin/platform/alerts/AlertRecipients.tsx": {
+    "aa-kit/no-raw-form-control": {
       "count": 3
     }
   },
@@ -392,6 +508,24 @@
   "app/admin/platform/audit/AuditLog.tsx": {
     "aa-kit/no-hand-styled-button": {
       "count": 1
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 6
+    }
+  },
+  "app/admin/platform/cost/CostByApp.tsx": {
+    "aa-kit/no-raw-form-control": {
+      "count": 1
+    }
+  },
+  "app/admin/platform/staff/StaffDirectory.tsx": {
+    "aa-kit/no-raw-form-control": {
+      "count": 1
+    }
+  },
+  "app/admin/platform/staff/StaffManage.tsx": {
+    "aa-kit/no-raw-form-control": {
+      "count": 5
     }
   },
   "app/admin/review/ClaimChecks.tsx": {
@@ -427,6 +561,9 @@
     },
     "aa-kit/no-raw-aa-var": {
       "count": 4
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 4
     }
   },
   "app/admin/review/page.tsx": {
@@ -438,6 +575,9 @@
     },
     "aa-kit/no-legacy-kit": {
       "count": 1
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 3
     }
   },
   "app/admin/review/reviewModel.ts": {
@@ -461,6 +601,9 @@
     "aa-kit/no-legacy-kit": {
       "count": 1
     },
+    "aa-kit/no-raw-form-control": {
+      "count": 9
+    },
     "aa-kit/no-raw-table": {
       "count": 1
     },
@@ -479,11 +622,17 @@
     },
     "aa-kit/no-legacy-kit": {
       "count": 1
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 3
     }
   },
   "app/admin/settings/JevCreditTab.tsx": {
     "aa-kit/no-legacy-kit": {
       "count": 1
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 3
     },
     "aa-kit/no-raw-table": {
       "count": 1
@@ -492,6 +641,9 @@
   "app/admin/settings/ModelsTab.tsx": {
     "aa-kit/no-legacy-kit": {
       "count": 1
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 2
     },
     "aa-kit/no-raw-table": {
       "count": 1
@@ -511,6 +663,9 @@
     },
     "aa-kit/no-legacy-kit": {
       "count": 1
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 3
     }
   },
   "app/admin/settings/page.tsx": {
@@ -519,11 +674,22 @@
     },
     "aa-kit/no-legacy-kit": {
       "count": 1
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 2
     }
   },
   "app/admin/supply-content/SupplyContentDetail.tsx": {
     "aa-kit/no-hand-styled-button": {
       "count": 1
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 5
+    }
+  },
+  "app/admin/supply-content/SupplyContentList.tsx": {
+    "aa-kit/no-raw-form-control": {
+      "count": 2
     }
   },
   "app/admin/tenant-activity/page.tsx": {
@@ -535,6 +701,9 @@
     },
     "aa-kit/no-legacy-kit": {
       "count": 1
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 5
     },
     "aa-kit/no-raw-table": {
       "count": 1
@@ -567,6 +736,9 @@
     },
     "aa-kit/no-legacy-kit": {
       "count": 1
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 5
     }
   },
   "app/admin/tenants/page.tsx": {
@@ -581,6 +753,9 @@
     },
     "aa-kit/no-raw-aa-var": {
       "count": 14
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 5
     },
     "aa-kit/no-raw-table": {
       "count": 5
@@ -605,6 +780,9 @@
     "aa-kit/no-raw-aa-var": {
       "count": 16
     },
+    "aa-kit/no-raw-form-control": {
+      "count": 6
+    },
     "aa-kit/no-raw-table": {
       "count": 5
     },
@@ -615,9 +793,17 @@
       "count": 2
     }
   },
+  "app/admin/writing-memory/ReleasesTab.tsx": {
+    "aa-kit/no-raw-form-control": {
+      "count": 10
+    }
+  },
   "app/admin/writing-memory/WritingMemory.tsx": {
     "aa-kit/no-hand-styled-button": {
       "count": 1
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 7
     }
   },
   "app/login/LoginForm.tsx": {
@@ -626,6 +812,9 @@
     },
     "aa-kit/no-raw-aa-var": {
       "count": 4
+    },
+    "aa-kit/no-raw-form-control": {
+      "count": 2
     }
   }
 }

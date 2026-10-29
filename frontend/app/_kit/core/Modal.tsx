@@ -15,6 +15,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { AlertTriangle, Info, X } from "lucide-react";
 import { Button } from "./primitives";
+import { Field, Textarea } from "./FormControls";
 import { K, RADIUS, sans, serif } from "./tokens";
 import { KIT_MESSAGES } from "./kit.messages";
 import { useT } from "./useI18n";
@@ -222,24 +223,17 @@ export function ConfirmModal({
             <div style={{ marginTop: 6, fontSize: 14, color: K.body, overflowWrap: "anywhere" }}>{body ?? message}</div>
           </div>
           {reason && (
-            <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 500, color: K.ink }}>
-                {reason.label}
-                {reason.required && <span style={{ color: K.danger }}> *</span>}
-              </span>
-              <textarea
+            // AA-994 S6a: the kit Field + Textarea (focus / disabled states, aria-required).
+            <Field label={reason.label} required={reason.required}>
+              <Textarea
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 rows={3}
                 maxLength={reason.maxLength ?? 2000}
                 placeholder={reason.placeholder}
-                style={{
-                  borderRadius: RADIUS.md, border: `1px solid ${K.line}`, background: K.card, padding: "8px 12px",
-                  fontSize: 14, fontFamily: sans, color: K.ink, resize: "vertical", boxSizing: "border-box",
-                  width: "100%",
-                }}
+                style={{ width: "100%" }}
               />
-            </label>
+            </Field>
           )}
           {error && <p role="alert" style={{ margin: 0, fontSize: 13, color: K.danger }}>{error}</p>}
         </div>

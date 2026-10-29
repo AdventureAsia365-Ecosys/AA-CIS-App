@@ -490,7 +490,8 @@ jobs:
   #   3. the committed file must equal the pruned one (a fix that did not prune its entries fails here);
   #   4. no entry and no rule total may grow against the base branch's file (a `--suppress-all` that hides new
   #      violations fails here), a new entry may only carry a deleted/renamed file's violations into a file the base
-  #      did not have, and no entry may name a deleted file;
+  #      did not have, and no entry may name a deleted file; a rule the change switches on (scripts/kit-new-rules.mjs,
+  #      AA-994 S6a) starts its baseline once, then only shrinks like the others;
   #   5. no inline `eslint-disable` of a kit rule (or bare `eslint-disable`) in page code: the suppressions file is the
   #      only baseline.
   # Steps 3-5 run even when step 2 fails, so one run shows every reason.
@@ -559,7 +560,12 @@ jobs:
           fi
           BASE_LIST="$RUNNER_TEMP/base-frontend-files.txt"
           git ls-tree -r --name-only "$BASE_SHA" -- . > "$BASE_LIST"  # paths relative to frontend/ (the cwd)
-          node app/_kit/core/check-kit-copy.mjs --suppressions "$BASE_FILE" eslint-suppressions.json --base-files "$BASE_LIST"
+          # A rule this change switches on (on at the head, off at the base for every file listing it, AA-994 S6a) may
+          # freeze its existing violations once; fails closed (no --new-rules) when the base config cannot be rebuilt.
+          NEW_RULES=$(node scripts/kit-new-rules.mjs "$BASE_SHA") || { echo "::warning::kit-new-rules failed: every rule must shrink"; NEW_RULES=""; }
+          if [ -n "$NEW_RULES" ]; then echo "Rules switched on by this change: $NEW_RULES"; fi
+          node app/_kit/core/check-kit-copy.mjs --suppressions "$BASE_FILE" eslint-suppressions.json --base-files "$BASE_LIST" \
+            ${NEW_RULES:+--new-rules "$NEW_RULES"}
 
       - name: No inline disable of a kit rule
         if: ${{ !cancelled() }}
