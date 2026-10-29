@@ -1,0 +1,130 @@
+name: Kit Consumers
+# AA-994 S3s (root ADR 0016 decision 6, plan guard G17): a CIS PR that changes the UI kit core must still compile and
+# pass kit lint in every consumer app. Each leg overlays this PR's frontend/app/_kit/core onto the consumer's main
+# with .github/scripts/kit-sync.sh --from-local (the same copy the sync bot makes), then runs in that app: the copy's
+# integrity check, `tsc --noEmit` (after `next typegen`, so route and image types exist as in `next build`) and the
+# app's own `npm run lint` (the kit preset ships in core/eslint-kit.mjs; --pass-on-unpruned-suppressions, because a
+# core change that fixes a frozen violation must not fail here).
+#
+# Non-required until the Booking catch-up (plan S4b); the stable check name is the "Kit consumers" job below. Before
+# it is made required, drop the `paths:` filter (required checks and merge_group ignore it): the plan job already
+# exits green, and every leg is skipped, when no kit path changed.
+# Read only: no secret, no App token; the consumer repos are public.
+on:
+  pull_request:
+    paths:
+      - "frontend/app/_kit/core/**"
+      - ".github/scripts/kit-sync.sh"
+      - ".github/scripts/kit_sync_bot.py"
+      - ".github/workflows/kit-consumers.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kit-consumers-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.plan.outputs.changed }}
+      consumers: ${{ steps.plan.outputs.consumers }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      - name: Did the kit core (or the sync code) change?
+        id: plan
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          python3 .github/scripts/kit_sync_bot.py plan --base "$BASE_SHA" --head HEAD \
+            --also .github/scripts/kit-sync.sh --also .github/scripts/kit_sync_bot.py \
+            --also .github/workflows/kit-consumers.yml
+
+  consumer:
+    name: Kit consumers (${{ matrix.consumer.name }})
+    needs: plan
+    if: needs.plan.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        consumer: ${{ fromJSON(needs.plan.outputs.consumers) }}
+    env:
+      NAME: ${{ matrix.consumer.name }}
+      APP: ${{ matrix.consumer.app_dir }}
+      DEST: ${{ matrix.consumer.dest }}
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - name: Check out this PR
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: cis
+          persist-credentials: false
+
+      - name: Check out ${{ matrix.consumer.repo }} main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: AdventureAsia365-Ecosys/${{ matrix.consumer.repo }}
+          ref: main
+          path: consumer
+          persist-credentials: false
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: consumer/${{ matrix.consumer.app_dir }}/package-lock.json
+
+      - name: Overlay this PR's kit core
+        run: bash cis/.github/scripts/kit-sync.sh "$NAME" --from-local --cis cis --dest-repo consumer
+
+      - name: Kit core integrity in the app
+        working-directory: consumer/${{ matrix.consumer.app_dir }}
+        run: |
+          core="${DEST#"$APP"/}"
+          node "$core/check-kit-copy.mjs"
+          node "$core/check-kit-copy.mjs" --css .
+
+      - name: Install (lockfile only)
+        working-directory: consumer/${{ matrix.consumer.app_dir }}
+        run: npm ci --no-audit --no-fund
+
+      - name: Type check (tsc --noEmit)
+        working-directory: consumer/${{ matrix.consumer.app_dir }}
+        run: |
+          npx --no-install next typegen || echo "::notice::next typegen failed; type-checking without generated route types"
+          npx --no-install tsc --noEmit
+
+      - name: Kit lint (the app's own ESLint config)
+        if: ${{ !cancelled() }}
+        working-directory: consumer/${{ matrix.consumer.app_dir }}
+        run: npm run lint -- --pass-on-unpruned-suppressions
+
+  kit-consumers:
+    name: Kit consumers
+    needs: [plan, consumer]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Result
+        env:
+          PLAN: ${{ needs.plan.result }}
+          CHANGED: ${{ needs.plan.outputs.changed }}
+          LEGS: ${{ needs.consumer.result }}
+        run: |
+          if [ "$PLAN" != "success" ]; then echo "::error::plan job: $PLAN"; exit 1; fi
+          if [ "$CHANGED" != "true" ]; then
+            echo "Kit core unchanged: nothing to check." >> "$GITHUB_STEP_SUMMARY"; exit 0
+          fi
+          if [ "$LEGS" != "success" ]; then
+            echo "::error::a consumer leg failed ($LEGS): this core change breaks a consumer app"; exit 1
+          fi
+          echo "The kit core change compiles and lints in every consumer." >> "$GITHUB_STEP_SUMMARY"

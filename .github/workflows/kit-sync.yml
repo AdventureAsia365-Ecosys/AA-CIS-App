@@ -1,0 +1,147 @@
+name: Kit Sync
+# AA-994 S3s (root ADR 0016 decisions 5 and 6, plan guard G14): after a CIS merge that touches the UI kit core, open
+# or update one PR per consumer repo that copies frontend/app/_kit/core into it, and report how far each consumer is
+# behind. The copy is .github/scripts/kit-sync.sh (the same code agents run by hand); the git/PR steps are
+# .github/scripts/kit_sync_bot.py.
+#
+#   AA-Partner          portal/app/_kit/core + web/app/_kit/core (one PR)   full profile
+#   AA-Booking          frontend/ui/core                                     full profile
+#   AA-TripPlanner-Web  frontend/ui/core                                     tokens profile
+#
+# The PR (branch bot/kit-sync, regenerated from the consumer's main every run) is opened with an aa-ecosys-ci-bot
+# installation token minted per matrix leg and narrowed to that one consumer repo, Contents + Pull requests write only
+# (no Workflows, Actions or Secrets): an App token, unlike GITHUB_TOKEN, starts the consumer's CI, previews and merge
+# queue. The token never covers AA-CIS-Infra or the root repo (ADR 0011a decision 3 keeps those two out of reach of
+# app workflows). The bot never merges: sync PRs are normal-tier PRs merged by the orchestrating agent through each
+# repo's merge queue (ADR 0016 decision 6).
+#
+# Nothing to sync (no copied file other than MANIFEST.json changes, e.g. a TripPlanner leg after a DataTable change)
+# is a green no-op; a stale open sync PR is then closed as superseded. Manual run: Actions -> Kit Sync -> Run
+# workflow on main; dry_run (default true) copies and commits in the runner, prints the PR it would open, and never
+# pushes or calls the PR API. The nightly run only writes the freshness table (report only, never a gate).
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/app/_kit/core/**"
+  schedule:
+    - cron: "40 1 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Copy and commit in the runner only: no push, no PR"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# One run at a time; a newer push replaces a pending run (debounce), a running one finishes.
+concurrency:
+  group: kit-sync
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Plan
+    if: github.event_name != 'schedule' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.plan.outputs.changed }}
+      repos: ${{ steps.plan.outputs.repos }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      - name: Did the kit core change?
+        id: plan
+        env:
+          # push: the previous main; workflow_dispatch: none, which counts as changed (the sync is idempotent).
+          BASE_SHA: ${{ github.event.before }}
+        run: python3 .github/scripts/kit_sync_bot.py plan --base "$BASE_SHA" --head "$GITHUB_SHA"
+
+  sync:
+    name: Sync ${{ matrix.repo }}
+    needs: plan
+    if: needs.plan.outputs.changed == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # Environment "release": deployment branch policy main only, holds AA_CI_BOT_PRIVATE_KEY (as release-please.yml).
+    environment: release
+    strategy:
+      fail-fast: false
+      matrix:
+        repo: ${{ fromJSON(needs.plan.outputs.repos) }}
+    steps:
+      - name: Check out AA-CIS-App (the core at this commit, history for the core log)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: cis
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+
+      - name: Mint the CI bot App token (this consumer repo only)
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.AA_CI_BOT_APP_ID }}
+          private-key: ${{ secrets.AA_CI_BOT_PRIVATE_KEY }}
+          owner: AdventureAsia365-Ecosys
+          repositories: ${{ matrix.repo }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Check out ${{ matrix.repo }} main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: AdventureAsia365-Ecosys/${{ matrix.repo }}
+          ref: main
+          path: consumer
+          fetch-depth: 1
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Bot commit identity
+        id: bot
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          id=$(gh api "/users/${SLUG}%5Bbot%5D" --jq .id)
+          echo "name=${SLUG}[bot]" >> "$GITHUB_OUTPUT"
+          echo "email=${id}+${SLUG}[bot]@users.noreply.github.com" >> "$GITHUB_OUTPUT"
+
+      - name: Sync the kit core and open or update the PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ matrix.repo }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          BOT_NAME: ${{ steps.bot.outputs.name }}
+          BOT_EMAIL: ${{ steps.bot.outputs.email }}
+        run: |
+          set -euo pipefail
+          dry=()
+          if [ "$DRY_RUN" = "true" ]; then dry=(--dry-run); fi
+          python3 cis/.github/scripts/kit_sync_bot.py --cis cis sync --repo "$REPO" --dest consumer \
+            --ref "$GITHUB_SHA" --run-url "$RUN_URL" --author-name "$BOT_NAME" --author-email "$BOT_EMAIL" "${dry[@]}"
+
+  report:
+    name: Freshness report
+    needs: sync
+    # After a sync (whatever its result) and on the nightly schedule, when plan and sync are skipped.
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      - name: Consumer lock refs against CIS main (report only)
+        env:
+          # The consumer repos are public: github.token only lifts the API rate limit, it writes nothing.
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/kit_sync_bot.py report --head "$GITHUB_SHA"
