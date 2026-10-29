@@ -16,7 +16,7 @@
 import {
   Gauge, Users, Upload, Wand2, ClipboardList, Library, Settings, Wallet, UserCog, Radio,
   Puzzle, ListChecks, Scale, Search, Image as ImageIcon, BookOpen, BarChart3, ShieldCheck,
-  Boxes, ScrollText, ChartPie, BellRing, MapPin, Network, Eraser, Building2, FileText, Hotel, Table2, BookMarked,
+  Boxes, ScrollText, ChartPie, BellRing, MapPin, Network, Eraser, Building2, FileText, Hotel, Table2, BookMarked, Quote,
 } from "lucide-react";
 import { useCallback } from "react";
 import { canSeePage } from "@/lib/rbac";
@@ -93,6 +93,7 @@ export const NAV_GROUPS: NavGroup[] = [
     { href: "/admin/photos", icon: <ImageIcon size={16} />, label: "Photos" },
     { href: "/admin/places", icon: <MapPin size={16} />, label: "Places" },  // AA-847
     { href: "/admin/aa-content", icon: <FileText size={16} />, label: "AA content (CRM)" },  // AA-977
+    { href: "/admin/facts", icon: <Quote size={16} />, label: "Facts" },  // AA-814 — sourced facts the writer cites
     { href: "/admin/supply-content", icon: <Hotel size={16} />, label: "Supply (Booking)" },  // AA-835 (S251: shorter, "Supply content (Booking)" was cut at 1440)
   ] },
   { label: "Intelligence", section: "cis", items: [

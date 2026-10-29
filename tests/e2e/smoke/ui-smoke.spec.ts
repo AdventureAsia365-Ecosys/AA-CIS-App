@@ -81,6 +81,8 @@ const ADMIN_PAGES: PageSpec[] = [
   { id: 'photos', label: 'Photos', path: '/admin/photos', viewerRefused: true },
   // AA-977 — CIS Content › Assets › AA content (CRM): every staff role reads (the viewer too; write controls hidden).
   { id: 'aa-content', label: 'AA content (CRM)', path: '/admin/aa-content' },
+  // AA-814 — CIS Content › Assets › Facts: every staff role reads (write controls hidden; writes admin only).
+  { id: 'facts', label: 'Facts', path: '/admin/facts' },
   // AA-835 — CIS Content › Assets › Supply (Booking): every staff role reads (lib/rbac.ts PAGE_RULES ALL_STAFF).
   { id: 'supply-content', label: 'Supply content (Booking)', path: '/admin/supply-content' },
   { id: 'platform-stats', label: 'A4 Quality', path: '/admin/platform-stats', readySelector: '[data-testid="admin-content-ready"]', viewerRefused: true },
