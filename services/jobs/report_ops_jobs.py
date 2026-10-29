@@ -6,8 +6,9 @@
                          views (aggregates, no PII). The result is the check (window, sent, received, gap, per day);
                          a gap seen at this check AND at the previous hour's check raises the admin bell
                          platform.inquiry_handoff.gap (again only when the gap grew, within 24 h) and queues one ops
-                         alert e-mail per UTC day (template inquiry_handoff_gap). Queued by the api's ops metrics
-                         sampler once per UTC hour (idempotency key inquiry_handoff_check:<hour>).
+                         alert e-mail per UTC day (template inquiry_handoff_gap); INQUIRY_HANDOFF_ALERTS=off on the
+                         worker switches both off (result alert.disabled). Queued by the api's ops metrics sampler once
+                         per UTC hour (idempotency key inquiry_handoff_check:<hour>).
   report_email           payload {"run_id", "report_id"}
                          Sends a succeeded report run (its Markdown) through the existing SES path
                          (shared/aws_client/ses_mailer.py) to that report's opt-in list only, never to the alert
@@ -83,7 +84,10 @@ async def run_handoff_check(ctx: JobContext) -> dict:
         previous = await handoff.previous_result(conn, hour)
     result = {"kind": CHECK_KIND, "hour": hour.isoformat(), **handoff.evaluate(days, previous)}
     if result["persistent"]:
-        result["alert"] = await _alert(ctx.pool, result, hour)
+        if handoff.alerts_enabled():
+            result["alert"] = await _alert(ctx.pool, result, hour)
+        else:
+            result["alert"] = {"disabled": f"{handoff.ALERTS_ENV} is off"}
     logger.info("inquiry_handoff_checked", hour=hour.isoformat(), gap=result["gap"], persistent=result["persistent"])
     ctx.set_result(result)
     return result

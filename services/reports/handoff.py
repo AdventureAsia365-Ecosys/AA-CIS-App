@@ -8,13 +8,20 @@ here is per UTC day too. No PII: aggregates only.
 
 What the views cannot say (they have no inquiry key): which inquiry is missing, its age, and "received but no trip
 case after 24 h". That needs a key-level contract view in each owner's schema (a tp-NNN and a bk-NNN migration that
-grant cis_app SELECT on idempotency keys and timestamps only); until then the gap is a count. The request is in the
-AA-1003 R2 runbook; CIS never reads tripplanner.v_inquiry_outbox or booking.inbox_events with another login.
+grant cis_app SELECT on idempotency keys and timestamps only); until then the gap is a count. The request is recorded
+in docs/implementation-notes/AA-1003.md ("R2 follow-up requests"); CIS never reads tripplanner.v_inquiry_outbox or
+booking.inbox_events with another login.
+
+The views belong to TripPlanner and Booking: a revoked grant or a view the owner dropped or reshaped surfaces as one
+of CONTRACT_ERRORS. The KPI computer turns it into kpis.Unavailable (the daily chain goes on); the hourly check and
+the TP-03 run fail, so the failure shows in the OPS-12 jobs and reports sections.
 
 Three users:
 - the hourly check (job kind inquiry_handoff_check, services/jobs/report_ops_jobs.py): the gap over the last
   WINDOW_DAYS UTC days, today included; a gap that is still there at the next hourly check (an hour later, well past
-  the 15-minute delivery allowance) raises one admin bell and one ops alert e-mail (shared/ops_alerts.py);
+  the 15-minute delivery allowance) raises one admin bell and one ops alert e-mail (shared/ops_alerts.py). Worker
+  variable INQUIRY_HANDOFF_ALERTS (default on; off / false / 0 / no) turns the bell and the e-mail off without a code
+  change: the check still runs and records the gap, the result says the alert was switched off;
 - the KPI snapshot (services/reports/kpis.py, `inquiry_handoff`): K-TP-HANDOFFGAP, K-BK-PARKED, K-BK-INQ2CASE of a
   closed UTC day;
 - the TP-03 daily report (report_generate) and the OPS-12 digest line.
@@ -22,9 +29,12 @@ Three users:
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Iterable, Optional
+
+import asyncpg
 
 TP = "tripplanner"
 WINDOW_DAYS = 7
@@ -32,6 +42,9 @@ CHECK_KIND = "inquiry_handoff_check"
 GAP_EVENT = "platform.inquiry_handoff.gap"
 FUNNEL_METRICS = ("inquiry_received", "inquiry_parked", "inquiry_failed", "trip_case_created")
 SOURCES = ("tripplanner.v_ops_traffic_daily", "booking.v_ops_funnel_daily")
+# A contract view CIS may no longer read as written: grant revoked, view dropped, a column renamed by its owner.
+CONTRACT_ERRORS: tuple[type[BaseException], ...] = (asyncpg.InsufficientPrivilegeError, asyncpg.UndefinedTableError,
+                                                    asyncpg.UndefinedColumnError)
 
 SENT_SQL = """
     SELECT day, n FROM tripplanner.v_ops_traffic_daily
@@ -70,6 +83,16 @@ GAP_BELL_ROLES = ["admin"]
 _GAP_BELL_LOCK_KEY = 1_003_020_003
 
 
+ALERTS_ENV = "INQUIRY_HANDOFF_ALERTS"
+_OFF = ("0", "false", "off", "no")
+
+
+def alerts_enabled(environ: Optional[dict] = None) -> bool:
+    """The bell + e-mail of a persistent gap; on unless INQUIRY_HANDOFF_ALERTS says off."""
+    env = os.environ if environ is None else environ
+    return (env.get(ALERTS_ENV) or "on").strip().lower() not in _OFF
+
+
 @dataclass(frozen=True)
 class DayCounts:
     day: date
@@ -94,8 +117,9 @@ def utc_today(now: Optional[datetime] = None) -> date:
 def build_days(first: date, last: date, sent_rows: Iterable, funnel_rows: Iterable) -> list[DayCounts]:
     """Every UTC day of [first, last] (zeros where a view has no row), oldest first. Pure."""
     acc: dict[date, dict] = {}
-    for r in sent_rows:
-        acc.setdefault(r["day"], {})["sent"] = int(r["n"] or 0)
+    for r in sent_rows:            # summed: the contract allows several rows per day and metric (as ops overview)
+        bucket = acc.setdefault(r["day"], {})
+        bucket["sent"] = bucket.get("sent", 0) + int(r["n"] or 0)
     for r in funnel_rows:
         d, metric, src, n = r["day"], r["metric"], r["source_system"], int(r["n"] or 0)
         bucket = acc.setdefault(d, {})

@@ -15,6 +15,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 
+import asyncpg
 import pytest
 
 from services.jobs import report_jobs, report_ops_jobs
@@ -103,6 +104,39 @@ def test_read_events_pages_through_the_ict_day():
     assert window["log_group"].startswith("/ecs/aa-cis-")
 
 
+def test_fetch_events_never_returns_a_partial_search():
+    client = MagicMock()
+    client.filter_log_events.return_value = {"events": [{"m": 1}], "nextToken": "more"}
+    start, end = periods.day_bounds(date(2026, 10, 29))
+    with pytest.raises(probes.LogsUnavailable) as e:                     # page cap
+        probes.fetch_events(client, "/ecs/aa-cis-dev", start, end)
+    assert e.value.reason == "incomplete" and client.filter_log_events.call_count == probes.MAX_PAGES
+    ticks = iter([0.0, 5.0, 25.0])                                       # start, after page 1, after page 2
+    client.filter_log_events.reset_mock()
+    with pytest.raises(probes.LogsUnavailable) as e:                     # time budget
+        probes.fetch_events(client, "/ecs/aa-cis-dev", start, end, budget_s=20, clock=lambda: next(ticks))
+    assert e.value.reason == "incomplete" and client.filter_log_events.call_count == 2
+    assert "20 s" in str(e.value)
+    # read_events passes the refusal through unchanged (not re-labelled aws_error)
+    client.filter_log_events.reset_mock()
+    with pytest.raises(probes.LogsUnavailable) as e:
+        probes.read_events(date(2026, 10, 29), client, datetime(2026, 10, 30, 2, tzinfo=UTC))
+    assert e.value.reason == "incomplete"
+
+
+def test_logs_client_has_short_timeouts_and_bounded_retries():
+    cfg = probes._client().meta.config
+    assert (cfg.connect_timeout, cfg.read_timeout) == (2, 5)
+    assert cfg.retries == {"total_max_attempts": 3, "mode": "standard"}     # max_attempts=2 retries + 1 try
+
+
+@pytest.mark.parametrize("env,group", [("test", "/ecs/aa-cis-dev"), ("", "/ecs/aa-cis-dev"),
+                                       ("prod", "/ecs/aa-cis-prod")])
+def test_log_group_follows_the_ops_overview_environment(monkeypatch, env, group):
+    monkeypatch.setenv("ENVIRONMENT", env)
+    assert probes.log_group() == group
+
+
 # ── handoff ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
 D = date(2026, 10, 29)
@@ -127,6 +161,9 @@ def test_build_days_fills_every_day_and_counts_tripplanner_only_where_it_should(
     last = days[-1]
     assert (last.sent, last.received, last.parked, last.failed, last.cases, last.gap) == (3, 2, 1, 1, 2, 1)
     assert handoff.inq_to_case(last) == 1.0 and handoff.inq_to_case(days[0]) is None
+    # several rows of one day and metric are summed, never the last one wins
+    two = handoff.build_days(D, D, [{"day": D, "n": 3}, {"day": D, "n": 1}], f1)
+    assert two[0].sent == 4 and two[0].gap == 2
 
 
 def test_evaluate_alerts_only_when_the_gap_persists():
@@ -206,6 +243,7 @@ def _ctx(payload, pool):
 
 @pytest.mark.parametrize("previous_gap,alerted", [(None, False), (1, True)])
 def test_hourly_check_alerts_on_a_persistent_gap(monkeypatch, previous_gap, alerted):
+    monkeypatch.delenv(handoff.ALERTS_ENV, raising=False)
     alert = AsyncMock(return_value={"bell": True, "email_job": "j"})
     monkeypatch.setattr(report_ops_jobs, "_alert", alert)
     out = asyncio.run(report_ops_jobs.run_handoff_check(
@@ -213,6 +251,23 @@ def test_hourly_check_alerts_on_a_persistent_gap(monkeypatch, previous_gap, aler
     assert out["gap"] == 1 and out["window"]["days"] == handoff.WINDOW_DAYS
     assert out["window"]["last"] == "2026-10-30"
     assert alert.await_count == (1 if alerted else 0) and ("alert" in out) is alerted
+
+
+def test_alert_kill_switch_keeps_the_check_and_drops_bell_and_email(monkeypatch):
+    monkeypatch.setenv(handoff.ALERTS_ENV, "off")
+    alert = AsyncMock()
+    monkeypatch.setattr(report_ops_jobs, "_alert", alert)
+    out = asyncio.run(report_ops_jobs.run_handoff_check(
+        _ctx({"hour": "2026-10-30T03"}, _pool(CheckConn(sent=2, received=1, previous_gap=1)))))
+    assert out["persistent"] is True and out["gap"] == 1
+    assert alert.await_count == 0 and out["alert"] == {"disabled": "INQUIRY_HANDOFF_ALERTS is off"}
+
+
+@pytest.mark.parametrize("value,enabled", [(None, True), ("", True), ("on", True), ("1", True), ("off", False),
+                                           (" FALSE ", False), ("0", False), ("no", False)])
+def test_alerts_enabled_reads_the_toggle(value, enabled):
+    env = {} if value is None else {handoff.ALERTS_ENV: value}
+    assert handoff.alerts_enabled(env) is enabled
 
 
 def test_hourly_check_refuses_a_bad_hour():
@@ -286,6 +341,16 @@ def test_inquiry_handoff_kpis():
     assert out["K-TP-HANDOFFGAP"].value == Decimal(1)
     assert out["K-BK-PARKED"].value == Decimal(2)
     assert out["K-BK-INQ2CASE"].value == Decimal("1.0")
+
+
+@pytest.mark.parametrize("err", [asyncpg.InsufficientPrivilegeError, asyncpg.UndefinedTableError,
+                                 asyncpg.UndefinedColumnError])
+def test_an_unreadable_contract_view_is_unavailable_not_a_failure(err):
+    class Conn:
+        async def fetch(self, sql, *args):
+            raise err("permission denied for view v_ops_traffic_daily")
+    with pytest.raises(kpis.Unavailable, match="contract_view"):
+        asyncio.run(kpis.inquiry_handoff(Conn(), _day_ctx()))
 
 
 def test_nightly_probes_kpis(monkeypatch):

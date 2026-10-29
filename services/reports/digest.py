@@ -6,14 +6,18 @@ A digest, not an alarm: SEV-worthy signals still page through the SNS alerts in 
 and is short when all is green, so a missing digest is itself a signal.
 
 Sections and where each comes from (no LLM, no paid API; two cheap AWS reads the task role already has or is asked
-for in the R2 runbook):
-  apps        live at render time: CIS, Booking and the partner CRM over their public /health + /health/ready (2 s
-              timeout each), the CIS workers alive in shared.job_worker and their commits (api and worker on the
-              same commit), TripPlanner listed as "no probe"; K-OPS-APPSGREEN = apps answering 200 + ok on both.
+for in docs/implementation-notes/AA-1003.md, "R2 follow-up requests"):
+  apps        live at render time: CIS (its public origin, app_registry.cis_api_origin()), Booking and the partner
+              CRM over their public /health + /health/ready (platform_apps.http_health_card, 2 s timeout each), the
+              CIS workers alive in shared.job_worker and their commits (api and worker on the same commit; not
+              compared when the CIS probe got no answer), TripPlanner listed as "no probe"; K-OPS-APPSGREEN = apps
+              answering 200 + ok on both.
   alarms      CloudWatch DescribeAlarms (cloudwatch:DescribeAlarms, granted for /admin/overview): alarms in ALARM
               now per app. "Fired in 24 h" (K-OPS-ALARMS) needs DescribeAlarmHistory: not measured yet.
   jobs        shared.job: failed rows of day D per kind, queued rows overdue now, running rows past their lease.
   llm         api.services.llm_availability (shared.llm_call_log + shared.job, last 24 h) and K-LLM-FALLBACK-24H.
+              `blocked` / `degraded` need a look; so does `unknown` with no answered text call in 24 h (an idle route
+              after a refusal reads `unknown` once its failed jobs leave the window: never counted green).
   probes      DATA-01: the nightly probe verdicts of day D (services/reports/probes.py, CloudWatch Logs).
   spend       K-LLM-COST-DAY of day D vs the median of the 14 days before (shared.kpi_daily).
   deploys     CIS worker tasks started and migrations registered (shared.schema_versions, every owner) in the 24 h
@@ -94,45 +98,42 @@ def _err(e: BaseException) -> str:
 # ── loaders (each returns a JSON-able dict; collect() isolates failures) ────────────────────────────────────────
 
 
-async def _http_probe(client, app_id: str, label: str, base: str, paths: tuple[str, str]) -> dict:
-    from api.services import platform_apps
+def _app_item(card: dict) -> dict:
+    """A platform_apps health card -> the digest's app line (the card says `unknown` when nothing answered)."""
+    status = "no_answer" if card.get("status") == "unknown" else card.get("status")
+    return {"id": card["id"], "label": card["label"], "status": status,
+            "reason": (card.get("probe") or {}).get("reason") or status, "git_sha": card.get("git_sha"),
+            "schema_version": (card.get("ready") or {}).get("schema_version")}
 
-    try:
-        health, ready = await asyncio.gather(*(platform_apps._get_json(client, f"{base}{p}") for p in paths))
-    except Exception as e:  # timeout, DNS, TLS
-        return {"id": app_id, "label": label, "status": "no_answer", "reason": type(e).__name__}
-    hb, rb = health["body"] or {}, ready["body"] or {}
-    if health["http_status"] != 200 or hb.get("status") != "ok":
-        status, reason = "down", f"{paths[0]} answered {health['http_status']}"
-    elif ready["http_status"] != 200 or rb.get("status") != "ok":
-        status, reason = "degraded", f"{paths[1]} answered {ready['http_status']} ({rb.get('status')})"
-    else:
-        status, reason = "ok", "health and readiness answer 200"
-    return {"id": app_id, "label": label, "status": status, "reason": reason, "git_sha": hb.get("git_sha"),
-            "schema_version": rb.get("schema_version")}
+
+def worker_parity(live_workers: list[dict], api_sha: Optional[str]) -> dict:
+    """{"alive", "commits", "same_commit_as_api"}: True / False, or None when the API's commit is unknown (the CIS
+    probe got no answer): nothing to compare, so no parity verdict. Pure."""
+    shas: dict[str, int] = {}
+    for w in live_workers:
+        sha = w.get("git_sha") or "unknown"
+        shas[sha] = shas.get(sha, 0) + 1
+    same = None if not api_sha or not live_workers else set(shas) == {api_sha}
+    return {"alive": len(live_workers), "commits": shas, "same_commit_as_api": same}
 
 
 async def load_apps(conn) -> dict:
     import httpx
 
-    from api.core.app_registry import APPS, CIS_API_ORIGIN
+    from api.core.app_registry import APPS, CIS_HEALTH_PATHS, cis_api_origin
+    from api.services import platform_apps
     from shared.jobs import queue
 
-    targets = [("cis", APPS["cis"].label, CIS_API_ORIGIN, ("/health", "/health/ready"))]
-    targets += [(a, APPS[a].label, APPS[a].health_base, APPS[a].health_paths) for a in ("booking", "crm")
-                if APPS[a].health_base and len(APPS[a].health_paths) == 2]
+    targets: list[tuple[str, dict]] = [("cis", {"base": cis_api_origin(), "paths": CIS_HEALTH_PATHS})]
+    targets += [(a, {}) for a in ("booking", "crm") if APPS[a].health_base and len(APPS[a].health_paths) == 2]
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_S) as client:
-        items = list(await asyncio.gather(*(_http_probe(client, *t) for t in targets)))
+        cards = await asyncio.gather(*(platform_apps.http_health_card(a, client, **kw) for a, kw in targets))
+    items = [_app_item(c) for c in cards]
     items.append({"id": "tripplanner", "label": APPS["tripplanner"].label, "status": "no_probe",
                   "reason": "no health endpoint yet"})
     health = await queue.worker_health(conn)
     live = [w for w in health["workers"] if w.get("alive")]
-    shas: dict[str, int] = {}
-    for w in live:
-        shas[w.get("git_sha") or "unknown"] = shas.get(w.get("git_sha") or "unknown", 0) + 1
-    api_sha = items[0].get("git_sha")
-    return {"items": items, "workers": {"alive": len(live), "commits": shas,
-                                        "same_commit_as_api": bool(live) and set(shas) == {api_sha}}}
+    return {"items": items, "workers": worker_parity(live, items[0].get("git_sha"))}
 
 
 async def load_alarms() -> dict:
@@ -140,9 +141,9 @@ async def load_alarms() -> dict:
 
     env = cloudwatch.environment()
     try:
-        alarms, _calls = await asyncio.to_thread(cloudwatch.fetch_alarms, cloudwatch._client("cloudwatch"), env)
+        alarms, _calls = await asyncio.to_thread(cloudwatch.fetch_alarms, cloudwatch.aws_client("cloudwatch"), env)
     except Exception as e:  # noqa: BLE001
-        return {"status": "unavailable", "reason": "not_permitted" if cloudwatch._is_denied(e) else _err(e)}
+        return {"status": "unavailable", "reason": "not_permitted" if cloudwatch.is_denied(e) else _err(e)}
     firing = [{"app": app, "name": a["name"], "since": a.get("since")}
               for app, bucket in sorted(alarms.items()) for a in bucket.get("firing") or []]
     return {"status": "ok", "firing": firing, "total": sum(b.get("total", 0) for b in alarms.values())}
@@ -164,6 +165,7 @@ async def load_llm(conn, now: datetime) -> dict:
     out = await llm_availability.read(conn, hours=24, now=now)
     return {"status": out["status"], "last_ok_at": out["last_ok_at"], "cause": out["cause"],
             "calls": sum(p["calls"] for p in out["providers"]),
+            "text_ok_calls": sum(p["ok_calls"] for p in out["providers"] if not p["embed"]),
             "providers": [{k: p[k] for k in ("provider", "account", "embed", "calls", "ok_calls")}
                           for p in out["providers"]],
             "failures": [{k: f.get(k) for k in ("error_class", "jobs", "last_at")} for f in out["failures"]]}
@@ -272,7 +274,7 @@ def attention(facts: dict, series: dict, day: date) -> list[str]:
         w = apps["workers"]
         if not w["alive"]:
             items.append("CIS: no live worker")
-        elif not w["same_commit_as_api"]:
+        elif w["same_commit_as_api"] is False:      # None: the API's commit is unknown, nothing to compare
             items.append(f"CIS: workers run {', '.join(sorted(w['commits']))}, not the API's commit")
     alarms = facts.get("alarms")
     if alarms and alarms.get("status") == "ok" and alarms["firing"]:
@@ -293,6 +295,10 @@ def attention(facts: dict, series: dict, day: date) -> list[str]:
     if llm and llm["status"] in ("blocked", "degraded"):
         cause = llm.get("cause") or {}
         items.append(f"LLM route {llm['status']}: {cause.get('error_class')} at {cause.get('at')}")
+    elif llm and llm["status"] == "unknown" and not _text_ok_calls(llm):
+        # 29/10/2026: Dev idle after the refusal, the failed jobs out of the window: "unknown" is not green
+        items.append(f"LLM route unknown: no answered text call in the last 24 h (last answered "
+                     f"{llm.get('last_ok_at') or 'never in the window'}); nothing shows the route works")
     fallback = _value(series, "K-LLM-FALLBACK-24H", day)
     if fallback is not None and fallback >= FALLBACK_RED:
         items.append(f"LLM fallback rate {fallback * 100:.1f} % (target < 5 %)")
@@ -320,6 +326,12 @@ def attention(facts: dict, series: dict, day: date) -> list[str]:
     for r in (facts.get("reports") or {}).get("flagged", []):
         items.append(f"Report {r['id']} {r['name']}: {r['due']}, {r['failed_7d']} failed run(s) in 7 days")
     return items
+
+
+def _text_ok_calls(llm: dict) -> int:
+    if isinstance(llm.get("text_ok_calls"), int):
+        return llm["text_ok_calls"]
+    return sum(int(p.get("ok_calls") or 0) for p in llm.get("providers") or [] if not p.get("embed"))
 
 
 def _short(sha: Optional[str]) -> str:
@@ -357,7 +369,8 @@ def render_digest(reg: Registry, report: Report, day: date, facts: dict, kpi_row
         w = apps["workers"]
         md += ["", f"CIS workers alive: {w['alive']} on "
                    + (", ".join(f"{_short(s)} ×{n}" for s, n in sorted(w['commits'].items())) or "—")
-                   + ("; same commit as the API." if w["same_commit_as_api"] else "; NOT the API's commit."), ""]
+                   + {True: "; same commit as the API.", False: "; NOT the API's commit.",
+                      None: "; the API's commit is unknown (no answer), not compared."}[w["same_commit_as_api"]], ""]
     alarms = facts.get("alarms")
     if alarms and alarms.get("status") == "ok":
         md += [f"Alarms in ALARM now: {len(alarms['firing'])} of {alarms['total']}"

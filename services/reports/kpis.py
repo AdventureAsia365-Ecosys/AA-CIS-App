@@ -10,7 +10,8 @@ Point-in-time KPIs (tours live) describe "now", so they are written only for the
 AA-1003 R2 adds two computers that read outside the CIS tables:
 - `inquiry_handoff` (TP-03): the ops.overview.v1 contract views of TripPlanner and Booking (cis_app has SELECT),
   services/reports/handoff.py. Those views count per UTC day, so these KPIs describe UTC day D (closed at 17:00 ICT of
-  D, long before the 00:30 UTC snapshot).
+  D, long before the 00:30 UTC snapshot). The views belong to other apps: a revoked grant or a view the owner
+  dropped or reshaped (handoff.CONTRACT_ERRORS) raises Unavailable like the probe log below.
 - `nightly_probes` (DATA-01): the probe verdict lines in CloudWatch Logs (services/reports/probes.py). When the log
   cannot be read (permission pending, AWS error, older than the log retention) it raises Unavailable: no value is
   written, the reason lands in the job result under `unavailable`, and the job still succeeds (an outside source
@@ -150,7 +151,10 @@ async def reports_failed(conn, ctx: DayContext) -> list[KpiValue]:
 
 async def inquiry_handoff(conn, ctx: DayContext) -> list[KpiValue]:
     """K-TP-HANDOFFGAP, K-BK-PARKED, K-BK-INQ2CASE of UTC day ctx.day (TP-03)."""
-    (d,) = await handoff.read_days(conn, ctx.day, ctx.day)
+    try:
+        (d,) = await handoff.read_days(conn, ctx.day, ctx.day)
+    except handoff.CONTRACT_ERRORS as e:
+        raise Unavailable(f"contract_view: {type(e).__name__}: {str(e)[:200]}") from e
     src = "booking.v_ops_funnel_daily"
     out = [KpiValue("K-TP-HANDOFFGAP", SCOPE_ALL, _dec(d.gap), "tripplanner.v_ops_traffic_daily + " + src),
            KpiValue("K-BK-PARKED", SCOPE_ALL, _dec(d.parked + d.failed), src)]

@@ -13,19 +13,26 @@ The other nightly checks (migration and contract copy guards, connection budget,
 only, and the schema dump and the isolation probe print no verdict line this parser knows: NOT_VISIBLE names them, so
 the digest says what it cannot see instead of counting them green.
 
-Permission: logs:FilterLogEvents on the log group (AA-CIS-Infra, ECS task role). Without it, or when CloudWatch does
-not answer, read_day raises LogsUnavailable: the KPI computer then writes no value and says why in the job result,
-and the OPS-12 digest prints the reason. A day older than the log retention (30 days, AA-CIS-Infra modules/ecs) has
-no events left, so it is refused the same way rather than reported as "every probe missing".
+Permission: logs:FilterLogEvents on the log group (AA-CIS-Infra, ECS task role; the request is recorded in
+docs/implementation-notes/AA-1003.md, "R2 follow-up requests"). Without it, or when CloudWatch does not answer,
+read_day raises LogsUnavailable: the KPI computer then writes no value and says why in the job result, and the OPS-12
+digest prints the reason. A day older than the log retention (30 days, AA-CIS-Infra modules/ecs) has no events left,
+so it is refused the same way rather than reported as "every probe missing".
+
+Bounded: both callers hold a pool connection while this runs (kpi_snapshot_daily, report_generate), so the client
+is the ops overview one (api/services/ops_overview/cloudwatch.py: connect 2 s, read 5 s, standard retries, at most 3
+tries a call) and the paging loop has a time budget (FETCH_BUDGET_S, checked between pages) and a page cap
+(MAX_PAGES). A search that does not finish within either raises LogsUnavailable("incomplete"): a partial read could
+call a probe that ran "missing", so no partial verdict is ever counted.
 """
 from __future__ import annotations
 
 import asyncio
-import os
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 from services.reports import periods
 
@@ -34,6 +41,7 @@ STREAM_PREFIX = "migrate/migrate/"
 FILTER_PATTERN = '?"run-script: file=" ?"SCRIPT verdict"'
 LOG_RETENTION_DAYS = 30          # AA-CIS-Infra modules/ecs/main.tf aws_cloudwatch_log_group.ecs retention_in_days
 MAX_PAGES = 20                   # 1 MB / 10,000 events a page; a night has a handful of matching lines
+FETCH_BUDGET_S = 20.0            # the whole paged search, checked between pages; one call <= ~3 x (2 s + 5 s)
 
 FILE_RE = re.compile(r"run-script: file=db/scripts/([a-z0-9_]+)\.py\b")
 VERDICT_RE = re.compile(r"SCRIPT verdict (.*)$")
@@ -69,7 +77,8 @@ NOT_VISIBLE: tuple[tuple[str, str, str], ...] = (
 
 
 class LogsUnavailable(Exception):
-    """The probe log cannot be read: `reason` is not_permitted, aws_error or too_old (plain words in str())."""
+    """The probe log cannot be read: `reason` is not_permitted, aws_error, incomplete or too_old (plain words in
+    str())."""
 
     def __init__(self, reason: str, message: str):
         super().__init__(reason, message)
@@ -190,7 +199,10 @@ def summarize(runs: Iterable[ProbeRun]) -> list[ProbeResult]:
 
 
 def environment() -> str:
-    return (os.environ.get("ENVIRONMENT") or "dev").strip() or "dev"
+    """The deployment environment the log group is named after; test / local map to dev like the ops overview's."""
+    from api.services.ops_overview import cloudwatch
+
+    return cloudwatch.environment()
 
 
 def log_group(env: Optional[str] = None) -> str:
@@ -198,10 +210,9 @@ def log_group(env: Optional[str] = None) -> str:
 
 
 def _client() -> Any:
-    import boto3  # lazy: only the worker path that reads the log needs it
+    from api.services.ops_overview import cloudwatch  # lazy: boto3 only on the worker path that reads the log
 
-    region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-west-1"
-    return boto3.client("logs", region_name=region)
+    return cloudwatch.aws_client("logs")
 
 
 def _error_code(e: Exception) -> str:
@@ -213,19 +224,26 @@ def _error_code(e: Exception) -> str:
     return type(e).__name__
 
 
-def fetch_events(client: Any, group: str, start: datetime, end: datetime) -> list[dict]:
-    """Every matching event of [start, end) (sync: run it in a thread)."""
+def fetch_events(client: Any, group: str, start: datetime, end: datetime, *,
+                 budget_s: float = FETCH_BUDGET_S, clock: Callable[[], float] = time.monotonic) -> list[dict]:
+    """Every matching event of [start, end) (sync: run it in a thread). Raises LogsUnavailable("incomplete") when the
+    search still has a next page after MAX_PAGES pages or after `budget_s` seconds."""
     kwargs = {"logGroupName": group, "logStreamNamePrefix": STREAM_PREFIX, "filterPattern": FILTER_PATTERN,
               "startTime": int(start.timestamp() * 1000), "endTime": int(end.timestamp() * 1000) - 1}
     events: list[dict] = []
-    for _ in range(MAX_PAGES):
+    started = clock()
+    for page_no in range(1, MAX_PAGES + 1):
         page = client.filter_log_events(**kwargs)
         events += page.get("events") or []
         token = page.get("nextToken")
         if not token:
-            break
+            return events
         kwargs["nextToken"] = token
-    return events
+        if clock() - started >= budget_s:
+            raise LogsUnavailable("incomplete", f"CloudWatch Logs did not finish the search in {budget_s:g} s "
+                                                f"({page_no} pages, {len(events)} lines); probe results not counted")
+    raise LogsUnavailable("incomplete", f"CloudWatch Logs search still had more pages after {MAX_PAGES} pages "
+                                        f"({len(events)} lines); probe results not counted")
 
 
 def read_events(day: date, client: Any = None, now: Optional[datetime] = None) -> tuple[list[dict], dict]:
@@ -236,9 +254,13 @@ def read_events(day: date, client: Any = None, now: Optional[datetime] = None) -
     group = log_group()
     try:
         events = fetch_events(client or _client(), group, start, end)
+    except LogsUnavailable:
+        raise
     except Exception as e:  # noqa: BLE001 — AWS / network: the caller degrades and says why
+        from api.services.ops_overview import cloudwatch
+
         code = _error_code(e)
-        if code in ("AccessDeniedException", "AccessDenied", "UnauthorizedOperation"):
+        if cloudwatch.is_denied(e):
             raise LogsUnavailable("not_permitted", "the CIS task role may not read the probe log yet "
                                                    "(logs:FilterLogEvents on the log group is pending)") from e
         raise LogsUnavailable("aws_error", f"CloudWatch Logs did not answer ({code})") from e

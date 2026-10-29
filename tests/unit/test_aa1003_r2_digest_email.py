@@ -78,6 +78,75 @@ def test_digest_flags_every_kind_of_problem():
     assert out.summary.endswith(f"{len(items)} items need a look")
 
 
+def test_an_idle_llm_route_with_no_answer_is_not_green():
+    facts = _green_facts()
+    # 29/10/2026 shape: the last answer is older than 6 h, the failed jobs have left the 24 h window
+    facts["llm"].update(status="unknown", last_ok_at=None, calls=0, text_ok_calls=0, providers=[])
+    items = digest.attention(facts, {}, D)
+    assert any(i.startswith("LLM route unknown: no answered text call") for i in items)
+    out = digest.render_digest(registry.load(), registry.load().report("OPS-12"), D, facts, [], NOW)
+    assert not out.summary.endswith("all green")
+    # embeddings answering do not prove the text route works
+    facts["llm"].update(text_ok_calls=None, providers=[
+        {"provider": "bedrock", "account": None, "embed": True, "calls": 4, "ok_calls": 4}])
+    assert any(i.startswith("LLM route unknown") for i in digest.attention(facts, {}, D))
+    # unknown with answered text calls earlier in the 24 h (just older than 6 h): no item
+    facts["llm"].update(text_ok_calls=3)
+    assert not any(i.startswith("LLM route") for i in digest.attention(facts, {}, D))
+
+
+def test_worker_parity_is_not_judged_without_the_api_commit():
+    live = [{"git_sha": "abc", "alive": True}, {"git_sha": "abc", "alive": True}]
+    assert digest.worker_parity(live, "abc")["same_commit_as_api"] is True
+    assert digest.worker_parity(live, "def")["same_commit_as_api"] is False
+    unknown = digest.worker_parity(live, None)
+    assert unknown == {"alive": 2, "commits": {"abc": 2}, "same_commit_as_api": None}
+    facts = _green_facts()
+    facts["apps"]["items"][0].update(status="no_answer", reason="health endpoint did not answer (ConnectTimeout)",
+                                     git_sha=None)
+    facts["apps"]["workers"] = unknown
+    items = digest.attention(facts, {}, D)
+    assert items == ["CIS: no_answer (health endpoint did not answer (ConnectTimeout))"]
+    out = digest.render_digest(registry.load(), registry.load().report("OPS-12"), D, facts, [], NOW)
+    assert "the API's commit is unknown (no answer), not compared." in out.markdown
+
+
+def test_load_apps_reuses_the_platform_health_card(monkeypatch):
+    from api.services import platform_apps
+    from shared.jobs import queue
+
+    calls = []
+
+    async def card(app_id, client=None, *, base=None, paths=None):
+        calls.append((app_id, base, paths))
+        if app_id == "cis":
+            return {"id": "cis", "label": "CIS", "status": "unknown",
+                    "probe": {"status": "unknown", "reason": "health endpoint did not answer (ConnectTimeout)"}}
+        return {"id": app_id, "label": app_id, "status": "ok", "git_sha": "b1",
+                "probe": {"status": "ok", "reason": "Health and readiness endpoints answer 200"},
+                "ready": {"schema_version": "bk-017"}}
+
+    monkeypatch.setattr(platform_apps, "http_health_card", card)
+    monkeypatch.setattr(queue, "worker_health", AsyncMock(return_value={"workers": [
+        {"git_sha": "abc", "alive": True}, {"git_sha": "old", "alive": False}]}))
+    monkeypatch.setenv("PUBLIC_API_BASE", "https://api.example.invalid/")
+    out = asyncio.run(digest.load_apps(MagicMock()))
+    assert calls[0] == ("cis", "https://api.example.invalid", ("/health", "/health/ready"))
+    assert {c[0] for c in calls} == {"cis", "booking", "crm"}
+    assert out["items"][0]["status"] == "no_answer" and out["items"][1]["schema_version"] == "bk-017"
+    assert out["items"][-1]["status"] == "no_probe"
+    assert out["workers"] == {"alive": 1, "commits": {"abc": 1}, "same_commit_as_api": None}
+
+
+def test_cis_api_origin_defaults_to_dev_and_follows_public_api_base(monkeypatch):
+    from api.core import app_registry
+
+    monkeypatch.delenv("PUBLIC_API_BASE", raising=False)
+    assert app_registry.cis_api_origin() == app_registry.CIS_API_ORIGIN
+    monkeypatch.setenv("PUBLIC_API_BASE", " https://api.example.invalid/ ")
+    assert app_registry.cis_api_origin() == "https://api.example.invalid"
+
+
 def test_spend_flag_needs_both_the_factor_and_the_floor():
     def pts(v, hist):
         return digest._series([_kpi("K-LLM-COST-DAY", D, v)] + [

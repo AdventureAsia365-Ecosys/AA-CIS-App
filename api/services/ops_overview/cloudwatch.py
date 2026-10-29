@@ -256,6 +256,19 @@ def _is_denied(e: Exception) -> bool:
     return "AccessDenied" in code or code in ("UnauthorizedOperation", "AuthorizationError")
 
 
+# AA-1003 R2: the public names other modules use (the OPS-12 digest, the DATA-01 probe log read), so every CloudWatch
+# caller gets the same short timeouts and bounded retries instead of botocore's 60 s defaults.
+def aws_client(service: str) -> Any:
+    """A boto3 client with this module's Config (connect 2 s, read 5 s, standard retry mode, max_attempts 2 = at
+    most 3 tries a call)."""
+    return _client(service)
+
+
+def is_denied(e: Exception) -> bool:
+    """True when an AWS error is a permission refusal (the caller says "not permitted", not "AWS did not answer")."""
+    return _is_denied(e)
+
+
 def collect_health(now: Optional[datetime] = None, env: Optional[str] = None, client: Any = None) -> dict:
     """The health section (sync; run it in a thread). Metrics and alarms fail independently."""
     now = now or datetime.now(timezone.utc)
