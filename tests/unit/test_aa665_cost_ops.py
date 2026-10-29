@@ -302,7 +302,7 @@ async def test_cost_forecast_providers_aws_and_budgets(monkeypatch):
     assert a2["mtd_usd"] == pytest.approx(24 * 8 + 9 + 9)
     assert a2["run_rate_usd_per_day"] == pytest.approx((5 * 8 + 9 + 9) / 7, abs=1e-3)
     assert a2["days_left"] == 5                                  # 27..31/10 projected
-    assert a2["budget_usd"] == 250.0 and a2["days_missing"] == 0
+    assert a2["budget_usd"] == 300.0 and a2["days_missing"] == 0
     a3 = aws["acc3"]
     assert a3["covered_from"] == "2026-10-20" and a3["days_missing"] == 19
     assert a3["run_rate_usd_per_day"] == 10.0                    # mean over the 6 stored days
@@ -375,3 +375,19 @@ def test_routes_registered():
     paths = {(m, r.path) for r in router.routes for m in getattr(r, "methods", ())}
     assert ("GET", "/admin/dfs-usage/runs") in paths
     assert ("GET", "/admin/cost-ops/forecast") in paths
+
+
+def test_aws_budgets_match_the_terraform_defaults_when_infra_is_checked_out():
+    """AA-1001 R0: the Cost Ops page showed acc2 against 250 USD while Terraform had set 300 since AA-896 (S255)."""
+    import re
+    from pathlib import Path
+    infra = Path(__file__).resolve().parents[3] / "infra" / "AA-CIS-Infra" / "accounts"
+    pins = {"acc2": (infra / "aa365" / "variables.tf", "total_monthly_budget_usd"),
+            "acc3": (infra / "acc3-bedrock" / "cost_guard.tf", "acc3_budget_monthly_usd")}
+    if not all(p.exists() for p, _ in pins.values()):
+        pytest.skip("AA-CIS-Infra is not checked out next to this repo (CI)")
+    for key, (path, var) in pins.items():
+        block = re.search(r'variable "%s" \{(.*?)\n\}' % var, path.read_text(), re.S)
+        assert block, f"{var} not found in {path}"
+        default = float(re.search(r"default\s*=\s*([0-9.]+)", block.group(1)).group(1))
+        assert cost_ops.AWS_MONTHLY_BUDGET_USD[key] == default, key
