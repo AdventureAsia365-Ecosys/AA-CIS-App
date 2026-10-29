@@ -124,8 +124,16 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     closure of core and of the tokens profile), `check-kit-copy.mjs --css .` (no `--aa-*` definition outside
     `core/tokens.css`), `lib/kitCore.test.mjs` and `lib/tokensContrast.test.mjs` (WCAG contrast of every checked text
     pair in both themes, plus white text over the photo scrim; helpers in `lib/contrast.mjs`). A consumer runs the same script without
-    `--self` against its copy and `kit.lock.json`; copies are written only by the root `tools/kit/kit-sync.sh` and
-    never edited in place (root hook `kit-core-edit-guard.sh`). CIS-local, outside `core/`: `api.ts`,
+    `--self` against its copy and `kit.lock.json`; copies are written only by `.github/scripts/kit-sync.sh` (the
+    root `tools/kit/kit-sync.sh` runs it) and never edited in place (root hook `kit-core-edit-guard.sh`).
+    **Kit sync (AA-994 S3s, ADR 0016 decision 6)**: a merge to `main` that touches `core/**` runs **Kit Sync**
+    (`kit-sync.yml` + `.github/scripts/kit_sync_bot.py`): per consumer repo (AA-Partner portal + web in one PR,
+    AA-Booking, AA-TripPlanner-Web tokens profile) an `aa-ecosys-ci-bot` token narrowed to that repo regenerates
+    branch `bot/kit-sync` from its `main` and opens or updates one PR `chore: sync UI kit core to AA-CIS-App <sha7>`
+    (no-op when no copied file but `MANIFEST.json` changes; the agent merges it through the merge queue); the same
+    workflow writes a nightly freshness table (report only). A PR touching `core/**` runs **Kit Consumers**
+    (`kit-consumers.yml`, non-required): core overlaid on each consumer's `main`, then integrity, `tsc --noEmit` and
+    the app's lint. CIS-local, outside `core/`: `api.ts`,
     `guideContent.ts` (the guide checks, re-exporting the core shape), the shell (`AdminShell`, `Sidebar`, `Topbar`,
     `BottomNav`, `CommandPalette`, `SessionKeepAlive`), `adminNav.tsx`, `useNavSections.ts`, `useAdminIdentity.ts`,
     `useReviewPendingCount.ts`, and `theme.ts` / `useTheme.ts` (the core store and hooks bound to `cis_theme`; the
