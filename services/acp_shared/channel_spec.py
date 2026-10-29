@@ -163,25 +163,28 @@ STOCK_PATTERNS = tuple(re.compile(p, re.I) for p in (
     # AA-780 — S234 r1–r4 posts: "That's not filler." / "That stop isn't filler." / "not downtime filler"
     r"\b(?:not|isn['’]?t|wasn['’]?t|aren['’]?t)\s+(?:\w+\s+)?filler\b",
     r"\bworth pausing (?:on|over|in|for)\b",
-))
-# AA-789 (Report 12 §1.3) — the AA-780 lines the S234 r4 panel also found in BLOGS ('does not perform for visitors'
-# #15, 'tolerates them' #17): hygiene.TEMPLATE_LINE_RES reads these on every channel (F15 stock line, same one-repair
-# rule), STOCK_PATTERNS keeps them for LinkedIn. The LinkedIn-only AA-780 lines ('not a backdrop', 'isn't an
-# inconvenience': r4 #7, #10, #11, all posts) stay in STOCK_PATTERNS only.
-CROSS_CHANNEL_STOCK_PATTERNS = tuple(re.compile(p, re.I) for p in (
+    # "was not simply a dramatic backdrop", "That is not a backdrop." — never "forms a dramatic backdrop"
+    r"\b(?:not|isn['’]?t|wasn['’]?t|aren['’]?t|weren['’]?t)\s+(?:simply\s+|just\s+|merely\s+|only\s+)?"
+    r"(?:an?\s+|the\s+)?(?:\w+\s+)?backdrop\b",
     # "The landscape does not perform for visitors." / "The valley doesn't perform." — the stock shape only:
     # sentence end or "for <the onlooker>". An object ("does not perform the cham dance") or a time/place
     # ("does not perform on Mondays", "in the rainy season", "at night") is an operating-schedule fact.
     r"\b(?:does not|doesn['’]?t|did not|didn['’]?t)\s+perform(?=\s*[.!?;]|\s*$|\s+for\s+(?:visitors|you|"
     r"tourists|travell?ers|anyone|the camera)\b)",
     r"\btolerates (?:them|you|us|visitors|travell?ers)\b",
-))
-STOCK_PATTERNS = STOCK_PATTERNS + CROSS_CHANNEL_STOCK_PATTERNS + tuple(re.compile(p, re.I) for p in (
-    # "was not simply a dramatic backdrop", "That is not a backdrop." — never "forms a dramatic backdrop"
-    r"\b(?:not|isn['’]?t|wasn['’]?t|aren['’]?t|weren['’]?t)\s+(?:simply\s+|just\s+|merely\s+|only\s+)?"
-    r"(?:an?\s+|the\s+)?(?:\w+\s+)?backdrop\b",
     # "isn't an inconvenience", "These aren't inconveniences", "not a bureaucratic inconvenience"
     r"\b(?:not|isn['’]?t|wasn['’]?t|aren['’]?t)\s+(?:an?\s+)?(?:\w+\s+)?inconveniences?\b",
+))
+# AA-789 (Report 12 §1.3; S234 r4 #15 'does not perform for visitors.', #17 'tolerates them', both in BLOGS) — the
+# blog-side copies of two AA-780 lines, read by hygiene.TEMPLATE_LINE_RES on every channel (F15 stock line, same
+# one-repair rule). Narrower than the LinkedIn lines above, because a blog states operating facts: 'perform' only at
+# the clause end ('The troupe does not perform for visitors outside the festival.' is a schedule), 'tolerates' only
+# with a pronoun ('The dzong tolerates visitors in the outer courtyard.' is an access fact). The LinkedIn-only
+# lines ('not a backdrop', 'isn't an inconvenience': r4 #7, #10, #11, all posts) are not copied.
+CROSS_CHANNEL_STOCK_PATTERNS = tuple(re.compile(p, re.I) for p in (
+    r"\b(?:does not|doesn['’]?t|did not|didn['’]?t)\s+perform(?:\s+for\s+(?:visitors|you|tourists|travell?ers"
+    r"|anyone|the camera))?(?=\s*[.!?;—–]|\s*$)",
+    r"\btolerates\s+(?:them|you|us)\b",
 ))
 # A first sentence that starts "There is a …" / "There's a …" (S232: 20/29 openers; S233: 6/12).
 GENERIC_OPENER_RE = re.compile(r"^\s*There(?:\s+is|'s|’s|\s+was)\s+(?:a|an|one)\b", re.I)

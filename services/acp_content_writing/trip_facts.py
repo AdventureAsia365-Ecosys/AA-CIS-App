@@ -362,11 +362,20 @@ def optional_as_fixed(text: str, moments: list[Moment], cta: Optional[str] = Non
 
 
 # AA-789 (S234 r4 #18: the Tsaatan day, a planned day-5 moment, written as "optional") — the reverse of
-# optional_as_fixed: a clause that calls a moment optional when the source plans the whole moment. Only the explicit
-# words: 'can' / 'may' describe what a planned day allows ('children can feed the reindeer').
+# optional_as_fixed: a clause that calls the VISIT itself optional when the source plans the whole moment. Only three
+# shapes whose subject is the visit: 'an optional day / visit / excursion …', a clause that opens on 'Visiting … /
+# A visit to … / The day with …' and ends in 'is optional', and '<Name> visit / day is optional' at the clause start.
+# A sub-activity of a planned visit may be optional ('children can ride a reindeer if they wish', 'milking the
+# reindeer is optional', 'Reindeer riding on the Tsaatan day is optional'): 'if you wish', 'add-on', 'not included'
+# and a bare 'optional' are never read here.
+_OPT = r"(?:entirely\s+|completely\s+|purely\s+)?optional\b"
 _CALLED_OPTIONAL_RE = re.compile(
-    r"\b(?:optional(?:ly)?|add-on|not\s+included|if\s+(?:you|they|families)\s+(?:wish|choose|prefer|like)"
-    r"|for\s+those\s+who\s+(?:want|wish|choose))\b", re.I)
+    r"\boptional\s+(?:days?|visits?|excursions?|trips?|outings?|stops?|detours?|overnights?|extensions?"
+    r"|side[\s-]trips?)\b"
+    r"|(?:^|,\s*)\W*(?:visiting|(?:a|the)\s+visit\s+to|visits\s+to|(?:a|the)\s+(?:day|stay|stop|excursion|trip"
+    rf"|overnight)\s+(?:with|at|to|among|in))\s+[\w’'-]+(?:\s+[\w’'-]+){{0,5}}?\s+(?:is|are|remains?)\s+{_OPT}"
+    r"|^\W*(?:the\s+)?(?:(?-i:[A-Z])[\w’'-]*\s+){1,3}(?:visit|day|stay|excursion|stop|overnight)s?\s+(?:is|are"
+    rf"|remains?)\s+{_OPT}", re.I)
 INCLUDED_AS_OPTIONAL_PROBLEM = ("calls {name} optional, but the source plans it as part of the trip — say it is part "
                                 "of the plan, or cut 'optional'")
 
@@ -381,31 +390,10 @@ def _planned_moment(m: Moment) -> bool:
                    if "Source itinerary:" in ln)
 
 
-# 'optional' + a noun names what is optional: 'for optional trekking' calls the trekking optional, not the moment
-# the clause is about ('Sod Camp offers … a mountain range nearby for optional trekking'); 'an optional day / visit /
-# excursion' is the moment itself.
-_MOMENT_NOUNS = frozenset({"day", "days", "visit", "visits", "excursion", "excursions", "extra", "extension", "stop",
-                           "trip", "outing", "detour", "side", "afternoon", "morning", "evening", "overnight"})
-
-
-_FUNCTION_WORDS = frozenset("""on in at for to and or but if as by with from during until after before unless
-when while so this that these those the a an extra""".split())
-
-
-def _targets_moment(clause: str, m: re.Match) -> bool:
-    if not m.group(0).lower().startswith("optional") or m.group(0).lower() == "optionally":
-        return True
-    nxt = re.match(r"\s+([A-Za-zÀ-ÖØ-öø-ÿ’'-]+)", clause[m.end():])
-    if nxt is None:
-        return True
-    word = nxt.group(1)
-    # a function word after it is the predicative use ('… is optional on day five'): the moment is what is optional
-    return word.lower() in _MOMENT_NOUNS or word.lower() in _FUNCTION_WORDS or word[:1].isupper()
-
-
 def included_as_optional(text: str, moments: list[Moment], cta: Optional[str] = None) -> list[str]:
     """Sentences (outside the FAQ) with a clause that names a planned moment (`_planned_moment`) and calls it
-    optional (`_CALLED_OPTIONAL_RE`), when that clause mentions none of the source's optional activities."""
+    optional (`_CALLED_OPTIONAL_RE`: the visit itself, never a sub-activity), when that clause mentions none of the
+    source's optional activities."""
     planned = [m for m in moments if m.trip_lines and _planned_moment(m)]
     if not planned:
         return []
@@ -415,8 +403,7 @@ def included_as_optional(text: str, moments: list[Moment], cta: Optional[str] = 
         if s["in_faq"]:
             continue
         for clause in _CLAUSE_RE.split(s["clean"]):
-            if not any(_targets_moment(clause, m) for m in _CALLED_OPTIONAL_RE.finditer(clause)) \
-                    or any(_mentions_activity(clause, a) for a in acts):
+            if not _CALLED_OPTIONAL_RE.search(clause.strip()) or any(_mentions_activity(clause, a) for a in acts):
                 continue
             named = moments_named(clause, planned)
             if named:
@@ -762,11 +749,14 @@ RARITY_CLAIM_RE = re.compile(
     r"|\bunlike\s+(?:almost\s+|nearly\s+|virtually\s+|practically\s+)?(?:anything|anywhere|any other)\b"
     r"|\b(?:almost\s+|nearly\s+|practically\s+)?(?:anywhere|nowhere|any\s?place|anything)\s+(?:else\s+)?on\s+"
     r"(?:earth|the planet)\b"
-    # AA-789 (S234 r4 #17 'a landscape most of the world has never considered', #19 'a significant fraction' for
-    # 0.4%, #4 'facts that are hard to overstate'): overclaims with no rarity word in them
-    r"|\bmost\s+of\s+the\s+world\b|\bthe\s+(?:rest\s+of\s+the\s+)?world\s+has\s+(?:never|rarely|barely)\b"
+    # AA-789 (S234 r4 #17 'a landscape most of the world has never considered', r3 #17 '… that most of the world has
+    # never seen'; r4 #19 'a significant fraction of the world's fresh surface water' for 0.4%; r4 #4 'facts that are
+    # hard to overstate'): overclaims with no rarity word in them. Each needs its claim words: 'most of the world'
+    # only with 'has never / rarely …' ('Travellers from most of the world can get a visa'), a 'significant share'
+    # only of the world / the planet ('A considerable share of the walk is on flat ground').
+    r"|\b(?:most\s+of\s+the|the(?:\s+rest\s+of\s+the)?)\s+world\s+(?:has|have)\s+(?:never|rarely|barely|yet\s+to)\b"
     r"|\b(?:significant|substantial|sizeable|sizable|considerable)\s+(?:fraction|share|proportion|portion"
-    r"|percentage)\b"
+    r"|percentage)\s+of\s+(?:the\s+)?(?:world\b|world['’]s|global\b|earth['’]s|planet['’]s|the\s+planet\b)"
     r"|\b(?:hard|difficult|impossible)\s+to\s+overstate\b"
     r"|\b(?:almost\s+|nearly\s+|practically\s+)?nowhere\s+else\b"
     r"|\bcategorically\s+different\b"
@@ -2302,11 +2292,12 @@ def fix_background_bases(text: str, ctx: "TripFactContext") -> tuple[str, list[s
 # S234 r1-r4: the writer copied the tenant style guide's pace lines ('balanced with time to rest',
 # 'full without being relentless') into copy as facts about the trip. A sentence that matches PACE_RE
 # and whose pace word the moment's own source does not back is an F17 `pace_promise` finding.
-# AA-789 (S234 r4 #14 'not a technical climb', report 07 fix 2) — a difficulty promise is the same kind of claim: a
-# 'technical' route word, 'strenuous', 'gruelling', 'effortless'. Seed-backed words pass (_pace_supported).
+# AA-789 (S234 r4 #14 'not a technical climb', report 07 fix 2) — the difficulty promise the panel cited: 'technical'
+# before a route word. Seed-backed words pass (_pace_supported). Not 'strenuous' / 'gruelling' (a safety caveat:
+# 'The hike is strenuous in places, so good boots matter.') nor 'effortless' (no panel example).
 PACE_RE = re.compile(r"\b(pace[ds]?|pacing|relentless|exhaust\w*|rest(?:ful|ing)?|rush\w*|manageable|balanced?"
-                     r"|technical(?=\s+(?:climb|climbing|ascent|trek|trekking|hike|hiking|walk|route|scramble|terrain))"
-                     r"|strenuous|gruell?ing|effortless(?:ly)?)\b", re.I)
+                     r"|technical(?=\s+(?:climb|climbing|ascent|trek|trekking|hike|hiking|walk|route|scramble"
+                     r"|terrain)))\b", re.I)
 _REST_OF_RE = re.compile(r"\bthe\s+rest\s+of\b", re.I)
 PACE_WINDOW = 6           # words either side of the pace word
 PACE_SUPPORT_SHARE = 0.6  # share of the window's content words found in the source → seed-backed

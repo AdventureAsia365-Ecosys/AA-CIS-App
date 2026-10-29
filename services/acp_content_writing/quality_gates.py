@@ -1791,8 +1791,6 @@ def faq_answer_problem(question: str, answer: str, context_text: str = "") -> Op
     'negative_only' — a what/which/who/where/when/why/how question answered only by negated
                       sentences ('…meat production is not the primary purpose.'). A yes/no
                       question may be answered 'No, …' and is never checked for this.
-    'off_attribute' — AA-789: a weather / purpose / when question whose first two answer sentences carry
-                      no word of that attribute (`_ATTRIBUTE_CHECKS`).
     A question with no subject tokens ('Can you swim?') passes the subject test."""
     if not (answer or "").strip():
         return None
@@ -1806,38 +1804,11 @@ def faq_answer_problem(question: str, answer: str, context_text: str = "") -> Op
         sents = [s["clean"] for s in sentence_spans(strip_citation_tags(answer)) if s["clean"].strip()]
         if sents and all(_negative_sentence(s) for s in sents):
             return "negative_only"
-    if _off_attribute(question, answer):
-        return "off_attribute"
     return None
 
 
-# AA-789 (S234 r4 #19 'What do the Tsaatan use their reindeer for?', #17 the weather question): the answer names the
-# question's subject but not what it asks ABOUT. Three attribute questions with a word list a real answer cannot
-# avoid; any other question is left to the subject test. Read on the first two answer sentences.
-_ATTRIBUTE_CHECKS = (
-    (re.compile(r"\b(?:weather|climate|temperatures?|how\s+(?:cold|warm|hot))\b", re.I),
-     re.compile(r"\b(?:weather|climate|temperatures?|°|degrees?|cold|cool|chilly|warm|hot|mild|freez\w*|frost\w*"
-                r"|snow\w*|rain\w*|wet|dry|wind\w*|storms?|sunny|sunshine|humid\w*|summer|winter|spring|autumn"
-                r"|season\w*|monsoon)\b", re.I)),
-    (re.compile(r"\b(?:use[ds]?|using)\b[^?]*\bfor\b|\bpurpose\b", re.I),
-     re.compile(r"\b(?:for|use[ds]?|using|purpose|serves?|serving)\b", re.I)),
-    (re.compile(r"^\W*when\b|\bwhat\s+time\b|\bbest\s+time\b|\bwhich\s+(?:month|season|day)s?\b", re.I),
-     re.compile(r"\b(?:\d+|january|february|march|april|may|june|july|august|september|october|november|december"
-                r"|spring|summer|autumn|fall|winter|season\w*|month\w*|week\w*|days?|morning|afternoon|evening|night"
-                r"|year\w*|century|centuries|time|when|before|after|during|until)\b", re.I)),
-)
-
-
-def _off_attribute(question: str, answer: str) -> bool:
-    q = strip_citation_tags(question or "")
-    sents = [sp["clean"] for sp in sentence_spans(strip_citation_tags(answer or "")) if sp["clean"].strip()][:2]
-    head = " ".join(sents)
-    return any(asks.search(q) and not gives.search(head) for asks, gives in _ATTRIBUTE_CHECKS)
-
-
 _FAQ_PROBLEM_TEXT = {"no_subject": "the answer does not name what the question asks about",
-                     "negative_only": "the answer only says what is not the case",
-                     "off_attribute": "the answer names the subject but not what the question asks about it"}
+                     "negative_only": "the answer only says what is not the case"}
 
 
 def drop_subjectless_faq(content_text: str, source_text: str = "",
@@ -2214,9 +2185,9 @@ def _has_num(text: str, key: str) -> bool:
 # S234 round 2 — contrast frames are fixed only down to the allowed density, worst first: a stock
 # 'This is not a metaphor', then a two-sentence "It's not X. It's Y.", then "is not X, it is Y",
 # then the milder "not just X but Y" / "less X than Y" (index into hygiene.CONTRAST_FRAME_RES).
-# AA-789 — the shapes added for recall rank with their nearest kin: the 'Not X.' fragment with the two-sentence
-# frame, the verb negation and the reversed 'Y, not X' with 'is not X, it is Y', 'less X, more Y' with 'less X than Y'.
-_CONTRAST_RANK = (5, 2, 10, 0, 1, 9, 8, 6, 3, 7, 11, 4)
+# AA-789 — the two shapes added for recall rank with their nearest kin: the 'Not X. Y X.' pair with the two-sentence
+# frame, the reversed 'Y, not X' with 'is not X, it is Y'.
+_CONTRAST_RANK = (5, 2, 9, 0, 1, 8, 6, 3, 7, 4)
 
 
 def _in_stock_sentence(spans: list[dict], start: int, end: int, stock_quotes: tuple) -> bool:
