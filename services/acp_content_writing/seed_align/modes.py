@@ -37,6 +37,11 @@ OFF, SHADOW, REPAIR, HOLD = "off", "shadow", "repair", "hold"
 MODES = (OFF, SHADOW, REPAIR, HOLD)
 MODE_ENV = "T10_SA_MODE"
 FINDING_PREFIX = "sa:"
+# On a result `apply` appended `sa:` findings to: did the gate's own findings block before them? `apply` must make the
+# result blocking so the `sa:` findings get their repair, but a warning the gate wrote (an F17 / F18 'title …' or
+# 'meta …' finding alone) must stay one that never holds a piece. quality_gates.never_holds reads this key, also on a
+# ledger kept by the AA-528 revert or read back from the DB. Absent → the gate's own findings may hold (as before).
+BASE_BLOCKING_KEY = "sa_base_blocking"
 # The existing gate a class's findings sit under (plan §2, "Gate it lives under"). Class 11 belongs to the FAQ step.
 CLASS_GATE = {
     sa_checks.OPTIONAL_AS_PLANNED: qr.F17_TRIP_FACT,
@@ -170,9 +175,20 @@ def _quoted_sentence(violation: str) -> str:
     return v[i + 3:].rstrip("'").strip() if i >= 0 else ""
 
 
+def base_blocking(g: dict) -> bool:
+    """Would the gate's own (non-`sa:`) findings of result `g` block, and so may they hold? The stored key when
+    `apply` set it, else the result's own failed-and-blocking state."""
+    if BASE_BLOCKING_KEY in g:
+        return bool(g[BASE_BLOCKING_KEY])
+    return not g.get("passed", True) and bool(g.get("blocking", True))
+
+
 def apply(sources: list[dict], sa: Optional[SeedAlignRun]) -> list[dict]:
     """`sources` (the legacy results, before merge_ledger) with the live findings appended to their gates. A finding
-    whose sentence a deterministic finding of the same gate already quotes is dropped (one repair per sentence)."""
+    whose sentence a deterministic finding of the same gate already quotes is dropped (one repair per sentence).
+    The result becomes failed, repairable and blocking (the `sa:` findings get the gate's sentence repair) and keeps
+    in BASE_BLOCKING_KEY whether its own findings blocked before: a warn-only F17 'meta …' result stays one that
+    never holds (quality_gates.never_holds)."""
     if sa is None or not sa.live:
         return sources
     out = []
@@ -187,10 +203,10 @@ def apply(sources: list[dict], sa: Optional[SeedAlignRun]) -> list[dict]:
             out.append(g)
             continue
         out.append({**g, "passed": False, "violations": list(g.get("violations") or []) + add, "repairable": True,
-                    "blocking": True})
+                    "blocking": True, BASE_BLOCKING_KEY: base_blocking(g)})
     return out
 
 
-__all__ = ["OFF", "SHADOW", "REPAIR", "HOLD", "MODES", "MODE_ENV", "FINDING_PREFIX", "CLASS_GATE", "HOLD_CAPABLE",
-           "HOLD_PROMOTED", "class_mode", "active_modes", "finding_class", "finding_may_hold", "SeedAlignRun", "run",
-           "apply"]
+__all__ = ["OFF", "SHADOW", "REPAIR", "HOLD", "MODES", "MODE_ENV", "FINDING_PREFIX", "BASE_BLOCKING_KEY", "CLASS_GATE",
+           "HOLD_CAPABLE", "HOLD_PROMOTED", "class_mode", "active_modes", "finding_class", "finding_may_hold",
+           "SeedAlignRun", "run", "base_blocking", "apply"]

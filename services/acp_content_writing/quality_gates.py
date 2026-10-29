@@ -212,6 +212,9 @@ class GateResultLite(_GateResultBase, total=False):
     findings: list[Finding]
     severity: Optional[str]
     parts: list[dict]
+    # AA-789 tier 1 — only on a result seed_align.apply appended 'sa:' findings to: whether the gate's own findings
+    # blocked before them (never_holds reads it).
+    sa_base_blocking: bool
 
 
 def _result(
@@ -2381,11 +2384,19 @@ def never_holds(g: dict) -> bool:
         return all(never_holds(p) for p in expand_ledger([g]) if not p["passed"] and p.get("blocking", True))
     if g.get("gate") in STYLE_ONLY_GATES:
         return True
-    # AA-789 tier 1 — a result failing on seed-alignment findings ('sa:<class>: …') alone never holds unless one of
-    # them may (seed_align.finding_may_hold: a promoted hold-capable class in hold mode; none before ~18/11)
+    # AA-789 tier 1 — seed-alignment findings ('sa:<class>: …') never hold unless one of them may
+    # (seed_align.finding_may_hold: a promoted hold-capable class in hold mode; none before ~18/11). The gate's own
+    # findings decide as before, and only when they blocked before the `sa:` ones were appended
+    # (seed_align.base_blocking): an F17 / F18 'title …' / 'meta …' warning stays a warning.
     vs = [str(v) for v in g.get("violations") or []]
-    if vs and all(v.startswith(seed_align.FINDING_PREFIX) for v in vs):
-        return not any(seed_align.finding_may_hold(v) for v in vs)
+    sa_vs = [v for v in vs if v.startswith(seed_align.FINDING_PREFIX)]
+    if sa_vs:
+        if any(seed_align.finding_may_hold(v) for v in sa_vs):
+            return False
+        own = [v for v in vs if not v.startswith(seed_align.FINDING_PREFIX)]
+        if not own or not seed_align.base_blocking(g):
+            return True
+        return never_holds({k: v for k, v in g.items() if k != seed_align.BASE_BLOCKING_KEY} | {"violations": own})
     return g.get("gate") == F14_GATE and not any(_F14_FAR_OVER in str(v) for v in g.get("violations") or [])
 
 

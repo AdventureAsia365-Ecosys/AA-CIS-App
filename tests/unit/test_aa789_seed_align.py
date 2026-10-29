@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 
 from services.acp_content_writing import quality_gates as qg
+from services.acp_content_writing import service as svc
 from services.acp_content_writing import trip_facts as tf
 from services.acp_content_writing.hygiene import HygieneContext
 from services.acp_content_writing.seed_align import checks as sa
@@ -198,6 +199,61 @@ def test_a_mixed_result_still_holds_on_its_deterministic_finding():
     g = {"gate": qr.F17_TRIP_FACT, "passed": False, "blocking": True, "repairable": True,
          "violations": ["sa:near_as_at: x: 'A.'", "gives a time the source does not: 'B.'"]}
     assert not qg.never_holds(g)
+
+
+def test_an_sa_finding_never_turns_a_warn_only_result_into_a_hold(no_sa_env):
+    """Review blocker (S258): gate_trip_facts writes F17 / F18 with blocking=False when only 'title …' / 'meta …'
+    findings are left (service._fit_seo_meta already refused that meta). Appending an sa: finding makes the result
+    blocking, so it gets the sentence repair, but neither the meta warning nor the sa: finding may hold the piece."""
+    no_sa_env.setenv(f"{modes.MODE_ENV}_NEAR_AS_AT", "repair")
+    warn = {"gate": qr.F17_TRIP_FACT, "passed": False, "blocking": False, "repairable": True,
+            "violations": ["meta gives a time the source does not: 'Sunrise at 5 am.'"]}
+    assert qg.hold_failure(qg.merge_ledger([warn])) is None
+    run = modes.SeedAlignRun(live={qr.F17_TRIP_FACT: ["sa:near_as_at: r: 'Lunch is at Mörön.'"]})
+    (out,) = modes.apply([warn], run)
+    assert out["blocking"] and not out["passed"] and out["repairable"] and out[modes.BASE_BLOCKING_KEY] is False
+    assert out["violations"][-1].startswith("sa:near_as_at: ")
+    assert qg.never_holds(out)
+    ledger = qg.merge_ledger([out])
+    assert qg.hold_failure(ledger) is None
+    # the repair still runs on it: it is the first blocking failure
+    assert next(g for g in qg.expand_ledger(ledger) if not g["passed"] and g["blocking"])["gate"] == qr.F17_TRIP_FACT
+    # what is left after a failed repair ships as a flag, never held
+    status, reason, flags = svc._hold_or_ship(ledger, [])
+    assert (status, reason) == ("approved", None) and any(f["gate"] == qr.F17_TRIP_FACT for f in flags)
+
+
+def test_an_sa_finding_keeps_a_blocking_result_holding_on_its_own_finding(no_sa_env):
+    no_sa_env.setenv(f"{modes.MODE_ENV}_NEAR_AS_AT", "repair")
+    body = {"gate": qr.F17_TRIP_FACT, "passed": False, "blocking": True, "repairable": True,
+            "violations": ["gives a time the source does not: 'We leave at 5 am.'"]}
+    run = modes.SeedAlignRun(live={qr.F17_TRIP_FACT: ["sa:near_as_at: r: 'Lunch is at Mörön.'"]})
+    (out,) = modes.apply([body], run)
+    assert out[modes.BASE_BLOCKING_KEY] is True
+    assert not qg.never_holds(out) and qg.hold_failure(qg.merge_ledger([out]))["gate"] == qr.F17_TRIP_FACT
+
+
+def test_an_sa_finding_on_a_passed_gate_never_holds(no_sa_env):
+    no_sa_env.setenv(f"{modes.MODE_ENV}_NEAR_AS_AT", "repair")
+    clean = {"gate": qr.F17_TRIP_FACT, "passed": True, "blocking": True, "repairable": True, "violations": []}
+    run = modes.SeedAlignRun(live={qr.F17_TRIP_FACT: ["sa:near_as_at: r: 'Lunch is at Mörön.'"]})
+    (out,) = modes.apply([clean], run)
+    assert out[modes.BASE_BLOCKING_KEY] is False and qg.never_holds(out)
+    assert qg.hold_failure(qg.merge_ledger([out])) is None
+
+
+def test_an_sa_finding_new_on_the_repaired_attempt_is_an_aa528_regression(no_sa_env):
+    """A repair must not introduce a new sa: finding unnoticed: one that appears only on the next attempt, on a gate
+    that passed before, is a new blocking failure for the AA-528 guard (it reverts when the attempt is not net
+    better). Only reachable once a class is in repair."""
+    no_sa_env.setenv(f"{modes.MODE_ENV}_NEAR_AS_AT", "repair")
+    passed = {"gate": qr.F17_TRIP_FACT, "passed": True, "blocking": True, "repairable": True, "violations": []}
+    other = {"gate": qr.F13_LEAK, "passed": False, "blocking": True, "repairable": True,
+             "violations": ["writer instruction: 'A sentence on the ruins.'"]}
+    prev = qg.merge_ledger([passed, other])
+    run = modes.SeedAlignRun(live={qr.F17_TRIP_FACT: ["sa:near_as_at: r: 'Lunch is at Mörön.'"]})
+    cur = qg.merge_ledger(modes.apply([passed, other], run))
+    assert svc._blocking_failures(cur) - svc._blocking_failures(prev) == {qr.F17_TRIP_FACT}
 
 
 def test_a_promoted_class_in_hold_mode_may_hold(no_sa_env, monkeypatch):

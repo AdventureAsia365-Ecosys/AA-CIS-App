@@ -28,8 +28,15 @@ non-answer) are slices S6 and S7. Tier 2 (LLM) is out of scope: every LLM route 
   gate (F17_trip_fact: classes 1-4; F18_rarity: 5, 6; F13_leak: 7, 8; F13_repeat: 10) as
   `sa:<class>: <reason>: '<sentence>'`, the quote format `sentence_repair` locates. A sentence a deterministic finding
   of the same gate already quotes gets no second finding.
-- **Hold rule.** `quality_gates.never_holds`: a result whose violations are all `sa:` findings never holds unless one
-  of them may (`modes.finding_may_hold`). A mixed result holds on its deterministic findings, as before.
+- **Hold rule.** `quality_gates.never_holds`: an `sa:` finding never holds unless it may (`modes.finding_may_hold`).
+  A mixed result holds on its own (deterministic) findings only when those blocked before the `sa:` ones were
+  appended. Review fix (S258): `apply` must make the result blocking so the `sa:` findings get their repair, but
+  `gate_trip_facts` writes F17 / F18 with `blocking=False` when only `title …` / `meta …` findings are left. Without
+  more, that warning became a hold once an `sa:` finding was appended. `apply` now stores the result's earlier state
+  in `sa_base_blocking` (`modes.BASE_BLOCKING_KEY`, also on stored ledgers, so the AA-528 revert and DB read-backs
+  answer the same) and `never_holds` decides the own findings on it. A key-less mixed result (none exists today)
+  holds on its own findings, as before. Chosen over a second legacy result with the same gate name, which every ledger
+  reader would see as a duplicate gate.
 - **Brief lines.** The seed's writer-instruction lines plus `hygiene.brief_texts` (brand pack, angle brief) plus the
   audience line feed class 7 (audience range, quoted brief phrases, voice words).
 - **Dependency.** `spacy==3.8.16` (released 24/08/2026; 3.8.17/18 are three days old) and the `en_core_web_sm` 3.8.0
@@ -42,7 +49,7 @@ non-answer) are slices S6 and S7. Tier 2 (LLM) is out of scope: every LLM route 
   a decoded AA-783 export: counts only), `tests/unit/test_aa789_seed_align.py`.
 - `quality_gates.run_quality_gates`: runs `seed_align.run` and `seed_align.apply` before `merge_ledger`; the outcome gets
   `seed_align` only when some class is not off. `QualityCheckOutcome` gets the optional key. `never_holds` gets the
-  `sa:` clause.
+  `sa:` clause; `GateResultLite` gets the optional `sa_base_blocking`.
 - `service.py`: each attempt's `outcome["seed_align"]` is kept in `context["seed_align"]` and stored in `writer_input`.
 - `requirements.txt`: spaCy and the model. `CONTEXT.md`: one paragraph in the T10 section.
 
@@ -70,6 +77,18 @@ non-answer) are slices S6 and S7. Tier 2 (LLM) is out of scope: every LLM route 
   ('Mörön … is a town that functions as a practical pause'). Second rater pending (plan D5).
 - I2 on the 40 pieces: every class off gives the same outcome hash as `main`; shadow gives the same ledger as off on
   all 40; repair changes 13 ledgers and no hold decision.
+
+## Open (matter once a class is in repair; not built in S258)
+- **Repair guards.** Built: a test that an `sa:` finding new on the repaired attempt, on a gate that passed before,
+  counts as an AA-528 regression (`_blocking_failures`). Not built: a check that the sentence repair itself is told
+  not to introduce an `sa:` shape (the repair prompt is unchanged), and an end-to-end test of the revert decision
+  with an `sa:` finding that appears only on attempt 2 (needs the t9 attempt loop with a fake LLM).
+- **Parse-stability abstain.** The plan's full-parse vs split-parse comparison is replaced by a misparsed-noun
+  heuristic (a noun read as a verb on the trigger path) plus the 40-token cap. A real stability check (parse the
+  sentence alone and inside its paragraph, abstain when the trigger's head differs) is still open.
+- **Error injection.** Covered: removing the seed relation makes a check abstain. Not covered: a forced wrong PP
+  attachment and a swapped moment (the sentence's place belongs to another day's moment).
+- **Second rater** for the eval set and the 40-piece census (plan D5 / G1) is still pending.
 
 ## Should know
 - Nothing changes on merge: every class is off until the worker env sets `T10_SA_MODE=shadow`.
