@@ -68,6 +68,11 @@ CIS merge, the "Kit consumers" check on CIS PRs, and the nightly freshness repor
   entry in `PRE_MIGRATION` in the same CIS PR (the unit test pins the table, so the flip is a visible diff); if an app
   is already clean while still flagged, the step says so in a notice. The flag lives in the bot, not as a sixth column
   of the `kit-sync.sh --list` table: it is a CI gate state, not part of ADR 0016's consumer table.
+- **S4b flip (29/10):** `booking` left `PRE_MIGRATION` (now `{"tripplanner": "S5a"}`) in a CIS PR merged after the
+  AA-Booking S4b PR, which deleted `frontend/ui/tokens.css` and every other copied kit file (its CSS defines `--bk-*`
+  only; Booking Frontend Build runs `check-kit-copy.mjs --css .` strictly). From then on the Kit consumers `--css` step
+  fails a CIS core change that would make Booking define `--aa-*` outside the core. Merging this before the Booking PR
+  would turn every CIS core PR red on the Booking leg (174 definitions on Booking main).
 - **Freshness** counts CIS commits that touch the consumer's profile paths since its lock ref (tokens profile: the
   token files, not `MANIFEST.json`), and lists the open sync PR. It runs nightly and after every sync, with
   `github.token` only (the consumer repos are public).
