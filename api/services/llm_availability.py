@@ -18,7 +18,7 @@ Two sources, both real outcomes inside the window:
 
 Status: the newest outcome wins. ``blocked`` when the newest account-level refusal is newer than the last answered
 text call (embeddings run on another account and do not clear it), ``degraded`` for a throttle newer than it,
-``ok`` when an answered call is the newest, ``unknown`` when the window holds neither.
+``ok`` when an answered call is the newest and at most STALE_OK_HOURS old, ``unknown`` otherwise.
 """
 from __future__ import annotations
 
@@ -109,8 +109,16 @@ def summarize_failures(job_rows: Iterable[dict]) -> list[dict]:
                   reverse=True)
 
 
-def decide_status(last_ok_at: Optional[datetime], failures: list[dict]) -> tuple[str, Optional[dict]]:
-    """(status, the failure entry that set it). See the module docstring for the rule."""
+# S258: no answered call for this long means "we cannot tell", not "ok" — after a provider refusal nothing may run
+# (Dev on 29/10/2026: the newest outcome was a success from before the refusal, so the card said ok while every
+# model was refused).
+STALE_OK_HOURS = 6
+
+
+def decide_status(last_ok_at: Optional[datetime], failures: list[dict],
+                  now: Optional[datetime] = None) -> tuple[str, Optional[dict]]:
+    """(status, the failure entry that set it). See the module docstring for the rule; an answered call older than
+    STALE_OK_HOURS (with ``now`` given) gives ``unknown``."""
     blocking = [f for f in failures if f["error_class"] in BLOCKING_CLASSES and f["last_at"]]
     throttled = [f for f in failures if f["error_class"] == THROTTLED and f["last_at"]]
     newest_block = max(blocking, key=lambda f: f["last_at"], default=None)
@@ -119,7 +127,7 @@ def decide_status(last_ok_at: Optional[datetime], failures: list[dict]) -> tuple
         return "blocked", newest_block
     if newest_throttle and (last_ok_at is None or newest_throttle["last_at"] > last_ok_at):
         return "degraded", newest_throttle
-    if last_ok_at is not None:
+    if last_ok_at is not None and (now is None or now - last_ok_at <= timedelta(hours=STALE_OK_HOURS)):
         return "ok", None
     return "unknown", None
 
@@ -136,7 +144,7 @@ def build(call_rows: Iterable[dict], job_rows: Iterable[dict], *, hours: int, no
     text_rows = [r for r in call_rows if not r.get("embed")]
     last_ok_at = _latest(r.get("last_ok_at") for r in text_rows)
     failures = summarize_failures(job_rows)
-    status, cause = decide_status(last_ok_at, failures)
+    status, cause = decide_status(last_ok_at, failures, now)
     return {
         "status": status,
         "window_hours": hours,
