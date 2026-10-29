@@ -34,9 +34,11 @@ def _row(**kw):
 
 
 class FakeDB:
-    def __init__(self, row):
+    def __init__(self, row, locked_row=None):
         self.row = row
+        self.locked_row = locked_row          # what the FOR UPDATE re-read returns (default: the same row)
         self.executed: list = []
+        self.reads: list = []
         self.in_tx = False
         self.committed = False
 
@@ -53,8 +55,11 @@ class FakeDB:
         return self._tx()
 
     async def fetchrow(self, sql, key):
-        assert "FOR UPDATE" in sql and self.in_tx
-        return self.row if self.row and self.row["connection_key"] == key else None
+        locked = "FOR UPDATE" in sql
+        assert locked == self.in_tx, "the row lock is taken only inside the transaction"
+        self.reads.append(("locked" if locked else "plain", self.in_tx))
+        row = (self.locked_row or self.row) if locked else self.row
+        return row if row and row["connection_key"] == key else None
 
     async def execute(self, sql, *args):
         assert self.in_tx, "write outside the transaction"
@@ -136,6 +141,39 @@ def test_refused_switches_write_nothing(row, match, _secret):
     db = FakeDB(row)
     with pytest.raises(llm_connections.ConnectionToggleRefused, match=match):
         _run(db, key=row["connection_key"])
+    assert db.executed == []
+    _secret.assert_not_called()
+
+
+def test_the_secret_is_read_before_the_transaction_opens(_secret):
+    db = FakeDB(_row())
+    in_tx_during_read = []
+    _secret.side_effect = lambda name: in_tx_during_read.append(db.in_tx) or json.dumps({"api_key": "sk-ant-test"})
+    with patch.object(anthropic_messages, "forget_connection"):
+        out = _run(db)
+    assert out["changed"] is True
+    assert in_tx_during_read == [False]                       # no row lock / open transaction during the AWS call
+    assert db.reads == [("plain", False), ("locked", True)]
+
+
+def test_enable_refused_when_a_credential_field_moved_during_the_check(_secret):
+    db = FakeDB(_row(), locked_row=_row(secret_name="aa-llm/dev/other-key"))
+    with pytest.raises(llm_connections.ConnectionToggleRefused, match="changed while"):
+        _run(db)
+    assert db.executed == []
+
+
+def test_disable_takes_no_unlocked_read():
+    db = FakeDB(_row(enabled=True))
+    _run(db, enabled=False)
+    assert db.reads == [("locked", True)]
+
+
+def test_anthropic_connection_with_an_openai_env_key_is_refused(_secret, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-test")
+    db = FakeDB(_row(secret_name=None, credential_env="OPENAI_API_KEY"))
+    with pytest.raises(llm_connections.ConnectionToggleRefused, match="not a 'anthropic' key"):
+        _run(db)
     assert db.executed == []
     _secret.assert_not_called()
 

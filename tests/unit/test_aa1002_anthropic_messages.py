@@ -141,12 +141,26 @@ def test_refusal_is_returned_with_its_category(fake):
     (anthropic_connection(secret_name="aa-cis/dev/rds"), ConnectionCredentialError),
     (anthropic_connection(base_url="https://evil.example.com"), ConnectionCredentialError),
     (anthropic_connection(kind="openai", base_url="https://api.openai.com/v1"), ConnectionCredentialError),
+    # the key comes from the aa-llm/ secret only: an env-held key (even an allowed one of another kind) is refused
+    (anthropic_connection(secret_name=None, credential_env="OPENAI_API_KEY"), ConnectionCredentialError),
+    (anthropic_connection(credential_env="OPENAI_API_KEY"), ConnectionCredentialError),
 ])
-def test_unusable_connections_never_reach_the_network_or_the_secret(fake, conn, exc):
+def test_unusable_connections_never_reach_the_network_or_the_secret(fake, conn, exc, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-must-not-leave")
     with pytest.raises(exc):
         _send(conn)
     assert fake.requests == []
     fake.reader.assert_not_called()
+
+
+def test_policy_ties_a_credential_env_to_its_kind():
+    assert set(connections.CREDENTIAL_ENV_KIND) == set(connections.CREDENTIAL_ENVS)
+    problems = anthropic_connection(secret_name=None, credential_env="OPENAI_API_KEY").policy_problems()
+    assert any("not a 'anthropic' key" in p for p in problems)
+    openai = connections.ProviderConnection(connection_key="openai-direct", kind="openai", auth_mode="api_key",
+                                            label="x", data_scope="vendor_direct", enabled=True,
+                                            credential_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1")
+    assert openai.policy_problems() == []
 
 
 def test_default_base_url_is_the_allowlisted_api(fake):
@@ -198,8 +212,15 @@ def test_no_retry_when_the_connection_says_zero(fake):
     (402, "billing_error", "payment required", errors.QUOTA_EXHAUSTED),
     (400, "invalid_request_error", "Your credit balance is too low to access the Anthropic API.",
      errors.QUOTA_EXHAUSTED),
+    (400, "invalid_request_error", "You have reached your specified workspace API usage limits. You will regain "
+     "access on 2026-11-01 at 00:00 UTC.", errors.QUOTA_EXHAUSTED),
     (400, "invalid_request_error", "messages: field required", errors.OTHER),
     (500, "api_error", "Internal server error", errors.OTHER),
+    # status first: a rate limit whose message mentions billing / usage limits stays retryable
+    (429, "rate_limit_error", "This request would exceed your rate limit; see usage limits and billing.",
+     errors.THROTTLED),
+    (529, "overloaded_error", "Overloaded (billing unaffected)", errors.THROTTLED),
+    (500, "api_error", "billing service hiccup", errors.OTHER),
 ])
 def test_status_errors_carry_the_aa900_class(fake, status, etype, message, cls):
     fake.replies.append(error_reply(status, etype, message))

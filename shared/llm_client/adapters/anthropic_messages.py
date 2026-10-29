@@ -9,7 +9,8 @@ What the adapter guarantees, whatever the row says:
 
 - **Credential**: the API key is read at call time from the connection's Secrets Manager secret
   (``connections.resolve_api_key``: the name must be ``aa-llm/<env>/<name>``, the connection enabled, no policy
-  problem) — never from ``ANTHROPIC_API_KEY`` or another env var of the task.
+  problem) — never from ``ANTHROPIC_API_KEY`` or another env var of the task: a row without ``secret_name`` or with
+  a ``credential_env`` is refused before anything is read.
 - **Endpoint**: ``base_url`` must pass ``connections.check_base_url`` (host allowlist per kind, a code constant), and
   it is always passed to the SDK explicitly, so ``ANTHROPIC_BASE_URL`` in the environment cannot redirect a key.
 - **Timeout / retries**: per connection (``timeout_s``, ``max_retries``); a NULL column means ``DEFAULT_TIMEOUT_S`` /
@@ -22,8 +23,9 @@ What the adapter guarantees, whatever the row says:
   explicitly (``resolve_effort``) so the same model answers at the same effort on every way in.
 - **Errors**: an ``AnthropicAPIError`` (a RuntimeError) whose ``llm_error_class`` is the AA-900 class
   (errors.py): 401 / 403 → ``access_denied`` (account level: the gateway raises ``LLMAccessDenied`` when every model
-  was refused that way), 402 / a credit or spend-limit refusal → ``quota_exhausted``, 429 / 529 → ``throttled``,
-  anything else → ``other``. A 401 also drops the cached key and client, so a rotated key is read on the next call.
+  was refused that way), 402 / a credit or spend-limit refusal (wording read only on 400 / 402 / 403) →
+  ``quota_exhausted``, 429 / 529 → ``throttled`` (checked first, never from the text), anything else → ``other``.
+  A 401 also drops the cached key and client, so a rotated key is read on the next call.
 - **Usage**: ``input_tokens`` of the Messages API excludes the cache; ``MessagesResult`` keeps the parts and the
   client adds them up like the Converse path (``tokens_in`` = uncached + cache read + cache write). ``provider_model``
   is the ``model`` the API says answered.
@@ -40,7 +42,7 @@ from typing import Any, Callable, Optional
 import structlog
 
 from .. import connections
-from ..errors import ACCESS_DENIED, OTHER, QUOTA_EXHAUSTED, THROTTLED
+from ..errors import ACCESS_DENIED, OTHER, QUOTA_EXHAUSTED, THROTTLED, classify_text
 
 logger = structlog.get_logger()
 
@@ -282,16 +284,25 @@ def forget_connection(connection_key: str) -> None:
 
 # ── errors ───────────────────────────────────────────────────────────────────────────────────────────────────────
 
-_QUOTA_TEXT = re.compile(r"credit balance is too low|spend limit|usage limit|billing", re.IGNORECASE)
+# The statuses whose MESSAGE may say "no credit / spend limit reached" (Anthropic answers a workspace spend limit or
+# an empty credit balance with a 400 invalid_request_error). Never a 429 / 529: a rate limit is retried with
+# backoff, and reading its free text first could end a job as account-level on a word like "billing".
+_QUOTA_TEXT_STATUSES = (400, 402, 403)
 
 
 def status_error_class(status: Optional[int], error_type: Optional[str], text: str = "") -> str:
-    if status == 402 or error_type == "billing_error" or _QUOTA_TEXT.search(text or ""):
+    """The AA-900 class of an Anthropic API status error. Order: rate limit / overload first (status or type, never
+    the text), then billing (402 / billing_error), then the credit / spend-limit wording, only on 400 / 402 / 403 and
+    with the same patterns ``errors.classify_text`` uses (so a stored job error classifies the same), then 401 / 403
+    access denied."""
+    if status in (429, 529) or error_type in ("rate_limit_error", "overloaded_error"):
+        return THROTTLED
+    if status == 402 or error_type == "billing_error":
+        return QUOTA_EXHAUSTED
+    if status in _QUOTA_TEXT_STATUSES and classify_text(text) == QUOTA_EXHAUSTED:
         return QUOTA_EXHAUSTED
     if status in (401, 403) or error_type in ("authentication_error", "permission_error"):
         return ACCESS_DENIED
-    if status in (429, 529) or error_type in ("rate_limit_error", "overloaded_error"):
-        return THROTTLED
     return OTHER
 
 
@@ -332,6 +343,11 @@ def send(*, connection: connections.ProviderConnection, wire_id: str, system: st
     if connection.kind != "anthropic":
         raise connections.ConnectionCredentialError(
             f"connection {connection.connection_key!r} is a {connection.kind!r} connection, not an Anthropic one")
+    if not connection.secret_name or connection.credential_env:
+        # the key comes from the aa-llm/ secret only, never from an env var of the task (policy_problems also refuses
+        # a credential_env of another kind; this guard keeps the adapter closed whatever the policy lists say)
+        raise connections.ConnectionCredentialError(
+            f"connection {connection.connection_key!r}: an Anthropic connection takes its key from secret_name only")
     api_key = connections.resolve_api_key(connection)          # enabled + policy (secret prefix, base_url) first
     base_url = connection.base_url or DEFAULT_BASE_URL
     connections.check_base_url("anthropic", base_url)

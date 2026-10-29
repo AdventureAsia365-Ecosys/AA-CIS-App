@@ -10,9 +10,10 @@ A provider refuses a call for one of three reasons the gateway and the job runne
 - ``throttled``: a rate limit (``ThrottlingException``, ``Too many requests``, an OpenAI rate-limit 429, an
   Anthropic API 429 ``rate_limit_error`` or 529 ``overloaded_error``). A retry with backoff can succeed.
 
-AA-1002 (S2): the Anthropic API adapter sets ``llm_error_class`` on its own errors from the HTTP status (401 / 403
-access denied, 402 / credit or spend limit quota, 429 / 529 throttled); the text patterns below also carry the
-Anthropic error types, so a stored job error classifies the same way.
+AA-1002 (S2): the Anthropic API adapter sets ``llm_error_class`` on its own errors from the HTTP status (429 / 529
+throttled first, 402 / credit or spend-limit wording quota, 401 / 403 access denied); the text patterns below also
+carry the Anthropic error types and the credit / spend-limit wording (the adapter reads that wording through
+``classify_text`` too), so a stored job error classifies the same way.
 
 Everything else is ``other`` (outage, timeout, bad reply), and keeps today's behaviour. The first two are the
 "account-level" classes: when every model a request tried failed with one of them, the gateway raises
@@ -59,7 +60,9 @@ _PATTERNS: tuple[tuple[str, re.Pattern], ...] = (
         r"|exceeded your current quota"
         r"|billing_hard_limit_reached"
         r"|\bbilling_error\b"                # AA-1002 S2: Anthropic API 402
-        r"|credit balance is too low",
+        r"|credit balance is too low"        # AA-1002 S2: Anthropic API 400, no prepaid credit left
+        r"|\bapi usage limits?\b"            # AA-1002 S2: Anthropic API 400, workspace / org spend limit reached
+        r"|\bspend(ing)? limit\b",
         re.IGNORECASE)),
     (THROTTLED, re.compile(
         r"throttlingexception"

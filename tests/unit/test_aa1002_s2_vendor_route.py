@@ -308,3 +308,38 @@ def test_golden_set_guard_blocks_the_adapter():
                                     user="u", max_tokens=1, stage="x")
     finally:
         undo()
+
+
+# ── registry reload on the call path: one load at a time ─────────────────────────────────────────────────────────
+
+def test_an_expired_registry_is_reloaded_once_however_many_threads_ask(monkeypatch):
+    """Review S258: when the 5-minute TTL runs out, concurrent LLM threads must not each open a DB connection for the
+    connections and for the deployments: the first reloads, the others wait and read its result."""
+    import threading
+    import time
+
+    loads = {"connections": 0, "deployments": 0}
+    gate = threading.Event()
+
+    def slow_fetch(fn):
+        gate.wait(2)
+        if fn is connections._fetch_all:
+            loads["connections"] += 1
+            return {"anthropic-direct": anthropic_connection()}
+        loads["deployments"] += 1
+        return [ModelDeployment("sonnet-5-5", "anthropic-direct", "claude-sonnet-5-5", 0, True, "admin")]
+
+    monkeypatch.setattr(connections, "run_sync", slow_fetch)
+    connections.invalidate()
+    deployments.invalidate()
+    found = []
+    threads = [threading.Thread(target=lambda: found.append(vendor_route.vendor_deployment_for(SONNET55)))
+               for _ in range(8)]
+    for t in threads:
+        t.start()
+    time.sleep(0.05)
+    gate.set()
+    for t in threads:
+        t.join(5)
+    assert loads == {"connections": 1, "deployments": 1}
+    assert len(found) == 8 and all(f is not None and f.connection.connection_key == "anthropic-direct" for f in found)

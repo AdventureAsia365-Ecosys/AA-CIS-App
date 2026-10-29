@@ -84,7 +84,12 @@ async def read(conn) -> dict:
 
 
 _SELECT_ONE_SQL = (f"SELECT {', '.join(conn_registry._COLUMNS)} FROM shared.llm_provider_connection "
-                   "WHERE connection_key = $1 FOR UPDATE")
+                   "WHERE connection_key = $1")
+_SELECT_ONE_FOR_UPDATE_SQL = _SELECT_ONE_SQL + " FOR UPDATE"
+
+# The fields the credential check depends on: when one of them changed between the check (outside the transaction)
+# and the locked re-read, the check no longer proves anything and the switch is refused.
+_CREDENTIAL_FIELDS = ("kind", "auth_mode", "secret_name", "credential_env", "base_url")
 
 
 def _check_credential(c: conn_registry.ProviderConnection) -> None:
@@ -98,23 +103,41 @@ def _check_credential(c: conn_registry.ProviderConnection) -> None:
         conn_registry.invalidate_credential(c.connection_key)
 
 
+def _refuse_unless_switchable(c: conn_registry.ProviderConnection, *, enabled: bool) -> None:
+    if c.kind not in TOGGLE_KINDS:
+        raise ConnectionToggleRefused(
+            f"connection {c.connection_key!r} is a {c.kind!r} connection: the gateway does not read its enabled "
+            "flag before slice S3, so switching it would change nothing")
+    if enabled:
+        problems = c.policy_problems()
+        if problems:
+            raise ConnectionToggleRefused(f"connection {c.connection_key!r} refused: {'; '.join(problems)}")
+
+
 async def set_enabled(db, connection_key: str, *, enabled: bool, actor: str) -> dict:
     """Switch one connection on or off and audit it. Raises LookupError (unknown key, 404) and
-    ConnectionToggleRefused (422). A request that changes nothing writes no audit row (``changed: false``)."""
-    async with db.transaction():
+    ConnectionToggleRefused (422). A request that changes nothing writes no audit row (``changed: false``).
+
+    Enabling reads the secret BEFORE the transaction opens (a slow Secrets Manager call never holds the row lock or
+    an open transaction); the locked re-read then refuses the switch if a credential field moved in between."""
+    checked = None
+    if enabled:
         row = await db.fetchrow(_SELECT_ONE_SQL, connection_key)
         if row is None:
             raise LookupError(f"unknown connection: {connection_key!r}")
+        pre = conn_registry._row_to_connection(row)
+        _refuse_unless_switchable(pre, enabled=True)
+        await asyncio.to_thread(_check_credential, pre)
+        checked = tuple(getattr(pre, f) for f in _CREDENTIAL_FIELDS)
+    async with db.transaction():
+        row = await db.fetchrow(_SELECT_ONE_FOR_UPDATE_SQL, connection_key)
+        if row is None:
+            raise LookupError(f"unknown connection: {connection_key!r}")
         c = conn_registry._row_to_connection(row)
-        if c.kind not in TOGGLE_KINDS:
+        _refuse_unless_switchable(c, enabled=enabled)
+        if enabled and tuple(getattr(c, f) for f in _CREDENTIAL_FIELDS) != checked:
             raise ConnectionToggleRefused(
-                f"connection {connection_key!r} is a {c.kind!r} connection: the gateway does not read its enabled "
-                "flag before slice S3, so switching it would change nothing")
-        if enabled:
-            problems = c.policy_problems()
-            if problems:
-                raise ConnectionToggleRefused(f"connection {connection_key!r} refused: {'; '.join(problems)}")
-            await asyncio.to_thread(_check_credential, c)
+                f"connection {connection_key!r} changed while its secret was checked; send the request again")
         changed = c.enabled != enabled
         if changed:
             await db.execute(

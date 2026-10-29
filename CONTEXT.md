@@ -251,8 +251,11 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   byte. A `model_tier` of `<model key>@<connection>` pins one deployment (probes only). The response is labelled
   `anthropic-api-<key>` so `llm_call_log` records `provider = 'anthropic'`; `tokens_in` = uncached + cache read +
   cache write (the Converse convention); a refusal / empty / non-conforming reply is billed-unusable; 401 / 403 are
-  `access_denied`, 402 / credit `quota_exhausted`, 429 / 529 `throttled`. Migration 306 seeds Anthropic API
-  deployments behind acc3 (priority 100) with the `anthropic-direct` connection off; the only admin write in S2 is
+  `access_denied`, 402 / credit or spend-limit wording (400 / 402 / 403 only) `quota_exhausted`, 429 / 529
+  `throttled` (checked first). The key comes from `secret_name` only (a credential env is tied to its own kind).
+  Migration 306 seeds Anthropic API deployments behind acc3 (priority 100, `vendor_direct`, every Anthropic Converse
+  model, tenant ones included) with the `anthropic-direct` connection off: slice S5 data scopes must land before or
+  with S3's spread over deployments, or tenant content leaves AWS when acc3 fails; the only admin write in S2 is
   `PATCH /admin/llm-connections/{key}` `{"enabled": bool}` (Anthropic connections, audited). Spread over
   deployments, legacy-key aliases, breaker, data scopes and cost parity are later slices (S3–S6).
 - **Structured output (`LLMRequest.json_schema`) per path**: Converse = one tool whose input is the schema, reply

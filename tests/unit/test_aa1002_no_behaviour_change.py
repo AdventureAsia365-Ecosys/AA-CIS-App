@@ -165,3 +165,39 @@ def test_calls_are_byte_identical_whatever_the_registry_holds(registry):
     assert out[0][0] == "hello" and out[1][0] == "legacy"
     assert out[0][3] == "acc3" and out[1][3] == "acc3"
     assert out[0][9] is None and out[0][2] == "bedrock-satellite"
+
+
+# ── golden snapshot taken from pre-S2 code ─────────────────────────────────────────────────────────────────────────
+
+PRE_S2_GOLDEN = Path(__file__).resolve().parent / "snapshots" / "aa1002_pre_s2_calls.json"
+
+
+def _registry_patches(registry: str):
+    if registry == "missing_table":
+        fetch = MagicMock(side_effect=OSError("relation shared.llm_provider_connection does not exist"))
+    else:
+        conns, deps = NO_ROUTE_STATES[registry]
+        fetch = MagicMock(side_effect=lambda fn: conns if fn is connections._fetch_all else deps)
+    return [patch.object(connections, "run_sync", fetch)]
+
+
+@pytest.mark.parametrize("registry", ["missing_table", *sorted(NO_ROUTE_STATES)])
+def test_calls_match_the_golden_snapshot_of_pre_s2_code(registry):
+    """Review S258: the byte-identical test above compares S2 with S2's own missing-table path. This one compares with
+    what code from before S2 (origin/main dd8eea05, no vendor_route) sent and returned, captured by
+    tests/unit/aa1002_golden_calls.py run unchanged on that checkout: Converse, Converse with a schema (forced tool)
+    and the legacy InvokeModel chain."""
+    import json
+
+    from tests.unit.aa1002_golden_calls import capture
+
+    catalog.invalidate()
+    connections.invalidate()
+    deployments.invalidate()
+    connections._connections = {}
+    deployments._by_model = {}
+    with patch.object(anthropic_messages, "send") as send, patch.object(connections, "_fetch_secret") as secret:
+        got = capture(_registry_patches(registry))
+    send.assert_not_called()
+    secret.assert_not_called()
+    assert json.loads(json.dumps(got, sort_keys=True)) == json.loads(PRE_S2_GOLDEN.read_text())

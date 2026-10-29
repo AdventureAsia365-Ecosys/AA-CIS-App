@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -63,6 +64,10 @@ BASE_URL_ALLOWLIST: dict[str, tuple[str, ...]] = {
 # Closed lists, same as the table CHECKs (migration 304): env vars a connection may name instead of a value.
 ACCOUNT_ID_ENVS = frozenset({"BEDROCK_ACCT_PRIMARY"})   # today's satellite account ID (the repo is public)
 CREDENTIAL_ENVS = frozenset({"OPENAI_API_KEY"})         # today's OpenAI key from the task definition, until S9
+# AA-1002 (S2): the kind each env-held key belongs to. A connection may name a credential env only of its own kind, so
+# an anthropic row naming OPENAI_API_KEY can never send the OpenAI key to api.anthropic.com (a kind not listed here,
+# anthropic included, takes its key from secret_name only).
+CREDENTIAL_ENV_KIND: dict[str, str] = {"OPENAI_API_KEY": "openai"}
 
 
 class ConnectionPolicyError(ValueError):
@@ -172,6 +177,9 @@ class ProviderConnection:
                 problems.append(str(e))
         if self.credential_env is not None and self.credential_env not in CREDENTIAL_ENVS:
             problems.append(f"credential_env {self.credential_env!r} is not allowed")
+        elif self.credential_env is not None and CREDENTIAL_ENV_KIND.get(self.credential_env) != self.kind:
+            problems.append(f"credential_env {self.credential_env!r} is not a {self.kind!r} key "
+                            "(this kind takes its key from secret_name)")
         if self.account_id_env is not None and self.account_id_env not in ACCOUNT_ID_ENVS:
             problems.append(f"account_id_env {self.account_id_env!r} is not allowed")
         if self.auth_mode == "assume_role":
@@ -236,15 +244,29 @@ def run_sync(coro_fn):
 _connections: dict[str, ProviderConnection] = {}
 _loaded_at = 0.0
 _failed_at = 0.0
+# One reload at a time (AA-1002 S2: the registry is on the call path now): when the TTL runs out, the first thread
+# reloads and the others wait for it and read its result instead of each opening its own DB connection.
+_load_lock = threading.Lock()
+
+
+def _fresh(now: float) -> bool:
+    """True while a loaded registry (5 min) or a failed load (60 s) is still within its TTL."""
+    return bool((_loaded_at and now - _loaded_at < _CACHE_TTL_SECONDS)
+                or (_failed_at and now - _failed_at < _FAILURE_TTL_SECONDS))
 
 
 def _ensure_loaded() -> None:
+    if _fresh(time.monotonic()):
+        return
+    with _load_lock:
+        now = time.monotonic()
+        if _fresh(now):
+            return              # another thread reloaded while this one waited
+        _load(now)
+
+
+def _load(now: float) -> None:
     global _connections, _loaded_at, _failed_at
-    now = time.monotonic()
-    if _loaded_at and now - _loaded_at < _CACHE_TTL_SECONDS:
-        return
-    if _failed_at and now - _failed_at < _FAILURE_TTL_SECONDS:
-        return
     try:
         _connections = run_sync(_fetch_all)
         _loaded_at, _failed_at = now, 0.0
