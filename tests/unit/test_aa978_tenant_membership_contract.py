@@ -96,8 +96,8 @@ class FakeConn:
         assert sql == feed.FEED_SQL
         self.feed_args.append(args)
         txid, seq, limit = int(args[0]), args[1], args[2]
-        rows = sorted((e for e in self.events if (int(e["txid"]), e["seq"]) > (txid, seq)),
-                      key=lambda e: (int(e["txid"]), e["seq"]))
+        rows = sorted((e for e in self.events if (int(e["txid_text"]), e["seq"]) > (txid, seq)),
+                      key=lambda e: (int(e["txid_text"]), e["seq"]))
         return rows[:limit]
 
 
@@ -166,7 +166,7 @@ def _keys(node: Any) -> set[str]:
 
 
 def _event(seq: int, txid: int, type_: str, membership: Optional[dict] = None) -> dict:
-    return {"seq": seq, "txid": str(txid), "event_id": uuid.uuid4(), "type": type_, "tenant_id": uuid.UUID(TENANT),
+    return {"seq": seq, "txid_text": str(txid), "event_id": uuid.uuid4(), "type": type_, "tenant_id": uuid.UUID(TENANT),
             "membership": membership, "occurred_at": T0}
 
 
@@ -349,6 +349,40 @@ def test_feed_conforms_and_pages_by_txid_then_seq(client, issuer, conn):
     end = client.get("/tenant/membership/v1/events", params={"after": page2["next_cursor"]},
                      headers=_auth(issuer)).json()
     assert end == {"items": [], "next_cursor": page2["next_cursor"]}     # nothing new: keep the cursor
+
+
+def test_feed_sorts_by_the_xid8_column_not_by_its_text_output():
+    """The fake above sorts numerically, so it cannot catch a text sort: check the statement itself. Postgres resolves
+    a bare ``ORDER BY`` name to an OUTPUT column first, so ``txid::text AS txid`` + ``ORDER BY txid`` sorted '10'
+    before '9' (pages served rows twice, ``limit=1`` skipped rows: the flaky integration test of S256). Every
+    ORDER BY term must be a qualified input column, and no output column may reuse an input column name with
+    another expression."""
+    sql = " ".join(feed.FEED_SQL.split())
+    select_list = sql.split(" FROM ")[0].removeprefix("SELECT ")
+    order_by = sql.split(" ORDER BY ")[1].split(" LIMIT ")[0]
+    assert [t.strip() for t in order_by.split(",")] == ["e.txid", "e.seq"]
+    aliases = {item.split(" AS ")[1].strip() for item in select_list.split(",") if " AS " in item}
+    assert aliases == {"txid_text"}
+    assert not aliases & {"txid", "seq"}
+
+
+def test_feed_pages_txids_of_different_lengths_in_numeric_order(client, issuer, conn):
+    """txid 9 / 10 / 99 / 100 (text order would be 10, 100, 9, 99) and three rows of one transaction: limit 1 walks
+    them in (txid, seq) order with no repeat and no gap, and matches one big page."""
+    conn.events = [_event(7, 100, "tenant.unlocked"), _event(2, 9, "tenant.created"), _event(5, 99, "tenant.locked"),
+                   _event(3, 10, "tenant.locked"), _event(4, 10, "tenant.unlocked"), _event(6, 10, "tenant.locked")]
+    expected = [(9, 2), (10, 3), (10, 4), (10, 6), (99, 5), (100, 7)]
+    seen, after = [], None
+    for _ in range(len(expected) + 1):
+        params = {"limit": "1"} | ({"after": after} if after else {})
+        page = client.get("/tenant/membership/v1/events", params=params, headers=_auth(issuer)).json()
+        if not page["items"]:
+            break
+        seen += [feed.decode_cursor(e["cursor"]) for e in page["items"]]
+        after = page["next_cursor"]
+    assert seen == expected
+    whole = client.get("/tenant/membership/v1/events", params={"limit": "500"}, headers=_auth(issuer)).json()
+    assert [feed.decode_cursor(e["cursor"]) for e in whole["items"]] == expected
 
 
 def test_feed_from_the_start_with_no_events_still_returns_a_cursor(client, issuer):

@@ -129,6 +129,37 @@ async def test_feed_cursor_pages_one_by_one(world):
 
 
 @pytest.mark.asyncio
+async def test_feed_pages_txids_of_different_lengths_and_ties_without_repeats_or_gaps():
+    """S256 flake, root cause: ``ORDER BY txid`` next to ``txid::text AS txid`` sorted by the text output column, so
+    a txid of another digit length ('10' < '9') broke the keyset walk (rows served twice, rows skipped). Rows with
+    hand-picked txids across digit-length boundaries, several rows per txid and one identical ``occurred_at`` (the
+    trigger-only guard skipped, superuser test DB) must come back in (txid, seq) order, page by page, with limit 1, 2
+    and 500 giving the same list: no repeat, no gap."""
+    conn = await asyncpg.connect(DSN)
+    tid = uuid.uuid4()
+    txids = [100, 9, 10, 1000, 10, 99, 7, 11, 10, 8]          # insertion order != txid order: seq alone is no help
+    try:
+        async with conn.transaction():
+            await conn.execute("SET LOCAL session_replication_role = replica")
+            for txid in txids:
+                await conn.execute(
+                    "INSERT INTO shared.tenant_membership_event (txid, type, tenant_id, occurred_at) "
+                    "VALUES ($1::text::xid8, 'tenant.locked', $2, '2026-10-29T00:00:00Z')", str(txid), tid)
+        rows = await conn.fetch("SELECT event_id, txid::text AS t, seq FROM shared.tenant_membership_event "
+                                "WHERE tenant_id = $1", tid)
+        expected = [str(r["event_id"]) for r in sorted(rows, key=lambda r: (int(r["t"]), r["seq"]))]
+        assert len(expected) == len(txids)
+        for limit in (1, 2, 500):
+            got = [e["event_id"] for e in await _all_events(conn, str(tid), limit=limit)]
+            assert got == expected, f"limit={limit}"
+    finally:
+        async with conn.transaction():
+            await conn.execute("SET LOCAL session_replication_role = replica")
+            await conn.execute("DELETE FROM shared.tenant_membership_event WHERE tenant_id = $1", tid)
+        await conn.close()
+
+
+@pytest.mark.asyncio
 async def test_an_open_transaction_hides_its_event_until_commit(world):
     conn, tid, _, _ = world
     every = await _all_events(conn, tid)
