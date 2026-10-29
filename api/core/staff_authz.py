@@ -133,6 +133,8 @@ POLICY: dict[tuple[str, str], str] = {
     ("PATCH", "/admin/llm-config/{stage}"): AI_ADMIN,
     ("PATCH", "/admin/llm-config/{stage}/route"): AI_ADMIN,
     ("PATCH", "/admin/llm-catalog/{model_key}"): AI_ADMIN,
+    # AA-1002 — the LLM connection registry names secrets, roles and endpoints: admin-only read
+    ("GET", "/admin/llm-connections"): AI_ADMIN,
     # admin_llm_ops — on-demand / scheduled spend + Jev probes (the Lambda ones are MACHINE_ROUTES)
     ("POST", "/admin/dfs-balance/check"): OPS_WRITE,
     ("POST", "/admin/cost-explorer/check"): SPEND_WRITE,

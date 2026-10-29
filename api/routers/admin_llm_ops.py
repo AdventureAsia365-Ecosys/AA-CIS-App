@@ -1124,6 +1124,16 @@ async def get_llm_availability(request: Request, hours: int = Query(24, ge=1, le
         return await llm_availability.read(conn, hours=hours)
 
 
+# AA-1002 (gateway slice S1) — the LLM connection registry and its model deployments, read-only, no secret value.
+# Admin only (POLICY: ai.admin): it names secrets, roles and endpoints. Off the routing path until slice S3.
+@router.get("/llm-connections", summary="LLM connections and model deployments (read-only, no secret values)")
+async def get_llm_connections(request: Request):
+    from api.services import llm_connections
+
+    async with request.app.state.pool.acquire() as conn:
+        return await llm_connections.read(conn)
+
+
 @router.get("/cost-explorer", summary="Stored AWS Cost Explorer spend for a window (no live CE call)")
 async def get_cost_explorer(
     request: Request, days: int = Query(7, ge=1, le=365),
