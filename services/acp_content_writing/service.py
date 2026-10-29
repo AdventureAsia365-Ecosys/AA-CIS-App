@@ -2226,6 +2226,9 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             )
             gate_ledger = outcome["gate_ledger"]
             flags = outcome["flags"]
+            # AA-789 tier 1 — the seed-alignment candidates of this attempt (shadow included), admin-only
+            if outcome.get("seed_align") is not None:
+                context.setdefault("seed_align", []).append({"attempt": attempt, **outcome["seed_align"]})
             faq_log = ([f"{faq_dropped} FAQ pair(s) that copied a body sentence were removed"] if faq_dropped else []) \
                 + faq_unanswerable
             if faq_log:
@@ -2548,6 +2551,8 @@ def writer_input_snapshot(context: dict) -> dict:
         **({"faq_filter": context["faq_filter"]} if context.get("faq_filter") else {}),
         # S247 (AA-779, ADR 0011) — the answer-fit step's mode, verdicts, drops and fallback; absent when it is off.
         **({"faq_answer_fit": context["faq_answer_fit"]} if context.get("faq_answer_fit") else {}),
+        # AA-789 tier 1 — seed alignment per attempt (modes, candidates, nlp version); absent when every class is off.
+        **({"seed_align": context["seed_align"]} if context.get("seed_align") else {}),
         # AA-918 (WM-16) — the learned lexicon rules this piece got (and the ones skipped, with why); absent when no
         # rule is active for its writer and owner. The rollback drill reads it: the next piece no longer lists it.
         **({"writing_rules": context["writing_rules"]} if context.get("writing_rules") else {}),
