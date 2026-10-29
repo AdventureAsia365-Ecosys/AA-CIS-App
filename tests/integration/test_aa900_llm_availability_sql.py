@@ -40,13 +40,16 @@ async def _call(conn, *, provider, account, role, at, signal="{}"):
         role, signal, at, provider, account)
 
 
-async def _job(conn, *, kind, status, error, at):
+async def _job(conn, *, kind, status, error, at, updated_at=None):
+    """A job row; ``updated_at`` defaults to ``at`` (a later touch of the row sets it apart)."""
     return await conn.fetchval(
         "INSERT INTO shared.job (kind, payload, status, attempt, max_attempts, error, created_at, updated_at, "
-        "finished_at) VALUES ($1, '{}'::jsonb, $2, 1, 1, $3, $4::timestamptz, $4::timestamptz, "
-        "CASE WHEN $2::text = 'failed' THEN $4::timestamptz END) "
+        "finished_at, locked_by, locked_until) VALUES ($1, '{}'::jsonb, $2, 1, 1, $3, $4::timestamptz, "
+        "$5::timestamptz, CASE WHEN $2::text = 'failed' THEN $4::timestamptz END, "
+        "CASE WHEN $2::text = 'running' THEN 'zz900-worker' END, "
+        "CASE WHEN $2::text = 'running' THEN $5::timestamptz + interval '5 minutes' END) "
         "RETURNING id::text",
-        kind, status, error, at)
+        kind, status, error, at, updated_at or at)
 
 
 @pytest.mark.asyncio
@@ -83,3 +86,30 @@ async def test_read_is_ok_once_a_call_is_answered_after_the_refusal(conn):
     await _call(conn, provider="bedrock-satellite", account="acc3", role="writer", at=NOW - timedelta(minutes=2))
     out = await av.read(conn, hours=24, now=NOW)
     assert out["status"] == "ok" and out["cause"] is None
+
+
+@pytest.mark.asyncio
+async def test_failures_are_dated_by_finished_at_and_running_rows_do_not_count(conn):
+    """S258 review: a heartbeat or a later touch of the row must not make an old failure look new."""
+    await _call(conn, provider="bedrock-satellite", account="acc3", role="writer", at=NOW - timedelta(minutes=10))
+    # A running retry whose previous attempt was throttled: its heartbeat is newer than the answered call.
+    await _job(conn, kind="zz900_writer", status="running", at=NOW - timedelta(hours=1),
+               updated_at=NOW - timedelta(minutes=1),
+               error="RuntimeError: ThrottlingException when calling the InvokeModel operation")
+    # A refusal that ended an hour ago, touched later (updated_at newer than the answered call).
+    await _job(conn, kind="zz900_writer", status="failed", at=NOW - timedelta(hours=1),
+               updated_at=NOW - timedelta(minutes=1),
+               error="llm_access_denied: Error 002: Access to Bedrock models is not allowed for this account")
+    out = await av.read(conn, hours=24, now=NOW)
+    assert out["status"] == "ok" and out["cause"] is None
+    assert [(f["error_class"], f["last_at"]) for f in out["failures"]] == [
+        ("access_denied", (NOW - timedelta(hours=1)).isoformat())]
+
+
+@pytest.mark.asyncio
+async def test_a_job_queued_for_a_retry_counts_from_its_requeue(conn):
+    await _call(conn, provider="bedrock-satellite", account="acc3", role="writer", at=NOW - timedelta(minutes=10))
+    await _job(conn, kind="zz900_writer", status="queued", at=NOW - timedelta(minutes=2),
+               error="RuntimeError: ThrottlingException when calling the InvokeModel operation")
+    out = await av.read(conn, hours=24, now=NOW)
+    assert out["status"] == "degraded" and out["cause"]["error_class"] == "throttled"

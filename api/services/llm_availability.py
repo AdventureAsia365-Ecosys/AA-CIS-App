@@ -8,8 +8,9 @@ Two sources, both real outcomes inside the window:
 - ``shared.llm_call_log``: per provider / account (and embeddings apart), how many calls were answered and when the
   last answered one was. A row is written only for a billed call (AA-927), so a call the provider refused leaves no
   row here: this side can only say "the last success was at ...".
-- ``shared.job``: the LLM errors of jobs that failed (or wait for a retry) in the window (``is_llm_failure``: the
-  ``llm_access_denied`` prefix, or older text that names an LLM call), each classified with
+- ``shared.job``: the LLM errors of jobs that failed (or wait for a retry) in the window, each dated by when it
+  happened (``JOBS_SQL``), kept when ``is_llm_failure`` (the ``llm_access_denied`` prefix, or older text that names
+  an LLM call) and classified with
   ``shared.llm_client.errors.classify_text`` — ``access_denied`` (Bedrock "Error 002", AccessDenied, IAM),
   ``quota_exhausted`` (no OpenAI credit) or ``throttled``. Since AA-900 a job ended by an account-level refusal has an
   error that starts with ``llm_access_denied``; older rows are classified by their text (an older S1 job only says
@@ -50,14 +51,20 @@ CALLS_SQL = """
      ORDER BY last_call_at DESC
 """
 
-# A queued / running row keeps the error of its last failed attempt (queue.fail re-queues with it).
+# When each LLM failure happened (S258 review of #1148): a failed row by its finished_at (set once, when the job ended;
+# updated_at moves on any later touch), a row queued for a retry by its updated_at (queue.fail re-queues with the
+# error and now(); nothing else writes a queued row before a worker claims it). A running row is left out: its error is
+# the previous attempt's and its updated_at is the heartbeat, so it would date an old failure as new; the attempt it
+# is running ends as a call-log row, a re-queue or a failure, and that outcome is counted then.
 JOBS_SQL = """
-    SELECT id::text AS id, kind, status, error, updated_at
+    SELECT id::text AS id, kind, status, error, finished_at AS failed_at
       FROM shared.job
-     WHERE error IS NOT NULL
-       AND status IN ('failed', 'queued', 'running')
-       AND updated_at >= $1
-     ORDER BY updated_at DESC
+     WHERE status = 'failed' AND error IS NOT NULL AND finished_at >= $1
+    UNION ALL
+    SELECT id::text AS id, kind, status, error, updated_at AS failed_at
+      FROM shared.job
+     WHERE status = 'queued' AND error IS NOT NULL AND updated_at >= $1
+     ORDER BY failed_at DESC
      LIMIT $2
 """
 
@@ -94,7 +101,7 @@ def summarize_failures(job_rows: Iterable[dict]) -> list[dict]:
             continue
         entry = by_class.setdefault(cls, {"error_class": cls, "jobs": 0, "last_at": None})
         entry["jobs"] += 1
-        at = row.get("updated_at")
+        at = row.get("failed_at")
         if entry["last_at"] is None or (at is not None and at > entry["last_at"]):
             entry.update(last_at=at, last_kind=row.get("kind"), last_job_id=row.get("id"),
                          last_status=row.get("status"), last_error=(row.get("error") or "")[:ERROR_SAMPLE_CHARS])
@@ -143,7 +150,7 @@ def build(call_rows: Iterable[dict], job_rows: Iterable[dict], *, hours: int, no
 
 
 async def read(conn, *, hours: int = 24, now: Optional[datetime] = None) -> dict:
-    """Two read-only queries on one connection."""
+    """Two read-only queries on one connection (the job side reads the finished_at and queued indexes)."""
     now = now or datetime.now(timezone.utc)
     since = now - timedelta(hours=hours)
     call_rows = [dict(r) for r in await conn.fetch(CALLS_SQL, since)]

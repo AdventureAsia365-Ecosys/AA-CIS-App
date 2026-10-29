@@ -16,7 +16,7 @@ def _calls(provider="bedrock-satellite", account="acc3", embed=False, ok_at=None
 
 
 def _job(error, at, kind="t2_rewrite", status="failed", job_id="j1"):
-    return {"id": job_id, "kind": kind, "status": status, "error": error, "updated_at": at}
+    return {"id": job_id, "kind": kind, "status": status, "error": error, "failed_at": at}
 
 
 def test_blocked_when_the_newest_outcome_is_an_account_level_refusal():
@@ -76,6 +76,15 @@ def test_sql_reads_only_and_skips_jev():
         assert sql.strip().upper().startswith("SELECT")
 
 
+def test_job_failures_are_dated_when_they_happened_and_running_rows_are_left_out():
+    """S258 review: a running row's error is the previous attempt's and its updated_at is the heartbeat."""
+    sql = " ".join(av.JOBS_SQL.split())
+    assert "status = 'failed' AND error IS NOT NULL AND finished_at >= $1" in sql
+    assert "status = 'queued' AND error IS NOT NULL AND updated_at >= $1" in sql
+    assert "'running'" not in sql
+    assert sql.count("AS failed_at") == 2 and "ORDER BY failed_at DESC" in sql
+
+
 @pytest.mark.asyncio
 async def test_read_passes_the_window_and_row_limit():
     conn = MagicMock()
@@ -97,7 +106,7 @@ def test_non_llm_job_errors_do_not_move_the_card(error):
     """S3 / Cognito / SES / Geoapify failures classify as access_denied or throttled but are not LLM failures."""
     now = datetime(2026, 10, 29, 12, tzinfo=timezone.utc)
     rows = [{"id": "j1", "kind": "supply_media_purge", "status": "failed", "error": error,
-             "updated_at": now - timedelta(minutes=5)}]
+             "failed_at": now - timedelta(minutes=5)}]
     assert not av.is_llm_failure(error)
     assert av.summarize_failures(rows) == []
 
