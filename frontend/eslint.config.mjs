@@ -2,14 +2,16 @@ import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
 
-import { kitConfig } from "./app/_kit/core/eslint-kit.mjs";
+import { STAGED_RULES, kitConfig } from "./app/_kit/core/eslint-kit.mjs";
 
 // AA-994 S1c (root ADR 0016 decision 7) — UI kit conformance rules, shipped with the kit core
 // (app/_kit/core/eslint-kit.mjs, byte-identical in every app that vendors the core). The `inline` preset
 // (inline style + K tokens) runs at `error` on all page code under app/; the kit itself (app/_kit/**: the
 // shell, DataTable, Modal, Drawer, PageFrame) is exempt because it is where the raw elements belong.
 // Rules: no raw <main> / <table> / dialog, no hard-coded colour, no hand-styled <button>, no var(--aa-*)
-// string, no --aa-* definition from JS, no import of the legacy adminUi / portal ui.tsx layers, no className.
+// string, no --aa-* definition from JS, no import of the legacy adminUi / portal ui.tsx layers, no className,
+// and (AA-994 S6a, the staged rule CIS turns on first) no raw <input> / <select> / <textarea>: the kit Field + Input,
+// Select, Textarea, Checkbox, Radio, DateField.
 //
 // Existing violations (of these and of the Next rules) are frozen in eslint-suppressions.json (ESLint bulk
 // suppressions). The file may only shrink: CI ("Frontend Lint") runs `eslint --prune-suppressions`, fails when
@@ -34,6 +36,7 @@ const eslintConfig = defineConfig([
     preset: "inline",
     files: ["app/**/*.{ts,tsx,js,jsx,mjs}"],
     ignores: ["app/_kit/**"],
+    rules: STAGED_RULES,
   }),
 ]);
 

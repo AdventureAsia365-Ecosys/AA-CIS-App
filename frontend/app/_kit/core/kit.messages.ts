@@ -1,7 +1,8 @@
 // UI kit core (root ADR 0016). Canonical: AA-CIS-App frontend/app/_kit/core. Edit only there; copies are checked byte for byte (kit.lock.json).
 // app/_kit/core/kit.messages.ts
 // AA-994 — the kit core components' own text (DataTable, Modal, Drawer, Toast, primitives, GuidePanel, LangSwitch,
-// and since S4a FilterBar, DateField, RowMenu, ConfirmModal, KpiTile, DateText), English and Vietnamese. Every app that renders an I18nProvider gets these in its UI language; outside a provider
+// and since S4a FilterBar, DateField, RowMenu, ConfirmModal, KpiTile, DateText; since S6a the form Field), English and
+// Vietnamese. Every app that renders an I18nProvider gets these in its UI language; outside a provider
 // they are English.
 
 import { defineMessages } from "./i18n";
@@ -78,6 +79,7 @@ export const KIT_MESSAGES = defineMessages(
     minutesAgo: (n: number) => `${n} min ago`,
     hoursAgo: (n: number) => `${n} h ago`,
     daysAgo: (n: number) => `${n} d ago`,
+    locked: "Locked",
   },
   {
     language: "Ngôn ngữ",
@@ -150,5 +152,6 @@ export const KIT_MESSAGES = defineMessages(
     minutesAgo: (n: number) => `${n} phút trước`,
     hoursAgo: (n: number) => `${n} giờ trước`,
     daysAgo: (n: number) => `${n} ngày trước`,
+    locked: "Đã khoá",
   },
 );

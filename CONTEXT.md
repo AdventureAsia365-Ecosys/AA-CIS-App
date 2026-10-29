@@ -117,6 +117,12 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     Booking's `ConfirmDialog`: Figma layout, optional reason, `message` / `danger` aliases), `PageFrame` `width`
     ("full" default, "wide" 1440, "narrow" 880) + header props, and `KitGallery.tsx` (every S4a component in its states,
     admin Settings → UI kit → Gallery; the gated gallery route of the visual job, S1d, will render it too),
+    **AA-994 S6a:** `FormControls.tsx` — the form controls every form uses: `Field` (label above, required mark, hint
+    or error below, lock icon; a `<label>` that gives its control `aria-describedby` / `aria-invalid` /
+    `aria-required`; `as="div"` = a labelled group) around native `Input`, `Select` (`options` / `placeholder` or
+    `<option>` children), `Textarea`, `Checkbox` (`indeterminate`) and `Radio`; 40px high (`size="sm"`: 36px, the
+    FilterBar height), focus / invalid / disabled states from one stylesheet; every native prop passes through, so a
+    page swaps `<input>` for `<Input>` without touching its state. ConfirmModal's reason box is a Field + Textarea.
     `check-kit-copy.mjs`, **`eslint-kit.mjs`** (AA-994 S1c, see "Kit lint" below), `MANIFEST.json` and **`tokens.css`** (AA-994 S1b: the one `--aa-*` token set of every
     frontend — light and dark palettes, `--aa-scrim` / `--aa-hero-bg`, shadows, `--aa-font-*` as
     `var(--font-*, "<family>")`, and the type / radius / space / z / motion scales from TripPlanner AA-995;
@@ -166,13 +172,21 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `app/**` except `app/_kit/**` (the kit owns the raw elements): no raw `<main>` (PageFrame / AdminMain), `<table>`
     (DataTable), `<dialog>` / `role="dialog"` (Modal / Drawer), no hex / rgb() / hsl() colour, no `<button>` with
     `style` / `className` (kit Button), no `var(--aa-*)` string (use `K`), no `--aa-*` set from JS, no import of
-    `app/admin/_components/adminUi` or the portal `ui.tsx` (`no-legacy-kit`), no `className`. Violations that existed
-    on 27/10/2026 are frozen in `frontend/eslint-suppressions.json` (ESLint bulk suppressions); the file only shrinks.
+    `app/admin/_components/adminUi` or the portal `ui.tsx` (`no-legacy-kit`), no `className`, and (AA-994 S6a) no
+    raw `<input>` / `<select>` / `<textarea>` (`no-raw-form-control`: the kit Field + controls or DateField;
+    `type="hidden"` / `"file"` stay allowed). Rule 8 is **staged**: it is in the plugin but in no preset, and an app
+    turns it on with `kitConfig({ …, rules: STAGED_RULES })` in the PR that freezes its existing uses (CIS first;
+    Partner and Booking with their page migrations; the AA-994 close-out moves it into the presets), so a kit sync
+    never turns a consumer's lint red. Violations that existed on 27/10/2026 (rule 8: on 29/10/2026, 239 in 53 files)
+    are frozen in `frontend/eslint-suppressions.json` (ESLint bulk suppressions); the file only shrinks.
     **Frontend Lint** (a gate, no `continue-on-error`; to be made required) runs the rules' RuleTester suite
     (`lib/eslintKit.test.mjs`), `eslint --prune-suppressions`, fails when the committed file differs from the pruned
     one, and fails when an entry or a rule total grows against the base branch (`check-kit-copy.mjs --suppressions`);
     a new entry may only carry the violations of a deleted / renamed file into a file the base did not have, so fixing
-    one old violation never buys a new one elsewhere. Inline disables of kit rules are not allowed: CI
+    one old violation never buys a new one elsewhere. The one exception is a rule the change switches on:
+    `frontend/scripts/kit-new-rules.mjs <base-sha>` rebuilds the base ESLint config from git and lists the rules that
+    are on at the head and off at the base for every file that suppresses them; `--new-rules` lets such a rule (with no
+    base suppressions) start its baseline once, after which it only shrinks. Inline disables of kit rules are not allowed: CI
     (`check-kit-copy.mjs --no-kit-disable app --ignore _kit`) fails on an `eslint-disable…` that names an `aa-kit/`
     rule, on a bare `eslint-disable` / `-line` / `-next-line` (it switches every rule off) and on a
     `/* eslint aa-kit/…: off */` comment in page code; the suppressions file is the only baseline. Disables that name

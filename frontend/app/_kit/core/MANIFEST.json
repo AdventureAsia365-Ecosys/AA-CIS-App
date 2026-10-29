@@ -33,11 +33,14 @@
     "FilterBar.tsx": {
       "sha256": "4987987bf08f9cef6b67dcf6027afb0ad10cf2eb4431d2da723196e05bb1a235"
     },
+    "FormControls.tsx": {
+      "sha256": "85729b25ea1aa39dfb92e995e87438893bbd01252d3250d48b9889e8014fa2ee"
+    },
     "GuidePanel.tsx": {
       "sha256": "8dd928920b5dc760b7b80433011f8b482ae6592c91456557542cb45df59142a5"
     },
     "KitGallery.tsx": {
-      "sha256": "f670d1989f05304a468dd95960f75c965e6b70ff99223a4d13f6f8b0b0694fd8"
+      "sha256": "fa6d8033a12ed5f5437ae820d8fa165c65e91f04951fadfd2da5e0ef91327f6f"
     },
     "KpiTile.tsx": {
       "sha256": "f421219ad2f1fb24806aad077199fe950aaadbc0c192989e424e96fe338f827f"
@@ -46,7 +49,7 @@
       "sha256": "0d7eaafd876984ba42766e124bf26145688b3f13031e753e771f183067687bba"
     },
     "Modal.tsx": {
-      "sha256": "e3f1e89e373a6f396a488a204d826236fa0064a4c660ca97776f117d456cde1a"
+      "sha256": "a461fd3892dcbf7631e3cee12eaf56348200bbb7988d5fdf9ecb8299f498dc2c"
     },
     "Money.tsx": {
       "sha256": "831a7f2266ef50869646043e9aea3b403316c91afd84dd8513ad9d17adeeedb6"
@@ -70,13 +73,13 @@
       "sha256": "bc6773a9a5a69ae55496752779c9c2fc8ac49eb07ed832cc91edff70c21dda00"
     },
     "check-kit-copy.mjs": {
-      "sha256": "e25096ddeb9e3d9fcb982bbbae6f153c0f35c7a0a20d41ee522e7cee1e609ae7"
+      "sha256": "8d717c8c83bcf0be7e982f69c64261f0313e04689ab290342b02938b1f31eee0"
     },
     "csv.ts": {
       "sha256": "3609313353164f3d0089b9e5675248d6a825c8826808b2f6b968ddb750c5189f"
     },
     "eslint-kit.mjs": {
-      "sha256": "7b902f9793ce11123b2b6b8ad59863cd8336d2856b1b31995e1cae0bd0c5be8a"
+      "sha256": "442b6f177f1742b25e3cc8ada63bc415c920a866e89a3e9fb95f371cdf7cf704"
     },
     "format.ts": {
       "sha256": "8e6b8c5655c6f32f619b6ad7521edf167276201320015673877e4badb734873d"
@@ -88,10 +91,10 @@
       "sha256": "44abb6d5201474cbbd8a7eb449d535829bc3c77af044362385156ea88310d583"
     },
     "kit.messages.ts": {
-      "sha256": "8eaca91495accf1ca47d1b8a6d9ff6593a0832fa3e291ee230e05c35c720e164"
+      "sha256": "8bba45273149716306c7c7e41a5caf5cef9f99a29fbe2b198c2a0ed1775dc016"
     },
     "kitGallery.messages.ts": {
-      "sha256": "74f3ee0c3e6e552494f802e361385d45443fcc358be5d4c2b177cb6a4f668ffa"
+      "sha256": "0e4753097e60420d3c34036e21c05fbc6c59278455bc625abb4dd2356f9b35f9"
     },
     "primitives.tsx": {
       "sha256": "0dc2c0d34b2286df42d638abcff0d9530842800eff01fa11022528889e423ea7"

@@ -5,7 +5,8 @@
 // apps that vendor the full core, so each app shows (and the visual job captures) the same thing. CIS renders it in
 // admin Settings → UI kit; the gated `KitGallery` route of the visual job (root ADR 0016 decision 9, AA-994 S1d)
 // renders it too. This first slice holds the components upstreamed from AA-Booking in S4a (Section, KpiTile,
-// FilterBar, RowMenu, ConfirmModal, Money, DateText); the older core components join it with S1d.
+// FilterBar, RowMenu, ConfirmModal, Money, DateText); S6a adds the form controls (Field, Input, Select, Textarea,
+// Checkbox, Radio, DateField in a Field); the older core components join it with S1d.
 //
 // Demo dates are fixed values and the relative examples use a fixed "now" (no clock read during render), so the
 // gallery renders the same text on the server and the client and in every screenshot.
@@ -20,6 +21,8 @@ import { FilterBar } from "./FilterBar";
 import { RowMenu } from "./RowMenu";
 import { Money } from "./Money";
 import { DateText, relativeTime } from "./DateText";
+import { DateField } from "./DateField";
+import { Checkbox, Field, Input, Radio, Select, Textarea } from "./FormControls";
 import { K, sans } from "./tokens";
 import { GALLERY_MESSAGES } from "./kitGallery.messages";
 import { useLang, useT } from "./useI18n";
@@ -44,6 +47,63 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
     <div style={{ display: "flex", gap: 12, alignItems: "baseline", flexWrap: "wrap", fontSize: 13, color: K.body }}>
       <span style={{ width: 120, flexShrink: 0, color: K.muted }}>{label}</span>
       <span style={{ display: "inline-flex", gap: 16, flexWrap: "wrap", minWidth: 0 }}>{children}</span>
+    </div>
+  );
+}
+
+/** The form controls in their states; local state only, nothing is sent. */
+function FormDemo() {
+  const t = useT(GALLERY_MESSAGES);
+  const [name, setName] = useState(() => t("formNameValue"));
+  const [code, setCode] = useState("HAN-0");
+  const [currency, setCurrency] = useState("USD");
+  const [day, setDay] = useState("2026-11-14");
+  const [note, setNote] = useState("");
+  const [notify, setNotify] = useState(true);
+  const [pay, setPay] = useState("card");
+  return (
+    <div style={GRID}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
+        <Field label={t("formName")} required hint={t("formNameHint")}>
+          <Input value={name} onChange={(e) => setName(e.target.value)} />
+        </Field>
+        <Field label={t("formCode")} required error={code.length < 6 ? t("formCodeError") : undefined}>
+          <Input value={code} onChange={(e) => setCode(e.target.value)} />
+        </Field>
+        <Field label={t("formCurrency")}>
+          <Select value={currency} onChange={(e) => setCurrency(e.target.value)}
+            options={[{ value: "USD", label: "USD" }, { value: "EUR", label: "EUR" }, { value: "VND", label: "VND" }]} />
+        </Field>
+        <Field label={t("formStart")}>
+          <DateField value={day} onChange={setDay} style={{ height: 40, width: "100%" }} />
+        </Field>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
+        <Field label={t("formNote")} hint={t("formNoteHint")}>
+          <Textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder={t("formNotePlaceholder")} />
+        </Field>
+        <Field label={t("formLockedLabel")} locked hint={t("formLockedHint")}>
+          <Input value="BK-2026-0142" disabled readOnly />
+        </Field>
+        <Field label={t("formPay")} as="div">
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+            {(["card", "transfer"] as const).map((v) => (
+              <Radio key={v} name="kit-gallery-pay" value={v} checked={pay === v} onChange={() => setPay(v)}
+                label={t(v === "card" ? "formPayCard" : "formPayTransfer")} />
+            ))}
+          </div>
+        </Field>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <Checkbox checked={notify} onChange={(e) => setNotify(e.target.checked)} label={t("formNotify")} />
+          <Checkbox checked={false} indeterminate onChange={() => {}} label={t("formSome")} />
+          <Checkbox checked disabled onChange={() => {}} label={t("formDisabled")} />
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <Input size="sm" placeholder={t("formSmall")} aria-label={t("formSmall")} style={{ width: 180 }} />
+          <Select size="sm" aria-label={t("formStatus")} placeholder={t("formAnyStatus")} defaultValue=""
+            options={[{ value: "open", label: t("filterOpen") }, { value: "closed", label: t("filterClosed") }]} />
+        </div>
+      </div>
     </div>
   );
 }
@@ -105,6 +165,10 @@ export function KitGallery() {
           />
         </Suspense>
         <div style={{ fontSize: 12, color: K.muted }}>{t("filterNote")}</div>
+      </Entry>
+
+      <Entry id="form" title={t("formTitle")}>
+        <FormDemo />
       </Entry>
 
       <Entry id="rowmenu" title={t("menuTitle")}>

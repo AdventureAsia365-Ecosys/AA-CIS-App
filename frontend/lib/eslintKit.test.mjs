@@ -13,8 +13,9 @@ import tsParser from "@typescript-eslint/parser";
 import { ESLint, RuleTester } from "eslint";
 
 import {
-  LEGACY_MODULES, PRESETS, RULES, isModule, kitConfig, kitRules, plugin, resolveImport,
+  LEGACY_MODULES, PRESETS, RULES, STAGED_RULES, isModule, kitConfig, kitRules, plugin, resolveImport,
 } from "../app/_kit/core/eslint-kit.mjs";
+import { newRules } from "../scripts/kit-new-rules.mjs";
 
 RuleTester.describe = describe;
 RuleTester.it = it;
@@ -154,6 +155,24 @@ tester.run("aa-kit/no-class-name", RULES["no-class-name"], {
   invalid: [bad(`const P = () => <div className="p-4" />;`)],
 });
 
+tester.run("aa-kit/no-raw-form-control", RULES["no-raw-form-control"], {
+  valid: [
+    page(`const P = () => <Field label="Name"><Input value={v} onChange={f} /></Field>;`),
+    page(`const P = () => <><Select options={o} /><Textarea /><Checkbox label="x" /><DateField value="" onChange={f} /></>;`),
+    page(`const P = () => <form><input type="hidden" name="csrf" value={t} /></form>;`),
+    page(`const P = () => <input type={"file"} hidden ref={r} onChange={f} />;`),
+    page(`const s = "<input>";`),
+  ],
+  invalid: [
+    bad(`const P = () => <input value={v} onChange={f} />;`),
+    bad(`const P = () => <input type="checkbox" checked={c} />;`),
+    bad(`const P = () => <input type={t} />;`),
+    bad(`const P = () => <select><option>a</option></select>;`),
+    bad(`const P = () => <textarea rows={3} />;`),
+    bad(`const P = () => <div><input /><select /></div>;`, 2),
+  ],
+});
+
 test("resolveImport maps the @/ alias and relative paths to app-root paths without extension", () => {
   const root = "/r";
   assert.equal(resolveImport("@/app/_kit", "/r/app/x/page.tsx", root), "app/_kit");
@@ -185,10 +204,34 @@ test("presets: inline = rules 1-7, 9 + no-class-name; tailwind = rules 1-7, 9; e
   assert.throws(() => kitConfig({ preset: "inline", files: [] }), /needs `files`/);
 });
 
+test("staged rule 8 is in the plugin but in no preset, so a kit sync never turns a consumer's lint red", () => {
+  assert.deepEqual(STAGED_RULES, { "aa-kit/no-raw-form-control": "error" });
+  for (const name of Object.keys(STAGED_RULES)) {
+    const short = name.replace(/^aa-kit\//, "");
+    assert.ok(plugin.rules[short], `${short} is defined`);
+    for (const [preset, names] of Object.entries(PRESETS)) assert.ok(!names.includes(short), `${short} not in ${preset}`);
+  }
+  const cfg = kitConfig({ preset: "inline", files: ["app/**/*.tsx"], rules: STAGED_RULES });
+  assert.equal(cfg.rules["aa-kit/no-raw-form-control"], "error");
+});
+
+test("kit-new-rules: a rule is new only when on at the head and off at the base for every file listing it", async () => {
+  const supp = { "app/a.tsx": { N: { count: 2 }, R: { count: 1 } }, "app/b.tsx": { N: { count: 1 }, M: { count: 1 } } };
+  const head = async () => ({ rules: { N: [2], R: [2], M: [2] } });
+  const base = async (f) => ({ rules: { R: [2], ...(f === "app/b.tsx" ? { M: [0] } : { M: [2] }) } });
+  // N: off everywhere at the base -> new. R: on at the base -> not new. M: off at the base only for b.tsx; it is listed
+  // only under b.tsx, so it is new too.
+  assert.deepEqual(await newRules(supp, head, base), ["M", "N"]);
+  const baseOnForA = async (f) => ({ rules: f === "app/a.tsx" ? { N: [2], R: [2] } : {} });
+  assert.deepEqual(await newRules(supp, head, baseOnForA), ["M"], "N ran at the base for a.tsx: not new");
+  const headOff = async () => ({ rules: { N: [0] } });
+  assert.deepEqual(await newRules(supp, headOff, async () => ({ rules: {} })), [], "off at the head: not new");
+});
+
 test("frontend eslint.config.mjs: kit preset at error on page code, the kit folder exempt", async () => {
   const eslint = new ESLint({ cwd: FRONTEND });
   const pageCfg = await eslint.calculateConfigForFile(join(FRONTEND, "app", "admin", "x", "page.tsx"));
-  for (const n of PRESETS.inline) {
+  for (const n of [...PRESETS.inline, "no-raw-form-control"]) {
     assert.deepEqual(pageCfg.rules[`aa-kit/${n}`], [2], `aa-kit/${n} is error on admin pages`);
   }
   const loginCfg = await eslint.calculateConfigForFile(join(FRONTEND, "app", "login", "LoginForm.tsx"));

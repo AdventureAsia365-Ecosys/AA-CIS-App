@@ -37,6 +37,12 @@ export {
 } from "./core/FilterBar";
 export { RowMenu, type RowMenuItem } from "./core/RowMenu";
 export { DateField } from "./core/DateField";
+// AA-994 S6a — form controls (lint rule no-raw-form-control): a labelled Field around native Input / Select / Textarea /
+// Checkbox / Radio.
+export {
+  Field, Input, Select, Textarea, Checkbox, Radio, controlStyle, CONTROL_CLASS,
+  type ControlSize, type InputProps, type SelectProps, type SelectOption, type TextareaProps, type ChoiceProps,
+} from "./core/FormControls";
 export { Money } from "./core/Money";
 export { DateText, relativeTime } from "./core/DateText";
 export {
