@@ -33,6 +33,15 @@ Refs AA-
 - `q0-relabel` justification (only when an existing truth label changes or a case is removed; an independent review follows):
 - Q2 run id (only when a judge prompt, rubric, anchor or judge route changed):
 
+## LLM change — only when the PR changes a prompt, a model or a route
+
+<!-- AA-900 / handbook §5.7. Runbook: docs/llm/eval-runbook.md; prompts: docs/llm/prompt-register.md. Delete this
+section otherwise. A route or model change made in admin Settings records the same lines in its issue. -->
+- Prompt id(s) from the register (row added or updated when a file, symbol, stage or version moved):
+- Eval: R2 `<writer>` (label `adhoc_aa900`) / Q2 / Q0-R0 tier / none (manual check described below):
+- Eval run ID and verdict (an R2 run happens after deploy: add it as a comment on this PR once it finished):
+- Eval cost: logged USD (cap USD):
+
 ## Docs checklist
 
 - [ ] `CONTEXT.md` updated (boundary, stack, ownership or a domain term changed), or N/A

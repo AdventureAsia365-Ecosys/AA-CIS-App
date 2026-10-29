@@ -40,11 +40,18 @@ EXCERPT_CHARS = 400              # per side of an example (around the change)
 MONTH_CAP_USD = 25.0             # learning-loop LLM spend on Dev per calendar month (UTC)
 RUN_CAP_USD = 1.0                # one mining run (also the spend_budget row of CIS 280)
 # Every learning-loop stage counts against the month (mine now; eval / shadow with AA-919; the WM-13 one-off).
-MEMORY_STAGES = ("writing_memory_mine", "writing_memory_eval", "writing_memory_shadow", "adhoc_wm13")
+# AA-900: `adhoc_aa900` is the llm_call_log label of an R2 run started for a prompt / model / route change (the eval
+# runbook, CIS docs/llm/eval-runbook.md); it counts against the same month cap.
+MEMORY_STAGES = ("writing_memory_mine", "writing_memory_eval", "writing_memory_shadow", "adhoc_wm13", "adhoc_aa900")
 
 # ── eval: the R2 runner (AA-919 WM-19) and the targeted shadow (WM-21) ─────────────────────────────────────────────
 EVAL_STAGE = "writing_memory_eval"     # the R2 judge stage (CIS 291) and the llm_call_log label of every R2 call
 EVAL_ROLE = "judge"
+# AA-900: the llm_call_log labels an R2 run may write under. `writing_memory_eval` (default) for a release's evidence
+# run from the Releases tab; `adhoc_aa900` for the eval of a prompt / model / route change PR (stage = adhoc_<issue>,
+# handbook §5.7). Only the label changes: routes, caps and verdict rules are the same.
+CHANGE_EVAL_STAGE = "adhoc_aa900"
+EVAL_LOG_STAGES = (EVAL_STAGE, CHANGE_EVAL_STAGE)
 SHADOW_STAGE = "writing_memory_shadow"  # the llm_call_log label of every shadow call (no judge, no route of its own)
 R2_RUN_CAP_USD = 10.0            # E4 / D3: <= $10 per R2 run; a run may be given a LOWER cap, never a higher one
 SHADOW_RUN_CAP_USD = 7.0         # qlint: allow a dollar cap (cost-cuts K3: T2 50 x $0.10 + 20 x $0.10), not a score

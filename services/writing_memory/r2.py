@@ -32,6 +32,8 @@ Sequence (WM-19 scope 1, cost-cuts #3):
 Money (E4 / D3): a HARD cap per run, <= $10 (`cfg.R2_RUN_CAP_USD`), configurable lower, read from llm_call_log: every
 model call of the run (writer, its own judges and Jev, the eval judge) is written under stage `writing_memory_eval`
 with `quality_signal.eval_run = <run id>` (call_log.bind_eval_stage), so `run_spend` is the run's real logged cost.
+AA-900: a run started for a prompt / model / route change PR passes `--stage adhoc_aa900` (`log_stage`): the same run
+under the ad-hoc label the handbook asks for (§5.7); `run_spend` and the month cap read that label too.
 Before each item the runner reserves the item's estimate and stops (`budget_cap`, verdict invalid) when logged spend +
 estimate would pass the cap; after each item it stops when the logged spend has passed it. The $25 month cap over every
 writing-memory stage applies the same way (budget.py).
@@ -49,7 +51,7 @@ call (judge cost only), traps skipped; never with a release, and never verdict `
 
 CLI (inside the api/worker container; DRY RUN prints the plan and the estimate, $0):
   python -m services.writing_memory.r2 --writer a1 [--release <id>] [--tiers fact_dense,long_9d] [--limit 8]
-         [--cap-usd 2] [--goal non_inferior] [--seed-fault qa_trace] [--enqueue]
+         [--cap-usd 2] [--goal non_inferior] [--seed-fault qa_trace] [--stage adhoc_aa900] [--enqueue]
 `--enqueue` queues the job `writing_memory_r2` on the worker (the run itself is never done in an exec session: a long
 paid run dies with the session, lessons S234).
 """
@@ -117,6 +119,7 @@ class R2Config:
     goal: Optional[str] = None
     seed_fault: Optional[str] = None
     triggered_by: str = "manual"
+    log_stage: str = cfg.EVAL_STAGE    # AA-900: the llm_call_log label of the run (cfg.EVAL_LOG_STAGES)
 
     def validate(self) -> None:
         if self.writer not in ("a1", "t2", "t9_blog", "t9_social"):
@@ -137,6 +140,11 @@ class R2Config:
                 raise R2Refused("a seeded-fault run is an r2 run")
         if self.limit is not None and self.limit < 1:
             raise R2Refused("limit must be >= 1")
+        if self.log_stage not in cfg.EVAL_LOG_STAGES:
+            raise R2Refused(f"log_stage must be one of {cfg.EVAL_LOG_STAGES}")
+        if self.release_id and self.log_stage != cfg.EVAL_STAGE:
+            raise R2Refused(f"a release run logs under {cfg.EVAL_STAGE} (a {self.log_stage} change eval must never "
+                            "become a release's evidence)")
         if self.tiers is not None:
             bad = set(self.tiers) - set(_TIERS)
             if bad:
@@ -327,6 +335,7 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
         "limit": conf.limit, "seeded_fault": conf.seed_fault,
         "candidate": "release" if release else "current", "t9_first_draft_only": writer in ew.T9_WRITERS,
         "golden_set": f"{gs['name']}@{gs['version']}", "writer_prompt_sha256": writer_prompt,
+        "log_stage": conf.log_stage,
         "views": "per item owner (active_parts(writer, item tenant))"}
     run_id = await store.create_run({
         "prompt_version": prompt_version(writer, writer_prompt),
@@ -405,7 +414,7 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
     stop_reason, stopped_phase = None, None
     tune_result = None
     try:
-        with bind_eval_stage(cfg.EVAL_STAGE, run_id):
+        with bind_eval_stage(conf.log_stage, run_id):
             # 0. calibrate (every run) + re-judge the stored controls (rejudge mode; reverify regenerates them below)
             for it in [x for x in items if not x.get("trap") and (x["item_id"] in planned_ids
                                                                    or x["item_id"] in calib_ids)]:
@@ -790,7 +799,9 @@ async def flush_call_log() -> None:
 async def run_with_pool(pool, conf: R2Config, *, progress=None) -> Outcome:
     from services.writing_memory.eval_judge import judge_output
     from services.writing_memory.eval_writers import regenerate
-    return await run_r2(PgStore(pool), conf, writer_fn=regenerate, judge_fn=judge_output, flush=flush_call_log,
+    # AA-900: run_spend reads the run's own label, so the per-run cap holds under either stage
+    return await run_r2(PgStore(pool, stages=(conf.log_stage,)), conf, writer_fn=regenerate, judge_fn=judge_output,
+                        flush=flush_call_log,
                         pool=pool, progress=progress)
 
 
@@ -819,7 +830,7 @@ async def estimate(pool, conf: R2Config) -> dict:
             "calibrated_possible": (len(calib) >= cfg.MIN_KAPPA_PAIRS
                                     and min(calib_labels.values()) >= cfg.MIN_KAPPA_PER_LABEL),
             "calibration_strata": ec.strata_label_counts(calib),
-            "estimated_usd_max": round(judge_only + gen, 3), "cap_usd": conf.cap_usd,
+            "estimated_usd_max": round(judge_only + gen, 3), "cap_usd": conf.cap_usd, "log_stage": conf.log_stage,
             "month_spend_usd": round(await store.month_spend(), 4), "month_cap_usd": cfg.MONTH_CAP_USD}
 
 
@@ -834,11 +845,13 @@ def _parse(argv=None) -> tuple[R2Config, argparse.Namespace]:
     ap.add_argument("--goal", choices=GOALS)
     ap.add_argument("--seed-fault", choices=sorted(SEED_FAULTS))
     ap.add_argument("--requested-by", default="cli")
+    ap.add_argument("--stage", default=cfg.EVAL_STAGE, choices=cfg.EVAL_LOG_STAGES,
+                    help="llm_call_log label of the run: adhoc_aa900 for a prompt / model / route change (AA-900)")
     ap.add_argument("--enqueue", action="store_true", help="queue the writing_memory_r2 job (the paid run)")
     a = ap.parse_args(argv)
     conf = R2Config(writer=a.writer, release_id=a.release, run_kind=a.run_kind,
                     tiers=[t for t in (a.tiers or "").split(",") if t] or None, limit=a.limit, cap_usd=a.cap_usd,
-                    goal=a.goal, seed_fault=a.seed_fault, triggered_by=f"cli:{a.requested_by}")
+                    goal=a.goal, seed_fault=a.seed_fault, triggered_by=f"cli:{a.requested_by}", log_stage=a.stage)
     return conf, a
 
 
