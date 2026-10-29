@@ -11,6 +11,10 @@ No network and no `gh`: --dry-run never calls it, --offline skips the PR step bu
 - `sync` on a consumer that already has the core is a green no-op that leaves no branch behind (dry run and live);
   after a core change it commits the copy on `bot/kit-sync`, a dry run pushes nothing, a live run pushes once and a
   rerun with the same tree does not push again.
+- A live sync never rebuilds `bot/kit-sync` in place on GitHub (the App token has no Workflows permission): a stale
+  branch without an open PR is deleted and recreated at consumer main through the refs API; when an open PR holds it
+  and GitHub refuses the force-push, the PR is closed, the branch recreated and a new PR opened; a refusal after that
+  is a clear error. Tested with a fake `gh` and a pre-receive hook that refuses like GitHub.
 - A tokens-profile consumer (TripPlanner) is a no-op when only a non-token file (and so MANIFEST.json) changed.
 - A first-time core file is called out in the PR body (lesson S256); the body carries `Refs AA-994`.
 - `report` prints how many core commits each consumer is behind.
@@ -21,6 +25,7 @@ No network and no `gh`: --dry-run never calls it, --offline skips the PR step bu
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import shutil
@@ -232,6 +237,122 @@ def test_sync_live_pushes_once_and_not_again_for_the_same_tree(tmp_path, cis):
     assert remote_branch(work).split("\t")[0] == pushed
 
 
+REFUSAL = ("refusing to allow a GitHub App to create or update workflow `.github/workflows/ci.yml` without "
+           "`workflows` permission")
+PRE_RECEIVE = f"""#!/bin/sh
+# Refuses like GitHub does for a token without the Workflows permission: a non-fast-forward update of bot/kit-sync
+# (it would carry main's workflow changes), or every update of it when the file refuse-all exists.
+zero=0000000000000000000000000000000000000000
+while read old new ref; do
+  [ "$ref" = refs/heads/bot/kit-sync ] || continue
+  if [ -f refuse-all ]; then echo "{REFUSAL}" >&2; exit 1; fi
+  if [ "$old" != "$zero" ] && ! git merge-base --is-ancestor "$old" "$new"; then echo "{REFUSAL}" >&2; exit 1; fi
+done
+"""
+
+
+def load_bot(monkeypatch):
+    name = "kit_sync_bot_under_test"
+    spec = importlib.util.spec_from_file_location(name, BOT)
+    mod = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, name, mod)  # @dataclass looks its module up in sys.modules
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class FakeGh:
+    """`gh` for the push path: PR list/create/edit/close and the git refs API, applied to the bare origin."""
+
+    def __init__(self, origin: Path, prs: list[dict]):
+        self.origin, self.prs, self.calls = origin, prs, []
+
+    def __call__(self, *args: str) -> str:
+        self.calls.append(args)
+        ref = "refs/heads/bot/kit-sync"
+        if args[:2] == ("pr", "list"):
+            return json.dumps(self.prs)
+        if args[:3] == ("api", "-X", "DELETE"):
+            subprocess.run(["git", "--git-dir", str(self.origin), "update-ref", "-d", ref], check=True)
+            return ""
+        if args[:3] == ("api", "-X", "POST"):
+            sha = next(a[4:] for a in args if a.startswith("sha="))
+            subprocess.run(["git", "--git-dir", str(self.origin), "update-ref", ref, sha], check=True)
+            return ""
+        if args[:2] == ("pr", "close"):
+            self.prs.clear()
+            return ""
+        if args[:2] == ("pr", "create"):
+            return "https://github.com/AdventureAsia365-Ecosys/AA-Booking/pull/7"
+        if args[:2] == ("pr", "edit"):
+            return ""
+        raise AssertionError(f"unexpected gh call {args}")
+
+    def kinds(self) -> list[str]:
+        return [" ".join(a[:3]) if a[0] == "api" else " ".join(a[:2]) for a in self.calls]
+
+
+@pytest.fixture()
+def stale_branch(tmp_path, cis):
+    """AA-Booking with an old bot/kit-sync, then a main commit that changes a workflow file and a new core commit."""
+    work = make_consumer(tmp_path, cis, "AA-Booking", ["booking"])
+    write_core(cis, {**BASE_FILES, "DataTable.tsx": "export const DataTable = 2;\n"})
+    v2 = commit_all(cis, "feat: kit v2")
+    args = ["--cis", str(cis), "sync", "--repo", "AA-Booking", "--dest", str(work), "--ref", v2, "--offline"]
+    assert bot(*args).returncode == 0
+    g(work, "checkout", "-q", "main")
+    (work / ".github" / "workflows").mkdir(parents=True)
+    (work / ".github" / "workflows" / "ci.yml").write_text("name: CI\n")
+    main = commit_all(work, "ci: a workflow change on main")
+    g(work, "push", "-q", "origin", "HEAD:refs/heads/main")
+    write_core(cis, {**BASE_FILES, "DataTable.tsx": "export const DataTable = 3;\n"})
+    v3 = commit_all(cis, "feat: kit v3")
+    origin = tmp_path / "AA-Booking.git"
+    hook = origin / "hooks" / "pre-receive"
+    hook.write_text(PRE_RECEIVE)
+    hook.chmod(0o755)
+    return work, origin, main, v3
+
+
+def run_live(monkeypatch, cis: Path, work: Path, ref: str, fake: FakeGh) -> int:
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    mod = load_bot(monkeypatch)
+    monkeypatch.setattr(mod, "gh", fake)
+    return mod.main(["--cis", str(cis), "sync", "--repo", "AA-Booking", "--dest", str(work), "--ref", ref])
+
+
+def test_stale_branch_without_pr_is_recreated_from_main(stale_branch, cis, monkeypatch, capsys):
+    work, origin, main, v3 = stale_branch
+    fake = FakeGh(origin, [])
+    assert run_live(monkeypatch, cis, work, v3, fake) == 0, capsys.readouterr().err
+    assert fake.kinds() == ["pr list", "api -X DELETE", "api -X POST", "pr create"]
+    tip = remote_branch(work).split("\t")[0]
+    assert g(work, "rev-parse", f"{tip}^") == main  # one sync commit on top of current main
+    assert "deleted the stale `bot/kit-sync`" in capsys.readouterr().out
+
+
+def test_refused_push_with_open_pr_closes_it_and_opens_a_new_one(stale_branch, cis, monkeypatch, capsys):
+    work, origin, main, v3 = stale_branch
+    fake = FakeGh(origin, [{"number": 5, "url": "https://example.invalid/pull/5"}])
+    assert run_live(monkeypatch, cis, work, v3, fake) == 0, capsys.readouterr().err
+    assert fake.kinds() == ["pr list", "pr close", "api -X DELETE", "api -X POST", "pr create"]
+    close = next(a for a in fake.calls if a[:2] == ("pr", "close"))
+    assert close[2] == "5" and "--delete-branch" not in close
+    tip = remote_branch(work).split("\t")[0]
+    assert g(work, "rev-parse", f"{tip}^") == main
+    assert "closed PR #5" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("prs", [[], [{"number": 5, "url": "https://example.invalid/pull/5"}]])
+def test_push_refused_after_recreate_is_a_clear_error(stale_branch, cis, monkeypatch, capsys, prs):
+    work, origin, main, v3 = stale_branch
+    (origin / "refuse-all").write_text("")
+    assert run_live(monkeypatch, cis, work, v3, FakeGh(origin, prs)) == 1
+    err = capsys.readouterr().err
+    assert "GitHub refused the push of `bot/kit-sync` to AA-Booking" in err
+    if prs:
+        assert "freshly cut from main" in err and "delete `bot/kit-sync` in AA-Booking by hand" in err
+
+
 def test_tokens_consumer_ignores_a_manifest_only_change(tmp_path, cis):
     work = make_consumer(tmp_path, cis, "AA-TripPlanner-Web", ["tripplanner"])
     write_core(cis, {**BASE_FILES, "DataTable.tsx": "export const DataTable = 2;\n"})
@@ -308,6 +429,10 @@ def test_sync_workflow_token_is_main_only_and_narrowed_to_one_consumer():
     assert wf["on"]["push"] == {"branches": ["main"], "paths": [f"{CORE}/**"]}
     assert wf["permissions"] == {"contents": "read"}
     assert wf["concurrency"]["cancel-in-progress"] is False
+    # Push runs (and live manual runs) have their own group, so a report or dry run never replaces a pending push run.
+    group = wf["concurrency"]["group"]
+    assert "'kit-sync-push'" in group and "'kit-sync-report'" in group
+    assert "github.event_name == 'push'" in group and "!inputs.dry_run" in group
     assert wf["on"]["workflow_dispatch"]["inputs"]["dry_run"]["default"] is True
     sync = wf["jobs"]["sync"]
     assert sync["environment"] == "release"
@@ -332,6 +457,29 @@ def test_consumers_workflow_reads_no_secret_and_has_a_stable_result_job():
     assert result["name"] == "Kit consumers"
     assert result["if"] == "always()"
     assert wf["jobs"]["consumer"]["if"] == "needs.plan.outputs.changed == 'true'"
+    assert wf["jobs"]["consumer"]["timeout-minutes"] <= 30
+
+
+def test_consumers_workflow_runs_each_consumer_unit_tests(tmp_path):
+    """Lesson S256: a first-time core file trips a consumer's own guard tests, so every leg runs them, time-bounded."""
+    steps = _wf(CONSUMERS_WF)["jobs"]["consumer"]["steps"]
+    step = next(s for s in steps if s["name"].startswith("Consumer unit tests"))
+    assert step["if"] == "${{ !cancelled() }}" and step["timeout-minutes"] <= 10
+    script = step["run"]
+
+    def pick(scripts: dict) -> str:
+        app = tmp_path / "app"
+        app.mkdir(exist_ok=True)
+        (app / "package.json").write_text(json.dumps({"scripts": scripts}))
+        line = next(line for line in script.splitlines() if line.strip().startswith("script="))
+        return subprocess.run(["bash", "-c", line + '; printf %s "$script"'], cwd=app, capture_output=True,
+                              text=True, check=True).stdout
+
+    if not shutil.which("node"):
+        pytest.skip("needs node")
+    assert pick({"test:unit": "node --test", "test:layout": "playwright test"}) == "test:unit"  # Booking
+    assert pick({"test": "node --test lib/*.test.ts"}) == "test"  # TripPlanner, portal
+    assert pick({"lint": "eslint"}) == ""
 
 
 def test_result_job_is_green_when_core_unchanged(tmp_path):

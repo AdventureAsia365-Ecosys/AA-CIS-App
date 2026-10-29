@@ -3,8 +3,10 @@ name: Kit Consumers
 # pass kit lint in every consumer app. Each leg overlays this PR's frontend/app/_kit/core onto the consumer's main
 # with .github/scripts/kit-sync.sh --from-local (the same copy the sync bot makes), then runs in that app: the copy's
 # integrity check, `tsc --noEmit` (after `next typegen`, so route and image types exist as in `next build`) and the
-# app's own `npm run lint` (the kit preset ships in core/eslint-kit.mjs; --pass-on-unpruned-suppressions, because a
-# core change that fixes a frozen violation must not fail here).
+# app's own `npm run lint` (the kit preset ships in core/eslint-kit.mjs and the app's lint overrides name core paths;
+# --pass-on-unpruned-suppressions, because a core change that fixes a frozen violation must not fail here), and the
+# app's own unit tests (`test:unit`, else `test`): they hold the consumer guards a new core file can trip, such as the
+# TripPlanner and Booking "no issue IDs" tests that scan every source file (lesson S256, kit sync section).
 #
 # Non-required until the Booking catch-up (plan S4b); the stable check name is the "Kit consumers" job below. Before
 # it is made required, drop the `paths:` filter (required checks and merge_group ignore it): the plan job already
@@ -52,6 +54,7 @@ jobs:
     needs: plan
     if: needs.plan.outputs.changed == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -107,6 +110,21 @@ jobs:
         if: ${{ !cancelled() }}
         working-directory: consumer/${{ matrix.consumer.app_dir }}
         run: npm run lint -- --pass-on-unpruned-suppressions
+
+      - name: Consumer unit tests (the app's own guards)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 8
+        working-directory: consumer/${{ matrix.consumer.app_dir }}
+        run: |
+          # Booking names its node:test suite test:unit (its test:layout / smoke need Playwright and a live host);
+          # portal, crm-web and TripPlanner use test. No script: nothing to run, said in the summary.
+          script=$(node -p 'const s = require("./package.json").scripts || {}; s["test:unit"] ? "test:unit" : (s.test ? "test" : "")')
+          if [ -z "$script" ]; then
+            echo "::notice::$NAME has no test:unit or test script"
+            echo "$NAME: no unit test script" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          npm run "$script"
 
   kit-consumers:
     name: Kit consumers

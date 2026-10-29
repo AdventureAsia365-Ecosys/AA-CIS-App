@@ -20,8 +20,26 @@ CIS merge, the "Kit consumers" check on CIS PRs, and the nightly freshness repor
   A lock-ref-only bump is never opened either. A stale open sync PR is closed as superseded on a no-op.
 - **No push when the tree is the same** as the remote `bot/kit-sync`: re-runs (manual dispatch, a re-pushed CIS
   commit) do not restart the consumer's CI.
-- **Debounce:** workflow-level concurrency group `kit-sync`, `cancel-in-progress: false` — a running sync finishes,
-  a newer push replaces the pending run. Each run syncs `github.sha` (always on CIS main, so Provenance accepts it).
+- **Debounce:** two workflow-level concurrency groups, both `cancel-in-progress: false`. `kit-sync-push` holds push
+  runs and live manual runs (`dry_run` false), the only runs that push: a running sync finishes, a newer one replaces
+  the pending one. `kit-sync-report` holds the nightly report and manual dry runs, so they can never replace a pending
+  push run (review finding, S257). Each run syncs `github.sha` (always on CIS main, so Provenance accepts it).
+- **The branch is never rebuilt in place on GitHub** (review finding, S257). The App token has no Workflows
+  permission, and GitHub refuses a ref update that adds or changes a file under `.github/workflows/`; a force-push
+  of a branch regenerated from a newer main onto the old `bot/kit-sync` carries main's workflow changes, so it would
+  be refused. The bot therefore: deletes a remote `bot/kit-sync` that is not the head of an open PR (refs API
+  `DELETE`), creates a missing branch at consumer `origin/main` (refs API `POST`, a commit GitHub already has), then
+  pushes, which only adds the sync commit. With an open PR it force-pushes as before (no new PR number, no lost
+  review); if GitHub refuses with its workflow message, the PR is closed as superseded (without `--delete-branch`),
+  the branch recreated the same way and a new PR opened. Any other refusal, or a refusal after the recreate, is a
+  `BotError` naming the repo and the manual way out (delete `bot/kit-sync`, re-run). `--offline` (tests) keeps the
+  plain force-push.
+- **Consumer unit tests in Kit Consumers** (review finding, S257; lesson S256, kit sync section): each leg also runs
+  the app's own `npm run test:unit` (Booking; its `test:layout` / smoke need Playwright and a live host) or else
+  `npm run test` (portal `node --test`, crm-web `vitest run`, TripPlanner `node --test`), so the TripPlanner and
+  Booking "no issue IDs" guards see a new core file. Booking's lint overrides are covered by the existing
+  `npm run lint` step (the app's own ESLint config). Bounded: step `timeout-minutes: 8`, job `timeout-minutes: 20`;
+  the check stays non-required.
 - **Token:** `actions/create-github-app-token` per matrix leg with `repositories: <that consumer repo>`,
   `permission-contents: write`, `permission-pull-requests: write`, in the `release` environment (main-only branch
   policy, where `AA_CI_BOT_PRIVATE_KEY` already lives for release-please). Nothing for AA-CIS-Infra or the root repo.
@@ -45,7 +63,9 @@ CIS merge, the "Kit consumers" check on CIS PRs, and the nightly freshness repor
   `.github/workflows/kit-consumers.yml` (Plan, Kit consumers (<consumer>) ×4, Kit consumers),
   `.github/scripts/kit-sync.sh` (canonical copy script), `.github/scripts/kit_sync_bot.py` (plan / sync / report),
   `.github/scripts/test_kit_sync.sh` (the root fixture suite, moved with the script; every call passes `--cis`),
-  `tests/unit/test_aa994_kit_sync_bot.py` (18 tests, real git repos in tmp_path, no network, no `gh`).
+  `tests/unit/test_aa994_kit_sync_bot.py` (23 tests, real git repos in tmp_path, no network; the push-path tests
+  load the bot in-process with a fake `gh` that applies the refs API to the bare origin, and a pre-receive hook that
+  refuses like GitHub does without the Workflows permission).
 - `CONTEXT.md`: the kit core paragraph names the new scripts and workflows.
 - The plan row says "Kit consumers job on CIS PRs"; it is a separate workflow file for the secret boundary above.
 
@@ -61,6 +81,10 @@ CIS merge, the "Kit consumers" check on CIS PRs, and the nightly freshness repor
   the filter must go (the plan job already handles "unchanged").
 - Branch `bot/kit-sync` is force-pushed every time it changes: a human commit on it is lost by design (the copy is
   byte-checked; fixes belong in CIS).
+- Recreating the branch when an open PR holds it (instead of always deleting first) keeps the PR number and its
+  review history in the common case (main changed no workflow file); the cost is one refused push before the
+  fallback. Whether GitHub compares a new branch against the default branch or checks commits not yet in the repo,
+  a branch created at a commit main already has plus a kit-only commit passes both readings.
 - The consumer checkout is shallow (`fetch-depth: 1`); the remote branch comparison fetches only `bot/kit-sync`.
 
 ## Should know

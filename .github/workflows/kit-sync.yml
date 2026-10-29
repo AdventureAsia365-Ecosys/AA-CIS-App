@@ -36,9 +36,12 @@ on:
 permissions:
   contents: read
 
-# One run at a time; a newer push replaces a pending run (debounce), a running one finishes.
+# Two groups, neither cancels a running run. kit-sync-push: push runs and live manual runs (dry_run false), the only
+# runs that push a branch; one at a time, a newer one replaces a pending one (debounce: it syncs a newer main), a
+# running one finishes. kit-sync-report: the nightly report and manual dry runs, which write nothing to a consumer, so
+# they can never replace a pending push run.
 concurrency:
-  group: kit-sync
+  group: ${{ (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run)) && 'kit-sync-push' || 'kit-sync-report' }}
   cancel-in-progress: false
 
 jobs:

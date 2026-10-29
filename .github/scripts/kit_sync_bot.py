@@ -17,6 +17,14 @@ Subcommands:
           <sha7>`. No-op (exit 0) when no copied file other than MANIFEST.json changes: the consumer already has
           these bytes; an open sync PR is then closed as superseded. --dry-run does everything up to the local
           commit and prints the PR it would open; it never pushes and never calls `gh`.
+          Workflow files: the App token has no Workflows permission, and GitHub refuses a push whose ref update
+          adds or changes a file under .github/workflows/. A force-push of a rebuilt branch onto an old
+          `bot/kit-sync` carries every workflow change consumer main made since that old branch, so the branch is
+          never rebuilt in place: a remote `bot/kit-sync` that is not the head of an open PR is deleted first, a
+          missing branch is created at consumer main through the git refs API, and the push then only adds the
+          sync commit. When an open PR holds the branch and GitHub still refuses the force-push, that PR is closed
+          as superseded, the branch is recreated the same way and a new PR is opened. A refusal after that is a
+          clear error (exit 1).
   report  [--head <CIS ref>] [--checkout <repo>=<path>]... [--offline]
           Freshness (report only, never a gate): consumer | lock ref on main | CIS head | core commits behind |
           open sync PR. Locks are read from the consumers' `main` on GitHub (public repos) unless --checkout gives a
@@ -199,6 +207,66 @@ def find_pr(repo: str) -> dict | None:
     return items[0] if items else None
 
 
+def is_workflow_refusal(message: str) -> bool:
+    """GitHub's answer to a push that would add or change a workflow file without the Workflows permission."""
+    text = message.lower()
+    return "workflow" in text and ("refusing to allow" in text or "permission" in text)
+
+
+def delete_branch(repo: str) -> None:
+    gh("api", "-X", "DELETE", f"repos/{OWNER}/{repo}/git/refs/heads/{BRANCH}")
+
+
+def create_branch(repo: str, sha: str) -> None:
+    """Create `bot/kit-sync` at a commit consumer main already has, so the push after it only adds the sync commit."""
+    gh("api", "-X", "POST", f"repos/{OWNER}/{repo}/git/refs", "-f", f"ref=refs/heads/{BRANCH}", "-f", f"sha={sha}")
+
+
+def push_branch(dest: Path, repo: str, base: str, remote: str, pr: dict | None, offline: bool,
+                short: str) -> tuple[str, dict | None]:
+    """Push HEAD (consumer main + the sync commit) to `bot/kit-sync`; returns (what happened, the open PR or None).
+
+    The branch is never rebuilt in place on GitHub (see the module docstring, "Workflow files"). --offline (tests)
+    pushes straight to origin without the refs API.
+    """
+    def push() -> None:
+        git(dest, "push", "-q", "--force", "origin", f"HEAD:refs/heads/{BRANCH}")
+
+    if offline:
+        push()
+        return f"force-pushed `{BRANCH}`", pr
+    notes = []
+    if remote and pr is None:
+        delete_branch(repo)
+        notes.append(f"deleted the stale `{BRANCH}` (no open PR)")
+        remote = ""
+    if not remote:
+        create_branch(repo, base)
+        notes.append(f"created `{BRANCH}` at main `{base[:7]}`")
+    try:
+        push()
+    except BotError as exc:
+        if not (pr and is_workflow_refusal(str(exc))):
+            raise BotError(f"GitHub refused the push of `{BRANCH}` to {repo}: {exc}") from exc
+        gh("pr", "close", str(pr["number"]), "--repo", f"{OWNER}/{repo}", "--comment",
+           f"Superseded: `{BRANCH}` is recreated from `main` for AA-CIS-App `{short}` (GitHub refused the update "
+           "because `main` changed workflow files since this branch was cut; the sync token has no Workflows "
+           "permission). A new sync PR follows (kit-sync.yml).")
+        delete_branch(repo)
+        create_branch(repo, base)
+        notes.append(f"closed PR #{pr['number']} and recreated `{BRANCH}` at main `{base[:7]}` (workflow files "
+                     "changed on main)")
+        pr = None
+        try:
+            push()
+        except BotError as exc2:
+            raise BotError(
+                f"GitHub refused the push of `{BRANCH}` to {repo} even onto a branch freshly cut from main "
+                f"`{base[:7]}`: {exc2}. The sync commit should touch only the kit core and lock files; check the "
+                f"diff, then delete `{BRANCH}` in {repo} by hand and re-run Kit Sync.") from exc2
+    return "; ".join([*notes, f"force-pushed `{BRANCH}`"]), pr
+
+
 def freshness_table(rows: list[tuple[str, str, str, str, str]]) -> str:
     lines = ["| Consumer | Lock ref (main) | CIS head | Core commits behind | Open sync PR |",
              "|---|---|---|---|---|"]
@@ -340,16 +408,15 @@ def cmd_sync(args: argparse.Namespace) -> int:
         print(f"kit-sync-bot: {result}")
         print(body)
     else:
+        pr = None if args.offline else find_pr(args.repo)
         if same_tree:
             push = f"`{BRANCH}` already has this tree (no push, no CI rerun)"
         else:
-            git(dest, "push", "-q", "--force", "origin", f"HEAD:refs/heads/{BRANCH}")
-            push = f"force-pushed `{BRANCH}`"
+            push, pr = push_branch(dest, args.repo, base, remote, pr, args.offline, short)
         with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as fh:
             fh.write(body)
             body_file = fh.name
         try:
-            pr = None if args.offline else find_pr(args.repo)
             if args.offline:
                 action = "PR step skipped (--offline)"
             elif pr:
