@@ -1745,6 +1745,11 @@ async def resolve_facts(request_id: UUID, context: dict, pool) -> None:
     facts = await fetch_facts_for_writing(tenant_id, pool, country=context.get("destination"))
     context["facts_text"] = format_facts_block(facts)
     context["facts_pending"] = False
+    # AA-814 review: the facts block size per write, to trace T9 input cost in shared.llm_call_log back to facts
+    # (budgeted by facts.budget_facts).
+    logger.info("t9_facts_seed", request_id=str(request_id), tenant_id=str(tenant_id), facts=len(facts),
+                tenant_facts=sum(1 for f in facts if f.get("scope") == "tenant"),
+                chars=len(context["facts_text"]))
 
 
 def _add_date_spans(context: dict) -> None:

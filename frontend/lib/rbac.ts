@@ -86,6 +86,9 @@ export const PAGE_RULES: PageRule[] = [
   // every staff role reads; edits / regenerate need content.write, publish / reject / unpublish review.act (backend
   // staff_authz POLICY; the page hides the controls with can(), the BFF refuses every write of the viewer).
   { prefix: "/admin/supply-content", roles: ALL_STAFF },
+  // AA-814 — platform Facts Entries (sourced claims every agency's writer may cite): every staff role reads; add / edit /
+  // delete need quality.write (admin; API_WRITE_RULES "facts" below, backend staff_authz POLICY).
+  { prefix: "/admin/facts", roles: ALL_STAFF },
 ];
 
 export function pageRule(pathname: string): PageRule | undefined {
@@ -136,6 +139,9 @@ export const API_WRITE_RULES: { prefix: string; roles: StaffRole[] }[] = [
   // AA-917 — writing memory writes (fact verdict, candidate edit / reject, job runs incl. the paid mining run); the
   // backend re-checks (ai.admin).
   { prefix: "writing-memory", roles: ["admin"] },
+  // AA-814 — platform fact writes (add / edit / delete) change what every tenant's T9 seed reads; the backend re-checks
+  // (quality.write). "facts" also covers the bare create path.
+  { prefix: "facts", roles: ["admin"] },
 ];
 
 // AA-577 follow-up — /api/admin/ paths that NO method may reach unless the role is listed (reads
