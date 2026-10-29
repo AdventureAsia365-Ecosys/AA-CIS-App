@@ -133,12 +133,12 @@ def test_a_rejudge_that_cannot_rebuild_the_judged_text_is_unjudged_not_refused()
 
 
 def test_a_site_type_refusal_is_unchanged_by_default_and_the_named_admin_knob_is_narrow():
-    """site_type stays as aa997.2 in aa997.3 (S257 P4: 4 correct vs 3 wrong refusals). The knob the tune script
-    sweeps: an admin-type answer named with the query's site word ("Horombo Hut") passes; "Annapurna" for
-    "Mt Annapurna" does not."""
+    """aa997.2 refuses an admin-type answer to a site query; aa997.3 turns on the narrow knob the S258 P4 sweep chose
+    (site_admin_named): an admin-type answer named with the query's site word ("Horombo Hut") passes; "Annapurna"
+    for "Mt Annapurna" does not."""
     hut = _c(-3.18, 37.45, "Horombo Hut", "suburb", iso="tz")
-    for rule in (V2, V3):
-        assert gm.strict_reason("Horombo Hut", hut, 1.0, None, None, (), params=gm.strict_params(rule)) == "site_type"
+    assert gm.strict_reason("Horombo Hut", hut, 1.0, None, None, (), params=gm.strict_params(V2)) == "site_type"
+    assert gm.strict_reason("Horombo Hut", hut, 1.0, None, None, (), params=gm.strict_params(V3)) is None
     knob = gm.StrictParams(site_admin_named=True)
     assert gm.strict_reason("Horombo Hut", hut, 1.0, None, None, (), params=knob) is None
     anna = _c(28.42, 83.74, "Annapurna", "district", iso="np")

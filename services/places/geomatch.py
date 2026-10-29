@@ -586,7 +586,8 @@ class StrictParams:
 
 STRICT_PARAMS = {
     ACCEPT_RULE: StrictParams(),
-    ACCEPT_RULE_V3: StrictParams(anchored_only=True, rejudge_off_route_km=AMBIGUOUS_ROUTE_KM, rejudge_v1_checks=False),
+    ACCEPT_RULE_V3: StrictParams(anchored_only=True, rejudge_off_route_km=500.0, rejudge_v1_checks=False,
+                                 site_admin_named=True),
 }
 
 
