@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.15.0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/compare/v0.14.0...v0.15.0) (2026-10-29)
+
+
+### Features
+
+* activities, intensity and cover photo on the tenant pool API, with activity / intensity / recently-added filters ([#1111](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1111)) ([e85c37f](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/e85c37f4a82912ddad5cb73ccef8ca6fd856f580))
+* add place_photo.s3_key_medium for a 960 w photo rendition (migration 301) ([#1124](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1124)) ([fe88f16](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/fe88f168016f7c636106cb31ea031ed2c6ecda45))
+* add tenant_tour_versions.generation_meta (migration 297) ([#1112](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1112)) ([c5b6db6](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/c5b6db685b4fc908769b7ee62e07f21ded3242d1))
+* add tenant_tour_versions.judge_breakdown (migration 300) ([#1119](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1119)) ([0a80543](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/0a8054381e7d58beebf84d1351037b535697d437))
+* admin UI in English or Vietnamese (one switch, kit i18n) ([#1129](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1129)) ([3994a1a](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/3994a1a804b3b5c8bb4abf83a675fbac8a1c961f))
+* catalog.v_tour_place_name for the Booking trip-plans list (migration 298) ([#1118](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1118)) ([61b479b](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/61b479b38d5a1a17bee8e56815729faae0399bff))
+* docs reader shows the bundle's checked SVG diagrams ([#1110](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1110)) ([e1a5f82](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/e1a5f820cfcfff909944e6f4dc397e1f3cdd27e6))
+* ground the T8 angle brief in the content seed before the T9 writer reads it (flag, default off) ([#1108](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1108)) ([d3ae346](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/d3ae3468a7ae398b2a6a3eb2f8c2aca9e65a984b))
+* name every CIS database connection built from get_database_url ([#1109](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1109)) ([5b6a317](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/5b6a317425d533f8832d9373d942683c56317cbc))
+* recorded cost incidents on Cost Operations, with the 25/09 DataForSEO sweep ([#1106](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1106)) ([1b88edc](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/1b88edce3acf8500b3e35d39dc07cd909df98715))
+* registered_keys and REQUIRED_CIS_KEYS on /health/ready ([#1121](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1121)) ([6a1f06d](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/6a1f06db66ed6a674820eb675f1678aabf3e32c9))
+* serve a 960 w photo rendition (size=medium) and backfill it for stored photos ([#1125](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1125)) ([5923c46](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/5923c46bd7a29e370d3383931de424c4487188f1))
+* store the T2 judge breakdown per version and check brand claims against the source ([#1123](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1123)) ([b6b6ea8](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/b6b6ea820d2009c972d40d88a405a414a8836557))
+* T2 writing-memory stamp in generation_meta (migration 297), hidden from tenants, plus Check now ([#1114](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1114)) ([717c58f](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/717c58f1802c9993bc6519bc530c504f71dfa711))
+
+
+### Bug Fixes
+
+* draw Mermaid diagrams after the brand font has loaded ([#1115](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1115)) ([4b356eb](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/4b356ebeb0337ddfc465c712ef3280ba859875cc))
+* let Content studio viewers call the read-only CTA check ([#1127](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1127)) ([6e68f48](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/6e68f48ec5344bd81f9585c84d8ac0209cf41a89))
+* Mermaid labels in the docs reader never break mid-word ([#1128](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1128)) ([5b13ccf](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/5b13ccf958cf1b0601b992f3f1da303b176be8cd))
+* R2 eval judge reads the same writer input the label panel read ([#1120](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1120)) ([39909fc](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/39909fc29327eed8c7300d77930d00f30b842c57))
+* settle the label rubric on one-phrase claims and add a calibration relabel path ([#1107](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1107)) ([051434e](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/051434ebf78ec3efda811211b843087148e6af2e))
+
 ## [0.14.0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/compare/v0.13.0...v0.14.0) (2026-10-28)
 
 
