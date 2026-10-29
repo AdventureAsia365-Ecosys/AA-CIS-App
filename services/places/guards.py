@@ -108,6 +108,25 @@ DAY_TRIP_KM = 150.0
 Route = tuple            # tuple[tuple[float, float], ...]: (lat, lng) stops in day order
 
 
+class TourRoute(tuple):
+    """A Route (the (lat, lng) stops in day order) that knows where it comes from (AA-997 S258, store.route_anchors):
+    `tour` = the tour source id, `anchored` = the day that uses the name has its own located overnight stop in it.
+    Everything that takes a Route takes it (it IS the tuple of stops); the strict acceptance rule aa997.3 reads the
+    two attributes (geomatch.evidence_routes, route_cover per_tour). A plain tuple counts as anchored."""
+
+    def __new__(cls, stops, *, tour: Optional[str] = None, anchored: bool = True):
+        obj = super().__new__(cls, stops)
+        obj.tour, obj.anchored = tour, anchored
+        return obj
+
+    def __reduce__(self):
+        return (_tour_route, (tuple(self), self.tour, self.anchored))
+
+
+def _tour_route(stops, tour, anchored):
+    return TourRoute(stops, tour=tour, anchored=anchored)
+
+
 def route_radius(name: Optional[str]) -> float:
     from services.places import geomatch
     return ROUTE_LONG_KM if geomatch.radius_km(name or "") > geomatch.ACCEPT_KM else ROUTE_KM

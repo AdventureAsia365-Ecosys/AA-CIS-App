@@ -5,11 +5,12 @@ Payload: {"mode": "dry_run" | "apply" | "hide" | "unhide" (default dry_run), "lo
 "country"?, "limit"? (apply, ≤ 400 a run), "hide_unconfirmed"? (default false), "reason"?,
 AA-997 v2: "recheck"? (outcomes of an earlier rule version to take again: llm_point / off_route / confirmed; default
 none), "strategy"? ("v1" default | "v2": query variants, hint bias, compact names — geocoder.STRATEGIES),
-"accept_rule"? ("v1" default | "aa997.2": the strict acceptance; recheck confirmed / geoapify need it — geoapify is
-dry-run only), "max_requests"? (a cap on Geoapify requests over the whole apply chain, "chain_id" set by the endpoint:
-the spent count is read from geo.geocode_call of the chain's jobs, so a retried or crashed run is counted too),
-"rule_version" (set by the endpoint; an apply whose rule version is not the deployed one is refused, so a chain queued
-before a rule change stops instead of running the new rule with an old dry run), "reasons"? / "confirm"? (hide)}.
+"accept_rule"? ("v1" default | "aa997.2" | "aa997.3": the strict acceptance; recheck confirmed / geoapify need it —
+geoapify is dry-run only), "max_requests"? (a cap on Geoapify requests over the whole apply chain, "chain_id" set by
+the endpoint: the spent count is read from geo.geocode_call of the chain's jobs, so a retried or crashed run is
+counted too), "rule_version" (set by the endpoint; an apply whose rule version is not the deployed one is refused, so
+a chain queued before a rule change stops instead of running the new rule with an old dry run), "reasons"? /
+"confirm"? (hide)}.
 Queued by POST /admin/places/relocate.
 
 dry_run: no paid call and no write — the counts and the Geoapify credit estimate in the job result.
@@ -59,14 +60,14 @@ def _int_or_none(v) -> Optional[int]:
 
 def _payload(p: dict) -> dict:
     from services.places.geocoder import STRATEGIES, STRATEGY_V1
-    from services.places.geomatch import ACCEPT_RULE, ACCEPT_RULE_V1
+    from services.places.geomatch import ACCEPT_RULE_V1, ACCEPT_RULES
     mode = p.get("mode") if p.get("mode") in MODES else "dry_run"
     limit = max(1, min(int(p.get("limit") or relocate.MAX_ROWS_PER_RUN), relocate.MAX_ROWS_PER_RUN))
     out = {"mode": mode, "located_by": relocate.located_by_list(p.get("located_by")),
            "country": (p.get("country") or None), "limit": limit,
            "hide_unconfirmed": bool(p.get("hide_unconfirmed"))}
     # AA-997 v2 keys, present only when used (an old payload reads exactly as before)
-    accept_rule = p.get("accept_rule") if p.get("accept_rule") in (ACCEPT_RULE, ACCEPT_RULE_V1) else ACCEPT_RULE_V1
+    accept_rule = p.get("accept_rule") if p.get("accept_rule") in ACCEPT_RULES else ACCEPT_RULE_V1
     if accept_rule != ACCEPT_RULE_V1:
         out["accept_rule"] = accept_rule
     if p.get("recheck"):

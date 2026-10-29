@@ -64,7 +64,8 @@ V2_MAX_QUERIES = 3
 def default_accept_rule(value: Optional[str] = None) -> str:
     """The acceptance rule place_geocode uses for NEW names (AA-997 v2 review fix: strict is behind a switch): env
     GEOCODER_ACCEPT_RULE (⚠️ underscore name — task definition), "v1" (default) | "aa997.2" (geomatch.ACCEPT_RULE: v1 +
-    the strict_reason checks). Anything else → v1 (logged). place_relocate takes it from its payload `accept_rule`."""
+    the strict_reason checks) | "aa997.3" (the same checks, route evidence tuned on the S258 P4 sample). Anything else →
+    v1 (logged). place_relocate takes it from its payload `accept_rule`."""
     raw = (value if value is not None else os.environ.get("GEOCODER_ACCEPT_RULE", geomatch.ACCEPT_RULE_V1)).strip()
     if raw.lower() not in geomatch.ACCEPT_RULES:
         logger.warning("geocoder_accept_rule_unknown_using_v1", value=raw)
@@ -134,7 +135,8 @@ class Geocoder(Protocol):
         AA-997: lat / lng (the model's point) is a hint and may be None; `routes` (guards.route_km) is the reference
         when given; `settlement` asks for a town (the town fallback). AA-997 v2: `strategy` "v2" = hint bias,
         query variants with `context` (geomatch.query_plan, ≤ `max_queries` requests) and compact name matching;
-        `strict` = acceptance rule geomatch.ACCEPT_RULE (strict_reason checks) instead of v1."""
+        `strict` = a strict acceptance rule (strict_reason checks) instead of v1: True = geomatch.ACCEPT_RULE, or a
+        rule name of geomatch.STRICT_RULES."""
         ...
 
     async def aclose(self) -> None: ...
@@ -328,8 +330,9 @@ class GeoapifyGeocoder:
     async def confirm(self, name: str, lat: Optional[float], lng: Optional[float], country: str, *,
                       native_name: Optional[str] = None, routes: tuple = (), settlement: bool = False,
                       strategy: str = "v1", context: Optional[str] = None, max_queries: Optional[int] = None,
-                      strict: bool = False) -> Result:
+                      strict=False) -> Result:
         iso = guards.iso2(country)
+        rule = geomatch.strict_rule(strict) or geomatch.ACCEPT_RULE_V1
         codes = guards.search_codes(country)
         v2 = strategy == STRATEGY_V2
         if v2:      # (search text, bare name judged): context variants tried only after the plain name missed
@@ -363,7 +366,7 @@ class GeoapifyGeocoder:
                     continue
                 meta = {"provider": self.name, "outcome": "accepted", "query": text, "judged": q, "rank": v.rank,
                         "strategy": strategy,
-                        "rule": geomatch.ACCEPT_RULE if strict else geomatch.ACCEPT_RULE_V1,
+                        "rule": rule,
                         "reference": "route" if guards.has_route(routes) else "hint",
                         "result_type": c.result_type, "confidence": c.confidence, "match_type": c.match_type,
                         "name": c.name, "sim": v.sim, "km": v.km, "source": c.source,
@@ -372,7 +375,7 @@ class GeoapifyGeocoder:
                     meta["hint"] = [round(lat, 5), round(lng, 5)]
                 return Confirmed(c.lat, c.lng, ctry, c.place_id, self.name, meta)
         return Unconfirmed({"provider": self.name, "outcome": "no_match", "tried": tried,
-                            "rule": geomatch.ACCEPT_RULE if strict else geomatch.ACCEPT_RULE_V1})
+                            "rule": rule})
 
     async def aclose(self) -> None:
         if self._own_http and self._http is not None:
@@ -384,12 +387,13 @@ def _brief(c: geomatch.Candidate) -> dict:
 
 
 def _accept_native(query: str, cands: list, lat: Optional[float], lng: Optional[float], iso2: str, *,
-                   ref_name: str = "", routes: tuple = (), iso_codes=None, strict: bool = False) -> geomatch.Verdict:
+                   ref_name: str = "", routes: tuple = (), iso_codes=None, strict=False) -> geomatch.Verdict:
     """A native-script query (中文 / 한글) has no Latin tokens to compare. Same rule as geomatch.accept
     otherwise: the radius and the settlement-only `city` rule come from the English name (`ref_name`) and
     the native query's own feature suffix (山莊 / 寺 / 湖 / 사 / 호 …); the candidate's name must contain the
     query or be contained in it, and then be ≥ 2 characters and ≥ half the query's length — "太平" (a city)
     for "太平山莊" (a mountain lodge) is the Taipingshan homonym trap of bake-off row 58."""
+    rule = geomatch.strict_rule(strict)
     q = query.replace(" ", "")
     settlement = (geomatch.is_settlement(ref_name) if ref_name else True) and not geomatch.native_feature(q)
     codes = set(iso_codes or ()) | ({iso2} if iso2 else set())
@@ -406,9 +410,10 @@ def _accept_native(query: str, cands: list, lat: Optional[float], lng: Optional[
         else:
             # the radius comes from the English name (`ref_name`)
             dist, why = geomatch.reference_km(c.lat, c.lng, lat, lng, ref_name or query, routes)
-            if strict and why in (None, geomatch.DAY_TRIP):     # AA-997 v2 strict checks (no Latin words: no kind)
+            if rule and why in (None, geomatch.DAY_TRIP):     # AA-997 v2 strict checks (no Latin words: no kind)
                 why = geomatch.strict_reason(ref_name or query, c, 1.0, lat, lng, routes, settlement=settlement,
-                                             day_trip=why == geomatch.DAY_TRIP, check_kind=False) or why
+                                             day_trip=why == geomatch.DAY_TRIP, check_kind=False,
+                                             params=geomatch.strict_params(rule)) or why
             if why == geomatch.DAY_TRIP and fallback is None:
                 fallback = geomatch.Verdict(c, i, 1.0, round(dist, 2))
             if why:
