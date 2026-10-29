@@ -17811,6 +17811,69 @@
         ]
       }
     },
+    "/admin/llm-connections": {
+      "get": {
+        "operationId": "get_llm_connections_admin_llm_connections_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "LLM connections and model deployments (read-only, no secret values)",
+        "tags": [
+          "admin-llm-ops"
+        ]
+      }
+    },
     "/admin/llm-shadow/report": {
       "get": {
         "operationId": "get_llm_shadow_report_admin_llm_shadow_report_get",
