@@ -295,7 +295,7 @@ jobs:
     timeout-minutes: 25
     permissions:
       contents: read
-      pull-requests: read    # merge_group: the PR's labels (migration:out-of-order)
+      pull-requests: read    # the PR's labels (migration:out-of-order), read live
     defaults:
       run:
         working-directory: .
@@ -303,6 +303,8 @@ jobs:
       OWNER: cis
       MIG_DIR: api/migrations
       READINESS_FILE: api/core/readiness.py
+      # Public readiness of Dev: registered_keys tell whether a lower key of this owner still waits for a person.
+      READY_URL: https://api-cis.lumiguides.it.com/health/ready
       INFRA_REPO: AdventureAsia365-Ecosys/AA-CIS-Infra
       # AA-CIS-Infra main after M3 (#493/#494): run_migration.py with the expand lint, expand_check.py --classify.
       INFRA_TOOLS_SHA: 3b999913ba990e5e2ca8d3fbd8efb4d44980ca76
@@ -323,21 +325,23 @@ jobs:
           EVENT: ${{ github.event_name }}
           GROUP_BASE: ${{ github.event.merge_group.base_sha }}
           GROUP_REF: ${{ github.event.merge_group.head_ref }}
-          PR_OOO: ${{ contains(github.event.pull_request.labels.*.name, 'migration:out-of-order') }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # The label is read live in both cases (not from the event payload): adding migration:out-of-order and
+          # "Re-run jobs" is enough, no empty commit needed.
           if [ "$EVENT" = "merge_group" ]; then
             BASE="$GROUP_BASE"
             git fetch --quiet --depth=1 origin "$BASE"
             PR=$(sed -nE 's#.*/pr-([0-9]+)-[0-9a-f]+$#\1#p' <<<"$GROUP_REF")
-            OOO=false
-            if [ -n "$PR" ] && gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name' \
-                | grep -qx 'migration:out-of-order'; then OOO=true; fi
           else
             BASE=$(git rev-parse HEAD^1)    # the merge commit's first parent = the base this PR is tested on
-            OOO="$PR_OOO"
+            PR="$PR_NUMBER"
           fi
+          OOO=false
+          if [ -n "$PR" ] && gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name' \
+              | grep -qx 'migration:out-of-order'; then OOO=true; fi
           git diff --name-status --no-renames "$BASE" HEAD -- "$MIG_DIR" "$READINESS_FILE" | tee changes.txt
           ADDED=$(grep -cE "^A[[:space:]]+${MIG_DIR}/[0-9]{3}_[^/]*\.sql$" changes.txt || true)
           {
@@ -427,7 +431,7 @@ jobs:
           [ -s classify.json ] && ARGS+=(--classify-json classify.json)
           [ -n "$CLASSIFY_STATUS" ] && ARGS+=(--classify-status "$CLASSIFY_STATUS")
           [ "$OOO" = "true" ] && ARGS+=(--allow-out-of-order)
-          python3 .github/scripts/migration_preflight.py "${ARGS[@]}"
+          python3 .github/scripts/migration_preflight.py "${ARGS[@]}" --ready-url "$READY_URL"
 
   docker-build:
     name: Docker Build Check

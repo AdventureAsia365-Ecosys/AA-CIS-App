@@ -17,12 +17,21 @@ What the commit needs (read from the checked-out tree, i.e. the commit being dep
 What Dev has: ``registered_keys`` on the readiness URL (AA-993 M4a). A task that predates M4a has no such field: the
 gate then falls back to ``schema_version`` (the newest key) and ``missing_schema_versions`` (critic 23).
 
-The Infra run check (critic 4): GitHub's public Actions API of AA-CIS-Infra (``--infra-repo``), workflow
-``migration-apply.yml`` on main. A run whose "Apply on Dev" job was queued or ran and that is not finished yet (apply,
-probe) is waited for; then the newest finished run whose apply job ran must have concluded ``success``. Runs whose
-apply job was skipped (``DB_AUTO_APPLY`` not 'true': list only, today's default) do not count, so with auto-apply off
-the gate is exactly "every key is registered", which the manual DB Migrate flow already guarantees. When the Infra
-repo is not readable (private again, ADR 0014: auto-apply is then off too) the run check is skipped with a notice.
+The Infra run check (critic 4): GitHub's Actions API of AA-CIS-Infra (``--infra-repo``, public), workflow
+``migration-apply.yml`` on main, judged on its "Apply on Dev" and "Isolation probe" jobs only (the dump dispatch and the
+copy-PR summary jobs do not guard the schema). A run whose apply or probe is queued or running, or any re-run in
+flight, is waited for. Otherwise the newest run that applied files decides; a red apply or probe can only hide in a run
+concluded failure / cancelled / timed out (last ``lookback_days``, default 45), and such a run blocks until it is
+re-run green or a newer run applies files with apply and probe green. Runs whose apply job was skipped
+(``DB_AUTO_APPLY`` not 'true': list only, today's default) never count, so with auto-apply off the gate is exactly
+"every key is registered", which the manual DB Migrate flow already guarantees. Only a 404 of the repo itself
+(anonymous: private again, ADR 0014, auto-apply then off too) skips the run check, with a notice; a 403/429 (rate or
+abuse limit), any other error and a read cap mean "cannot decide": never a pass, the gate checks again every
+``--infra-interval`` seconds until the timeout.
+
+Timeout: ``--timeout``, default the repo variable ``SCHEMA_GATE_TIMEOUT_S`` (workflow env) or 2400 s, at most 2580 s
+(the job's ``timeout-minutes: 45`` less a margin). The chain it covers starts at the merge: migration-sync (cron
+*/10, often late), the copy PR's checks and the ci-bot merge, the Migration Apply plan, the apply and probe tasks.
 
 Exit 0 = every key registered (and the Infra run green); 1 = timeout (the summary names the missing keys or the red
 run); 2 = bad input (readiness file unreadable). Standard library only. Identical file in AA-CIS-App, AA-Booking and
@@ -40,15 +49,17 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from collections.abc import Callable
 
 PREFIX = {"cis": "", "booking": "bk-", "crm": "crm-"}
 FILE_RE = re.compile(r"^([0-9]{3})_[^/]*\.sql$")
 APPLY_JOB = "Apply on Dev"
 WORKFLOW = "migration-apply.yml"
 USER_AGENT = "aa-schema-gate"
+DEFAULT_TIMEOUT = 2400.0                # ADR 0017 d7 (S257 review: 20 min is too short for the chain)
+MAX_TIMEOUT = 2580.0                    # the schema-gate job has timeout-minutes: 45
 
 
 # ── what the deployed commit needs ──────────────────────────────────────────────────────────────────────────────────
@@ -153,6 +164,12 @@ def evaluate(app: str, required: list, body: dict) -> Schema:
 
 # ── the Infra migration-apply runs ──────────────────────────────────────────────────────────────────────────────────
 
+PROBE_JOB = "Isolation probe"          # a reusable workflow: "Isolation probe (blocking) / Isolation probe"
+IN_FLIGHT = ("in_progress", "queued", "pending", "waiting")
+RED_RUNS = ("failure", "cancelled", "timed_out")   # a red apply or probe can only hide in a run concluded like this
+OK_JOB = ("success", "skipped")
+PAGE = 100
+
 
 @dataclass
 class RunState:
@@ -162,55 +179,158 @@ class RunState:
     url: str = ""
 
 
+class Unread(Exception):
+    """A read the run check cannot decide on (HTTP error, rate limit, read cap): never a pass, the gate polls again."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class Private(Exception):
+    """The Infra repo itself answers 404 anonymously: private again (ADR 0014), so auto-apply is off (ADR 0017 d8)."""
+
+
+def guard_verdict(jobs: list, run_completed: bool) -> str:
+    """'none' | 'pending' | 'red' | 'green' from the "Apply on Dev" and "Isolation probe" jobs only.
+
+    The dump dispatch and the copy-PR summary jobs do not guard the schema, so they neither block nor delay the gate
+    (ADR 0017 d7: the run that registered the keys must have apply and probe green). 'none' = apply skipped or absent
+    (list only, nothing pending, or the plan has not finished)."""
+    applied = [j for j in jobs if str(j.get("name", "")).startswith(APPLY_JOB) and j.get("conclusion") != "skipped"]
+    if not applied:
+        return "none"
+    probe = [j for j in jobs if str(j.get("name", "")).startswith(PROBE_JOB)]
+    guard = applied + probe
+    if any(j.get("status") != "completed" for j in guard):
+        return "pending"
+    if any(j.get("conclusion") not in OK_JOB for j in guard):
+        return "red"
+    if not probe and not run_completed:
+        return "pending"                # the apply just finished; the probe job is not created yet
+    return "green"
+
+
+def _newest(run: dict) -> tuple:
+    return (str(run.get("created_at") or ""), int(run.get("id") or 0))
+
+
 @dataclass
 class Infra:
-    """GitHub REST reads of the Infra repo's migration-apply runs. ``get(path) -> (status, json | None)``."""
+    """GitHub REST reads of the Infra repo's migration-apply runs. ``get(path) -> (status, json | None)``.
+
+    Cost per check: 7 list calls (4 in-flight statuses, 3 red conclusions, each one page) plus one jobs call per
+    in-flight run and per red-concluded run until the newest one that applied files decides. Jobs of completed runs
+    are cached for the whole gate, and a check is never cut short into a pass: a cap or an unreadable page is a
+    "cannot decide" (fail closed)."""
 
     repo: str
     get: Callable
-    window: int = 30
+    max_jobs: int = 80                 # jobs reads per check, cache misses only
+    lookback_days: int = 45            # red runs older than this are not read (see the module docstring)
+    now: Callable = time.time
     _jobs: dict = field(default_factory=dict)
+    _budget: int = 0
 
-    def jobs(self, run: dict) -> list | None:
-        cache_key = (run["id"], run.get("run_attempt"), run.get("status"), run.get("updated_at"))
-        if run.get("status") == "completed" and cache_key in self._jobs:
-            return self._jobs[cache_key]
-        status, data = self.get(f"/repos/{self.repo}/actions/runs/{run['id']}/jobs?per_page=100")
-        if status != 200 or not isinstance(data, dict):
-            return None
-        jobs = data.get("jobs") or []
-        if run.get("status") == "completed":
-            self._jobs[cache_key] = jobs
+    def _read(self, path: str) -> dict:
+        status, data = self.get(path)
+        if status == 200 and isinstance(data, dict):
+            return data
+        if status == 404:
+            repo_status, _ = self.get(f"/repos/{self.repo}")
+            if repo_status == 404:
+                raise Private()
+            raise Unread(f"{path.split('?')[0]} answered 404 while {self.repo} is readable (HTTP {repo_status}): "
+                         f"is {WORKFLOW} renamed?")
+        why = "rate limited or refused" if status in (403, 429) else ("network error" if status == 0 else "error")
+        raise Unread(f"cannot read {self.repo} Actions (HTTP {status}, {why}) at {path.split('?')[0]}")
+
+    def _runs(self, query: str) -> list:
+        data = self._read(f"/repos/{self.repo}/actions/workflows/{WORKFLOW}/runs?branch=main&per_page={PAGE}&{query}")
+        return list(data.get("workflow_runs") or [])
+
+    def jobs(self, run: dict) -> list:
+        key = (run["id"], run.get("run_attempt"))
+        done = run.get("status") == "completed"
+        if done and key in self._jobs:
+            return self._jobs[key]
+        if self._budget <= 0:
+            raise Unread(f"read the jobs of {self.max_jobs} runs without finding the newest run that applied files")
+        self._budget -= 1
+        jobs = list(self._read(f"/repos/{self.repo}/actions/runs/{run['id']}/jobs?per_page=100").get("jobs") or [])
+        if done:
+            self._jobs[key] = jobs
         return jobs
 
     def state(self) -> RunState:
-        status, data = self.get(
-            f"/repos/{self.repo}/actions/workflows/{WORKFLOW}/runs?branch=main&per_page={self.window}")
-        if status in (403, 404):
-            return RunState(True, f"{self.repo} Actions not readable (HTTP {status}): the repo is private, so "
-                            "auto-apply is off (ADR 0017 d8); keys alone are checked", unreadable=True)
-        if status != 200 or not isinstance(data, dict):
-            return RunState(False, f"cannot read {self.repo} {WORKFLOW} runs (HTTP {status})")
-        for run in data.get("workflow_runs") or []:
-            jobs = self.jobs(run)
-            if jobs is None:
-                return RunState(False, f"cannot read the jobs of {self.repo} run {run['id']}")
-            apply = [j for j in jobs if str(j.get("name", "")).startswith(APPLY_JOB)]
-            ran = [j for j in apply if j.get("conclusion") != "skipped"]
+        self._budget = self.max_jobs
+        try:
+            return self._state()
+        except Private:
+            return RunState(True, f"{self.repo} is not readable anonymously (private: auto-apply is off, ADR 0017 "
+                            "d8); keys alone are checked", unreadable=True)
+        except Unread as exc:
+            return RunState(False, f"{exc.reason}; not a pass, checking again")
+
+    def _state(self) -> RunState:
+        # 1. A run applying or probing now (a re-run of an old run included) is waited for; a fresh run still in its
+        #    plan job applied nothing yet.
+        inflight: dict = {}
+        for status in IN_FLIGHT:
+            for run in self._runs(f"status={status}"):
+                inflight[run["id"]] = run
+        for run in sorted(inflight.values(), key=_newest, reverse=True):
             url = run.get("html_url", "")
+            if int(run.get("run_attempt") or 1) > 1:
+                return RunState(False, f"migration-apply run {run['id']} is being re-run (attempt "
+                                f"{run.get('run_attempt')}): waiting for it", url=url)
+            verdict = guard_verdict(self.jobs(run), False)
+            if verdict == "pending":
+                return RunState(False, f"migration-apply run {run['id']} is applying or probing", url=url)
+            if verdict == "red":
+                return self._red(run)
+            if verdict == "green":
+                return RunState(True, f"the newest migration-apply run that applied files has apply and probe green "
+                                f"(its other jobs may still run): {url}", url=url)
+
+        # 2. A red apply or probe hides only in a run concluded failure / cancelled / timed out. The newest such run
+        #    that applied files decides: green (only its dump or summary job failed) = nothing red is left after it;
+        #    red = blocking unless a newer run applied files with apply and probe green (_red).
+        since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(self.now() - self.lookback_days * 86400))
+        reds: dict = {}
+        full = []
+        for status in RED_RUNS:
+            runs = self._runs(f"status={status}&created=%3E%3D{since}")
+            if len(runs) >= PAGE:
+                full.append(status)
+            for run in runs:
+                reds[run["id"]] = run
+        for run in sorted(reds.values(), key=_newest, reverse=True):
             if run.get("status") != "completed":
-                if ran:
-                    return RunState(False, f"migration-apply run {run['id']} is applying or probing", url=url)
-                continue            # plan only so far (or list only): nothing this deploy waits for
-            if not ran:
-                continue            # list only (DB_AUTO_APPLY off) or nothing pending
-            if run.get("conclusion") == "success":
-                return RunState(True, f"the last migration-apply run that applied files is green: {url}", url=url)
-            return RunState(False, f"the last migration-apply run that applied files concluded "
-                            f"{run.get('conclusion')!r} (apply or the blocking Isolation Probe): {url}. Fix it and "
-                            "re-run its failed jobs; the gate passes once that run is green", url=url)
-        return RunState(True, f"no migration-apply run applied files in the last {self.window} runs "
-                        "(auto-apply off or nothing pending): the keys came from DB Migrate")
+                continue
+            verdict = guard_verdict(self.jobs(run), True)
+            if verdict == "green":
+                return RunState(True, f"the newest red-concluded run that applied files has apply and probe green "
+                                f"(only its dump or summary job failed): {run.get('html_url', '')}")
+            if verdict != "none":
+                return self._red(run)
+        if full:
+            raise Unread(f"a full page of {PAGE} runs concluded {', '.join(full)} in {self.lookback_days} days and "
+                         "none of them applied files: older ones were not read")
+        return RunState(True, f"no migration-apply run in the last {self.lookback_days} days has a red apply or probe "
+                        "(list-only runs, with DB_AUTO_APPLY off, never count)")
+
+    def _red(self, red: dict) -> RunState:
+        url = red.get("html_url", "")
+        if red.get("status") == "completed" and red.get("created_at"):
+            since = str(red["created_at"])
+            newer = [r for r in self._runs(f"status=success&created=%3E%3D{since}") if r["id"] != red["id"]]
+            for run in sorted(newer, key=_newest, reverse=True):
+                if guard_verdict(self.jobs(run), True) == "green":
+                    return RunState(True, f"run {red['id']} has a red apply or probe, but the newer run {run['id']} "
+                                    f"applied files with apply and probe green: {run.get('html_url', '')}")
+        return RunState(False, f"migration-apply run {red['id']} has a red apply or Isolation Probe ({url}). Fix it "
+                        "and re-run its failed jobs; the gate passes once its apply and probe are green", url=url)
 
 
 # ── the loop ────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -223,12 +343,15 @@ class Outcome:
 
 
 def run_gate(app: str, required: list, fetch_ready: Callable, infra: Infra | None, *, timeout: float,
-             interval: float, unreachable_grace: float, clock: Callable = time.monotonic,
-             sleep: Callable = time.sleep, log: Callable = print) -> Outcome:
+             interval: float, unreachable_grace: float, infra_interval: float = 0.0,
+             clock: Callable = time.monotonic, sleep: Callable = time.sleep, log: Callable = print) -> Outcome:
     start = clock()
     reached = False
     last = "nothing read yet"
     polls = 0
+    keys_at: float | None = None
+    run: RunState | None = None
+    run_at = 0.0
     while True:
         polls += 1
         status, body = fetch_ready()
@@ -236,12 +359,20 @@ def run_gate(app: str, required: list, fetch_ready: Callable, infra: Infra | Non
             reached = True
             schema = evaluate(app, required, body)
             if schema.missing:
+                keys_at = None
                 last = (f"Dev lacks {', '.join(schema.missing)} ({schema.how}; readiness HTTP {status})")
             else:
-                run = infra.state() if infra is not None else RunState(True, "Infra run check off")
+                if keys_at is None:
+                    keys_at = clock() - start
+                if infra is None:
+                    run = RunState(True, "Infra run check off")
+                elif run is None or run.ok or clock() - run_at >= infra_interval:
+                    run, run_at = infra.state(), clock()       # a not-ok answer is re-read every infra_interval
                 if run.ok:
                     lines = [f"every required key is registered on Dev ({len(required)} keys, newest "
-                             f"{required[-1]}; {schema.how})", run.reason, f"polls: {polls}"]
+                             f"{required[-1]}; {schema.how})", run.reason,
+                             f"timing: keys registered after {int(keys_at)} s, gate passed after "
+                             f"{int(clock() - start)} s, {polls} polls"]
                     if run.unreadable:
                         log(f"::notice::{run.reason}")
                     return Outcome(0, lines)
@@ -259,7 +390,8 @@ def run_gate(app: str, required: list, fetch_ready: Callable, infra: Infra | Non
                 "An expand file (`-- migrate: expand`) is copied to AA-CIS-Infra by the migration-sync bot and "
                 "applied by Migration Apply when DB_AUTO_APPLY is true; otherwise, and for every contract or "
                 "destructive file, a person applies it with DB Migrate (MIG-4: code that needs a contract file merges "
-                "only after that apply). Nothing was deployed; re-run this workflow once the key is registered.",
+                "only after that apply). Nothing was deployed; re-run this workflow once the key is registered (and "
+                "the Migration Apply run is green).",
             ])
         sleep(interval)
 
@@ -288,13 +420,24 @@ def http_json(url: str, token: str = "", timeout: float = 15.0) -> tuple:
 
 
 def github_get(path: str, token: str, fetch: Callable = http_json) -> tuple:
-    """GitHub REST GET. A 401/403/404 with this run's token is retried anonymously: the token of an app repo may not
-    reach another repo, while the Infra Actions API is public. Only an anonymous 403/404 means "not readable"."""
+    """GitHub REST GET. A 401/403/404/429 with this run's token is retried anonymously (the token of an app repo may not
+    reach another repo; the Infra Actions API is public). Run-check meaning of the final answer (Infra._read): only a
+    404 of the repo itself = private; a 403/429 (rate or abuse limit) or anything else = cannot decide, poll again."""
     url = "https://api.github.com" + path
     status, data = fetch(url, token)
-    if token and status in (401, 403, 404):
+    if token and status in (401, 403, 404, 429):
         status, data = fetch(url, "")
     return status, data
+
+
+def timeout_from(env: dict) -> float:
+    """--timeout default: repo variable SCHEMA_GATE_TIMEOUT_S (via the workflow env), else DEFAULT_TIMEOUT."""
+    raw = str(env.get("SCHEMA_GATE_TIMEOUT_S") or "").strip()
+    try:
+        value = float(raw) if raw else DEFAULT_TIMEOUT
+    except ValueError:
+        value = DEFAULT_TIMEOUT
+    return value if value > 0 else DEFAULT_TIMEOUT
 
 
 def main(argv: list | None = None) -> int:
@@ -305,13 +448,20 @@ def main(argv: list | None = None) -> int:
     p.add_argument("--ready-url", required=True, help="the Dev readiness URL (/health/ready of the app)")
     p.add_argument("--infra-repo", default="AdventureAsia365-Ecosys/AA-CIS-Infra",
                    help="owner/name of the Infra repo; empty = no run check")
-    p.add_argument("--timeout", type=float, default=1200.0, help="seconds (ADR 0017 d7: 20 min)")
+    p.add_argument("--timeout", type=float, default=timeout_from(os.environ),
+                   help=f"seconds (env SCHEMA_GATE_TIMEOUT_S, default {int(DEFAULT_TIMEOUT)}; "
+                   f"at most {int(MAX_TIMEOUT)})")
     p.add_argument("--interval", type=float, default=30.0)
+    p.add_argument("--infra-interval", type=float, default=120.0,
+                   help="seconds between Infra run checks while the last one was not ok")
     p.add_argument("--unreachable-grace", type=float, default=300.0,
                    help="seconds without a JSON readiness answer before failing early")
     p.add_argument("--summary", default=os.environ.get("GITHUB_STEP_SUMMARY", ""))
     a = p.parse_args(argv)
 
+    if a.timeout > MAX_TIMEOUT:
+        print(f"::warning::schema-gate: timeout {int(a.timeout)} s is above the job limit; using {int(MAX_TIMEOUT)} s")
+        a.timeout = MAX_TIMEOUT
     try:
         source = Path(a.readiness_file).read_text(encoding="utf-8")
         names = sorted(f.name for f in Path(a.migrations_dir).glob("*.sql"))
@@ -319,14 +469,15 @@ def main(argv: list | None = None) -> int:
     except (OSError, ValueError, SyntaxError) as exc:
         print(f"::error::schema-gate: cannot read what this commit needs: {exc}")
         return 2
-    print(f"schema-gate: this commit needs {len(required)} keys, newest {required[-1]}")
+    print(f"schema-gate: this commit needs {len(required)} keys, newest {required[-1]}; "
+          f"waiting up to {int(a.timeout)} s")
 
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
     infra = None
     if a.infra_repo:
         infra = Infra(a.infra_repo, lambda path: github_get(path, token))
     out = run_gate(a.app, required, lambda: http_json(a.ready_url), infra, timeout=a.timeout,
-                   interval=a.interval, unreachable_grace=a.unreachable_grace)
+                   interval=a.interval, unreachable_grace=a.unreachable_grace, infra_interval=a.infra_interval)
     head = "passed" if out.code == 0 else "failed (nothing deployed)"
     if a.summary:
         with open(a.summary, "a", encoding="utf-8") as fh:

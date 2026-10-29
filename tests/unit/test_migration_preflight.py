@@ -71,14 +71,66 @@ def test_name_status() -> None:
 def test_expand_file_with_raise_passes_and_says_auto_apply() -> None:
     r = _assess({"003_x.sql": EXPAND}, BASE_REQ, BASE_REQ | {"bk-003"})
     assert r.errors == []
-    assert r.files[0].klass == "expand" and "auto-applied" in mp.verdict_line(r.files[0])
+    assert r.files[0].klass == "expand"
+    assert mp.verdict_line(r.files[0]).startswith("expected expand (unverified"), "no classify evidence"
     assert "**expand**" in mp.summary_markdown(r)
+    r.files[0].classify = "expand"
+    assert mp.verdict_line(r.files[0]).startswith("auto-applied")
 
 
 @pytest.mark.parametrize(("sql", "klass"), [(CONTRACT, "contract"), (DESTRUCTIVE, "destructive")])
 def test_non_expand_file_with_raise_is_refused(sql: str, klass: str) -> None:
     r = _assess({"003_x.sql": sql}, BASE_REQ, BASE_REQ | {"bk-003"})
     assert any(f"is {klass}" in e and "MIG-4" in e for e in r.errors)
+
+
+def _assess_dev(dev_keys: set | None, lower: dict, raise_to: set = frozenset()) -> mp.Result:
+    """Base 001..00n on main (``lower``: name -> SQL), the PR adds the next file (expand); Dev holds ``dev_keys``."""
+    base = ("001_a.sql", *sorted(lower))
+    new = f"{len(base) + 1:03d}_new.sql"
+    head = sorted({*base, new})
+    headers = {"001_a.sql": "none", **{n: mp.header_of(q) for n, q in lower.items()}, new: "expand"}
+    reports = {new: _rep(new, EXPAND, classify="expand")}
+    return mp.assess(
+        "booking",
+        list(base),
+        head,
+        {"A": [new], "M": [], "D": []},
+        {"bk-001"},
+        {"bk-001", *raise_to},
+        reports,
+        set(base),
+        dev_keys=dev_keys,
+        headers=headers,
+    )
+
+
+def test_a_lower_contract_file_not_on_dev_is_a_warning_and_the_verdict_says_it_waits() -> None:
+    r = _assess_dev({"bk-001"}, {"002_c.sql": CONTRACT}, raise_to={"bk-003"})
+    assert r.errors == [] and len(r.warnings) == 1
+    assert "bk-002" in r.warnings[0] and "Deploy Dev of this PR (readiness bk-003) stays red" in r.warnings[0]
+    verdict = mp.verdict_line(r.files[0])
+    assert verdict.startswith("expand, but waits behind bk-002") and "auto-applied by" not in verdict
+    assert "**warning:**" in mp.summary_markdown(r)
+
+
+def test_a_lower_expand_file_not_on_dev_is_only_a_note() -> None:
+    r = _assess_dev({"bk-001"}, {"002_e.sql": EXPAND})
+    assert r.warnings == [] and any("applied first (expand): bk-002" in n for n in r.notes)
+    assert mp.verdict_line(r.files[0]).startswith("auto-applied")
+
+
+def test_everything_below_registered_or_dev_unreadable_says_nothing() -> None:
+    assert _assess_dev({"bk-001", "bk-002"}, {"002_c.sql": CONTRACT}).warnings == []
+    assert _assess_dev(None, {"002_c.sql": CONTRACT}).warnings == []
+
+
+def test_read_dev_keys() -> None:
+    keys, note = mp.read_dev_keys("booking", "https://x.invalid", lambda _u: (200, {"registered_keys": ["bk-001", 2]}))
+    assert keys == {"bk-001", "bk-002"} and note == ""
+    keys, note = mp.read_dev_keys("booking", "https://x.invalid", lambda _u: (0, None))
+    assert keys is None and "not readable" in note
+    assert mp.read_dev_keys("booking", "", lambda _u: (200, {})) == (None, "")
 
 
 def test_contract_file_alone_passes_and_says_manual() -> None:
@@ -229,7 +281,16 @@ def test_main_expand_with_raise_passes(repo: Path) -> None:
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", "pr")
     code, md = _main(repo)
-    assert code == 0 and "**expand**" in md and "header only" in md
+    assert code == 0 and "**expand**" in md and "header only" in md and "expected expand (unverified" in md
+
+
+def test_main_reads_dev_keys_for_the_prefix_check(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (repo / "migrations" / "003_x.sql").write_text(EXPAND, encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "pr")
+    monkeypatch.setattr(mp.sg, "http_json", lambda url, token="", timeout=15.0: (200, {"registered_keys": ["bk-001"]}))
+    code, md = _main(repo, "--ready-url", "https://example.invalid/ready")
+    assert code == 0 and "**warning:** bk-002" in md and "waits behind bk-002" in md
 
 
 def test_main_contract_with_raise_and_an_edit_fail(repo: Path) -> None:

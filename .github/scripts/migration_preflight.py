@@ -26,7 +26,10 @@ Readiness keys use the same reading as ``schema_gate.py`` (booking / crm: ``REQU
 ``LEGACY_CIS_BASELINE`` + 1 … ``REQUIRED_CIS_SCHEMA``). Without ``--infra-tools`` only the header is read (no lint);
 without ``--infra-copies`` every file on the base commit counts as copied (fail closed). Without classify evidence a
 file is expand when its header says so and the lint passes; the copy PR's classify and Migration Apply's re-classify
-stay the authority, and ``schema-gate`` is the backstop. Exit 1 on any refusal, 0 otherwise. Standard library only;
+stay the authority, and ``schema-gate`` is the backstop; such a file is reported "expected expand (unverified)".
+With ``--ready-url`` (Dev ``/health/ready``, public) a lower file of the owner that Dev has not registered and that is
+not expand is a warning: the strict-prefix apply (ADR 0017 d5) stops there, so the added file waits for a person.
+Exit 1 on any refusal, 0 otherwise. Standard library only;
 identical file in AA-CIS-App, AA-Booking and AA-Partner; tests: the repo's unit test ``test_migration_preflight.py``.
 """
 
@@ -61,6 +64,7 @@ class FileReport:
     lint_warnings: list = field(default_factory=list)
     classify: str = ""                  # expand | contract | "" (no evidence)
     findings: list = field(default_factory=list)
+    blocked_by: list = field(default_factory=list)  # lower keys of this owner not on Dev that a person must apply
 
     @property
     def klass(self) -> str:
@@ -74,6 +78,7 @@ class FileReport:
 @dataclass
 class Result:
     errors: list = field(default_factory=list)
+    warnings: list = field(default_factory=list)
     notes: list = field(default_factory=list)
     files: list = field(default_factory=list)
     raised: list = field(default_factory=list)
@@ -150,8 +155,29 @@ def immutable_errors(changes: dict, copies: set | None) -> tuple:
     return errors, notes
 
 
+def prefix_waits(app: str, added: list, head_names: list, dev_keys: set | None, headers: dict, floor: int) -> tuple:
+    """(expand keys, other keys) of this owner below the lowest added file that Dev has not registered yet.
+
+    The strict-prefix apply (ADR 0017 d5) applies an owner's files in number order and stops at the first one a person
+    must apply, so an added expand file waits behind every unregistered lower file, and stays stuck behind a contract
+    or destructive one. ``dev_keys`` None = Dev's registered_keys not readable (nothing reported)."""
+    if dev_keys is None or not added:
+        return [], []
+    lowest = min(int(FILE_RE.match(x).group(1)) for x in added)
+    expand, other = [], []
+    for name in head_names:
+        m = FILE_RE.match(name)
+        if not m or name in added or not floor < int(m.group(1)) < lowest:
+            continue
+        key = sg.norm_key(app, m.group(1))
+        if key not in dev_keys:
+            (expand if headers.get(name) == "expand" else other).append(key)
+    return expand, other
+
+
 def assess(app: str, base_names: list, head_names: list, changes: dict, base_required: set, head_required: set,
-           reports: dict, copies: set | None, allow_out_of_order: bool = False) -> Result:
+           reports: dict, copies: set | None, allow_out_of_order: bool = False, dev_keys: set | None = None,
+           headers: dict | None = None, floor: int = 0) -> Result:
     r = Result()
     r.errors, r.notes = immutable_errors(changes, copies)
     e, n = number_errors(base_names, changes.get("A", []), allow_out_of_order)
@@ -179,6 +205,16 @@ def assess(app: str, base_names: list, head_names: list, changes: dict, base_req
         if rep.key not in head_required:
             r.notes.append(f"`{name}` ({rep.key}) is not required by readiness: Deploy Dev does not wait for it, so "
                            "code must not depend on it until a PR raises readiness")
+    wait_expand, wait_other = prefix_waits(app, list(changes.get("A", [])), head_names, dev_keys, headers or {}, floor)
+    if wait_expand:
+        r.notes.append(f"not on Dev yet, applied first (expand): {', '.join(wait_expand)}")
+    if wait_other:
+        for rep in r.files:
+            rep.blocked_by = list(wait_other)
+        r.warnings.append(f"{', '.join(wait_other)} (contract, destructive or no expand header) is not registered on "
+                          "Dev: the strict-prefix auto-apply stops there, so the added file(s) wait until a person "
+                          "applies it with DB Migrate" + (f"; Deploy Dev of this PR (readiness {', '.join(r.raised)}) "
+                                                          "stays red until then" if r.raised else ""))
     stale = [k for k in r.raised if k in head_keys and k not in added_keys]
     if stale:
         r.notes.append(f"readiness raised to {', '.join(stale)} (files already on main): Deploy Dev waits until "
@@ -187,10 +223,17 @@ def assess(app: str, base_names: list, head_names: list, changes: dict, base_req
 
 
 def verdict_line(rep: FileReport) -> str:
-    if rep.klass == "expand":
-        return ("auto-applied by AA-CIS-Infra Migration Apply after the bot's copy PR merges (when DB_AUTO_APPLY is "
-                "true; otherwise one manual DB Migrate apply)")
-    return "copied by the bot, never auto-applied: a person applies it with DB Migrate (MIG-4)"
+    if rep.klass != "expand":
+        return "copied by the bot, never auto-applied: a person applies it with DB Migrate (MIG-4)"
+    if rep.blocked_by:
+        return (f"expand, but waits behind {', '.join(rep.blocked_by)} (not on Dev, a person applies it first): not "
+                "auto-applied until then")
+    if not rep.classify:
+        return ("expected expand (unverified: no classify evidence here; the copy PR's Expand classify decides). "
+                "Auto-applied after the bot's copy PR merges when DB_AUTO_APPLY is true; otherwise one manual DB "
+                "Migrate apply")
+    return ("auto-applied by AA-CIS-Infra Migration Apply after the bot's copy PR merges (when DB_AUTO_APPLY is "
+            "true; otherwise one manual DB Migrate apply)")
 
 
 def summary_markdown(r: Result) -> str:
@@ -204,6 +247,7 @@ def summary_markdown(r: Result) -> str:
         out.append("")
     if r.raised:
         out.append(f"- readiness raised to: {', '.join(r.raised)}")
+    out += [f"- **warning:** {w}" for w in r.warnings]
     out += [f"- note: {n}" for n in r.notes]
     out += [f"- **refused:** {e}" for e in r.errors]
     if not r.files and not r.raised and not r.errors:
@@ -263,6 +307,24 @@ def classify_entries(path: str, status: int | None, app: str) -> tuple:
     return out, note
 
 
+def read_dev_keys(app: str, url: str, fetch=None) -> tuple:
+    """(registered keys on Dev | None, note). Public readiness; any failure = no prefix check, with a note."""
+    if not url:
+        return None, ""
+    status, body = (fetch or sg.http_json)(url)
+    keys = body.get("registered_keys") if isinstance(body, dict) else None
+    if not isinstance(keys, list):
+        return None, (f"Dev registered_keys not readable (HTTP {status}; scaled to 0?): lower files still waiting on "
+                      "Dev were not checked")
+    out = set()
+    for k in keys:
+        try:
+            out.add(sg.norm_key(app, k))
+        except ValueError:
+            continue
+    return out, ""
+
+
 def main(argv: list | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--app", required=True, choices=sorted(INFRA_DIR))
@@ -274,6 +336,7 @@ def main(argv: list | None = None) -> int:
     p.add_argument("--classify-json", default="")
     p.add_argument("--classify-status", type=int, default=None)
     p.add_argument("--allow-out-of-order", action="store_true")
+    p.add_argument("--ready-url", default="", help="Dev /health/ready (public): registered_keys for the prefix check")
     p.add_argument("--summary", default=os.environ.get("GITHUB_STEP_SUMMARY", ""))
     a = p.parse_args(argv)
 
@@ -306,8 +369,13 @@ def main(argv: list | None = None) -> int:
             rep.classify, rep.findings = verdicts[name]
         reports[name] = rep
 
+    dev_keys, dev_note = read_dev_keys(a.app, a.ready_url) if changes.get("A") else (None, "")
+    headers = {n: header_of((Path(mig) / n).read_text(encoding="utf-8")) for n in head_names}
+    floor = sg.cis_baseline(Path(a.readiness_file).read_text(encoding="utf-8")) if a.app == "cis" else 0
     r = assess(a.app, base_names, head_names, changes, base_required, head_required, reports, copies,
-               a.allow_out_of_order)
+               a.allow_out_of_order, dev_keys=dev_keys, headers=headers, floor=floor)
+    if dev_note:
+        r.notes.append(dev_note)
     if changes.get("A"):
         if tools is None:
             r.notes.append("the pinned AA-CIS-Infra tools were not available: header only, no runner lint")
@@ -320,6 +388,8 @@ def main(argv: list | None = None) -> int:
     if a.summary:
         with open(a.summary, "a", encoding="utf-8") as fh:
             fh.write(md)
+    for w in r.warnings:
+        print(f"::warning::Migration preflight: {w}")
     for e in r.errors:
         print(f"::error::Migration preflight: {e}")
     return 1 if r.errors else 0

@@ -43,15 +43,17 @@ jobs:
   # when the roll starts) and in parallel with the build. Every CIS key this commit needs (LEGACY_CIS_BASELINE + 1 up to
   # REQUIRED_CIS_SCHEMA of api/core/readiness.py, plus every api/migrations/ file in that range) must be in
   # /health/ready `registered_keys` on Dev, and the AA-CIS-Infra Migration Apply run that applied files last must be
-  # green (its blocking Isolation Probe included). Polls up to 20 min (an expand file merged in the same PR is copied
-  # by the migration-sync bot and applied by Migration Apply meanwhile), then fails BEFORE the roll. No AWS, no secret:
-  # /health/ready and the Infra Actions API are public. With DB_AUTO_APPLY off it only checks that the keys are
-  # registered, which the manual DB Migrate flow already guarantees. Logic: .github/scripts/schema_gate.py
+  # green (its apply and blocking Isolation Probe jobs). Polls up to SCHEMA_GATE_TIMEOUT_S (repo variable, default
+  # 2400 s: an expand file merged in the same PR is copied by the migration-sync bot and applied by Migration Apply
+  # meanwhile), then fails BEFORE the roll. No AWS, no secret: /health/ready and the Infra Actions API are public. With
+  # DB_AUTO_APPLY off it only checks that the keys are registered, which the manual DB Migrate flow already guarantees
+  # (apply within the window, or re-run this workflow after the apply). Logic: .github/scripts/schema_gate.py
   # (tests/unit/test_schema_gate_script.py).
   schema-gate:
     name: Schema gate
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # The script stops at SCHEMA_GATE_TIMEOUT_S (default 2400 s, at most 2580 s); the job limit is the backstop.
+    timeout-minutes: 45
     permissions:
       contents: read
       actions: read
@@ -66,6 +68,7 @@ jobs:
       - name: Wait until Dev has every key this commit needs
         env:
           GH_TOKEN: ${{ github.token }}
+          SCHEMA_GATE_TIMEOUT_S: ${{ vars.SCHEMA_GATE_TIMEOUT_S }}
         run: |
           python3 .github/scripts/schema_gate.py --app cis --readiness-file api/core/readiness.py \
             --migrations-dir api/migrations --ready-url https://api-cis.lumiguides.it.com/health/ready
