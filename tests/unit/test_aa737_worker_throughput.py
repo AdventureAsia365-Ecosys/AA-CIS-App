@@ -79,7 +79,9 @@ def test_background_kind_never_claimed_with_two_or_fewer_free_slots(free):
                           # AA-920 WM-26: the post-activation check ($0, hourly while a release with content is active)
                           "writing_memory_post_activation",
                           # AA-1003 report core: daily KPI snapshot and report rendering ($0, DB reads only)
-                          "kpi_snapshot_daily", "report_generate"}
+                          "kpi_snapshot_daily", "report_generate",
+                          # AA-1003 R2: TP-03 hourly handoff check and the OPS-12 digest e-mail ($0)
+                          "inquiry_handoff_check", "report_email"}
     assert bool(background & set(w.claim_caps(free))) == (free > worker.BACKGROUND_RESERVE)
 
 

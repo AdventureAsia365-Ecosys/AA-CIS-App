@@ -133,17 +133,20 @@ async def _get_json(client: httpx.AsyncClient, url: str) -> dict:
     return {"http_status": r.status_code, "body": body if isinstance(body, dict) else None}
 
 
-async def _http_health_card(app_id: str, client: Optional[httpx.AsyncClient] = None) -> dict:
-    """An app probed over its public health + readiness paths (Booking, the partner CRM)."""
+async def http_health_card(app_id: str, client: Optional[httpx.AsyncClient] = None, *,
+                           base: Optional[str] = None, paths: Optional[tuple[str, str]] = None) -> dict:
+    """An app probed over its public health + readiness paths (Booking, the partner CRM; the OPS-12 digest also
+    probes CIS itself by passing its public origin as `base`). `status`: ok | degraded | down | unknown (no answer)."""
     info = APPS[app_id]
-    health_path, ready_path = info.health_paths
+    base = base or info.health_base
+    health_path, ready_path = paths or info.health_paths
     card: dict[str, Any] = {"id": app_id, "label": info.label, "repo_url": info.repo_url,
-                            "health_url": f"{info.health_base}{health_path}"}
+                            "health_url": f"{base}{health_path}"}
     own = client is None
     client = client or httpx.AsyncClient(timeout=HTTP_TIMEOUT_S)
     try:
         health, ready = await asyncio.gather(
-            *(_get_json(client, f"{info.health_base}{p}") for p in info.health_paths))
+            *(_get_json(client, f"{base}{p}") for p in (health_path, ready_path)))
     except Exception as e:  # timeout, DNS, TLS: the page says unknown, never fails
         logger.warning("platform_apps_http_probe_failed", app=app_id, error=repr(e)[:200])
         card.update(status="unknown", error=type(e).__name__,
@@ -172,6 +175,10 @@ async def _http_health_card(app_id: str, client: Optional[httpx.AsyncClient] = N
         "ok": "Health and readiness endpoints answer 200",
     }[card["status"]]}
     return card
+
+
+async def _http_health_card(app_id: str, client: Optional[httpx.AsyncClient] = None) -> dict:
+    return await http_health_card(app_id, client)
 
 
 async def _booking_card(client: Optional[httpx.AsyncClient] = None) -> dict:

@@ -431,7 +431,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `place_geocode`, `tour_graph_build` — AA-712, `place_shape`, `place_dedupe` — AA-847, `place_relocate` — AA-997, the five `retention_*` kinds — AA-825,
     `ops_alert_email` — AA-828, `data_erasure` — AA-839, the writing-memory kinds `writing_signal_backfill`,
     `writing_signal_fact_filter`, `writing_memory_mine` — AA-917, `writing_memory_r0` — AA-918, `writing_memory_r2`,
-    `writing_memory_shadow` — AA-919, `writing_memory_post_activation` — AA-920, `kpi_snapshot_daily`, `report_generate` — AA-1003). Every claim merges `progress.attempt_started_at` (AA-751, F18):
+    `writing_memory_shadow` — AA-919, `writing_memory_post_activation` — AA-920, `kpi_snapshot_daily`, `report_generate`,
+    `inquiry_handoff_check`, `report_email` — AA-1003). Every claim merges `progress.attempt_started_at` (AA-751, F18):
     `started_at` keeps the first attempt's start, so per-attempt age reads the progress key.
   - **Background kinds (AA-712)**: `@job_kind(..., background=True)` kinds never take the worker's
     last `BACKGROUND_RESERVE` (2) free slots (`Worker.claim_caps`), so a place-pipeline backlog cannot
@@ -515,6 +516,26 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `GET /admin/reports`, `GET /admin/reports/{id}/runs`, `GET /admin/reports/runs/{run_id}`,
     `POST /admin/reports/{id}/run`, 409 for a report not generated here; `POST /admin/reports/snapshots` {day?}
     re-computes one day's snapshot, the back-fill path, 90 days max). $0: DB reads only.
+  - **Daily safety net (AA-1003 R2)**: `report_generate` also renders **OPS-12** (daily platform health digest,
+    `services/reports/digest.py`: live /health + /health/ready of CIS (public origin `PUBLIC_API_BASE`, Dev default),
+    Booking and the CRM (`platform_apps.http_health_card`), CIS workers' commits vs the API's (not compared when the
+    API's commit is unknown), alarms in ALARM (DescribeAlarms), failed / overdue / lease-expired `shared.job` rows, LLM
+    availability (`api.services.llm_availability`; `unknown` with no answered text call in 24 h is an attention
+    item, never green), nightly probe verdicts, LLM spend vs the 14-day median, worker
+    starts and migrations of the last 24 h, open waves, overdue reports; every section isolated, short when green) and
+    **TP-03** (inquiry handoff, `services/reports/handoff.py`: TripPlanner `inquiry_sent` vs Booking
+    `inquiry_received` per UTC day from the ops.overview.v1 contract views only). Kind `inquiry_handoff_check`
+    (queued hourly by the ops sampler, key per UTC hour) checks the last 7 UTC days; a gap seen at two checks in a
+    row raises the admin bell `platform.inquiry_handoff.gap` (24 h throttle unless it grows) and one ops alert e-mail
+    per UTC day (template `inquiry_handoff_gap`); worker variable `INQUIRY_HANDOFF_ALERTS=off` turns bell and e-mail
+    off (the check still runs). Kind `report_email` sends a scheduled OPS-12 run to its opt-in list
+    only (`OPS_DIGEST_EMAIL_TO`, comma-separated; empty = skipped), never to the alert recipients. KPI computers
+    `inquiry_handoff` (K-TP-HANDOFFGAP, K-BK-PARKED, K-BK-INQ2CASE, UTC day D) and `nightly_probes` (DATA-01:
+    K-DATA-PROBES, K-DATA-LIVENESS, K-DATA-STALE from the `SCRIPT verdict` lines of the ECS run-script probes in
+    CloudWatch Logs, `services/reports/probes.py`; needs `logs:FilterLogEvents` on the log group; the ops overview
+    client's short timeouts and a 20 s budget for the paged search, an unfinished search counts nothing). A computer
+    whose outside source is unreadable (probe log, or a contract view revoked / dropped / reshaped) raises
+    `kpis.Unavailable`: no value, reason under `unavailable` in the job result, the snapshot still succeeds and chains. $0 (view reads, two cheap AWS reads, SES).
   - **Ops metrics sampler (AA-832, AA-751)**: `api/core/ops_metrics_sampler.py`, a background task of
     the **api** (not the worker) started in `api/main.py`'s lifespan after the main pool, cancelled
     before it closes, off when `ENVIRONMENT=test`, never raises. Every 300 s (first tick 30 s after

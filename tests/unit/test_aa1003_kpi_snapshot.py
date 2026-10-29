@@ -228,7 +228,7 @@ def test_chain_targets_the_daily_and_live_cis_reports(monkeypatch):
     monkeypatch.setattr(report_jobs, "enqueue_report_run", fake_enqueue)
     day = date(2026, 10, 28)
     asyncio.run(report_jobs.chain_reports(MagicMock(), day, "job"))
-    assert sorted(s[0] for s in seen) == ["EX-04", "EX-06"]
+    assert sorted(s[0] for s in seen) == ["EX-04", "EX-06", "OPS-12", "TP-03"]     # R2 adds OPS-12, TP-03
     assert all(s[1:] == (day, day, "schedule", report_jobs.SCHEDULER) for s in seen)
 
 

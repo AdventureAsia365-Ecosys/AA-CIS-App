@@ -26,6 +26,7 @@ are reported as their own rows by the cost module.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -58,6 +59,15 @@ class AppInfo:
 TP_ONLINE_STAGES: tuple[str, ...] = ("tp_compose", "tp_search_embed")
 # AA-TripPlanner-Web backend/config.py TP_DAILY_SPEND_CAP_USD default (mirrored; the live value may differ).
 TP_DEFAULT_DAILY_CAP_USD = 5.0
+# The CIS API's public origin (API Gateway custom domain): the OPS-12 digest probes /health + /health/ready from the
+# worker the way an outside caller sees them (AA-1003 R2). The Dev default; PUBLIC_API_BASE (the variable
+# services/photos/sync.py already reads for the same origin) overrides it, so another environment needs no code change.
+CIS_API_ORIGIN = "https://api-cis.lumiguides.it.com"
+CIS_HEALTH_PATHS: tuple[str, str] = ("/health", "/health/ready")
+
+
+def cis_api_origin() -> str:
+    return (os.environ.get("PUBLIC_API_BASE") or CIS_API_ORIGIN).strip().rstrip("/") or CIS_API_ORIGIN
 # AA-Partner's Dev partner host (CloudFront, AA-CIS-Infra crm_edge.tf).
 CRM_PARTNER_ORIGIN = "https://partner-dev.lumiguides.it.com"
 

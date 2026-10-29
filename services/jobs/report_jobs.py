@@ -6,8 +6,10 @@
                       day and upserts them into shared.kpi_daily (re-running a day overwrites its values). A computer
                       that fails does not stop the others: their values are written, then the job raises so the
                       runner retries (a failed KPI is never a silent success). A scheduled run that wrote every KPI
-                      queues report_generate for each CIS-generated daily/live report (EX-04, EX-06) for the same
-                      day (one scheduled run per report and day, shared.report_run_schedule_uq).
+                      queues report_generate for each CIS-generated daily/live report (EX-04, EX-06; R2: OPS-12,
+                      TP-03) for the same day (one scheduled run per report and day, shared.report_run_schedule_uq).
+                      R2: a computer whose outside source cannot be read now (kpis.Unavailable: the probe log) writes
+                      no value and is listed under `unavailable` in the result; that alone never fails the job.
                       Scheduled once a day by the api's ops metrics sampler (api/core/ops_metrics_sampler.py,
                       _reports_part) from 00:30 UTC, idempotency key kpi_snapshot_daily:<day>.
   report_generate     payload {"run_id": <shared.report_run id>, "report_id", "period_start", "period_end"}
@@ -15,6 +17,8 @@
                       succeeded (summary, output JSON, output_markdown) or failed (error). Created with its run row by
                       enqueue_report_run (POST /admin/reports/{id}/run, or the chain above). A job that ends without
                       success (failed after its retries, cancelled) leaves the run failed (on_terminal).
+                      R2: a scheduled run of an e-mailed report (OPS-12) queues report_email for its run once it
+                      succeeded (services/jobs/report_ops_jobs.py).
 
 Both are background kinds (never take the worker's last free slots) and cost $0 (DB reads only).
 """
@@ -26,8 +30,9 @@ from typing import Optional
 
 import structlog
 
+from services.jobs import report_ops_jobs
 from services.reports import generate, periods, store
-from services.reports.kpis import COMPUTERS, DayContext, KpiValue
+from services.reports.kpis import COMPUTERS, DayContext, KpiValue, Unavailable
 from services.reports.registry import Report, load
 from shared.jobs.registry import JobContext, NonRetryable, enqueue, job_kind
 
@@ -63,17 +68,24 @@ def resolve_day(payload: dict, now=None) -> date:
     return day
 
 
-async def compute_day(conn, ctx: DayContext, allowed: set[str]) -> tuple[list[KpiValue], dict[str, str]]:
-    """Every computer for one day -> (values of registered snapshot KPIs, {computer: error})."""
+async def compute_day(conn, ctx: DayContext,
+                      allowed: set[str]) -> tuple[list[KpiValue], dict[str, str], dict[str, str]]:
+    """Every computer for one day -> (values of registered snapshot KPIs, {computer: error},
+    {computer: why its outside source is unavailable})."""
     values: list[KpiValue] = []
     errors: dict[str, str] = {}
+    unavailable: dict[str, str] = {}
     for name, (fn, _ids) in COMPUTERS.items():
         try:
             values += [v for v in await fn(conn, ctx) if v.kpi_id in allowed]
+        except Unavailable as e:    # an outside source (the probe log) is not readable now: no value, noted
+            unavailable[name] = str(e)[:300]
+            logger.info("kpi_snapshot_part_unavailable", part=name, day=ctx.day.isoformat(),
+                        reason=unavailable[name])
         except Exception as e:      # one broken KPI must not hide the others; the job still raises below
             errors[name] = f"{type(e).__name__}: {str(e)[:300]}"
             logger.warning("kpi_snapshot_part_failed", part=name, day=ctx.day.isoformat(), error=errors[name])
-    return values, errors
+    return values, errors, unavailable
 
 
 async def enqueue_report_run(pool, report: Report, first: date, last: date, *, trigger: str, triggered_by: str,
@@ -123,14 +135,15 @@ async def run_snapshot(ctx: JobContext) -> dict:
     versions = {k.id: k.version for k in snap}
     ctx_day = DayContext.for_day(day)
     async with ctx.pool.acquire() as conn:
-        values, errors = await compute_day(conn, ctx_day, set(units))
+        values, errors, unavailable = await compute_day(conn, ctx_day, set(units))
         async with conn.transaction():
             written = await store.upsert_kpis(conn, day, values, units=units, versions=versions, job_id=ctx.job_id)
     by_kpi: dict[str, int] = {}
     for v in values:
         by_kpi[v.kpi_id] = by_kpi.get(v.kpi_id, 0) + 1
     result = {"kind": SNAPSHOT_KIND, "day": day.isoformat(), "trigger": trigger, "rows_written": written,
-              "by_kpi": by_kpi, "no_value": sorted(set(units) - set(by_kpi)), "errors": errors, "chained": []}
+              "by_kpi": by_kpi, "no_value": sorted(set(units) - set(by_kpi)), "errors": errors,
+              "unavailable": unavailable, "chained": []}
     await ctx.progress(phase="written", day=day.isoformat(), rows_written=written)
     if errors:
         ctx.set_result(result)
@@ -178,9 +191,18 @@ async def run_report(ctx: JobContext) -> dict:
             await store.finish_failed(conn, run_id, f"{type(e).__name__}: {str(e)[:1000]}")
             raise
         await store.finish_ok(conn, run_id, summary=out.summary, output=out.output, markdown=out.markdown)
+    email = None
+    if run.get("trigger") == "schedule" and report.id in report_ops_jobs.EMAILED_REPORTS:
+        try:        # the report is stored; a failed enqueue must not fail it (the digest page still has it)
+            email = await report_ops_jobs.enqueue_report_email(ctx.pool, run_id, report.id, parent_job_id=ctx.job_id)
+        except Exception as e:
+            email = {"error": f"{type(e).__name__}: {str(e)[:200]}"}
+            logger.warning("report_email_enqueue_failed", run_id=run_id, report_id=report.id, error=email["error"])
     result = {"kind": REPORT_KIND, "run_id": run_id, "report_id": report.id,
               "period_start": run["period_start"].isoformat(), "period_end": run["period_end"].isoformat(),
               "summary": out.summary}
+    if email is not None:
+        result["email"] = email
     ctx.set_result(result)
     logger.info("report_generated", run_id=run_id, report_id=report.id, summary=out.summary)
     return result

@@ -384,10 +384,17 @@ kpis:
   definition: trip_case_created / inquiry_received, same source_system
   unit: ratio
   threshold: 100 % within 24 h
-  sources: []
+  sources:
+  - booking.v_ops_funnel_daily
   defined_in: TP-03
   used_by:
   - TP-03
+  snapshot:
+    job: kpi_snapshot_daily
+    scopes:
+    - all
+    computes: trip_case_created / inquiry_received of booking.v_ops_funnel_daily, source_system tripplanner, UTC day D (no
+      value on a day without inquiries)
 - id: K-BK-INVOICED
   version: 1
   name: Invoiced revenue
@@ -423,7 +430,7 @@ kpis:
   - BK-01
 - id: K-BK-PARKED
   version: 1
-  name: Parkedfailed inquiries
+  name: Parked or failed inquiries
   definition: booking.v_ops_funnel_daily metrics inquiry_parked + inquiry_failed; age from booking.inbox_events (status,
     received_at, processed_at)
   unit: count
@@ -434,6 +441,14 @@ kpis:
   defined_in: TP-03
   used_by:
   - TP-03
+  snapshot:
+    job: kpi_snapshot_daily
+    scopes:
+    - all
+    computes: inquiry_parked + inquiry_failed of booking.v_ops_funnel_daily for UTC day D, every source (the current status
+      of the inquiries received that day); the age needs booking.inbox_events (no cis_app grant yet)
+  alert:
+    red_gte: 1
 - id: K-BK-STALLED
   version: 1
   name: Stalled cases
@@ -1036,6 +1051,15 @@ kpis:
   defined_in: DATA-01
   used_by:
   - DATA-01
+  snapshot:
+    job: kpi_snapshot_daily
+    scopes:
+    - all
+    computes: violations= of the last `SCRIPT verdict` line the tour liveness gate task (run-script s248_tour_deletion_probe)
+      logged in the ICT day (CloudWatch Logs /ecs/aa-cis-<env>, streams migrate/migrate/*); no value when the gate did not
+      run or the task role cannot read the log group
+  alert:
+    red_gte: 1
 - id: K-DATA-PROBES
   version: 1
   name: Probes passed
@@ -1047,6 +1071,14 @@ kpis:
   used_by:
   - OPS-12
   - DATA-01
+  snapshot:
+    job: kpi_snapshot_daily
+    scopes:
+    - all
+    computes: 'of the probes whose verdict CIS can read (the ECS run-script probes: tour liveness gate, downstream freshness
+      probe), the share whose last run in the ICT day passed (no error, nothing over the bar); a probe with no run or no
+      verdict line counts as not passed. GitHub-only workflows are not visible from CIS. No value when the task role cannot
+      read the log group'
 - id: K-DATA-STALE
   version: 1
   name: Stale rows > 24 h
@@ -1059,6 +1091,14 @@ kpis:
   defined_in: DATA-01
   used_by:
   - DATA-01
+  snapshot:
+    job: kpi_snapshot_daily
+    scopes:
+    - all
+    computes: stale_aged= of the last `SCRIPT verdict` line the freshness probe task (run-script aa991_freshness_probe) logged
+      in the ICT day (CloudWatch Logs, as K-DATA-LIVENESS)
+  alert:
+    red_gte: 1
 - id: K-DB-CONN
   version: 1
   name: Connection saturation
@@ -2360,9 +2400,20 @@ kpis:
   sources:
   - tripplanner.v_inquiry_outbox
   - booking.inbox_events
+  - tripplanner.v_ops_traffic_daily
+  - booking.v_ops_funnel_daily
   defined_in: TP-03
   used_by:
   - TP-03
+  snapshot:
+    job: kpi_snapshot_daily
+    scopes:
+    - all
+    computes: 'UTC day D (the contract views count per UTC day): inquiry_sent of tripplanner.v_ops_traffic_daily minus inquiry_received
+      of booking.v_ops_funnel_daily with source_system tripplanner, floored at 0. The per-inquiry 15-minute rule needs a key-level
+      contract view (no cis_app grant on v_inquiry_outbox or inbox_events yet)'
+  alert:
+    red_gte: 1
 - id: K-TP-INQ
   version: 1
   name: TripPlanner inquiries sent

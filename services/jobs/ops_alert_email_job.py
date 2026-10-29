@@ -6,6 +6,8 @@ row (shared.cost_guard.maybe_alert). Payload: {"template": "spend_budget", "peri
 "requested_by"} from "Send test e-mail" on Platform › Alert recipients (api/services/alert_recipients.py).
 AA-845: {"template": "jev_credit_low" | "jev_credit_exhausted", "test", ...} from the Jev credit bells
 (shared/jev_credit.py, shared/llm_client/decide.maybe_alert_jev_credit).
+AA-1003 R2: {"template": "inquiry_handoff_gap", gap, sent, received, window, ...} from the TP-03 hourly check
+(services/jobs/report_ops_jobs.py), once per UTC day.
 
 Recipients (AA-913, shared/alert_recipients.ops_recipients): the confirmed rows of shared.alert_recipient plus
 ALERT_EMAIL_TO, lower case, deduplicated; all in the To of one message (internal staff). When the alerts topic is
@@ -39,6 +41,7 @@ _RENDERERS = {
     ops_alerts.TEMPLATE_JEV_CREDIT_LOW: ops_alerts.render_jev_credit,              # AA-845
     ops_alerts.TEMPLATE_JEV_CREDIT_EXHAUSTED: ops_alerts.render_jev_credit,        # AA-845
     ops_alerts.TEMPLATE_WRITING_MEMORY_ROLLBACK: ops_alerts.render_writing_memory_rollback,   # AA-920
+    ops_alerts.TEMPLATE_INQUIRY_HANDOFF_GAP: ops_alerts.render_inquiry_handoff_gap,   # AA-1003 TP-03
 }
 WORKER_ACTOR = f"job:{ops_alerts.KIND}"
 
