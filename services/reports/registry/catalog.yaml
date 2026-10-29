@@ -1,0 +1,1757 @@
+# Report registry: every recurring report of the AA ecosystem (AA-1003 R1; catalog from the AA-1001 advisory).
+#
+# Source of truth for report IDs, cadence, owner role, channel and template. Edit by hand; the lint
+# (tools/docs/report_registry.py check, root Docs lint) checks the shape, the KPI references (kpis.yaml) and the
+# template paths. The CIS report engine reads a byte copy (AA-CIS-App services/reports/registry/catalog.yaml):
+# change both in the same session (the CIS copy in its own PR).
+#
+# Fields: id, family, name_en, name_vi, audience, owner_role, decision (what the reader decides with it), cadence
+# (words), schedule (one of hourly/daily/weekly/monthly/quarterly/live/event/on_demand), channel, automation
+# (auto/semi/manual/on_demand), status (state of the report today: exists/partial/planned/missing), priority (P0-P3),
+# template (path of its Markdown template, or null for a product page), generator (cis = the CIS engine renders it
+# with job kind report_generate; null = not automated yet), kpis (IDs in kpis.yaml), sections (what it contains).
+
+version: 1
+imported_from: docs/audits/2026-10-29-S258-report-catalog/catalog.json
+reports:
+- id: EX-01
+  family: executive
+  name_en: Weekly business pack
+  name_vi: Gói báo cáo kinh doanh hằng tuần
+  audience: business owner (primary reader), tech lead (approver)
+  owner_role: tech lead (approves); agent drafts the narrative and posts after approval
+  decision: Is the program on track this week, is spend inside budget, and which decisions must the business owner make
+    now?
+  cadence: 'weekly: auto-draft Monday 01:30 UTC (08:30 ICT) for the previous ISO week in ICT; approved and posted by Tuesday'
+  schedule: weekly
+  channel: Jira comment under the weekly platform report epic PR-20 (Vietnamese, business owner mention node, no Linear
+    IDs, no 'ạ'); draft JSON + Markdown in S3 and /admin/reports; Jira draft copy in docs/audits/<date>-S<nnn>-session-close/jira-drafts.md
+    without commercial numbers while the root repo is public
+  automation: semi
+  status: partial
+  priority: P0
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/business-review.md
+  generator: null
+  kpis:
+  - K-DEL-SHIPPED
+  - K-COST-MTD
+  - K-LLM-COST-WEEK
+  - K-CAT-LIVE
+  - K-DEM-INQ
+  - K-REL-SEV
+  sections:
+  - '1. Headline: three Vietnamese lines (went well / went wrong / money)'
+  - 2. KPI strip with week-over-week arrows, read from EX-04 snapshots (never typed by hand)
+  - 3. Shipped per app (CIS, TripPlanner, Booking, Partner/CRM, Infra) from release-please CHANGELOG versions and DEV-03
+    Done-with-live-verify issues
+  - '4. Money: week spend, month-to-date vs prorated budget, month-end forecast (from FI-02)'
+  - 5. Demand and catalog headline (TP-01, BK-02 counts, CIS-01 tours live, CIS-05 quality headline)
+  - 6. Incidents and risks (OPS-04 records, OPS-12 week roll-up, blocked items such as the acc3 Bedrock access incident)
+  - '7. Next week: top 3-5 items from docs/backlog/README.md'
+  - 8. Decisions needed (options + recommendation; docs/backlog/README.md section 2, docs/guides/ceo.md section 6)
+- id: EX-02
+  family: executive
+  name_en: Monthly business review
+  name_vi: Báo cáo kinh doanh hằng tháng cho chủ doanh nghiệp
+  audience: business owner (reader, decisions), tech lead (author, approver)
+  owner_role: tech lead (author/approver); business owner (reader)
+  decision: Where did the money go and what did it buy, is demand and commercial traction moving, and what must the business
+    owner decide next month (pricing, tenants, go-live, paid runs)?
+  cadence: 'monthly: auto-draft business day 2 at 02:00 UTC (09:00 ICT) for the previous month; cost section marked provisional
+    when BD2 falls before day 3 and refreshed automatically on day 3; approved by business day 5'
+  schedule: monthly
+  channel: S3 (Markdown + PDF) and /admin/reports; five-line Vietnamese summary as a Jira comment under the weekly report
+    epic with the link; optional one-page HTML artifact for phone reading; platform-only sections may be copied to docs/audits/<date>-S<nnn>-mbr/
+  automation: semi
+  status: missing
+  priority: P1
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/business-review.md
+  generator: null
+  kpis:
+  - K-COST-TOTAL
+  - K-UNIT-TOUR
+  - K-BK-CONV
+  - K-DEL-PLAN
+  - K-REL-SEV
+  - K-PART-PAYING
+  sections:
+  - '1. Executive summary, five Vietnamese lines: delivered, money, demand, risks, decisions'
+  - '2. Scorecard: this month vs last month vs 3-month average (EX-04)'
+  - '3. Delivery per app: released versions (DEV-02) and per-app Jira epic highlights; DORA headline (DEV-01)'
+  - '4. Content and catalog: tours published, republished, retired, served; quality gate pass rate (CIS-01, CIS-05)'
+  - '5. Demand funnel: TripPlanner session -> trip started -> inquiry sent -> Booking inquiry -> trip case -> proposal sent
+    -> confirmed (TP-01, BK-02); acquisition sources (MKT-01)'
+  - 6. Commercial summary from FI-07 (aggregates only); shows 'not live (Dev)' until the first real booking
+  - 7. Partners (EX-03, EX-07 summary)
+  - '8. Cost and unit costs (FI-01, FI-05 headline): total by app, top 5 movers with reasons, cost per published tour'
+  - '9. Reliability and security: incidents (OPS-04), SLO misses (OPS-13), security hygiene counts (SEC-03), legal readiness
+    count (SEC-10)'
+  - 10. Customer satisfaction headline (CX-01) once real trips complete
+  - 11. Risks and decisions needed (options + recommendation; clickable decision page per memory artifact-decisions-interactive)
+  - 12. Goals for next month
+- id: EX-03
+  family: executive
+  name_en: Partner growth and churn
+  name_vi: Tăng trưởng và rời bỏ của đối tác (tenant Content studio, đại lý CRM, đối tác B2B)
+  audience: business owner, tech lead, AA staff managing partners
+  owner_role: business owner (decisions); tech lead (build)
+  decision: Which partners to upsell, rescue or offboard; is the partner business growing; which plan and price work?
+  cadence: monthly section of EX-02 (business day 2) + live tab; quarterly cohort in EX-05
+  schedule: monthly
+  channel: New Summary tab on /admin/platform/agencies (merged with the planned S-03 AA insights, AA-966) + CSV; monthly
+    numbers into EX-02
+  automation: auto
+  status: missing
+  priority: P2
+  template: null
+  generator: null
+  kpis:
+  - K-PART-PAYING
+  - K-PART-CHURN
+  - K-PART-MRR
+  - K-PART-ACT
+  - K-PART-QUOTA
+  sections:
+  - '1. Partner count by product (Content studio tenant, CRM agency, Booking B2B partner) and plan: active, new, churned'
+  - '2. MRR bridge: start + new + expansion - contraction - churn = end'
+  - 3. Activation headline (detail in EX-07)
+  - '4. Usage and quota: tours rewritten, API calls, quota %, overage, CRM seats vs member_limit'
+  - '5. Health list: at-risk partners and upsell candidates'
+  - 6. Churn reasons (shared.tenants.cancellation_reason, CRM offboarding)
+  - 7. Cohort table by sign-up month (quarterly, in EX-05)
+- id: EX-04
+  family: executive
+  name_en: Executive KPI scorecard with daily history
+  name_vi: Bảng chỉ số điều hành có lịch sử theo ngày (xương sống số liệu)
+  audience: business owner, tech lead; feeds every periodic report
+  owner_role: tech lead
+  decision: Is any headline number moving the wrong way vs last week/month, without waiting for a written report?
+  cadence: daily snapshot 00:30 UTC (07:30 ICT) for the previous ICT day + live on demand; cost values provisional for 48
+    h (Cost Explorer settles late, docs/ops/finops.md)
+  schedule: daily
+  channel: /admin/overview new Trend tab + CSV export; feeds EX-01, EX-02, EX-05, FI-05
+  automation: auto
+  status: partial
+  priority: P0
+  template: null
+  generator: cis
+  kpis:
+  - K-COST-FCST
+  - K-LLM-COST-DAY
+  - K-CAT-LIVE
+  - K-TP-TRIPS
+  - K-TP-INQ
+  - K-BK-INQ
+  - K-BK-CONF
+  - K-JOB-FAIL
+  sections:
+  - 1. KPI tiles with 7/30/90-day sparkline and delta vs prior period
+  - '2. Cost: spend MTD, month-end forecast vs budget, LLM spend per day per app'
+  - '3. Catalog: tours live, published per day'
+  - '4. Demand: TripPlanner sessions, trips, inquiries; Booking inquiries, proposals, confirmed'
+  - '5. Partners: active tenants, active CRM agencies'
+  - '6. Health: apps green, failed jobs 24 h per job table, alarms in ALARM'
+  - 7. CSV export of the snapshot table for any range
+- id: EX-05
+  family: executive
+  name_en: Quarterly business review and annual plan
+  name_vi: Báo cáo kinh doanh hằng quý và kế hoạch năm
+  audience: business owner (approves budget), tech lead (author)
+  owner_role: tech lead (author); business owner (approver)
+  decision: 'Strategy and budget for the next quarter or year: which apps to invest in, go-live timing, pricing, vendor
+    changes.'
+  cadence: 'quarterly: auto-draft with the monthly pack on business day 2 of January, April, July, October; approved by
+    business day 10; annual plan in December or before prod go-live'
+  schedule: quarterly
+  channel: S3 + /admin/reports; summary as a Jira comment under the weekly report epic; optional Slides-type artifact for
+    presentation
+  automation: semi
+  status: missing
+  priority: P2
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/business-review.md
+  generator: null
+  kpis:
+  - K-FIN-QVAR
+  - K-UNIT-TREND
+  - K-PART-NET
+  - K-DEL-ROADMAP
+  sections:
+  - '1. Quarter in one page (Vietnamese): goals vs results'
+  - '2. Trend of the three monthly reviews: cost, unit costs, demand, partners, revenue'
+  - 3. Budget vs actual for the quarter and year to date (FI-06)
+  - 4. Vendor and contract review (FI-04 quarterly part)
+  - '5. Security and compliance: SEC-05 access review status, SEC-09 privacy counts, SEC-10 legal readiness'
+  - '6. Delivery: DORA trend (DEV-01), roadmap next quarter from docs/backlog/tracker/plan.json'
+  - 7. Partner cohorts (EX-03, EX-07)
+  - 8. Capacity and growth forecast (OPS-16)
+  - '9. Q4 only: next-year budget per app and prod cost model'
+- id: EX-06
+  family: executive
+  name_en: Report register and calendar (reports hub)
+  name_vi: Sổ đăng ký và lịch báo cáo (trung tâm báo cáo)
+  audience: tech lead, business owner, agents
+  owner_role: tech lead
+  decision: Which recurring report is due or overdue, where is the latest copy, who approved it?
+  cadence: live; due check daily at 02:00 UTC inside the scheduler
+  schedule: live
+  channel: /admin/reports (CIS admin) + bell; overdue list in OPS-12 and EX-01
+  automation: auto
+  status: missing
+  priority: P0
+  template: null
+  generator: cis
+  kpis:
+  - K-RPT-ONTIME
+  - K-RPT-OVERDUE
+  - K-RPT-FAILED
+  sections:
+  - '1. Catalogue: every report ID, family, cadence, owner role, channel, status'
+  - '2. Due list: next due date, last run, run status (scheduled / draft / approved / posted / failed / overdue)'
+  - 3. Latest output links (S3 object, Jira URL, git path, admin page)
+  - 4. Overdue and failed runs
+  - '5. Report usage: opens per report in 90 days (to retire unread reports)'
+- id: EX-07
+  family: executive
+  name_en: Partner onboarding funnel
+  name_vi: Phễu kích hoạt đối tác mới (tenant Content studio và đại lý CRM)
+  audience: business owner, AA staff managing partners, tech lead
+  owner_role: AA staff managing partners; business owner reviews
+  decision: Where do new tenants and agencies stall between invitation and first value, and who needs a hand-hold call this
+    week?
+  cadence: weekly Monday 01:30 UTC (stuck list) + monthly in EX-02
+  schedule: weekly
+  channel: /admin/platform/agencies Onboarding tab + section of EX-03; stuck list in the weekly SES digest to AA admins
+  automation: auto
+  status: missing
+  priority: P2
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/customer-growth-report.md
+  generator: null
+  kpis:
+  - K-PART-ACT
+  - K-ONB-CRM
+  - K-ONB-TTV
+  - K-ONB-STUCK
+  sections:
+  - '1. Content studio funnel: tenant created -> first staff sign-in -> brand brief uploaded -> first approved piece ->
+    first publish'
+  - '2. CRM funnel: invitation sent -> invitation accepted -> first trip -> first proposal -> first booked trip'
+  - 3. Median days per step, by sign-up month
+  - '4. Stuck list: partners more than 7 days on one step, with owner role'
+  - '5. Setup gaps: mailbox not connected (crm.channel_account), no SEO config (shared.tenant_seo_config)'
+- id: FI-01
+  family: finops
+  name_en: Monthly cost review
+  name_vi: Báo cáo chi phí hằng tháng (nửa chi phí của rà soát năng lực OPS-08)
+  audience: tech lead (approves), business owner (five-line Vietnamese summary)
+  owner_role: tech lead
+  decision: Was the month's spend justified, which items to cut or scale, are we within budget?
+  cadence: 'monthly: auto-draft business day 2 at 02:00 UTC; cost provisional when before day 3 (Cost Explorer settles ~48
+    h, docs/ops/finops.md) and refreshed on day 3; approved by business day 5. First real run: October 2026, on or after
+    2026-11-03'
+  schedule: monthly
+  channel: docs/audits/<date>-S<nnn>-capacity-review/cost.md via root PR (platform cost is not commercial data) next to
+    the OPS-08 README; Vietnamese summary inside EX-02 and the weekly Jira comment
+  automation: semi
+  status: partial
+  priority: P0
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/cost-finops-review.md
+  generator: null
+  kpis:
+  - K-COST-ACC2
+  - K-COST-APP
+  - K-COST-UNTAGGED
+  - K-COST-EXPLAINED
+  - K-LLM-RECON
+  sections:
+  - Summary for the business owner (Vietnamese, 5 lines)
+  - Totals by account (acc2, acc3 gross and credits; the retired account stays at 0)
+  - 'By App tag: cis, tripplanner, booking, crm, identity, shared, untagged'
+  - Top 5 services and every change > 20 % with reasons
+  - LLM spend (FI-03 summary, incl. cost per tenant)
+  - Unit costs (FI-05)
+  - Budgets, anomalies and hard stops (FI-06)
+  - Actions
+- id: FI-02
+  family: finops
+  name_en: Weekly spend and vendor balance digest
+  name_vi: Bản tin chi tiêu và số dư nhà cung cấp hằng tuần (e-mail tự động)
+  audience: tech lead, business owner (opt-in)
+  owner_role: tech lead
+  decision: Slow a paid run, top up a vendor credit, or investigate a spend jump before the month closes?
+  cadence: 'weekly: Monday 01:30 UTC (08:30 ICT) for the previous ISO week in ICT'
+  schedule: weekly
+  channel: SES e-mail to report subscribers + Weekly panel on /admin/cost-ops; headline into EX-01
+  automation: auto
+  status: missing
+  priority: P1
+  template: null
+  generator: null
+  kpis:
+  - K-COST-FCST
+  - K-COST-WOW
+  - K-RUNWAY-DFS
+  - K-RUNWAY-JEV
+  - K-RUNWAY-ACC3
+  sections:
+  - 1. Month-to-date spend per account and App vs budget, month-end forecast
+  - '2. Last 7 days vs previous 7 days per provider: AWS acc2, Bedrock acc3, Jev, DataForSEO, Geoapify, OpenAI'
+  - 3. Top 5 LLM stages by cost this week
+  - '4. Balances and runway: DataForSEO, Jev credit, acc3 AWS Lift credit (expires 31/12/2026)'
+  - 5. Budget bells, anomaly alerts and spend_budget hard stops in the week
+  - 6. Link to /admin/cost-ops
+- id: FI-03
+  family: finops
+  name_en: LLM cost attribution
+  name_vi: Phân bổ chi phí LLM theo bước, vai trò, model, tenant và app
+  audience: tech lead, engineer, business owner (tenant margin)
+  owner_role: tech lead
+  decision: Which stage or model to optimise or reroute, which tenant is unprofitable, how much shadow/eval spend to keep?
+  cadence: monthly section of FI-01 (business day 2) + live
+  schedule: monthly
+  channel: /admin/cost-ops LLM tab with CSV export + FI-01 section
+  automation: auto
+  status: partial
+  priority: P1
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/cost-finops-review.md
+  generator: null
+  kpis:
+  - K-LLM-APP
+  - K-LLM-TENANT
+  - K-LLM-SHADOW
+  - K-LLM-FALLBACK
+  - K-LLM-ADHOC
+  - K-LLM-RECON
+  sections:
+  - 1. LLM spend by app and stage (month, 6-month trend)
+  - 2. By model and provider/account (acc3 Bedrock, OpenAI last resort)
+  - 3. Shadow and eval share (is_shadow, adhoc_* stages)
+  - 4. Fallback rate and failures (outage windows shown as zero-call days, not savings)
+  - 5. Cost per tenant (Content studio and CRM) vs plan revenue
+  - 6. Gateway ledger vs Cost Explorer reconciliation (K-LLM-RECON from FI-01)
+  - 7. TripPlanner and CRM ledgers
+- id: FI-04
+  family: finops
+  name_en: Vendor spend, balances and contract register
+  name_vi: 'Sổ nhà cung cấp nền tảng: chi phí, số dư, hạn mức, hợp đồng'
+  audience: tech lead, business owner
+  owner_role: tech lead (register); business owner (contract decisions)
+  decision: Renew, downgrade, top up or replace a platform vendor; which contracts/DPAs are missing before prod?
+  cadence: monthly spend in FI-01; quarterly contract review in EX-05; event 30 days before a renewal or credit expiry
+  schedule: monthly
+  channel: Sections of FI-01 / EX-05; renewal bell on /admin
+  automation: semi
+  status: partial
+  priority: P1
+  template: null
+  generator: null
+  kpis:
+  - K-VEND-SPEND
+  - K-VEND-EXPIRY
+  - K-VEND-HEADROOM
+  - K-VEND-DPA
+  sections:
+  - '1. Vendor table: use, plan, fixed fee, usage spend this month, owner role, reseller/payer'
+  - '2. Credits and balances: AWS Lift (acc3), Jev, DataForSEO'
+  - '3. Free-plan headroom: Vercel Hobby, Sentry free, GitHub Actions minutes (private repos), Geoapify free tier, Linear
+    Free (250 unarchived)'
+  - '4. Contracts: start, renewal, notice period, DPA / zero-retention status'
+  - 5. Changes since last review and renewals in the next 60 days
+- id: FI-05
+  family: finops
+  name_en: Unit economics
+  name_vi: Chi phí đơn vị (mỗi tour, kế hoạch chuyến đi, booking, đại lý)
+  audience: business owner, tech lead
+  owner_role: tech lead
+  decision: Is the platform getting cheaper per unit of output; what price floor do tenant plans and bookings need?
+  cadence: monthly section of FI-01 (business day 2) + live endpoint
+  schedule: monthly
+  channel: /admin/platform/cost Unit costs card + FI-01 section; headline into EX-02
+  automation: auto
+  status: partial
+  priority: P1
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/cost-finops-review.md
+  generator: null
+  kpis:
+  - K-UNIT-TOUR
+  - K-UNIT-TRIP
+  - K-UNIT-BOOKING
+  - K-UNIT-AGENCY
+  - K-UNIT-JEV
+  sections:
+  - '1. Unit cost table: this month vs last vs 3-month average'
+  - 2. Numerators (App-tag totals + LLM per app) beside denominators
+  - '3. LLM units per model: USD per 1,000 calls, per 1M tokens'
+  - '4. Vendor units: Jev per 1,000 decisions, DataForSEO per keyword, Geoapify per 1,000 requests'
+  - 5. Commentary on movers
+- id: FI-06
+  family: finops
+  name_en: Budget vs actual and credit runway
+  name_vi: Ngân sách so với thực chi và thời gian còn dùng credit
+  audience: business owner (approves budget), tech lead (proposes)
+  owner_role: business owner (approves); tech lead (proposes)
+  decision: Raise, cut or reallocate budgets per app; spend or save credits; approve next year's budget.
+  cadence: monthly section of FI-01; quarterly in EX-05; annual budget in December or before prod
+  schedule: monthly
+  channel: /admin/cost-ops Budgets tab + FI-01 / EX-05 sections
+  automation: semi
+  status: partial
+  priority: P1
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/cost-finops-review.md
+  generator: null
+  kpis:
+  - K-FIN-VAR
+  - K-FIN-FCSTACC
+  - K-FIN-YTD
+  - K-FIN-HARDSTOP
+  sections:
+  - '1. Budget table: account, App, vendor, budget, actual, variance, forecast'
+  - 2. Year to date vs annual plan
+  - 3. Credits remaining and expiry
+  - 4. Hard stops hit (shared.spend_budget) and budget alerts fired
+  - 5. Proposed budget changes (Terraform var.per_app_monthly_budgets) with reasons
+  - 6. Annual plan and prod cost scenarios (EX-05, Q4)
+- id: FI-07
+  family: finops
+  name_en: Revenue, bookings and margin (weekly flash + monthly close)
+  name_vi: Doanh thu, booking và biên lợi nhuận (bản nhanh tuần + đóng sổ tháng)
+  audience: business owner, Booking admin (finance), sales lead
+  owner_role: Booking admin (finance) prepares; business owner reviews
+  decision: Is the travel business profitable per booking, channel and destination; are pricing rules and supplier contracts
+    right?
+  cadence: weekly flash Monday 01:30 UTC; monthly flash business day 2 (feeds EX-02); monthly close final by business day
+    5
+  schedule: weekly
+  channel: New Booking staff page Finance reports (month picker, CSV/XLSX, PDF of the close) stored under the booking/ prefix
+    of the reports bucket; only aggregate totals reach CIS through a new bk-NNN contract view
+  automation: auto
+  status: partial
+  priority: P2
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/cost-finops-review.md
+  generator: null
+  kpis:
+  - K-BK-CONFIRMED
+  - K-BK-GMV
+  - K-BK-MARGIN
+  - K-BK-CASH
+  - K-BK-INVOICED
+  - K-BK-CANCEL
+  sections:
+  - 1. Bookings confirmed and cancelled by channel (B2C, B2B partner via party_tenant_id), destination, trip style; confirmed
+    pax
+  - 2. GMV and average booking value (approved version total_price at fx_rate_locked)
+  - '3. Gross margin: sell price - supplier net cost (booking.version_item_costs)'
+  - '4. Cash: invoiced, collected (verified), refunds, supplier payouts'
+  - '5. Pipeline: proposals sent not approved, value at stake'
+  - '6. FX exposure: currencies sold vs paid'
+  - '7. Monthly close checklist: unverified payments, unmatched supplier bills, voided items'
+  - 8. Departures next month
+  - 9. Five-line Vietnamese summary
+- id: FI-09
+  family: finops
+  name_en: Tenant billing run
+  name_vi: Kỳ tính phí tenant và đại lý hằng tháng
+  audience: business owner (approves charges), AA staff (billing)
+  owner_role: business owner (approves)
+  decision: What each partner owes this month (plan + overage) and whether plans and quotas are priced right.
+  cadence: monthly, business day 2 for the previous month; approved by business day 5
+  schedule: monthly
+  channel: CIS admin billing-run view in /admin/reports; statements via CIS-04 and CRM-05
+  automation: semi
+  status: missing
+  priority: P3
+  template: null
+  generator: null
+  kpis:
+  - K-BILL-AMOUNT
+  - K-BILL-OVERAGE
+  - K-BILL-MARGIN
+  sections:
+  - '1. Billing run: tenant, plan, plan fee, usage, overage, amount due'
+  - 2. Cost to serve per tenant (LLM + DataForSEO) and margin
+  - 3. Quota breaches and plan-change suggestions
+  - 4. Statements issued (links to CIS-04 / CRM-05)
+- id: CIS-01
+  family: app-ops
+  name_en: Weekly catalog health
+  name_vi: Sức khoẻ catalog hằng tuần
+  audience: tech lead, content ops, business owner (headline)
+  owner_role: tech lead
+  decision: Is the sellable catalog complete and current; which countries or tours need rewrite, photos, republish or retirement
+    this week?
+  cadence: weekly Monday 01:30 UTC + live page; extra run when a rerun wave closes
+  schedule: weekly
+  channel: /admin/data-coverage Weekly tab (stored snapshots) + SES digest to subscribers; headline in EX-01
+  automation: auto
+  status: partial
+  priority: P1
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/app-ops-report.md
+  generator: null
+  kpis:
+  - K-CAT-LIVE
+  - K-CAT-COVER
+  - K-CAT-PHOTO
+  - K-CAT-S1
+  - K-CAT-LIFECYCLE
+  sections:
+  - 'Headline: tours live / paused / retired and week-over-week delta'
+  - Lifecycle events this week with reasons
+  - S1 rewrite coverage per country (current writer done vs pending)
+  - Photo and cover coverage per country
+  - Downstream freshness (from DATA-01)
+  - Top 10 action list
+- id: CIS-02
+  family: data-quality
+  name_en: Place and geocode quality
+  name_vi: Chất lượng địa điểm và geocode
+  audience: tech lead, content ops
+  owner_role: tech lead
+  decision: Is place data accurate enough for TripPlanner maps and Booking itineraries; continue, change or stop the geocode
+    chain (AA-997)?
+  cadence: monthly (business day 2) + after each geocode chain batch
+  schedule: monthly
+  channel: /admin/places summary card; accuracy audit Markdown in docs/audits/<date>-S<nnn>-geo-quality/
+  automation: semi
+  status: partial
+  priority: P2
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/data-quality-report.md
+  generator: null
+  kpis:
+  - K-GEO-ACC
+  - K-GEO-OUTLIERS
+  - K-GEO-COST
+  - K-GEO-TOURPLACE
+  sections:
+  - Accuracy on the fixed 600-row audit sample (S254) vs target
+  - Chain progress and projected end accuracy
+  - Outliers present and merges awaiting review
+  - Geocode calls and cost
+  - Places without coordinates or low precision per country
+- id: CIS-03
+  family: app-ops
+  name_en: Tenant content delivery (internal)
+  name_vi: Phân phối nội dung cho tenant (nội bộ AA)
+  audience: AA admin, tech lead, business owner
+  owner_role: AA admin (reviewer role)
+  decision: Which tenants get value; where does the T-series hold or regenerate too much; who is near quota or overage?
+  cadence: monthly business day 2 + live
+  schedule: monthly
+  channel: /admin/tenant-activity Monthly tab; SES digest to AA admins
+  automation: auto
+  status: partial
+  priority: P2
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/app-ops-report.md
+  generator: null
+  kpis:
+  - K-TEN-DELIVERED
+  - K-TEN-HELD
+  - K-TEN-REGEN
+  - K-TEN-PUBLISH
+  - K-TEN-PIECECOST
+  sections:
+  - Pieces approved / held / failed per tenant and channel
+  - Held reasons, top 5
+  - Regeneration rate
+  - Publish results per channel
+  - Quota and overage per tenant
+  - LLM cost per approved piece
+- id: CIS-04
+  family: agency
+  name_en: Tenant monthly usage statement
+  name_vi: Bảng kê sử dụng hằng tháng gửi tenant Content studio
+  audience: tenant owner/admin (Content studio)
+  owner_role: AA admin
+  decision: Tenant checks what it used and pays for, and whether to change plan.
+  cadence: monthly business day 2, only for tenants with activity
+  schedule: monthly
+  channel: Tenant portal account/billing page (PDF/CSV download) + e-mail to the tenant owner; object under the tenant prefix
+    of the reports bucket
+  automation: auto
+  status: partial
+  priority: P3
+  template: null
+  generator: null
+  kpis:
+  - K-CIS04-TOURS-REWRITTEN
+  - K-CIS04-API-CALLS-USED
+  - K-CIS04-PIECES-DELIVERED-PUBLISHED
+  - K-CIS04-OVERAGE-USD
+  sections:
+  - Plan and quota
+  - Tours rewritten and API calls vs quota
+  - Pieces delivered and published per channel
+  - Overage (if any) and next reset date
+- id: CIS-05
+  family: ai-quality
+  name_en: Weekly AI content quality KPIs
+  name_vi: KPI chất lượng nội dung AI hằng tuần (Writing Memory)
+  audience: tech lead, reviewer
+  owner_role: tech lead
+  decision: Is writing quality stable or drifting; keep or roll back the active writing-memory release; is the judge reliable
+    enough to gate?
+  cadence: weekly Monday 01:30 UTC
+  schedule: weekly
+  channel: /admin/writing-memory KPIs tab + SES digest; headline in EX-01
+  automation: auto
+  status: planned
+  priority: P1
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/ai-content-quality.md
+  generator: null
+  kpis:
+  - K-AIQ-KAPPA
+  - K-AIQ-REGRESSION
+  - K-AIQ-GATEFIRE
+  - K-AIQ-SCORE
+  - K-AIQ-RELEASE
+  sections:
+  - Judge agreement (kappa) of the latest eval vs threshold, with its date
+  - Gate fire rates per gate, 4-week trend
+  - Held and flagged rates in tenant and admin content
+  - Average quality score
+  - Writing signals captured and rules active
+  - Active release per writer (a1, t2, t9_blog, t9_social), reverify flags
+  - Disagreement queue size and age
+- id: CIS-06
+  family: ai-quality
+  name_en: Eval and release report
+  name_vi: Báo cáo đánh giá / phát hành prompt (theo sự kiện)
+  audience: tech lead, reviewer
+  owner_role: reviewer
+  decision: Approve, reject or roll back a writing-memory release or prompt version.
+  cadence: 'event: each eval run finish or release status change'
+  schedule: event
+  channel: /admin/writing-memory release drawer with a printable summary; JSON in S3
+  automation: auto
+  status: partial
+  priority: P2
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/ai-content-quality.md
+  generator: null
+  kpis:
+  - K-EVAL-DELTA
+  - K-EVAL-GATEPASS
+  - K-EVAL-COST
+  sections:
+  - Release and baseline identifiers
+  - Verdict, kappa, quality delta vs baseline
+  - Gate pass/fail counts
+  - Cost vs cost cap
+  - Top 10 item-level regressions
+  - Approval record
+- id: CIS-07
+  family: ai-quality
+  name_en: Rerun wave and paid-run report with cost
+  name_vi: Báo cáo wave chạy lại và đợt chạy trả tiền (kèm chi phí)
+  audience: tech lead, business owner (large runs)
+  owner_role: tech lead
+  decision: Was the wave complete and within budget; start, scale or stop the next wave?
+  cadence: 'event: each wave close or paid batch; daily stuck check exists (POST /admin/waves/check)'
+  schedule: event
+  channel: Small /admin/waves page (none today) + Markdown in docs/audits/<date>-S<nnn>-<wave>/; summary line in EX-01
+  automation: auto
+  status: partial
+  priority: P1
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/ai-content-quality.md
+  generator: null
+  kpis:
+  - K-WAVE-DONE
+  - K-WAVE-UNIT
+  - K-WAVE-RUNNING
+  - K-WAVE-RETRY
+  - K-WAVE-STUCK
+  sections:
+  - 'Scope: expected vs done vs stuck tours'
+  - Gate and Jev outcomes
+  - Cost per stage (S1 rewrite, review, atomize, judges, Jev, DataForSEO, geocoding)
+  - Wave total, running total vs approved cap, USD per tour, projection for the full country/catalog
+  - Failures and retry cost
+  - Next-wave recommendation
+- id: TP-01
+  family: app-ops
+  name_en: Weekly TripPlanner funnel
+  name_vi: Phễu TripPlanner hằng tuần
+  audience: business owner, tech lead
+  owner_role: tech lead
+  decision: Is the B2C planner turning visitors into advisor inquiries; where does the funnel leak?
+  cadence: weekly Monday 01:30 UTC + live card
+  schedule: weekly
+  channel: /admin/overview TripPlanner card with week/month comparison; SES digest; headline in EX-01
+  automation: auto
+  status: partial
+  priority: P1
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/app-ops-report.md
+  generator: null
+  kpis:
+  - K-TP-SESSIONS
+  - K-TP-S2T
+  - K-TP-T2I
+  - K-TP-LLMCAP
+  sections:
+  - Sessions, trips started, trips edited, inquiries sent (week + 4-week trend)
+  - Step conversion
+  - AI searches and keyword-fallback share
+  - TripPlanner LLM spend vs daily cap
+  - Top pinned components
+- id: TP-02
+  family: reliability
+  name_en: Monthly TripPlanner performance and reliability
+  name_vi: Hiệu năng web và độ ổn định Lambda TripPlanner hằng tháng
+  audience: tech lead, engineer
+  owner_role: tech lead
+  decision: Do the map pages meet Core Web Vitals and are Browse/Assembly Lambdas healthy; what to optimise next?
+  cadence: monthly business day 2 + Lighthouse on every frontend release
+  schedule: monthly
+  channel: GitHub Actions summary JSON to S3; section of OPS-08; /admin/platform/apps card
+  automation: semi
+  status: partial
+  priority: P2
+  template: null
+  generator: null
+  kpis:
+  - K-TP-LCP
+  - K-TP-LAMBDAERR
+  - K-TP-LAMBDAP95
+  - K-TP-FALLBACK
+  sections:
+  - Lighthouse mobile/desktop LCP, CLS, INP on key pages
+  - Lambda Browse and Assembly errors, throttles, p95 duration
+  - Embedding fallback chain usage
+  - Narration failures and cost
+  - Regressions vs last month
+- id: TP-03
+  family: data-quality
+  name_en: Inquiry handoff reconciliation (TripPlanner to Booking)
+  name_vi: Đối soát yêu cầu tư vấn TripPlanner sang Booking (mỗi giờ + tổng hợp ngày)
+  audience: ops staff, tech lead
+  owner_role: ops staff
+  decision: Did every customer inquiry reach Booking and become a trip case; which ones are parked or failed?
+  cadence: hourly check (cheap view reads) + daily summary 01:00 UTC (08:00 ICT)
+  schedule: hourly
+  channel: Line in OPS-12 and BK-01; bell (shared.notifications) + ops alert e-mail only when a gap exists
+  automation: auto
+  status: missing
+  priority: P0
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/data-quality-report.md
+  generator: null
+  kpis:
+  - K-TP-HANDOFFGAP
+  - K-BK-PARKED
+  - K-BK-INQ2CASE
+  sections:
+  - Inquiries sent vs received per day
+  - Parked and failed inquiries with age
+  - Received but no trip case after 24 h
+  - Mismatches over the last 7 days
+- id: BK-01
+  family: app-ops
+  name_en: Booking daily operations digest
+  name_vi: Bản tin vận hành Booking mỗi sáng
+  audience: ops staff, sales, Booking admin
+  owner_role: ops staff (Booking admin owns recipients)
+  decision: 'What must staff do today: overdue checks, unconfirmed suppliers, expiring quotes and holds, unpaid deposits
+    for near departures?'
+  cadence: daily 01:00 UTC (08:00 ICT), Monday to Friday (Monday covers the weekend)
+  schedule: daily
+  channel: One e-mail per staff member via bk_notify_email + Booking dashboard Today panel
+  automation: auto
+  status: partial
+  priority: P1
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/app-ops-report.md
+  generator: null
+  kpis:
+  - K-BK-OVERDUECHECKS
+  - K-BK-ATRISK
+  - K-BK-SUPPENDING
+  - K-BK-EXPIRING
+  - K-BK-UNVERIFIED
+  sections:
+  - Departures in 14 days with blockers
+  - Overdue trip checks by assignee
+  - Supplier requests waiting > 48 h
+  - Quotes/proposals expiring in 3 days
+  - B2B holds expiring in 48 h
+  - Payments recorded but not verified
+  - Inquiries parked or failed (TP-03)
+  - Open departure incidents (BK-06)
+- id: BK-02
+  family: app-ops
+  name_en: Booking sales pipeline
+  name_vi: Phễu bán hàng Booking (tuần/tháng)
+  audience: business owner, sales lead
+  owner_role: business owner
+  decision: How fast and how often do inquiries become confirmed trips; which source and channel convert; where do cases
+    stall?
+  cadence: weekly Monday 01:30 UTC (sales) + monthly business day 2 (business owner)
+  schedule: weekly
+  channel: Booking dashboard Reports tab with CSV; counts to CIS through ops.overview.v1
+  automation: auto
+  status: partial
+  priority: P2
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/app-ops-report.md
+  generator: null
+  kpis:
+  - K-BK-CONV
+  - K-BK-TTP
+  - K-BK-TTC
+  - K-BK-STALLED
+  sections:
+  - 'Funnel by source_system and channel: inquiries, cases, proposal sent, confirmed, cancelled'
+  - Conversion per step, month over month
+  - Time to first proposal and to confirmation (median, p90)
+  - Open cases by status and age
+  - Quoted and confirmed value (inside Booking only)
+  - Lost/cancel reasons
+- id: BK-03
+  family: finops
+  name_en: Receivables and payables aging with collections
+  name_vi: Tuổi nợ phải thu, phải trả và thu hồi công nợ
+  audience: Booking admin (finance), sales, contracting staff, business owner
+  owner_role: Booking admin (finance)
+  decision: Whom to chase today, which supplier bills to pay this week, is cash enough to pay suppliers before customers
+    pay?
+  cadence: weekly Monday 01:30 UTC + month-end statement business day 2; overdue items also in BK-01 daily
+  schedule: weekly
+  channel: Booking billing page Aging tab with CSV; weekly e-mail to Booking admin
+  automation: auto
+  status: missing
+  priority: P1
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/cost-finops-review.md
+  generator: null
+  kpis:
+  - K-AR-OVERDUE
+  - K-AR-AGING
+  - K-AR-DSO
+  - K-AR-UNVERIFIED
+  - K-AP-OVERDUE
+  sections:
+  - 1. AR aging buckets (current, 1-30, 31-60, 61-90, > 90 days) per currency
+  - 2. Overdue list with next action
+  - 3. Payments awaiting verification
+  - 4. Deposits and instalments due before departure
+  - '5. AP: supplier bills due in 14 days, overdue, paid this week'
+  - '6. Cash gap: AP due vs AR expected in 30 days'
+  - 7. Collection trend
+- id: BK-04
+  family: app-ops
+  name_en: Supplier performance and contract renewals
+  name_vi: Hiệu suất và hợp đồng nhà cung cấp du lịch
+  audience: contracting staff, Booking admin
+  owner_role: contracting staff
+  decision: Which suppliers confirm slowly, decline often or cause incidents; which contracts to renew or renegotiate before
+    they expire?
+  cadence: monthly business day 2; contract expiry check weekly Monday
+  schedule: monthly
+  channel: Booking suppliers page Performance tab + CSV; expiry list in the BK-01 digest on Mondays
+  automation: auto
+  status: partial
+  priority: P3
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/app-ops-report.md
+  generator: null
+  kpis:
+  - K-SUP-LEAD
+  - K-SUP-DECLINE
+  - K-SUP-CONTRACT
+  - K-SUP-INCIDENT
+  sections:
+  - Confirmation lead time per supplier
+  - Decline and cancellation rates with decline codes
+  - Volume per supplier
+  - Supplier-caused departure incidents (BK-06)
+  - Contracts expiring in 60 days and contracts already expired with live bookings
+- id: BK-05
+  family: app-ops
+  name_en: B2B partner desk report
+  name_vi: 'Kênh B2B: báo giá và giữ chỗ'
+  audience: sales lead, business owner
+  owner_role: sales lead
+  decision: Are partner agencies converting holds into bookings; are hold rules right?
+  cadence: monthly business day 2
+  schedule: monthly
+  channel: Booking b2b-desk Report tab + CSV
+  automation: auto
+  status: partial
+  priority: P3
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/app-ops-report.md
+  generator: null
+  kpis:
+  - K-B2B-H2C
+  - K-B2B-EXPIRED
+  - K-B2B-EXT
+  sections:
+  - Quotes priced per partner
+  - Holds created, confirmed, released, expired, extended
+  - Hold to confirm rate and average hold life
+  - FX buffer and margin applied (internal)
+- id: BK-06
+  family: app-ops
+  name_en: Departure fill and incidents
+  name_vi: Lấp đầy chuyến khởi hành và sự cố trên tuyến
+  audience: ops staff, sales lead, business owner
+  owner_role: ops staff
+  decision: Which fixed departures will run, need a push or should be cancelled; are on-trip incidents cleared fast?
+  cadence: weekly Monday 01:30 UTC; open incidents also in BK-01 daily
+  schedule: weekly
+  channel: Booking departures page Report tab + CSV
+  automation: auto
+  status: missing
+  priority: P3
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/app-ops-report.md
+  generator: null
+  kpis:
+  - K-DEP-FILL
+  - K-DEP-INC
+  - K-DEP-TTC
+  sections:
+  - 'Departures in 60 days: capacity, booked pax, fill %'
+  - Departures below the minimum fill at T-30
+  - Incidents by code (weather, road, health, political, supplier, other), open and cleared
+  - Time to clear incidents
+- id: CX-01
+  family: customer
+  name_en: Traveller satisfaction and reviews
+  name_vi: Mức hài lòng của khách và đánh giá sau chuyến đi
+  audience: business owner, sales lead, contracting staff; agency owner for CRM agencies (own data only)
+  owner_role: sales lead (AA); agency owner (CRM)
+  decision: Are travellers happy, which suppliers, guides or itineraries cause complaints, and which reviews can be used
+    in marketing (with consent)?
+  cadence: monthly business day 2 + complaint alert on each detractor answer
+  schedule: monthly
+  channel: Booking Reports tab (AA trips); CRM Reports page (agency trips, agency only); aggregate scores to CIS via a bk-NNN
+    contract view for EX-02
+  automation: auto
+  status: missing
+  priority: P2
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/customer-growth-report.md
+  generator: null
+  kpis:
+  - K-CX-RESP
+  - K-CX-CSAT
+  - K-CX-NPS
+  - K-CX-COMPLAINT
+  sections:
+  - 1. Survey response rate after trip end
+  - 2. CSAT and NPS by destination, trip style, channel
+  - 3. Supplier and guide mentions (scores per supplier)
+  - 4. Complaints and follow-ups with owner and status
+  - 5. Incidents during the trip (BK-06) next to the score
+  - 6. Reviews with publish consent (count only in CIS; text stays in the owning app)
+- id: MKT-01
+  family: growth
+  name_en: Acquisition and marketing funnel
+  name_vi: Nguồn khách và phễu marketing
+  audience: business owner, sales lead
+  owner_role: business owner
+  decision: Which channels bring travellers and partners that convert, and where to spend marketing effort?
+  cadence: monthly business day 2 (section of EX-02) + weekly line in EX-01
+  schedule: monthly
+  channel: /admin/overview Acquisition card + EX-02 section
+  automation: auto
+  status: missing
+  priority: P2
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/customer-growth-report.md
+  generator: null
+  kpis:
+  - K-MKT-SOURCE
+  - K-MKT-CONV
+  - K-MKT-CUSTSRC
+  sections:
+  - 1. Sessions and sign-ups by source (direct, search, social, partner, campaign)
+  - 2. Source -> trip -> inquiry -> confirmed, per source
+  - 3. Booking customers by booking.customers.source and trip case channel
+  - 4. Partner leads (B2B, Content studio, CRM) by source
+  - 5. Campaign list with results (when CRM campaigns exist, AA-968)
+- id: MKT-02
+  family: growth
+  name_en: SEO and content performance
+  name_vi: Hiệu quả SEO và nội dung
+  audience: business owner, content ops, tenant owner (own sites, later)
+  owner_role: content ops
+  decision: Is published content reaching search demand; which tours or tenant posts to refresh; is DataForSEO spend paying
+    off?
+  cadence: monthly business day 2
+  schedule: monthly
+  channel: /admin/content-quality SEO tab; tenant view later in the portal
+  automation: semi
+  status: missing
+  priority: P3
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/customer-growth-report.md
+  generator: null
+  kpis:
+  - K-SEO-COVER
+  - K-SEO-DFSCACHE
+  - K-SEO-CTR
+  sections:
+  - '1. Keyword coverage: tours with seo_context and top keywords'
+  - 2. DataForSEO spend per tour and per tenant, cache hit rate
+  - 3. Published pages per channel (acp_shared.publish_log external_url)
+  - 4. Search impressions, clicks and average position per page (Google Search Console, once verified)
+  - '5. Refresh list: pages with falling clicks or expired seo_context'
+- id: CRM-01
+  family: agency
+  name_en: Agency pipeline and conversion
+  name_vi: Pipeline và chuyển đổi của đại lý
+  audience: agency owner/admin, agency agents
+  owner_role: agency owner
+  decision: Which leads and sources convert, where trips stall, why trips are lost.
+  cadence: live + monthly in CRM-05
+  schedule: live
+  channel: CRM web Reports page (apps/AA-Partner/web/lib/nav.ts, 'reports' entry, empty today) + Home KPI tiles
+  automation: auto
+  status: planned
+  priority: P1
+  template: null
+  generator: null
+  kpis:
+  - K-CRM01-WIN-RATE
+  - K-CRM01-STALLED-TRIPS
+  - K-CRM01-LOST-REASONS
+  - K-CRM01-LEAD-SOURCE-MIX
+  sections:
+  - Trips by stage and stage age
+  - Stage conversion and win rate
+  - Lead source performance
+  - Lost and cancel reasons
+  - Cycle time inquiry to booked
+  - Year-on-year tiles
+- id: CRM-02
+  family: agency
+  name_en: Agency response time and workload
+  name_vi: Thời gian phản hồi và khối lượng việc của đại lý
+  audience: agency owner/admin
+  owner_role: agency owner
+  decision: Are travellers answered fast enough; is any agent overloaded or late on tasks?
+  cadence: weekly Monday + live tile; monthly in CRM-05
+  schedule: weekly
+  channel: CRM Reports page section + weekly in-app digest for the agency owner
+  automation: auto
+  status: missing
+  priority: P2
+  template: null
+  generator: null
+  kpis:
+  - K-CRM02-FIRST-RESPONSE-TIME
+  - K-CRM02-UNANSWERED-24-H
+  - K-CRM02-OVERDUE-TASKS
+  sections:
+  - First response time per conversation and per agent
+  - Unanswered inbound older than 24 h
+  - Overdue tasks by assignee
+  - Trips per owner
+- id: CRM-03
+  family: agency
+  name_en: Agency e-mail channel health
+  name_vi: Sức khoẻ kênh e-mail của đại lý
+  audience: agency owner/admin; AA staff (counts only)
+  owner_role: agency owner
+  decision: Are connected mailboxes working; must the agency reconnect?
+  cadence: daily job (exists) + weekly summary; monthly in CRM-05
+  schedule: daily
+  channel: CRM settings health card; AA counts via the Agencies console (crm.ops.v1)
+  automation: auto
+  status: partial
+  priority: P2
+  template: null
+  generator: null
+  kpis:
+  - K-CRM03-HEALTHY-MAILBOXES
+  - K-CRM03-SEND-FAILURE
+  - K-CRM03-IMPORT-SKIP
+  sections:
+  - Mailboxes by status and last token check
+  - Send attempts and failures by outcome
+  - Mail imports (imported, duplicate, skipped)
+  - Disconnect alerts sent
+- id: CRM-04
+  family: agency
+  name_en: CRM AI assistant usage
+  name_vi: Sử dụng trợ lý AI trong CRM
+  audience: agency owner/admin, AA staff (counts), tech lead
+  owner_role: agency owner; tech lead for the AA roll-up
+  decision: Is the assistant used and useful per agency; is cost within entitlement; are refusals or errors rising?
+  cadence: monthly in CRM-05 + live; AA roll-up monthly in FI-03 (K-LLM-TENANT)
+  schedule: monthly
+  channel: CRM Reports page AI section; AA view counts only via crm.ops.v1
+  automation: auto
+  status: missing
+  priority: P2
+  template: null
+  generator: null
+  kpis:
+  - K-CRM04-AI-CALLS-PER-ACTIVE-MEMBER
+  - K-CRM04-FAILURE-RATE
+  - K-CRM04-REFUSAL-RATE
+  - K-CRM04-COST-PER-AGENCY
+  - K-CRM04-LATENCY-P95
+  sections:
+  - Calls by stage and outcome
+  - Refusals and error classes
+  - Cost per agency vs entitlement
+  - Latency p95
+  - Scrubber receipts (PII removed counts)
+- id: CRM-05
+  family: agency
+  name_en: Agency monthly summary
+  name_vi: Báo cáo tháng gửi chủ đại lý
+  audience: agency owner
+  owner_role: agency owner
+  decision: How did the agency do this month and what to fix next month?
+  cadence: monthly business day 2
+  schedule: monthly
+  channel: CRM Reports page (PDF/CSV) + e-mail to the agency owner; object under crm/<tenant>/ in the reports bucket, encrypted
+    with the CRM key policy
+  automation: auto
+  status: missing
+  priority: P2
+  template: null
+  generator: null
+  kpis:
+  - K-CRM01-WIN-RATE
+  - K-CRM05-BOOKED-VALUE
+  - K-CRM05-SEAT-USE
+  sections:
+  - 'Headline: trips booked, revenue booked, win rate vs last month'
+  - Pipeline (CRM-01)
+  - Response and workload (CRM-02)
+  - Channel health (CRM-03)
+  - AI assistant use (CRM-04)
+  - Seats vs member_limit and plan
+  - Data lifecycle runs and access summary (CRM-06)
+  - Traveller satisfaction (CX-01, agency trips)
+- id: CRM-06
+  family: security
+  name_en: Agency access and data-rights report
+  name_vi: Truy cập và quyền dữ liệu của đại lý
+  audience: agency owner (controller); AA staff counts only
+  owner_role: agency owner
+  decision: Who accessed traveller data, which exports and erasures ran, is the agency meeting its controller duties?
+  cadence: monthly (section of CRM-05) + on demand
+  schedule: monthly
+  channel: CRM settings access-log and data pages
+  automation: auto
+  status: partial
+  priority: P3
+  template: null
+  generator: null
+  kpis:
+  - K-CRM06-ERASURE-REQUESTS-CLOSED
+  - K-CRM06-AUDIT-EXPORTS
+  - K-CRM06-STALE-TRAVELLER-ACCESS
+  sections:
+  - Access events by member and action (crm.audit_event)
+  - Audit exports (crm.audit_export_manifest)
+  - Traveller portal access (crm.traveler_access)
+  - Erasure requests and status (crm.erasure_request)
+  - Consent records (crm.consent)
+  - Lifecycle/retention runs (crm.lifecycle_run)
+- id: OPS-12
+  family: reliability
+  name_en: Daily platform health digest
+  name_vi: Bản tin sức khoẻ nền tảng mỗi sáng
+  audience: tech lead, engineer on duty
+  owner_role: tech lead
+  decision: Is anything broken or drifting that needs work today?
+  cadence: daily 01:00 UTC (08:00 ICT), every day; short when all green so a missing digest is itself a signal. Probe results
+    are from the previous run window (02:17-05:13 UTC, about 20 h earlier)
+  schedule: daily
+  channel: SES e-mail to subscribers + Daily tile on /admin/reports
+  automation: auto
+  status: missing
+  priority: P0
+  template: null
+  generator: null
+  kpis:
+  - K-OPS-APPSGREEN
+  - K-OPS-ALARMS
+  - K-JOB-FAIL
+  - K-LLM-FALLBACK-24H
+  - K-DATA-PROBES
+  sections:
+  - 'Apps: /health and /health/ready per app with a probe, deployed SHA per service (api and worker on the same SHA); TripPlanner
+    listed as ''no probe'' until it has /health'
+  - Alarms in ALARM now and fired in 24 h
+  - 'Jobs: failed and overdue per job table (OPS-14)'
+  - 'LLM route health: calls, fallback rate, errors in 24 h; acc3 status'
+  - Last nightly probes (DATA-01) with their run time
+  - Spend yesterday vs 14-day median (EX-04)
+  - Open waves, inquiry handoff gap (TP-03), overdue reports (EX-06)
+- id: OPS-13
+  family: reliability
+  name_en: Weekly SLO and DB performance check
+  name_vi: Kiểm tra SLO và hiệu năng DB hằng tuần
+  audience: tech lead, engineer
+  owner_role: tech lead
+  decision: Did any DB SLI miss its objective two weeks running; which query or index to fix?
+  cadence: 'weekly Monday: probe 00:43 UTC, report 01:30 UTC; also after each wave'
+  schedule: weekly
+  channel: S3 + /admin/reports; Markdown only when a miss needs analysis, in docs/audits/<date>-S<nnn>-c43-w<nn>/; headline
+    in EX-01
+  automation: semi
+  status: partial
+  priority: P1
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/slo-db-performance.md
+  generator: null
+  kpis:
+  - K-SLI-MET
+  - K-SLI-2WEEK
+  - K-DB-SLOWSTMT
+  - K-DB-CONN
+  sections:
+  - 'SLI table: objective vs measured per app'
+  - Top 20 statements per role by total and by mean (pg_stat_statements)
+  - Slow log > 500 ms, lock waits
+  - Connection saturation vs max_connections (181) and role limits
+  - Two-week misses escalated with the offending query and proposed fix
+  - Job runner health summary (OPS-14)
+- id: OPS-08
+  family: reliability
+  name_en: Monthly capacity, SLO and availability review
+  name_vi: Rà soát năng lực, SLO và độ sẵn sàng hằng tháng
+  audience: tech lead (approves), CTO/CIO guides
+  owner_role: tech lead
+  decision: Is capacity enough for next month; resize, tune or accept; which C3 triggers fired?
+  cadence: monthly business day 2 with FI-01; approved by business day 5
+  schedule: monthly
+  channel: docs/audits/<date>-S<nnn>-capacity-review/README.md via root PR (FI-01 cost.md in the same folder)
+  automation: semi
+  status: partial
+  priority: P1
+  template: null
+  generator: null
+  kpis:
+  - K-CAP-CPU
+  - K-CAP-STORAGE
+  - K-CAP-CONN
+  - K-AVAIL
+  - K-CAP-TRIGGERS
+  sections:
+  - The nine C8b items (CloudWatch RDS 30 days, pg_stat_statements per role with C1.2 SLIs, table/index growth, ledgers
+    vs retention (DATA-04), Lambda concurrency (TP-02), job backlog per owner (OPS-14), connection budget C2.2, C3 triggers,
+    RDS cost line (FI-01))
+  - Availability per app from health probes
+  - Monitoring gaps vs C4.1
+  - Decisions
+- id: OPS-14
+  family: app-ops
+  name_en: Job runner health (all job tables)
+  name_vi: Sức khoẻ bộ chạy job của cả bốn app
+  audience: engineer, tech lead
+  owner_role: engineer on duty
+  decision: Which job kinds fail, retry, run late or never run; tune concurrency or fix code?
+  cadence: weekly Monday 01:30 UTC (section of OPS-13) + daily failures in OPS-12
+  schedule: weekly
+  channel: /admin/jobs new All apps tab; weekly section
+  automation: auto
+  status: partial
+  priority: P1
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/app-ops-report.md
+  generator: null
+  kpis:
+  - K-JOB-FAILRATE
+  - K-JOB-P95
+  - K-JOB-QUEUEAGE
+  - K-JOB-DEAD
+  sections:
+  - 'Per app and kind: runs, failures, retries, p95 duration vs expected (docs/ops/job-kinds.md)'
+  - Overdue running rows and queue age
+  - Kinds that never ran in 30 days
+  - Deploy-gate blocks and overrides
+  - 'Paid-call kinds: cost per run'
+- id: OPS-04
+  family: incident
+  name_en: Incident and postmortem report (incl. cost incidents)
+  name_vi: Báo cáo sự cố và postmortem (gồm sự cố chi phí)
+  audience: tech lead, engineer, business owner (SEV1-2 summary)
+  owner_role: tech lead
+  decision: What broke or overspent, is it stopped, which guard prevents a repeat?
+  cadence: 'event: write within 5 working days of a SEV1-2 (2 days for the Linear note); monthly roll-up in EX-02 and DEV-01'
+  schedule: event
+  channel: docs/ops/postmortems/<YYYY-MM-DD>-<slug>.md (folder does not exist yet; create it); SEV3 as a session-log line;
+    summary line in EX-01
+  automation: manual
+  status: partial
+  priority: P0
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/incident-postmortem.md
+  generator: null
+  kpis:
+  - K-INC-COUNT
+  - K-INC-TTD
+  - K-INC-TTR
+  - K-INC-ACTIONS
+  - K-INC-COSTATTR
+  sections:
+  - Summary and SEV
+  - Impact (who, how long, data, cost USD)
+  - Timeline (UTC+7) with detection source
+  - Root cause (5 whys) and contributing factors
+  - Cost attribution for cost incidents (account, App tag, service, LLM stage/job_id)
+  - What went well / badly
+  - Actions with owner and due date
+  - Lessons written to skill/aa-lessons/lessons.md
+- id: OPS-15
+  family: app-ops
+  name_en: Session-close state snapshot
+  name_vi: Ảnh chụp trạng thái cuối phiên (máy đọc được)
+  audience: tech lead, next agent session
+  owner_role: tech lead (agent runs it)
+  decision: What exactly is live now (images, migrations, jobs, PRs) so the next session starts from facts?
+  cadence: every session close (event)
+  schedule: event
+  channel: docs/audits/<date>-S<nnn>-session-close/state-snapshot.md + state-snapshot.json via root PR
+  automation: semi
+  status: partial
+  priority: P1
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/app-ops-report.md
+  generator: null
+  kpis:
+  - K-SNAP-COVERAGE
+  - K-SNAP-DRIFT
+  sections:
+  - 'ECS services: task definition, image SHA, rollout state, api/worker SHA match'
+  - 'Health: /health and /health/ready per app'
+  - 'Migrations: latest per owner'
+  - Lambda versions/aliases, Vercel production commits per project
+  - 'Job tables: queued/running per owner (shared.job, booking.job, crm.job, tripplanner.job), open waves'
+  - Open PRs per repo, repo heads
+- id: OPS-16
+  family: reliability
+  name_en: Capacity and growth forecast
+  name_vi: Dự báo năng lực và tăng trưởng (6-12 tháng)
+  audience: tech lead, business owner (budget)
+  owner_role: tech lead
+  decision: When will storage, connections, CPU, LLM spend or free-plan limits run out under the planned waves and go-live,
+    and what to provision or change ahead of time?
+  cadence: quarterly with EX-05; again when a go-live date is set
+  schedule: quarterly
+  channel: docs/audits/<date>-S<nnn>-capacity-forecast/README.md via root PR; summary in EX-05
+  automation: semi
+  status: missing
+  priority: P2
+  template: null
+  generator: null
+  kpis:
+  - K-FC-RUNWAY
+  - K-FC-ACCURACY
+  - K-FC-COST12
+  sections:
+  - '1. Growth model: rows/day per ledger (DATA-04), DB size trend (1.5 GB at the 2026-10-29 dump), job volume'
+  - '2. Planned load: master plan slots, wave schedule, go-live scenario (traffic assumptions stated)'
+  - '3. Runway per limit: RDS storage, max_connections 181 and role limits, CPU baseline, Lambda concurrency, Vercel and
+    GitHub free plans, Linear 250 issues'
+  - 4. Cost projection per app for 3/6/12 months (feeds FI-06 and EX-05)
+  - 5. Actions with lead time
+- id: OPS-17
+  family: readiness
+  name_en: Go-live readiness scorecard
+  name_vi: Bảng điểm sẵn sàng go-live theo app
+  audience: business owner (go/no-go), tech lead
+  owner_role: tech lead (prepares); business owner (decides)
+  decision: Is each app ready to go to production, and what blocks the go-live date?
+  cadence: 'event: when a go-live date is set, then weekly until go-live'
+  schedule: event
+  channel: docs/audits/<date>-S<nnn>-go-live-readiness/README.md via root PR + a clickable decision page for the business
+    owner
+  automation: semi
+  status: missing
+  priority: P1
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/readiness-signoff.md
+  generator: null
+  kpis:
+  - K-GO-READY
+  - K-GO-BLOCKERS
+  sections:
+  - '1. Checklist per app from the prod blueprint (PROD-01: ADR 0012 + prod section of docs/ops/README.md)'
+  - '2. Status per item: done / in progress / blocked, with evidence link'
+  - '3. Linked gates: SLO set (OPS-08), drills done (OPS-03), access review (SEC-05), legal readiness (SEC-10), UAT signed
+    (DEV-04), security alerts past SLA (SEC-03), budget approved (FI-06)'
+  - 4. Blockers and owners
+  - 5. Go/no-go recommendation
+- id: OPS-03
+  family: reliability
+  name_en: Backup, restore and rollback drill record
+  name_vi: Biên bản diễn tập sao lưu, khôi phục và rollback
+  audience: tech lead, CTO
+  owner_role: tech lead
+  decision: Can we restore and roll back within target; which runbook step failed?
+  cadence: when a procedure changes and once before prod (Dev); quarterly from prod (DM-9.3)
+  schedule: event
+  channel: docs/audits/<date>-S<nnn>-<drill>/ via root PR; index docs/ops/drills/README.md
+  automation: manual
+  status: partial
+  priority: P2
+  template: null
+  generator: null
+  kpis:
+  - K-DR-RTO
+  - K-DR-RPO
+  - K-DR-STALE
+  sections:
+  - Drill scope (PITR, single schema, app rollback, Terraform rollback)
+  - Measured RTO and RPO
+  - Steps that failed or were unclear
+  - Runbook changes made
+- id: SEC-03
+  family: security
+  name_en: Monthly security hygiene report
+  name_vi: Báo cáo vệ sinh bảo mật hằng tháng (lỗ hổng, secret, probe cách ly)
+  audience: tech lead, CIO guide
+  owner_role: tech lead
+  decision: Which vulnerabilities, secret drifts or isolation failures must be fixed this month; which ignores expire?
+  cadence: monthly business day 2
+  schedule: monthly
+  channel: docs/audits/<date>-S<nnn>-security-review/README.md via root PR + generated docs/generated/security-alerts.md
+    (planned); counts into EX-02
+  automation: semi
+  status: partial
+  priority: P1
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/security-review.md
+  generator: null
+  kpis:
+  - K-SEC-VULNSLA
+  - K-SEC-SECRETFIND
+  - K-SEC-DRIFT
+  - K-SEC-ISOLATION
+  sections:
+  - Dependabot alerts per repo by severity and age
+  - pip-audit / npm ignores and their expiry
+  - Trivy image findings (report only)
+  - Secret scanning results (secret-scan, secret-scan-history workflows)
+  - Secrets register drift (Secrets Manager, Lambda env, GitHub, Vercel names)
+  - Nightly tenant-isolation probe and CRM key policy diff results
+  - Actions
+- id: SEC-05
+  family: security
+  name_en: Quarterly access review
+  name_vi: Rà soát quyền truy cập hằng quý
+  audience: tech lead, CIO/CTO guides
+  owner_role: tech lead
+  decision: Who can reach each app and system, and which access to remove?
+  cadence: 'quarterly: first session of each quarter, scheduled with the business day 2 pack'
+  schedule: quarterly
+  channel: docs/audits/<date>-S<nnn>-access-review/README.md via root PR; index docs/security/README.md
+  automation: semi
+  status: exists
+  priority: P1
+  template: null
+  generator: null
+  kpis:
+  - K-ACC-UNJUSTIFIED
+  - K-ACC-STALE
+  - K-ACC-KEYS
+  - K-ACC-CARRYOVER
+  sections:
+  - GitHub org members, apps, deploy keys
+  - Vercel members and tokens
+  - AWS IAM users, roles, static keys (acc2, acc3)
+  - Cognito WORKFORCE users and groups vs staff directory (DirectoryHealth)
+  - DB roles and grants (db-schema-reference roles section)
+  - Secrets access
+  - Findings and removals
+- id: SEC-08
+  family: security
+  name_en: Privileged action and audit-log review
+  name_vi: Rà soát thao tác đặc quyền và nhật ký kiểm toán
+  audience: tech lead
+  owner_role: tech lead
+  decision: Were privileged actions expected and recorded; is the audit chain intact?
+  cadence: monthly business day 2 (section of SEC-03)
+  schedule: monthly
+  channel: Section of SEC-03
+  automation: semi
+  status: partial
+  priority: P2
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/security-review.md
+  generator: null
+  kpis:
+  - K-AUD-CHAIN
+  - K-AUD-BREAKGLASS
+  - K-AUD-OVERRIDES
+  sections:
+  - CIS audit hash-chain verification
+  - Break-glass uses and deploy-gate overrides with reasons
+  - Role changes (Booking staff role sync, CIS staff role drift)
+  - Admin actions by type (CIS acp_shared.audit_log, booking.audit_logs, CRM counts)
+  - Unusual patterns (off-hours bulk actions)
+- id: SEC-09
+  family: security
+  name_en: Privacy and data-rights report
+  name_vi: Báo cáo quyền riêng tư và yêu cầu của chủ thể dữ liệu
+  audience: tech lead, business owner (legal calls)
+  owner_role: tech lead; business owner for legal decisions
+  decision: Are data-subject requests, erasures, retention and consent handled on time?
+  cadence: quarterly with EX-05; monthly counts in SEC-03
+  schedule: quarterly
+  channel: docs/audits/<date>-S<nnn>-privacy-review/ via root PR (counts only, no subject data)
+  automation: semi
+  status: partial
+  priority: P2
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/security-review.md
+  generator: null
+  kpis:
+  - K-PRIV-DSAR
+  - K-PRIV-RETENTION
+  - K-PRIV-CONSENT
+  sections:
+  - DSARs received and closed (docs/legal/register.md)
+  - 'Erasure runs: DRY RUN vs apply (CIS data_erasure job, crm.erasure_request)'
+  - Retention runs on schedule (docs/legal/retention-log.md, retention_* kinds, bk_retention_job)
+  - Consent capture check (DM-6.5)
+  - Open privacy items handed to SEC-10
+- id: SEC-10
+  family: security
+  name_en: Legal, policy and AI-terms readiness tracker
+  name_vi: Theo dõi sẵn sàng pháp lý, chính sách và điều khoản AI
+  audience: business owner (decisions, lawyer is their call), tech lead
+  owner_role: tech lead (tracks); business owner (decides with a lawyer)
+  decision: Which privacy, terms, DPA, sub-processor and AI-clause items are still open before go-live, and which need a
+    business or legal answer this month?
+  cadence: monthly count (section of SEC-03) + quarterly full review with EX-05; weekly inside OPS-17 once a go-live date
+    is set
+  schedule: monthly
+  channel: docs/audits/<date>-S<nnn>-legal-readiness/README.md via root PR (company doc in English + .vi.md for the business
+    owner); open items as a clickable decision page
+  automation: semi
+  status: partial
+  priority: P1
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/security-review.md
+  generator: null
+  kpis:
+  - K-LEGAL-OPEN
+  - K-LEGAL-TBC
+  - K-VEND-DPA
+  sections:
+  - '1. The twelve readiness topics from docs/legal/readiness-packet.md: status, proposed answer, owner role'
+  - 2. Draft pages still marked 'Draft - pending legal review' (TripPlanner and Partner privacy/terms)
+  - 3. Vendor DPAs and AI zero-retention status (docs/legal/register.md vendor table)
+  - 4. Tenant AI clause status (docs/legal/tenant-terms-ai-clause-draft.md)
+  - 5. '[to be confirmed]' markers remaining in public pages
+  - 6. Changes since last review
+- id: DATA-01
+  family: data-quality
+  name_en: Nightly data integrity digest
+  name_vi: Bản tin toàn vẹn dữ liệu hằng đêm (tổng hợp các probe)
+  audience: tech lead, engineer
+  owner_role: tech lead
+  decision: Did any nightly integrity probe fail; which layer is stale or drifting?
+  cadence: nightly (02:17-05:13 UTC); reported in the next OPS-12 digest at 01:00 UTC (results about 20 h old, run time
+    printed)
+  schedule: daily
+  channel: Each workflow uploads a summary JSON to the reports bucket; section of OPS-12; weekly roll-up in CIS-01
+  automation: auto
+  status: partial
+  priority: P1
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/data-quality-report.md
+  generator: null
+  kpis:
+  - K-DATA-PROBES
+  - K-DATA-STALE
+  - K-DATA-LIVENESS
+  - K-DATA-DRIFT
+  sections:
+  - 'Probe results: migration copy guard (02:17 UTC), contract copy guard (02:29), connection budget (02:43), schema dump/drift
+    (03:43), isolation (04:13), CRM key policy diff (04:29), tour liveness gate (04:43), freshness (05:13)'
+  - Stale rows aged > 24 h per downstream layer
+  - Liveness gate violations
+  - Unexpected schema drift
+- id: DATA-02
+  family: data-quality
+  name_en: Weekly cross-app reconciliation
+  name_vi: Đối soát liên ứng dụng hằng tuần
+  audience: tech lead, engineer
+  owner_role: tech lead
+  decision: Are events flowing between apps without loss or lag; does the LLM ledger match the bill?
+  cadence: weekly Monday 01:30 UTC
+  schedule: weekly
+  channel: Section of OPS-13 weekly; /admin/reports
+  automation: auto
+  status: missing
+  priority: P2
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/data-quality-report.md
+  generator: null
+  kpis:
+  - K-REC-INBOX
+  - K-REC-UNMATCHED
+  - K-REC-FEEDLAG
+  - K-LLM-RECON
+  sections:
+  - 'Inquiry handoff: TripPlanner outbox vs Booking inbox (weekly roll-up of TP-03)'
+  - Booking inbox backlog and age (booking.inbox_events)
+  - 'Tour lifecycle events read by bk_tour_lifecycle_pull (AA-986): lag'
+  - Booking supply feed (booking.v_supply_outbox) consumption by CRM (crm.booking_feed_state)
+  - LLM gateway ledger vs Cost Explorer (K-LLM-RECON, FI-01)
+  - crm.ops.v1 feed freshness
+  - Vercel production commit vs main per project
+- id: DATA-03
+  family: data-quality
+  name_en: Schema and contract change report
+  name_vi: Báo cáo thay đổi schema và hợp đồng dữ liệu
+  audience: engineer, tech lead, agents
+  owner_role: engineer
+  decision: Which migrations and contract changes landed; did any break a consumer?
+  cadence: event (each DB Migrate apply) + weekly summary Monday in DEV-03
+  schedule: event
+  channel: PR body of the schema-reference bot PR; weekly section of DEV-03
+  automation: auto
+  status: partial
+  priority: P3
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/data-quality-report.md
+  generator: null
+  kpis:
+  - K-SCH-APPLIED
+  - K-SCH-BREAKING
+  - K-SCH-REFLAG
+  sections:
+  - Migrations applied per owner (CIS, tp-, bk-, crm-)
+  - bot/db-schema-reference PRs and drift status
+  - Contract changes in docs/contracts and API contract checks
+  - ERD drift
+- id: DATA-04
+  family: data-quality
+  name_en: Ledger growth and retention compliance
+  name_vi: Tăng trưởng sổ ghi và tuân thủ thời hạn lưu trữ
+  audience: tech lead
+  owner_role: tech lead
+  decision: Are ledgers inside their retention windows and is growth sustainable?
+  cadence: monthly business day 2 (item 4 of OPS-08)
+  schedule: monthly
+  channel: Section of OPS-08
+  automation: auto
+  status: partial
+  priority: P2
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/data-quality-report.md
+  generator: null
+  kpis:
+  - K-RET-OVERDUE
+  - K-RET-RUNS
+  - K-RET-GROWTH
+  sections:
+  - Row counts and size of ledgers (shared.llm_call_log, shared.job, shared.decision_log, shared.tenant_api_usage_monthly,
+    shared.cost_explorer_snapshot, booking.job, booking.inbox_events)
+  - Rows older than their window
+  - Retention job outcomes (CIS retention_* kinds, bk_retention_job, bk_retention_inbox_redact)
+  - Top 20 tables by size and 30-day growth
+- id: DATA-05
+  family: on-demand
+  name_en: On-demand report or data request
+  name_vi: Yêu cầu báo cáo hoặc trích xuất số liệu theo nhu cầu
+  audience: business owner, tech lead, Booking admin, AA staff
+  owner_role: tech lead (triage); agent runs
+  decision: Answer a specific question not covered by a scheduled report, or rerun a report for another period.
+  cadence: on demand
+  schedule: on_demand
+  channel: /admin/reports Request form or a Jira/Linear comment; result in S3 + report_run; technical analyses in docs/audits/<date>-S<nnn>-<slug>/
+  automation: on_demand
+  status: missing
+  priority: P1
+  template: null
+  generator: null
+  kpis:
+  - K-OD-SLA
+  - K-OD-REPEAT
+  sections:
+  - Request (question, decision it supports, period, audience)
+  - Method and sources
+  - Result
+  - Limits and caveats
+  - Promote-to-registry decision
+- id: DEV-01
+  family: release
+  name_en: Monthly delivery and DORA report
+  name_vi: Báo cáo phân phối phần mềm và DORA hằng tháng
+  audience: tech lead, CTO guide
+  owner_role: tech lead
+  decision: Is delivery fast and safe enough; where to invest in CI, tests or review?
+  cadence: monthly business day 2
+  schedule: monthly
+  channel: S3 + /admin/reports; Markdown in docs/audits/<date>-S<nnn>-delivery/; headline in EX-02
+  automation: auto
+  status: missing
+  priority: P1
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/delivery-dora-report.md
+  generator: null
+  kpis:
+  - K-DORA-DF
+  - K-DORA-LT
+  - K-DORA-CFR
+  - K-DORA-MTTR
+  - K-CI-MAINFAIL
+  sections:
+  - 'DORA per app: deployment frequency, lead time for changes, change failure rate, time to restore'
+  - 'CI health: duration, failure rate on main, re-runs, flaky tests, Actions minutes'
+  - Release versions shipped (DEV-02)
+  - Post-deploy verify failures and rollbacks
+  - Improvement actions
+- id: DEV-02
+  family: release
+  name_en: Release notes per app
+  name_vi: Ghi chú phát hành theo app
+  audience: business owner (Vietnamese summary), staff, engineers
+  owner_role: tech lead
+  decision: What changed for users in this release; is any action needed from staff or tenants?
+  cadence: 'event: each release-please release'
+  schedule: event
+  channel: CHANGELOG.md (auto) + Jira epic comment for user-visible releases (batched at session end)
+  automation: semi
+  status: partial
+  priority: P2
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/delivery-dora-report.md
+  generator: null
+  kpis:
+  - K-REL-NOTES
+  sections:
+  - Version and date
+  - User-visible changes in business words
+  - Fixes
+  - Breaking or behaviour changes and required actions
+  - Links to CHANGELOG and evidence
+- id: DEV-03
+  family: release
+  name_en: Weekly engineering flow
+  name_vi: Dòng chảy công việc kỹ thuật hằng tuần
+  audience: tech lead
+  owner_role: tech lead
+  decision: Is work converging (In Progress closing, PRs merging) and are master-plan slots on track?
+  cadence: weekly Monday 01:30 UTC
+  schedule: weekly
+  channel: /admin/reports + section of EX-01 (counts only, no Linear IDs in Jira)
+  automation: auto
+  status: partial
+  priority: P1
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/delivery-dora-report.md
+  generator: null
+  kpis:
+  - K-DEL-SHIPPED
+  - K-FLOW-WIPAGE
+  - K-FLOW-PRAGE
+  - K-FLOW-QUOTA
+  sections:
+  - Issues Done with live verify (K-DEL-SHIPPED)
+  - In Progress older than 7 days
+  - Open PRs per repo and age
+  - Master plan slot progress (docs/backlog/tracker/plan.json)
+  - Schema and contract changes (DATA-03)
+  - Linear quota (Free plan, 250 unarchived)
+- id: DEV-04
+  family: readiness
+  name_en: UAT sign-off record
+  name_vi: Biên bản nghiệm thu UAT theo app
+  audience: business owner (accepts), tech lead, staff testers
+  owner_role: tech lead (prepares); business owner (signs off)
+  decision: Does each app do what the business needs, recorded on video, and is it accepted for go-live?
+  cadence: 'event: once after all technical work or when the business owner says (AA-855, > S262); repeat for major releases
+    before prod'
+  schedule: event
+  channel: docs/audits/<date>-S<nnn>-uat/README.md via root PR (links, no personal data) + a clickable sign-off page for
+    the business owner; summary in the Jira epic per app
+  automation: manual
+  status: planned
+  priority: P2
+  template: docs/audits/2026-10-29-S258-report-catalog/templates/readiness-signoff.md
+  generator: null
+  kpis:
+  - K-UAT-PASS
+  - K-UAT-DEFECTS
+  - K-UAT-COVER
+  sections:
+  - '1. Scope: apps and roles tested (CIS admin + portal, TripPlanner, Booking, CRM)'
+  - 2. Scenario list per app with expected result
+  - '3. Result per scenario: pass / fail / pass with note, video link, screenshot'
+  - 4. Defects found with severity and fix status
+  - '5. Sign-off: accepted / accepted with conditions / rejected, by role and date'

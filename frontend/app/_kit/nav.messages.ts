@@ -25,6 +25,7 @@ export const NAV_MESSAGES = defineMessages(
     "Tenant output": "Tenant output",
     // entries
     "Data coverage": "Data coverage",
+    "Reports": "Reports",
     "Staff": "Staff",
     "Audit log": "Audit log",
     "Alert recipients": "Alert recipients",
@@ -72,6 +73,7 @@ export const NAV_MESSAGES = defineMessages(
     "Intelligence": "Phân tích",
     "Tenant output": "Đầu ra của tenant",
     "Data coverage": "Độ phủ dữ liệu",
+    "Reports": "Báo cáo",
     "Staff": "Nhân sự",
     "Audit log": "Nhật ký kiểm tra",
     "Alert recipients": "Người nhận cảnh báo",

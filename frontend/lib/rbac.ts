@@ -53,6 +53,7 @@ export const PAGE_RULES: PageRule[] = [
   // Admin only — whole-system views, money, tenants, jobs, decisions, photos.
   { prefix: "/admin/overview", roles: ["admin"] },          // AA-664
   { prefix: "/admin/data-coverage", roles: ["admin"] },     // AA-992 — counts from raw upload to CRM (incl. CRM)
+  { prefix: "/admin/reports", roles: ["admin"] },          // AA-1003 — report register, KPI scorecard runs
   { prefix: "/admin/tenants", roles: ["admin"] },
   { prefix: "/admin/cost-ops", roles: ["admin"] },         // AA-505; AA-665 (was /admin/llm-usage, redirected)
   { prefix: "/admin/jobs", roles: ["admin"] },              // AA-650
@@ -142,6 +143,8 @@ export const API_WRITE_RULES: { prefix: string; roles: StaffRole[] }[] = [
   // AA-814 — platform fact writes (add / edit / delete) change what every tenant's T9 seed reads; the backend re-checks
   // (quality.write). "facts" also covers the bare create path.
   { prefix: "facts", roles: ["admin"] },
+  // AA-1003 — "generate now" on /admin/reports; the backend re-checks (ops.write).
+  { prefix: "reports/", roles: ["admin"] },
 ];
 
 // AA-577 follow-up — /api/admin/ paths that NO method may reach unless the role is listed (reads
@@ -161,6 +164,9 @@ export const API_READ_RULES: { prefix: string; roles: StaffRole[] }[] = [
   // AA-992 — backend /admin/data-coverage (counts of every stage, CRM included): admin only, re-checked by the backend
   // (staff_policy, capability ops.read).
   { prefix: "data-coverage", roles: ["admin"] },
+  // AA-1003 — backend /admin/reports/* (report register, runs and their output, generate now): admin only, re-checked
+  // by the backend (staff_policy, ops.read / ops.write).
+  { prefix: "reports", roles: ["admin"] },
   // AA-839 — backend /admin/job-runner/erasure (inventory + apply settings) and /erasure/run: admin only, re-checked
   // by the backend (staff_policy, tenant.read / tenant.write).
   { prefix: "job-runner/erasure", roles: ["admin"] },

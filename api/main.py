@@ -74,6 +74,7 @@ from api.routers.admin_alert_recipients import router as admin_alert_recipients_
 from api.routers.admin_aa_content import router as admin_aa_content_router  # AA-977
 from api.routers.admin_writing_memory import router as admin_writing_memory_router  # AA-917
 from api.routers.admin_facts import router as admin_facts_router  # AA-814
+from api.routers.admin_reports import router as admin_reports_router  # AA-1003
 from api.routers.v1_progress import router as v1_progress_router  # AA-637
 from api.routers.catalog_http import (  # AA-976 — catalog.http.v1 for the partner CRM (M2M)
     CatalogProblem, catalog_problem_handler, router as catalog_http_router,
@@ -331,6 +332,7 @@ app.include_router(admin_alert_recipients_router)  # AA-913 — /admin/platform/
 app.include_router(admin_aa_content_router)  # AA-977 — /admin/aa-content (AA content editor, no include prefix)
 app.include_router(admin_writing_memory_router)  # AA-917 — /admin/writing-memory (no include prefix)
 app.include_router(admin_facts_router)  # AA-814 — /admin/facts (platform Facts Entries, no include prefix)
+app.include_router(admin_reports_router)  # AA-1003 — /admin/reports (report register, runs; no include prefix)
 app.include_router(admin_photos_router)  # AA-708 — /admin/photos (Drive photo sync, matching)
 app.include_router(admin_places_router)  # AA-712 — /admin/places/backfill (place pipeline)
 app.include_router(admin_supply_content_router)  # AA-835 — /admin/supply-content (Booking supply content review)

@@ -1,0 +1,2664 @@
+# KPI registry: every KPI the reports of catalog.yaml show (AA-1003 R1; imported from the AA-1001 advisory).
+#
+# One entry per KPI ID. A KPI is defined once (defined_in = the report that owns the definition) and reused by the
+# reports in used_by. `sources` lists the DB tables and views the definition reads; the lint checks each against
+# docs/architecture/db-schema-reference.md, except the names in planned_sources (proposed, not built yet).
+# `unit` was inferred at import for KPIs nothing computes yet: correct it when the KPI is built. `snapshot` says which
+# job writes the KPI's daily value to shared.kpi_daily (scope keys: all, app:<app>, provider:<provider>), and
+# `alert` the value bounds a generated report colours (amber_gte / red_gte); a threshold in words stays in `threshold`.
+# Edit by hand; the CIS report engine reads a byte copy (AA-CIS-App services/reports/registry/kpis.yaml).
+
+version: 1
+imported_from: docs/audits/2026-10-29-S258-report-catalog/catalog.json
+planned_sources:
+- name: shared.report_run
+  reason: named by K-RPT-FAILED; not in docs/architecture/db-schema-reference.md at import (proposed in the catalog)
+kpis:
+- id: K-ACC-CARRYOVER
+  version: 1
+  name: Findings carried over
+  definition: Open findings from the previous review
+  unit: count
+  threshold: '0'
+  sources: []
+  defined_in: SEC-05
+  used_by:
+  - SEC-05
+- id: K-ACC-KEYS
+  version: 1
+  name: Active static IAM keys
+  definition: Active IAM user access keys in ecosystem accounts
+  unit: count
+  threshold: 0 (except documented bootstrap)
+  sources: []
+  defined_in: SEC-05
+  used_by:
+  - SEC-05
+- id: K-ACC-STALE
+  version: 1
+  name: Stale identities
+  definition: Users with no sign-in in 90 days
+  unit: count
+  threshold: 0 or justified
+  sources: []
+  defined_in: SEC-05
+  used_by:
+  - SEC-05
+- id: K-ACC-UNJUSTIFIED
+  version: 1
+  name: Unjustified access
+  definition: Principals without a documented need
+  unit: count
+  threshold: 0 at sign-off
+  sources: []
+  defined_in: SEC-05
+  used_by:
+  - SEC-05
+- id: K-AIQ-GATEFIRE
+  version: 1
+  name: Gate fire rate per gate
+  definition: Share of acp_shared.content_piece rows whose gate_ledger records a fail for the gate
+  unit: ratio
+  threshold: Within +/-5 points of the 4-week median
+  sources:
+  - acp_shared.content_piece
+  defined_in: CIS-05
+  used_by:
+  - CIS-05
+- id: K-AIQ-KAPPA
+  version: 1
+  name: Judge kappa
+  definition: shared.prompt_eval_runs.judge_kappa of the latest run with finished_at not null, per writer
+  unit: score
+  threshold: '>= 0.6 to let the judge gate (AA-919 best 0.562)'
+  sources:
+  - shared.prompt_eval_runs
+  defined_in: CIS-05
+  used_by:
+  - CIS-05
+- id: K-AIQ-REGRESSION
+  version: 1
+  name: Regression flag
+  definition: shared.prompt_eval_runs.regression_detected true for runs finished in the week
+  unit: status
+  threshold: 0; any true triggers CIS-06 review
+  sources:
+  - shared.prompt_eval_runs
+  defined_in: CIS-05
+  used_by:
+  - CIS-05
+- id: K-AIQ-RELEASE
+  version: 1
+  name: Release status
+  definition: shared.writing_memory_release rows with status 'active' per writer; reverify true with reverify_at older than
+    7 days
+  unit: status
+  threshold: 0 stale reverify flags
+  sources:
+  - shared.writing_memory_release
+  defined_in: CIS-05
+  used_by:
+  - CIS-05
+- id: K-AIQ-SCORE
+  version: 1
+  name: Average quality score
+  definition: avg silver_aa_internal.quality_scores.score_overall with evaluated_at in the week
+  unit: score
+  threshold: No drop > 3 points week over week
+  sources:
+  - silver_aa_internal.quality_scores
+  defined_in: CIS-05
+  used_by:
+  - CIS-05
+- id: K-AP-OVERDUE
+  version: 1
+  name: AP overdue
+  definition: sum booking.v_supplier_bill_balance.balance where overdue
+  unit: count
+  threshold: '0'
+  sources:
+  - booking.v_supplier_bill_balance
+  defined_in: BK-03
+  used_by:
+  - BK-03
+- id: K-AR-AGING
+  version: 1
+  name: Aging buckets
+  definition: sum booking.v_payment_schedule_status.remaining_amount by days_overdue bucket
+  unit: status
+  threshold: '> 60 days = 0'
+  sources:
+  - booking.v_payment_schedule_status
+  defined_in: BK-03
+  used_by:
+  - BK-03
+- id: K-AR-DSO
+  version: 1
+  name: DSO
+  definition: Open receivables / invoiced amount in the last 90 days x 90
+  unit: days
+  threshold: <= 30 days
+  sources: []
+  defined_in: BK-03
+  used_by:
+  - BK-03
+- id: K-AR-OVERDUE
+  version: 1
+  name: AR overdue
+  definition: sum booking.v_invoice_balance.overdue_amount / sum balance, per currency
+  unit: count
+  threshold: Red > 10 %
+  sources:
+  - booking.v_invoice_balance
+  defined_in: BK-03
+  used_by:
+  - BK-03
+- id: K-AR-UNVERIFIED
+  version: 1
+  name: Unverified payments
+  definition: sum booking.v_invoice_balance.unverified_amount and max age
+  unit: count
+  threshold: 0 older than 2 working days
+  sources:
+  - booking.v_invoice_balance
+  defined_in: BK-03
+  used_by:
+  - BK-03
+- id: K-AUD-BREAKGLASS
+  version: 1
+  name: Break-glass uses
+  definition: Uses in the month, each with a record per docs/ops/runbooks/break-glass.md
+  unit: count
+  threshold: 100 % recorded
+  sources: []
+  defined_in: SEC-08
+  used_by:
+  - SEC-08
+- id: K-AUD-CHAIN
+  version: 1
+  name: Hash-chain verify
+  definition: GET /admin/platform/audit/verify result for the month (acp_shared.audit_log chain_seq, prev_hash, row_hash)
+  unit: status
+  threshold: Pass
+  sources:
+  - acp_shared.audit_log
+  defined_in: SEC-08
+  used_by:
+  - SEC-08
+- id: K-AUD-OVERRIDES
+  version: 1
+  name: Deploy-gate overrides
+  definition: Deploy runs with input override_running_jobs set (apps/AA-CIS-App/.github/workflows/deploy-dev.yml) with a
+    reason (docs/ops/runbooks/deploy-gate-override.md)
+  unit: count
+  threshold: 100 % with reason
+  sources: []
+  defined_in: SEC-08
+  used_by:
+  - SEC-08
+- id: K-AVAIL
+  version: 1
+  name: Availability per app
+  definition: Successful health probes / probes in the month (Booking 5-minute uptime schedule, ops probe for others; TripPlanner
+    after it gets /health)
+  unit: count
+  threshold: Dev informational; prod SLO set in OPS-17 / PROD-01
+  sources: []
+  defined_in: OPS-08
+  used_by:
+  - OPS-08
+- id: K-B2B-EXPIRED
+  version: 1
+  name: Expired holds
+  definition: holds with expired_at not null / holds created
+  unit: count
+  threshold: < 30 %
+  sources: []
+  defined_in: BK-05
+  used_by:
+  - BK-05
+- id: K-B2B-EXT
+  version: 1
+  name: Extensions per hold
+  definition: avg booking.b2b_holds.extended_count
+  unit: count
+  threshold: <= 1
+  sources:
+  - booking.b2b_holds
+  defined_in: BK-05
+  used_by:
+  - BK-05
+- id: K-B2B-H2C
+  version: 1
+  name: Hold to confirm
+  definition: booking.b2b_holds with confirmed_at not null / holds created
+  unit: ratio
+  threshold: '>= 40 % (baseline after first prod quarter)'
+  sources:
+  - booking.b2b_holds
+  defined_in: BK-05
+  used_by:
+  - BK-05
+- id: K-BILL-AMOUNT
+  version: 1
+  name: Amount billable
+  definition: price_usd_monthly + overage_usd from shared.v_tenant_monthly_usage; CRM plan fee from crm.tenant_entitlement.plan
+    (price list pending)
+  unit: usd
+  threshold: Reconciles 100 % with issued invoices
+  sources:
+  - shared.v_tenant_monthly_usage
+  - crm.tenant_entitlement
+  defined_in: FI-09
+  used_by:
+  - FI-09
+- id: K-BILL-MARGIN
+  version: 1
+  name: Tenant margin
+  definition: (amount billable - K-LLM-TENANT - shared.dfs_call_log.cost_usd for the tenant_id) / amount billable
+  unit: ratio
+  threshold: Flag < 50 %
+  sources:
+  - shared.dfs_call_log
+  defined_in: FI-09
+  used_by:
+  - FI-09
+- id: K-BILL-OVERAGE
+  version: 1
+  name: Overage share
+  definition: overage_usd / amount billable
+  unit: ratio
+  threshold: '> 30 % two months running = suggest upgrade'
+  sources: []
+  defined_in: FI-09
+  used_by:
+  - FI-09
+- id: K-BK-ATRISK
+  version: 1
+  name: At-risk departures
+  definition: v_trip_check_board rows with start_date within 14 days and suppliers_confirmed false or payment_verified false
+  unit: count
+  threshold: 0 at T-7
+  sources: []
+  defined_in: BK-01
+  used_by:
+  - BK-01
+- id: K-BK-CANCEL
+  version: 1
+  name: Cancellation rate
+  definition: Cases reaching 'cancelled' / (confirmed + cancelled) in the period
+  unit: ratio
+  threshold: Flag > 10 %
+  sources: []
+  defined_in: FI-07
+  used_by:
+  - FI-07
+- id: K-BK-CASH
+  version: 1
+  name: Cash collected
+  definition: Sum booking.payments.amount with verified_at not null and voided_at null, by received_on
+  unit: usd
+  threshold: Matches bank statement at close
+  sources:
+  - booking.payments
+  defined_in: FI-07
+  used_by:
+  - FI-07
+- id: K-BK-CONF
+  version: 1
+  name: Booking cases confirmed
+  definition: booking.v_ops_funnel_daily metric inquiry_received / confirmed
+  unit: count
+  threshold: Trend
+  sources:
+  - booking.v_ops_funnel_daily
+  defined_in: EX-04
+  used_by:
+  - EX-04
+- id: K-BK-CONFIRMED
+  version: 1
+  name: Confirmed bookings
+  definition: Trip cases whose first booking.trip_case_status_history row with to_status 'confirmed' falls in the period
+  unit: count
+  threshold: Business owner target at go-live
+  sources:
+  - booking.trip_case_status_history
+  defined_in: FI-07
+  used_by:
+  - FI-07
+- id: K-BK-CONV
+  version: 1
+  name: Inquiry to confirmed
+  definition: Cases whose first booking.trip_case_status_history row with to_status 'confirmed' exists / inquiry_received,
+    same cohort month
+  unit: ratio
+  threshold: Baseline after first prod quarter; alert on -20 % vs trailing 3 months
+  sources:
+  - booking.trip_case_status_history
+  defined_in: BK-02
+  used_by:
+  - EX-02
+  - BK-02
+  report_thresholds:
+    EX-02: Business owner sets target at go-live; Dev = trend
+- id: K-BK-EXPIRING
+  version: 1
+  name: Expiring quotes and holds
+  definition: booking.trip_case_versions with is_sent_to_customer true, is_approved false, valid_until within 3 days; booking.b2b_quotes
+    valid_until within 3 days; booking.b2b_holds status 'active' with expires_at within 48 h
+  unit: count
+  threshold: Each listed with owner
+  sources:
+  - booking.trip_case_versions
+  - booking.b2b_quotes
+  - booking.b2b_holds
+  defined_in: BK-01
+  used_by:
+  - BK-01
+- id: K-BK-GMV
+  version: 1
+  name: GMV
+  definition: Sum booking.trip_case_versions.total_price (is_approved true) of cases confirmed in the period, converted
+    with fx_rate_locked
+  unit: usd
+  threshold: Business owner target
+  sources:
+  - booking.trip_case_versions
+  defined_in: FI-07
+  used_by:
+  - FI-07
+- id: K-BK-INQ
+  version: 1
+  name: Booking inquiries received
+  definition: booking.v_ops_funnel_daily metric inquiry_received / confirmed
+  unit: count
+  threshold: Trend
+  sources:
+  - booking.v_ops_funnel_daily
+  defined_in: EX-04
+  used_by:
+  - EX-04
+- id: K-BK-INQ2CASE
+  version: 1
+  name: Inquiry to case
+  definition: trip_case_created / inquiry_received, same source_system
+  unit: ratio
+  threshold: 100 % within 24 h
+  sources: []
+  defined_in: TP-03
+  used_by:
+  - TP-03
+- id: K-BK-INVOICED
+  version: 1
+  name: Invoiced revenue
+  definition: Sum booking.invoices.total_amount with issued_at in the month and cancelled_at null, per currency
+  unit: usd
+  threshold: vs previous month and same month last year
+  sources:
+  - booking.invoices
+  defined_in: FI-07
+  used_by:
+  - FI-07
+- id: K-BK-MARGIN
+  version: 1
+  name: Gross margin %
+  definition: (GMV - sum booking.version_item_costs.net_amount converted from net_currency) / GMV
+  unit: ratio
+  threshold: Red below booking.pricing_rules.floor_margin for the channel
+  sources:
+  - booking.version_item_costs
+  defined_in: FI-07
+  used_by:
+  - FI-07
+- id: K-BK-OVERDUECHECKS
+  version: 1
+  name: Overdue checks
+  definition: sum booking.v_trip_check_board.checks_overdue
+  unit: count
+  threshold: 0; red if a case departs within 7 days with overdue checks
+  sources:
+  - booking.v_trip_check_board
+  defined_in: BK-01
+  used_by:
+  - BK-01
+- id: K-BK-PARKED
+  version: 1
+  name: Parkedfailed inquiries
+  definition: booking.v_ops_funnel_daily metrics inquiry_parked + inquiry_failed; age from booking.inbox_events (status,
+    received_at, processed_at)
+  unit: count
+  threshold: 0 open older than 4 h
+  sources:
+  - booking.v_ops_funnel_daily
+  - booking.inbox_events
+  defined_in: TP-03
+  used_by:
+  - TP-03
+- id: K-BK-STALLED
+  version: 1
+  name: Stalled cases
+  definition: booking.trip_cases not in completed/cancelled with last status change > 7 days ago
+  unit: count
+  threshold: 0 without a note
+  sources:
+  - booking.trip_cases
+  defined_in: BK-02
+  used_by:
+  - BK-02
+- id: K-BK-SUPPENDING
+  version: 1
+  name: Pending supplier confirmations
+  definition: booking.supplier_bookings with status 'requested', requested_at older than 48 h
+  unit: count
+  threshold: '0'
+  sources:
+  - booking.supplier_bookings
+  defined_in: BK-01
+  used_by:
+  - BK-01
+- id: K-BK-TTC
+  version: 1
+  name: Time to confirm
+  definition: median and p90 of first 'confirmed' changed_at - created_at
+  unit: hours
+  threshold: Tracked
+  sources: []
+  defined_in: BK-02
+  used_by:
+  - BK-02
+- id: K-BK-TTP
+  version: 1
+  name: Time to first proposal
+  definition: median(first changed_at with to_status 'proposal_sent' - booking.trip_cases.created_at)
+  unit: hours
+  threshold: <= 48 h
+  sources:
+  - booking.trip_cases
+  defined_in: BK-02
+  used_by:
+  - BK-02
+- id: K-BK-UNVERIFIED
+  version: 1
+  name: Unverified payments
+  definition: sum booking.v_invoice_balance.unverified_count
+  unit: count
+  threshold: 0 older than 2 working days
+  sources:
+  - booking.v_invoice_balance
+  defined_in: BK-01
+  used_by:
+  - BK-01
+- id: K-CAP-CONN
+  version: 1
+  name: Connection peak
+  definition: DatabaseConnections max and p95 vs max_connections
+  unit: count
+  threshold: p95 < 60 %
+  sources: []
+  defined_in: OPS-08
+  used_by:
+  - OPS-08
+- id: K-CAP-CPU
+  version: 1
+  name: CPU hours above baseline
+  definition: Hours with hourly average CPU > 20 % (T baseline) in 30 days
+  unit: count
+  threshold: Trigger per C3
+  sources: []
+  defined_in: OPS-08
+  used_by:
+  - OPS-08
+- id: K-CAP-STORAGE
+  version: 1
+  name: Storage growth
+  definition: GB/day over 30 and 7 days
+  unit: count
+  threshold: Trigger > 1 GB/day for a week
+  sources: []
+  defined_in: OPS-08
+  used_by:
+  - OPS-08
+- id: K-CAP-TRIGGERS
+  version: 1
+  name: C3 triggers fired
+  definition: Count of C3 triggers fired with decision recorded
+  unit: count
+  threshold: Each has a decision
+  sources: []
+  defined_in: OPS-08
+  used_by:
+  - OPS-08
+- id: K-CAT-COVER
+  version: 1
+  name: Cover coverage
+  definition: catalog.v_tour rows with cover_photo_path not null / all catalog.v_tour rows
+  unit: ratio
+  threshold: '>= 95 %; red < 90 %'
+  sources:
+  - catalog.v_tour
+  defined_in: CIS-01
+  used_by:
+  - CIS-01
+- id: K-CAT-LIFECYCLE
+  version: 1
+  name: Lifecycle events
+  definition: gold_aa_internal.tour_lifecycle_event by event (retired, paused, restored, superseded) and reason in the week;
+    superseded events shown with replaced_by_tour_id
+  unit: status
+  threshold: Informational; retirements with reason source_deleted or master_trashed listed for review
+  sources:
+  - gold_aa_internal.tour_lifecycle_event
+  defined_in: CIS-01
+  used_by:
+  - CIS-01
+- id: K-CAT-LIVE
+  version: 1
+  name: Tours live
+  definition: 'Rows of gold_aa_internal.v_tour_liveness with state ''served'' at the snapshot (the view''s states: served,
+    paused, retired); paused and retired counted the same way'
+  unit: count
+  threshold: No unexplained drop > 2 % week over week (EX-04 uses day over day)
+  sources:
+  - gold_aa_internal.v_tour_liveness
+  defined_in: CIS-01
+  used_by:
+  - EX-01
+  - EX-04
+  - CIS-01
+  report_thresholds:
+    EX-01: Flag a drop > 2 % week over week
+    EX-04: Flag drop > 2 % day over day
+  snapshot:
+    job: kpi_snapshot_daily
+    scopes:
+    - all
+    computes: 'rows of gold_aa_internal.v_tour_liveness with state ''served'' when the job runs (a point-in-time count:
+      written for the latest day only, never back-filled)'
+- id: K-CAT-PHOTO
+  version: 1
+  name: Photo depth
+  definition: Share of catalog.v_tour rows with photo_count >= 3
+  unit: ratio
+  threshold: '>= 80 %'
+  sources:
+  - catalog.v_tour
+  defined_in: CIS-01
+  used_by:
+  - CIS-01
+- id: K-CAT-S1
+  version: 1
+  name: S1 rewrite coverage
+  definition: Live gold_aa_internal.published_tours (deleted_at null) rewritten by the current S1 writer / all live published
+    tours, same count as /admin/s1-rewrite
+  unit: ratio
+  threshold: 100 %; countries < 90 % listed
+  sources:
+  - gold_aa_internal.published_tours
+  defined_in: CIS-01
+  used_by:
+  - CIS-01
+- id: K-CI-MAINFAIL
+  version: 1
+  name: CI failure rate on main
+  definition: Failed ci.yml runs on main / runs
+  unit: ratio
+  threshold: < 5 %
+  sources: []
+  defined_in: DEV-01
+  used_by:
+  - DEV-01
+- id: K-CIS04-API-CALLS-USED
+  version: 1
+  name: API calls used
+  definition: shared.v_tenant_monthly_usage.api_calls_used vs api_calls_quota_monthly
+  unit: count
+  threshold: Shown vs quota
+  sources:
+  - shared.v_tenant_monthly_usage
+  defined_in: CIS-04
+  used_by:
+  - CIS-04
+- id: K-CIS04-OVERAGE-USD
+  version: 1
+  name: Overage (USD)
+  definition: shared.v_tenant_monthly_usage.overage_usd
+  unit: usd
+  threshold: Shown only when > 0
+  sources:
+  - shared.v_tenant_monthly_usage
+  defined_in: CIS-04
+  used_by:
+  - CIS-04
+- id: K-CIS04-PIECES-DELIVERED-PUBLISHED
+  version: 1
+  name: Pieces delivered / published
+  definition: acp_shared.content_piece status 'approved' and acp_shared.publish_log status 'published' for the tenant
+  unit: ratio
+  threshold: Informational
+  sources:
+  - acp_shared.content_piece
+  - acp_shared.publish_log
+  defined_in: CIS-04
+  used_by:
+  - CIS-04
+- id: K-CIS04-TOURS-REWRITTEN
+  version: 1
+  name: Tours rewritten
+  definition: shared.v_tenant_monthly_usage.tours_rewritten for billing_month vs tours_quota_monthly
+  unit: count
+  threshold: Shown vs quota
+  sources:
+  - shared.v_tenant_monthly_usage
+  defined_in: CIS-04
+  used_by:
+  - CIS-04
+- id: K-COST-ACC2
+  version: 1
+  name: acc2 total vs budget
+  definition: Cost Explorer month total (shared.cost_explorer_snapshot.amount_usd for the acc2 account_id) / var.total_monthly_budget_usd
+    300 (infra/AA-CIS-Infra/accounts/aa365/variables.tf lines 159-162)
+  unit: ratio
+  threshold: <= 100 %
+  sources:
+  - shared.cost_explorer_snapshot
+  defined_in: FI-01
+  used_by:
+  - FI-01
+- id: K-COST-APP
+  version: 1
+  name: Per-App actual vs budget
+  definition: shared.cost_explorer_app_snapshot.amount_usd per app_tag vs var.per_app_monthly_budgets (cis 90, tripplanner
+    10, booking 25, crm 35, identity 10, shared 120; variables.tf lines 184-193)
+  unit: ratio
+  threshold: Each <= 100 %; amber at 80 %
+  sources:
+  - shared.cost_explorer_app_snapshot
+  defined_in: FI-01
+  used_by:
+  - FI-01
+- id: K-COST-EXPLAINED
+  version: 1
+  name: Explained movers
+  definition: Services with MoM change > 20 % and > 2 USD that carry a written reason / all such services
+  unit: count
+  threshold: 100 %
+  sources: []
+  defined_in: FI-01
+  used_by:
+  - FI-01
+- id: K-COST-FCST
+  version: 1
+  name: Month-end forecast
+  definition: GET /admin/cost-ops/forecast per account, stored daily (budget side valid only after roadmap R0 fixes the
+    250 USD constant)
+  unit: count
+  threshold: <= budget (300 acc2, 250 acc3)
+  sources: []
+  defined_in: EX-04
+  used_by:
+  - EX-04
+  - FI-02
+  report_thresholds:
+    FI-02: Amber >= 0.8, red >= 1.0
+- id: K-COST-MTD
+  version: 1
+  name: Spend month-to-date vs prorated budget
+  definition: '(acc2 MTD from shared.cost_explorer_snapshot + acc3 gross) / (budget x elapsed days / days in month); budgets:
+    acc2 var.total_monthly_budget_usd = 300 (infra/AA-CIS-Infra/accounts/aa365/variables.tf lines 159-162), acc3 var.acc3_budget_monthly_usd
+    = 250 (accounts/acc3-bedrock/cost_guard.tf line 29)'
+  unit: usd
+  threshold: Green <= 1.0, amber 1.0-1.1, red > 1.1
+  sources:
+  - shared.cost_explorer_snapshot
+  defined_in: EX-01
+  used_by:
+  - EX-01
+- id: K-COST-TOTAL
+  version: 1
+  name: Total platform cost
+  definition: acc2 Cost Explorer month total + acc3 gross (before credits) + vendor ledgers (Jev shared.decision_log.cost_usd,
+    DataForSEO shared.dfs_call_log.cost_usd, Geoapify geo.geocode_call.cost_usd, OpenAI rows of shared.llm_call_log provider
+    openai)
+  unit: usd
+  threshold: acc2 <= 300 USD, acc3 <= 250 USD gross
+  sources:
+  - shared.decision_log
+  - shared.dfs_call_log
+  - geo.geocode_call
+  - shared.llm_call_log
+  defined_in: EX-02
+  used_by:
+  - EX-02
+- id: K-COST-UNTAGGED
+  version: 1
+  name: Untagged share
+  definition: Untagged App spend / acc2 total
+  unit: ratio
+  threshold: < 5 % (DM-10.1)
+  sources: []
+  defined_in: FI-01
+  used_by:
+  - FI-01
+- id: K-COST-WOW
+  version: 1
+  name: Week-over-week change per provider
+  definition: (last 7 d - prior 7 d) / prior 7 d
+  unit: count
+  threshold: Flag > 30 % and > 5 USD
+  sources: []
+  defined_in: FI-02
+  used_by:
+  - FI-02
+- id: K-CRM01-LEAD-SOURCE-MIX
+  version: 1
+  name: Lead source mix
+  definition: crm.trip.lead_source share and win rate
+  unit: status
+  threshold: Informational
+  sources:
+  - crm.trip
+  defined_in: CRM-01
+  used_by:
+  - CRM-01
+- id: K-CRM01-LOST-REASONS
+  version: 1
+  name: Lost reasons
+  definition: crm.trip.lost_reason_code distribution (price, price_aa_tour, aa_sold_out, aa_on_request_declined, dates_changed,
+    went_elsewhere, no_response, postponed, other)
+  unit: status
+  threshold: Top 3 shown
+  sources:
+  - crm.trip
+  defined_in: CRM-01
+  used_by:
+  - CRM-01
+- id: K-CRM01-STALLED-TRIPS
+  version: 1
+  name: Stalled trips
+  definition: crm.trip with stage_entered_at older than 14 days, stage not in completed/lost/cancelled
+  unit: count
+  threshold: 0 without waiting_on
+  sources:
+  - crm.trip
+  defined_in: CRM-01
+  used_by:
+  - CRM-01
+- id: K-CRM01-WIN-RATE
+  version: 1
+  name: Win rate
+  definition: 'Trips with a crm.trip_stage_history row with to_stage ''booked'' / trips created in the cohort month (stages:
+    inquiry, qualifying, proposal, booked, pre_departure, travelling, completed, lost, cancelled)'
+  unit: ratio
+  threshold: Agency-set target; trend
+  sources:
+  - crm.trip_stage_history
+  defined_in: CRM-01
+  used_by:
+  - CRM-01
+  - CRM-05
+- id: K-CRM02-FIRST-RESPONSE-TIME
+  version: 1
+  name: First response time
+  definition: median(first outbound crm.message.occurred_at - first inbound occurred_at) per conversation_id, metadata only
+  unit: count
+  threshold: <= 4 working hours
+  sources:
+  - crm.message
+  defined_in: CRM-02
+  used_by:
+  - CRM-02
+- id: K-CRM02-OVERDUE-TASKS
+  version: 1
+  name: Overdue tasks
+  definition: crm.task not done (done_at null) with due_at < now, per assignee_member_id
+  unit: count
+  threshold: 0 older than 2 days
+  sources:
+  - crm.task
+  defined_in: CRM-02
+  used_by:
+  - CRM-02
+- id: K-CRM02-UNANSWERED-24-H
+  version: 1
+  name: Unanswered > 24 h
+  definition: Conversations whose latest crm.message is inbound and older than 24 h
+  unit: count
+  threshold: '0'
+  sources:
+  - crm.message
+  defined_in: CRM-02
+  used_by:
+  - CRM-02
+- id: K-CRM03-HEALTHY-MAILBOXES
+  version: 1
+  name: Healthy mailboxes
+  definition: 'crm.channel_account with status ''connected'' and last_token_check_at within 24 h / accounts not deleted
+    (statuses: connected, needs_attention, disconnected)'
+  unit: status
+  threshold: 100 %
+  sources:
+  - crm.channel_account
+  defined_in: CRM-03
+  used_by:
+  - CRM-03
+- id: K-CRM03-IMPORT-SKIP
+  version: 1
+  name: Import skip
+  definition: crm.mail_import skipped_count / total_count
+  unit: count
+  threshold: < 5 %
+  sources:
+  - crm.mail_import
+  defined_in: CRM-03
+  used_by:
+  - CRM-03
+- id: K-CRM03-SEND-FAILURE
+  version: 1
+  name: Send failure
+  definition: crm.dispatch_attempt with outcome in ('send_failed','send_uncertain') / attempts with decided_at not null
+    and outcome <> 'retry'
+  unit: count
+  threshold: < 2 %
+  sources:
+  - crm.dispatch_attempt
+  defined_in: CRM-03
+  used_by:
+  - CRM-03
+- id: K-CRM04-AI-CALLS-PER-ACTIVE-MEMBER
+  version: 1
+  name: AI calls per active member
+  definition: crm.llm_call rows per tenant_id / active crm.member rows
+  unit: count
+  threshold: Adoption trend
+  sources:
+  - crm.llm_call
+  - crm.member
+  defined_in: CRM-04
+  used_by:
+  - CRM-04
+- id: K-CRM04-COST-PER-AGENCY
+  version: 1
+  name: Cost per agency
+  definition: sum crm.llm_call.cost_usd_est per tenant_id in the month vs entitlement (allowed_features contains ai_assist)
+  unit: usd
+  threshold: <= entitlement
+  sources:
+  - crm.llm_call
+  defined_in: CRM-04
+  used_by:
+  - CRM-04
+- id: K-CRM04-FAILURE-RATE
+  version: 1
+  name: Failure rate
+  definition: crm.llm_usage_daily.failed_calls / calls (platform-wide; table has no tenant column)
+  unit: ratio
+  threshold: < 3 %
+  sources:
+  - crm.llm_usage_daily
+  defined_in: CRM-04
+  used_by:
+  - CRM-04
+- id: K-CRM04-LATENCY-P95
+  version: 1
+  name: Latency p95
+  definition: p95 crm.llm_call.latency_ms
+  unit: seconds
+  threshold: Trend
+  sources:
+  - crm.llm_call
+  defined_in: CRM-04
+  used_by:
+  - CRM-04
+- id: K-CRM04-REFUSAL-RATE
+  version: 1
+  name: Refusal rate
+  definition: crm.llm_call with refusal_code not null / calls, per tenant
+  unit: ratio
+  threshold: Flag > 5 %
+  sources:
+  - crm.llm_call
+  defined_in: CRM-04
+  used_by:
+  - CRM-04
+- id: K-CRM05-BOOKED-VALUE
+  version: 1
+  name: Booked value
+  definition: crm.v_booking_line_money_current amount_base sums for trips that reached 'booked' in the month, in base_currency
+  unit: usd
+  threshold: vs last month
+  sources:
+  - crm.v_booking_line_money_current
+  defined_in: CRM-05
+  used_by:
+  - CRM-05
+- id: K-CRM05-SEAT-USE
+  version: 1
+  name: Seat use
+  definition: Active crm.member rows / crm.tenant_entitlement.member_limit
+  unit: count
+  threshold: '> 90 % suggests plan change'
+  sources:
+  - crm.member
+  - crm.tenant_entitlement
+  defined_in: CRM-05
+  used_by:
+  - CRM-05
+- id: K-CRM06-AUDIT-EXPORTS
+  version: 1
+  name: Audit exports
+  definition: crm.audit_export_manifest rows in the period
+  unit: count
+  threshold: Informational
+  sources:
+  - crm.audit_export_manifest
+  defined_in: CRM-06
+  used_by:
+  - CRM-06
+- id: K-CRM06-ERASURE-REQUESTS-CLOSED
+  version: 1
+  name: Erasure requests closed
+  definition: crm.erasure_request with executed_at not null / requested in the period
+  unit: count
+  threshold: 100 % within the deadline in docs/legal/dsar-erasure-runbook.md
+  sources:
+  - crm.erasure_request
+  defined_in: CRM-06
+  used_by:
+  - CRM-06
+- id: K-CRM06-STALE-TRAVELLER-ACCESS
+  version: 1
+  name: Stale traveller access
+  definition: crm.traveler_access rows not deleted with purge_after passed
+  unit: count
+  threshold: '0'
+  sources:
+  - crm.traveler_access
+  defined_in: CRM-06
+  used_by:
+  - CRM-06
+- id: K-CX-COMPLAINT
+  version: 1
+  name: Complaint closure
+  definition: Complaints closed within 5 working days / complaints raised
+  unit: count
+  threshold: '>= 90 %'
+  sources: []
+  defined_in: CX-01
+  used_by:
+  - CX-01
+- id: K-CX-CSAT
+  version: 1
+  name: CSAT
+  definition: Share of answers scoring 4-5 on the 5-point overall question
+  unit: ratio
+  threshold: '>= 85 %'
+  sources: []
+  defined_in: CX-01
+  used_by:
+  - CX-01
+- id: K-CX-NPS
+  version: 1
+  name: NPS
+  definition: '% promoters (9-10) - % detractors (0-6) on the recommend question'
+  unit: score
+  threshold: '>= 40 (baseline after first prod quarter)'
+  sources: []
+  defined_in: CX-01
+  used_by:
+  - CX-01
+- id: K-CX-RESP
+  version: 1
+  name: Response rate
+  definition: Surveys answered / surveys sent for trips that reached 'completed' in the period
+  unit: ratio
+  threshold: '>= 30 %'
+  sources: []
+  defined_in: CX-01
+  used_by:
+  - CX-01
+- id: K-DATA-DRIFT
+  version: 1
+  name: Schema drift
+  definition: Structure changes in the dump not explained by a registered migration
+  unit: count
+  threshold: '0'
+  sources: []
+  defined_in: DATA-01
+  used_by:
+  - DATA-01
+- id: K-DATA-LIVENESS
+  version: 1
+  name: Liveness violations
+  definition: Rows flagged by db-tour-liveness-gate
+  unit: count
+  threshold: '0'
+  sources: []
+  defined_in: DATA-01
+  used_by:
+  - DATA-01
+- id: K-DATA-PROBES
+  version: 1
+  name: Probes passed
+  definition: Nightly integrity workflows with conclusion success / scheduled runs
+  unit: ratio
+  threshold: All
+  sources: []
+  defined_in: DATA-01
+  used_by:
+  - OPS-12
+  - DATA-01
+- id: K-DATA-STALE
+  version: 1
+  name: Stale rows > 24 h
+  definition: Sum of aged > 24 h counts per layer from db-freshness-probe (segments, ranking, routes, geo.tour_place, place
+    cards, seo_context vs published_tours)
+  unit: count
+  threshold: 0 (enforcing since S253)
+  sources:
+  - geo.tour_place
+  defined_in: DATA-01
+  used_by:
+  - DATA-01
+- id: K-DB-CONN
+  version: 1
+  name: Connection saturation
+  definition: 'DatabaseConnections p95 / max_connections; per role vs its connection limit (db-schema-reference.md Roles
+    table: cis_app 90, tripplanner 30, booking 15, crm_app 6)'
+  unit: ratio
+  threshold: < 60 %; each role < 80 % of its limit; 0 too many connections
+  sources: []
+  defined_in: OPS-13
+  used_by:
+  - OPS-13
+- id: K-DB-SLOWSTMT
+  version: 1
+  name: Slow statements
+  definition: Statements with calls >= 20 and mean > 200 ms
+  unit: count
+  threshold: Trend down
+  sources: []
+  defined_in: OPS-13
+  used_by:
+  - OPS-13
+- id: K-DEL-PLAN
+  version: 1
+  name: Delivery reliability
+  definition: Planned slots for the month in docs/backlog/tracker/plan.json Done with live verify / planned
+  unit: count
+  threshold: '>= 70 %'
+  sources: []
+  defined_in: EX-02
+  used_by:
+  - EX-02
+- id: K-DEL-ROADMAP
+  version: 1
+  name: Roadmap delivery
+  definition: Milestones in docs/backlog/tracker/plan.json planned for the quarter and Done / planned
+  unit: count
+  threshold: '>= 70 %'
+  sources: []
+  defined_in: EX-05
+  used_by:
+  - EX-05
+- id: K-DEL-SHIPPED
+  version: 1
+  name: Features shipped
+  definition: Linear issues moved to Done in the ISO week (Mon 00:00 to Sun 23:59 ICT) with merge + deploy + live verify
+    per skill/aa-ship/SKILL.md
+  unit: count
+  threshold: Trend; 0 in a week with planned work = red
+  sources: []
+  defined_in: EX-01
+  used_by:
+  - EX-01
+  - DEV-03
+  report_thresholds:
+    DEV-03: Trend
+- id: K-DEM-INQ
+  version: 1
+  name: Demand
+  definition: 7-day sums of tripplanner.v_ops_traffic_daily metrics trip_started, inquiry_sent and booking.v_ops_funnel_daily
+    metrics inquiry_received, confirmed
+  unit: count
+  threshold: Trend only (Dev)
+  sources:
+  - tripplanner.v_ops_traffic_daily
+  - booking.v_ops_funnel_daily
+  defined_in: EX-01
+  used_by:
+  - EX-01
+- id: K-DEP-FILL
+  version: 1
+  name: Fill rate
+  definition: Booked pax (b2b hold lines and trip cases linked to the departure) / booking.departures.capacity, per departure
+  unit: ratio
+  threshold: Business owner sets the go/no-go floor; flag < floor at T-30
+  sources:
+  - booking.departures
+  defined_in: BK-06
+  used_by:
+  - BK-06
+- id: K-DEP-INC
+  version: 1
+  name: Open incidents
+  definition: booking.departure_incidents with cleared_at null
+  unit: count
+  threshold: 0 older than 24 h without a note
+  sources:
+  - booking.departure_incidents
+  defined_in: BK-06
+  used_by:
+  - BK-06
+- id: K-DEP-TTC
+  version: 1
+  name: Time to clear
+  definition: median(cleared_at - flagged_at) per incident_code
+  unit: hours
+  threshold: Trend
+  sources: []
+  defined_in: BK-06
+  used_by:
+  - BK-06
+- id: K-DORA-CFR
+  version: 1
+  name: Change failure rate
+  definition: Deploys followed within 24 h by a rollback, a fix PR on the same area, a failed post-deploy-verify or an incident
+    / deploys
+  unit: ratio
+  threshold: < 15 %
+  sources: []
+  defined_in: DEV-01
+  used_by:
+  - DEV-01
+- id: K-DORA-DF
+  version: 1
+  name: Deployment frequency
+  definition: Successful deploy runs per app per week (deploy-dev.yml for CIS, Booking, Partner; deploy-web-dev.yml / deploy-portal-dev.yml
+    for Partner; deploy-lambdas.yml for TripPlanner; vercel-deploy.yml)
+  unit: count
+  threshold: '>= daily on active apps (elite band, context only)'
+  sources: []
+  defined_in: DEV-01
+  used_by:
+  - DEV-01
+- id: K-DORA-LT
+  version: 1
+  name: Lead time for changes
+  definition: Median time from PR first commit to the successful deploy that contains the merge SHA
+  unit: hours
+  threshold: < 1 day
+  sources: []
+  defined_in: DEV-01
+  used_by:
+  - DEV-01
+- id: K-DORA-MTTR
+  version: 1
+  name: Time to restore
+  definition: Median OPS-04 time to restore
+  unit: hours
+  threshold: < 1 day
+  sources: []
+  defined_in: DEV-01
+  used_by:
+  - DEV-01
+- id: K-DR-RPO
+  version: 1
+  name: RPO
+  definition: Data window lost (PITR)
+  unit: count
+  threshold: <= 5 min
+  sources: []
+  defined_in: OPS-03
+  used_by:
+  - OPS-03
+- id: K-DR-RTO
+  version: 1
+  name: RTO measured
+  definition: Start of restore to verified service
+  unit: count
+  threshold: < 1 h on Dev (03-scaling.md C1.2)
+  sources: []
+  defined_in: OPS-03
+  used_by:
+  - OPS-03
+- id: K-DR-STALE
+  version: 1
+  name: Runbooks past drill cadence
+  definition: Runbooks whose last_tested is older than the DM-9.3 cadence
+  unit: count
+  threshold: 0 before prod
+  sources: []
+  defined_in: OPS-03
+  used_by:
+  - OPS-03
+- id: K-EVAL-COST
+  version: 1
+  name: Eval cost
+  definition: prompt_eval_runs.cost_usd vs cost_cap_usd
+  unit: usd
+  threshold: <= cap
+  sources: []
+  defined_in: CIS-06
+  used_by:
+  - CIS-06
+- id: K-EVAL-DELTA
+  version: 1
+  name: Quality delta
+  definition: prompt_eval_runs.avg_quality_score - baseline_avg_quality_score
+  unit: count
+  threshold: '>= 0 to approve'
+  sources: []
+  defined_in: CIS-06
+  used_by:
+  - CIS-06
+- id: K-EVAL-GATEPASS
+  version: 1
+  name: Gate pass
+  definition: gate_pass_count / (gate_pass_count + gate_fail_count)
+  unit: ratio
+  threshold: '>= baseline'
+  sources: []
+  defined_in: CIS-06
+  used_by:
+  - CIS-06
+- id: K-FC-ACCURACY
+  version: 1
+  name: Forecast accuracy
+  definition: '|last quarter''s forecast for this quarter - actual| / actual for DB size and monthly cost'
+  unit: ratio
+  threshold: <= 20 %
+  sources: []
+  defined_in: OPS-16
+  used_by:
+  - OPS-16
+- id: K-FC-COST12
+  version: 1
+  name: 12-month cost projection
+  definition: Projected monthly cost per account at month 12 vs budget
+  unit: usd
+  threshold: <= budget or a decision recorded
+  sources: []
+  defined_in: OPS-16
+  used_by:
+  - OPS-16
+- id: K-FC-RUNWAY
+  version: 1
+  name: Shortest runway
+  definition: Months until the first limit is reached at projected growth
+  unit: days
+  threshold: '>= 6 months; < 3 months = act now'
+  sources: []
+  defined_in: OPS-16
+  used_by:
+  - OPS-16
+- id: K-FIN-FCSTACC
+  version: 1
+  name: Forecast accuracy
+  definition: '|forecast at day 15 - actual| / actual'
+  unit: ratio
+  threshold: <= 15 %
+  sources: []
+  defined_in: FI-06
+  used_by:
+  - FI-06
+- id: K-FIN-HARDSTOP
+  version: 1
+  name: Hard stops
+  definition: Calls refused by a shared.spend_budget row with hard_stop true in the month (from the gateway refusal log)
+  unit: count
+  threshold: 0 unplanned
+  sources:
+  - shared.spend_budget
+  defined_in: FI-06
+  used_by:
+  - FI-06
+- id: K-FIN-QVAR
+  version: 1
+  name: Quarter cost vs budget
+  definition: Sum of 3 months actual (FI-06) / sum of monthly budgets
+  unit: ratio
+  threshold: <= 100 %
+  sources: []
+  defined_in: EX-05
+  used_by:
+  - EX-05
+- id: K-FIN-VAR
+  version: 1
+  name: Variance per budget line
+  definition: (actual - budget) / budget
+  unit: ratio
+  threshold: Amber > 0 %, red > +10 %
+  sources: []
+  defined_in: FI-06
+  used_by:
+  - FI-06
+- id: K-FIN-YTD
+  version: 1
+  name: YTD vs annual plan
+  definition: Actual year to date / prorated annual budget
+  unit: ratio
+  threshold: <= 100 %
+  sources: []
+  defined_in: FI-06
+  used_by:
+  - FI-06
+- id: K-FLOW-PRAGE
+  version: 1
+  name: PRs open > 3 days
+  definition: Open PRs older than 3 days across the six repos
+  unit: count
+  threshold: 0 without a note
+  sources: []
+  defined_in: DEV-03
+  used_by:
+  - DEV-03
+- id: K-FLOW-QUOTA
+  version: 1
+  name: Linear quota
+  definition: Unarchived issues / 250
+  unit: count
+  threshold: < 80 %
+  sources: []
+  defined_in: DEV-03
+  used_by:
+  - DEV-03
+- id: K-FLOW-WIPAGE
+  version: 1
+  name: In Progress > 7 days
+  definition: Linear issues In Progress for more than 7 days
+  unit: count
+  threshold: 0 (memory in-progress-must-converge)
+  sources: []
+  defined_in: DEV-03
+  used_by:
+  - DEV-03
+- id: K-GEO-ACC
+  version: 1
+  name: Geocode accuracy
+  definition: Correct rows / audited rows on the fixed S254 600-row sample (method of the AA-997 interim audit)
+  unit: ratio
+  threshold: '>= 90 % (S257 interim 77.7 %, projection ~79.5 %, docs/backlog/README.md)'
+  sources: []
+  defined_in: CIS-02
+  used_by:
+  - CIS-02
+- id: K-GEO-COST
+  version: 1
+  name: Geocode spend
+  definition: sum geo.geocode_call.cost_usd, requests and credits with called_at in the period
+  unit: usd
+  threshold: Within the Geoapify credit plan; bell at 80 %
+  sources:
+  - geo.geocode_call
+  defined_in: CIS-02
+  used_by:
+  - CIS-02
+- id: K-GEO-OUTLIERS
+  version: 1
+  name: Outliers
+  definition: Rows in geo.place_outlier at the snapshot, and rows with observed_at in the period (the table has no resolution
+    column)
+  unit: count
+  threshold: Downward; red if growing two periods running
+  sources:
+  - geo.place_outlier
+  defined_in: CIS-02
+  used_by:
+  - CIS-02
+- id: K-GEO-TOURPLACE
+  version: 1
+  name: Tour-place coverage
+  definition: Live tours (K-CAT-LIVE) with at least one geo.tour_place row / live tours
+  unit: ratio
+  threshold: '>= 98 %'
+  sources:
+  - geo.tour_place
+  defined_in: CIS-02
+  used_by:
+  - CIS-02
+- id: K-GO-BLOCKERS
+  version: 1
+  name: Open blockers
+  definition: Must items blocked or without an owner
+  unit: count
+  threshold: 0 at the go/no-go meeting
+  sources: []
+  defined_in: OPS-17
+  used_by:
+  - OPS-17
+- id: K-GO-READY
+  version: 1
+  name: Readiness per app
+  definition: Checklist items done with evidence / items, per app
+  unit: status
+  threshold: 100 % of must items before go-live
+  sources: []
+  defined_in: OPS-17
+  used_by:
+  - OPS-17
+- id: K-INC-ACTIONS
+  version: 1
+  name: Actions on time
+  definition: Postmortem actions closed by due date / due
+  unit: ratio
+  threshold: '>= 90 %'
+  sources: []
+  defined_in: OPS-04
+  used_by:
+  - OPS-04
+- id: K-INC-COSTATTR
+  version: 1
+  name: Cost incident attribution time
+  definition: Alert to written cause
+  unit: usd
+  threshold: <= 1 working day; >= 50 USD or > 20 % of a budget = SEV2
+  sources: []
+  defined_in: OPS-04
+  used_by:
+  - OPS-04
+- id: K-INC-COUNT
+  version: 1
+  name: Incidents by SEV
+  definition: Incidents opened per SEV in the period
+  unit: count
+  threshold: 0 SEV1
+  sources: []
+  defined_in: OPS-04
+  used_by:
+  - OPS-04
+- id: K-INC-TTD
+  version: 1
+  name: Time to detect
+  definition: Start of impact to first alert or human report
+  unit: hours
+  threshold: < 15 min SEV1
+  sources: []
+  defined_in: OPS-04
+  used_by:
+  - OPS-04
+- id: K-INC-TTR
+  version: 1
+  name: Time to restore
+  definition: Detection to service restored (median feeds DEV-01 MTTR)
+  unit: hours
+  threshold: < 1 working day
+  sources: []
+  defined_in: OPS-04
+  used_by:
+  - OPS-04
+- id: K-JOB-DEAD
+  version: 1
+  name: Dead kinds
+  definition: Registered scheduled kinds with no run in 30 days
+  unit: count
+  threshold: '0'
+  sources: []
+  defined_in: OPS-14
+  used_by:
+  - OPS-14
+- id: K-JOB-FAIL
+  version: 1
+  name: Failed jobs 24 h
+  definition: Rows with status failed and finished_at in the last 24 h in shared.job, booking.job, tripplanner.job, crm.job
+    (crm via crm.ops.v1)
+  unit: count
+  threshold: 0 green, >= 1 amber, >= 5 red
+  sources:
+  - shared.job
+  - booking.job
+  - tripplanner.job
+  - crm.job
+  defined_in: EX-04
+  used_by:
+  - EX-04
+  - OPS-12
+  report_thresholds:
+    OPS-12: '0'
+  snapshot:
+    job: kpi_snapshot_daily
+    scopes:
+    - app:cis
+    computes: shared.job rows with status failed and finished_at in the ICT day (app:cis); booking.job, tripplanner.job
+      and crm.job join in a later slice
+  alert:
+    amber_gte: 1
+    red_gte: 5
+- id: K-JOB-FAILRATE
+  version: 1
+  name: Failure rate per kind
+  definition: Rows with status failed / rows finished (finished_at in the window) per kind (shared.job, booking.job, tripplanner.job,
+    crm.job via crm.ops.v1)
+  unit: ratio
+  threshold: < 2 %
+  sources:
+  - shared.job
+  - booking.job
+  - tripplanner.job
+  - crm.job
+  defined_in: OPS-14
+  used_by:
+  - OPS-14
+- id: K-JOB-P95
+  version: 1
+  name: Duration vs expected
+  definition: p95(finished_at - started_at) / expected seconds per kind
+  unit: seconds
+  threshold: < 1.0
+  sources: []
+  defined_in: OPS-14
+  used_by:
+  - OPS-14
+- id: K-JOB-QUEUEAGE
+  version: 1
+  name: Queue age p95
+  definition: p95(started_at - greatest(created_at, run_after)) per kind (job tables have no claimed_at)
+  unit: seconds
+  threshold: < 5 min for foreground kinds
+  sources:
+  - shared.job
+  defined_in: OPS-14
+  used_by:
+  - OPS-14
+  snapshot:
+    job: kpi_snapshot_daily
+    scopes:
+    - app:cis
+    computes: p95 of started_at - greatest(created_at, run_after) over shared.job rows started in the ICT day (all kinds;
+      the per-kind split stays in OPS-14)
+  alert:
+    amber_gte: 300
+- id: K-LEGAL-OPEN
+  version: 1
+  name: Open readiness topics
+  definition: Topics in docs/legal/readiness-packet.md without an accepted answer
+  unit: status
+  threshold: 0 before go-live
+  sources: []
+  defined_in: SEC-10
+  used_by:
+  - SEC-10
+- id: K-LEGAL-TBC
+  version: 1
+  name: Open markers
+  definition: Count of '[to be confirmed]' in published legal pages and docs/legal/register.md
+  unit: count
+  threshold: 0 before go-live
+  sources: []
+  defined_in: SEC-10
+  used_by:
+  - SEC-10
+- id: K-LLM-ADHOC
+  version: 1
+  name: Ad hoc spend
+  definition: cost_usd where stage like 'adhoc_%' by stage (AA-635 rule)
+  unit: usd
+  threshold: Each run appears in its CIS-07 or DATA-05 report
+  sources: []
+  defined_in: FI-03
+  used_by:
+  - FI-03
+- id: K-LLM-APP
+  version: 1
+  name: LLM spend by app
+  definition: sum shared.llm_call_daily.cost_usd by app + tripplanner.llm_spend_daily.cost_usd + crm.llm_usage_daily.cost_usd
+    (check overlap with shared.llm_call_daily app values before summing)
+  unit: usd
+  threshold: Within FI-06 allocation
+  sources:
+  - shared.llm_call_daily
+  - tripplanner.llm_spend_daily
+  - crm.llm_usage_daily
+  defined_in: FI-03
+  used_by:
+  - FI-03
+- id: K-LLM-COST-DAY
+  version: 1
+  name: LLM cost per day
+  definition: shared.llm_call_daily.cost_usd for the ICT day, by app
+  unit: usd
+  threshold: Flag > 2 x 14-day median
+  sources:
+  - shared.llm_call_daily
+  - shared.llm_call_log
+  defined_in: EX-04
+  used_by:
+  - EX-04
+  snapshot:
+    job: kpi_snapshot_daily
+    scopes:
+    - all
+    - app:<app>
+    - provider:<provider>
+    computes: sum shared.llm_call_log.cost_usd with created_at in the ICT day, in total, by app (quality_signal.app, default
+      cis) and by provider; shadow calls included (the ledger has no shadow column; shared.llm_call_daily is the rollup
+      of days older than the 180-day raw window, outside the 90-day backfill)
+- id: K-LLM-COST-WEEK
+  version: 1
+  name: LLM spend
+  definition: Sum shared.llm_call_daily.cost_usd for the 7 ICT days, is_shadow split shown
+  unit: usd
+  threshold: Flag > 1.3 x 4-week average and > 5 USD
+  sources:
+  - shared.llm_call_daily
+  defined_in: EX-01
+  used_by:
+  - EX-01
+- id: K-LLM-FALLBACK
+  version: 1
+  name: Fallback rate
+  definition: sum fallback_calls / sum calls (shared.llm_call_daily)
+  unit: ratio
+  threshold: Red > 5 %
+  sources:
+  - shared.llm_call_daily
+  defined_in: FI-03
+  used_by:
+  - FI-03
+- id: K-LLM-FALLBACK-24H
+  version: 1
+  name: Fallback rate 24 h
+  definition: fallback_calls / calls in shared.llm_call_daily for yesterday
+  unit: ratio
+  threshold: < 5 %
+  sources:
+  - shared.llm_call_daily
+  - shared.llm_call_log
+  defined_in: OPS-12
+  used_by:
+  - OPS-12
+  snapshot:
+    job: kpi_snapshot_daily
+    scopes:
+    - all
+    computes: shared.llm_call_log rows with fallback_used / all rows, created_at in the ICT day (no value on a day without
+      calls)
+  alert:
+    red_gte: 0.05
+- id: K-LLM-RECON
+  version: 1
+  name: LLM ledger accuracy
+  definition: '|Cost Explorer Bedrock cost on acc3 - sum shared.llm_call_daily.cost_usd where account = acc3| / Cost Explorer
+    Bedrock cost on acc3'
+  unit: ratio
+  threshold: <= 10 %
+  sources:
+  - shared.llm_call_daily
+  defined_in: FI-01
+  used_by:
+  - FI-01
+  - FI-03
+  - DATA-02
+- id: K-LLM-SHADOW
+  version: 1
+  name: Shadow share
+  definition: cost_usd where is_shadow / total (shared.llm_call_daily)
+  unit: ratio
+  threshold: Flag > 15 %
+  sources:
+  - shared.llm_call_daily
+  defined_in: FI-03
+  used_by:
+  - FI-03
+- id: K-LLM-TENANT
+  version: 1
+  name: AI cost per tenant
+  definition: sum shared.llm_call_daily.cost_usd by tenant_id (Content studio) and sum crm.llm_call.cost_usd_est by tenant_id
+    (CRM, counts via crm.ops.v1) in the month; null tenant_id = platform work
+  unit: usd
+  threshold: <= 30 % of the tenant's plan price (feeds FI-09 margin)
+  sources:
+  - shared.llm_call_daily
+  - crm.llm_call
+  defined_in: FI-03
+  used_by:
+  - FI-03
+- id: K-MKT-CONV
+  version: 1
+  name: Source conversion
+  definition: Inquiries sent / sessions, per source; confirmed cases per source via booking.trip_cases.source_system + inquiry_snapshot
+  unit: ratio
+  threshold: Business owner sets after first prod quarter
+  sources:
+  - booking.trip_cases
+  defined_in: MKT-01
+  used_by:
+  - MKT-01
+- id: K-MKT-CUSTSRC
+  version: 1
+  name: New customers by source
+  definition: booking.customers created in the period grouped by source
+  unit: count
+  threshold: Trend
+  sources:
+  - booking.customers
+  defined_in: MKT-01
+  used_by:
+  - MKT-01
+- id: K-MKT-SOURCE
+  version: 1
+  name: Sessions by source
+  definition: TripPlanner sessions grouped by first-touch source (proposed tp-NNN columns referrer_host, utm_source, utm_medium,
+    utm_campaign on tripplanner.sessions)
+  unit: count
+  threshold: Trend
+  sources:
+  - tripplanner.sessions
+  defined_in: MKT-01
+  used_by:
+  - MKT-01
+- id: K-OD-REPEAT
+  version: 1
+  name: Repeat requests
+  definition: Requests for the same question 2+ times in 90 days
+  unit: count
+  threshold: 0 (promote to the registry instead)
+  sources: []
+  defined_in: DATA-05
+  used_by:
+  - DATA-05
+- id: K-OD-SLA
+  version: 1
+  name: Requests on time
+  definition: Requests delivered within the SLA of their type / requests
+  unit: ratio
+  threshold: '>= 90 %'
+  sources: []
+  defined_in: DATA-05
+  used_by:
+  - DATA-05
+- id: K-ONB-CRM
+  version: 1
+  name: CRM activation
+  definition: Agencies (crm.tenant, is_synthetic false) with a crm.proposal within 14 days of crm.tenant.created_at / agencies
+    created
+  unit: count
+  threshold: '>= 50 % (set after the first 5 agencies)'
+  sources:
+  - crm.tenant
+  - crm.proposal
+  defined_in: EX-07
+  used_by:
+  - EX-07
+- id: K-ONB-STUCK
+  version: 1
+  name: Stuck partners
+  definition: Partners with no step progress for more than 7 days before activation
+  unit: count
+  threshold: 0 without an owner note
+  sources: []
+  defined_in: EX-07
+  used_by:
+  - EX-07
+- id: K-ONB-TTV
+  version: 1
+  name: Time to first value
+  definition: Median days from tenant or agency creation to first publish (Content studio) or first proposal (CRM)
+  unit: usd
+  threshold: <= 7 days
+  sources: []
+  defined_in: EX-07
+  used_by:
+  - EX-07
+- id: K-OPS-ALARMS
+  version: 1
+  name: Alarms fired 24 h
+  definition: CloudWatch DescribeAlarmHistory state changes to ALARM in 24 h
+  unit: count
+  threshold: 0; each explained
+  sources: []
+  defined_in: OPS-12
+  used_by:
+  - OPS-12
+- id: K-OPS-APPSGREEN
+  version: 1
+  name: Apps green
+  definition: Apps with a health endpoint answering /health and /health/ready 200 at 00:55 UTC / apps with a health endpoint
+    (GET /admin/platform/apps)
+  unit: count
+  threshold: All
+  sources: []
+  defined_in: OPS-12
+  used_by:
+  - OPS-12
+- id: K-PART-ACT
+  version: 1
+  name: Activation rate (Content studio)
+  definition: Tenants created in the cohort month (shared.tenants.created_at, is_canary not true) with a first acp_shared.publish_log
+    row of status 'published' within 14 days / tenants created
+  unit: ratio
+  threshold: '>= 60 %'
+  sources:
+  - shared.tenants
+  - acp_shared.publish_log
+  defined_in: EX-07
+  used_by:
+  - EX-03
+  - EX-07
+- id: K-PART-CHURN
+  version: 1
+  name: Logo churn rate
+  definition: Partners with shared.tenants.cancelled_at in the month or crm.tenant status moved to 'offboarding'/'offboarded'
+    in the month / active at month start
+  unit: ratio
+  threshold: Amber > 2 %, red > 5 % per month
+  sources:
+  - shared.tenants
+  - crm.tenant
+  defined_in: EX-03
+  used_by:
+  - EX-03
+- id: K-PART-MRR
+  version: 1
+  name: MRR (USD)
+  definition: Sum shared.membership_plans.price_usd_monthly of active non-canary tenants + CRM plan price (price list to
+    be set by the business owner) + overage_usd from shared.v_tenant_monthly_usage
+  unit: usd
+  threshold: Net revenue retention >= 100 %
+  sources:
+  - shared.membership_plans
+  - shared.v_tenant_monthly_usage
+  defined_in: EX-03
+  used_by:
+  - EX-03
+- id: K-PART-NET
+  version: 1
+  name: Partner net growth
+  definition: Active paying partners end - start of quarter (EX-03)
+  unit: count
+  threshold: Business owner goal
+  sources: []
+  defined_in: EX-05
+  used_by:
+  - EX-05
+- id: K-PART-PAYING
+  version: 1
+  name: Active paying partners
+  definition: shared.tenants is_active and is_canary not true, joined on plan_id to shared.membership_plans with price_usd_monthly
+    > 0, plus crm.tenant status 'active' and is_synthetic false with crm.tenant_entitlement.plan in ('core','pro'), plus
+    booking.b2b_partners status active
+  unit: count
+  threshold: Trend; business owner sets the yearly goal
+  sources:
+  - shared.tenants
+  - shared.membership_plans
+  - crm.tenant
+  - crm.tenant_entitlement
+  - booking.b2b_partners
+  defined_in: EX-03
+  used_by:
+  - EX-02
+  - EX-03
+  report_thresholds:
+    EX-02: Trend; 0 until first paying tenant
+- id: K-PART-QUOTA
+  version: 1
+  name: Quota utilisation
+  definition: Per-tenant quota_tours_pct / quota_calls_pct from shared.v_tenant_monthly_usage; CRM active crm.member rows
+    / crm.tenant_entitlement.member_limit
+  unit: ratio
+  threshold: '> 80 % upsell flag; < 10 % for 2 months churn-risk flag'
+  sources:
+  - shared.v_tenant_monthly_usage
+  - crm.member
+  - crm.tenant_entitlement
+  defined_in: EX-03
+  used_by:
+  - EX-03
+- id: K-PRIV-CONSENT
+  version: 1
+  name: Consent coverage
+  definition: Result of docs/legal/consent-capture-query.md (booking.customers.contact_consent, crm.consent)
+  unit: ratio
+  threshold: 100 % of records with consent where required
+  sources:
+  - booking.customers
+  - crm.consent
+  defined_in: SEC-09
+  used_by:
+  - SEC-09
+- id: K-PRIV-DSAR
+  version: 1
+  name: DSARs on time
+  definition: Requests closed within the deadline in docs/legal/dsar-erasure-runbook.md / received
+  unit: ratio
+  threshold: 100 %
+  sources: []
+  defined_in: SEC-09
+  used_by:
+  - SEC-09
+- id: K-PRIV-RETENTION
+  version: 1
+  name: Retention runs on schedule
+  definition: Scheduled retention runs succeeded / scheduled
+  unit: count
+  threshold: 100 %
+  sources: []
+  defined_in: SEC-09
+  used_by:
+  - SEC-09
+- id: K-REC-FEEDLAG
+  version: 1
+  name: Feed lag
+  definition: max booking.outbox.feed_seq - position stored in crm.booking_feed_state
+  unit: count
+  threshold: 0 after 15 min
+  sources:
+  - booking.outbox
+  - crm.booking_feed_state
+  defined_in: DATA-02
+  used_by:
+  - DATA-02
+- id: K-REC-INBOX
+  version: 1
+  name: Inbox age p95
+  definition: p95 of now - received_at for booking.inbox_events with processed_at null; p95 of processed_at - received_at
+    for processed rows
+  unit: seconds
+  threshold: < 5 min (inquiry lag objective, C1.2)
+  sources:
+  - booking.inbox_events
+  defined_in: DATA-02
+  used_by:
+  - DATA-02
+- id: K-REC-UNMATCHED
+  version: 1
+  name: Unmatched events
+  definition: tripplanner.v_inquiry_outbox rows with no booking.inbox_events row of the same idempotency_key after 24 h
+  unit: status
+  threshold: '0'
+  sources:
+  - tripplanner.v_inquiry_outbox
+  - booking.inbox_events
+  defined_in: DATA-02
+  used_by:
+  - DATA-02
+- id: K-REL-NOTES
+  version: 1
+  name: Releases with notes
+  definition: release-please releases with a user-facing note / releases
+  unit: count
+  threshold: 100 %
+  sources: []
+  defined_in: DEV-02
+  used_by:
+  - DEV-02
+- id: K-REL-SEV
+  version: 1
+  name: Platform health
+  definition: SEV1-SEV2 incidents opened in the week (docs/ops/incident-response.md) + count of CloudWatch alarms that fired
+  unit: status
+  threshold: 0 SEV1-2; every fired alarm explained
+  sources: []
+  defined_in: EX-01
+  used_by:
+  - EX-01
+  - EX-02
+  report_thresholds:
+    EX-02: 0; each has a postmortem within 5 working days
+- id: K-RET-GROWTH
+  version: 1
+  name: Ledger growth
+  definition: Rows per day, 30-day average, per ledger
+  unit: count
+  threshold: Within C3 triggers
+  sources: []
+  defined_in: DATA-04
+  used_by:
+  - DATA-04
+- id: K-RET-OVERDUE
+  version: 1
+  name: Rows past window
+  definition: Rows older than the C5.4 window per ledger
+  unit: count
+  threshold: '0'
+  sources: []
+  defined_in: DATA-04
+  used_by:
+  - DATA-04
+- id: K-RET-RUNS
+  version: 1
+  name: Retention runs succeeded
+  definition: Succeeded / scheduled retention runs
+  unit: count
+  threshold: 100 %
+  sources: []
+  defined_in: DATA-04
+  used_by:
+  - DATA-04
+- id: K-RPT-FAILED
+  version: 1
+  name: Failed generations
+  definition: Proposed shared.report_run rows with status failed in 7 days
+  unit: count
+  threshold: '0'
+  sources:
+  - shared.report_run
+  defined_in: EX-06
+  used_by:
+  - EX-06
+  snapshot:
+    job: kpi_snapshot_daily
+    scopes:
+    - all
+    computes: shared.report_run rows with status failed and finished_at in the 7 ICT days ending with the day
+  alert:
+    red_gte: 1
+- id: K-RPT-ONTIME
+  version: 1
+  name: Reports on time
+  definition: Runs delivered (approved or posted) by due date / runs due in the month
+  unit: ratio
+  threshold: '>= 90 %'
+  sources: []
+  defined_in: EX-06
+  used_by:
+  - EX-06
+- id: K-RPT-OVERDUE
+  version: 1
+  name: Overdue reports
+  definition: Runs past due + grace with no approved output
+  unit: count
+  threshold: 0; bell after 3 days
+  sources: []
+  defined_in: EX-06
+  used_by:
+  - EX-06
+- id: K-RUNWAY-ACC3
+  version: 1
+  name: acc3 credit runway
+  definition: Remaining AWS Lift credit (from proposed docs/finance/vendors.yaml) / average daily acc3 gross spend, vs the
+    31/12/2026 expiry
+  unit: days
+  threshold: Flag > 50 USD expiring unused or exhaustion before expiry
+  sources: []
+  defined_in: FI-02
+  used_by:
+  - FI-02
+- id: K-RUNWAY-DFS
+  version: 1
+  name: DataForSEO runway (days)
+  definition: Latest shared.dfs_balance_snapshot.balance_usd / average daily shared.dfs_call_log.cost_usd over 14 d
+  unit: days
+  threshold: Red < 14 days
+  sources:
+  - shared.dfs_balance_snapshot
+  - shared.dfs_call_log
+  defined_in: FI-02
+  used_by:
+  - FI-02
+- id: K-RUNWAY-JEV
+  version: 1
+  name: Jev runway (days)
+  definition: (sum shared.jev_credit_topup.amount_usd - sum shared.decision_log.cost_usd since the first top-up) / 14-day
+    daily average
+  unit: days
+  threshold: Red < 14 days
+  sources:
+  - shared.jev_credit_topup
+  - shared.decision_log
+  defined_in: FI-02
+  used_by:
+  - FI-02
+- id: K-SCH-APPLIED
+  version: 1
+  name: Migrations applied
+  definition: DB Migrate apply runs succeeded per owner
+  unit: ratio
+  threshold: Informational
+  sources: []
+  defined_in: DATA-03
+  used_by:
+  - DATA-03
+- id: K-SCH-BREAKING
+  version: 1
+  name: Breaking contract changes
+  definition: api-contract.yml / contracts.yml failures merged or overridden
+  unit: count
+  threshold: '0'
+  sources: []
+  defined_in: DATA-03
+  used_by:
+  - DATA-03
+- id: K-SCH-REFLAG
+  version: 1
+  name: Reference lag
+  definition: Hours from apply to merged db-schema-reference PR
+  unit: count
+  threshold: < 24 h
+  sources: []
+  defined_in: DATA-03
+  used_by:
+  - DATA-03
+- id: K-SEC-DRIFT
+  version: 1
+  name: Register drift
+  definition: Secrets present in a system but not in docs/security/secrets-register.yaml, or the reverse
+  unit: count
+  threshold: '0'
+  sources: []
+  defined_in: SEC-03
+  used_by:
+  - SEC-03
+- id: K-SEC-ISOLATION
+  version: 1
+  name: Isolation probe failures
+  definition: Failed runs of db-isolation-probe.yml in the month
+  unit: count
+  threshold: '0'
+  sources: []
+  defined_in: SEC-03
+  used_by:
+  - SEC-03
+- id: K-SEC-SECRETFIND
+  version: 1
+  name: Secret findings
+  definition: New secret-scan findings in the month
+  unit: count
+  threshold: 0 unresolved
+  sources: []
+  defined_in: SEC-03
+  used_by:
+  - SEC-03
+- id: K-SEC-VULNSLA
+  version: 1
+  name: Alerts past SLA
+  definition: Open critical/high alerts older than the SLA in docs/security/vulnerability-management.md
+  unit: count
+  threshold: '0'
+  sources: []
+  defined_in: SEC-03
+  used_by:
+  - SEC-03
+- id: K-SEO-COVER
+  version: 1
+  name: Keyword coverage
+  definition: Live tours with a silver_aa_internal.seo_context row with expires_at in the future / live tours
+  unit: ratio
+  threshold: '>= 95 %'
+  sources:
+  - silver_aa_internal.seo_context
+  defined_in: MKT-02
+  used_by:
+  - MKT-02
+- id: K-SEO-CTR
+  version: 1
+  name: Search CTR
+  definition: Clicks / impressions per published page from Search Console
+  unit: count
+  threshold: Trend; flag a page falling > 30 % month over month
+  sources: []
+  defined_in: MKT-02
+  used_by:
+  - MKT-02
+- id: K-SEO-DFSCACHE
+  version: 1
+  name: DataForSEO cache hit
+  definition: shared.dfs_call_log rows with cache_hit true / all rows in the period
+  unit: count
+  threshold: '>= 70 %'
+  sources:
+  - shared.dfs_call_log
+  defined_in: MKT-02
+  used_by:
+  - MKT-02
+- id: K-SLI-2WEEK
+  version: 1
+  name: Two-week misses
+  definition: Objectives missed in two consecutive weekly checks
+  unit: count
+  threshold: 0; else raised to the tech lead (C1.2a)
+  sources: []
+  defined_in: OPS-13
+  used_by:
+  - OPS-13
+- id: K-SLI-MET
+  version: 1
+  name: SLIs met
+  definition: C1.2 objectives met / objectives measured (docs/architecture/data-standards/03-scaling.md)
+  unit: count
+  threshold: All
+  sources: []
+  defined_in: OPS-13
+  used_by:
+  - OPS-13
+- id: K-SNAP-COVERAGE
+  version: 1
+  name: Snapshot coverage
+  definition: Checks captured / checks in the script list
+  unit: ratio
+  threshold: 100 %
+  sources: []
+  defined_in: OPS-15
+  used_by:
+  - OPS-15
+- id: K-SNAP-DRIFT
+  version: 1
+  name: Drift found
+  definition: Services whose live SHA differs from main head without an open PR
+  unit: count
+  threshold: '0'
+  sources: []
+  defined_in: OPS-15
+  used_by:
+  - OPS-15
+- id: K-SUP-CONTRACT
+  version: 1
+  name: Contracts expiring
+  definition: booking.supplier_contracts with valid_to within 60 days and status not expired, per supplier
+  unit: count
+  threshold: Each has a renewal owner; 0 expired with future service_date bookings
+  sources:
+  - booking.supplier_contracts
+  defined_in: BK-04
+  used_by:
+  - BK-04
+- id: K-SUP-DECLINE
+  version: 1
+  name: Decline rate
+  definition: supplier_bookings with declined_at not null / rows with requested_at not null, per supplier
+  unit: ratio
+  threshold: < 10 %
+  sources: []
+  defined_in: BK-04
+  used_by:
+  - BK-04
+- id: K-SUP-INCIDENT
+  version: 1
+  name: Supplier incidents
+  definition: booking.departure_incidents with incident_code 'supplier' in the period
+  unit: count
+  threshold: Trend; > 2 per supplier per quarter = review
+  sources:
+  - booking.departure_incidents
+  defined_in: BK-04
+  used_by:
+  - BK-04
+- id: K-SUP-LEAD
+  version: 1
+  name: Confirmation lead time
+  definition: median(confirmed_at - requested_at) per supplier_id in booking.supplier_bookings
+  unit: hours
+  threshold: <= 48 h
+  sources:
+  - booking.supplier_bookings
+  defined_in: BK-04
+  used_by:
+  - BK-04
+- id: K-TEN-DELIVERED
+  version: 1
+  name: Delivered pieces
+  definition: 'acp_shared.content_piece with status ''approved'' and created_at in the month, per tenant (status values:
+    processing, approved, held, failed)'
+  unit: count
+  threshold: Trend
+  sources:
+  - acp_shared.content_piece
+  defined_in: CIS-03
+  used_by:
+  - CIS-03
+- id: K-TEN-HELD
+  version: 1
+  name: Held rate
+  definition: content_piece status 'held' / pieces created in the period
+  unit: ratio
+  threshold: < 10 %; red > 20 %
+  sources: []
+  defined_in: CIS-03
+  used_by:
+  - CIS-03
+- id: K-TEN-PIECECOST
+  version: 1
+  name: LLM cost per delivered piece
+  definition: shared.v_tenant_monthly_usage.llm_cost_usd / delivered pieces
+  unit: usd
+  threshold: Margin alert if cost > 30 % of plan price
+  sources:
+  - shared.v_tenant_monthly_usage
+  defined_in: CIS-03
+  used_by:
+  - CIS-03
+- id: K-TEN-PUBLISH
+  version: 1
+  name: Publish success
+  definition: acp_shared.publish_log status 'published' / attempts with status published or failed, per channel
+  unit: count
+  threshold: '>= 98 %'
+  sources:
+  - acp_shared.publish_log
+  defined_in: CIS-03
+  used_by:
+  - CIS-03
+- id: K-TEN-REGEN
+  version: 1
+  name: Regeneration rate
+  definition: pieces with attempt_number > 1 / all pieces
+  unit: ratio
+  threshold: < 15 %
+  sources: []
+  defined_in: CIS-03
+  used_by:
+  - CIS-03
+- id: K-TP-FALLBACK
+  version: 1
+  name: Keyword fallback share
+  definition: shared.llm_call_log rows of stage tp_search_embed with fallback_used true / all tp_search_embed rows
+  unit: ratio
+  threshold: < 5 %
+  sources:
+  - shared.llm_call_log
+  defined_in: TP-02
+  used_by:
+  - TP-02
+- id: K-TP-HANDOFFGAP
+  version: 1
+  name: Handoff gap
+  definition: 'tripplanner.v_inquiry_outbox rows older than 15 min with no booking.inbox_events row of the same idempotency_key;
+    daily view: v_ops_traffic_daily inquiry_sent - v_ops_funnel_daily inquiry_received (source_system tripplanner) per closed
+    day'
+  unit: count
+  threshold: 0; any gap = alert at the next hourly check
+  sources:
+  - tripplanner.v_inquiry_outbox
+  - booking.inbox_events
+  defined_in: TP-03
+  used_by:
+  - TP-03
+- id: K-TP-INQ
+  version: 1
+  name: TripPlanner inquiries sent
+  definition: tripplanner.v_ops_traffic_daily metric trip_started / inquiry_sent
+  unit: count
+  threshold: Trend
+  sources:
+  - tripplanner.v_ops_traffic_daily
+  defined_in: EX-04
+  used_by:
+  - EX-04
+- id: K-TP-LAMBDAERR
+  version: 1
+  name: Lambda error rate
+  definition: CloudWatch AWS/Lambda Errors / Invocations per function
+  unit: ratio
+  threshold: < 1 %
+  sources: []
+  defined_in: TP-02
+  used_by:
+  - TP-02
+- id: K-TP-LAMBDAP95
+  version: 1
+  name: Lambda p95 duration
+  definition: CloudWatch Duration p95 per function
+  unit: seconds
+  threshold: Browse < 800 ms, Assembly < 8 s
+  sources: []
+  defined_in: TP-02
+  used_by:
+  - TP-02
+- id: K-TP-LCP
+  version: 1
+  name: Mobile LCP
+  definition: Lighthouse CI median LCP on home and planner pages (mobile)
+  unit: seconds
+  threshold: <= 2.5 s
+  sources: []
+  defined_in: TP-02
+  used_by:
+  - TP-02
+- id: K-TP-LLMCAP
+  version: 1
+  name: LLM spend vs cap
+  definition: tripplanner.llm_spend_daily.cost_usd per UTC day (online stages) vs TP_DAILY_SPEND_CAP_USD (placeholder default
+    5.0, apps/AA-TripPlanner-Web/backend/config.py lines 117-122; business cap still open)
+  unit: usd
+  threshold: < 80 % of cap any day
+  sources:
+  - tripplanner.llm_spend_daily
+  defined_in: TP-01
+  used_by:
+  - TP-01
+- id: K-TP-S2T
+  version: 1
+  name: Session to trip
+  definition: trip_started / planner_session_started
+  unit: ratio
+  threshold: '>= 25 % (baseline after first prod month)'
+  sources: []
+  defined_in: TP-01
+  used_by:
+  - TP-01
+- id: K-TP-SESSIONS
+  version: 1
+  name: Sessions
+  definition: sum n of tripplanner.v_ops_traffic_daily metric planner_session_started
+  unit: count
+  threshold: Trend until prod traffic
+  sources:
+  - tripplanner.v_ops_traffic_daily
+  defined_in: TP-01
+  used_by:
+  - TP-01
+- id: K-TP-T2I
+  version: 1
+  name: Trip to inquiry
+  definition: inquiry_sent / trip_started
+  unit: ratio
+  threshold: '>= 5 % (baseline after first prod month)'
+  sources: []
+  defined_in: TP-01
+  used_by:
+  - TP-01
+- id: K-TP-TRIPS
+  version: 1
+  name: TripPlanner trips started
+  definition: tripplanner.v_ops_traffic_daily metric trip_started / inquiry_sent
+  unit: count
+  threshold: Trend
+  sources:
+  - tripplanner.v_ops_traffic_daily
+  defined_in: EX-04
+  used_by:
+  - EX-04
+- id: K-UAT-COVER
+  version: 1
+  name: Video coverage
+  definition: Scenarios with a recorded video / scenarios
+  unit: ratio
+  threshold: 100 % (memory uat-videos-after-tech)
+  sources: []
+  defined_in: DEV-04
+  used_by:
+  - DEV-04
+- id: K-UAT-DEFECTS
+  version: 1
+  name: Open blocking defects
+  definition: Severity 1-2 defects found in UAT not yet fixed and verified
+  unit: count
+  threshold: 0 at sign-off
+  sources: []
+  defined_in: DEV-04
+  used_by:
+  - DEV-04
+- id: K-UAT-PASS
+  version: 1
+  name: Scenario pass rate
+  definition: Scenarios passed / scenarios run, per app
+  unit: ratio
+  threshold: 100 % of must scenarios
+  sources: []
+  defined_in: DEV-04
+  used_by:
+  - DEV-04
+- id: K-UNIT-AGENCY
+  version: 1
+  name: USD per active agency
+  definition: (crm App total + crm.llm_usage_daily.cost_usd) / active CRM tenants (EX-03)
+  unit: usd
+  threshold: Below CRM plan price
+  sources:
+  - crm.llm_usage_daily
+  defined_in: FI-05
+  used_by:
+  - FI-05
+- id: K-UNIT-BOOKING
+  version: 1
+  name: USD per confirmed booking
+  definition: booking App total / confirmed (booking.v_ops_funnel_daily)
+  unit: usd
+  threshold: n/a until first booking; then <= 5 % of average booking margin
+  sources:
+  - booking.v_ops_funnel_daily
+  defined_in: FI-05
+  used_by:
+  - FI-05
+- id: K-UNIT-JEV
+  version: 1
+  name: Jev USD per 1,000 decisions
+  definition: sum shared.decision_log.cost_usd / count of rows with cached false x 1000
+  unit: usd
+  threshold: Trend
+  sources:
+  - shared.decision_log
+  defined_in: FI-05
+  used_by:
+  - FI-05
+- id: K-UNIT-TOUR
+  version: 1
+  name: USD per published tour
+  definition: (cis App total + cis LLM spend) / tours published or republished in the month (gold_aa_internal.published_tours.published_at)
+  unit: usd
+  threshold: Flag MoM +20 %; baseline after 3 months
+  sources:
+  - gold_aa_internal.published_tours
+  defined_in: FI-05
+  used_by:
+  - EX-02
+  - FI-05
+  report_thresholds:
+    EX-02: Flag MoM increase > 20 %; baseline after 3 months
+- id: K-UNIT-TREND
+  version: 1
+  name: Unit cost trend
+  definition: FI-05 unit costs, quarter vs previous quarter
+  unit: status
+  threshold: Flat or down
+  sources: []
+  defined_in: EX-05
+  used_by:
+  - EX-05
+- id: K-UNIT-TRIP
+  version: 1
+  name: USD per trip plan
+  definition: (tripplanner App total + tripplanner.llm_spend_daily.cost_usd) / trip_started (tripplanner.v_ops_traffic_daily)
+  unit: usd
+  threshold: Trend
+  sources:
+  - tripplanner.llm_spend_daily
+  - tripplanner.v_ops_traffic_daily
+  defined_in: FI-05
+  used_by:
+  - FI-05
+- id: K-VEND-DPA
+  version: 1
+  name: DPA coverage
+  definition: Personal-data vendors with signed DPA / all such vendors (docs/legal/register.md vendor table; none signed
+    today, line 245)
+  unit: ratio
+  threshold: 100 % before prod go-live
+  sources: []
+  defined_in: FI-04
+  used_by:
+  - FI-04
+  - SEC-10
+- id: K-VEND-EXPIRY
+  version: 1
+  name: Credit expiry risk
+  definition: Credit forecast to remain at expiry at current burn
+  unit: count
+  threshold: Flag > 50 USD
+  sources: []
+  defined_in: FI-04
+  used_by:
+  - FI-04
+- id: K-VEND-HEADROOM
+  version: 1
+  name: Free-plan headroom
+  definition: Usage / plan limit per free plan
+  unit: count
+  threshold: Amber > 70 %, red > 90 %
+  sources: []
+  defined_in: FI-04
+  used_by:
+  - FI-04
+- id: K-VEND-SPEND
+  version: 1
+  name: Vendor spend
+  definition: Jev shared.decision_log.cost_usd; DataForSEO shared.dfs_call_log.cost_usd; Geoapify geo.geocode_call.cost_usd;
+    OpenAI shared.llm_call_log rows with provider openai; fixed fees from vendors.yaml
+  unit: usd
+  threshold: Within FI-06 vendor lines
+  sources:
+  - shared.decision_log
+  - shared.dfs_call_log
+  - geo.geocode_call
+  - shared.llm_call_log
+  defined_in: FI-04
+  used_by:
+  - FI-04
+- id: K-WAVE-DONE
+  version: 1
+  name: Completion
+  definition: Done tours / shared.rerun_wave.expected_tour_ids
+  unit: count
+  threshold: 100 % before closing
+  sources:
+  - shared.rerun_wave
+  defined_in: CIS-07
+  used_by:
+  - CIS-07
+- id: K-WAVE-RETRY
+  version: 1
+  name: Retry waste
+  definition: Cost of attempts that failed / wave total
+  unit: count
+  threshold: < 10 %
+  sources: []
+  defined_in: CIS-07
+  used_by:
+  - CIS-07
+- id: K-WAVE-RUNNING
+  version: 1
+  name: Running total vs cap
+  definition: Sum of all waves in the run / approved cap
+  unit: ratio
+  threshold: Stop at 100 %
+  sources: []
+  defined_in: CIS-07
+  used_by:
+  - CIS-07
+- id: K-WAVE-STUCK
+  version: 1
+  name: Stuck tours
+  definition: Expected tours with no progress since shared.rerun_wave.last_checked_at
+  unit: count
+  threshold: 0 at close
+  sources:
+  - shared.rerun_wave
+  defined_in: CIS-07
+  used_by:
+  - CIS-07
+- id: K-WAVE-UNIT
+  version: 1
+  name: USD per tour
+  definition: Wave cost (shared.llm_call_log + shared.decision_log + shared.dfs_call_log + geo.geocode_call, joined by job_id
+    to the wave's shared.job rows) / tours done
+  unit: usd
+  threshold: Within approved estimate +20 % and the shared.spend_budget per_run_usd cap
+  sources:
+  - shared.llm_call_log
+  - shared.decision_log
+  - shared.dfs_call_log
+  - geo.geocode_call
+  - shared.job
+  defined_in: CIS-07
+  used_by:
+  - CIS-07
