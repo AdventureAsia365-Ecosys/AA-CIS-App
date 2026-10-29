@@ -5,7 +5,9 @@ Payload: {"mode": "dry_run" | "apply" | "hide" | "unhide" (default dry_run), "lo
 "country"?, "limit"? (apply, ≤ 400 a run), "hide_unconfirmed"? (default false), "reason"?,
 AA-997 v2: "recheck"? (outcomes of an earlier rule version to take again: llm_point / off_route / confirmed; default
 none), "strategy"? ("v1" default | "v2": query variants, hint bias, compact names — geocoder.STRATEGIES),
-"max_requests"? (a cap on Geoapify requests over the whole apply chain; "spent" carries the count from run to run),
+"accept_rule"? ("v1" default | "aa997.2": the strict acceptance; recheck confirmed / geoapify need it — geoapify is
+dry-run only), "max_requests"? (a cap on Geoapify requests over the whole apply chain, "chain_id" set by the endpoint:
+the spent count is read from geo.geocode_call of the chain's jobs, so a retried or crashed run is counted too),
 "rule_version" (set by the endpoint; an apply whose rule version is not the deployed one is refused, so a chain queued
 before a rule change stops instead of running the new rule with an old dry run), "reasons"? / "confirm"? (hide)}.
 Queued by POST /admin/places/relocate.
@@ -57,12 +59,16 @@ def _int_or_none(v) -> Optional[int]:
 
 def _payload(p: dict) -> dict:
     from services.places.geocoder import STRATEGIES, STRATEGY_V1
+    from services.places.geomatch import ACCEPT_RULE, ACCEPT_RULE_V1
     mode = p.get("mode") if p.get("mode") in MODES else "dry_run"
     limit = max(1, min(int(p.get("limit") or relocate.MAX_ROWS_PER_RUN), relocate.MAX_ROWS_PER_RUN))
     out = {"mode": mode, "located_by": relocate.located_by_list(p.get("located_by")),
            "country": (p.get("country") or None), "limit": limit,
            "hide_unconfirmed": bool(p.get("hide_unconfirmed"))}
     # AA-997 v2 keys, present only when used (an old payload reads exactly as before)
+    accept_rule = p.get("accept_rule") if p.get("accept_rule") in (ACCEPT_RULE, ACCEPT_RULE_V1) else ACCEPT_RULE_V1
+    if accept_rule != ACCEPT_RULE_V1:
+        out["accept_rule"] = accept_rule
     if p.get("recheck"):
         out["recheck"] = relocate.recheck_list(p.get("recheck"))
     if p.get("strategy") in STRATEGIES and p.get("strategy") != STRATEGY_V1:
@@ -70,6 +76,8 @@ def _payload(p: dict) -> dict:
     if _int_or_none(p.get("max_requests")):
         out["max_requests"] = _int_or_none(p.get("max_requests"))
         out["spent"] = max(0, int(p.get("spent") or 0))
+        if p.get("chain_id"):
+            out["chain_id"] = str(p["chain_id"])
     if p.get("rule_version"):
         out["rule_version"] = str(p["rule_version"])
     if mode == "hide":
@@ -82,6 +90,21 @@ def daily_credits() -> int:
     """This job's share of the day: the place_geocode credit limit minus RESERVE_CREDITS (never below 0)."""
     limit = int(_env_float("GEOAPIFY_DAILY_CREDIT_LIMIT", DEFAULT_DAILY_CREDITS))
     return max(0, limit - relocate.RESERVE_CREDITS)
+
+
+async def _chain_spent(ctx: JobContext, p: dict) -> int:
+    """Requests the apply chain already sent: geo.geocode_call rows of the chain's jobs (logged in each run's
+    `finally`, so a retried attempt or a run stopped by an exception counts), never below the payload's carried
+    `spent`. A chain with no chain_id (queued before) uses the carried count only."""
+    carried = int(p.get("spent") or 0)
+    if not p.get("chain_id"):
+        return carried
+    try:
+        async with ctx.pool.acquire() as conn:
+            return max(carried, await store.chain_requests(conn, KIND, p["chain_id"]))
+    except Exception as e:  # noqa: BLE001 — the carried count is the fallback
+        logger.warning("place_relocate_chain_spent_failed", error=str(e)[:200])
+        return carried
 
 
 async def _requeue(ctx: JobContext, p: dict, *, run_after: datetime, key: Optional[str]) -> str:
@@ -105,7 +128,8 @@ async def run(ctx: JobContext) -> Optional[dict]:
             return await relocate.dry_run(conn, located_by=p["located_by"], country=p["country"],
                                           cost_per_request=inner.cost_per_request, daily_credits=daily_credits(),
                                           recheck=p.get("recheck"), strategy=p.get("strategy", "v1"),
-                                          max_requests=p.get("max_requests"))
+                                          max_requests=p.get("max_requests"),
+                                          accept_rule=p.get("accept_rule", "v1"))
     if daily_credits() <= 0:
         return {"status": "refused_no_credit_share", "detail": (
             f"GEOAPIFY_DAILY_CREDIT_LIMIT leaves no share after the {relocate.RESERVE_CREDITS} credits kept for "
@@ -117,8 +141,14 @@ async def run(ctx: JobContext) -> Optional[dict]:
         return {"status": "refused_rule_version_changed", "payload_rule_version": p.get("rule_version", PRE_V2_RULE),
                 "rule_version": relocate.RULE_VERSION,
                 "detail": "the rule changed since this chain's dry run: run a new dry run, then apply"}
-    if p.get("max_requests") and p.get("spent", 0) >= p["max_requests"]:
-        return {"status": "stopped_request_cap", "spent": p["spent"], "max_requests": p["max_requests"]}
+    held_back = sorted(set(p.get("recheck") or ()) & set(relocate.RECHECK_DRY_RUN_ONLY))
+    if held_back:
+        return {"status": "refused_recheck_dry_run_only", "recheck": held_back,
+                "detail": "this recheck is dry-run only until a labelled sample shows the re-judge keeps correct rows"}
+    if p.get("max_requests"):
+        p = {**p, "spent": await _chain_spent(ctx, p)}
+        if p["spent"] >= p["max_requests"]:
+            return {"status": "stopped_request_cap", "spent": p["spent"], "max_requests": p["max_requests"]}
     async with geoapify_lock(ctx.pool) as held:
         if not held:
             job = await _requeue(ctx, p, run_after=datetime.now(timezone.utc) + timedelta(seconds=LOCKED_DELAY_S),
@@ -141,9 +171,13 @@ async def _apply_locked(ctx: JobContext, p: dict, inner) -> dict:
         result = await relocate.apply(ctx.pool, geocoder, located_by=p["located_by"], country=p["country"],
                                       limit=p["limit"], hide_unconfirmed=p["hide_unconfirmed"],
                                       progress=ctx.progress, recheck=p.get("recheck"),
-                                      strategy=p.get("strategy", "v1"), max_requests=cap)
+                                      strategy=p.get("strategy", "v1"), max_requests=cap,
+                                      accept_rule=p.get("accept_rule", "v1"))
     except BudgetExceeded as e:
-        ctx.set_result({"status": "stopped_budget", **result})
+        stopped = {"status": "stopped_budget", **result}
+        if p.get("max_requests"):       # the next run reads the chain's geo.geocode_call rows; shown here too
+            stopped["spent"] = p.get("spent", 0) + inner.requests
+        ctx.set_result(stopped)
         await maybe_alert(ctx.pool, geo_budget, reason=str(e))
         raise
     finally:

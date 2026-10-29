@@ -4086,6 +4086,12 @@
       },
       "RelocateRequest": {
         "properties": {
+          "accept_rule": {
+            "default": "v1",
+            "pattern": "^(v1|aa997\\.2)$",
+            "title": "Accept Rule",
+            "type": "string"
+          },
           "confirm": {
             "default": false,
             "title": "Confirm",

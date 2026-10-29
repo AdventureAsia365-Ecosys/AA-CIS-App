@@ -55,7 +55,7 @@ from services.places import geomatch, guards
 from shared.cost_guard import BudgetExceeded
 from services.places.names import name_norm
 from services.places.geocoder import (CONFIRMED_BY, STRATEGY_V1, Confirmed, CreditLimitReached,
-                                      GeocoderUnavailable, Unconfirmed, default_strategy)
+                                      GeocoderUnavailable, Unconfirmed, default_accept_rule, default_strategy)
 
 logger = structlog.get_logger()
 
@@ -150,7 +150,9 @@ class Outcome:
     @property
     def final(self) -> bool:
         """AA-997: no point and no use asking again (store: status 'unknown' at once)."""
-        return self.point is None and not self.deferred and self.error is None and self.reason in FINAL_REASONS
+        # a reason may carry detail after ':' ("unconfirmed_by_geocoder:strict=ambiguous_route", AA-997 v2)
+        return (self.point is None and not self.deferred and self.error is None
+                and (self.reason or "").split(":", 1)[0] in FINAL_REASONS)
 
 
 @dataclass(frozen=True)
@@ -365,25 +367,48 @@ async def _resolve(item: Item, answer, geocoder, external: bool) -> Outcome:
         if (prop is None and answer != REASON_NULL) or not guards.has_route(item.routes):
             return Outcome(None, reason=why)
         country = prop.country if prop else (guards.canonical_country(item.country) or item.country)
-        res = await geocoder.confirm(item.name, None, None, country, routes=item.routes)
+        res = await geocoder.confirm(item.name, None, None, country, routes=item.routes, **_rule_kw())
         hit = _confirmed(item, res, country)
-        return Outcome(hit) if hit else Outcome(None, reason=REASON_NULL if prop is None else why)
-    # AA-997 v2: GEOCODER_STRATEGY=v2 adds query variants + hint bias for new names (kwarg sent only then, so a
-    # geocoder written before v2 keeps working); the town fallback below stays a plain settlement search
+        if hit:
+            return Outcome(hit)
+        strict = _unconfirmed_reason(res).partition(":")[2]     # "strict=…" when the strict rule refused one
+        base = REASON_NULL if prop is None else why
+        return Outcome(None, reason=f"{base}:{strict}" if strict and prop is None else base)
+    # AA-997 v2: GEOCODER_STRATEGY=v2 adds query variants + hint bias for new names, GEOCODER_ACCEPT_RULE=aa997.2 the
+    # strict acceptance (kwargs sent only when switched on, so a geocoder written before v2 keeps working); the town
+    # fallback below stays a plain settlement search (under the same acceptance rule)
     strategy = default_strategy()
     kw = {"strategy": strategy} if strategy != STRATEGY_V1 else {}
     res = await geocoder.confirm(item.name, prop.lat, prop.lng, prop.country, native_name=prop.native_name,
-                                 routes=item.routes, **kw)
+                                 routes=item.routes, **kw, **_rule_kw())
     hit = _confirmed(item, res, prop.country)
     if hit:
         return Outcome(hit)
     town = prop.town
+    tres = None
     if town and geomatch.name_sim(town, item.name) < 0.999 and not geomatch.is_generic_phrase(town):
-        tres = await geocoder.confirm(town, prop.lat, prop.lng, prop.country, routes=item.routes, settlement=True)
+        tres = await geocoder.confirm(town, prop.lat, prop.lng, prop.country, routes=item.routes, settlement=True,
+                                      **_rule_kw())
         thit = _confirmed(item, tres, prop.country, town=town)
         if thit:
             return Outcome(thit)
-    return Outcome(None, reason=REASON_UNCONFIRMED)
+    return Outcome(None, reason=_unconfirmed_reason(res, tres))
+
+
+def _rule_kw() -> dict:
+    """`strict=True` when GEOCODER_ACCEPT_RULE switches the strict acceptance on (AA-997 v2), else nothing."""
+    return {"strict": True} if default_accept_rule() == geomatch.ACCEPT_RULE else {}
+
+
+def _unconfirmed_reason(*results) -> str:
+    """REASON_UNCONFIRMED, plus the strict-only refusals of the searches (":strict=ambiguous_route,kind") when the
+    strict rule refused a candidate: still final (status unknown — the same search gives the same answer), but the
+    name can be found by its last_error and re-queued if the rule is relaxed (AA-997 v2 review fix)."""
+    strict = []
+    for res in results:
+        for t in ((getattr(res, "meta", None) or {}).get("tried") or []):
+            strict += [r for r in geomatch.strict_refusals(t.get("rejected")) if r not in strict]
+    return f"{REASON_UNCONFIRMED}:strict={','.join(strict)}" if strict else REASON_UNCONFIRMED
 
 
 def _confirmed(item: Item, res, country: str, *, town: Optional[str] = None) -> Optional[Located]:

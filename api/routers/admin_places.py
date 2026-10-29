@@ -43,17 +43,20 @@ AA-847 Problem 2 (automatic duplicate merge, migration 257; owner decision S246:
 AA-997 (S254 geocode audit, fix plan step 1: coordinates come from the geocoder only):
   POST /admin/places/relocate {mode = dry_run | apply | hide | unhide, located_by = ["llm"] (| "mapbox"), country?,
                                limit ≤ 400, hide_unconfirmed = false, strategy = v1 | v2, max_requests?,
-                               recheck = [] (llm_point | off_route | confirmed | geoapify),
+                               accept_rule = v1 | aa997.2,
+                               recheck = [] (llm_point | off_route | confirmed | geoapify (dry run only)),
                                reasons? + confirm = false (hide)}
        queue one place_relocate run (services/places/relocate.py). dry_run: no call, no write — counts (non-place
        names, points off the tours' route, Hong Kong / Macao stored as China) and the Geoapify credit / day estimate
        in the job result (GET /admin/job-runner/jobs/{id}). apply: the geocoder-only path per row, ≤ limit rows a run,
        re-enqueued until done; 409 when the latest dry run of this rule version and selection is missing.
-       AA-997 v2: recheck re-runs rows an earlier rule version stamped; strategy v2 = query variants + hint bias;
-       max_requests caps the chain's Geoapify requests. hide (report; confirm=true writes) / unhide: the readers'
-       hide-unconfirmed policy — rows still flagged llm_point / off_route / unconfirmed_hard_type / weak_confirm
-       (+ non_place:* only when "non_place" is in reasons) become suspect (hidden everywhere), unhide reverts exactly
-       those. No paid call.
+       AA-997 v2: recheck re-runs rows an earlier rule version stamped (confirmed / geoapify need accept_rule
+       aa997.2: the strict acceptance; geoapify is dry-run only); strategy v2 = query variants + hint bias;
+       max_requests caps the chain's Geoapify requests (counted from geo.geocode_call of the chain's jobs).
+       hide (report; confirm=true writes) / unhide: the readers' hide-unconfirmed policy — rows still flagged
+       llm_point / off_route / unconfirmed_hard_type / weak_confirm (+ non_place:* only when "non_place" is in
+       reasons) become suspect (hidden everywhere); unhide reverts the rows still flagged for the reason they were
+       hidden and keeps the record (unhidden_at). No paid call.
 
 Every response that shows coordinates carries the Geoapify / OpenStreetMap attribution (ADR 0007).
 """
@@ -633,6 +636,7 @@ class RelocateRequest(BaseModel):
     # AA-997 v2
     recheck: list[str] = Field(default_factory=list, max_length=4)
     strategy: str = Field("v1", pattern="^(v1|v2)$")
+    accept_rule: str = Field("v1", pattern="^(v1|aa997\\.2)$")
     max_requests: Optional[int] = Field(None, ge=1, le=100_000)
     reasons: Optional[list[str]] = Field(None, max_length=8)      # hide
     confirm: bool = False                                         # hide: false = report only
@@ -645,6 +649,18 @@ class RelocateRequest(BaseModel):
         if bad:
             raise ValueError(f"recheck must be in {list(RECHECK_ALLOWED)}")
         return sorted(set(v))
+
+    @model_validator(mode="after")
+    def _strict_rechecks(self):
+        from services.places.relocate import RECHECK_DRY_RUN_ONLY, RECHECK_STRICT_ONLY, is_strict
+        need = [x for x in self.recheck if x in RECHECK_STRICT_ONLY]
+        if need and not is_strict(self.accept_rule):
+            raise ValueError(f"recheck {need} re-judges stored answers with the strict rule: "
+                             "send accept_rule 'aa997.2'")
+        held = [x for x in self.recheck if x in RECHECK_DRY_RUN_ONLY]
+        if held and self.mode == "apply":
+            raise ValueError(f"recheck {held} is dry-run only until a labelled sample clears it")
+        return self
 
     @field_validator("located_by")
     @classmethod
@@ -677,8 +693,12 @@ async def relocate_run(body: RelocateRequest, request: Request, x_admin_secret: 
         payload["recheck"] = body.recheck
     if body.strategy != "v1":
         payload["strategy"] = body.strategy
+    if body.accept_rule != "v1":
+        payload["accept_rule"] = body.accept_rule
     if body.max_requests:
         payload["max_requests"] = body.max_requests
+        if body.mode == "apply":      # the chain's request count is read from geo.geocode_call of its jobs
+            payload["chain_id"] = str(uuid.uuid4())
     if body.mode == "hide":
         payload["reasons"] = relocate.hide_reasons(body.reasons)
         payload["confirm"] = body.confirm
@@ -689,11 +709,12 @@ async def relocate_run(body: RelocateRequest, request: Request, x_admin_secret: 
             same = (res.get("rule_version") == relocate.RULE_VERSION and res.get("located_by") == body.located_by
                     and (res.get("country") or None) == (body.country or None)
                     and (res.get("recheck") or []) == body.recheck
-                    and (res.get("strategy") or "v1") == body.strategy)
+                    and (res.get("strategy") or "v1") == body.strategy
+                    and (res.get("accept_rule") or "v1") == body.accept_rule)
             if not same:
                 raise HTTPException(status_code=409, detail={
                     "error": "run the dry run of this selection first (same rule version, located_by, country, "
-                             "recheck, strategy)",
+                             "recheck, strategy, accept_rule)",
                     "rule_version": relocate.RULE_VERSION, "last_dry_run": last["id"] if last is not None else None})
             payload["dry_run_job"] = last["id"]
             busy = await conn.fetchrow(_OPEN_RELOCATE_APPLY_SQL, RELOCATE_KIND, relocate.RULE_VERSION)
