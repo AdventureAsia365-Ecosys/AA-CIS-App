@@ -2,7 +2,7 @@
 
 Why: the photo read views by place (shared.v_destination_photos, catalog.v_destination_photo) need destination_id,
 which no photo had (the sync only matched destinations on request, and the request was never made after the S207
-reset). Without it the pool cover fallback (api/routers/v1_tours.py _POOL_COVER_SQL) and the TripPlanner destination
+reset). Without it the pool cover fallback (services/photos/covers.py) and the TripPlanner destination
 pages find no photo of a place.
 
 Rule: a photo is compared only with the places of ITS OWN tour — the geo.tour_place rows of the tour's source key
@@ -59,3 +59,69 @@ async def tour_candidates(conn, tour_ids: Iterable[str]) -> dict[str, list[tuple
         if r["place_name"]:
             pairs.add((r["destination_id"], r["place_name"]))
     return {t: sorted(p) for t, p in out.items()}
+
+
+# ── AA-671 S258: what matcher version 2 needs (services.photos.match.resolve_destination `places` / `nearby`) ──────
+# Per photo tour id: its places' coordinates and how many itinerary days the tour spends at each (geo.tour_place
+# day_index; a graph-build stop that is not an itinerary place counts 0 days). Same tour scope as CANDIDATES_SQL.
+PLACES_SQL = """
+    WITH tours AS (
+        SELECT rt.tour_id, (COALESCE(rt.source_group_id, rt.tour_id))::text AS source_id
+          FROM silver_aa_internal.raw_tours rt
+         WHERE rt.tour_id = ANY($1::uuid[])
+    ), cand AS (
+        SELECT t.tour_id, tp.destination_id, tp.day_index
+          FROM tours t
+          JOIN geo.tour_place tp ON tp.source_id = t.source_id
+         WHERE tp.destination_id IS NOT NULL
+        UNION
+        SELECT t.tour_id, ts.destination_id, NULL::int
+          FROM tours t
+          JOIN geo.tour_stop ts ON ts.source_id = t.source_id
+          JOIN geo.graph_build gb ON gb.build_id = ts.build_id AND gb.is_current
+    )
+    SELECT c.tour_id::text AS tour_id, d.id::text AS destination_id, d.lat, d.lng,
+           count(DISTINCT c.day_index) AS days, min(c.day_index) AS first_day
+      FROM cand c
+      JOIN shared.destinations d ON d.id = c.destination_id AND d.duplicate_of IS NULL
+     GROUP BY 1, 2, 3, 4
+     ORDER BY 1, 2
+"""
+# Places outside the tours whose identity key equals a label key (destinations_name_country_uidx leads with name_norm):
+# located, not merged, not flagged suspect. The resolver keeps only those near the photo's own tour.
+NEARBY_SQL = """
+    SELECT d.id::text AS id, d.name, d.name_norm, d.lat, d.lng
+      FROM shared.destinations d
+     WHERE d.name_norm = ANY($1::text[]) AND d.duplicate_of IS NULL AND d.name_norm IS NOT NULL
+       AND d.geo_status <> 'suspect'
+     ORDER BY 1
+"""
+
+
+async def tour_places(conn, tour_ids: Iterable[str]) -> dict:
+    """tour id -> {destination id -> match.Place} (coordinates, itinerary days). Raises on a DB error."""
+    from services.photos.match import Place
+    from services.places.store import _catalog_fetch
+
+    ids = sorted({str(t) for t in tour_ids if t})
+    if not ids:
+        return {}
+    out: dict[str, dict] = {}
+    for r in await _catalog_fetch(conn, PLACES_SQL, ids):
+        out.setdefault(r["tour_id"], {})[r["destination_id"]] = Place(
+            r["lat"], r["lng"], int(r["days"] or 0), r["first_day"])
+    return out
+
+
+async def nearby_by_key(conn, labels: Iterable[str]) -> dict:
+    """label key -> [(destination id, name, match.Place)] of the places named by any of the labels. Raises on a DB
+    error."""
+    from services.photos.match import Place, label_keys
+
+    keys = sorted({k for lab in labels for k in label_keys(lab)})
+    if not keys:
+        return {}
+    out: dict[str, list] = {}
+    for r in await conn.fetch(NEARBY_SQL, keys):
+        out.setdefault(r["name_norm"], []).append((r["id"], r["name"], Place(r["lat"], r["lng"])))
+    return out

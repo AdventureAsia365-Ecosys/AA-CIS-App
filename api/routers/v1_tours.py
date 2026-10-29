@@ -17,6 +17,7 @@ from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from api.routers._served import annotate as _annotate_served, refuse_http as _refuse_not_served
 from shared import tour_liveness as _tl
 from shared.tour_liveness import TourNotServedError, live_source_sql
+from services.photos import covers as _covers
 from services.photos.sync import public_base
 from api.routers._tenant_projection import (
     project_billing, project_raw, project_tour, project_version,
@@ -124,6 +125,7 @@ _POOL_COUNT_SQL = """
 """
 _POOL_REWRITTEN_TENANT_COND = "ttv.tenant_id = ${tid}::uuid"
 _POOL_ROWS_SQL = """
+    {cover_with}
     SELECT pt.id, pt.tour_id, pt.aa_name, pt.aa_subtitle, pt.aa_summary,
            pt.aa_highlights, pt.aa_itineraries, pt.aa_description,
            pt.seo_title, pt.seo_meta, pt.seo_keywords_used,
@@ -146,7 +148,7 @@ _POOL_ROWS_SQL = """
 # AA-671 — the Marketplace facets of each pool tour, from CIS data the catalog already serves (no new column):
 #   activities = the distinct graph activities of the tour's components, intensity = the highest component intensity
 #   (the catalog.http.v1 facets rule, services/catalog_http/mapping.py facets()), cover = the tour's position-1 photo,
-#   else a photo of its primary place (_POOL_COVER_SQL).
+#   else a photo of its primary place, a photo place near it, or one of its country (services/photos/covers.py).
 # Graph vocabulary: geo.tour_place CHECKs tour_place_activity_check / tour_place_intensity_level_check (graph.v1);
 # the tenant sees the catalog.http.v1 intensity names (leisurely -> easy, active -> challenging), like the CRM.
 # The two pools read different relations for the same rows: aa_app_user (tenant pool) holds SELECT on the catalog
@@ -177,45 +179,11 @@ _POOL_FACET_JOIN = {
          WHERE c.source_id = (COALESCE(rt.source_group_id, rt.tour_id))::text
     ) facet ON true""",
 }
-# AA-671 S257 — cover fallback. Only the tours with a photo folder of their own have a position-1 tour photo (S256:
-# 162 of 892 pool tours), so a tour without one takes a photo of its primary place: among the usable places of its
-# graph components (the facet join's rows) that have an AA photo, the one the tour spends the most days in, then the
-# earliest day, then the destination id (deterministic). Within that place the photo is picked by
-# md5(tour id || path), stable for a tour but spread across tours, so twenty Hanoi tours on one grid page do not all
-# show the same picture (lesson S253, duplicate covers). Destination photos come from the same photo read views
-# (matched, served rows: every one has the 600 / 960 / 1600 px renditions), so the URLs are built the same way.
-_POOL_COVER_SQL = """LEFT JOIN LATERAL (
-        SELECT COALESCE(
-            (SELECT ph.path FROM {tour_photo} ph
-              WHERE {tour_photo_cond} ph.tour_id = pt.tour_id AND ph.position = 1
-              LIMIT 1),
-            (SELECT place_photo.path
-               FROM (SELECT c.destination_id, count(DISTINCT c.day_index) AS days, min(c.day_index) AS first_day
-                       FROM {components}
-                      GROUP BY c.destination_id) place
-              CROSS JOIN LATERAL (
-                    SELECT dp.path FROM {destination_photo} dp
-                     WHERE dp.destination_id = place.destination_id
-                     ORDER BY md5(pt.tour_id::text || dp.path)
-                     LIMIT 1) place_photo
-              ORDER BY place.days DESC, place.first_day, place.destination_id
-              LIMIT 1)
-        ) AS path
-    ) cover ON true"""
-_POOL_COVER_JOIN = {
-    True: _POOL_COVER_SQL.format(
-        tour_photo="catalog.v_tour_photo", tour_photo_cond="ph.source_system = 'cis' AND",
-        components="catalog.v_tour_component c WHERE c.source_system = 'cis' AND c.tour_id = pt.tour_id",
-        destination_photo="catalog.v_destination_photo"),
-    # Flag off: the facet join's source rows (geo.tour_place on a usable destination, by the tour's source key)
-    False: _POOL_COVER_SQL.format(
-        tour_photo="shared.v_tour_photos", tour_photo_cond="",
-        components="""geo.tour_place c
-                       JOIN shared.destinations d ON d.id = c.destination_id
-                                                 AND d.geo_status <> 'suspect' AND d.duplicate_of IS NULL
-                      WHERE c.source_id = (COALESCE(rt.source_group_id, rt.tour_id))::text""",
-        destination_photo="shared.v_destination_photos"),
-}
+# AA-671 — the cover chain (tour photo, then a photo of the primary place; S258: a photo place near the primary
+# place, then one of its country) lives in services/photos/covers.py, shared with the photo_destination_match job's
+# coverage report so the report counts what this route serves. The rows statement defines its `cover_place` CTE.
+_POOL_COVER_JOIN = {pool: _covers.cover_join(pool) for pool in (True, False)}
+_POOL_COVER_WITH = {pool: "WITH " + _covers.cover_cte(pool) for pool in (True, False)}
 
 
 def _pool_facets(row: dict) -> dict:
@@ -331,6 +299,7 @@ async def browse_pool(
         rows_sql = _POOL_ROWS_SQL.format(
             rewritten_cond=_POOL_REWRITTEN_TENANT_COND.format(tid=len(params) + 3),
             facet_join=facet_join, cover_join=_POOL_COVER_JOIN[used_tenant_pool],
+            cover_with=_POOL_COVER_WITH[used_tenant_pool],
             where=where, order_by=order_by, limit=len(params) + 1, offset=len(params) + 2)
         count_sql = _POOL_COUNT_SQL.format(facet_join=facet_join if count_needs_facets else "", where=where)
         total = await conn.fetchval(count_sql, *params)

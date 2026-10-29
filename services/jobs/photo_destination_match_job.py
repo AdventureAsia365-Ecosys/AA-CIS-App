@@ -3,7 +3,12 @@ destination their label names (shared.place_photo.destination_id), so the photo 
 (shared.v_destination_photos, catalog.v_destination_photo) and the pool cover fallback find them.
 
 Payload: {"dry_run": bool (DEFAULT TRUE — pass false to write), "country": str | None, "limit": int (1..5000,
-          default 5000), "fill_covers": bool (default false; apply only — see below)}.
+          default 5000), "fill_covers": bool (default false; apply only — see below), "version": 1 | 2 (default 1)}.
+
+Version 2 (S258, $0): the matcher also breaks a tie between places on one spot (tie_break same_spot) and matches a
+label that IS the name of a place near the tour (rule nearby_exact: "Paro" -> the town Paro, at most 20 km from a place
+of the tour, where version 1 only reported the monastery "Paro Taktsang" as weak); see match.resolve_destination.
+The photo sync stays on version 1 until a version 2 run has been reviewed.
 
 Rule (services.photos.destinations + services.photos.match.resolve_destination): a photo is compared only with the
 places of its own tour (geo.tour_place of the tour's source key + the current graph build's stops, non-duplicate
@@ -28,6 +33,11 @@ Every run (dry run included) previews it in ``covers_preview``: covers that woul
 destinations whose cover is empty / job-set and that have no served photo yet (an upper bound: a planned photo
 without a stored rendition is not served).
 
+Coverage: every run reports ``covers_coverage`` — the pool tours per cover level (services/photos/covers.py: tour,
+place, nearby, country, none), the tours without a cover per country, and on a dry run ``to_place_after_apply`` (tours
+below the place level that have a place this run would give a photo). An apply reports it again after the writes
+(``covers_coverage_after``). A failed coverage read is reported, never fails the run.
+
 Audit: the result counts every outcome (matched / ambiguous / no_match / no_candidate / no_label), the rule that
 matched, per country, with samples; an apply logs one `photo_destination_matched` line per photo it wrote and one
 `photo_destination_ambiguous` line per tied photo. No model call, no Drive or S3 I/O ($0).
@@ -49,6 +59,7 @@ MAX_LIMIT = 5000
 DEFAULT_LIMIT = MAX_LIMIT
 MAX_SAMPLES = 30
 OUTCOMES = ("matched", "ambiguous", "weak", "no_match", "no_candidate", "no_label")
+VERSIONS = (1, 2)
 
 _OPEN = """
       FROM shared.place_photo
@@ -106,6 +117,15 @@ def _flag(payload: dict, name: str, default: bool) -> bool:
     return raw
 
 
+def _version(payload: dict) -> int:
+    raw = payload.get("version", 1)
+    if raw is None:
+        return 1
+    if isinstance(raw, bool) or raw not in VERSIONS:
+        raise NonRetryable("version must be 1 or 2")
+    return raw
+
+
 def _dry_run(payload: dict) -> bool:
     raw = payload.get("dry_run", True)
     if not isinstance(raw, bool):
@@ -113,31 +133,46 @@ def _dry_run(payload: dict) -> bool:
     return raw
 
 
-def plan(rows: list[dict], candidates: dict[str, list[tuple[str, str]]]) -> dict[str, Any]:
+def plan(rows: list[dict], candidates: dict[str, list[tuple[str, str]]], place_info: Optional[dict] = None,
+         nearby: Optional[dict] = None) -> dict[str, Any]:
     """Decide every open row. Pure. Returns {"writes": [(photo id, destination id, tour id, rule)], "ambiguous":
-    [every tied row], "outcomes", "rules", "by_country", "samples"}."""
-    from services.photos.match import resolve_destination
+    [every tied row], "outcomes", "rules", "tie_breaks", "by_country", "samples"}. Version 2 passes `place_info` (tour
+    id -> {destination id -> match.Place}) and `nearby` (label key -> [(destination id, name, Place)])."""
+    from services.photos.match import label_keys, resolve_destination
 
     outcomes: Counter = Counter({o: 0 for o in OUTCOMES})
     rules: Counter = Counter()
+    tie_breaks: Counter = Counter()
     by_country: dict[str, Counter] = {}
     samples: dict[str, list] = {"matched": [], "ambiguous": [], "weak": [], "no_match": []}
     writes: list[tuple[str, str, str, str]] = []
     ambiguous: list[dict] = []
     for r in rows:
         places = candidates.get(r["tour_id"], [])
-        found = resolve_destination(r["place_label"], places)
+        if place_info is None:
+            found = resolve_destination(r["place_label"], places)
+            near = []
+        else:
+            near = [n for k in sorted(label_keys(r["place_label"])) for n in (nearby or {}).get(k, [])]
+            found = resolve_destination(r["place_label"], places, place_info.get(r["tour_id"], {}), near)
         outcomes[found.outcome] += 1
         by_country.setdefault(r["country"], Counter({o: 0 for o in OUTCOMES}))[found.outcome] += 1
         names = {}
-        for did, name in places:
+        for did, name in list(places) + [(d, n) for d, n, _ in near]:
             names.setdefault(did, name)
         if found.outcome == "matched":
             rules[found.rule] += 1
+            if found.tie_break:
+                tie_breaks[found.tie_break] += 1
             writes.append((r["id"], found.destination_id, r["tour_id"], found.rule))
             item = {"photo_id": r["id"], "label": r["place_label"], "destination_id": found.destination_id,
                     "destination": names.get(found.destination_id), "rule": found.rule,
                     "match_source": r["match_source"]}
+            if found.tie_break:
+                item["tie_break"] = found.tie_break
+                item["tied"] = [{"destination_id": d, "name": names.get(d)} for d in found.candidates]
+            if found.km is not None:
+                item["km"] = found.km
         elif found.outcome == "ambiguous":
             item = {"photo_id": r["id"], "label": r["place_label"], "rule": found.rule,
                     "candidates": [{"destination_id": d, "name": names.get(d)} for d in found.candidates]}
@@ -153,24 +188,47 @@ def plan(rows: list[dict], candidates: dict[str, list[tuple[str, str]]]) -> dict
         if item is not None and len(samples[found.outcome]) < MAX_SAMPLES:
             samples[found.outcome].append(item)
     return {"writes": writes, "ambiguous": ambiguous, "outcomes": dict(outcomes), "rules": dict(rules),
-            "by_country": {c: dict(v) for c, v in sorted(by_country.items())}, "samples": samples}
+            "tie_breaks": dict(tie_breaks), "by_country": {c: dict(v) for c, v in sorted(by_country.items())},
+            "samples": samples}
+
+
+def coverage_sql() -> str:
+    """The coverage statement over the pool tours (the base conditions of GET /v1/tours/pool, admin pool)."""
+    from api.routers.v1_tours import _POOL_BASE_CONDITIONS
+    from services.photos.covers import coverage_sql as build
+    return build(_POOL_BASE_CONDITIONS)
+
+
+async def _coverage(pool, job_id, planned_destinations) -> dict:
+    """covers.summarise() over every pool tour; {"error": ...} when the read fails (a report, never a reason to stop).
+    Reads raw_tours with the AA master pinned, like the candidate read (raw_tours is FORCE-RLS)."""
+    from services.photos.covers import summarise
+    from services.places.store import _catalog_fetch
+    try:
+        async with pool.acquire() as conn:
+            rows = await _catalog_fetch(conn, coverage_sql())
+    except Exception as exc:    # noqa: BLE001 — reported in the result and the log
+        logger.warning("photo_destination_coverage_failed", job_id=job_id, error=type(exc).__name__)
+        return {"error": type(exc).__name__}
+    return summarise(rows, planned_destinations)
 
 
 @job_kind(KIND, concurrency=1, max_attempts=2, expected_seconds=300, background=True)
 async def run(ctx: JobContext) -> dict:
-    from services.photos.destinations import tour_candidates
+    from services.photos.destinations import nearby_by_key, tour_candidates, tour_places
     from services.photos.sync import fill_destination_covers, public_base
 
     payload = ctx.payload or {}
     dry_run = _dry_run(payload)
     fill_covers = _flag(payload, "fill_covers", False)
     limit = _limit(payload)
+    version = _version(payload)
     country: Optional[str] = payload.get("country") or None
     if country is not None and not isinstance(country, str):
         raise NonRetryable("country must be a string")
     pool = ctx.pool
     res: dict[str, Any] = {"dry_run": dry_run, "country": country, "limit": limit, "fill_covers": fill_covers,
-                           "stopped": None}
+                           "version": version, "stopped": None}
     if not dry_run and await pool.fetchval(SYNC_RUNNING_SQL):
         res["stopped"] = "photo_sync_running"
         ctx.set_result(res)
@@ -181,9 +239,13 @@ async def run(ctx: JobContext) -> dict:
     res["open_before"] = int(await pool.fetchval(OPEN_COUNT_SQL, country))
     rows = [dict(r) for r in await pool.fetch(OPEN_ROWS_SQL, country, limit)]
     await ctx.progress(phase="matching", rows=len(rows), open_before=res["open_before"])
+    places = nearby = None
     async with pool.acquire() as conn:
         candidates = await tour_candidates(conn, {r["tour_id"] for r in rows})
-    decided = plan(rows, candidates)
+        if version == 2:
+            places = await tour_places(conn, {r["tour_id"] for r in rows})
+            nearby = await nearby_by_key(conn, [r["place_label"] for r in rows if r["place_label"]])
+    decided = plan(rows, candidates, places, nearby)
     writes = decided.pop("writes")
     ambiguous = decided.pop("ambiguous")
     res.update(decided)
@@ -198,6 +260,7 @@ async def run(ctx: JobContext) -> dict:
                                   sorted({w[1] for w in writes}))
     res["covers_preview"] = {"pending_now": int(preview["pending_now"]), "new_empty": int(preview["new_empty"]),
                              "new_job_owned": int(preview["new_job_owned"])}
+    res["covers_coverage"] = await _coverage(pool, ctx.job_id, sorted({w[1] for w in writes}))
 
     if not dry_run and writes:
         async with pool.acquire() as conn:
@@ -222,9 +285,11 @@ async def run(ctx: JobContext) -> dict:
     served = await pool.fetchrow(SERVED_SQL)
     res["served_after"] = {"photos": served["photos"], "destinations": served["destinations"]}
     res["open_after"] = int(await pool.fetchval(OPEN_COUNT_SQL, country))
+    if not dry_run:
+        res["covers_coverage_after"] = await _coverage(pool, ctx.job_id, ())
     ctx.set_result(res)
     await ctx.progress(phase="done", planned=res["planned"], matched=res["outcomes"]["matched"],
                        written=res["written"])
-    logger.info("photo_destination_match_done", job_id=ctx.job_id, dry_run=dry_run, country=country,
+    logger.info("photo_destination_match_done", job_id=ctx.job_id, dry_run=dry_run, country=country, version=version,
                 planned=res["planned"], written=res["written"], covers_set=res["covers_set"], **res["outcomes"])
     return res
