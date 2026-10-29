@@ -59,8 +59,9 @@ LOG_LIMIT = 50
 # with the AA-994 plan slice that migrates them. kit-consumers.yml runs the `check-kit-copy.mjs --css` check on these
 # in report-only mode (a warning plus a summary count) instead of failing the leg; the copy check, tsc, lint and the
 # app's unit tests stay strict for every consumer. The slice that removes an app's own `--aa-*` definitions deletes
-# its entry here, in the same CIS PR, which makes the check strict for it (S4b: Booking, S5a: TripPlanner).
-PRE_MIGRATION = {"booking": "S4b", "tripplanner": "S5a"}
+# its entry here, in the same CIS PR, which makes the check strict for it (S5a: TripPlanner). Booking left the map in
+# S4b (AA-Booking frontend/ui/tokens.css deleted; its CSS defines `--bk-*` only).
+PRE_MIGRATION = {"tripplanner": "S5a"}
 
 
 class BotError(Exception):

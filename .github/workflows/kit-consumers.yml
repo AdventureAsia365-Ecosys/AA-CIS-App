@@ -12,11 +12,11 @@ name: Kit Consumers
 # leave later steps running without node_modules (run 40815951299: `eslint: not found`).
 #
 # Pre-migration consumers: the matrix carries `migrated` (and `migrates_in`) per consumer from PRE_MIGRATION in
-# .github/scripts/kit_sync_bot.py. portal and crm-web are migrated; booking and tripplanner still define `--aa-*`
-# tokens in their own frontend/ui/tokens.css (planned: AA-994 S4b for Booking, S5a for TripPlanner). For those the
+# .github/scripts/kit_sync_bot.py. portal, crm-web and booking (since AA-994 S4b) are migrated; tripplanner still
+# defines `--aa-*` tokens in its own frontend/ui/tokens.css (planned: AA-994 S5a). For it the
 # `check-kit-copy.mjs --css` step is report-only: a warning annotation and a summary line "pre-migration: N --aa-*
-# definitions outside core". The copy check, tsc, lint and the unit tests stay strict for every consumer. S4b / S5a
-# flip the flag by deleting the app's PRE_MIGRATION entry in the same CIS PR, which makes the step strict for it.
+# definitions outside core". The copy check, tsc, lint and the unit tests stay strict for every consumer. S5a flips
+# the flag by deleting TripPlanner's PRE_MIGRATION entry in the same CIS PR, which makes the step strict for it.
 #
 # Non-required until the Booking catch-up (plan S4b); the stable check name is the "Kit consumers" job below. Before
 # it is made required, drop the `paths:` filter (required checks and merge_group ignore it): the plan job already

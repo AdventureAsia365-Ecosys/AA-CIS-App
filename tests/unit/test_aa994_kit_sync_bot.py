@@ -23,7 +23,7 @@ No network and no `gh`: --dry-run never calls it, --offline skips the PR step bu
   green when the plan says unchanged.
 - The consumer legs install the app's dependencies before any check and run tsc / lint / tests only when that install
   succeeded (run 40815951299: `eslint: not found`); the plan matrix carries `migrated` per consumer (portal, crm-web
-  true; booking, tripplanner false until AA-994 S4b / S5a) and the `--css` check is report-only (warning + summary
+  true; booking true since AA-994 S4b; tripplanner false until S5a) and the `--css` check is report-only (warning + summary
   count, exit 0) for a pre-migration consumer, strict for a migrated one, and fails on a usage error either way.
 """
 from __future__ import annotations
@@ -174,9 +174,9 @@ def test_plan_unchanged_when_no_core_file_changed(tmp_path, cis):
     matrix = json.loads(outputs["consumers"])
     assert {c["name"]: c["app_dir"] for c in matrix} == {
         "portal": "portal", "crm-web": "web", "booking": "frontend", "tripplanner": "frontend"}
-    # Pre-migration consumers (their own CSS still defines --aa-*): S4b flips Booking, S5a TripPlanner.
+    # Pre-migration consumers (their own CSS still defines --aa-*): Booking migrated in S4b, S5a flips TripPlanner.
     assert {c["name"]: (c["migrated"], c["migrates_in"]) for c in matrix} == {
-        "portal": (True, ""), "crm-web": (True, ""), "booking": (False, "S4b"), "tripplanner": (False, "S5a")}
+        "portal": (True, ""), "crm-web": (True, ""), "booking": (True, ""), "tripplanner": (False, "S5a")}
 
 
 def test_plan_changed_on_core_change_or_without_base(cis):
