@@ -187,12 +187,28 @@ export interface Release {
 export interface ReleasesPage { items: Release[]; total: number; limit: number; offset: number }
 
 /** A named evidence run in the release drawer: ids, verdict and a whitelisted summary of its details. */
+/** One row of an R2 run's judge calibration per stratum (eval_checks.kappa_by_stratum; dim "all" = overall). */
+export interface KappaStratum {
+  dim: string; value: string; n: number; labels: { pass: number; fail: number }; agree: number;
+  kappa: number | null; kappa_max: number | null; pass_recall: number | null; fail_recall: number | null;
+  measurable: boolean; below: boolean;
+}
+
 export interface ReleaseRun {
   id: string; pipeline: string; writer: string; run_kind: string; verdict: string | null; stop_reason: string | null;
   finished_at: string | null; tour_count: number | null; cost_usd: number | string | null;
+  judge_kappa?: number | null; judge_counts?: boolean | null;
   summary: { inputs?: number; errors?: number; byte_diffs?: number; byte_diffs_vs_pre?: number;
     compared_with_pre?: number; stored_hashes?: number; stored_hash_match?: number; prompt_sha256?: string;
-    git_sha?: string; source?: string; results?: Record<string, number>; reasons?: string[] };
+    git_sha?: string; source?: string; results?: Record<string, number>; reasons?: string[];
+    kappa_pairs?: number; kappa_labels?: { pass: number; fail: number }; kappa_strata?: KappaStratum[];
+    kappa_strata_below?: string[] };
+}
+
+/** "tier long_9d" for a stratum row; a tenant id is shortened (the drawer shows ids, never names here). */
+export function stratumLabel(s: Pick<KappaStratum, "dim" | "value">): string {
+  const v = s.dim === "tenant" && isUuid(s.value) ? s.value.slice(0, 8) : s.value;
+  return `${s.dim} ${v}`;
 }
 
 export interface ReleaseDetail extends Release {

@@ -7,6 +7,8 @@
   run here); generic travel phrasing never counts.
 - `injection_violations`: a trap item's candidate output that obeyed the injected instruction (canary, link, phrase).
 - `cohen_kappa`: the judge's agreement with the golden labels (WM-19 scope 4: it counts only at kappa >= 0.6).
+- `kappa_by_stratum`: the same agreement per stratum of the golden set (channel, tenant, tier, split) and overall
+  (S257, reported on every run; the gate stays the overall kappa).
 - `plan_phases`: probe (<= 3, the traps first) -> tune (70% split) -> holdout (30% split) of the affected tiers.
 - `compare_item`, `tune_decision`, `holdout_decision`: the paired criterion of quality-system design §4.2.
 - `shadow_size`, `shadow_quota`: WM-21 scope 1 (20 / 50 / <= 10 / 0; t9_social with no channel: 50 Facebook + 20).
@@ -248,6 +250,114 @@ def judge_counts(kappa: Optional[float], n_pairs: int, labels: Optional[dict[str
     return True
 
 
+def kappa_max(pairs: Iterable[tuple[str, str]]) -> Optional[float]:
+    """The highest kappa the two raters' pass rates allow (Cohen 1960 kappa_max); None with no pairs or when the
+    expected agreement is 1. A kappa far under the threshold with kappa_max over it = the judge's pass RATE is close
+    to the labels' but it passes the wrong texts; kappa_max itself under the threshold = the judge passes far more
+    or far fewer texts than the labels do."""
+    p = [(a, b) for a, b in pairs if a in ("pass", "fail") and b in ("pass", "fail")]
+    n = len(p)
+    if not n:
+        return None
+    la = sum(1 for a, _ in p if a == "pass") / n
+    lb = sum(1 for _, b in p if b == "pass") / n
+    pe = la * lb + (1 - la) * (1 - lb)
+    if pe >= 1.0:
+        return None
+    pomax = min(la, lb) + min(1 - la, 1 - lb)
+    return round((pomax - pe) / (1 - pe), 3)
+
+
+# ── per-stratum calibration (S257) ─────────────────────────────────────────────────────────────────────────────────
+# One overall kappa can hide a judge that agrees with the labels on one channel / tenant / tier and not on another
+# (Simpson). The strata are what the golden set itself defines on an item: its channel (T9 social), its owner (a tenant
+# id, or `platform`), its tiers (fact_dense, long_9d, ...; post_edit items never calibrate) and its split. Reported
+# with the overall row on every run; the gate itself is unchanged (judge_counts: overall kappa >= MIN_KAPPA on >=
+# MIN_KAPPA_PAIRS pairs with >= MIN_KAPPA_PER_LABEL of each label). A stratum is `measurable` when it meets the same
+# pair / label minimums, and `below` when it is measurable and its kappa is under MIN_KAPPA: the report names those.
+
+STRATUM_DIMS = ("channel", "tenant", "tier", "split")
+STRATA_MAX = 40                  # rows kept in a run's details (the overall row first): ids and counts only
+
+
+def item_strata(item: dict) -> list[tuple[str, str]]:
+    """The (dimension, value) strata of one golden item (a shared.eval_golden_item row as the stores read it)."""
+    out: list[tuple[str, str]] = []
+    if item.get("channel"):
+        out.append(("channel", str(item["channel"])[:40]))
+    out.append(("tenant", str(item.get("tenant_id") or "platform")[:40]))
+    tiers = sorted({str(t)[:40] for t in item.get("tiers") or [] if t and t != "post_edit"}) or ["untiered"]
+    out.extend(("tier", t) for t in tiers)
+    if item.get("split") in ("tune", "holdout"):
+        out.append(("split", item["split"]))
+    return out
+
+
+def _recall(p: list[tuple[str, str]], label: str) -> Optional[float]:
+    n = sum(1 for a, _ in p if a == label)
+    return round(sum(1 for a, b in p if a == label and b == label) / n, 3) if n else None
+
+
+def stratum_stats(pairs: Iterable[tuple[str, str]]) -> dict:
+    """Agreement of one group of (label, judged) pairs: n, label counts, raw agreement, kappa (None unless both labels
+    occur: a one-class group gives 1.0 to any judge that matches it and says nothing), kappa_max, the recall of each
+    label class (lesson S248: check the pass recall, not only kappa), `measurable` and `below`."""
+    p = [(a, b) for a, b in pairs if a in ("pass", "fail") and b in ("pass", "fail")]
+    labels = label_counts(p)
+    both = labels["pass"] > 0 and labels["fail"] > 0
+    kappa = cohen_kappa(p) if both else None
+    measurable = len(p) >= cfg.MIN_KAPPA_PAIRS and min(labels.values()) >= cfg.MIN_KAPPA_PER_LABEL
+    return {"n": len(p), "labels": labels, "agree": sum(1 for a, b in p if a == b), "kappa": kappa,
+            "kappa_max": kappa_max(p) if both else None, "pass_recall": _recall(p, "pass"),
+            "fail_recall": _recall(p, "fail"), "measurable": measurable,
+            "below": bool(measurable and kappa is not None and kappa < cfg.MIN_KAPPA)}
+
+
+def _grouped(records: Iterable[dict]) -> tuple[list[dict], dict[tuple[str, str], list[dict]]]:
+    recs = list(records)
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for r in recs:
+        for key in dict.fromkeys(tuple(s) for s in r.get("strata") or ()):
+            groups.setdefault(key, []).append(r)
+    return recs, groups
+
+
+def _stratum_order(key: tuple[str, str]) -> tuple:
+    dim, value = key
+    return (STRATUM_DIMS.index(dim) if dim in STRATUM_DIMS else len(STRATUM_DIMS), dim, value)
+
+
+def kappa_by_stratum(records: Iterable[dict]) -> list[dict]:
+    """Overall + per-stratum agreement. `records` = [{label, judge, strata: [(dim, value), ...]}] (one per
+    calibration pair; `strata` from `item_strata`). Returns [{dim, value, **stratum_stats}], the overall row
+    (dim = value = "all") first, then by dimension (STRATUM_DIMS order) and value, at most STRATA_MAX rows."""
+    recs, groups = _grouped(records)
+    out = [{"dim": "all", "value": "all", **stratum_stats((r["label"], r["judge"]) for r in recs)}]
+    for key in sorted(groups, key=_stratum_order):
+        out.append({"dim": key[0], "value": key[1],
+                    **stratum_stats((r["label"], r["judge"]) for r in groups[key])})
+    return out[:STRATA_MAX]
+
+
+def strata_below(rows: Iterable[dict]) -> list[str]:
+    """`dim:value` of every measurable stratum whose kappa is under MIN_KAPPA (the overall row excluded)."""
+    return [f"{r['dim']}:{r['value']}" for r in rows if r.get("below") and r.get("dim") != "all"]
+
+
+def strata_label_counts(items: Iterable[dict]) -> list[dict]:
+    """The DRY RUN view of the calibration items per stratum (no judge yet): [{dim, value, n, labels,
+    measurable_possible}], overall first. Shows which strata can ever be measured with the current golden set."""
+    recs, groups = _grouped({"label": it.get("label_verdict"), "strata": item_strata(it)} for it in items)
+
+    def row(dim, value, rs):
+        labels = {v: sum(1 for r in rs if r["label"] == v) for v in ("pass", "fail")}
+        n = labels["pass"] + labels["fail"]
+        return {"dim": dim, "value": value, "n": n, "labels": labels,
+                "measurable_possible": n >= cfg.MIN_KAPPA_PAIRS and min(labels.values()) >= cfg.MIN_KAPPA_PER_LABEL}
+    return ([row("all", "all", recs)] + [row(k[0], k[1], groups[k]) for k in sorted(groups, key=_stratum_order)]
+            )[:STRATA_MAX]
+
+
 # ── control policy ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 def control_mode(run_kind: str) -> str:
@@ -397,7 +507,8 @@ def shadow_probe_count(scope: str, other_tenants: int) -> int:
     return min(cfg.SHADOW_PROBE_INPUTS, max(0, other_tenants))
 
 
-__all__ = ["cohen_kappa", "compare_item", "control_mode", "criterion_met", "flatten_text", "injection_violations",
-           "isolation_probe", "judge_counts", "label_counts", "paired_stats", "plan_phases", "qa_artefacts",
-           "result_phase", "selected_tiers", "shadow_probe_count", "shadow_quota", "shadow_size", "shingles",
-           "tenant_fingerprint", "too_many_errors", "tune_decision"]
+__all__ = ["STRATUM_DIMS", "cohen_kappa", "compare_item", "control_mode", "criterion_met", "flatten_text",
+           "injection_violations", "isolation_probe", "item_strata", "judge_counts", "kappa_by_stratum", "kappa_max",
+           "label_counts", "paired_stats", "plan_phases", "qa_artefacts", "result_phase", "selected_tiers",
+           "shadow_probe_count", "shadow_quota", "shadow_size", "shingles", "strata_below", "strata_label_counts",
+           "stratum_stats", "tenant_fingerprint", "too_many_errors", "tune_decision"]

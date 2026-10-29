@@ -321,26 +321,32 @@ class Verdict:
     claims: tuple = ()             # S256: [{class, claim, why}], stored in eval_item_result.details.judge_claims
 
 
-def _generate_sync(user_prompt: str):
+def _generate_sync(user_prompt: str, model_key: Optional[str] = None, stage: str = cfg.EVAL_STAGE):
+    fields = {"model_tier": model_key} if model_key else {}
     return LLMClient().generate(LLMRequest(system_prompt=system_prompt(), user_prompt=user_prompt,
-                                           stage=cfg.EVAL_STAGE, max_tokens=MAX_TOKENS, temperature=0.0,
-                                           json_schema=JUDGE_SCHEMA))
+                                           stage=stage, max_tokens=MAX_TOKENS, temperature=0.0,
+                                           json_schema=JUDGE_SCHEMA, **fields))
 
 
 async def judge_output(pool, *, writer: str, source_text: str, output_text: str, run_id: str, item_id: str,
-                       arm: str) -> Verdict:
-    """One judge call; its llm_call_log row (or billed_unusable row) is written before it returns / raises."""
+                       arm: str, model_key: Optional[str] = None, stage: str = cfg.EVAL_STAGE,
+                       signal_extra: Optional[dict] = None) -> Verdict:
+    """One judge call; its llm_call_log row (or billed_unusable row) is written before it returns / raises.
+
+    R2 always uses the defaults (the `writing_memory_eval` route). `model_key` + `stage` are for the AA-919 judge
+    comparison harness only (scripts/aa919/judge_compare.py): the same prompt on one catalog model (the gateway's
+    per-request override, no route, no fallback), logged under an adhoc stage (`adhoc_aa919`, role judge)."""
     resp = await asyncio.to_thread(_generate_sync, build_user_prompt(writer=writer, source_text=source_text,
-                                                                     output_text=output_text))
+                                                                     output_text=output_text), model_key, stage)
     signal = {"app": "cis", "issue": "AA-919", "run_id": run_id, "item_id": item_id, "arm": arm,
-              "judge_version": judge_version()}
+              "judge_version": judge_version(), **(signal_extra or {})}
     try:
         v = parse_verdict(resp.content)
     except Exception as e:
-        await record_unusable(resp, stage=cfg.EVAL_STAGE, role=cfg.EVAL_ROLE, error=e, quality_signal_extra=signal)
+        await record_unusable(resp, stage=stage, role=cfg.EVAL_ROLE, error=e, quality_signal_extra=signal)
         raise
     await record_call_with_pool(
-        pool, stage=cfg.EVAL_STAGE, role=cfg.EVAL_ROLE, model=resp.model_used,
+        pool, stage=stage, role=cfg.EVAL_ROLE, model=resp.model_used,
         tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
         cost_usd=resp.cost_usd, quality_signal={**signal, "json_parsed": True, "verdict": v["verdict"]},
         stop_reason=getattr(resp, "stop_reason", None), account=getattr(resp, "satellite_account", None),

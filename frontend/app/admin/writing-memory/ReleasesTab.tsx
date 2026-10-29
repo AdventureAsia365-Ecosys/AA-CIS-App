@@ -30,7 +30,7 @@ import { can } from "@/lib/rbac";
 import { TenantSelect, useTenants } from "../_components/TenantSelect";
 import {
   EVIDENCE_NEEDED, RELEASE_STATUSES, WM_API, WRITERS, actorLabel, checkTone,
-  evidenceOk, evidenceWord, isUuid, monthStart, releaseActions, releaseTone,
+  evidenceOk, evidenceWord, isUuid, monthStart, releaseActions, releaseTone, stratumLabel,
   type ActiveReleases, type ContentClass, type PostActivationReport, type Release, type ReleaseDetail, type ReleaseRun,
   type ReleasesPage, type Writer, type WriterSwitch,
 } from "@/lib/writingMemory";
@@ -250,9 +250,35 @@ function RunCard({ label, run, id }: { label: string; run: ReleaseRun | null; id
       {facts.length > 0 && <div>{facts.join(" · ")}</div>}
       {s.results && <div style={{ color: K.muted }}>{Object.entries(s.results).map(([k, v]) => `${k} ${v}`).join(" · ")}</div>}
       {s.reasons && s.reasons.length > 0 && <div style={{ color: K.danger }}>{s.reasons.join("; ")}</div>}
+      {run.judge_kappa != null && s.kappa_labels && (
+        <div>{t("kappaLine", run.judge_kappa.toFixed(3), s.kappa_pairs ?? 0, s.kappa_labels.pass, s.kappa_labels.fail)}
+          {" · "}<span style={{ color: run.judge_counts ? K.success : K.danger }}>
+            {t(run.judge_counts ? "kappaCounts" : "kappaNotCounts")}</span></div>)}
+      {(s.kappa_strata ?? []).length > 1 && <KappaStrata s={s} />}
       {s.prompt_sha256 && <div style={{ color: K.muted }}>{t("prompt")} <span style={{ fontFamily: mono }}>
         {s.prompt_sha256.slice(0, 16)}</span>{s.git_sha ? t("code", s.git_sha.slice(0, 8)) : ""}</div>}
     </div>
+  );
+}
+
+// AA-919 S257: the judge's agreement with the golden labels per stratum (channel, tenant, tier, split). The gate is the
+// overall kappa above; a measurable stratum under 0.6 is named in red.
+function KappaStrata({ s }: { s: ReleaseRun["summary"] }) {
+  const t = useT(R);
+  const rows = (s.kappa_strata ?? []).filter((r) => r.dim !== "all");
+  return (
+    <details style={{ fontSize: 12 }}>
+      <summary style={{ cursor: "pointer", color: K.muted }}>{t("kappaStrataTitle")}</summary>
+      <ul style={{ margin: "4px 0 0", paddingLeft: 18, display: "grid", gap: 2 }}>
+        {rows.map((r) => (
+          <li key={`${r.dim}:${r.value}`} style={{ color: r.below ? K.danger : r.measurable ? undefined : K.muted }}>
+            {t("kappaStratumRow", stratumLabel(r), r.kappa == null ? "–" : r.kappa.toFixed(3), r.n, r.labels.pass,
+              r.labels.fail)}{r.measurable ? "" : ` · ${t("kappaTooFew")}`}
+          </li>))}
+      </ul>
+      {(s.kappa_strata_below ?? []).length > 0 && (
+        <div style={{ color: K.danger, marginTop: 4 }}>{t("kappaBelow", (s.kappa_strata_below ?? []).join(", "))}</div>)}
+    </details>
   );
 }
 

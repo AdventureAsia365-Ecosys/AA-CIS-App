@@ -156,7 +156,8 @@ async def run_r2_job(ctx: JobContext) -> dict:
     ctx.add_cost(out.cost_usd)
     result = {"run_id": out.run_id, "verdict": out.verdict, "stop_reason": out.stop_reason,
               "stopped_phase": out.stopped_phase, "cost_usd": round(out.cost_usd, 6), "judge_kappa": out.judge_kappa,
-              "judge_counts": out.judge_counts, "counts": out.counts}
+              "judge_counts": out.judge_counts, "kappa_strata_below": out.kappa_strata_below,
+              "counts": out.counts}
     logger.info("aa919_r2_job_done", **{k: result[k] for k in ("run_id", "verdict", "stop_reason", "cost_usd")})
     return result
 

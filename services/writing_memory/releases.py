@@ -69,7 +69,8 @@ _COLUMNS = """
     created_by, created_at, updated_at
 """
 _RUN_COLUMNS = ("id::text AS id, pipeline, writer, run_kind, verdict, stop_reason, finished_at, details, "
-                "release_id::text AS release_id, tour_count, cost_usd")
+                "release_id::text AS release_id, tour_count, cost_usd, judge_kappa::float8 AS judge_kappa, "
+                "judge_counts")
 
 
 class ReleaseError(Exception):
@@ -331,8 +332,33 @@ async def runs_of(conn, release: dict) -> dict[str, Optional[dict]]:
 # are the verdict reasons release0 writes ("3 byte differences").
 SUMMARY_NUMBERS = ("inputs", "errors", "byte_diffs", "byte_diffs_none_vs_r0", "byte_diffs_vs_pre", "compared_with_pre",
                    "stored_hashes", "stored_hash_match", "distinct_system_prompts", "skipped_post_edit",
-                   "source_cost_usd", "cost_usd")
+                   "source_cost_usd", "cost_usd", "kappa_pairs")
 SUMMARY_STRINGS = ("prompt_sha256", "git_sha", "source")
+# AA-919 S257: the R2 judge calibration per stratum (eval_checks.kappa_by_stratum): ids, counts and ratios only.
+STRATUM_KEYS = ("dim", "value", "n", "labels", "agree", "kappa", "kappa_max", "pass_recall", "fail_recall",
+                "measurable", "below")
+
+
+def _labels(v: Any) -> Optional[dict[str, int]]:
+    if isinstance(v, dict) and set(v) == {"pass", "fail"} and all(isinstance(x, int) and not isinstance(x, bool)
+                                                                  for x in v.values()):
+        return {"pass": v["pass"], "fail": v["fail"]}
+    return None
+
+
+def _stratum(v: Any) -> Optional[dict[str, Any]]:
+    """One kappa_strata row, shape-checked (a row with any other shape is dropped)."""
+    if not isinstance(v, dict) or not all(isinstance(v.get(k), str) and 0 < len(v[k]) <= 40 for k in ("dim", "value")):
+        return None
+    labels = _labels(v.get("labels"))
+    if labels is None or _num(v.get("n")) is None or _num(v.get("agree")) is None:
+        return None
+    if any(v.get(k) is not None and _num(v.get(k)) is None for k in ("kappa", "kappa_max", "pass_recall",
+                                                                      "fail_recall")):
+        return None
+    if not all(isinstance(v.get(k), bool) for k in ("measurable", "below")):
+        return None
+    return {**{k: v.get(k) for k in STRATUM_KEYS}, "labels": labels}
 
 
 def run_summary(details: Any) -> dict[str, Any]:
@@ -352,6 +378,16 @@ def run_summary(details: Any) -> dict[str, Any]:
     reasons = d.get("reasons")
     if isinstance(reasons, list):
         out["reasons"] = [str(r)[:200] for r in reasons if isinstance(r, str)][:10]
+    if _labels(d.get("kappa_labels")):
+        out["kappa_labels"] = _labels(d["kappa_labels"])
+    strata = d.get("kappa_strata")
+    if isinstance(strata, list):
+        rows = [r for r in (_stratum(x) for x in strata[:40]) if r is not None]
+        if rows:
+            out["kappa_strata"] = rows
+    below = d.get("kappa_strata_below")
+    if isinstance(below, list):
+        out["kappa_strata_below"] = [str(b)[:90] for b in below if isinstance(b, str)][:40]
     return out
 
 

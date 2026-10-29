@@ -12,7 +12,9 @@ Sequence (WM-19 scope 1, cost-cuts #3):
                     calibrated too), scored against the baseline_import run's score_only row. Cohen's kappa of these
                     verdicts vs the golden labels decides whether the judge COUNTS (kappa >= 0.6 on >= 10 pairs,
                     scope 4); otherwise the run is informative only: it stops after tune (no holdout money) and
-                    cannot pass.
+                    cannot pass. The same pairs are also scored per stratum of the golden set (channel,
+                    tenant, tier, split; `details.kappa_strata`, S257) and the measurable strata under the
+                    threshold are named (`details.kappa_strata_below`): reported, the gate stays the overall one.
                 (b) the CONTROL of every planned item: the stored output of the owner's active release (its eval
                     run's candidate output; release 0 = the AA-729 baseline's score_only row, i.e. the frozen fixture
                     output, so (a) and (b) are the same judge call). Never regenerated outside a `reverify` run (scope
@@ -155,6 +157,7 @@ class Outcome:
     judge_kappa: Optional[float] = None
     judge_counts: bool = False
     counts: dict = field(default_factory=dict)
+    kappa_strata_below: list = field(default_factory=list)   # S257: measurable strata with kappa < MIN_KAPPA
 
 
 WriterFn = Callable[..., Awaitable[dict]]
@@ -336,6 +339,7 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
     compared: dict[str, list[dict]] = {"probe": [], "tune": [], "holdout": []}
     controls: dict[str, dict] = {}
     pairs: list[tuple[str, str]] = []
+    cal_recs: list[dict] = []          # S257: the same pairs with the item's strata (channel, tenant, tier, split)
     view_cache: dict[Optional[str], tuple[Optional[dict], Optional[dict]]] = {owner_tenant: build_views(
         writer, active, release)}
 
@@ -424,6 +428,8 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
                     if cal_v is not None:
                         counters["calibration_judged"] += 1
                         pairs.append((it["label_verdict"], cal_v.verdict))
+                        cal_recs.append({"label": it["label_verdict"], "judge": cal_v.verdict,
+                                         "strata": ec.item_strata(it)})
                         if same:
                             ctl_v = cal_v
                 if ctl_text is not None and ctl_v is None and not (same and cal_v is None):
@@ -454,8 +460,13 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
             out.judge_kappa = ec.cohen_kappa(pairs)
             details["kappa_labels"] = ec.label_counts(pairs)
             out.judge_counts = ec.judge_counts(out.judge_kappa, len(pairs), details["kappa_labels"])
+            # S257: per-stratum agreement, reported with the overall row; the gate above is unchanged
+            details["kappa_strata"] = ec.kappa_by_stratum(cal_recs)
+            details["kappa_strata_below"] = ec.strata_below(details["kappa_strata"])
+            out.kappa_strata_below = list(details["kappa_strata_below"])
             if progress:
-                await progress(phase="calibrated", kappa=out.judge_kappa, pairs=len(pairs))
+                await progress(phase="calibrated", kappa=out.judge_kappa, pairs=len(pairs),
+                               strata_below=",".join(out.kappa_strata_below) or None)
 
             for phase in ("probe", "tune", "holdout"):
                 if phase == "holdout" and tune_result != "pass":
@@ -591,7 +602,7 @@ async def _finish(store, out: Outcome, run_id, conf, stop_reason, stopped_phase,
         "judge_kappa": out.judge_kappa, "judge_counts": bool(out.judge_counts)})
     logger.info("aa919_r2_done", run_id=run_id, writer=conf.writer, verdict=verdict, stop_reason=stop_reason,
                 stopped_phase=stopped_phase, cost_usd=round(cost, 4), kappa=out.judge_kappa,
-                attempted=counters["attempted"])
+                strata_below=details.get("kappa_strata_below"), attempted=counters["attempted"])
 
 
 # ── Postgres store ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -807,6 +818,7 @@ async def estimate(pool, conf: R2Config) -> dict:
             "calibration_items": len(calib), "calibration_labels": calib_labels,
             "calibrated_possible": (len(calib) >= cfg.MIN_KAPPA_PAIRS
                                     and min(calib_labels.values()) >= cfg.MIN_KAPPA_PER_LABEL),
+            "calibration_strata": ec.strata_label_counts(calib),
             "estimated_usd_max": round(judge_only + gen, 3), "cap_usd": conf.cap_usd,
             "month_spend_usd": round(await store.month_spend(), 4), "month_cap_usd": cfg.MONTH_CAP_USD}
 
