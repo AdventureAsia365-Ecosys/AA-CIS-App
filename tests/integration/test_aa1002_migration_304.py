@@ -72,8 +72,10 @@ def _profiles(c):
 
 
 def _deployments(c):
+    # the rows 304 writes: 306 (AA-1002 S2) adds anthropic-direct seeds that a 304 re-run does not recreate
     c.execute("SELECT model_key, connection_key, wire_id, priority, enabled, origin "
-              "FROM shared.llm_model_deployment ORDER BY model_key, priority, connection_key")
+              "FROM shared.llm_model_deployment WHERE updated_by <> 'migration-306-aa1002' "
+              "ORDER BY model_key, priority, connection_key")
     return [tuple(r.values()) for r in c.fetchall()]
 
 

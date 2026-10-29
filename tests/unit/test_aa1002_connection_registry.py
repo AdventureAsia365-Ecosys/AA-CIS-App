@@ -286,7 +286,7 @@ def test_listing_shows_sources_and_problems_never_a_value(monkeypatch):
         out = llm_connections.build(conns, deps)
     fetch.assert_not_called()
     rows = {r["connection_key"]: r for r in out["connections"]}
-    assert out["schema_ready"] is True and out["routing_uses_registry"] is False
+    assert out["schema_ready"] is True and out["routing_uses_registry"] is True   # S2 (AA-1002)
     assert rows["acc3"]["account_id"] == "123456789012" and rows["acc3"]["credential_source"] == "sts"
     assert rows["acc3"]["deployments"][0]["wire_id"] == "global.anthropic.claude-sonnet-4-6"
     assert rows["openai-direct"]["credential_source"] == "env"

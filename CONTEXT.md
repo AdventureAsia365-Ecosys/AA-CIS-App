@@ -239,6 +239,22 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
 - **Model Catalog** (`shared.llm_model_catalog`, AA-658, ADR 0005): the admin dropdown options and
   LLM prices come from it (`pricing.py` is the fallback). Non-legacy Model Keys (e.g. `sonnet-5`)
   are called with the Bedrock Converse API on the acc3 satellite.
+- **Connection registry + Anthropic API path** (AA-1002, gateway slices S1 / S2; migrations 304 / 306):
+  `shared.llm_provider_connection` (one row per way in: Bedrock account, vendor API; a secret NAME only,
+  `^aa-llm/<env>/<name>$`, and a code allowlist of base URL hosts per kind) and `shared.llm_model_deployment` (a
+  catalog model on a connection: wire id, priority, `request_defaults`). Only `shared/llm_client/vendor_route.py`
+  reads them on the call path: a catalog key whose first enabled deployment (lowest priority) on an enabled
+  connection is on an `anthropic` connection is called through the Anthropic Messages API
+  (`adapters/anthropic_messages.py`, SDK `anthropic` 2.x: key read from the secret at call time, per-connection
+  timeout / retries, `output_config.format` for structured output, explicit `output_config.effort`, no sampling
+  parameters, no forced tool, no server-side fallbacks); every other registry state keeps today's path byte for
+  byte. A `model_tier` of `<model key>@<connection>` pins one deployment (probes only). The response is labelled
+  `anthropic-api-<key>` so `llm_call_log` records `provider = 'anthropic'`; `tokens_in` = uncached + cache read +
+  cache write (the Converse convention); a refusal / empty / non-conforming reply is billed-unusable; 401 / 403 are
+  `access_denied`, 402 / credit `quota_exhausted`, 429 / 529 `throttled`. Migration 306 seeds Anthropic API
+  deployments behind acc3 (priority 100) with the `anthropic-direct` connection off; the only admin write in S2 is
+  `PATCH /admin/llm-connections/{key}` `{"enabled": bool}` (Anthropic connections, audited). Spread over
+  deployments, legacy-key aliases, breaker, data scopes and cost parity are later slices (S3–S6).
 - **Structured output (`LLMRequest.json_schema`) per path**: Converse = one tool whose input is the schema, reply
   conformed (`_checked_json`, AA-659/714); OpenAI = strict `response_format`. The legacy `haiku` / `sonnet` keys
   (Anthropic Messages API, `invoke_claude`) have neither: since S251 (AA-835) the gateway appends a "one JSON object

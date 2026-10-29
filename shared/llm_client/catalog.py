@@ -17,6 +17,8 @@ import structlog
 
 from shared.secrets import get_database_url
 
+from .models import ANTHROPIC_API_LABEL_PREFIX
+
 logger = structlog.get_logger()
 
 _CACHE_TTL_SECONDS = 300.0
@@ -155,11 +157,13 @@ def _ensure_loaded() -> None:
 
 
 def get_model_sync(model_key: str) -> Optional[CatalogModel]:
-    """Accepts a Model Key, optionally with the "satellite-" label prefix LLMResponse uses."""
+    """Accepts a Model Key, optionally with the "satellite-" / "anthropic-api-" label prefix LLMResponse uses."""
     if not model_key:
         return None
     if model_key.startswith("satellite-"):
         model_key = model_key[len("satellite-"):]
+    elif model_key.startswith(ANTHROPIC_API_LABEL_PREFIX):        # AA-1002 S2 label of the Anthropic API path
+        model_key = model_key[len(ANTHROPIC_API_LABEL_PREFIX):]
     _ensure_loaded()
     return _models.get(model_key)
 

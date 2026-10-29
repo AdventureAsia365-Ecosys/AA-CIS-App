@@ -1134,6 +1134,40 @@ async def get_llm_connections(request: Request):
         return await llm_connections.read(conn)
 
 
+class LlmConnectionPatch(BaseModel):
+    """AA-1002 (S2): only the on/off switch. secret_name / base_url / limits are edited in slice S4."""
+    model_config = {"extra": "forbid"}
+    enabled: bool
+
+
+# AA-1002 (gateway slice S2) — switch an Anthropic API connection on or off (admin only, POLICY ai.admin; audit row).
+# Enabling refuses a policy problem or an unreadable secret (422). The worker reads the change within 5 minutes.
+@router.patch("/llm-connections/{connection_key}",
+              summary="Switch an LLM connection on or off (admin-only, audited)")
+async def patch_llm_connection(
+    request: Request,
+    connection_key: str,
+    body: LlmConnectionPatch,
+    x_admin_secret: str = Header(None),
+    x_admin_user_id: Optional[str] = Header(None),
+):
+    from api.services import llm_connections
+
+    verify_admin_secret(x_admin_secret)
+    admin_actor = x_admin_user_id or "unknown"
+    try:
+        async with request.app.state.pool.acquire() as conn:
+            result = await llm_connections.set_enabled(conn, connection_key, enabled=body.enabled,
+                                                       actor=f"admin:{admin_actor}")
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except llm_connections.ConnectionToggleRefused as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    logger.info("admin_llm_connection_changed", connection_key=connection_key, enabled=body.enabled,
+                changed=result["changed"], admin_actor=admin_actor)
+    return result
+
+
 @router.get("/cost-explorer", summary="Stored AWS Cost Explorer spend for a window (no live CE call)")
 async def get_cost_explorer(
     request: Request, days: int = Query(7, ge=1, le=365),

@@ -9,7 +9,7 @@ from typing import Optional
 
 import openai
 import structlog
-from .models import LLMRequest, LLMResponse
+from .models import ANTHROPIC_API_LABEL_PREFIX, LLMRequest, LLMResponse
 from .prompt_cache import build_cached_system_prompt, build_cached_messages
 from .pricing import BEDROCK_SONNET, BEDROCK_HAIKU, COST_TABLE, calc_cost
 from .role_config import get_stage_config_sync
@@ -18,6 +18,7 @@ from .catalog import LEGACY_KEYS, CatalogModel, get_model_sync
 from .schema_check import SchemaMismatch, conform
 from .errors import OTHER, THROTTLED, LLMAccessDenied, account_level_class, classify
 from . import stream_sink
+from .vendor_route import VendorDeployment, pinned_deployment, split_pin, vendor_deployment_for
 
 logger = structlog.get_logger()
 
@@ -763,6 +764,11 @@ class LLMClient:
         )
 
     def _call_catalog_model(self, request: LLMRequest, model_key: str, preferred_acct: str) -> LLMResponse:
+        # AA-1002 (S2): "<model key>@<connection>" pins one deployment (probes, connection tests; model_tier only —
+        # a stage route names catalog keys, and `_call_route` skips anything the catalog does not know).
+        pin = split_pin(model_key)
+        if pin:
+            model_key = pin[0]
         model = get_model_sync(model_key)
         if model is None:
             raise RuntimeError(f"Model {model_key!r} is not in shared.llm_model_catalog "
@@ -770,6 +776,16 @@ class LLMClient:
         if not model.enabled:
             raise RuntimeError(f"Model {model_key!r} is disabled in the catalog: "
                                f"{model.blocked_reason or 'no reason given'}")
+        if pin:
+            return self._call_anthropic_messages(request, model, pinned_deployment(model, pin[1]))
+        # AA-1002 (S2): an enabled deployment on an enabled Anthropic connection, first by priority, serves the
+        # model through the Messages API. None (every other registry state) = today's path below, unchanged.
+        vendor = vendor_deployment_for(model)
+        if vendor is not None:
+            return self._call_anthropic_messages(request, model, vendor)
+        if model.api_style == "anthropic_messages":
+            raise RuntimeError(f"Model {model_key!r} is served only by the Anthropic API and has no enabled "
+                               "deployment on an enabled Anthropic connection")
         if model.api_style == "openai_chat":
             return self._call_openai(request, model=model.wire_model or model.model_key, catalog_model=model)
         if model.api_style != "converse":
@@ -925,6 +941,72 @@ class LLMClient:
             fallback_used=False, satellite_account=account,
             cache_read_tokens=cache_read, cache_write_tokens=cache_write,
             stop_reason=stop_reason, provider_requests=provider_requests,
+        )
+
+    def _call_anthropic_messages(self, request: LLMRequest, model: CatalogModel,
+                                 vendor: VendorDeployment) -> LLMResponse:
+        """AA-1002 (S2) — one model on one Anthropic API connection (adapters/anthropic_messages.py).
+
+        Same contract as the Converse path: a structured request is conformed to its schema (`_checked_json`);
+        a reply that was billed but cannot be used (stop_reason refusal, empty, not JSON, schema mismatch) raises
+        BilledUnusableReply carrying its usage, so `_call_key_logged` writes the billed_unusable row and a route
+        moves on. `input_tokens` = uncached + cache read + cache write (the Converse convention for
+        llm_call_log.tokens_in); the cost is the catalog price of the Model Key (pricing.calc_cost), and the model
+        the API reports goes to `provider_model` and the success log. The label "anthropic-api-<key>" makes
+        llm_call_log record provider='anthropic' for every caller (call_log._normalize_model_provider)."""
+        from .adapters import anthropic_messages
+
+        dep, conn = vendor.deployment, vendor.connection
+        schema = request.json_schema
+        max_tokens = request.max_tokens
+        if model.max_output_tokens:
+            max_tokens = min(max_tokens, model.max_output_tokens)
+        stream_sink.emit_restart(request.stage)
+        on_delta = None if schema else stream_sink.delta_callback(request.stage)
+        result = anthropic_messages.send(
+            connection=conn, wire_id=dep.wire_id, system=request.system_prompt, user=request.user_prompt,
+            max_tokens=max_tokens, stage=request.stage, json_schema=schema, request_defaults=dep.request_defaults,
+            on_delta=on_delta)
+
+        label = f"{ANTHROPIC_API_LABEL_PREFIX}{model.model_key}"
+        in_tok, out_tok = result.input_tokens, result.output_tokens
+        cache_read, cache_write = result.cache_read_tokens, result.cache_write_tokens
+        prompt_tok = in_tok + cache_read + cache_write
+        cost = self._calc_cost(model.model_key, in_tok, out_tok, cache_read=cache_read, cache_write=cache_write)
+        stop_reason = result.stop_reason
+        billed = bool(in_tok or out_tok or cache_read or cache_write)
+
+        def unusable(message: str) -> RuntimeError:
+            if not billed:
+                return RuntimeError(message)
+            return _billed_unusable(message, [_billed_usage(
+                label, None, {"tokens_in": prompt_tok, "tokens_out": out_tok}, cost, stop_reason, 1)])
+
+        content = result.text
+        if stop_reason == "refusal":
+            category = (result.stop_details or {}).get("category")
+            raise unusable(f"{model.model_key} refused the request (stop_reason=refusal, category={category})")
+        if not content:
+            raise unusable(f"{model.model_key} returned empty content (stop_reason={stop_reason})")
+        if schema:
+            try:
+                parsed = json.loads(content) if result.structured else _json_object_in_text(content)
+                if not isinstance(parsed, dict):
+                    raise RuntimeError(f"{model.model_key} returned no JSON object for schema {schema['name']!r}")
+                content = _checked_json(model.model_key, parsed, schema)
+            except (ValueError, RuntimeError) as e:
+                raise unusable(str(e)) from e
+
+        logger.info("llm_success", provider="anthropic", api="messages", model=model.model_key,
+                    provider_model=result.provider_model, wire_id=dep.wire_id, connection=conn.connection_key,
+                    data_scope=conn.data_scope, in_tokens=prompt_tok, uncached_in_tokens=in_tok,
+                    cache_read=cache_read, cache_write=cache_write, out_tokens=out_tok, cost_usd=cost,
+                    stop_reason=stop_reason, effort=result.effort, request_id=result.request_id)
+        return LLMResponse(
+            content=content, model_used=label, provider="anthropic",
+            input_tokens=prompt_tok, output_tokens=out_tok, cost_usd=cost, fallback_used=False,
+            cache_read_tokens=cache_read, cache_write_tokens=cache_write, stop_reason=stop_reason,
+            provider_model=result.provider_model,
         )
 
     def _call_openai(self, request: LLMRequest, model: str,

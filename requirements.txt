@@ -4,6 +4,10 @@ botocore==1.43.49
 
 # LLM - unpinned để pip tự resolve compatibility
 openai>=1.16.2
+# AA-1002 (gateway slice S2): the Anthropic Messages API adapter (shared/llm_client/adapters/anthropic_messages.py).
+# Pinned: 2.x sends API version 2026-10-21 (no temperature / top_p / top_k on any model) and runs on httpx2, the
+# SDK's own HTTP layer (the maintained httpx fork, github.com/pydantic/httpx2); the rest of the app keeps httpx.
+anthropic==2.3.0
 # Only langgraph is imported (services/content_generation/graph.py). langchain, langchain-community
 # and langgraph-checkpoint-postgres were never imported and were dropped (pip-audit, see
 # docs/implementation-notes/AA-907-s245.md). langchain-core comes in through langgraph.
