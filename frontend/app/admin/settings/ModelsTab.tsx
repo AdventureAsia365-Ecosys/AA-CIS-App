@@ -6,6 +6,7 @@
 //                shadow-A/B editor (StageRouteEditor, PATCH /llm-config/{stage}/route).
 //   • Catalog  — every catalog model, editable price/source/enabled (CatalogTab).
 //   • Shadow A/B — the shadow comparison report (ShadowReportTab).
+// AA-900: the Stages sub-tab opens with the LLM availability card (LlmAvailabilityCard).
 // Dead stages (HIDDEN_STAGES) are not rendered in the Stages editor.
 // Built on the kit (Tabs/Badge/Button/ConfirmModal/DataTable/Toast) + react-query.
 // AA-994: text in the UI language (models.messages.ts; stage labels llmShared.ts + llmShared.vi.ts).
@@ -40,6 +41,7 @@ import {
 import { STAGE_GROUP_LABELS_VI, STAGE_LABELS_VI } from "./llmShared.vi";
 import { MODELS } from "./models.messages";
 import { StageRouteEditor } from "./StageRouteEditor";
+import { LlmAvailabilityCard } from "./LlmAvailabilityCard";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import { accountName } from "@/lib/awsAccounts";
 
@@ -304,6 +306,7 @@ function StagesSubTab() {
   const byStage = Object.fromEntries(rows.map((r) => [r.stage, r]));
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <LlmAvailabilityCard />
       <p style={{ fontSize: 12, color: A.muted2, margin: 0 }}>
         {t("stagesIntroA")} <b>{t("stagesIntroB")}</b>{t("stagesIntroC")} <b>{t("stagesIntroD")}</b>{" "}
         {t("stagesIntroE")}

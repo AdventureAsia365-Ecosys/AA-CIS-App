@@ -27,6 +27,7 @@ from api.routers.admin import verify_admin_secret
 from api.routers.auth import verify_tenant_jwt
 from api.middleware import tenant_role as _tenant_role  # AA-979 csr check in the dependency
 from api.routers.v1_pipeline import _rewrite_tour
+from shared.llm_client.errors import is_llm_access_denied
 from services.content_generation.pipeline_lessons import load_s1_lessons_block
 from services.content_generation import s1_checkpoint as _ckpt  # AA-993 G2
 from shared.aws_client.bronze import bronze_bucket
@@ -777,11 +778,10 @@ async def _execute_run_tour(
                 logger.info("sonnet_upgrade_triggered", tour_id=req.tour_id,
                             reason="hard_codes" if _trigger_hard else "low_score_optin",
                             surviving_hard=sorted(_surviving_rewrite), score=_score)
-                _upgraded = await _rewrite_tour(
-                    tour, idx=0, total=1,
+                _upgraded = await _sonnet_upgrade(
+                    tour, tour_id=req.tour_id,
                     brand_rules=brand_rules,
                     seo=seo_data,
-                    model_tier="sonnet",
                     subtitle_focus=req.subtitle_focus,
                     seo_mode=effective_seo_mode,
                     on_stage=on_stage,
@@ -791,7 +791,9 @@ async def _execute_run_tour(
                 # Keep sonnet when it is strictly better: for a hard-code trigger that means fewer
                 # surviving hard codes (clearing the blocker is the goal, not a higher score); for the
                 # AA-237 opt-in trigger it keeps the original "higher score wins" rule.
-                if _trigger_hard:
+                if _upgraded is None:
+                    _keep = False
+                elif _trigger_hard:
                     _keep = len(_surviving_hard_codes(_upgraded)) < len(_surviving_hard_codes(result))
                 else:
                     _keep = _upgraded.get("quality_score", 0.0) > _score
@@ -799,8 +801,8 @@ async def _execute_run_tour(
                     result = _upgraded
                     _auto_upgraded = True
                 # AA-736: mark that a sonnet retry happened so the review-queue summary can say so,
-                # whichever run we kept. Only meaningful for the hard-code trigger.
-                if _trigger_hard:
+                # whichever run we kept. Only meaningful for the hard-code trigger (a refused upgrade never ran).
+                if _trigger_hard and _upgraded is not None:
                     result["_sonnet_retried"] = True
                 logger.info("sonnet_upgrade_result", tour_id=req.tour_id, kept=_keep,
                             surviving_hard_after=sorted(_surviving_hard_codes(result)))
@@ -1070,6 +1072,20 @@ async def _execute_run_tour(
         await conn.close()
 
 
+async def _sonnet_upgrade(tour: dict, *, tour_id: str, **kwargs) -> Optional[dict]:
+    """The AA-237 / AA-736 one-shot sonnet re-run of a tour, or None when it was refused at account level (AA-900).
+
+    The primary result is already paid for, so a refused upgrade (the account blocked mid-run, or the sonnet model not
+    enabled) keeps it; the next LLM call meets the same refusal typed."""
+    try:
+        return await _rewrite_tour(tour, idx=0, total=1, model_tier="sonnet", **kwargs)
+    except Exception as exc:
+        if not is_llm_access_denied(exc):
+            raise
+        logger.warning("sonnet_upgrade_llm_access_denied", tour_id=tour_id, error=str(exc)[:300])
+        return None
+
+
 async def _run_tour_safe(tour_req: TourRunRequest, job_id: str | None = None,
                          stage_cb: "Callable[[str], Awaitable[None]] | None" = None,
                          checkpoint: "_ckpt.S1Checkpoint | None" = None) -> dict | None:
@@ -1089,6 +1105,8 @@ async def _run_tour_safe(tour_req: TourRunRequest, job_id: str | None = None,
                 last_exc = exc
                 logger.warning("run_tour_attempt_failed", tour_id=tour_req.tour_id,
                                attempt=attempt + 1, error=str(exc))
+                if is_llm_access_denied(exc):
+                    break  # AA-900: refused at account level; the next attempt would be refused the same way
         logger.error("background_run_tour_failed", tour_id=tour_req.tour_id,
                      batch_id=tour_req.batch_id, error=str(last_exc))
         if not _is_uuid(tour_req.batch_id):
@@ -1096,6 +1114,8 @@ async def _run_tour_safe(tour_req: TourRunRequest, job_id: str | None = None,
             # uuid-cast UPDATE rather than crash the failure handler.
             logger.info("pipeline_runs_fail_mark_skipped",
                         batch_id=tour_req.batch_id, reason="batch_id is not a valid uuid")
+            if is_llm_access_denied(last_exc):
+                raise last_exc  # AA-900: see the end of this function
             return
         try:
             conn = await asyncpg.connect(get_database_url())
@@ -1107,6 +1127,10 @@ async def _run_tour_safe(tour_req: TourRunRequest, job_id: str | None = None,
             await conn.close()
         except Exception as db_exc:
             logger.error("failed_to_mark_pipeline_failed", error=str(db_exc))
+        if is_llm_access_denied(last_exc):
+            # AA-900: the one failure the job must see typed (fails at once, reason llm_access_denied) — every other
+            # final failure is still swallowed (return None), as before.
+            raise last_exc
 
 
 def _build_s1_progress_sink(redis, job_id: str):

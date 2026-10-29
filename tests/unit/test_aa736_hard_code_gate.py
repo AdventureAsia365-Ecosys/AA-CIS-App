@@ -173,3 +173,16 @@ def test_forbidden_word_no_longer_triggers_sonnet_upgrade():
     assert rt.call_count == 1
     assert out["auto_upgraded"] is False
     assert admin_pipeline._is_publishable(out) is False
+
+
+def test_a_sonnet_upgrade_refused_at_account_level_keeps_the_haiku_result():
+    # AA-900: the account is blocked mid-run (or the sonnet model is not enabled). The haiku result is already paid
+    # for: it is kept, not marked as retried, and the refusal does not fail the run.
+    from shared.llm_client.errors import LLMAccessDenied
+    out, rt = _run([_result(8.0, "haiku-4.5", ["MISSING_FIELD"]),
+                    LLMAccessDenied("All models in the route failed: Error 002")])
+    assert rt.call_count == 2
+    assert rt.call_args.kwargs["model_tier"] == "sonnet"
+    assert out["auto_upgraded"] is False
+    assert out["model_used"] == "haiku-4.5"
+    assert admin_pipeline._surviving_hard_codes(out) == {"MISSING_FIELD"}

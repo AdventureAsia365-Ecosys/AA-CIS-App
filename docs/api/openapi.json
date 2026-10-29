@@ -17307,6 +17307,81 @@
         ]
       }
     },
+    "/admin/llm-availability": {
+      "get": {
+        "operationId": "get_llm_availability_admin_llm_availability_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "hours",
+            "required": false,
+            "schema": {
+              "default": 24,
+              "maximum": 168,
+              "minimum": 1,
+              "title": "Hours",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "LLM availability from recent real outcomes (no probe call)",
+        "tags": [
+          "admin-llm-ops"
+        ]
+      }
+    },
     "/admin/llm-catalog": {
       "get": {
         "operationId": "get_llm_catalog_admin_llm_catalog_get",

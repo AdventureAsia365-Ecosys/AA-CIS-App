@@ -263,6 +263,22 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     and admin cannot re-enable it; `LLMClient._call_openai` refuses any model whose catalog row is not
     enabled, so the legacy Haiku/Sonnet chain no longer falls back to GPT-4.1. Admin rejects an
     OpenAI-API model as primary, shadow or non-last fallback. Settings › LLM Models shows each route.
+- **Account-level refusals fail fast** (AA-900, `shared/llm_client/errors.py`): a provider error is classified as
+  `access_denied` (Bedrock "Error 002: Access to Bedrock models is not allowed for this account", AccessDenied, IAM,
+  OpenAI 401/403), `quota_exhausted` (no OpenAI credit), `throttled` or `other`. When EVERY model a request tried was
+  refused at account level (route, single key or the legacy Haiku/Sonnet chain), the gateway raises `LLMAccessDenied`
+  (a RuntimeError; a mixed or throttled failure stays the plain RuntimeError). The job runner
+  (`worker.failure_outcome`) fails such a job at once, no retry, error prefixed `llm_access_denied`; the S1/T2 writer
+  re-raises it out of the graph (`graph.generate_node`, `s1_writer_v2_live._call`, `_rewrite_tour`) and
+  `_run_tour_safe` stops its internal retries. Every other `_rewrite_tour` caller (eval regression, writing-memory
+  eval writers, the T3 QA gate) also gets the exception instead of a `failed` dict, so an eval run aborts rather than
+  record one refused tour after another. A refusal after a paid draft keeps the draft: the S1 sonnet upgrade
+  (`_sonnet_upgrade` returns None) and the writer-v2 meta calls. Per-item loops that swallow LLM errors (A3 atomize
+  days) are unchanged.
+  Settings › LLM Models › Stages opens with the **LLM availability** card (`GET /admin/llm-availability`,
+  `api/services/llm_availability.py`): answered calls per provider / account from `llm_call_log` plus classified
+  errors of failed (dated by `finished_at`) or re-queued jobs from `shared.job`; no probe call. A refused call writes no `llm_call_log` row (AA-927 bills
+  only), so job errors are the refusal side of the signal.
 - **Every model call goes through the gateway** (`shared/llm_client/`, AA-685): text through
   `LLMClient.generate(stage=...)`, embeddings through `shared.llm_client.embed.embed(stage, texts)`
   (catalog `api_style='embed'`, stage role `embed`). `tests/unit/test_aa685_no_raw_model_calls.py` fails

@@ -16,6 +16,7 @@ from .role_config import get_stage_config_sync
 from .bedrock_satellite import DEFAULT_SATELLITE_ACCOUNT
 from .catalog import LEGACY_KEYS, CatalogModel, get_model_sync
 from .schema_check import SchemaMismatch, conform
+from .errors import OTHER, THROTTLED, LLMAccessDenied, account_level_class, classify
 from . import stream_sink
 
 logger = structlog.get_logger()
@@ -115,6 +116,22 @@ def unusable_reply_cost(exc: BaseException) -> float:
     The gateway rows already count it in llm_call_log."""
     usage = getattr(exc, "billed_usage", None) or getattr(exc, "logged_usage", None) or ()
     return float(sum(float((u or {}).get("cost_usd") or 0.0) for u in usage))
+
+
+def _all_failed(message: str, failures: list) -> RuntimeError:
+    """AA-900: the error to raise when every model a request tried failed (`failures`, one exception each).
+    LLMAccessDenied when all of them were refused at account level (access denied / no credit): a retry cannot
+    help, so the job runner fails the job at once. Otherwise the plain RuntimeError as before. The last failure is
+    the cause either way (the job error and the traceback keep the provider's own words)."""
+    classes = [classify(f) for f in failures]
+    cls = account_level_class(classes)
+    exc: RuntimeError = LLMAccessDenied(message, cls) if cls else RuntimeError(message)
+    if not cls:
+        # Decided here: a mixed failure is not account-level, whatever its last cause says.
+        exc.llm_error_class = THROTTLED if THROTTLED in classes else OTHER
+    if failures:
+        exc.__cause__ = failures[-1]
+    return exc
 
 
 def _billed_usage(model_used: str, account: Optional[str], usage_totals: dict, cost: float,
@@ -359,7 +376,15 @@ class LLMClient:
 
         role = (stage_cfg.role if stage_cfg and stage_cfg.role else "writer")
         if len(chain) == 1:
-            resp = self._call_key_logged(request, chain[0], primary_acct, role=role, position=0)
+            try:
+                resp = self._call_key_logged(request, chain[0], primary_acct, role=role, position=0)
+            except (LLMAccessDenied, UnusableReply):
+                raise
+            except Exception as e:
+                # AA-900: a single-model request refused at account level raises the typed error (no retry helps).
+                if account_level_class([classify(e)]):
+                    raise _all_failed(f"{chain[0]} refused for stage {request.stage!r}: {str(e)[:300]}", [e]) from e
+                raise
         else:
             resp = self._call_route(request, chain, primary_acct, role=role)
 
@@ -432,6 +457,7 @@ class LLMClient:
         # throttle, blocked) clears `all_unusable`: the final error is RouteUnusableReply only when no model was down.
         unusable_usage: list = []
         all_unusable = True
+        failures: list = []  # AA-900: one exception per model actually tried (skipped keys are not attempts)
         for position, key in enumerate(chain):
             if key not in LEGACY_KEYS:
                 m = get_model_sync(key)
@@ -447,6 +473,7 @@ class LLMClient:
                 logger.warning("llm_route_attempt_failed", stage=request.stage, model=key,
                                position=position, error=str(e)[:300])
                 errors.append(f"{key}: {str(e)[:200]}")
+                failures.append(e)
                 billed = _billed_usage_of(e) if isinstance(e, UnusableReply) else []
                 if billed:
                     unusable_usage.extend(billed)
@@ -469,7 +496,7 @@ class LLMClient:
             exc = RouteUnusableReply(message)
             exc.logged_usage = tuple(unusable_usage)
             raise exc
-        raise RuntimeError(message)
+        raise _all_failed(message, failures)
 
     def _start_shadow(self, request: LLMRequest, cfg, primary: LLMResponse,
                       primary_acct: str) -> None:
@@ -521,6 +548,7 @@ class LLMClient:
         # starts at the primary satellite. Event names stay the same; only `reason` says why the
         # satellite was the first stop.
         acc2_native = legacy_acc2_native_enabled()
+        failures: list = []  # AA-900: every tier that was tried and failed, for the final error
 
         if tier == "sonnet":
             # T1: Claude Sonnet — premium quality (acc2-native, off by default)
@@ -529,6 +557,7 @@ class LLMClient:
                     resp = self._call_bedrock(request, model=BEDROCK_SONNET, use_cache=True)
                     return resp
                 except Exception as e:
+                    failures.append(e)
                     if "AccessDeniedException" in str(e) or "not authorized" in str(e).lower():
                         logger.warning("t1_sonnet_not_subscribed", model=BEDROCK_SONNET,
                                        hint="Enable cross-region inference profile in AWS Marketplace (AA-50)")
@@ -544,6 +573,7 @@ class LLMClient:
                             reason="acc2 T1 failed" if acc2_native else "acc2 native off (AA-843)")
                 return resp
             except Exception as e:
+                failures.append(e)
                 # AA-998: no cross-account retry; Sonnet degrades to Haiku on the same account.
                 logger.warning("t1_5a_satellite_failed_trying_t2", model=BEDROCK_SONNET,
                                account=primary_acct, error=str(e))
@@ -555,6 +585,7 @@ class LLMClient:
                 resp.fallback_used = tier == "sonnet"  # only a fallback when Sonnet was intended
                 return resp
             except Exception as e:
+                failures.append(e)
                 logger.warning("t2_failed_trying_t2_5a", model=BEDROCK_HAIKU, error=str(e))
 
         # T2.5a: Claude Haiku on the acc3 satellite
@@ -567,6 +598,7 @@ class LLMClient:
                         reason="acc2 T2 failed" if acc2_native else "acc2 native off (AA-843)")
             return resp
         except Exception as e:
+            failures.append(e)
             logger.warning("t2_5a_satellite_failed_trying_t3", model=BEDROCK_HAIKU,
                            account=primary_acct, error=str(e))
 
@@ -577,7 +609,7 @@ class LLMClient:
         if not openai_platform_allowed("gpt-4.1"):
             logger.error("t3_skipped_gpt41_retired", tier=tier,
                          reason="GPT-4.1 retired (S235); no OpenAI last resort for legacy tiers")
-            raise RuntimeError("All LLM providers failed (Bedrock tiers down; GPT-4.1 retired)")
+            raise _all_failed("All LLM providers failed (Bedrock tiers down; GPT-4.1 retired)", failures)
         try:
             resp = self._call_openai(request, model="gpt-4.1")
             resp.fallback_used = True
@@ -586,7 +618,7 @@ class LLMClient:
             return resp
         except Exception as e:
             logger.error("t3_failed_all_providers_down", error=str(e))
-            raise RuntimeError("All LLM providers failed") from e
+            raise _all_failed("All LLM providers failed", [*failures, e]) from e
 
     def _call_bedrock(
         self, request: LLMRequest, model: str, use_cache: bool = False
