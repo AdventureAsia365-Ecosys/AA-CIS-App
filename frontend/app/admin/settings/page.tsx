@@ -1,5 +1,6 @@
 "use client";
 // app/admin/settings/page.tsx — AA-158 Admin Settings (4 tabs)
+// AA-994: text in the UI language (messages.ts); gate keys, pipeline steps, keywords and tenant values stay as sent.
 
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
@@ -13,8 +14,10 @@ import {
   A, alpha, serif, sans, mono,
   Card, SLabel, TabBar, Badge, Btn, Spinner, LoadingScreen,
 } from "../_components/adminUi";
-import { AdminMain, PageHeader, formatDateTime, apiGet, useAdminIdentity } from "../../_kit";
+import { AdminMain, PageHeader, apiGet, useAdminIdentity, useFormat, useT } from "../../_kit";
 import { can, staffErrorMessage, type Capability } from "@/lib/rbac";
+import { RBAC_MESSAGES } from "@/lib/rbac.messages";
+import { SETTINGS } from "./messages";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -57,24 +60,25 @@ interface SettingsData {
 // ─── Pipeline Gates Tab ───────────────────────────────────────────────────────
 
 function PipelineGatesTab({ gates }: { gates: SettingsData["pipeline_gates"] }) {
+  const t = useT(SETTINGS);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <Card>
-        <SLabel>Brand Audit Threshold</SLabel>
+        <SLabel>{t("brandThreshold")}</SLabel>
         <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
           <span style={{ fontFamily: sans, fontVariantNumeric: "tabular-nums", fontSize: 36, fontWeight: 600, color: A.ink, letterSpacing: "-0.03em" }}>
             {gates.brand_audit_threshold.toFixed(1)}
           </span>
           <span style={{ fontSize: 14, color: A.muted }}>/&nbsp;10</span>
-          <Badge color="amber">hardcoded</Badge>
+          <Badge color="amber">{t("hardcoded")}</Badge>
         </div>
         <p style={{ fontSize: 12, color: A.muted2, marginTop: 8, fontFamily: sans }}>
-          Tours scoring below this threshold are sent to flag_fix before re-evaluation.
+          {t("thresholdHelp")}
         </p>
       </Card>
 
       <Card>
-        <SLabel>Deduplication Key</SLabel>
+        <SLabel>{t("dedupKey")}</SLabel>
         <code style={{
           display: "block", fontFamily: mono, fontSize: 12,
           background: A.bg, padding: "10px 14px", borderRadius: 8,
@@ -83,12 +87,12 @@ function PipelineGatesTab({ gates }: { gates: SettingsData["pipeline_gates"] }) 
           {gates.dedup_key}
         </code>
         <p style={{ fontSize: 12, color: A.muted2, marginTop: 8, fontFamily: sans }}>
-          Composite key used to detect duplicate source records on upload.
+          {t("dedupHelp")}
         </p>
       </Card>
 
       <Card>
-        <SLabel>Pipeline Flow</SLabel>
+        <SLabel>{t("pipelineFlow")}</SLabel>
         <div style={{ display: "flex", alignItems: "center", gap: 0, flexWrap: "wrap" }}>
           {gates.pipeline_flow.map((step, i) => (
             <div key={step} style={{ display: "flex", alignItems: "center" }}>
@@ -107,7 +111,7 @@ function PipelineGatesTab({ gates }: { gates: SettingsData["pipeline_gates"] }) 
           ))}
         </div>
         <p style={{ fontSize: 12, color: A.muted2, marginTop: 10, fontFamily: sans }}>
-          brand_audit only runs on tours that pass validate (score ≥ threshold).
+          {t("flowHelp")}
         </p>
       </Card>
     </div>
@@ -117,6 +121,9 @@ function PipelineGatesTab({ gates }: { gates: SettingsData["pipeline_gates"] }) 
 // ─── SEO Config Tab ───────────────────────────────────────────────────────────
 
 function SeoConfigTab({ seo: initialSeo, canEdit }: { seo: SettingsData["seo_config"]; canEdit: boolean }) {
+  const t = useT(SETTINGS);
+  const tr = useT(RBAC_MESSAGES);
+  const { formatDateTime } = useFormat();
   const [seo, setSeo] = useState(initialSeo);
   const [keywords, setKeywords] = useState<string[]>(initialSeo?.custom_keywords ?? []);
   const [kwInput, setKwInput] = useState("");
@@ -145,7 +152,7 @@ function SeoConfigTab({ seo: initialSeo, canEdit }: { seo: SettingsData["seo_con
     try {
       target = JSON.parse(targetJson);
     } catch {
-      setError("Target Market is not valid JSON");
+      setError(t("invalidJson"));
       return;
     }
 
@@ -158,7 +165,7 @@ function SeoConfigTab({ seo: initialSeo, canEdit }: { seo: SettingsData["seo_con
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
-        setError(staffErrorMessage(res.status, d.detail, "Save failed"));
+        setError(staffErrorMessage(res.status, d.detail, t("saveFailed"), tr("adminOnly")));
         return;
       }
       const updated = await res.json();
@@ -166,7 +173,7 @@ function SeoConfigTab({ seo: initialSeo, canEdit }: { seo: SettingsData["seo_con
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch {
-      setError("Network error");
+      setError(t("networkError"));
     } finally {
       setSaving(false);
     }
@@ -176,7 +183,7 @@ function SeoConfigTab({ seo: initialSeo, canEdit }: { seo: SettingsData["seo_con
     return (
       <Card>
         <div style={{ padding: 24, textAlign: "center", color: A.muted }}>
-          No SEO config found.
+          {t("noSeo")}
         </div>
       </Card>
     );
@@ -185,20 +192,20 @@ function SeoConfigTab({ seo: initialSeo, canEdit }: { seo: SettingsData["seo_con
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <Card>
-        <SLabel>SEO Provider</SLabel>
+        <SLabel>{t("seoProvider")}</SLabel>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ fontSize: 14, fontWeight: 600, color: A.ink }}>
             {seo.seo_provider === "dataforseo" ? "DataForSEO" : seo.seo_provider}
           </span>
-          <Badge color="gray">read-only</Badge>
+          <Badge color="gray">{t("readOnly")}</Badge>
         </div>
         <p style={{ fontSize: 12, color: A.muted2, marginTop: 6, fontFamily: sans }}>
-          Seed keyword: <code style={{ fontFamily: mono }}>&quot;{"{country}"} tours&quot;</code> — per-tour country from raw_tours.
+          {t("seedKeyword")} <code style={{ fontFamily: mono }}>{t("seedPattern")}</code> {t("seedHelp")}
         </p>
       </Card>
 
       <Card>
-        <SLabel>Custom Keywords</SLabel>
+        <SLabel>{t("customKeywords")}</SLabel>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
           {keywords.map((kw, i) => (
             <span key={i} style={{
@@ -219,7 +226,7 @@ function SeoConfigTab({ seo: initialSeo, canEdit }: { seo: SettingsData["seo_con
             </span>
           ))}
           {keywords.length === 0 && (
-            <span style={{ fontSize: 13, color: A.muted2 }}>No custom keywords</span>
+            <span style={{ fontSize: 13, color: A.muted2 }}>{t("noKeywords")}</span>
           )}
         </div>
         {canEdit && <div style={{ display: "flex", gap: 8 }}>
@@ -227,7 +234,7 @@ function SeoConfigTab({ seo: initialSeo, canEdit }: { seo: SettingsData["seo_con
             value={kwInput}
             onChange={e => setKwInput(e.target.value)}
             onKeyDown={e => e.key === "Enter" && (e.preventDefault(), addKeyword())}
-            placeholder="Add keyword…"
+            placeholder={t("addKeyword")}
             style={{
               flex: 1, padding: "7px 12px", borderRadius: 8,
               border: `1px solid ${A.line}`, fontSize: 13,
@@ -235,13 +242,13 @@ function SeoConfigTab({ seo: initialSeo, canEdit }: { seo: SettingsData["seo_con
             }}
           />
           <Btn variant="secondary" size="sm" onClick={addKeyword}>
-            <Plus size={13} /> Add
+            <Plus size={13} /> {t("add")}
           </Btn>
         </div>}
       </Card>
 
       <Card>
-        <SLabel>Target Market (JSON)</SLabel>
+        <SLabel>{t("targetMarket")}</SLabel>
         <textarea
           value={targetJson}
           onChange={e => setTargetJson(e.target.value)}
@@ -260,16 +267,16 @@ function SeoConfigTab({ seo: initialSeo, canEdit }: { seo: SettingsData["seo_con
         {canEdit ? (
           <Btn variant="primary" onClick={save} disabled={saving}>
             {saving ? <Spinner size={13} /> : <Save size={13} />}
-            {saving ? "Saving…" : "Save SEO Config"}
+            {saving ? t("saving") : t("saveSeo")}
           </Btn>
         ) : (
           <span data-testid="seo-read-only" style={{ fontSize: 12, color: A.muted }}>
-            Read-only for your role. SEO config changes are made by an admin.
+            {t("seoReadOnly")}
           </span>
         )}
         {saved && (
           <span style={{ fontSize: 12, color: A.green, fontWeight: 600 }}>
-            Saved ✓
+            {t("saved")}
           </span>
         )}
         {error && (
@@ -277,7 +284,7 @@ function SeoConfigTab({ seo: initialSeo, canEdit }: { seo: SettingsData["seo_con
         )}
         {seo.updated_at && (
           <span style={{ fontSize: 11, color: A.muted2, marginLeft: "auto" }}>
-            Last saved: {formatDateTime(seo.updated_at)}
+            {t("lastSaved", formatDateTime(seo.updated_at))}
           </span>
         )}
       </div>
@@ -294,6 +301,7 @@ function TenantInfoTab({
   tenant: SettingsData["tenant"];
   plan: SettingsData["plan"];
 }) {
+  const t = useT(SETTINGS);
   const PLAN_COLOR: Record<string, "blue" | "green" | "gold" | "purple" | "gray"> = {
     internal:   "gold",
     starter:    "blue",
@@ -307,29 +315,29 @@ function TenantInfoTab({
       <Card>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", gap: 20 }}>
           <div>
-            <SLabel>Tenant Name</SLabel>
+            <SLabel>{t("tenantName")}</SLabel>
             <div style={{ fontSize: 16, fontWeight: 600, color: A.ink, fontFamily: serif }}>
               {tenant.name}
             </div>
           </div>
           <div>
-            <SLabel>Slug</SLabel>
+            <SLabel>{t("slug")}</SLabel>
             <code style={{ fontSize: 13, fontFamily: mono, color: A.body }}>{tenant.slug}</code>
           </div>
           <div>
-            <SLabel>Plan Tier</SLabel>
+            <SLabel>{t("planTier")}</SLabel>
             <Badge color={PLAN_COLOR[tenant.plan_tier] ?? "gray"}>
               {tenant.plan_tier}
             </Badge>
           </div>
           <div>
-            <SLabel>Status</SLabel>
+            <SLabel>{t("status")}</SLabel>
             <Badge color={tenant.is_active ? "green" : "red"}>
-              {tenant.is_active ? "active" : "inactive"}
+              {tenant.is_active ? t("active") : t("inactive")}
             </Badge>
           </div>
           <div>
-            <SLabel>Tenant ID</SLabel>
+            <SLabel>{t("tenantId")}</SLabel>
             <code style={{ fontSize: 11, fontFamily: mono, color: A.muted2, wordBreak: "break-all" }}>
               {tenant.tenant_id}
             </code>
@@ -338,11 +346,11 @@ function TenantInfoTab({
       </Card>
 
       <Card>
-        <SLabel>Plan Quota</SLabel>
+        <SLabel>{t("planQuota")}</SLabel>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))", gap: 16 }}>
           <div>
             <div style={{ fontSize: 11, color: A.muted, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.1em" }}>
-              Monthly Tours
+              {t("monthlyTours")}
             </div>
             <div style={{ fontFamily: serif, fontSize: 28, fontWeight: 500, color: A.ink, letterSpacing: "-0.02em" }}>
               {plan.tours_quota_monthly > 0 ? plan.tours_quota_monthly.toLocaleString() : "∞"}
@@ -350,7 +358,7 @@ function TenantInfoTab({
           </div>
           <div>
             <div style={{ fontSize: 11, color: A.muted, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.1em" }}>
-              Monthly Price
+              {t("monthlyPrice")}
             </div>
             <div style={{ fontFamily: serif, fontSize: 28, fontWeight: 500, color: A.ink, letterSpacing: "-0.02em" }}>
               {plan.price_usd_monthly > 0 ? `$${plan.price_usd_monthly.toFixed(0)}` : "—"}
@@ -358,12 +366,12 @@ function TenantInfoTab({
           </div>
           <div>
             <div style={{ fontSize: 11, color: A.muted, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.1em" }}>
-              Trash Retention
+              {t("trashRetention")}
             </div>
             <div style={{ fontFamily: serif, fontSize: 28, fontWeight: 500, color: A.ink, letterSpacing: "-0.02em" }}>
-              {plan.trash_retention_days}d
+              {t("days", plan.trash_retention_days)}
             </div>
-            <div style={{ fontSize: 10, color: A.muted2, marginTop: 2 }}>system default</div>
+            <div style={{ fontSize: 10, color: A.muted2, marginTop: 2 }}>{t("systemDefault")}</div>
           </div>
         </div>
       </Card>
@@ -378,16 +386,18 @@ function TenantInfoTab({
 // ?tab=brand). `?tab=` selects the initial tab so old links land in the right place.
 // AA-882 — `needs`: a tab whose reads the backend keeps admin-only (LLM Models: model routes, catalog
 // and the shadow cost report; Jev Credit: the top-up ledger) is not shown to a role without it.
-const TABS: { key: string; label: string; needs?: Capability }[] = [
-  { key: "pipeline",  label: "Pipeline Gates" },
-  { key: "brand",     label: "Brand Identity" },
-  { key: "seo",       label: "SEO Config" },
-  { key: "models",    label: "LLM Models", needs: "ai.admin" },
-  { key: "jev-credit", label: "Jev Credit", needs: "spend.read" },
-  { key: "tenant",    label: "Tenant Info" },
+// `label` is a key of messages.ts SETTINGS (AA-994).
+type TabLabel = "tabPipeline" | "tabBrand" | "tabSeo" | "tabModels" | "tabJevCredit" | "tabTenant" | "tabUiKit";
+const TABS: { key: string; label: TabLabel; needs?: Capability }[] = [
+  { key: "pipeline",  label: "tabPipeline" },
+  { key: "brand",     label: "tabBrand" },
+  { key: "seo",       label: "tabSeo" },
+  { key: "models",    label: "tabModels", needs: "ai.admin" },
+  { key: "jev-credit", label: "tabJevCredit", needs: "spend.read" },
+  { key: "tenant",    label: "tabTenant" },
   // AA-662 — UI-kit living reference (design system), moved here from a standalone /admin/kit-demo
   // page so it lives under Settings as a system/reference tab rather than a top-level nav item.
-  { key: "ui-kit",    label: "UI Kit" },
+  { key: "ui-kit",    label: "tabUiKit" },
 ];
 
 export default function SettingsPage() {
@@ -400,12 +410,13 @@ export default function SettingsPage() {
 }
 
 function SettingsPageInner() {
+  const t = useT(SETTINGS);
   const wanted = useSearchParams().get("tab");
   const { role } = useAdminIdentity();
-  const tabs = TABS.filter(t => !t.needs || can(role, t.needs));
-  const [picked, setTab] = useState(() => (TABS.some(t => t.key === wanted) ? wanted! : "pipeline"));
+  const tabs = TABS.filter(x => !x.needs || can(role, x.needs)).map(x => ({ key: x.key, label: t(x.label) }));
+  const [picked, setTab] = useState(() => (TABS.some(x => x.key === wanted) ? wanted! : "pipeline"));
   // A deep link to a tab the role does not see falls back to the first tab (derived, no effect).
-  const tab = tabs.some(t => t.key === picked) ? picked : "pipeline";
+  const tab = tabs.some(x => x.key === picked) ? picked : "pipeline";
 
   // AA-686 — react-query instead of a hand-rolled useState/useEffect fetch (the React Compiler
   // flags setState inside an effect; the kit standard is useQuery).
@@ -418,16 +429,16 @@ function SettingsPageInner() {
       <AdminMain>
         {/* Header */}
         <PageHeader
-          title="Settings"
-          description="Pipeline gates, brand identity, SEO config, models per stage, and tenant info for aa_internal"
+          title={t("title")}
+          description={t("description")}
         />
 
-        {isLoading && <LoadingScreen msg="Loading settings…" />}
+        {isLoading && <LoadingScreen msg={t("loading")} />}
 
         {!isLoading && isError && (
           <Card style={{ textAlign: "center", padding: 40 }}>
-            <div style={{ color: A.red, marginBottom: 12 }}>Failed to load settings</div>
-            <Btn variant="secondary" onClick={() => refetch()}>Retry</Btn>
+            <div style={{ color: A.red, marginBottom: 12 }}>{t("loadError")}</div>
+            <Btn variant="secondary" onClick={() => refetch()}>{t("retry")}</Btn>
           </Card>
         )}
 

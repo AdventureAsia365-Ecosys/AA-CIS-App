@@ -5,6 +5,8 @@
 // log. Tabs: Overview (+ AA-665 C3 month-end forecast vs budget, ForecastPanel), LLM, DataForSEO (+ C2 runs by job,
 // DfsRunsPanel), AWS bill (the AA-623 Cost Explorer reconciliation), Jev (JevPanel, the Jev Decisions endpoints),
 // Budgets. Deep link: /admin/cost-ops?tab=<key>.
+// AA-994: text in the UI language (messages.ts, panels.messages.ts); tenant labels, stages, roles, models, endpoints,
+// markets and AWS service names from the API stay as sent.
 
 import { Suspense, useState, useEffect, useCallback, useMemo, type CSSProperties } from "react";
 import { useSearchParams } from "next/navigation";
@@ -20,13 +22,13 @@ import {
   A, serif, sans, mono, Card, SLabel, Badge, Btn, LoadingScreen, StatCard, TabBar, TH, TD,
   CHART_TOOLTIP,
 } from "../_components/adminUi";
-import { ScrollX, AdminMain, PageHeader, formatDate, formatDateTime } from "../../_kit";
+import { ScrollX, AdminMain, PageHeader, useFormat, useT } from "../../_kit";
 import { useChartColors } from "../../_kit/useTheme";
-import { useAwsAccounts } from "../_components/useAwsAccounts";
+import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import {
-  LIVE_ACCOUNTS, LLM_ACCOUNT, MAIN_ACCOUNT, RETIRED_ACCOUNT, RETIRED_ACCOUNT_LABEL, accountLabel, accountName,
-  isLiveAccount, type AwsAccounts,
+  LIVE_ACCOUNTS, LLM_ACCOUNT, MAIN_ACCOUNT, RETIRED_ACCOUNT, accountLabel, accountName, isLiveAccount,
 } from "@/lib/awsAccounts";
+import { COST } from "./messages";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -109,27 +111,38 @@ const ACCOUNT_COLOR: Record<string, string> = {
   [LLM_ACCOUNT]: A.slate, [MAIN_ACCOUNT]: A.green, openai: A.ink3, typesafe: A.accent, [RETIRED_ACCOUNT]: A.gold,
   unknown: A.muted,
 };
-// Buckets that are not an AWS account.
-const OTHER_ACCOUNT_META: Record<string, { label: string; short: string }> = {
-  openai:  { label: "OpenAI (no AWS account)",        short: "OpenAI" },
+// Buckets that are not an AWS account (message keys of messages.ts COST).
+const OTHER_ACCOUNT_META: Record<
+  string,
+  { label: "acctOpenaiLong" | "acctJevLong" | "acctLegacyLong"; short: "acctOpenai" | "acctJev" | "acctLegacy" }
+> = {
+  openai:  { label: "acctOpenaiLong", short: "acctOpenai" },
   // AA-660 — Jev decisions (shared/llm_client/decide.py); details per stage in /admin/decisions.
-  typesafe: { label: "Jev · TypeSafe (no AWS account)", short: "Jev" },
-  unknown: { label: "Legacy (no account logged)",     short: "legacy" },
+  typesafe: { label: "acctJevLong", short: "acctJev" },
+  unknown: { label: "acctLegacyLong", short: "acctLegacy" },
 };
-/** Short name of an account bucket: the AWS account ID, "Retired account", or OpenAI / Jev / legacy. */
-function acctShort(k: string, dir?: AwsAccounts): string {
-  return OTHER_ACCOUNT_META[k]?.short ?? accountName(k, dir);
-}
-/** Long name of an account bucket, for the LLM estimate (every AWS line of it is Bedrock). */
-function acctLong(k: string, dir?: AwsAccounts): string {
-  if (OTHER_ACCOUNT_META[k]) return OTHER_ACCOUNT_META[k].label;
-  return isLiveAccount(k) ? `${accountLabel(k, dir)} · Bedrock` : `${RETIRED_ACCOUNT_LABEL} (Bedrock, history)`;
+
+/** Account names in the UI language: `short` = the AWS account ID, "Retired account", or OpenAI / Jev / legacy;
+ *  `long` = the name for the LLM estimate (every AWS line of it is Bedrock); `name` / `label` = lib/awsAccounts. */
+function useAcctNames() {
+  const t = useT(COST);
+  const dir = useAwsAccounts();
+  const text = useAccountText();
+  return useMemo(() => ({
+    short: (k: string) => (OTHER_ACCOUNT_META[k] ? t(OTHER_ACCOUNT_META[k].short) : accountName(k, dir, text)),
+    long: (k: string) => {
+      if (OTHER_ACCOUNT_META[k]) return t(OTHER_ACCOUNT_META[k].label);
+      return isLiveAccount(k) ? t("acctBedrock", accountLabel(k, dir, text)) : t("acctRetiredBedrock", text.retired);
+    },
+    name: (k: string | null | undefined) => accountName(k, dir, text),
+    label: (k: string | null | undefined) => accountLabel(k, dir, text),
+  }), [t, dir, text]);
 }
 // AA-623 — Cost Explorer rows carry the same account key the token estimate uses (account_key, set by the backend
 // since AA-902), so they line up with the estimated (token) breakdown. An unresolved account keeps its raw ID.
 const ceKey = (r: { account_id: string; account_key?: string | null }) => r.account_key ?? r.account_id;
-const ceName = (r: { account_id: string; account_key?: string | null }, dir?: AwsAccounts) =>
-  r.account_key ? accountName(r.account_key, dir) : r.account_id;
+const ceName = (r: { account_id: string; account_key?: string | null }, name: (k: string) => string) =>
+  r.account_key ? name(r.account_key) : r.account_id;
 // Cost Explorer covers WHOLE accounts, so these labels must not say "Bedrock": the main account runs the
 // infrastructure (ECS/RDS/ELB/ElastiCache...) and native Claude is blocked there — its Bedrock line is only
 // Cohere Embed / Palmyra. accountLabel() adds the role ("main infrastructure" / "LLM").
@@ -167,6 +180,7 @@ const DATE_INPUT: CSSProperties = {
 // ── Shared quality cell ──────────────────────────────────────────────────────
 
 function QualityCell({ b }: { b: Branch }) {
+  const t = useT(COST);
   if (b.ok_eligible_count > 0) {
     const p = Math.round((b.ok_rate ?? 0) * 100);
     const color = p >= 80 ? A.green : p >= 50 ? A.amber : A.red;
@@ -176,22 +190,22 @@ function QualityCell({ b }: { b: Branch }) {
       </span>
     );
   }
-  if (b.avg_atoms_extracted != null) return <span style={{ color: A.ink3 }}>{b.avg_atoms_extracted.toFixed(1)} atoms/call</span>;
-  if (b.avg_output_len_chars != null) return <span style={{ color: A.ink3 }}>{Math.round(b.avg_output_len_chars)} chars/call</span>;
+  if (b.avg_atoms_extracted != null) return <span style={{ color: A.ink3 }}>{t("atomsPerCall", b.avg_atoms_extracted.toFixed(1))}</span>;
+  if (b.avg_output_len_chars != null) return <span style={{ color: A.ink3 }}>{t("charsPerCall", Math.round(b.avg_output_len_chars))}</span>;
   return <span style={{ color: A.muted2 }}>—</span>;
 }
 
 function AcctDot({ account }: { account: string }) {
-  const dir = useAwsAccounts();
+  const names = useAcctNames();
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, color: A.muted }}>
       <span style={{ width: 7, height: 7, borderRadius: "50%", background: ACCOUNT_COLOR[account] ?? A.muted, flexShrink: 0 }} />
-      {acctShort(account, dir)}
+      {names.short(account)}
     </span>
   );
 }
 
-// ── Spend-by-tenant table (LLM) — the primary per-tenant view Nghiệp asked for ──────────────
+// ── Spend-by-tenant table (LLM) — the primary per-tenant view ──────────────
 
 interface TenantRow {
   key: string; label: string; tenantId: string | null;
@@ -226,29 +240,30 @@ function TenantSpendTable({ branches, onFallbackClick }: {
   branches: Branch[];
   onFallbackClick: (tenantId: string | null, label: string) => void;
 }) {
-  const dir = useAwsAccounts();
+  const t = useT(COST);
+  const names = useAcctNames();
   const rows = useMemo(() => buildTenantRows(branches), [branches]);
   const accountsPresent = useMemo(() => ACCOUNTS.filter(a => branches.some(b => acctKey(b) === a)), [branches]);
-  if (rows.length === 0) return <div style={{ color: A.muted2, fontSize: 13, padding: "8px 0" }}>No LLM calls in range.</div>;
+  if (rows.length === 0) return <div style={{ color: A.muted2, fontSize: 13, padding: "8px 0" }}>{t("noLlmInRange")}</div>;
   return (
     <ScrollX>
     <table style={{ width: "100%", borderCollapse: "collapse" }}>
       <thead><tr>
-        <th style={TH}>Tenant</th>
-        <th style={{ ...TH, textAlign: "right" }}>Cost</th>
-        <th style={{ ...TH, textAlign: "right" }}>Calls</th>
-        <th style={{ ...TH, textAlign: "right" }}>Tokens</th>
-        <th style={{ ...TH, textAlign: "right" }}>$/1K tok</th>
-        <th style={{ ...TH, textAlign: "right" }}>Pass</th>
-        <th style={{ ...TH, textAlign: "right" }}>Fallback</th>
-        {accountsPresent.map(a => <th key={a} style={{ ...TH, textAlign: "right" }}>{acctShort(a, dir)}</th>)}
+        <th style={TH}>{t("colTenant")}</th>
+        <th style={{ ...TH, textAlign: "right" }}>{t("colCost")}</th>
+        <th style={{ ...TH, textAlign: "right" }}>{t("colCalls")}</th>
+        <th style={{ ...TH, textAlign: "right" }}>{t("colTokens")}</th>
+        <th style={{ ...TH, textAlign: "right" }}>{t("colPerKTok")}</th>
+        <th style={{ ...TH, textAlign: "right" }}>{t("colPass")}</th>
+        <th style={{ ...TH, textAlign: "right" }}>{t("colFallback")}</th>
+        {accountsPresent.map(a => <th key={a} style={{ ...TH, textAlign: "right" }}>{names.short(a)}</th>)}
       </tr></thead>
       <tbody>
         {rows.map(r => (
           <tr key={r.key}>
             <td style={{ ...TD }}>
               <span style={{ fontWeight: 600, color: A.ink2 }}>{r.label}</span>
-              <span style={{ color: A.muted2, fontSize: 11, marginLeft: 6 }}>{r.models.size} model(s)</span>
+              <span style={{ color: A.muted2, fontSize: 11, marginLeft: 6 }}>{t("models", r.models.size)}</span>
             </td>
             <td style={{ ...TD, textAlign: "right", fontFamily: mono, fontWeight: 600 }}>{fmtUsd(r.cost)}</td>
             <td style={{ ...TD, textAlign: "right" }}>{fmtInt(r.calls)}</td>
@@ -262,7 +277,7 @@ function TenantSpendTable({ branches, onFallbackClick }: {
                 <button onClick={() => onFallbackClick(r.tenantId, r.label)} style={{
                   background: "none", border: "none", cursor: "pointer", color: A.amber,
                   fontFamily: sans, fontSize: 13, fontWeight: 600, textDecoration: "underline", padding: 0,
-                }} title="View the calls that fell back">
+                }} title={t("viewFallback")}>
                   {pct(r.fallback / r.calls)}
                 </button>
               ) : <span style={{ color: A.muted2 }}>{r.calls > 0 ? "0%" : "—"}</span>}
@@ -283,6 +298,8 @@ function TenantSpendTable({ branches, onFallbackClick }: {
 // ── LLM tree — leaf + generic collapsible group (works for either grouping order) ────────────
 
 function StageLeaf({ b }: { b: Branch }) {
+  const t = useT(COST);
+  const { formatDateTime } = useFormat();
   const fbPct = b.call_count > 0 ? b.fallback_count / b.call_count : 0;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0 8px 60px", borderBottom: `1px solid ${A.line2}` }}>
@@ -293,8 +310,8 @@ function StageLeaf({ b }: { b: Branch }) {
       <span style={{ fontSize: 12, color: A.muted, minWidth: 60 }}>{fmtInt(b.call_count)}</span>
       <span style={{ fontSize: 12, color: A.ink2, minWidth: 84, fontFamily: mono }}>{fmtUsd(b.total_cost_usd)}</span>
       <span style={{ fontSize: 12, minWidth: 120 }}><QualityCell b={b} /></span>
-      {b.fallback_count > 0 && <Badge color="amber">{Math.round(fbPct * 100)}% fb</Badge>}
-      {b.truncated_count > 0 && <Badge color="red">{b.truncated_count} trunc</Badge>}
+      {b.fallback_count > 0 && <Badge color="amber">{t("fbBadge", Math.round(fbPct * 100))}</Badge>}
+      {b.truncated_count > 0 && <Badge color="red">{t("truncBadge", b.truncated_count)}</Badge>}
       <span style={{ fontSize: 11, color: A.muted2, marginLeft: "auto" }}>
         {formatDateTime(b.last_call_at)}
       </span>
@@ -306,6 +323,7 @@ function StageLeaf({ b }: { b: Branch }) {
 function SubNode({ label, sublabel, branches, indent, dotColor }: {
   label: string; sublabel?: string; branches: Branch[]; indent: number; dotColor?: string;
 }) {
+  const t = useT(COST);
   const [open, setOpen] = useState(false);
   const cost = branches.reduce((s, b) => s + b.total_cost_usd, 0);
   const calls = branches.reduce((s, b) => s + b.call_count, 0);
@@ -322,8 +340,8 @@ function SubNode({ label, sublabel, branches, indent, dotColor }: {
         {dotColor && <span style={{ width: 8, height: 8, borderRadius: "50%", background: dotColor, flexShrink: 0 }} />}
         <span style={{ fontFamily: mono, fontSize: 12.5, color: A.ink2, fontWeight: 600 }}>{label}</span>
         {sublabel && <span style={{ fontSize: 11, color: A.muted2 }}>{sublabel}</span>}
-        <span style={{ fontSize: 11.5, color: A.muted2 }}>{fmtInt(calls)} calls</span>
-        {tok > 0 && <span style={{ fontSize: 11, color: A.muted2, fontFamily: mono }}>{fmtUsd(perK)}/1K</span>}
+        <span style={{ fontSize: 11.5, color: A.muted2 }}>{t("calls", fmtInt(calls))}</span>
+        {tok > 0 && <span style={{ fontSize: 11, color: A.muted2, fontFamily: mono }}>{t("perK", fmtUsd(perK))}</span>}
         <span style={{ fontSize: 11.5, color: A.ink3, marginLeft: "auto", fontFamily: mono }}>{fmtUsd(cost)}</span>
       </button>
       {open && branches.map((b, i) => <StageLeaf key={`${b.stage}-${b.tenant_label}-${b.account}-${i}`} b={b} />)}
@@ -337,7 +355,8 @@ function TopGroup({ label, sublabel, dotColor, branches, groupBy }: {
   groupBy: "account" | "tenant";
 }) {
   const [open, setOpen] = useState(true);
-  const dir = useAwsAccounts();
+  const t = useT(COST);
+  const names = useAcctNames();
   const cost = branches.reduce((s, b) => s + b.total_cost_usd, 0);
   const calls = branches.reduce((s, b) => s + b.call_count, 0);
   // second-level key: if grouped by account -> break down by model; if by tenant -> by account
@@ -359,7 +378,7 @@ function TopGroup({ label, sublabel, dotColor, branches, groupBy }: {
         {open ? <ChevronDown size={15} color={A.ink} /> : <ChevronRight size={15} color={A.ink} />}
         {dotColor && <span style={{ width: 9, height: 9, borderRadius: "50%", background: dotColor, flexShrink: 0 }} />}
         <span style={{ fontFamily: serif, fontSize: 14.5, color: A.ink, fontWeight: 500 }}>{label}</span>
-        <span style={{ fontSize: 12, color: A.muted2 }}>{sublabel} · {fmtInt(calls)} calls · {sub.size} {groupBy === "account" ? "model" : "account"}(s)</span>
+        <span style={{ fontSize: 12, color: A.muted2 }}>{t("groupSub", sublabel, fmtInt(calls), sub.size, groupBy === "account")}</span>
         <span style={{ fontSize: 13, color: A.ink2, marginLeft: "auto", fontFamily: mono, fontWeight: 600 }}>{fmtUsd(cost)}</span>
       </button>
       {open && (
@@ -367,7 +386,7 @@ function TopGroup({ label, sublabel, dotColor, branches, groupBy }: {
           {[...sub.entries()].map(([k, bs]) => (
             <SubNode
               key={k}
-              label={groupBy === "account" ? k : acctShort(k, dir)}
+              label={groupBy === "account" ? k : names.short(k)}
               dotColor={groupBy === "tenant" ? ACCOUNT_COLOR[k] : undefined}
               branches={bs}
               indent={38}
@@ -384,7 +403,8 @@ function TopGroup({ label, sublabel, dotColor, branches, groupBy }: {
 function Bar({ rows, total, colorOf }: {
   rows: { key: string; label: string; cost: number }[]; total: number; colorOf: (k: string) => string;
 }) {
-  if (rows.length === 0) return <div style={{ color: A.muted2, fontSize: 13 }}>No spend yet.</div>;
+  const t = useT(COST);
+  if (rows.length === 0) return <div style={{ color: A.muted2, fontSize: 13 }}>{t("noSpendYet")}</div>;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       {rows.map(r => {
@@ -413,6 +433,8 @@ function Bar({ rows, total, colorOf }: {
 function FallbackModal({ tenantId, tenantLabel, rangeQs, rangeLabel, onClose }: {
   tenantId: string | null; tenantLabel: string | null; rangeQs: string; rangeLabel: string; onClose: () => void;
 }) {
+  const t = useT(COST);
+  const { formatDateTime } = useFormat();
   const [calls, setCalls] = useState<CallRow[] | null>(null);
   const [err, setErr] = useState("");
   useEffect(() => {
@@ -423,8 +445,8 @@ function FallbackModal({ tenantId, tenantLabel, rangeQs, rangeLabel, onClose }: 
     fetch(`/api/admin/llm-usage/calls?${qs.toString()}`)
       .then(r => r.ok ? r.json() : Promise.reject(r.status))
       .then(d => setCalls(d.calls))
-      .catch(() => setErr("Failed to load fallback calls"));
-  }, [tenantId, rangeQs]);
+      .catch(() => setErr(t("loadFallbackError")));
+  }, [tenantId, rangeQs, t]);
   return (
     <div onClick={onClose} style={{
       position: "fixed", inset: 0, background: "rgba(31,41,51,0.45)", zIndex: 1000,
@@ -436,24 +458,24 @@ function FallbackModal({ tenantId, tenantLabel, rangeQs, rangeLabel, onClose }: 
       }}>
         <div style={{ display: "flex", alignItems: "center", padding: "16px 20px", borderBottom: `1px solid ${A.line}`, position: "sticky", top: 0, background: A.card }}>
           <div>
-            <div style={{ fontFamily: serif, fontSize: 16, color: A.ink, fontWeight: 500 }}>Fallback calls</div>
+            <div style={{ fontFamily: serif, fontSize: 16, color: A.ink, fontWeight: 500 }}>{t("fallbackCalls")}</div>
             <div style={{ fontSize: 11.5, color: A.muted2 }}>
-              {tenantLabel ? `Tenant: ${tenantLabel}` : "All tenants"} · {rangeLabel} · calls that fell back to another model in the route or to GPT
+              {tenantLabel ? t("tenantIs", tenantLabel) : t("allTenants")} · {rangeLabel} · {t("fallbackSub")}
             </div>
           </div>
-          <Btn size="sm" variant="ghost" onClick={onClose} style={{ marginLeft: "auto" }}>Close</Btn>
+          <Btn size="sm" variant="ghost" onClick={onClose} style={{ marginLeft: "auto" }}>{t("close")}</Btn>
         </div>
         <div style={{ padding: "0 4px" }}>
           {err && <div style={{ color: A.red, fontSize: 13, padding: 24 }}>{err}</div>}
-          {!err && calls == null && <LoadingScreen msg="Loading fallback calls…" />}
+          {!err && calls == null && <LoadingScreen msg={t("loadingFallback")} />}
           {!err && calls != null && calls.length === 0 && (
-            <div style={{ color: A.muted, fontSize: 13, padding: 32, textAlign: "center" }}>No fallback calls in range — every call ran on its primary account.</div>
+            <div style={{ color: A.muted, fontSize: 13, padding: 32, textAlign: "center" }}>{t("noFallback")}</div>
           )}
           {!err && calls != null && calls.length > 0 && (
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead><tr>
-                <th style={TH}>When</th><th style={TH}>Stage</th><th style={TH}>Model</th>
-                <th style={TH}>Account</th><th style={{ ...TH, textAlign: "right" }}>Cost</th><th style={TH}>Stop</th>
+                <th style={TH}>{t("colWhen")}</th><th style={TH}>{t("colStage")}</th><th style={TH}>{t("colModel")}</th>
+                <th style={TH}>{t("colAccount")}</th><th style={{ ...TH, textAlign: "right" }}>{t("colCost")}</th><th style={TH}>{t("colStop")}</th>
               </tr></thead>
               <tbody>
                 {calls.map(c => (
@@ -478,9 +500,9 @@ function FallbackModal({ tenantId, tenantLabel, rangeQs, rangeLabel, onClose }: 
 // ═══════════════════════ PAGE ═══════════════════════════════════════════════
 
 const TABS = [
-  { key: "overview", label: "Overview" }, { key: "llm", label: "LLM" }, { key: "dfs", label: "DataForSEO" },
-  { key: "aws", label: "AWS bill" }, { key: "jev", label: "Jev" }, { key: "budgets", label: "Budgets" },
-];
+  { key: "overview", label: "tabOverview" }, { key: "llm", label: "tabLlm" }, { key: "dfs", label: "tabDfs" },
+  { key: "aws", label: "tabAws" }, { key: "jev", label: "tabJev" }, { key: "budgets", label: "tabBudgets" },
+] as const;
 // Tabs that load their own data (the page's spend fetch, its loading and error states do not apply).
 const SELF_LOADING_TABS = new Set(["budgets", "jev"]);
 
@@ -494,9 +516,13 @@ export default function CostOperationsPage() {
 }
 
 function CostOperationsInner() {
+  const t = useT(COST);
+  const { formatDate, formatDateTime } = useFormat();
+  const names = useAcctNames();
   const wanted = useSearchParams().get("tab");
   const [days, setDays] = useState(30);
-  const [tab, setTab] = useState(() => (TABS.some(t => t.key === wanted) ? wanted! : "overview"));
+  const [tab, setTab] = useState<string>(() => (TABS.some(x => x.key === wanted) ? wanted! : "overview"));
+  const tabs = useMemo(() => TABS.map(x => ({ key: x.key, label: t(x.label) })), [t]);
   const [branches, setBranches] = useState<Branch[] | null>(null);
   const [dfs, setDfs] = useState<{ summary: DfsSummary; branches: DfsBranch[] } | null>(null);
   const [countries, setCountries] = useState<DfsCountry[] | null>(null);
@@ -512,7 +538,6 @@ function CostOperationsInner() {
   const [tenantFilter, setTenantFilter] = useState<string | null>(null);
   const [acctFilter, setAcctFilter] = useState<string | null>(null);
   const [groupBy, setGroupBy] = useState<"account" | "tenant">("tenant");
-  const awsAccounts = useAwsAccounts();
   // AA-622 fallback drill-down: {tenantId, label} when open (tenantId null = all tenants)
   const [fbModal, setFbModal] = useState<{ tenantId: string | null; label: string | null } | null>(null);
 
@@ -530,7 +555,7 @@ function CostOperationsInner() {
   const [draftStart, setDraftStart] = useState("");
   const [draftEnd, setDraftEnd] = useState("");
   const rangeQs = custom ? `start=${custom.start}&end=${custom.end}` : `days=${days}`;
-  const rangeLabel = custom ? `${custom.start} → ${custom.end}` : `last ${days} days`;
+  const rangeLabel = custom ? `${custom.start} → ${custom.end}` : t("lastDays", days);
   const windowDays = custom ? custom.days : days;
   // Days the window spans (a custom window: start to end, inclusive), for the DFS runs time match (max 31 days).
   const windowSpanDays = custom
@@ -569,9 +594,9 @@ function CostOperationsInner() {
         setCostExplorer(ce ?? null);
         setError("");
       })
-      .catch(() => setError("Failed to load spend data"))
+      .catch(() => setError(t("loadError")))
       .finally(() => setLoading(false));
-  }, []);
+  }, [t]);
 
   // AA-623 — manually trigger a fresh AWS Cost Explorer fetch (admin-secret gated on the BFF
   // proxy), then reload the stored snapshot. Mirrors the loading-flag + inline-message pattern
@@ -585,15 +610,15 @@ function CostOperationsInner() {
         const errCount = Object.keys(result.errors || {}).length;
         setCeCheckMsg(
           errCount > 0
-            ? `Fetched ${result.row_count} rows, ${errCount} account(s) failed (see logs).`
-            : `Fetched ${result.row_count} rows from AWS.`
+            ? t("ceFetchedErrors", result.row_count, errCount)
+            : t("ceFetched", result.row_count)
         );
         return fetch(`/api/admin/cost-explorer?${rangeQs}`).then(r => r.ok ? r.json() : null).catch(() => null);
       })
       .then((ce) => setCostExplorer(ce ?? null))
-      .catch(() => setCeCheckMsg("Refresh failed — check server logs."))
+      .catch(() => setCeCheckMsg(t("ceRefreshFailed")))
       .finally(() => setCeChecking(false));
-  }, [rangeQs]);
+  }, [rangeQs, t]);
   // eslint-disable-next-line react-hooks/set-state-in-effect -- initial + range-change fetch, same pattern as every admin page
   useEffect(() => { load(rangeQs); }, [rangeQs, load]);
 
@@ -636,10 +661,10 @@ function CostOperationsInner() {
   const spendByAccount = useMemo(() => {
     const m = new Map<string, number>();
     for (const b of llm) { const ak = acctKey(b); m.set(ak, (m.get(ak) ?? 0) + b.total_cost_usd); }
-    const rows = [...m.entries()].map(([key, cost]) => ({ key, label: acctLong(key, awsAccounts), cost }));
-    if (dfsCost > 0) rows.push({ key: "dfs", label: "DataForSEO (3rd-party)", cost: dfsCost });
+    const rows = [...m.entries()].map(([key, cost]) => ({ key, label: names.long(key), cost }));
+    if (dfsCost > 0) rows.push({ key: "dfs", label: t("dfsThirdParty"), cost: dfsCost });
     return rows.sort((a, b) => b.cost - a.cost);
-  }, [llm, dfsCost, awsAccounts]);
+  }, [llm, dfsCost, names, t]);
   // AA-623 — Cost Explorer per account, Bedrock vs infra, next to the token estimate for the same
   // account. Only Bedrock-on-AWS estimate is comparable: OpenAI/legacy rows never hit an AWS bill.
   const ceByAccount = useMemo(() => {
@@ -651,10 +676,10 @@ function CostOperationsInner() {
     return (costExplorer?.accounts ?? []).map(a => {
       const key = ceKey(a);
       // The account ID with its role; the retired account without its ID (AA-998); an unresolved key its raw ID.
-      const label = a.account_key ? accountLabel(a.account_key, awsAccounts) : a.account_id;
+      const label = a.account_key ? names.label(a.account_key) : a.account_id;
       return { ...a, key, label, estimated: estByAcct.get(key) ?? 0 };
     });
-  }, [costExplorer, allBranches, awsAccounts]);
+  }, [costExplorer, allBranches, names]);
   const bedrockEstimated = ceByAccount.reduce((s, r) => s + r.estimated, 0);
   const ceTopServices = useMemo(() => (costExplorer?.services ?? []).slice(0, 10), [costExplorer]);
   // Stored CE days only cover windows someone clicked "Refresh from AWS" for — flag gaps.
@@ -717,22 +742,22 @@ function CostOperationsInner() {
   return (
       <AdminMain>
         <PageHeader
-          title="Cost Operations"
-          description="What the platform spends — LLM, DataForSEO, Jev and the AWS bill — against budget"
+          title={t("title")}
+          description={t("description")}
           actions={
             <>
               {DAY_OPTIONS.map(d => (
                 <Btn key={d} size="sm" variant={!custom && days === d ? "primary" : "secondary"}
-                     onClick={() => { setCustom(null); setDays(d); }}>{d} days</Btn>
+                     onClick={() => { setCustom(null); setDays(d); }}>{t("days", d)}</Btn>
               ))}
               <span style={{ width: 1, height: 20, background: A.line, margin: "0 4px" }} />
-              <input type="date" value={draftStart} onChange={e => setDraftStart(e.target.value)} aria-label="From (UTC)"
+              <input type="date" value={draftStart} onChange={e => setDraftStart(e.target.value)} aria-label={t("fromUtc")}
                      style={{ ...DATE_INPUT, borderColor: custom ? A.ink3 : A.line }} />
               <span style={{ fontSize: 12, color: A.muted }}>→</span>
-              <input type="date" value={draftEnd} onChange={e => setDraftEnd(e.target.value)} aria-label="To (UTC, inclusive; empty = today)"
+              <input type="date" value={draftEnd} onChange={e => setDraftEnd(e.target.value)} aria-label={t("toUtc")}
                      style={{ ...DATE_INPUT, borderColor: custom ? A.ink3 : A.line }} />
               <Btn size="sm" variant={custom ? "primary" : "secondary"} onClick={applyCustom}
-                   disabled={!draftStart || (!!draftEnd && draftStart > draftEnd)}>Apply</Btn>
+                   disabled={!draftStart || (!!draftEnd && draftStart > draftEnd)}>{t("apply")}</Btn>
             </>
           }
         />
@@ -742,28 +767,28 @@ function CostOperationsInner() {
           <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "center" }}>
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
               <Building2 size={14} color={A.muted} />
-              <span style={{ fontSize: 12, color: A.muted, marginRight: 4 }}>Tenant</span>
+              <span style={{ fontSize: 12, color: A.muted, marginRight: 4 }}>{t("tenant")}</span>
               <select value={tenantFilter ?? ""} onChange={e => setTenantFilter(e.target.value || null)}
                 style={{ fontSize: 12.5, padding: "5px 8px", borderRadius: 7, border: `1px solid ${A.line}`, background: A.card, color: A.ink2, fontFamily: sans, cursor: "pointer" }}>
-                <option value="">All tenants</option>
-                {tenantOptions.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+                <option value="">{t("allTenants")}</option>
+                {tenantOptions.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
               </select>
             </div>
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <span style={{ fontSize: 12, color: A.muted, marginRight: 2 }}>Account</span>
-              <Btn size="sm" variant={acctFilter === null ? "primary" : "secondary"} onClick={() => setAcctFilter(null)}>All</Btn>
+              <span style={{ fontSize: 12, color: A.muted, marginRight: 2 }}>{t("account")}</span>
+              <Btn size="sm" variant={acctFilter === null ? "primary" : "secondary"} onClick={() => setAcctFilter(null)}>{t("all")}</Btn>
               {acctOptions.map(a => (
-                <Btn key={a} size="sm" variant={acctFilter === a ? "primary" : "secondary"} onClick={() => setAcctFilter(a)}>{acctShort(a, awsAccounts)}</Btn>
+                <Btn key={a} size="sm" variant={acctFilter === a ? "primary" : "secondary"} onClick={() => setAcctFilter(a)}>{names.short(a)}</Btn>
               ))}
             </div>
             {filterActive && (
-              <Btn size="sm" variant="ghost" onClick={() => { setTenantFilter(null); setAcctFilter(null); }}>Clear</Btn>
+              <Btn size="sm" variant="ghost" onClick={() => { setTenantFilter(null); setAcctFilter(null); }}>{t("clear")}</Btn>
             )}
           </div>
         </Card>
 
         <div style={{ marginBottom: 20 }}>
-          <TabBar tabs={TABS} active={tab} onChange={setTab} />
+          <TabBar tabs={tabs} active={tab} onChange={setTab} />
         </div>
 
         {/* AA-627 — low DFS balance banner (all tabs). The daily check writes the snapshot; this
@@ -773,11 +798,10 @@ function CostOperationsInner() {
             <div style={{ display: "flex", alignItems: "center", gap: 10, color: A.red, fontSize: 13.5, fontWeight: 600 }}>
               <AlertTriangle size={16} style={{ flexShrink: 0 }} />
               <span>
-                DataForSEO balance is low: {fmtUsd2(dfsBalance.balance_usd ?? 0)}
-                {" "}(threshold {fmtUsd2(dfsBalance.threshold_usd)}). Top up the account to avoid SEO fetch failures (HTTP 402).
+                {t("dfsLowA", fmtUsd2(dfsBalance.balance_usd ?? 0), fmtUsd2(dfsBalance.threshold_usd))}
                 {dfsBalance.fetched_at && (
                   <span style={{ fontWeight: 400, color: A.muted, marginLeft: 6 }}>
-                    · as of {formatDateTime(dfsBalance.fetched_at)}
+                    {t("asOf", formatDateTime(dfsBalance.fetched_at))}
                   </span>
                 )}
               </span>
@@ -790,11 +814,11 @@ function CostOperationsInner() {
         {/* AA-665 C1 — Jev spend and credit from the Jev Decisions endpoints; the page's window (max 90 days) applies. */}
         {tab === "jev" && <JevPanel days={windowDays} />}
 
-        {!SELF_LOADING_TABS.has(tab) && loading && <LoadingScreen msg="Loading spend…" />}
+        {!SELF_LOADING_TABS.has(tab) && loading && <LoadingScreen msg={t("loadingSpend")} />}
         {!SELF_LOADING_TABS.has(tab) && !loading && error && (
           <Card style={{ textAlign: "center", padding: 40 }}>
             <div style={{ color: A.red, marginBottom: 12 }}>{error}</div>
-            <Btn variant="secondary" onClick={() => load(rangeQs)}>Retry</Btn>
+            <Btn variant="secondary" onClick={() => load(rangeQs)}>{t("retry")}</Btn>
           </Card>
         )}
 
@@ -806,16 +830,16 @@ function CostOperationsInner() {
                 {/* AA-665 C3 — this month's forecast vs budget (its own fetch; the date window does not apply). */}
                 <ForecastPanel />
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))", gap: 14, marginBottom: 20 }}>
-                  <StatCard label="Total external spend" value={fmtUsd2(totalSpend)} sub={`${rangeLabel} · LLM + DFS${filterActive ? " · filtered" : ""}`} icon={<Wallet size={16} />} />
-                  <StatCard label="LLM cost" value={fmtUsd2(llmCost)} sub={`${fmtInt(llmCalls)} calls · ${fmtInt(llmTokens)} tok`} accent={A.gold} icon={<Cpu size={16} />} />
-                  <StatCard label="DataForSEO cost" value={fmtUsd2(dfsCost)} sub={`${fmtInt(dfsCalls)} calls · ${pct(dfsCacheRate)} cache`} accent={A.green} icon={<Search size={16} />} />
-                  <StatCard label="Tenants active" value={fmtInt(spendByTenant.length)} sub={`${fmtInt(llmFallback)} fallback · ${fmtInt(llmTruncated)} truncated`} accent={A.accent} icon={<Building2 size={16} />} />
+                  <StatCard label={t("totalSpend")} value={fmtUsd2(totalSpend)} sub={t("totalSpendSub", rangeLabel, !!filterActive)} icon={<Wallet size={16} />} />
+                  <StatCard label={t("llmCost")} value={fmtUsd2(llmCost)} sub={t("callsTok", fmtInt(llmCalls), fmtInt(llmTokens))} accent={A.gold} icon={<Cpu size={16} />} />
+                  <StatCard label={t("dfsCostLong")} value={fmtUsd2(dfsCost)} sub={t("callsCache", fmtInt(dfsCalls), pct(dfsCacheRate))} accent={A.green} icon={<Search size={16} />} />
+                  <StatCard label={t("tenantsActive")} value={fmtInt(spendByTenant.length)} sub={t("fbTrunc", fmtInt(llmFallback), fmtInt(llmTruncated))} accent={A.accent} icon={<Building2 size={16} />} />
                 </div>
 
                 <Card style={{ marginBottom: 20 }}>
-                  <SLabel>Daily spend trend (LLM + DFS)</SLabel>
+                  <SLabel>{t("trend")}</SLabel>
                   {trend.length === 0 ? (
-                    <div style={{ color: A.muted2, fontSize: 13, padding: "30px 0", textAlign: "center" }}>No spend in {rangeLabel}.</div>
+                    <div style={{ color: A.muted2, fontSize: 13, padding: "30px 0", textAlign: "center" }}>{t("noSpendIn", rangeLabel)}</div>
                   ) : (
                     <ResponsiveContainer width="100%" height={240}>
                       <AreaChart data={trend} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
@@ -829,30 +853,30 @@ function CostOperationsInner() {
                       </AreaChart>
                     </ResponsiveContainer>
                   )}
-                  <div style={{ fontSize: 11, color: A.muted2, marginTop: 6 }}>Note: trend is platform-wide (not filtered).</div>
+                  <div style={{ fontSize: 11, color: A.muted2, marginTop: 6 }}>{t("trendNote")}</div>
                 </Card>
 
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))", gap: 20, marginBottom: 20 }}>
                   <Card>
-                    <SLabel>Spend by tenant</SLabel>
+                    <SLabel>{t("spendByTenant")}</SLabel>
                     <Bar rows={spendByTenant} total={spendByTenant.reduce((s, r) => s + r.cost, 0)} colorOf={() => A.accent} />
                   </Card>
                   <Card>
-                    <SLabel>Spend by account</SLabel>
+                    <SLabel>{t("spendByAccount")}</SLabel>
                     <Bar rows={spendByAccount} total={totalSpend} colorOf={(k) => k === "dfs" ? A.green : (ACCOUNT_COLOR[k] ?? A.muted)} />
                   </Card>
                 </div>
 
                 <Card style={{ marginBottom: 20 }}>
-                  <SLabel>Top stages by cost</SLabel>
+                  <SLabel>{t("topStages")}</SLabel>
                   {stageRanking.length === 0 ? (
-                    <div style={{ color: A.muted2, fontSize: 13 }}>No LLM calls yet.</div>
+                    <div style={{ color: A.muted2, fontSize: 13 }}>{t("noLlmYet")}</div>
                   ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                       {stageRanking.map(s => (
                         <div key={s.stage} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
                           <span style={{ fontFamily: mono, color: A.ink2, minWidth: 160 }}>{s.stage}</span>
-                          <span style={{ color: A.muted2 }}>{fmtInt(s.calls)} calls</span>
+                          <span style={{ color: A.muted2 }}>{t("calls", fmtInt(s.calls))}</span>
                           <span style={{ marginLeft: "auto", fontFamily: mono, color: A.ink3 }}>{fmtUsd(s.cost)}</span>
                         </div>
                       ))}
@@ -861,11 +885,10 @@ function CostOperationsInner() {
                 </Card>
 
                 <Card dark>
-                  <SLabel light>Reconcile note</SLabel>
+                  <SLabel light>{t("reconcile")}</SLabel>
                   <div style={{ fontSize: 12.5, color: "rgba(255,255,255,0.75)", lineHeight: 1.6 }}>
-                    Computed from per-call cost in <code style={{ fontFamily: mono }}>llm_call_log</code> + <code style={{ fontFamily: mono }}>dfs_call_log</code> — NOT the AWS invoice.
-                    Claude on Bedrock runs on the LLM account (<b>{accountName(LLM_ACCOUNT, awsAccounts)}</b>); the main infrastructure account ({accountName(MAIN_ACCOUNT, awsAccounts)}) only calls non-Claude Bedrock models (Cohere Embed / Palmyra). DataForSEO is 3rd-party (never in Cost Explorer).
-                    See the AWS bill tab for the reconciliation against the real AWS invoice.
+                    {t("reconcileA")} <code style={{ fontFamily: mono }}>llm_call_log</code> + <code style={{ fontFamily: mono }}>dfs_call_log</code>{" "}
+                    {t("reconcileB")}<b>{names.name(LLM_ACCOUNT)}</b>{t("reconcileC")}{names.name(MAIN_ACCOUNT)}{t("reconcileD")}
                   </div>
                 </Card>
               </>
@@ -879,54 +902,54 @@ function CostOperationsInner() {
                     itself costs ~$0.01/request); "Refresh from AWS" triggers a fresh fetch on demand. */}
                 <Card style={{ marginBottom: 20 }}>
                   <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 10 }}>
-                    <SLabel style={{ marginBottom: 0 }}>AWS actual (Cost Explorer) vs estimated (token)</SLabel>
+                    <SLabel style={{ marginBottom: 0 }}>{t("awsVsEst")}</SLabel>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                       {ceCheckMsg && <span style={{ fontSize: 11.5, color: A.muted2 }}>{ceCheckMsg}</span>}
                       <Btn size="sm" variant="secondary" onClick={runCostExplorerCheck} disabled={ceChecking}>
-                        {ceChecking ? "Refreshing…" : "Refresh from AWS"}
+                        {ceChecking ? t("refreshing") : t("refreshAws")}
                       </Btn>
                     </div>
                   </div>
 
                   {!costExplorer?.has_data ? (
                     <div style={{ color: A.muted2, fontSize: 13, padding: "16px 0", textAlign: "center" }}>
-                      No stored Cost Explorer data for {rangeLabel}. Click &quot;Refresh from AWS&quot; to fetch this window.
+                      {t("noCeData", rangeLabel)}
                     </div>
                   ) : (
                     <>
                       {ceGap && (
                         <div style={{ fontSize: 12, color: A.amber, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
-                          <AlertTriangle size={13} style={{ flexShrink: 0 }} /> Stored AWS data only covers {ceGap} of this window — click &quot;Refresh from AWS&quot; to fill it.
+                          <AlertTriangle size={13} style={{ flexShrink: 0 }} /> {t("ceGap", ceGap)}
                         </div>
                       )}
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14, marginBottom: 14 }}>
                         <StatCard
-                          label="Bedrock actual (AWS bill)"
+                          label={t("bedrockActual")}
                           value={fmtUsd2(costExplorer.bedrock_usd ?? 0)}
-                          sub={costExplorer.fetched_at ? `CE · as of ${formatDateTime(costExplorer.fetched_at)}` : "CE"}
+                          sub={costExplorer.fetched_at ? t("ceAsOf", formatDateTime(costExplorer.fetched_at)) : "CE"}
                           accent={A.gold}
                         />
                         <StatCard
-                          label="Bedrock estimated (token)"
+                          label={t("bedrockEstimated")}
                           value={fmtUsd2(bedrockEstimated)}
-                          sub={`${rangeLabel} · llm_call_log Bedrock accounts only`}
+                          sub={t("bedrockEstSub", rangeLabel)}
                           accent={A.ink3}
                         />
                         <StatCard
-                          label="AWS infra (non-Bedrock)"
+                          label={t("awsInfra")}
                           value={fmtUsd2((costExplorer.total_usd ?? 0) - (costExplorer.bedrock_usd ?? 0))}
-                          sub={`total AWS ${fmtUsd2(costExplorer.total_usd ?? 0)} · ECS/RDS/ELB/…`}
+                          sub={t("awsInfraSub", fmtUsd2(costExplorer.total_usd ?? 0))}
                           accent={A.muted}
                         />
                       </div>
                       <div style={{ overflowX: "auto" }}>
                         <table style={{ width: "100%", borderCollapse: "collapse" }}>
                           <thead><tr>
-                            <th style={TH}>Account</th>
-                            <th style={{ ...TH, textAlign: "right" }}>Bedrock actual</th>
-                            <th style={{ ...TH, textAlign: "right" }}>Bedrock estimated</th>
-                            <th style={{ ...TH, textAlign: "right" }}>Infra / other</th>
-                            <th style={{ ...TH, textAlign: "right" }}>Account total</th>
+                            <th style={TH}>{t("colAccount")}</th>
+                            <th style={{ ...TH, textAlign: "right" }}>{t("colBedrockActual")}</th>
+                            <th style={{ ...TH, textAlign: "right" }}>{t("colBedrockEst")}</th>
+                            <th style={{ ...TH, textAlign: "right" }}>{t("colInfra")}</th>
+                            <th style={{ ...TH, textAlign: "right" }}>{t("colAccountTotal")}</th>
                           </tr></thead>
                           <tbody>
                             {ceByAccount.map(r => (
@@ -943,11 +966,11 @@ function CostOperationsInner() {
                       </div>
                       {ceTopServices.length > 0 && (
                         <details style={{ marginTop: 10 }}>
-                          <summary style={{ fontSize: 12, color: A.muted, cursor: "pointer" }}>Top AWS services in this window</summary>
+                          <summary style={{ fontSize: 12, color: A.muted, cursor: "pointer" }}>{t("topServices")}</summary>
                           <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 8 }}>
                             {ceTopServices.map(s => (
                               <div key={`${s.account_id}-${s.service}`} style={{ display: "flex", gap: 8, fontSize: 12 }}>
-                                <span style={{ color: A.muted2, minWidth: 44, fontFamily: mono }}>{ceName(s, awsAccounts)}</span>
+                                <span style={{ color: A.muted2, minWidth: 44, fontFamily: mono }}>{ceName(s, names.name)}</span>
                                 <span style={{ color: s.is_bedrock ? A.gold : A.ink2 }}>{s.service}</span>
                                 <span style={{ marginLeft: "auto", fontFamily: mono, color: A.ink3 }}>{fmtUsd2(s.amount_usd)}</span>
                               </div>
@@ -956,9 +979,7 @@ function CostOperationsInner() {
                         </details>
                       )}
                       <div style={{ fontSize: 11, color: A.muted2, marginTop: 8 }}>
-                        Compare the Bedrock columns only: Cost Explorer bills whole accounts, and the main infrastructure
-                        account ({accountName(MAIN_ACCOUNT, awsAccounts)}) runs the infrastructure too (native Claude is blocked there — its Bedrock line is Cohere Embed / Palmyra only). CE days are UTC and the
-                        latest ~24h is still being finalized. OpenAI and DataForSEO are not AWS and never appear here.
+                        {t("ceNoteA")}{names.name(MAIN_ACCOUNT)}{t("ceNoteB")}
                       </div>
                     </>
                   )}
@@ -971,51 +992,51 @@ function CostOperationsInner() {
             {tab === "llm" && (
               <>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 160px), 1fr))", gap: 14, marginBottom: 18 }}>
-                  <StatCard label="LLM cost" value={fmtUsd2(llmCost)} sub={filterActive ? "filtered" : rangeLabel} accent={A.gold} />
-                  <StatCard label="Calls" value={fmtInt(llmCalls)} sub={`${fmtInt(llmTokens)} tokens`} />
-                  <StatCard label="Pass rate" value={okElig > 0 ? pct(okCount / okElig) : "—"} sub={okElig > 0 ? `${okCount}/${okElig}` : "no signal"} />
+                  <StatCard label={t("llmCost")} value={fmtUsd2(llmCost)} sub={filterActive ? t("filtered") : rangeLabel} accent={A.gold} />
+                  <StatCard label={t("colCalls")} value={fmtInt(llmCalls)} sub={t("tokens", fmtInt(llmTokens))} />
+                  <StatCard label={t("passRate")} value={okElig > 0 ? pct(okCount / okElig) : "—"} sub={okElig > 0 ? `${okCount}/${okElig}` : t("noSignal")} />
                   <div onClick={() => llmFallback > 0 && setFbModal({ tenantId: tenantFilter, label: tenantLabelOf(tenantFilter) })}
-                       style={{ cursor: llmFallback > 0 ? "pointer" : "default" }} title={llmFallback > 0 ? "View fallback calls" : undefined}>
-                    <StatCard label="Fallback ▸" value={llmCalls > 0 ? pct(llmFallback / llmCalls) : "—"} sub={`${fmtInt(llmFallback)} route / GPT fallback`} accent={A.amber} />
+                       style={{ cursor: llmFallback > 0 ? "pointer" : "default" }} title={llmFallback > 0 ? t("viewFallbackCalls") : undefined}>
+                    <StatCard label={t("fallbackStat")} value={llmCalls > 0 ? pct(llmFallback / llmCalls) : "—"} sub={t("fallbackSubStat", fmtInt(llmFallback))} accent={A.amber} />
                   </div>
-                  <StatCard label="Truncated" value={llmCalls > 0 ? pct(llmTruncated / llmCalls) : "—"} sub={`${fmtInt(llmTruncated)} max_tokens`} accent={A.red} />
+                  <StatCard label={t("truncated")} value={llmCalls > 0 ? pct(llmTruncated / llmCalls) : "—"} sub={t("truncatedSub", fmtInt(llmTruncated))} accent={A.red} />
                 </div>
 
                 <Card style={{ marginBottom: 18, padding: 0, overflow: "hidden" }}>
-                  <div style={{ padding: "14px 18px" }}><SLabel style={{ marginBottom: 0 }}>Spend by tenant{acctFilter ? ` · ${acctShort(acctFilter, awsAccounts)}` : ""}</SLabel></div>
+                  <div style={{ padding: "14px 18px" }}><SLabel style={{ marginBottom: 0 }}>{t("spendByTenant")}{acctFilter ? ` · ${names.short(acctFilter)}` : ""}</SLabel></div>
                   <div style={{ padding: "0 18px 16px" }}>
                     <TenantSpendTable branches={llm} onFallbackClick={(tid, label) => setFbModal({ tenantId: tid, label })} />
                   </div>
                 </Card>
 
                 <div style={{ display: "flex", gap: 6, marginBottom: 12, alignItems: "center" }}>
-                  <span style={{ fontSize: 12, color: A.muted }}>Group by</span>
-                  <Btn size="sm" variant={groupBy === "tenant" ? "primary" : "secondary"} onClick={() => setGroupBy("tenant")}>Tenant → Account → Model</Btn>
-                  <Btn size="sm" variant={groupBy === "account" ? "primary" : "secondary"} onClick={() => setGroupBy("account")}>Account → Model → Stage</Btn>
+                  <span style={{ fontSize: 12, color: A.muted }}>{t("groupBy")}</span>
+                  <Btn size="sm" variant={groupBy === "tenant" ? "primary" : "secondary"} onClick={() => setGroupBy("tenant")}>{t("groupTenant")}</Btn>
+                  <Btn size="sm" variant={groupBy === "account" ? "primary" : "secondary"} onClick={() => setGroupBy("account")}>{t("groupAccount")}</Btn>
                 </div>
 
                 {llmTree.length === 0 ? (
-                  <Card style={{ textAlign: "center", padding: 40 }}><div style={{ color: A.muted, fontSize: 13 }}>No LLM calls match the filter.</div></Card>
+                  <Card style={{ textAlign: "center", padding: 40 }}><div style={{ color: A.muted, fontSize: 13 }}>{t("noLlmFilter")}</div></Card>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                     {llmTree.map(([k, bs]) => {
                       const isAcct = groupBy === "account";
-                      const label = isAcct ? acctLong(k, awsAccounts) : (bs[0]?.tenant_label ?? k);
+                      const label = isAcct ? names.long(k) : (bs[0]?.tenant_label ?? k);
                       const dot = isAcct ? (ACCOUNT_COLOR[k] ?? A.muted) : A.accent;
-                      const sublabel = isAcct ? "account" : "tenant";
+                      const sublabel = isAcct ? t("subAccount") : t("subTenant");
                       return <TopGroup key={k} label={label} sublabel={sublabel} dotColor={dot} branches={bs} groupBy={groupBy} />;
                     })}
                   </div>
                 )}
 
                 <Card style={{ marginTop: 20 }}>
-                  <SLabel>Current model config (Settings → LLM Models)</SLabel>
+                  <SLabel>{t("modelConfig")}</SLabel>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", gap: "6px 24px" }}>
                     {(configs ?? []).map(c => (
                       <div key={c.stage} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, padding: "5px 0", borderBottom: `1px solid ${A.line2}` }}>
                         <span style={{ fontFamily: mono, color: A.ink2, minWidth: 150 }}>{c.stage}</span>
                         <Badge color={ROLE_COLOR[c.role] ?? "gray"}>{c.role}</Badge>
-                        <span style={{ marginLeft: "auto", fontFamily: mono, color: A.ink3 }}>{c.model_id}{c.account_route ? ` · ${accountName(c.account_route, awsAccounts)}` : ""}</span>
+                        <span style={{ marginLeft: "auto", fontFamily: mono, color: A.ink3 }}>{c.model_id}{c.account_route ? ` · ${names.name(c.account_route)}` : ""}</span>
                       </div>
                     ))}
                   </div>
@@ -1029,39 +1050,39 @@ function CostOperationsInner() {
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 150px), 1fr))", gap: 14, marginBottom: 18 }}>
                   {/* AA-627 — account balance (remaining), distinct from cost (spent). Latest daily snapshot. */}
                   <StatCard
-                    label="Account balance"
+                    label={t("accountBalance")}
                     value={dfsBalance?.has_data ? fmtUsd2(dfsBalance.balance_usd ?? 0) : "—"}
                     sub={dfsBalance?.has_data && dfsBalance.fetched_at
-                      ? `as of ${formatDate(dfsBalance.fetched_at)}`
-                      : "no reading yet"}
+                      ? t("asOfDay", formatDate(dfsBalance.fetched_at))
+                      : t("noReading")}
                     accent={dfsBalance?.below_threshold ? A.red : A.green}
                   />
-                  <StatCard label="DFS cost" value={fmtUsd2(dfsCost)} sub={filterActive ? "filtered" : rangeLabel} accent={A.green} />
-                  <StatCard label="Total calls" value={fmtInt(dfsCalls)} />
-                  <StatCard label="Live calls" value={fmtInt(dfsLive)} sub="real DFS HTTP" accent={A.amber} />
-                  <StatCard label="Cache hits" value={fmtInt(dfsCacheHits)} accent={A.gold} />
-                  <StatCard label="Cache hit rate" value={pct(dfsCacheRate)} sub="DFS-attributable" />
+                  <StatCard label={t("dfsCost")} value={fmtUsd2(dfsCost)} sub={filterActive ? t("filtered") : rangeLabel} accent={A.green} />
+                  <StatCard label={t("totalCalls")} value={fmtInt(dfsCalls)} />
+                  <StatCard label={t("liveCalls")} value={fmtInt(dfsLive)} sub={t("realHttp")} accent={A.amber} />
+                  <StatCard label={t("cacheHits")} value={fmtInt(dfsCacheHits)} accent={A.gold} />
+                  <StatCard label={t("cacheHitRate")} value={pct(dfsCacheRate)} sub={t("dfsAttributable")} />
                 </div>
 
                 {/* AA-665 C2 — DataForSEO spend by the job that made the calls (not tenant-filtered). */}
                 <DfsRunsPanel rangeQs={rangeQs} rangeLabel={rangeLabel} windowDays={windowSpanDays} />
 
                 <Card style={{ padding: 0, overflow: "hidden", marginBottom: 20 }}>
-                  <div style={{ padding: "14px 18px" }}><SLabel style={{ marginBottom: 0 }}>Spend by tenant</SLabel></div>
+                  <div style={{ padding: "14px 18px" }}><SLabel style={{ marginBottom: 0 }}>{t("spendByTenant")}</SLabel></div>
                   {dfsByTenant.length === 0 ? (
-                    <div style={{ color: A.muted2, fontSize: 13, padding: "0 18px 24px" }}>No DataForSEO calls match the filter.</div>
+                    <div style={{ color: A.muted2, fontSize: 13, padding: "0 18px 24px" }}>{t("noDfsFilter")}</div>
                   ) : (
                     <ScrollX>
                     <table style={{ width: "100%", borderCollapse: "collapse" }}>
                       <thead><tr>
-                        <th style={TH}>Tenant</th>
-                        <th style={{ ...TH, textAlign: "right" }}>Cost</th>
-                        <th style={{ ...TH, textAlign: "right" }}>Calls</th>
-                        <th style={{ ...TH, textAlign: "right" }}>Live</th>
-                        <th style={{ ...TH, textAlign: "right" }}>Cache</th>
-                        <th style={{ ...TH, textAlign: "right" }}>Cache %</th>
-                        <th style={{ ...TH, textAlign: "right" }}>Keywords</th>
-                        <th style={{ ...TH, textAlign: "right" }}>$/keyword</th>
+                        <th style={TH}>{t("colTenant")}</th>
+                        <th style={{ ...TH, textAlign: "right" }}>{t("colCost")}</th>
+                        <th style={{ ...TH, textAlign: "right" }}>{t("colCalls")}</th>
+                        <th style={{ ...TH, textAlign: "right" }}>{t("colLive")}</th>
+                        <th style={{ ...TH, textAlign: "right" }}>{t("colCache")}</th>
+                        <th style={{ ...TH, textAlign: "right" }}>{t("colCachePct")}</th>
+                        <th style={{ ...TH, textAlign: "right" }}>{t("colKeywords")}</th>
+                        <th style={{ ...TH, textAlign: "right" }}>{t("colPerKeyword")}</th>
                       </tr></thead>
                       <tbody>
                         {dfsByTenant.map((r, i) => (
@@ -1083,19 +1104,19 @@ function CostOperationsInner() {
                 </Card>
 
                 <Card style={{ padding: 0, overflow: "hidden", marginBottom: 20 }}>
-                  <div style={{ padding: "14px 18px" }}><SLabel style={{ marginBottom: 0 }}>Spend by endpoint × tenant</SLabel></div>
+                  <div style={{ padding: "14px 18px" }}><SLabel style={{ marginBottom: 0 }}>{t("spendByEndpoint")}</SLabel></div>
                   {dfsRows.length === 0 ? (
-                    <div style={{ color: A.muted2, fontSize: 13, padding: "0 18px 24px" }}>No DataForSEO calls match the filter.</div>
+                    <div style={{ color: A.muted2, fontSize: 13, padding: "0 18px 24px" }}>{t("noDfsFilter")}</div>
                   ) : (
                     <ScrollX>
                     <table style={{ width: "100%", borderCollapse: "collapse" }}>
                       <thead><tr>
-                        <th style={TH}>Endpoint</th><th style={TH}>Tenant</th>
-                        <th style={{ ...TH, textAlign: "right" }}>Cost</th>
-                        <th style={{ ...TH, textAlign: "right" }}>Live</th>
-                        <th style={{ ...TH, textAlign: "right" }}>Cache</th>
-                        <th style={{ ...TH, textAlign: "right" }}>Cache %</th>
-                        <th style={{ ...TH, textAlign: "right" }}>Keywords</th>
+                        <th style={TH}>{t("colEndpoint")}</th><th style={TH}>{t("colTenant")}</th>
+                        <th style={{ ...TH, textAlign: "right" }}>{t("colCost")}</th>
+                        <th style={{ ...TH, textAlign: "right" }}>{t("colLive")}</th>
+                        <th style={{ ...TH, textAlign: "right" }}>{t("colCache")}</th>
+                        <th style={{ ...TH, textAlign: "right" }}>{t("colCachePct")}</th>
+                        <th style={{ ...TH, textAlign: "right" }}>{t("colKeywords")}</th>
                       </tr></thead>
                       <tbody>
                         {dfsRows.map((b, i) => (
@@ -1116,19 +1137,19 @@ function CostOperationsInner() {
                 </Card>
 
                 <Card style={{ padding: 0, overflow: "hidden" }}>
-                  <div style={{ padding: "14px 18px" }}><SLabel style={{ marginBottom: 0 }}>Spend by target market</SLabel></div>
+                  <div style={{ padding: "14px 18px" }}><SLabel style={{ marginBottom: 0 }}>{t("spendByMarket")}</SLabel></div>
                   {(countries?.length ?? 0) === 0 ? (
-                    <div style={{ color: A.muted2, fontSize: 13, padding: "0 18px 24px" }}>No market data yet.</div>
+                    <div style={{ color: A.muted2, fontSize: 13, padding: "0 18px 24px" }}>{t("noMarket")}</div>
                   ) : (
                     <ScrollX>
                     <table style={{ width: "100%", borderCollapse: "collapse" }}>
                       <thead><tr>
-                        <th style={TH}>Market</th>
-                        <th style={{ ...TH, textAlign: "right" }}>Cost</th>
-                        <th style={{ ...TH, textAlign: "right" }}>Calls</th>
-                        <th style={{ ...TH, textAlign: "right" }}>Live</th>
-                        <th style={{ ...TH, textAlign: "right" }}>Cache %</th>
-                        <th style={{ ...TH, textAlign: "right" }}>Keywords</th>
+                        <th style={TH}>{t("colMarket")}</th>
+                        <th style={{ ...TH, textAlign: "right" }}>{t("colCost")}</th>
+                        <th style={{ ...TH, textAlign: "right" }}>{t("colCalls")}</th>
+                        <th style={{ ...TH, textAlign: "right" }}>{t("colLive")}</th>
+                        <th style={{ ...TH, textAlign: "right" }}>{t("colCachePct")}</th>
+                        <th style={{ ...TH, textAlign: "right" }}>{t("colKeywords")}</th>
                       </tr></thead>
                       <tbody>
                         {countries!.map((c, i) => (
@@ -1145,7 +1166,7 @@ function CostOperationsInner() {
                     </table>
                     </ScrollX>
                   )}
-                  <div style={{ fontSize: 11, color: A.muted2, padding: "0 18px 14px" }}>Note: target market is platform-wide (not tenant-filtered — DFS keyword research is shared).</div>
+                  <div style={{ fontSize: 11, color: A.muted2, padding: "0 18px 14px" }}>{t("marketNote")}</div>
                 </Card>
               </>
             )}

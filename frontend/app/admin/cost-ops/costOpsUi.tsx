@@ -51,10 +51,14 @@ export function int(n: number | null | undefined): string {
 
 export type BudgetStatus = "over" | "warn" | "ok" | "no_budget" | "no_data";
 
-export const STATUS_META: Record<BudgetStatus, { tone: Tone; label: string }> = {
-  over: { tone: "danger", label: "Over budget" },
-  warn: { tone: "warning", label: "Near budget" },
-  ok: { tone: "success", label: "Within budget" },
-  no_budget: { tone: "neutral", label: "No budget" },
-  no_data: { tone: "neutral", label: "No data" },
+// `label` is a key of panels.messages.ts PANELS (AA-994).
+export const STATUS_META: Record<
+  BudgetStatus,
+  { tone: Tone; label: "statusOver" | "statusWarn" | "statusOk" | "statusNoBudget" | "statusNoData" }
+> = {
+  over: { tone: "danger", label: "statusOver" },
+  warn: { tone: "warning", label: "statusWarn" },
+  ok: { tone: "success", label: "statusOk" },
+  no_budget: { tone: "neutral", label: "statusNoBudget" },
+  no_data: { tone: "neutral", label: "statusNoData" },
 };

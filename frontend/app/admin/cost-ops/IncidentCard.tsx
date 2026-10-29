@@ -2,11 +2,12 @@
 // app/admin/cost-ops/IncidentCard.tsx — AA-665: a recorded cost incident (backend api/services/cost_incidents.py) shown
 // on Cost Operations › DataForSEO when the window overlaps it. The text is the reviewed finding (trigger, scope,
 // failure point, cause, what changed since); every number comes from the logs over the incident window, read live by
-// GET /api/admin/dfs-usage/runs (field `incidents`).
+// GET /api/admin/dfs-usage/runs (field `incidents`). AA-994: labels in the UI language; the incident text stays as sent.
 
 import type React from "react";
-import { Badge, K, RADIUS, formatDateTime, mono } from "../../_kit";
+import { Badge, K, RADIUS, mono, useFormat, useT } from "../../_kit";
 import { Stat, int, noteStyle, numStyle, statGrid, usd } from "./costOpsUi";
+import { PANELS } from "./panels.messages";
 
 export interface IncidentView {
   id: string;
@@ -54,26 +55,28 @@ function Field({ term, children }: { term: string; children: React.ReactNode }) 
 }
 
 export default function IncidentCard({ incident }: { incident: IncidentView }) {
+  const t = useT(PANELS);
+  const { formatDateTime } = useFormat();
   const { dfs, llm } = incident;
   const llmSub = llm.source === "daily"
-    ? "whole days (raw log no longer kept)"
+    ? t("wholeDays")
     : llm.stages.map((s) => s.stage).join(", ");
   return (
-    <section style={cardStyle} data-testid="cost-ops-incident" aria-label={`Recorded incident: ${incident.title}`}>
+    <section style={cardStyle} data-testid="cost-ops-incident" aria-label={t("incidentAria", incident.title)}>
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
-        <Badge tone="danger">Recorded incident</Badge>
+        <Badge tone="danger">{t("recordedIncident")}</Badge>
         <strong style={{ fontSize: 14, color: K.ink }}>{incident.title}</strong>
       </div>
       <div style={{ ...noteStyle, marginTop: 4 }}>
         {formatDateTime(incident.started_at)} → {formatDateTime(incident.ended_at)}
       </div>
       <div style={{ ...statGrid, marginTop: 10 }}>
-        <Stat label="DataForSEO spend" value={usd(dfs.cost_usd)} tone="danger"
-              sub={`${int(dfs.calls)} calls (${int(dfs.live_calls)} live)`} />
-        <Stat label="LLM spend (same run)" value={usd(llm.cost_usd)} sub={`${int(llm.calls)} calls · ${llmSub}`} />
-        <Stat label="First paid call" value={dfs.first_paid_at ? formatDateTime(dfs.first_paid_at) : "—"} />
-        <Stat label="Last paid call" value={dfs.last_paid_at ? formatDateTime(dfs.last_paid_at) : "—"}
-              sub="where the spend stopped" />
+        <Stat label={t("dfsSpend")} value={usd(dfs.cost_usd)} tone="danger"
+              sub={t("callsLive", int(dfs.calls), int(dfs.live_calls))} />
+        <Stat label={t("llmSameRun")} value={usd(llm.cost_usd)} sub={t("callsWith", int(llm.calls), llmSub)} />
+        <Stat label={t("firstPaid")} value={dfs.first_paid_at ? formatDateTime(dfs.first_paid_at) : "—"} />
+        <Stat label={t("lastPaid")} value={dfs.last_paid_at ? formatDateTime(dfs.last_paid_at) : "—"}
+              sub={t("whereStopped")} />
       </div>
       {dfs.endpoints.length > 0 && (
         <div style={{ ...noteStyle, marginTop: 6 }}>
@@ -85,12 +88,12 @@ export default function IncidentCard({ incident }: { incident: IncidentView }) {
           ))}
         </div>
       )}
-      <Field term="Trigger">{incident.trigger}</Field>
-      <Field term="Scope">{incident.scope}</Field>
-      <Field term="Failure point">{incident.failure_point}</Field>
-      <Field term="Cause">{incident.cause}</Field>
+      <Field term={t("trigger")}>{incident.trigger}</Field>
+      <Field term={t("scope")}>{incident.scope}</Field>
+      <Field term={t("failurePoint")}>{incident.failure_point}</Field>
+      <Field term={t("cause")}>{incident.cause}</Field>
       {incident.since_fixed.length > 0 && (
-        <Field term="Changed since">
+        <Field term={t("changedSince")}>
           <ul style={{ margin: "2px 0 0", paddingLeft: 18 }}>
             {incident.since_fixed.map((f) => <li key={f}>{f}</li>)}
           </ul>

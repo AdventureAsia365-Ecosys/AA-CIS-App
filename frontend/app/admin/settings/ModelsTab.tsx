@@ -8,6 +8,7 @@
 //   • Shadow A/B — the shadow comparison report (ShadowReportTab).
 // Dead stages (HIDDEN_STAGES) are not rendered in the Stages editor.
 // Built on the kit (Tabs/Badge/Button/ConfirmModal/DataTable/Toast) + react-query.
+// AA-994: text in the UI language (models.messages.ts; stage labels llmShared.ts + llmShared.vi.ts).
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -20,7 +21,9 @@ import {
   ToastProvider,
   apiGet,
   apiSend,
-  formatDateTime,
+  useFormat,
+  useLocalized,
+  useT,
   useToast, ScrollX,
 } from "../../_kit";
 import {
@@ -34,9 +37,13 @@ import {
   type StageRoute,
   withVia,
 } from "./llmShared";
+import { STAGE_GROUP_LABELS_VI, STAGE_LABELS_VI } from "./llmShared.vi";
+import { MODELS } from "./models.messages";
 import { StageRouteEditor } from "./StageRouteEditor";
-import { useAwsAccounts } from "../_components/useAwsAccounts";
+import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import { accountName } from "@/lib/awsAccounts";
+
+const STAGE_GROUP_LABELS: Record<string, string> = Object.fromEntries(STAGE_GROUPS.map((g) => [g.key, g.label]));
 import { CatalogTab } from "./CatalogTab";
 import { ShadowReportTab } from "./ShadowReportTab";
 
@@ -46,6 +53,7 @@ interface LlmConfigResp {
 
 // ── Route line (read-only summary of chain + shadow) ───────────────────────────
 function RouteLine({ route }: { route?: StageRoute }) {
+  const t = useT(MODELS);
   if (!route || route.chain.length === 0) return null;
   const chip = (label: string, via: string | null | undefined, key: string, tone: "main" | "fb" | "shadow") => (
     <span key={key} style={{
@@ -62,7 +70,7 @@ function RouteLine({ route }: { route?: StageRoute }) {
       width: "100%", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6,
       fontSize: 11, color: A.muted2, paddingLeft: 2,
     }}>
-      <span>Route:</span>
+      <span>{t("route")}</span>
       {route.chain.map((i, n) => (
         <span key={`${i.model_id}-${n}`} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
           {n > 0 && <span aria-hidden>→</span>}
@@ -71,7 +79,7 @@ function RouteLine({ route }: { route?: StageRoute }) {
       ))}
       {route.shadow && (
         <>
-          <span style={{ marginLeft: 8 }}>Shadow ({route.shadow.sample_pct}%, compare only):</span>
+          <span style={{ marginLeft: 8 }}>{t("shadowCompare", route.shadow.sample_pct)}</span>
           {chip(route.shadow.label, route.shadow.via, "shadow", "shadow")}
         </>
       )}
@@ -81,6 +89,9 @@ function RouteLine({ route }: { route?: StageRoute }) {
 
 // ── Primary-model row (PATCH /llm-config/{stage}) + its route editor ───────────
 function ModelRow({ row }: { row: StageConfigRow }) {
+  const t = useT(MODELS);
+  const { formatDateTime } = useFormat();
+  const stageLabels = useLocalized({ en: STAGE_LABELS, vi: STAGE_LABELS_VI });
   const toast = useToast();
   const qc = useQueryClient();
   const [modelId, setModelId] = useState(row.model_id);
@@ -94,20 +105,22 @@ function ModelRow({ row }: { row: StageConfigRow }) {
     return o ? withVia(o.label, o.via) : id;
   };
   const awsAccounts = useAwsAccounts();
+  const accountText = useAccountText();
   // A route outside the options (a non-Claude stage has none) still shows the account ID, never the key (AA-998).
   const acctLabel = (v: string) =>
-    row.account_route_options.find((o: AccountOption) => o.value === v)?.label ?? accountName(v, awsAccounts);
+    row.account_route_options.find((o: AccountOption) => o.value === v)?.label
+      ?? accountName(v, awsAccounts, accountText);
 
   const mut = useMutation({
     mutationFn: (body: { model_id: string; account_route: string | null }) =>
       apiSend<StageConfigRow>(`/api/admin/llm-config/${row.stage}`, { method: "PATCH", body, admin: true }),
     onSuccess: () => {
-      toast.success(`Model saved for ${row.stage}`);
+      toast.success(t("modelSaved", row.stage));
       setError("");
       qc.invalidateQueries({ queryKey: ["llm-config"] });
     },
     onError: (e) => {
-      setError(e instanceof Error ? e.message : "Save failed");
+      setError(e instanceof Error ? e.message : t("saveFailed"));
       setModelId(row.model_id);
       setAccountRoute(row.account_route ?? "");
     },
@@ -129,7 +142,7 @@ function ModelRow({ row }: { row: StageConfigRow }) {
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <div style={{ minWidth: 200 }}>
           <div style={{ fontFamily: mono, fontSize: 12, color: A.ink, fontWeight: 600 }}>{row.stage}</div>
-          <div style={{ fontSize: 11.5, color: A.muted2 }}>{STAGE_LABELS[row.stage] ?? row.stage}</div>
+          <div style={{ fontSize: 11.5, color: A.muted2 }}>{stageLabels[row.stage] ?? STAGE_LABELS[row.stage] ?? row.stage}</div>
         </div>
         <Badge tone={ROLE_TONE[row.role] ?? "neutral"} dot={false}>{row.role}</Badge>
 
@@ -145,7 +158,7 @@ function ModelRow({ row }: { row: StageConfigRow }) {
         >
           {row.options.map((o: ModelOption) => (
             <option key={o.model_id} value={o.model_id} disabled={!o.available}>
-              {withVia(o.label, o.via)}{!o.available ? " — not available" : ""}
+              {withVia(o.label, o.via)}{!o.available ? t("notAvailable") : ""}
             </option>
           ))}
         </select>
@@ -181,7 +194,7 @@ function ModelRow({ row }: { row: StageConfigRow }) {
           </span>
           <Btn variant="secondary" size="sm" disabled={!dirty || saving} onClick={() => setConfirming(true)}>
             {saving ? <Spinner size={12} /> : null}
-            {saving ? "Saving…" : "Save"}
+            {saving ? t("saving") : t("save")}
           </Btn>
         </div>
       </div>
@@ -195,13 +208,12 @@ function ModelRow({ row }: { row: StageConfigRow }) {
         open={confirming}
         onClose={() => setConfirming(false)}
         onConfirm={confirmSave}
-        title={`Change model for ${row.stage}?`}
-        confirmLabel="Confirm change"
+        title={t("changeModelTitle", row.stage)}
+        confirmLabel={t("confirmChange")}
         body={
           <div>
             <p style={{ fontSize: 12.5, color: A.muted, marginTop: 0, marginBottom: 12 }}>
-              Changing the model affects the ENTIRE SYSTEM (every LLM call at this stage, not just
-              yours) — it takes effect on the next call, no redeploy needed.
+              {t("changeModelBody")}
             </p>
             <div style={{
               background: A.line2, borderRadius: 8, padding: "10px 12px",
@@ -227,6 +239,7 @@ interface JevQuestionRow {
 interface JevSummaryResp { questions?: JevQuestionRow[] }
 
 function JevStagesCard() {
+  const t = useT(MODELS);
   const { data } = useQuery({
     queryKey: ["decisions-summary", 7],
     queryFn: () => apiGet<JevSummaryResp>("/api/admin/decisions/summary?days=7", { admin: true }).catch(() => ({ questions: [] } as JevSummaryResp)),
@@ -235,13 +248,13 @@ function JevStagesCard() {
   const modeTone = { off: "neutral", shadow: "info", enforce: "accent" } as const;
   return (
     <Card>
-      <SLabel>Jev decisions per stage (TypeSafe · jev-latest)</SLabel>
+      <SLabel>{t("jevTitle")}</SLabel>
       <p style={{ fontSize: 12, color: A.muted2, margin: "0 0 10px" }}>
-        Stages that ask Jev typed questions. Only <b>enforce</b> questions with a confident verdict change
-        what a stage does. Edit modes and floors on <a href="/admin/decisions" style={{ color: A.gold }}>Jev Decisions</a>.
+        {t("jevIntroA")} <b>{t("jevIntroB")}</b> {t("jevIntroC")}{" "}
+        <a href="/admin/decisions" style={{ color: A.gold }}>{t("jevDecisions")}</a>.
       </p>
       {rows === null ? <Spinner /> : rows.length === 0 ? (
-        <div style={{ fontSize: 12.5, color: A.muted }}>No Jev questions configured yet.</div>
+        <div style={{ fontSize: 12.5, color: A.muted }}>{t("noJevQuestions")}</div>
       ) : (
         <ScrollX>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
@@ -254,8 +267,8 @@ function JevStagesCard() {
                 <td style={{ padding: "6px 8px", fontFamily: mono }}>
                   {q.accept_floor ?? "—"} / {q.reject_ceiling ?? "—"}
                 </td>
-                <td style={{ padding: "6px 8px", color: A.muted }}>{q.calibration_ref ? "calibrated" : "not calibrated"}</td>
-                <td style={{ padding: "6px 8px", fontFamily: mono }}>{q.verdicts} verdicts · {q.acted} acted · 7d</td>
+                <td style={{ padding: "6px 8px", color: A.muted }}>{q.calibration_ref ? t("calibrated") : t("notCalibrated")}</td>
+                <td style={{ padding: "6px 8px", fontFamily: mono }}>{t("verdictsActed", q.verdicts, q.acted)}</td>
                 <td style={{ padding: "6px 0", fontFamily: mono, textAlign: "right" }}>${q.cost_usd.toFixed(5)}</td>
               </tr>
             ))}
@@ -269,6 +282,8 @@ function JevStagesCard() {
 
 // ── Stages sub-tab ─────────────────────────────────────────────────────────────
 function StagesSubTab() {
+  const t = useT(MODELS);
+  const groupLabels = useLocalized({ en: STAGE_GROUP_LABELS, vi: STAGE_GROUP_LABELS_VI });
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["llm-config"],
     queryFn: () => apiGet<LlmConfigResp>("/api/admin/llm-config", { admin: true }),
@@ -276,12 +291,12 @@ function StagesSubTab() {
 
   const rows = useMemo(() => data?.stages ?? [], [data]);
 
-  if (isLoading && !data) return <LoadingScreen msg="Loading model configuration…" />;
+  if (isLoading && !data) return <LoadingScreen msg={t("loadingConfig")} />;
   if (isError || !data) {
     return (
       <Card style={{ textAlign: "center", padding: 40 }}>
-        <div style={{ color: A.red, marginBottom: 12 }}>Failed to load model configuration</div>
-        <Btn variant="secondary" onClick={() => refetch()}>Retry</Btn>
+        <div style={{ color: A.red, marginBottom: 12 }}>{t("loadConfigError")}</div>
+        <Btn variant="secondary" onClick={() => refetch()}>{t("retry")}</Btn>
       </Card>
     );
   }
@@ -290,17 +305,15 @@ function StagesSubTab() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <p style={{ fontSize: 12, color: A.muted2, margin: 0 }}>
-        Only admins (aa_internal) can change models here — tenants have no access. Each stage shows
-        its primary model, an editable <b>fallback chain</b>, and a <b>shadow A/B</b> toggle. A shadow
-        runs a second judge call on a share of calls, so it doubles the cost on those — keep it on only
-        while comparing. Unavailable models are listed disabled with their reason.
+        {t("stagesIntroA")} <b>{t("stagesIntroB")}</b>{t("stagesIntroC")} <b>{t("stagesIntroD")}</b>{" "}
+        {t("stagesIntroE")}
       </p>
       {STAGE_GROUPS.map((group) => {
         const stages = group.stages.filter((s) => !HIDDEN_STAGES.has(s) && byStage[s]);
         if (stages.length === 0) return null;
         return (
           <Card key={group.key}>
-            <SLabel>{group.label}</SLabel>
+            <SLabel>{groupLabels[group.key] ?? group.label}</SLabel>
             <div>
               {stages.map((stage) => (
                 <ModelRow key={stage} row={byStage[stage]} />
@@ -316,17 +329,18 @@ function StagesSubTab() {
 
 // ── Main tab (sub-tab switcher) ────────────────────────────────────────────────
 const SUB_TABS = [
-  { key: "stages", label: "Stages" },
-  { key: "catalog", label: "Catalog" },
-  { key: "shadow", label: "Shadow A/B" },
-];
+  { key: "stages", label: "subStages" },
+  { key: "catalog", label: "subCatalog" },
+  { key: "shadow", label: "subShadow" },
+] as const;
 
 function ModelsTabInner() {
+  const t = useT(MODELS);
   const [sub, setSub] = useState("stages");
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div data-testid="llm-models-ready">
-        <Tabs tabs={SUB_TABS} active={sub} onChange={setSub} />
+        <Tabs tabs={SUB_TABS.map((s) => ({ key: s.key, label: t(s.label) }))} active={sub} onChange={setSub} />
       </div>
       {sub === "stages" && <StagesSubTab />}
       {sub === "catalog" && <CatalogTab />}

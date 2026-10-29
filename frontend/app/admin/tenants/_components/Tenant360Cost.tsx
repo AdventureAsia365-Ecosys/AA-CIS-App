@@ -3,13 +3,17 @@
 // AA-766 — Tenant 360 Cost tab: month-to-date LLM spend per stage, $/piece (blog vs social),
 // $/tour (T2 rewrite) and plan revenue vs LLM cost -> margin. GET /admin/tenants/{id}/cost, same
 // cost definition as the Usage & Billing tab (AA-798: llm_call_log, Jev in, shadow out).
+// AA-994: text in the UI language (tenant360.messages.ts); the API's cost definition stays as sent.
 
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { A, mono, serif } from "../../_components/adminUi";
-import { Badge, DataTable, ErrorState, Spinner, apiGet } from "../../../_kit";
+import { Badge, DataTable, ErrorState, Spinner, apiGet, useT, type Translator } from "../../../_kit";
 import { type TenantCost, pct, usd } from "./tenant360";
+import { T360 } from "./tenant360.messages";
+
+type T = Translator<typeof T360.en>;
 
 type ChannelRow = TenantCost["by_channel"][number];
 type StageRow = TenantCost["by_stage"][number] & { share: number | null };
@@ -17,19 +21,19 @@ type StageRow = TenantCost["by_stage"][number] & { share: number | null };
 const tabular: React.CSSProperties = { fontVariantNumeric: "tabular-nums" };
 const KIND_TONE: Record<string, "accent" | "info" | "neutral"> = { blog: "accent", social: "info", other: "neutral" };
 
-const CHANNEL_COLUMNS: ColumnDef<ChannelRow, unknown>[] = [
-  { accessorKey: "channel", header: "Channel", cell: c => <span style={{ fontFamily: mono, fontSize: 11.5 }}>{String(c.getValue())}</span> },
-  { accessorKey: "kind", header: "Kind", cell: c => <Badge tone={KIND_TONE[String(c.getValue())] ?? "neutral"} dot={false}>{String(c.getValue())}</Badge> },
-  { accessorKey: "pieces", header: "Pieces", cell: c => <span style={tabular}>{Number(c.getValue())}</span> },
-  { accessorKey: "cost_usd", header: "Cost", cell: c => <span style={tabular}>{usd(c.getValue() as number, 4)}</span> },
-  { accessorKey: "cost_per_piece_usd", header: "$ / piece", cell: c => <strong style={tabular}>{usd(c.getValue() as number | null, 4)}</strong> },
+const channelColumns = (t: T): ColumnDef<ChannelRow, unknown>[] => [
+  { accessorKey: "channel", header: t("colChannel"), cell: c => <span style={{ fontFamily: mono, fontSize: 11.5 }}>{String(c.getValue())}</span> },
+  { accessorKey: "kind", header: t("colKind"), cell: c => <Badge tone={KIND_TONE[String(c.getValue())] ?? "neutral"} dot={false}>{String(c.getValue())}</Badge> },
+  { accessorKey: "pieces", header: t("colPieces"), cell: c => <span style={tabular}>{Number(c.getValue())}</span> },
+  { accessorKey: "cost_usd", header: t("colCost"), cell: c => <span style={tabular}>{usd(c.getValue() as number, 4)}</span> },
+  { accessorKey: "cost_per_piece_usd", header: t("colPerPiece"), cell: c => <strong style={tabular}>{usd(c.getValue() as number | null, 4)}</strong> },
 ];
 
-const STAGE_COLUMNS: ColumnDef<StageRow, unknown>[] = [
-  { accessorKey: "stage", header: "Stage", cell: c => <span style={{ fontFamily: mono, fontSize: 11.5 }}>{String(c.getValue())}</span> },
-  { accessorKey: "calls", header: "Calls", cell: c => <span style={tabular}>{Number(c.getValue()).toLocaleString()}</span> },
-  { accessorKey: "cost_usd", header: "Cost", cell: c => <span style={tabular}>{usd(c.getValue() as number, 4)}</span> },
-  { accessorKey: "share", header: "Share", cell: c => <span style={{ ...tabular, color: A.muted }}>{pct(c.getValue() as number | null)}</span> },
+const stageColumns = (t: T): ColumnDef<StageRow, unknown>[] => [
+  { accessorKey: "stage", header: t("colStage"), cell: c => <span style={{ fontFamily: mono, fontSize: 11.5 }}>{String(c.getValue())}</span> },
+  { accessorKey: "calls", header: t("colCalls"), cell: c => <span style={tabular}>{Number(c.getValue()).toLocaleString()}</span> },
+  { accessorKey: "cost_usd", header: t("colCost"), cell: c => <span style={tabular}>{usd(c.getValue() as number, 4)}</span> },
+  { accessorKey: "share", header: t("colShare"), cell: c => <span style={{ ...tabular, color: A.muted }}>{pct(c.getValue() as number | null)}</span> },
 ];
 
 function Kpi({ label, value, hint, color }: { label: string; value: string; hint?: string; color?: string }) {
@@ -47,6 +51,9 @@ function H({ children }: { children: React.ReactNode }) {
 }
 
 export function Tenant360Cost({ tenantId }: { tenantId: string }) {
+  const t = useT(T360);
+  const channelCols = useMemo(() => channelColumns(t), [t]);
+  const stageCols = useMemo(() => stageColumns(t), [t]);
   const q = useQuery({
     queryKey: ["tenant360", tenantId, "cost"],
     queryFn: () => apiGet<TenantCost>(`/api/admin/tenants/${tenantId}/cost`, { admin: true }),
@@ -56,8 +63,8 @@ export function Tenant360Cost({ tenantId }: { tenantId: string }) {
     if (!d) return [];
     return d.by_stage.map(st => ({ ...st, share: d.total_cost_usd > 0 ? st.cost_usd / d.total_cost_usd : null }));
   }, [q.data]);
-  if (q.isLoading) return <div style={{ fontSize: 12, color: A.muted, display: "flex", gap: 6, alignItems: "center" }}><Spinner size={12} /> Loading cost…</div>;
-  if (q.isError || !q.data) return <ErrorState message={`Failed to load cost: ${(q.error as Error)?.message ?? "unknown error"}`} onRetry={() => q.refetch()} />;
+  if (q.isLoading) return <div style={{ fontSize: 12, color: A.muted, display: "flex", gap: 6, alignItems: "center" }}><Spinner size={12} /> {t("loadingCost")}</div>;
+  if (q.isError || !q.data) return <ErrorState message={t("costLoadError", (q.error as Error)?.message ?? t("unknownError"))} onRetry={() => q.refetch()} />;
   const c = q.data;
   const mg = c.margin;
   const marginColor = mg.margin_usd == null ? A.muted : mg.margin_usd < 0 ? A.red : A.green;
@@ -68,38 +75,36 @@ export function Tenant360Cost({ tenantId }: { tenantId: string }) {
   return (
     <div style={{ minWidth: 0 }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
-        <Kpi label={`LLM cost (${c.billing_month ?? "this month"}, MTD)`} value={usd(c.total_cost_usd)} />
-        <Kpi label="Plan revenue (MTD)" value={mg.plan_attached ? usd(mg.revenue_usd) : "No plan attached"}
-          hint={mg.plan_attached ? `${usd(mg.plan_price_usd)} plan + ${usd(mg.overage_usd)} overage` : undefined} />
-        <Kpi label="LLM margin" value={mg.margin_usd == null ? "—" : usd(mg.margin_usd)} color={marginColor}
-          hint={mg.margin_pct == null ? undefined : `${mg.margin_pct.toFixed(1)}% of revenue`} />
-        <Kpi label="$ / tour (T2 rewrite)" value={usd(c.per_tour.cost_per_tour_usd, 4)}
-          hint={`${usd(c.per_tour.t2_cost_usd)} over ${c.per_tour.tours_rewritten} tour${c.per_tour.tours_rewritten === 1 ? "" : "s"}`} />
-        <Kpi label="$ / blog piece" value={usd(blog?.cost_per_piece_usd, 4)}
-          hint={blog ? `${blog.pieces} piece${blog.pieces === 1 ? "" : "s"}` : "no blog pieces"} />
-        <Kpi label="$ / social piece" value={usd(social?.cost_per_piece_usd, 4)}
-          hint={social ? `${social.pieces} piece${social.pieces === 1 ? "" : "s"}` : "no social pieces"} />
+        <Kpi label={t("llmCostMtd", c.billing_month ?? t("thisMonth"))} value={usd(c.total_cost_usd)} />
+        <Kpi label={t("planRevenue")} value={mg.plan_attached ? usd(mg.revenue_usd) : t("noPlan")}
+          hint={mg.plan_attached ? t("planPlusOverage", usd(mg.plan_price_usd), usd(mg.overage_usd)) : undefined} />
+        <Kpi label={t("llmMargin")} value={mg.margin_usd == null ? "—" : usd(mg.margin_usd)} color={marginColor}
+          hint={mg.margin_pct == null ? undefined : t("ofRevenue", mg.margin_pct.toFixed(1))} />
+        <Kpi label={t("perTour")} value={usd(c.per_tour.cost_per_tour_usd, 4)}
+          hint={t("overTours", usd(c.per_tour.t2_cost_usd), c.per_tour.tours_rewritten)} />
+        <Kpi label={t("perBlog")} value={usd(blog?.cost_per_piece_usd, 4)}
+          hint={blog ? t("pieces", blog.pieces) : t("noBlog")} />
+        <Kpi label={t("perSocial")} value={usd(social?.cost_per_piece_usd, 4)}
+          hint={social ? t("pieces", social.pieces) : t("noSocial")} />
       </div>
 
-      <H>$ per piece by channel</H>
+      <H>{t("perPieceByChannel")}</H>
       <DataTable<ChannelRow>
-        tableId="tenant360-cost-channels" data={c.by_channel} columns={CHANNEL_COLUMNS}
+        tableId="tenant360-cost-channels" data={c.by_channel} columns={channelCols}
         getRowId={r => r.channel} searchable={false} pageSize={25} stickyHeader={false}
-        emptyTitle="No piece-linked LLM calls this month"
-        emptyDescription="Nothing in llm_call_log is linked to a T9/T10 content piece since the 1st." />
+        emptyTitle={t("noPieceCalls")}
+        emptyDescription={t("noPieceCallsBody")} />
 
-      <H>Cost by stage</H>
+      <H>{t("costByStage")}</H>
       <DataTable<StageRow>
-        tableId="tenant360-cost-stages" columns={STAGE_COLUMNS}
+        tableId="tenant360-cost-stages" columns={stageCols}
         data={stageRows}
         getRowId={r => r.stage} searchable={false} pageSize={25} stickyHeader={false} enableCsv
         csvFilename={`tenant-${tenantId}-cost-by-stage.csv`}
-        emptyTitle="No LLM spend this month" emptyDescription="Nothing in llm_call_log for this tenant since the 1st." />
+        emptyTitle={t("noSpend")} emptyDescription={t("noSpendBody")} />
 
       <div style={{ fontSize: 11, color: A.muted2, marginTop: 10, lineHeight: 1.5 }}>
-        {c.definition} {usd(c.unattributed_to_piece_usd, 4)} this month is not linked to a content piece
-        (T2 rewrites, planning, angle generation). Revenue = the plan&apos;s full monthly price + overage, not prorated;
-        margin is revenue minus LLM cost only.
+        {c.definition} {t("costFootnote", usd(c.unattributed_to_piece_usd, 4))}
       </div>
     </div>
   );

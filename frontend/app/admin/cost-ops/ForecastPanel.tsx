@@ -4,13 +4,15 @@
 // API: GET /api/admin/cost-ops/forecast (backend api/services/cost_ops.py cost_forecast; spend.read = admin). DB only:
 // the AWS rows read the STORED Cost Explorer snapshots (AWS bill tab › "Refresh from AWS" stores new days), never a
 // live CE call. Always the current UTC month; the page's date window does not apply.
+// AA-994: text in the UI language (panels.messages.ts); provider and account labels come from the API.
 
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import {
-  Badge, DataTable, ErrorState, K, SkeletonBar, apiGet, formatDate, formatDateTime, type ColumnDef,
+  Badge, DataTable, ErrorState, K, SkeletonBar, apiGet, useFormat, useT, type ColumnDef, type Translator,
 } from "../../_kit";
 import { PanelTitle, STATUS_META, noteStyle, numStyle, panelStyle, usd, type BudgetStatus } from "./costOpsUi";
+import { PANELS } from "./panels.messages";
 
 interface Projection {
   mtd_usd: number | null;
@@ -50,10 +52,11 @@ interface ForecastResp {
 }
 
 function StatusCell({ r }: { r: Projection }) {
+  const t = useT(PANELS);
   const m = STATUS_META[r.status] ?? STATUS_META.no_data;
   return (
     <span title={r.budget_source ?? undefined} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-      <Badge tone={m.tone}>{m.label}</Badge>
+      <Badge tone={m.tone}>{t(m.label)}</Badge>
       {r.forecast_pct_of_budget != null && (
         <span style={{ ...numStyle, fontSize: 12, color: K.muted }}>{Math.round(r.forecast_pct_of_budget)}%</span>
       )}
@@ -69,10 +72,11 @@ function money<T>(key: keyof Projection, header: string): ColumnDef<T, unknown> 
   };
 }
 
-function useColumns() {
+function useColumns(t: Translator<typeof PANELS.en>) {
+  const { formatDate } = useFormat();
   const providers = useMemo<ColumnDef<ProviderRow, unknown>[]>(() => [
     {
-      accessorKey: "label", header: "Provider",
+      accessorKey: "label", header: t("colProvider"),
       cell: (c) => {
         const r = c.row.original;
         return (
@@ -87,44 +91,44 @@ function useColumns() {
         );
       },
     },
-    money<ProviderRow>("mtd_usd", "Month to date"),
-    money<ProviderRow>("run_rate_usd_per_day", "Per day (7-day rate)"),
-    money<ProviderRow>("forecast_usd", "Month-end forecast"),
-    money<ProviderRow>("budget_usd", "Budget"),
-    { id: "status", header: "Status", cell: (c) => <StatusCell r={c.row.original} /> },
-  ], []);
+    money<ProviderRow>("mtd_usd", t("colMtd")),
+    money<ProviderRow>("run_rate_usd_per_day", t("colPerDay")),
+    money<ProviderRow>("forecast_usd", t("colForecast")),
+    money<ProviderRow>("budget_usd", t("colBudget")),
+    { id: "status", header: t("colStatus"), cell: (c) => <StatusCell r={c.row.original} /> },
+  ], [t]);
   const aws = useMemo<ColumnDef<AwsRow, unknown>[]>(() => [
     {
-      accessorKey: "label", header: "AWS account",
+      accessorKey: "label", header: t("colAwsAccount"),
       cell: (c) => {
         const r = c.row.original;
         return (
           <div style={{ minWidth: 0 }}>
             <div style={{ fontWeight: 600 }}>{r.label}</div>
             <div style={{ fontSize: 11.5, color: r.days_missing ? K.amber : K.muted }}>
-              {r.covered_to
-                ? `Stored to ${formatDate(r.covered_to)}${r.days_missing ? ` · ${r.days_missing} day(s) missing` : ""}`
-                : "No stored Cost Explorer days this month"}
+              {r.covered_to ? t("storedTo", formatDate(r.covered_to), r.days_missing ?? 0) : t("noStoredDays")}
             </div>
           </div>
         );
       },
     },
-    money<AwsRow>("mtd_usd", "Month to date"),
-    money<AwsRow>("run_rate_usd_per_day", "Per day (7-day rate)"),
-    money<AwsRow>("forecast_usd", "Month-end forecast"),
-    money<AwsRow>("budget_usd", "Budget"),
-    { id: "status", header: "Status", cell: (c) => <StatusCell r={c.row.original} /> },
-  ], []);
+    money<AwsRow>("mtd_usd", t("colMtd")),
+    money<AwsRow>("run_rate_usd_per_day", t("colPerDay")),
+    money<AwsRow>("forecast_usd", t("colForecast")),
+    money<AwsRow>("budget_usd", t("colBudget")),
+    { id: "status", header: t("colStatus"), cell: (c) => <StatusCell r={c.row.original} /> },
+  ], [t, formatDate]);
   return { providers, aws };
 }
 
 export default function ForecastPanel() {
+  const t = useT(PANELS);
+  const { formatDateTime } = useFormat();
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["cost-ops-forecast"],
     queryFn: () => apiGet<ForecastResp>("/api/admin/cost-ops/forecast", { admin: true }),
   });
-  const cols = useColumns();
+  const cols = useColumns(t);
 
   if (isLoading) {
     return (
@@ -138,7 +142,7 @@ export default function ForecastPanel() {
   if (isError || !data) {
     return (
       <div style={panelStyle}>
-        <ErrorState message={`Could not load the forecast. ${(error as Error)?.message ?? ""}`}
+        <ErrorState message={t("forecastLoadError", (error as Error)?.message ?? "")}
                     onRetry={() => refetch()} />
       </div>
     );
@@ -146,15 +150,14 @@ export default function ForecastPanel() {
   const over = [...data.providers, ...data.aws_accounts].filter((r) => r.status === "over");
   return (
     <div style={panelStyle} data-testid="cost-ops-forecast">
-      <PanelTitle aside={<span style={noteStyle}>As of {formatDateTime(data.generated_at)}</span>}>
-        Month-end forecast · {data.month}
+      <PanelTitle aside={<span style={noteStyle}>{t("asOf", formatDateTime(data.generated_at))}</span>}>
+        {t("forecastTitle", data.month)}
       </PanelTitle>
       <div style={{ ...noteStyle, marginBottom: 12 }}>
-        {data.complete_days} of {data.days_in_month} days complete. Forecast = spend of the complete days + the mean of
-        the last {data.run_rate_days} complete days × the days left.
+        {t("forecastNote", data.complete_days, data.days_in_month, data.run_rate_days)}
         {over.length > 0 && (
           <span style={{ color: K.danger, fontWeight: 600 }}>
-            {" "}Over budget at this rate: {over.map((r) => r.label).join(", ")}.
+            {" "}{t("overAtRate", over.map((r) => r.label).join(", "))}
           </span>
         )}
       </div>
@@ -167,7 +170,7 @@ export default function ForecastPanel() {
           paginate={false}
           tableMinWidth={720}
           compact
-          emptyTitle="No spend this month"
+          emptyTitle={t("noSpendMonth")}
         />
         <DataTable<AwsRow>
           tableId="cost-ops-forecast-aws"
@@ -177,13 +180,11 @@ export default function ForecastPanel() {
           paginate={false}
           tableMinWidth={720}
           compact
-          emptyTitle="No AWS accounts"
+          emptyTitle={t("noAwsAccounts")}
         />
       </div>
       <div style={{ ...noteStyle, marginTop: 10 }}>
-        AI providers: gateway estimates (llm_call_log, llm_call_daily) and dfs_call_log; budget = the provider&apos;s
-        daily cap on the Budgets tab × days in the month. AWS accounts: the stored Cost Explorer days (AWS bill tab), which
-        lag 1–2 days; budget = the account&apos;s AWS Budget.
+        {t("forecastFootnote")}
       </div>
     </div>
   );

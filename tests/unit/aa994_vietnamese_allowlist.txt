@@ -5,5 +5,4 @@
 #
 # path (from the repo root)                         lines   why it is still here
 frontend/app/admin/data-erasure/ApplyPanel.tsx      1       a person's name in the approval note (sweep: name the role)
-frontend/app/admin/settings/JevCreditTab.tsx        1       a person's name in a placeholder (sweep: name the role)
 frontend/lib/aaContent.ts                           2       content matching, not UI text (Vietnamese visa words, đ folding)

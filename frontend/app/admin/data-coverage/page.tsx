@@ -9,7 +9,8 @@
 // recomputes the DB counts only when its copy is older than 15 s) and is disabled for 15 s after a click.
 //
 // The page computes nothing: status, missing and the expected gap come from the API; the badge colour is `status` +
-// `kind` (lib/dataCoverage.ts statusBadge). Admin only (lib/rbac.ts PAGE_RULES), English.
+// `kind` (lib/dataCoverage.ts statusBadge). Admin only (lib/rbac.ts PAGE_RULES). AA-994: text in the UI language
+// (messages.ts + lib/dataCoverage.messages.ts); API labels, notes and reasons stay as sent.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -31,11 +32,14 @@ import {
   downloadCsv,
   sans,
   toCsv, AdminMain,
+  useLang,
+  useT,
+  type Translator,
 } from "../../_kit";
 import {
-  CSV_COLUMNS,
   DATA_COVERAGE_PATH,
   REFRESH_THROTTLE_MS,
+  csvColumns,
   csvRows,
   formatAge,
   formatCount,
@@ -49,11 +53,22 @@ import {
   type CoverageGroup,
   type CoverageRow,
   type DataCoverageResponse,
+  type DcWords,
 } from "@/lib/dataCoverage";
+import { DC_MESSAGES } from "@/lib/dataCoverage.messages";
+import { DC } from "./messages";
+
+type T = Translator<typeof DC.en>;
+
+function useDcWords(): DcWords {
+  return DC_MESSAGES[useLang()];
+}
 
 const QUERY_KEY = ["data-coverage"] as const;
 
 export default function DataCoveragePage() {
+  const t = useT(DC);
+  const w = useDcWords();
   const qc = useQueryClient();
   const query = useQuery({
     queryKey: QUERY_KEY,
@@ -80,54 +95,52 @@ export default function DataCoveragePage() {
   const error = (refresh.error as Error | null) ?? (query.error as Error | null);
 
   const onRefresh = () => {
-    const t = Date.now();
-    setThrottledUntil(t + REFRESH_THROTTLE_MS);
-    setNow(t);
+    const at = Date.now();
+    setThrottledUntil(at + REFRESH_THROTTLE_MS);
+    setNow(at);
     refresh.mutate();
   };
   const onExport = () => {
     if (!data) return;
-    downloadCsv(`data-coverage-${data.as_of.slice(0, 10)}`, toCsv(csvRows(data), CSV_COLUMNS));
+    downloadCsv(`data-coverage-${data.as_of.slice(0, 10)}`, toCsv(csvRows(data), csvColumns(w)));
   };
 
   return (
     <AdminMain>
       <SkeletonStyle />
       <PageHeader
-        title="Data coverage"
-        description="Live counts from raw upload to TripPlanner, Booking and CRM. Numbers only."
+        title={t("title")}
+        description={t("description")}
         actions={
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             {data && <AsOf data={data} />}
             <Button variant="secondary" size="sm" onClick={onRefresh} disabled={busy || throttled}
-              title={throttled ? "Refreshed a moment ago" : "Count again now (the database counts skip the 60 s cache)"}>
-              <RefreshCw size={13} /> {refresh.isPending ? "Counting…" : "Refresh"}
+              title={throttled ? t("refreshedMoment") : t("refreshTitle")}>
+              <RefreshCw size={13} /> {refresh.isPending ? t("counting") : t("refresh")}
             </Button>
             <Button variant="secondary" size="sm" onClick={onExport} disabled={!data}
-              title="Every row of every stage as CSV">
-              <Download size={13} /> Export CSV
+              title={t("exportTitle")}>
+              <Download size={13} /> {t("exportCsv")}
             </Button>
           </div>
         }
       />
 
       {error && !data ? (
-        <ErrorState message={error.message || "Could not load the data coverage"} onRetry={() => query.refetch()} />
+        <ErrorState message={error.message || t("loadError")} onRetry={() => query.refetch()} />
       ) : !data ? (
         <PageSkeleton />
       ) : (
         <div data-testid="data-coverage-ready">
           {refresh.isError && (
             <div style={{ ...noteStyle, color: K.danger, marginBottom: 12 }}>
-              Refresh failed: {(refresh.error as Error)?.message || "unknown error"}. Showing the previous answer.
+              {t("refreshFailed", (refresh.error as Error)?.message || t("unknownError"))}
             </div>
           )}
           <SummaryStrip data={data} />
           {data.groups.map((g) => <GroupSection key={g.id} group={g} />)}
           <div style={{ ...noteStyle, marginTop: 14 }}>
-            OK = missing is within the expected gap · Gap = a defect (generated automatically) · Backlog = known work
-            (manual or paid run) · Info = no target · n/a = the source did not answer (hover for the reason).
-            Built in {formatCount(data.generated_ms)} ms.
+            {t("legend")} {t("builtIn", formatCount(data.generated_ms))}
           </div>
         </div>
       )}
@@ -136,28 +149,30 @@ export default function DataCoveragePage() {
 }
 
 function AsOf({ data }: { data: DataCoverageResponse }) {
-  const age = formatAge(data.as_of);
+  const t = useT(DC);
+  const age = formatAge(data.as_of, undefined, useDcWords());
   return (
     <span data-testid="data-coverage-as-of" style={{ fontSize: 12, color: K.muted, fontFamily: sans, display: "inline-flex", gap: 6, alignItems: "center" }}>
-      As of {formatUtcTime(data.as_of)}{data.cached && age ? ` (cached ${age})` : ""}
-      {data.stale && <Badge tone="warning">stale</Badge>}
+      {t("asOf", formatUtcTime(data.as_of))}{data.cached && age ? t("cached", age) : ""}
+      {data.stale && <Badge tone="warning">{t("stale")}</Badge>}
     </span>
   );
 }
 
 function SummaryStrip({ data }: { data: DataCoverageResponse }) {
+  const t = useT(DC);
   const tiles: { label: string; value: string; color: string; testId: string }[] = [
-    { label: "Live tours", value: formatCount(data.live_tours), color: K.ink, testId: "dc-live" },
-    { label: "Gaps (defects)", value: formatCount(data.summary.gaps), color: data.summary.gaps ? K.danger : K.ink, testId: "dc-gaps" },
-    { label: "Backlog over gap", value: formatCount(data.summary.backlog), color: data.summary.backlog ? K.amber : K.ink, testId: "dc-backlog" },
-    { label: "Not available", value: formatCount(data.summary.na), color: K.ink3, testId: "dc-na" },
+    { label: t("tileLive"), value: formatCount(data.live_tours), color: K.ink, testId: "dc-live" },
+    { label: t("tileGaps"), value: formatCount(data.summary.gaps), color: data.summary.gaps ? K.danger : K.ink, testId: "dc-gaps" },
+    { label: t("tileBacklog"), value: formatCount(data.summary.backlog), color: data.summary.backlog ? K.amber : K.ink, testId: "dc-backlog" },
+    { label: t("tileNa"), value: formatCount(data.summary.na), color: K.ink3, testId: "dc-na" },
   ];
   return (
     <div className="aa-kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 22 }}>
-      {tiles.map((t) => (
-        <div key={t.label} data-testid={t.testId} style={tileStyle}>
-          <div style={{ fontSize: 11, color: K.muted, textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 600 }}>{t.label}</div>
-          <div style={{ fontSize: 24, fontWeight: 700, color: t.color, fontVariantNumeric: "tabular-nums", marginTop: 4 }}>{t.value}</div>
+      {tiles.map((tile) => (
+        <div key={tile.testId} data-testid={tile.testId} style={tileStyle}>
+          <div style={{ fontSize: 11, color: K.muted, textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 600 }}>{tile.label}</div>
+          <div style={{ fontSize: 24, fontWeight: 700, color: tile.color, fontVariantNumeric: "tabular-nums", marginTop: 4 }}>{tile.value}</div>
         </div>
       ))}
     </div>
@@ -165,19 +180,21 @@ function SummaryStrip({ data }: { data: DataCoverageResponse }) {
 }
 
 function GroupSection({ group }: { group: CoverageGroup }) {
-  const columns = useMemo(() => COLUMNS, []);
+  const t = useT(DC);
+  const w = useDcWords();
+  const columns = useMemo(() => buildColumns(t, w), [t, w]);
   const gaps = groupGaps(group);
-  const allNa = groupUnavailableReason(group);
+  const allNa = groupUnavailableReason(group, w);
   return (
     <section data-testid={`dc-group-${group.id}`} style={{ marginBottom: 26 }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 8, fontFamily: sans }}>
         <h2 style={{ fontSize: 15, fontWeight: 700, color: K.ink, margin: 0 }}>{group.label}</h2>
         <span style={{ fontSize: 12, color: gaps ? K.danger : K.muted }}>
-          {group.rows.length} rows · {gaps} {gaps === 1 ? "gap" : "gaps"}
+          {t("groupCount", group.rows.length, gaps)}
         </span>
       </div>
       {group.note && <div style={{ ...noteStyle, marginBottom: 8 }}>{group.note}</div>}
-      {allNa && <div style={{ ...noteStyle, marginBottom: 8 }}>Not available: {allNa}</div>}
+      {allNa && <div style={{ ...noteStyle, marginBottom: 8 }}>{t("notAvailable", allNa)}</div>}
       <DataTable<CoverageRow>
         tableId={`data-coverage-${group.id}`}
         data={group.rows}
@@ -193,10 +210,10 @@ function GroupSection({ group }: { group: CoverageGroup }) {
   );
 }
 
-const COLUMNS: ColumnDef<CoverageRow, unknown>[] = [
+const buildColumns = (t: T, w: DcWords): ColumnDef<CoverageRow, unknown>[] => [
   {
     id: "metric",
-    header: "Metric",
+    header: t("colMetric"),
     accessorFn: (r) => r.label,
     cell: ({ row }) => {
       const r = row.original;
@@ -204,21 +221,21 @@ const COLUMNS: ColumnDef<CoverageRow, unknown>[] = [
         <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
           <span>{r.label}</span>
           {r.issue && <Badge tone="neutral" dot={false} style={{ textTransform: "none", letterSpacing: 0 }}>{r.issue}</Badge>}
-          <InfoTip text={`Source: ${r.source}. ${r.timing_ms} ms.`} label={`Source of ${r.label}`} testId={`dc-src-${r.id}`} />
+          <InfoTip text={t("sourceTip", r.source, r.timing_ms)} label={t("sourceOf", r.label)} testId={`dc-src-${r.id}`} />
         </span>
       );
     },
   },
   {
     id: "count",
-    header: "Count",
+    header: t("colCount"),
     accessorFn: (r) => r.value,
     meta: { align: "right" },
     cell: ({ row }) => <span style={numStyle}>{formatCount(row.original.value)}</span>,
   },
   {
     id: "of",
-    header: "Of",
+    header: t("colOf"),
     accessorFn: (r) => r.denominator,
     cell: ({ row }) => <span style={{ ...numStyle, color: K.ink3 }}>{formatOf(row.original)}</span>,
   },
@@ -231,41 +248,41 @@ const COLUMNS: ColumnDef<CoverageRow, unknown>[] = [
   },
   {
     id: "missing",
-    header: "Missing",
+    header: t("colMissing"),
     accessorFn: (r) => r.missing,
     meta: { align: "right" },
     cell: ({ row }) => <span style={numStyle}>{formatCount(row.original.missing)}</span>,
   },
   {
     id: "expected",
-    header: "Expected gap",
+    header: t("colExpected"),
     accessorFn: (r) => r.expected_gap,
     cell: ({ row }) => <span style={{ fontSize: 12, color: K.muted }}>{formatExpected(row.original)}</span>,
   },
   {
     id: "status",
-    header: "Status",
+    header: t("colStatus"),
     accessorFn: (r) => r.status,
     cell: ({ row }) => {
       const r = row.original;
-      const b = statusBadge(r);
+      const b = statusBadge(r, w);
       return (
         <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }} data-testid={`dc-status-${r.id}`}>
           <Badge tone={b.tone}>{b.label}</Badge>
-          {r.status === "na" && r.reason && <InfoTip text={r.reason} label={`Why ${r.label} is not available`} testId={`dc-na-${r.id}`} />}
+          {r.status === "na" && r.reason && <InfoTip text={r.reason} label={t("whyNa", r.label)} testId={`dc-na-${r.id}`} />}
         </span>
       );
     },
   },
   {
     id: "open",
-    header: "Open",
+    header: t("colOpen"),
     enableSorting: false,
     meta: { hideLabelOnCard: true },
     cell: ({ row }) => {
       const d = row.original.drill;
       return d ? (
-        <Link href={d} aria-label={`Open ${row.original.label}`} style={{ color: K.accent, display: "inline-flex" }}>
+        <Link href={d} aria-label={t("open", row.original.label)} style={{ color: K.accent, display: "inline-flex" }}>
           <ArrowUpRight size={15} />
         </Link>
       ) : null;
