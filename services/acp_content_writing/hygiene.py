@@ -1230,60 +1230,6 @@ INSTRUCTION_LEAK_RE = re.compile(
     rf"|\bthis\s+(?:guide|post)\s+(?:{_SELF_VERBS})\b"
     r"|\bin\s+this\s+(?:piece|post|article|guide)\b"
     r"|\bwhat\s+follows\s+is\s+(?:a|an|the)\b", re.I)
-# AA-789 — brief wording the S234 panel found in copy that INSTRUCTION_LEAK_RE missed: the brief's 'one X, one Y,
-# one Z' recipe printed as a sentence of its own ('One ruined site, one date, one fact.', r2 #19). Only the verbless
-# three-item fragment whose last item is a word of the brief's vocabulary (fact, detail, date …): 'Each family gets
-# one tent, one stove and one lantern.' and a 'One tent, one stove, one lantern.' packing line are copy. Reported by
-# find_issues (F13_leak, sentence repair) only, never deleted by autofix.
-# The angle's 'two named rivers' (r3 #7) is NOT a pattern: in both stored pieces it is followed by the names
-# ('between two named rivers — the Male River and the Female River'), the same shape as the clean 'The two named
-# passes on the road, Dochula and Pele La, both have prayer flags.', so no regex tells them apart.
-_ITEM = r"(?:[a-z][\w'’-]*\s+)?[a-z][\w'’-]*"
-BRIEF_WORDING_RE = re.compile(
-    rf"^\W*(?-i:O)ne\s+{_ITEM},\s+one\s+{_ITEM},\s+(?:and\s+)?one\s+(?:[a-z][\w'’-]*\s+)?"
-    r"(?:facts?|dates?|details?|stor(?:y|ies)|moments?|images?|scenes?|figures?|numbers?|ideas?|lines?"
-    r"|questions?|points?)\s*[.!?]?\s*$", re.I)
-# AA-789 (S234 r3 #14: 'carries several romanised spellings — Mörön, Murun, Muren — and one phonetic approximation in
-# English that is best avoided') — the seed's 'Naming:' note retold in the copy. Its spelling bookkeeping is a leak
-# only next to a place whose moment HAS a Naming note (by any spelling the note gives): 'phonetic approximation' in a
-# sentence that names that place, 'correctly spelled' only with the name right beside it ('is correctly spelled
-# Mörön', 'Mörön is correctly spelled …'). 'Make sure your name is correctly spelled on the visa application' and 'The
-# Dzongkha greeting kuzuzangpo is written here as a phonetic approximation.' are plain copy. Not LEAK_RE, so autofix
-# never trims or deletes on it; reported by find_issues (F13_leak, sentence repair) only. Not 'a loose / common
-# approximation', 'best avoided' or 'should be referred to as': those read as plain copy (a trail map, the midday sun).
-NAMING_NOTE_TERMS_RE = re.compile(r"\bphonetic(?:al)?\s+approximation\b|\bcorrectly\s+spelled\b", re.I)
-_SPELLED_NEXT_RE = re.compile(r"\bcorrectly\s+spelled\s+(?:as\s+)?['‘\"“]?([a-z0-9][a-z0-9’'-]*)", re.I)
-_SPELLED_PREV_RE = re.compile(r"([a-z0-9][a-z0-9’'-]*)['’\"”]?\s+(?:is|was|are)\s+correctly\s+spelled\b", re.I)
-_NAMING_STOP = frozenset({"the", "this", "it", "its", "a", "an", "also", "city", "town", "place", "english"})
-
-
-def _naming_spellings(naming: str) -> frozenset:
-    """The folded names a seed 'Naming:' line gives for its place ('Mörön', 'Murun', 'Muren', 'Moron')."""
-    body = (naming or "").split(":", 1)[-1]
-    words = {fold(w) for w in re.findall(r"[A-ZÀ-ÖØ-Þ][\w’'-]+", body)}
-    return frozenset(w for w in words if w not in _NAMING_STOP and len(w) > 2)
-
-
-def naming_note_leaks(sentence: str, moments: list) -> list[str]:
-    """The Naming-note terms (NAMING_NOTE_TERMS_RE) in `sentence` when it names a place a moment's Naming note
-    covers (see above)."""
-    m = NAMING_NOTE_TERMS_RE.search(sentence or "")
-    if not m:
-        return []
-    spellings = set()
-    for mo in moments or ():
-        if getattr(mo, "naming", ""):
-            spellings |= _naming_spellings(mo.naming)
-    if not spellings:
-        return []
-    folded = fold(sentence)
-    if re.search(r"\bphonetic", folded):
-        have = set(re.findall(r"[a-z0-9’'-]+", folded))
-    else:
-        have = {g.rstrip("’'") for rx in (_SPELLED_NEXT_RE, _SPELLED_PREV_RE) for g in rx.findall(folded)}
-    return [m.group(0)] if have & spellings else []
-
-
 _DAY_RANGE_RE = re.compile(rf"\bdays\s+({NUM_TOKEN}){_RANGE_SEP}({NUM_TOKEN})\b", re.I)
 _SCOPE_DAYS_RE = re.compile(r"\bdays?\s+(\d+)(?:\s*[–—-]\s*(\d+))?", re.I)
 
@@ -1885,112 +1831,6 @@ def near_duplicates(text: str, ignore: frozenset = frozenset(), cta: Optional[st
     return out
 
 
-# AA-789 (S234 r4 #1: 'is still a living religious seat' … 'continues to function as a living religious
-# institution', a repair duplicate) — the same thing described twice with the head noun swapped. `_restatement` reads
-# only the sentence just before; this reads up to PARAPHRASE_WINDOW sentences back but only predicates: both
-# sentences describe their subject with '(is | remains | serves as | functions as …) a <w1> <w2> <noun>', the same
-# w1 w2 (w2 an adjective ending: '-ous', '-al', '-ic' …), a different noun, w1 w2 not the source's own wording, and
-# the SAME subject (`_same_subject`). Two different things often share an adjective pair, so the subject must be the
-# same noun phrase: the later subject's head noun is the earlier one's and its other words are a subset of the
-# earlier subject's ('The dzong' after 'Punakha Dzong'; never 'Our day-four lodge' after 'Our day-two lodge' nor 'The
-# second camp' after 'The first camp'), or the later subject is a pronoun whose nearest antecedent is that subject
-# (no sentence between them has a subject of the same number). A predicate with 'also' / 'too' / 'as well' adds a
-# second fact ('It is also a working religious school') and is never read. A descriptor in subject or object position
-# is never read either. Reported (F13_repeat, sentence repair), never deleted by autofix.
-_DESCRIPTOR_END_RE = re.compile(r"(?:ous|al|ic|ive|ful|ible|able|ish|less|ern)$")
-_PRONOUN_SUBJECT_RE = re.compile(r"^\W*(it|this|that|they|these|those|he|she)\b", re.I)
-_PLURAL_PRONOUNS = frozenset({"they", "these", "those"})
-_PREDICATE_DESC_RE = re.compile(
-    r"\b(?:is|are|was|were|remains?|stays?|(?:serves?|serving|functions?|functioning|acts?|acting|works?)\s+as)"
-    r"\s+(?:still\s+|now\s+|very\s+much\s+|truly\s+|essentially\s+)?(?:a|an|the)\s+"
-    r"([a-z][a-z-]+)\s+([a-z][a-z-]+)\s+([a-z][a-z-]+)\b", re.I)
-_ADDITIVE_RE = re.compile(r"\b(?:also|too|as\s+well)\b", re.I)
-# the verb group between a subject and its predicate ('continues to', 'has long', 'still') — cut off the subject
-_SUBJECT_END_RE = re.compile(
-    r"\s+(?:is|are|was|were|remains?|stays?|serves?|functions?|acts?|works?|continues?|has|have|had|still|now"
-    r"|today|very|truly|essentially|itself|themselves)\b.*$", re.I)
-_SUBJECT_DETERMINERS = frozenset({"the", "a", "an", "this", "that", "these", "those", "its", "their", "our", "your",
-                                  "his", "her"})
-PARAPHRASE_WINDOW = 4
-
-
-def _subject_np(sentence: str) -> tuple[str, ...]:
-    """The subject noun phrase of `sentence` as folded words, determiners kept out: the words before its first verb
-    group, after a leading adverbial ('Today, …'). () when there is none (a pronoun subject, a clause-initial verb)."""
-    head = sentence.split(",")[-1] if sentence.count(",") == 1 and len(sentence.split(",")[0].split()) <= 3 \
-        else sentence
-    head = _SUBJECT_END_RE.sub("", head.strip())
-    words = [w for w in re.findall(r"[a-z0-9][a-z0-9’'-]*", fold(head)) if w not in _SUBJECT_DETERMINERS]
-    return tuple(words) if 0 < len(words) <= 5 else ()
-
-
-def _plural(np: tuple[str, ...]) -> bool:
-    return bool(np) and np[-1].endswith("s") and not np[-1].endswith(("ss", "us", "is"))
-
-
-def _same_subject(later: tuple[str, ...], earlier: tuple[str, ...]) -> bool:
-    """`later` names the thing `earlier` names: same head noun, its other words a subset of `earlier`'s."""
-    if not later or not earlier or _stem(later[-1]) != _stem(earlier[-1]):
-        return False
-    return set(later[:-1]) <= set(earlier[:-1])
-
-
-def _predicates(sentence: str) -> list[tuple[str, str, str]]:
-    """(w1, w2, head) for each '<copula / serves as> a w1 w2 head' in `sentence`, none when it is additive."""
-    if _ADDITIVE_RE.search(sentence):
-        return []
-    out = []
-    for m in _PREDICATE_DESC_RE.finditer(sentence):
-        w1, w2, head = (g.lower() for g in m.groups())
-        if _DESCRIPTOR_END_RE.search(w2):
-            out.append((w1, w2, head))
-    return out
-
-
-def _antecedent_is(spans: list[dict], subjects: list[tuple], i: int, j: int) -> bool:
-    """The pronoun opening span j refers back to span i's subject: no span between them has a subject of the
-    pronoun's number, and span i's subject has it."""
-    pron = _PRONOUN_SUBJECT_RE.match(spans[j]["clean"]).group(1).lower()
-    plural = pron in _PLURAL_PRONOUNS
-    if not subjects[i] or _plural(subjects[i]) != plural:
-        return False
-    return not any(subjects[k] and _plural(subjects[k]) == plural for k in range(i + 1, j))
-
-
-def paraphrased_repeats(text: str, source: str = "", ignore: frozenset = frozenset(),
-                        cta: Optional[str] = None) -> list[tuple[str, str]]:
-    """[(later sentence, the shared descriptor)] for prose sentences outside the FAQ (see above)."""
-    spans = [sp for sp in _dup_spans(text, cta) if sp["kind"] == "prose"]
-    src = " ".join(fold(source or "").split())
-    preds = [_predicates(sp["clean"]) for sp in spans]
-    subjects = [_subject_np(sp["clean"]) if not _PRONOUN_SUBJECT_RE.match(sp["clean"]) else () for sp in spans]
-    out = []
-    for j in range(1, len(spans)):
-        pronoun = bool(_PRONOUN_SUBJECT_RE.match(spans[j]["clean"]))
-        hit = None
-        for w1, w2, head in preds[j]:
-            if f"{w1} {w2}" in src:
-                continue
-            for i in range(max(0, j - PARAPHRASE_WINDOW), j):
-                if not any(a == w1 and b == w2 and _stem(h0) != _stem(head) for a, b, h0 in preds[i]):
-                    continue
-                if (_antecedent_is(spans, subjects, i, j) if pronoun
-                        else _same_subject(subjects[j], subjects[i])):
-                    hit = f"{w1} {w2}"
-                    break
-            if hit:
-                break
-        if hit:
-            out.append((spans[j]["clean"], hit))
-    return out
-
-
-# AA-789 — no 'section opens on a bare relational noun' check (S234 r4 #16 'Access requires a multi-hour horse or
-# reindeer ride.' under '## Into the Taiga: The Tsaatan Reindeer Herders'): the heading names what the access is to,
-# exactly as in the clean '## Punakha Dzong / Entry requires modest dress.', so the text alone cannot tell the
-# panel's orphan from plain copy, and F13_repeat blocks and can hold.
-
-
 def orphan_lines(text: str, ignore: frozenset = frozenset(), cta: Optional[str] = None) -> list[str]:
     """One-sentence paragraphs of ≤ 8 words whose every content word is already in the sentence
     before or after them — a line a repair left behind ('The itinerary builds it in.' between 'The
@@ -2375,27 +2215,19 @@ CONTRAST_FRAME_RES = tuple(re.compile(p, re.I) for p in (
     r"\b(?:this|that|it)\s+is\s+not\s+(?:a\s+)?metaphor\b",
     r"\bnot\s+(?:a\s+|an\s+|the\s+)?\w+(?:\s+\w+){0,3}\s+but\s+(?!also\b)\w+",
     r"[—–,;]\s*not\s+(?:just|only|merely|simply)\s+\w+",
-    # AA-789 (Report 12 §1.3: the panel saw frames on 16-19 of 20 pieces, the check flagged 3) — two shapes it
-    # missed, both narrow because a plain 'Y, not X' is how travel copy states a fact ('per person, not per room',
-    # 'in Paro, not Thimphu', 'a family-run guesthouse, not a large hotel', 'optional, not compulsory').
-    # 8: the clause-final reversed frame whose X is an abstraction: an '-al / -ic / -ive / -ous' adjective on an
-    # abstract noun ('The annual return is institutional, not ceremonial sentiment.' r4 #8; 'a founding argument, not
-    # a scenic preference' r4 class 4), something 'frozen' ('not a site frozen for visitors' r4 #1), or a stock
-    # dismissal noun ('not a museum', 'not a postcard', 'not an accident').
-    r"(?:,|\s[—–])\s*not\s+(?:a\s+|an\s+|the\s+)?(?:"
-    r"(?-i:[a-z])[\w'’-]*(?:al|ic|ive|ous|ful)\s+(?-i:[a-z])[\w'’-]*(?:ment|ence|ance|ion|ity|ism|ness|ship)"
-    r"|(?:(?-i:[a-z])[\w'’-]*\s+)?(?-i:[a-z])[\w'’-]*\s+frozen\s+(?:in|for)\s+[\w'’-]+"
-    r"|(?:(?-i:[a-z])[\w'’-]*\s+)?(?:museum|postcard|backdrop|accident|coincidence|spectacle|relic|afterthought"
-    r"|formality|footnote|theme\s+park|stage\s+set)(?:\s+(?-i:[a-z])[\w'’-]*){0,3}"
-    r")\s*(?=[.!?]|$)",
+    # AA-789 (Report 12 §1.3: the panel saw frames on 16-19 of 20 pieces, the check flagged 3) — two literal shapes.
+    # F15 only: it blocks on attempt 1 for one sentence repair and never holds (quality_gates.never_holds), and a
+    # finding needs more than 1 frame per 150 words.
+    # 8: the clause-final reversed frame, ONLY with the abstractions the panel quoted ('institutional, not ceremonial
+    # sentiment' r4 #8, 'a founding argument, not a scenic preference' r4 class 4) and the cliché 'frozen in time'.
+    # A shape rule (an '-al / -ic' adjective on an abstract noun, a stock noun like 'museum' / 'formality') fired on
+    # clean facts ('paid to the government, not a personal commission', 'the check is strict, not a formality').
+    r"(?:,|\s[—–])\s*not\s+(?:a\s+|an\s+)?(?:ceremonial\s+sentiment|scenic\s+preference"
+    r"|(?:(?-i:[a-z])[\w'’-]*\s+)?frozen\s+in\s+time)\s*(?=[.!?]|$)",
     # 9: the broetry pair, a 'Not …' fragment answered by a two-word fragment ending on the same word ('Not squeezed
     # in. Planned in.' r3 #15). A lone 'Not …' fragment is left alone: 'Not suitable for children under seven.' is
     # standard itinerary copy.
     r"(?:^|(?<=[.!?]\s)|(?<=\n))(?-i:N)ot\s+(?:[\w'’-]+\s+){0,2}([\w'’-]+)[.!?]\s+(?-i:[A-Z])[\w'’-]*\s+\1[.!?]",
-    # Dropped after review (AA-789 notes): a verb negation answered after ';' / ':' (fired on 'The camp does not have
-    # Wi-Fi; it does have a generator'; the panel's 'does not perform for visitors. It simply continues.' is two
-    # sentences and the stock line catches it) and 'less X, more Y' (no panel example; fired on 'Expect less
-    # driving, more walking').
 ))
 CONTRAST_WORDS_PER_FRAME = 150
 
@@ -2537,7 +2369,7 @@ TEMPLATE_LINE_RES = tuple(re.compile(p, re.I) for p in (
     # only as the sentence's opener with a plural pronoun (r2 #2 'Knowing them in advance —' had no
     # antecedent); 'and knowing that in advance changes how you plan' (r1 #13, clean) is fine
     r"^knowing\s+(?:them|these|those)\s+in\s+advance\b",
-)) + CROSS_CHANNEL_STOCK_PATTERNS  # AA-789 — narrow blog copies of 'does not perform', 'tolerates them' (r4 #15, #17)
+)) + CROSS_CHANNEL_STOCK_PATTERNS  # AA-789 — literal blog copies of 'does not perform for visitors', 'tolerates them'
 
 
 # AA-790 (S251 T9 pilot, AI-tells 4.08) — the AI tells the writer-side pass (ai_tells.rewrite) cannot fix in code:
@@ -3515,8 +3347,7 @@ def find_issues(content_text: str, ctx: HygieneContext, *, seo_title: Optional[s
     for s in spans:  # S234 round 2 — headings too ('A Sentence on Loss')
         if s["kind"] not in ("prose", "bullet", "faq_a", "faq_q", "heading"):
             continue
-        for leak in instruction_leaks(s["clean"], ctx.scope) + [m.group(0) for m in BRIEF_WORDING_RE.finditer(
-                s["clean"])]:
+        for leak in instruction_leaks(s["clean"], ctx.scope):
             leaks.append(f"leaks the writer's instructions ('{leak}'): '{s['clean'][:200]}'")
         for leak in audience_leaks(s["clean"], ctx.audience, ctx.source_text):
             leaks.append(f"leaks the brand's audience definition ('{leak}'), not a fact about this trip: "
@@ -3537,9 +3368,6 @@ def find_issues(content_text: str, ctx: HygieneContext, *, seo_title: Optional[s
         m = LEAK_RE.search(s["clean"])
         if m:
             leaks.append(f"leaks the source-notes wording ('{m.group(0)}'): '{s['clean'][:200]}'")
-        else:
-            for term in naming_note_leaks(s["clean"], ctx.moments):  # AA-789 (S234 r3 #14)
-                leaks.append(f"leaks the source-notes wording ('{term}'): '{s['clean'][:200]}'")
         m = SOCIAL_PROOF_RE.search(s["clean"])
         if m and not _is_cta(s["clean"], ctx.cta):
             issues.append(f"social proof ('{m.group(0)}') the source does not state: '{s['clean'][:200]}'")
@@ -3551,9 +3379,6 @@ def find_issues(content_text: str, ctx: HygieneContext, *, seo_title: Optional[s
         repeats.append(f"{d['why']} — cut it or say something new: '{d['later']['clean'][:200]}'")
     repeats += [f"adds nothing to the sentences around it — cut it: '{o[:200]}'"
                 for o in orphan_lines(text, ignore, ctx.cta)]
-    repeats += [f"tells the same thing again in other words ('{pair}…') — cut it or say something new: '{o[:200]}'"
-                for o, pair in paraphrased_repeats(text, ctx.source_text, ignore, ctx.cta)
-                if f"{o[:200]}'" not in {r.rsplit(": '", 1)[-1] for r in repeats}]  # AA-789 (S234 r4 #1)
     from services.acp_content_writing.trip_facts import misplaced_sentences
     repeats += [f"repeats a moment under another moment's heading — cut it or move its fact: '{m[:200]}'"
                 for m in misplaced_sentences(text, ctx.moments, ctx.cta)]

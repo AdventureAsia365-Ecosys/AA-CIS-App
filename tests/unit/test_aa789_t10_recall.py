@@ -1,24 +1,27 @@
-"""AA-789 — T10 gate recall tuning (Report 12 §1.3, S234 panel rounds r2-r4).
+"""AA-789 — T10 gate recall tuning (Report 12 §1.3, S234 panel rounds r2-r4), revision 4: precision over recall.
 
-Positive cases: each defect the S234 panel quoted in reports 03 / 04 / 07 (root
-`docs/audits/2026-10-13-S234-t-series-rounds/`) that the deterministic gates missed. Report 12 §1.3 is a table of
-classes without sentences, so the quotes come from the round reports; a comment names the report row. Fixtures that
-quote the panel word for word are marked "quote"; the others are marked "synthetic, shape of …": a reworded sentence
-with the same shape (never stored copy, AA-919 golden-text guard).
+Three independent S257 verifier rounds found false positives on CLEAN travel copy in the widened patterns, and every
+widened pattern under F13_leak, F13_repeat, F17_trip_fact and F18_rarity feeds a gate that blocks and can hold a
+tenant piece. Revision 4 keeps a widened pattern only when it is narrow, literal and fires on none of the clean
+sentences of any round:
+- F18_rarity: `trip_facts.AA789_RARITY` ('unlike almost anything', 'anything else on earth', '(most of | the rest of)
+  the world has never / rarely <verb>').
+- F15_voice (blocks on attempt 1 for one sentence repair, never holds): contrast frame 8 (closed list: 'ceremonial
+  sentiment', 'scenic preference', 'frozen in time'), frame 9 (the 'Not X in. Y in.' pair) and two blog stock lines
+  (`channel_spec.CROSS_CHANNEL_STOCK_PATTERNS`).
+- F17 time idioms ('worn out by midday'): only removes findings.
+Everything else of revisions 1-3 is reverted to `main`; the panel examples it caught are pinned below as KNOWN MISSES
+(they need the planned post-repair integrity check, an LLM, not regex).
 
-Negative cases: every clean sentence the S257 independent verifier ran through the first version and saw flagged
-(`verifier`), every clean sentence the second reviewer found flagged by revision 2 (`reviewer`), plus near-misses
-of our own. The widened patterns feed gates that block and can hold (F13_leak,
-F13_repeat, F17_trip_fact, F18_rarity), so a pattern that could not be made precise was dropped (the notes list them)
-and its panel example is pinned here as a known miss.
-
-The no-new-fire check on the panel-clean LinkedIn pieces is the offline replay `scripts/aa789_recall_replay.py`
-(real copy stays out of the repo); its compare logic is tested at the end of this file.
+Fixtures quoting the panel are marked "quote" (all shorter than 8 words); the others are "synthetic, shape of …".
+Negative cases: every clean sentence of the three verifier rounds — `verifier` (round 1), `reviewer` (round 2) and
+ROUND3_CLEAN (round 3, 40 sentences with their seeds) — plus near-misses of our own.
 """
 from __future__ import annotations
 
 import importlib.util
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -26,12 +29,25 @@ import pytest
 from services.acp_content_writing import hygiene as h
 from services.acp_content_writing import quality_gates as qg
 from services.acp_content_writing import trip_facts as tf
-from services.acp_shared.channel_spec import linkedin_spec
+from services.acp_shared.channel_spec import CROSS_CHANNEL_STOCK_PATTERNS, linkedin_spec
 from tests.unit.test_aa768_s234_round3 import PUNAKHA_SEED, ROUTE_SEED, TERRA_AUDIENCE, TERRA_CTA
+
+# the patterns this issue adds, run alone on the clean sentences
+AA789_FRAME_INDICES = (8, 9)
+AA789_RARITY_RE = re.compile(tf.AA789_RARITY, re.I)
 
 
 def _frames(sentence: str) -> list[str]:
     return [f[2] for f in h.contrast_frames(sentence)]
+
+
+def _aa789_frames(text: str) -> list[str]:
+    return [f[2] for f in h.contrast_frames(text) if f[3] in AA789_FRAME_INDICES]
+
+
+def _aa789_stock(text: str) -> list[str]:
+    return [m.group(0) for sp in h.sentence_spans(text) for rx in CROSS_CHANNEL_STOCK_PATTERNS
+            if (m := rx.search(sp["clean"]))]
 
 
 def _trip(text: str, seed: str = ROUTE_SEED, channel: str = "blog") -> dict:
@@ -46,8 +62,7 @@ def _issues(text: str, seed: str = ROUTE_SEED) -> dict:
 # ---------------------------------------------------------------- severity flags are unchanged (S246 standing rule)
 
 def test_gate_severity_flags_are_unchanged():
-    """The flags are unchanged; note that F13_leak / F13_repeat / F17 / F18 already block and can hold, so every
-    pattern widened under them blocks too (hence the precision cases below)."""
+    """The flags are unchanged. The F15 frames this issue adds block on attempt 1 only and never hold."""
     assert qg.F15_STOCK_BLOCKING is True and qg.F17_BLOCKING is True and qg.F18_BLOCKING is True
     assert qg.F12_SCOPE_BLOCKING is False
     text = ("The yearly return is institutional, not ceremonial sentiment. "
@@ -56,6 +71,7 @@ def test_gate_severity_flags_are_unchanged():
     later = qg.gate_voice(text, spec=None, stock_blocking=False)
     assert not attempt1["passed"] and attempt1["blocking"]       # attempt 1: one sentence repair, as before
     assert not later["passed"] and not later["blocking"]          # attempt >= 2: a warn, never a hold
+    assert qg.never_holds({"gate": "F15_voice", "passed": False, "blocking": True, "violations": ["x"]})
 
 
 # ---------------------------------------------------------------- F15 contrast frames (§1.3 row 1)
@@ -63,11 +79,10 @@ def test_gate_severity_flags_are_unchanged():
 @pytest.mark.parametrize("sentence", [
     "The yearly return is institutional, not ceremonial sentiment.",      # synthetic, shape of r4 #8
     "The location was a founding argument, not a scenic preference.",    # quote, r4 class 4 (Punakha)
-    "It is a working monastery, not a site frozen for visitors.",         # synthetic around the r4 #1 quote
-    "The dzong is a working monastery, not a museum.",                     # synthetic, stock dismissal noun
+    "It is a working monastery, not a village frozen in time.",           # synthetic, the closed-list cliché
     "Not squeezed in. Planned in.",                                        # quote, r3 #15
-    "The dzong is not simply seen; it is entered.",                        # synthetic, r4 #8 'not simply seen'
-    "These aren't inconveniences — they're part of the rhythm.",          # synthetic, r4 #10 (existing)
+    "The dzong is not simply seen; it is entered.",                        # synthetic, r4 #8 (existing frame)
+    "These aren't inconveniences — they're part of the rhythm.",          # synthetic, r4 #10 (existing frame)
 ])
 def test_contrast_frame_shapes_are_found(sentence):
     assert _frames(sentence), sentence
@@ -92,9 +107,12 @@ def test_contrast_frame_shapes_are_found(sentence):
     "Not included. Lunch is included.",
     "It doesn't rain much here, it is said.",
     "The guide is less than an hour away.",
+    # revision 4: the shape rule of revision 3 is gone; these are known misses or clean facts
+    "It is a working monastery, not a site frozen for visitors.",          # synthetic r4 #1: known miss
+    "The dzong is a working monastery, not a museum.",                     # stock noun: known miss (dropped)
 ])
 def test_contrast_near_misses_stay_clean(sentence):
-    assert not _frames(sentence), sentence
+    assert not _aa789_frames(sentence), sentence
 
 
 def test_density_rule_still_decides_the_finding():
@@ -115,8 +133,8 @@ def test_a_frame_inside_a_stock_quote_is_not_counted_twice():
 
 @pytest.mark.parametrize("sentence,line", [
     ("The landscape does not perform for visitors.", "does not perform for visitors"),   # quote, r4 #15 (blog)
-    ("The valley does not perform. It simply continues.", "does not perform"),           # synthetic, r4 #15
-    ("The herders simply tolerates them.", "tolerates them"),                            # synthetic, r4 #17 quote
+    ("The valley does not perform for visitors. It simply continues.", "does not perform for visitors"),  # r4 #15
+    ("The herding families simply tolerates them.", "tolerates them"),                   # synthetic, r4 #17 quote
     ("The herding economy is a detail worth pausing on.", "worth pausing on"),           # synthetic, r4 #5 (existing)
 ])
 def test_returning_stock_lines_are_found_on_every_channel(sentence, line):
@@ -129,9 +147,13 @@ def test_returning_stock_lines_are_found_on_every_channel(sentence, line):
     "The dzong tolerates visitors in the outer courtyard during the festival.",          # verifier
     "The troupe does not perform for visitors outside the festival.",                    # an operating schedule
     "The dancers do not perform the cham on Mondays.",
+    "In winter the troupe does not perform for visitors.",                               # a season qualifier
+    "On festival days the troupe does not perform for visitors.",
+    "The valley does not perform. It simply continues.",              # bare 'does not perform': known miss
+    "An adult reindeer tolerates them only when they approach slowly.",                  # not sentence-final
 ])
 def test_blog_stock_line_near_misses(sentence):
-    assert h.template_lines(sentence) == []
+    assert _aa789_stock(sentence) == [], sentence
 
 
 def test_linkedin_only_stock_lines_stay_linkedin_only():
@@ -142,19 +164,29 @@ def test_linkedin_only_stock_lines_stay_linkedin_only():
     assert qg.gate_voice("The dzong tolerates visitors. Day two is long.", spec=li)["violations"]  # LinkedIn as before
 
 
-# ---------------------------------------------------------------- F17 'optional' flips (§1.3 row 7)
+# ---------------------------------------------------------------- F17 (§1.3 row 7): only the time idioms stay
+
+def test_time_idiom_is_not_a_schedule():
+    assert _trip("Children are rarely worn out by midday here.")["trip_fact"] == []      # synthetic, r4 #11 FP
+    assert any("gives a time" in v for v in _trip("You reach the Tsaatan settlements by midday.")["trip_fact"])
+
 
 @pytest.mark.parametrize("sentence", [
+    # KNOWN MISSES (revision 4 reverted these to main: each widening fired on clean copy in a verifier round)
     "Families cross the lake by boat, and walk the shore, and optionally ride horses.",  # synthetic, r4 #14
-    "Families travel by boat and on foot, with only horse riding optional.",          # synthetic, r4 #5
-    "Families travel by boat and on foot, with horse riding on request.",       # a verbless hedge is the item's own
-    "Families travel by boat, and horse riding can be arranged.",               # the boat item is its own statement
+    "Families travel by boat and on foot, with only horse riding optional.",            # synthetic, r4 #5
     ("Hours on the lake — by boat — and walks along the shore are part of how this stage of the journey unfolds, "
-     "with horse riding available as an extra."),                               # synthetic, r4 #5 (a plan statement)
+     "with horse riding available as an extra."),                                       # synthetic, r4 #5
+    "Visiting the Tsaatan herders is optional on day five.",                            # synthetic, r4 #18
+    "The Tsaatan visit is optional.",                                                   # synthetic, r4 #18
+    "The caldera walk is not a technical climb.",                                       # quote, r4 #14
+    "Lunch is at Mörön, the provincial capital.",                                       # synthetic, r4 fix 2
+    "A stop in Mörön breaks the drive.",                                                # synthetic, r3
 ])
-def test_optional_boat_written_as_planned(sentence):
+def test_f17_panel_examples_are_known_misses(sentence):
     found = _trip(sentence)["trip_fact"]
-    assert any("as part of the plan" in v and "boat" in v for v in found), found
+    assert not any(k in v for v in found for k in ("as part of the plan", "calls Tsaatan", "'technical'",
+                                                   "but the source says near it")), found
 
 
 @pytest.mark.parametrize("sentence", [
@@ -163,92 +195,47 @@ def test_optional_boat_written_as_planned(sentence):
     "The day includes the boundary walk and, if you wish, a boat ride on the water.",
     "Across the lake days, active options include trekking, horseback riding and boat rides on the water.",
     "Boat rides, horse riding and visits to nomadic families can be arranged on request.",   # reviewer
-    "Boat rides and horse riding cost extra.",
-    "Supplies for the lakeside camps still arrive by boat in summer.",          # reviewer: freight, not travellers
+    "Supplies for the lakeside camps still arrive by boat in summer.",                     # reviewer
     "The camp's own supplies come in by boat once a week.",
     "Supplies arrive by boat, which is part of life on the lake.",
-])
-def test_hedged_lists_are_not_flagged(sentence):
-    assert not any("as part of the plan" in v for v in _trip(sentence)["trip_fact"])
-
-
-@pytest.mark.parametrize("sentence", [
-    "An optional day with the Tsaatan reindeer herders is possible.",       # synthetic, r4 #18 (day made optional)
-    "Visiting the Tsaatan herders is optional on day five.",                # synthetic, r4 #18
-    "The Tsaatan visit is optional.",                                       # synthetic, r4 #18
-    "An optional excursion to the Tsaatan reindeer herders is possible.",   # synthetic, r4 #18
-])
-def test_planned_moment_called_optional(sentence):
-    assert any(v.startswith("calls Tsaatan") for v in _trip(sentence)["trip_fact"])
-
-
-@pytest.mark.parametrize("sentence", [
     "At the Tsaatan settlements on day five, children can ride a reindeer if they wish.",   # verifier
     "At the Tsaatan settlements, milking the reindeer is optional.",                        # verifier
-    "Reindeer riding on the Tsaatan day is optional.",                     # a sub-activity of the planned day
-    "On day five, milking the reindeer at the Tsaatan settlements is optional.",
-    "Sod Camp has a mountain range nearby for optional trekking and a mineral spring.",  # optional names trekking
-    "Optional boat rides on Lake Khövsgöl fill the fifth day.",             # mixed moment: forward check's job
-    "Children can feed the reindeer at the Tsaatan settlements.",          # 'can' is what a planned day allows
-    "Sod Camp staff can arrange optional excursions to the mineral spring.",                 # reviewer (side place)
+    "Reindeer riding on the Tsaatan day is optional.",
+    "Sod Camp staff can arrange optional excursions to the mineral spring.",                # reviewer
     "An optional stop at Uran Togoo's crater rim viewpoint is possible for older children.",  # reviewer
     "Visiting the mineral spring near Sod Camp is optional.",
+    "The hike is strenuous in places, so good boots matter.",                               # verifier
+    "No technical climbing gear is needed on the caldera walk.",                            # reviewer
+    "Helmets are provided for the short technical scramble below the summit.",              # reviewer
+    "After lunch, the drive continues to the airport in Mörön for those flying back.",      # reviewer
+    "The bus does not stop in Mörön.",
 ])
-def test_reverse_flip_near_misses(sentence):
-    assert not any(v.startswith("calls ") for v in _trip(sentence)["trip_fact"])
+def test_f17_near_misses_stay_clean(sentence):
+    found = _trip(sentence)["trip_fact"]
+    assert not any(k in v for v in found for k in ("as part of the plan", "calls ", "pace or rest promise",
+                                                   "but the source says near it")), found
 
 
-def test_time_idiom_is_not_a_schedule():
-    assert _trip("Children are rarely worn out by midday here.")["trip_fact"] == []      # synthetic, r4 #11 FP
-    assert any("gives a time" in v for v in _trip("You reach the Tsaatan settlements by midday.")["trip_fact"])
-
-
-def test_difficulty_promise_is_a_pace_finding():
-    assert any("'technical'" in v for v in _trip("The caldera walk is not a technical climb.")["trip_fact"])  # r4 #14
-    assert any("'technical'" in v for v in _trip("It isn't a technical hike.")["trip_fact"])  # synthetic, r4 #14
-    assert _trip("The guides carry technical fabric jackets for the wind.")["trip_fact"] == []
-    assert _trip("The caldera walk is not a technical climb.", channel="linkedin")["trip_fact"] == []  # blogs only
-
+# ---------------------------------------------------------------- F18 overclaims (§1.3 row 5)
 
 @pytest.mark.parametrize("sentence", [
-    "The hike is strenuous in places, so good boots matter.",              # verifier (a safety caveat)
-    "The last stretch is gruelling in the heat, so start early.",
-    "No technical climbing gear is needed on the caldera walk.",               # reviewer (a packing fact)
-    "Helmets are provided for the short technical scramble below the summit.",  # reviewer (a route fact)
-    "The route has one technical section, which guides rope up.",
-])
-def test_difficulty_caveats_are_not_pace_promises(sentence):
-    assert not any("pace or rest promise" in v for v in _trip(sentence)["trip_fact"])
-
-
-def test_lunch_at_a_place_the_source_puts_it_near():
-    found = _trip("Lunch is at Mörön, the provincial capital.")["trip_fact"]   # synthetic, r4 #4/#5/#14/#15/#16/#18/#19
-    assert any("but the source says near it" in v for v in found)
-    assert _trip("Lunch is near Mörön, the provincial capital.")["trip_fact"] == []
-    found = _trip("A stop in Mörön breaks the drive.")["trip_fact"]              # synthetic, r3 'A stop in Mörön'
-    assert any("but the source says near it" in v for v in found)
-
-
-@pytest.mark.parametrize("sentence", [
-    "After lunch, the drive continues to the airport in Mörön for those flying back.",   # reviewer (clause boundary)
-    "The bus does not stop in Mörön.",                                                   # a negated stop
-    "Lunch is a picnic; the evening is in Mörön.",
-])
-def test_near_as_at_near_misses(sentence):
-    assert not any("but the source says near it" in v for v in _trip(sentence)["trip_fact"]), sentence
-
-
-# ---------------------------------------------------------------- F18 superlatives and overclaims (§1.3 row 5)
-
-@pytest.mark.parametrize("sentence", [
-    "This is one of the most coherent family routes available.",               # synthetic, r4 #16
     "The forest here is unlike almost anything else on earth.",                # quote, r4 #16
     "It is a landscape most of the world has never considered.",               # quote, r4 #17
     "A way of life that most of the world has never seen survives here.",      # synthetic, r3 #17 quote
-    "The lake holds a significant fraction of the world's fresh water.",        # synthetic, r4 #19 (0.4%)
+    "The rest of the world has rarely heard of this valley.",                  # synthetic, r4 #17 shape
+    "Nothing here resembles anything else on earth.",                          # synthetic, r4 #16 shape
 ])
-def test_superlatives_and_overclaims(sentence):
+def test_overclaims_are_found(sentence):
     assert _trip(sentence)["rarity"], sentence
+
+
+@pytest.mark.parametrize("sentence", [
+    "This is one of the most coherent family routes available.",               # synthetic, r4 #16: known miss
+    "The lake holds a significant fraction of the world's fresh water.",        # synthetic, r4 #19: known miss
+    "The scale of the lake is hard to overstate.",                             # r4 #4 shape: known miss
+])
+def test_f18_panel_examples_are_known_misses(sentence):
+    assert _trip(sentence)["rarity"] == [], sentence
 
 
 @pytest.mark.parametrize("sentence", [
@@ -256,110 +243,161 @@ def test_superlatives_and_overclaims(sentence):
     "A considerable share of the walk is on flat ground beside the lake.",                 # verifier
     "A substantial portion of the day is spent on the road between camps.",                # verifier
     "A significant share of the trip is spent outdoors.",
-    "The importance of sun protection at this altitude is hard to overstate.",   # reviewer (a safety caveat)
-    "The scale of the lake is hard to overstate.",            # r4 #4 shape: known miss ('hard to overstate' dropped)
+    "The importance of sun protection at this altitude is hard to overstate.",             # reviewer
     "The Tsaatan are one of the most distinct ethnic groups you can meet.",    # a superlative the source makes
+    "Unlike most ger camps on the route, Sod Camp faces a mountain range.",
 ])
 def test_rarity_near_misses(sentence):
     seed = ROUTE_SEED + "\n- The Tsaatan are one of Mongolia's most distinct ethnic groups."
     assert _trip(sentence, seed=seed)["rarity"] == [], sentence
 
 
-# ---------------------------------------------------------------- F13 repeats and leaks (§1.3 row 4)
+# ---------------------------------------------------------------- F13 (§1.3 row 4): all reverted, known misses
 
-@pytest.mark.parametrize("text", [
+@pytest.mark.parametrize("text,seed", [
     ("Punakha Dzong is still a living religious seat. The courtyards are open on day four. "
-     "It is a living religious institution today."),                       # synthetic, r4 #1
-    ("Punakha Dzong is still a living religious seat. The courtyards are open on day four. "
-     "The dzong continues to function as a living religious institution."),   # synthetic, r4 #1 wording
+     "The dzong continues to function as a living religious institution.", PUNAKHA_SEED),   # synthetic, r4 #1
+    ("## Ruins\n\nOne old wall, one year, one fact.", ROUTE_SEED),                        # synthetic, r2 #19
+    ("## Mörön\n\nMörön has one phonetic approximation in English that locals dislike.", ROUTE_SEED),  # r3 #14
+    ("## Punakha\n\nThe two named rivers meet below the dzong walls.", ROUTE_SEED),          # r3 #7 shape
+    ("## Into the Taiga\n\nAccess requires a multi-hour horse or reindeer ride.", ROUTE_SEED),  # r4 #16
 ])
-def test_paraphrased_descriptor_repeat(text):
-    assert any(r.startswith("tells the same thing again") for r in _issues(text, PUNAKHA_SEED)["repeat"])
+def test_f13_panel_examples_are_known_misses(text, seed):
+    r = _issues(text, seed)
+    assert r["leak"] == [] and r["repeat"] == [], r
 
 
 @pytest.mark.parametrize("text", [
     ("The evening brings a local musical performance in the camp. Dinner is mutton stew and bread. "
      "Children can try the local musical instruments in the camp afterwards."),                     # verifier
-    ("The ecological boundary runs along the lake. The camp is on the shore. "
-     "Families can discuss the ecological boundary itself over dinner."),
-    "The camp is a traditional nomadic ger camp. The lodge is a traditional nomadic guesthouse.",  # two subjects
-    ("Our day-two lodge is a comfortable rural guesthouse. Dinner is at seven. "
-     "Our day-four lodge is a comfortable rural farmstay."),                                        # reviewer
+    "The camp is a traditional nomadic ger camp. The lodge is a traditional nomadic guesthouse.",
     ("The first camp is a seasonal nomadic site. Dinner is at seven. "
      "The second camp is a seasonal nomadic settlement."),                                          # reviewer
     ("The monastery remains a working religious community. "
-     "It is also a working religious school for young monks."),                                   # reviewer (additive)
-    ("The dzong is a living religious seat. The monks are friendly. "
-     "They are a living religious community."),                                    # a pronoun with another antecedent
-])
-def test_paraphrase_near_misses(text):
-    assert h.paraphrased_repeats(text, ROUTE_SEED) == []
-
-
-def test_paraphrase_check_on_many_varied_descriptor_sentences():
-    """The verifier's synthetic stress text: hundreds of 'The <adj> <adj> <noun> …' sentences flagged 234 of 332."""
-    adjs = ["ancient", "local", "musical", "religious", "seasonal", "typical", "historic", "natural", "rural"]
-    nouns = ["hall", "camp", "road", "valley", "dance", "market", "bridge", "temple", "lake", "festival", "meal"]
-    sents = [f"The {a} {b} {n} is near the camp." for a in adjs for b in adjs if a != b for n in nouns[:5]]
-    assert len(sents) > 300
-    assert h.paraphrased_repeats(" ".join(sents), ROUTE_SEED) == []
-
-
-@pytest.mark.parametrize("text", [
+     "It is also a working religious school for young monks."),                                    # reviewer
     "## Practical notes\n\nEntry fees are included in the price.",                                  # verifier
     "## Uran Togoo\n\nThe approach road is paved for most of the way.",                             # verifier
     "## Punakha Dzong\n\nAdmission tickets for the dzong are arranged by your guide.",              # verifier
-    "## Into the Taiga\n\nAccess requires a multi-hour horse or reindeer ride.",   # r4 #16: known miss (dropped)
-])
-def test_section_openers_are_not_repeat_findings(text):
-    assert not any(r.startswith("opens its section") for r in _issues(text)["repeat"])
-
-
-@pytest.mark.parametrize("text", [
-    "## Ruins\n\nOne old wall, one year, one fact.",                                       # synthetic, r2 #19
-    "## Mörön\n\nMörön has one phonetic approximation in English that locals dislike.",  # synthetic, r3 #14
-    "## Mörön\n\nThe city is correctly spelled Mörön, with two umlauts.",   # synthetic, the seed's Naming note
-    "## Mörön\n\nMurun is correctly spelled with two umlauts.",              # synthetic, another spelling of the note
-])
-def test_brief_and_naming_note_leaks(text):
-    assert _issues(text)["leak"], text
-
-
-@pytest.mark.parametrize("text", [
-    "## Paro\n\nThe trail map at the gate is only a loose approximation of the real path.",           # verifier
-    "## Bhutan\n\nThe two named passes on the road, Dochula and Pele La, both have prayer flags.",    # verifier
-    "## Punakha\n\nThe two named rivers meet below the dzong walls.",       # r3 #7 shape: known miss (dropped)
-    "## Paro\n\nThe midday sun on the trail is best avoided.",
-    "## Paro\n\nA guide named Tashi meets the group at the trailhead.",
-    "## Mörön\n\nMörön, also romanised as Murun, is the provincial capital.",
-    "## Camp\n\nEach family gets one tent, one stove and one lantern.",
-    "## Camp\n\nOne tent, one stove, one lantern.",
-    "## Distances\n\nThe 3.5 km figure is a common approximation.",
-    # reviewer
+    "## Paro\n\nThe trail map at the gate is only a loose approximation of the real path.",         # verifier
+    "## Bhutan\n\nThe two named passes on the road, Dochula and Pele La, both have prayer flags.",  # verifier
     "## Visas\n\nMake sure your name is correctly spelled on the visa application, exactly as in your passport.",
-    "## Paro\n\nThe Dzongkha greeting kuzuzangpo is written here as a phonetic approximation.",   # reviewer
-    "## Mörön\n\nWhen flying to Mörön, make sure your name is correctly spelled on the ticket.",
-    "## Mörön\n\nThe city has one phonetic approximation in English that locals dislike.",   # names no Naming place
+    "## Paro\n\nThe Dzongkha greeting kuzuzangpo is written here as a phonetic approximation.",     # reviewer
+    "## Camp\n\nEach family gets one tent, one stove and one lantern.",
 ])
-def test_leak_near_misses(text):
-    assert _issues(text)["leak"] == [], text
+def test_f13_near_misses_stay_clean(text):
+    r = _issues(text)
+    assert r["leak"] == [] and r["repeat"] == [], r
 
 
-def test_naming_note_terms_need_a_seed_naming_note():
-    text = "## Paro\n\nThe Dzongkha greeting kuzuzangpo is written here as a phonetic approximation."   # reviewer
-    assert _issues(text, PUNAKHA_SEED)["leak"] == []
+# ---------------------------------------------------------------- round 3: 40 clean sentences, no AA-789 pattern
 
 
-def test_naming_note_terms_are_not_trimmed_by_autofix():
-    text = "## Mörön\n\nMörön has one phonetic approximation in English.\n\nThe courtyards are open."
-    fixed, _ = h.autofix(text, h.HygieneContext(seed=ROUTE_SEED, brand_name="Pretend Brand", cta=None))
-    assert "Mörön has one phonetic approximation in English." in fixed
+_SEED_V = """Ha Long Bay — overnight cruise among limestone karsts
+Location: Ha Long Bay, Quang Ninh Province, Vietnam
+Day 2 of the trip
+Source itinerary: Board a traditional junk for an overnight cruise. Optional activities include kayaking through Luon Cave and a cooking class on board. Lunch is served on board.
+
+Yen Duc village — water puppet show
+Location: Yen Duc, Quang Ninh Province, Vietnam
+Day 3 of the trip
+Source itinerary: Stop for lunch near Yen Duc village on the drive back to Hanoi; water puppet show at the village."""
+
+_SEED_N = """Thorong La — trek over the pass
+Location: Thorong La, Manang District, Nepal
+Day 9 of the trip
+Source itinerary: Cross Thorong La (5,416 m) on a non-technical trek; the main challenge is altitude. Two acclimatisation days in Manang precede the crossing."""
+
+_SEED_B = """Lake Baikal — cross the ice by hovercraft
+Location: Lake Baikal, Irkutsk Oblast, Russia
+Day 3 of the trip
+Source itinerary: Cross the frozen lake by hovercraft to Olkhon Island.
+Place background (checked facts about the place itself — you may use these; they say nothing about what this trip does):
+- Lake Baikal holds about 20 percent of the world's unfrozen fresh surface water.
+- It is the deepest lake in the world, at 1,642 m."""
+
+_SEED_G = """Elephant sanctuary — half-day visit
+Location: Mae Taeng, Chiang Mai Province, Thailand
+Day 2 of the trip
+Source itinerary: Half-day visit to an observation-only elephant sanctuary for retired logging elephants; no riding or bathing. Lunch near Mae Taeng market."""
+
+ROUND3_CLEAN = [
+ ("blog", _SEED_G, "The sanctuary is a rescue centre for retired logging elephants, not commercial entertainment."),
+ ("blog", ROUTE_SEED, "Tipping your driver and guide is customary in Mongolia, not a legal obligation."),
+ ("blog", PUNAKHA_SEED, "Bhutan's Sustainable Development Fee is paid to the government, not a personal commission."),
+ ("blog", _SEED_N, "Travel insurance with helicopter evacuation cover is a condition of booking this trek, not an optional addition."),
+ ("blog", PUNAKHA_SEED, "Photography inside the assembly hall is forbidden by monastery rule, not a seasonal restriction."),
+ ("blog", _SEED_G, "Unlike at the old trekking camps, the herd at this sanctuary does not perform."),
+ ("blog", ROUTE_SEED, "Reindeer are calm, but keep a respectful distance: an adult animal tolerates you only when you approach slowly."),
+ ("blog", PUNAKHA_SEED, "The masked dancers rehearse in the dzong courtyard for weeks before the festival; outside the festival days the troupe does not perform."),
+ ("blog", PUNAKHA_SEED, "Gangtey Goemba is an active monastery with monks in residence, not a museum, so visiting hours follow the prayer schedule."),
+ ("blog", ROUTE_SEED, "Rangers check every permit at the national park gate at Khatgal; the check is strict, not a formality."),
+ ("blog", ROUTE_SEED, "Families explore the shore on foot or by boat, depending on the weather and on which optional activities they choose."),
+ ("blog", ROUTE_SEED, "If the lake is calm on day five, families can head out by boat; horseback riding across the hills is the other optional choice."),
+ ("blog", ROUTE_SEED, "We reach Khatgal by road from Mörön, and from there the optional boat rides set off from the jetty."),
+ ("blog", ROUTE_SEED, "Guests travel between camps by four-wheel-drive van, and boat rides on the water can be added on day five for those who want them."),
+ ("blog", ROUTE_SEED, "On the lake day, families walk the shoreline and forest paths, and anyone who wants to can take a boat out on the water."),
+ ("blog", ROUTE_SEED, "Families travel by horse or reindeer for several hours to reach the Tsaatan camps, because no road runs into the taiga."),
+ ("blog", _SEED_V, "Guests who would rather stay dry can see Luon Cave from a bamboo rowing boat instead of by kayak."),
+ ("blog", _SEED_V, "The junk anchors in a sheltered bay for the night, and guests are free to swim, kayak or join the cooking class on board."),
+ ("blog", ROUTE_SEED, "The Tsaatan day is part of the plan, not an optional extra: it is why the route runs this far north."),
+ ("blog", ROUTE_SEED, "Long-distance buses from Ulaanbaatar to Khatgal make a stop in Mörön, the provincial capital."),
+ ("blog", ROUTE_SEED, "Mörön's small airport has scheduled flights to Ulaanbaatar, which is useful if a family needs to cut the trip short."),
+ ("blog", ROUTE_SEED, "## FAQ\n\n**How do you pronounce Mörön?**\n\nRoughly 'MUR-urn'. Signs and tickets often show Muren, which is only a phonetic approximation of the Mongolian."),
+ ("blog", ROUTE_SEED, "## Mörön\n\nThe drive north passes through Mörön, the capital of Khövsgöl province, where the road turns towards the lake."),
+ ("blog", ROUTE_SEED, "## Practical notes\n\nCheck that Mörön is correctly spelled on your domestic flight ticket; some booking sites list the airport as Muren."),
+ ("linkedin", ROUTE_SEED, "One driver, one guide, one pick-up point.\n\nThat is how we keep arrival day in Ulaanbaatar calm for families with young children."),
+ ("blog", PUNAKHA_SEED, "## Day 2\n\nThe drive is a short scenic transfer from Thimphu to Punakha over Dochula Pass.\n\n## Day 5\n\nThe drive is a short scenic run back to Paro for the flight home."),
+ ("blog", _SEED_V, "Lunch on day two is served on board, and the last stop is in Yen Duc village for the water puppet show."),
+ ("blog", ROUTE_SEED, "Lake Khövsgöl is a vast freshwater lake near the Russian border. It holds an estimated 70 percent of Mongolia's fresh water. The lake is a vital ecological reserve, protected as a national park."),
+ ("blog", ROUTE_SEED, "The Tsaatan are among the most distinctive communities you can meet in northern Mongolia, a small group of a few hundred people."),
+ ("blog", _SEED_B, "Lake Baikal holds about 20 percent of the world's unfrozen fresh surface water, a significant share of the planet's supply."),
+ ("blog", ROUTE_SEED, "Mongolian place names have no single agreed romanisation, and the world has yet to settle on one, so you will see Mörön written several ways."),
+ ("blog", ROUTE_SEED, "Unlike most ger camps on the route, Sod Camp faces a mountain range with trekking access and a mineral spring."),
+ ("blog", _SEED_N, "The Annapurna Circuit is not a technical trek, but Thorong La sits at 5,416 m, so the plan builds in two acclimatisation days in Manang."),
+ ("blog", _SEED_N, "## FAQ\n\n**Do we need climbing gear for Thorong La?**\n\nNo. No technical climbing gear is needed; trekking poles and microspikes for ice near the pass are enough."),
+ ("blog", PUNAKHA_SEED, "Punakha Dzong served as the capital of Bhutan until 1955, when the government moved to Thimphu; today it is the winter residence of the Je Khenpo."),
+ ("linkedin", ROUTE_SEED, "Families ask us whether Lake Khövsgöl is worth the long drive north.\n\nIt holds an estimated 70 percent of Mongolia's fresh water, and the boundary between steppe and taiga runs along its shore.\n\nBoat rides and horseback riding are optional on day five, so each family picks what suits its children."),
+ ("blog", _SEED_G, "Lunch is at a noodle shop near Mae Taeng market, a ten-minute drive from the sanctuary."),
+ ("blog", _SEED_G, "The sanctuary is observation-only, so there is no riding or bathing, and children watch the elephants feed from a raised platform."),
+ ("blog", ROUTE_SEED, "The trail is a gentle gradual ascent through larch forest. Lunch is a picnic at the rim. The trail is a gentle gradual descent on the far side."),
+ ("blog", PUNAKHA_SEED, "## FAQ\n\n**Is Punakha Dzong a museum?**\n\nNo. It is a working dzong: the district administration and the Central Monk Body both use it, and the monks winter here."),
+]
 
 
-def test_brief_wording_is_reported_not_deleted_by_autofix():
-    text = "## Ruins\n\nOne old wall, one year, one fact.\n\nThe courtyards are open."
-    fixed, _ = h.autofix(text, h.HygieneContext(seed=PUNAKHA_SEED, brand_name="Pretend Brand", cta=None))
-    assert "One old wall, one year, one fact." in fixed
+@pytest.mark.parametrize("channel,seed,text", ROUND3_CLEAN)
+def test_round3_clean_sentences_fire_no_aa789_pattern(channel, seed, text):
+    """Round 3 of the S257 verification (40 clean sentences, own seeds). The gate-level check (branch vs main, every
+    gate) is the harness in the notes; here each pattern this issue adds runs alone."""
+    assert _aa789_frames(text) == [], text
+    assert _aa789_stock(text) == [], text
+    assert not AA789_RARITY_RE.search(text), text
+
+
+@pytest.mark.parametrize("channel,seed,text", ROUND3_CLEAN)
+def test_round3_clean_sentences_get_no_aa789_finding(channel, seed, text):
+    """…and none of the findings the reverted patterns produced comes back on them."""
+    trip = tf.find_trip_fact_issues(text, tf.TripFactContext(seed=seed, audience=TERRA_AUDIENCE, cta=TERRA_CTA,
+                                                             channel=channel))
+    issues = h.find_issues(text, h.HygieneContext(seed=seed, brand_name="Pretend Brand", cta=TERRA_CTA))
+    flat = trip["trip_fact"] + trip["rarity"] + issues["leak"] + issues["repeat"]
+    for gone in ("presents 'boat", "puts the stop", "puts the lunch", "but the source says near it",
+                 "tells the same thing again", "'phonetic approximation'", "'correctly spelled'",
+                 "leaks the writer's instructions ('One", "significant share", "the world has yet to",
+                 "among the most distinctive"):
+        assert not any(gone in v.rsplit(": '", 1)[0] for v in flat), (gone, text)   # the problem, not the quote
+
+
+@pytest.mark.parametrize("text,where", [
+    ("Boat rides and horse riding cost extra.", "trip_fact"),           # own near-miss of revision 3
+    ("Our day-two lodge is a comfortable rural guesthouse. Dinner is at seven. "
+     "Our day-four lodge is a comfortable rural farmstay.", "repeat"),  # reviewer (round 2)
+])
+def test_pre_existing_main_findings_are_unchanged(text, where):
+    """Two near-misses of revisions 2-3 that `main` already flags through older checks (optional_as_fixed's hedge
+    list has no 'cost extra'; near_duplicates reads the two lodge sentences as one). Revision 4 reverts to `main`, so
+    they fire exactly as on `main`; fixing them is not recall tuning and is left out of this PR."""
+    found = _trip(text)["trip_fact"] if where == "trip_fact" else _issues(text)["repeat"]
+    assert found, text
 
 
 # ---------------------------------------------------------------- F16 answer addresses the question (§1.3 row 8)
