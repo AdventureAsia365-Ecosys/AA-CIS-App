@@ -293,3 +293,22 @@ def test_rewrite_tour_reraises_a_denial_from_the_writer_node():
     with patch.object(vp, "build_graph", return_value=_Graph()):
         with pytest.raises(E.LLMAccessDenied):
             asyncio.run(vp._rewrite_tour(tour, 0, 1, brand_rules={}, seo={}))
+
+
+def test_an_error_raised_while_handling_a_refusal_is_not_a_refusal():
+    """Only explicit causes count: cleanup failing inside `except LLMAccessDenied` keeps its normal retries."""
+    from shared.llm_client.errors import LLMAccessDenied, is_llm_access_denied
+    try:
+        try:
+            raise LLMAccessDenied("every model refused")
+        except LLMAccessDenied:
+            raise ValueError("cleanup failed")
+    except ValueError as e:
+        assert not is_llm_access_denied(e)
+    try:
+        try:
+            raise LLMAccessDenied("every model refused")
+        except LLMAccessDenied as inner:
+            raise RuntimeError("wrapped") from inner
+    except RuntimeError as e:
+        assert is_llm_access_denied(e)

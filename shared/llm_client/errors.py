@@ -94,14 +94,14 @@ def classify_text(text: Optional[str]) -> str:
     return OTHER
 
 
-def _chain(exc: BaseException) -> Iterator[BaseException]:
-    """The exception, then its explicit causes and implicit contexts (cycle-safe, bounded)."""
+def _chain(exc: BaseException, *, implicit: bool = True) -> Iterator[BaseException]:
+    """The exception, then its explicit causes and (when ``implicit``) implicit contexts (cycle-safe, bounded)."""
     seen: set[int] = set()
     cur: Optional[BaseException] = exc
     while cur is not None and id(cur) not in seen and len(seen) < 16:
         seen.add(id(cur))
         yield cur
-        cur = cur.__cause__ or cur.__context__
+        cur = cur.__cause__ or (cur.__context__ if implicit else None)
 
 
 def classify(error: Union[BaseException, str, None]) -> str:
@@ -130,7 +130,9 @@ def is_llm_access_denied(error: Optional[BaseException]) -> bool:
     throttled ones must keep its retries)."""
     if error is None:
         return False
-    return any(isinstance(link, LLMAccessDenied) for link in _chain(error))
+    # Explicit causes only (lessons: job runner, NodeCancelledError): an unrelated error raised while handling a
+    # refusal must not end its job without a retry.
+    return any(isinstance(link, LLMAccessDenied) for link in _chain(error, implicit=False))
 
 
 def account_level_class(classes: list[str]) -> Optional[str]:
