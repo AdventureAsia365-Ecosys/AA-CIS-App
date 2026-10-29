@@ -722,7 +722,10 @@ _SEED_BOILERPLATE = ("(do not place it in any other town, region or country)",
                      "(do not name any other country or region for it)", "(the itinerary calls it",
                      "Place background (checked facts about the place itself — you may use these; "
                      "they say nothing about what this trip does):")
-_SEED_LABEL_RE = re.compile(r"^(?:Source itinerary|Why it matters|Location|Naming|Season|Status):|\[Fact id=[^\]\n]*\]"
+# AA-814 follow-up: 'Source:' and its owner tag ('; agency fact' / '; platform fact') are the label of each Facts entry
+# (facts._fact_entry), not seed words.
+_SEED_LABEL_RE = re.compile(r"^(?:Source itinerary|Why it matters|Location|Naming|Season|Status|Source):"
+                            r"|\[Fact id=[^\]\n]*\]|\b(?:agency|platform) fact\b(?!\s*-?\s*sheets?\b)"
                             r"|\bof the trip\b", re.M)
 # A settlement noun is a topic, like a name: kept when the text still names it ('present the village as a stage').
 _FACT_TOPIC_WORDS = frozenset("village town city hamlet settlement".split())
@@ -1144,9 +1147,15 @@ def copies(a: str, b: str, ignore: frozenset = frozenset()) -> bool:
 
 # The prompt's own vocabulary showing up in published text (S233: "The content seed describes
 # this as a 15-day journey…", "The content seed for this journey notes that…").
+# AA-814 follow-up: a Facts entry's 'Source: <provenance>; agency fact' line (facts._fact_entry) — the line label at the
+# start of a sentence, or the owner tag anywhere.
 LEAK_RE = re.compile(
     r"\b(?:content seed|the seed|this seed|source itinerary|place background|the itinerary calls it"
-    r"|other trips that include|for context only|source notes)\b|\[moment\b|\bscope:", re.I)
+    r"|other trips that include|for context only|source notes"
+    r"|agency fact(?!\s*-?\s*sheets?\b)|platform fact(?!\s*-?\s*sheets?\b))\b|\[moment\b|\bscope:"
+    r"|^\W*source:", re.I)
+# The whole sentence is a copied Facts 'Source:' line: it says nothing to a reader, so the fix deletes it.
+_SOURCE_LINE_RE = re.compile(r"^\W*source:", re.I)
 _LEAK_FRAME_RE = re.compile(
     r"^(?:(?:the|this|our) (?:content )?seed(?: (?:for|of) this (?:journey|trip|route|piece))?"
     r" (?:notes|says|mentions|states|records|lists|explains|adds|confirms)(?: that)?,?"
@@ -2902,7 +2911,10 @@ _DUP_WINDOW = 3
 
 
 def _leak_fix(sentence: str) -> Optional[str]:
-    """The sentence without its leaked frame, or None when it cannot be trimmed cleanly."""
+    """The sentence without its leaked frame, or None when it cannot be trimmed cleanly. "" (delete it) for a copied
+    Facts 'Source:' line (AA-814 follow-up)."""
+    if _SOURCE_LINE_RE.match(strip_tags(sentence)):
+        return ""
     m = _LEAK_DESCRIBES_RE.match(sentence)
     if m:
         subj = m.group(1)

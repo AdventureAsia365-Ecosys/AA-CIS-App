@@ -221,6 +221,7 @@ def build_s1_user_prompt(state: dict) -> str:
     AA-792: a T2 tenant rewrite gets the tenant-voice variant (voice="tenant") and no appended
     style guide — it is already in the system prompt's CLIENT BRAND block."""
     from .prompts import s1_per_day_targets_enabled
+    from .t2_facts import FACTS_KEY
     is_t2 = bool(state.get("is_tenant_rewrite"))
     prompt = build_rewrite_prompt(
         state["tour"],
@@ -233,6 +234,9 @@ def build_s1_user_prompt(state: dict) -> str:
         # None on the Bedrock Batch path (no live extraction) -> prompt as today, byte-identical.
         structured_facts=state.get("structured_facts"),
         voice="tenant" if is_t2 else "neutral",
+        # AA-814 follow-up (T2_FACTS): the Facts Entry lines the t2_rewrite job put on the T2 source; absent with the
+        # switch off and on every A1 tour -> no FACTS block, prompt byte-identical.
+        facts=(state["tour"].get(FACTS_KEY) or "") if is_t2 else "",
     )
     style_guide = state.get("brand_style_guide", "") or ""
     if style_guide and not is_t2:

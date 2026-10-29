@@ -51,6 +51,7 @@ _SOURCE_PREFIX = "Source itinerary:"
 _LABEL_SPLIT_RE = re.compile(r"\s+[—–]\s+")
 _SENT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'“])")
 _FACT_HEAD_RE = re.compile(r"^\[Fact id=[^\]]+\]\s*$")
+_FACT_SOURCE_RE = re.compile(r"^Source:\s")  # facts._fact_entry's source / owner line (AA-814)
 _OFFERED_QUOTE_RE = re.compile(r"the itinerary says:\s*\"([^\"]+)\"")
 
 # The practical questions of the blog form, in order. A sentence is quoted under every question it answers.
@@ -156,11 +157,12 @@ def stops(seeds: list[str]) -> list[Stop]:
 
 
 def fact_entries(facts_text: Optional[str]) -> list[str]:
-    """The FACTS entries ('<title>: <body>'), one per [Fact id=…] block (pure)."""
+    """The FACTS entries ('<title>: <body>'), one per [Fact id=…] block (pure). AA-814 follow-up: the entry's
+    'Source: …; agency fact' line is a label, not part of the fact, so it is never quoted to the writer."""
     out: list[str] = []
     for block in re.split(r"\n\s*\n", facts_text or ""):
         lines = [ln.strip() for ln in block.strip().splitlines() if ln.strip()]
-        body = " ".join(ln for ln in lines if not _FACT_HEAD_RE.match(ln))
+        body = " ".join(ln for ln in lines if not _FACT_HEAD_RE.match(ln) and not _FACT_SOURCE_RE.match(ln))
         if body:
             out.append(body)
     return out

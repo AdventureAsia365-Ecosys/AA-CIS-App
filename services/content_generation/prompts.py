@@ -438,11 +438,31 @@ _USER_VOICE = {
 }
 
 
+def _render_t2_facts_block(facts: str) -> str:
+    """AA-814 follow-up: the T2 FACTS block (the agency's own facts and the platform's, for this trip's country;
+    services/content_generation/t2_facts.py). "" when there are none, so the prompt is unchanged. Placed with the
+    tour data (before PER-DAY SOURCE LENGTH), ending in a newline like _render_source_facts_block."""
+    facts = (facts or "").strip()
+    if not facts:
+        return ""
+    return (
+        "\nFACTS (checked facts for this trip's country: the brand's own and the platform's; where both cover the"
+        " same subject only the brand's is listed):\n"
+        f"{facts}\n"
+        "Use a fact only where a traveller planning this trip needs it (a price, a season, an entry rule, booking"
+        " terms), usually in the summary, or in the day it concerns. Copy every number, price and date exactly as"
+        " written here. A fact never changes what TOUR DATA says the trip does. Never add a fact that is in neither"
+        " TOUR DATA nor this list, and never say where a fact comes from.\n"
+    )
+
+
 def build_rewrite_prompt(tour: dict, seo: dict, few_shots: list[dict] = None,
                          subtitle_focus: str = "standard", per_day_targets: bool = False,
-                         structured_facts: dict = None, voice: str = "neutral") -> str:
+                         structured_facts: dict = None, voice: str = "neutral", facts: str = "") -> str:
     """The S1/T2 writer USER prompt. ``voice`` (AA-792): "neutral" for the A1 master catalogue
-    (byte-identical to before), "tenant" for a T2 tenant rewrite in the client brand's voice."""
+    (byte-identical to before), "tenant" for a T2 tenant rewrite in the client brand's voice.
+    ``facts`` (AA-814 follow-up, T2_FACTS): the T2 source's Facts Entry lines (t2_facts.facts_lines); a FACTS block
+    on a T2 rewrite only. "" (the default, and always for A1) leaves the prompt byte-identical."""
     v = _USER_VOICE["tenant" if voice == "tenant" else "neutral"]
     few_shot_text = ""
     if few_shots:
@@ -501,6 +521,7 @@ def build_rewrite_prompt(tour: dict, seo: dict, few_shots: list[dict] = None,
     # prompt is byte-identical to today (the raw itinerary stays in the prompt either way; the
     # facts only constrain, they do not replace it).
     _source_facts_block = _render_source_facts_block(structured_facts)
+    _facts_block = _render_t2_facts_block(facts) if voice == "tenant" else ""
 
     prompt = f"""{v["opening"]}
 {few_shot_text}
@@ -514,7 +535,7 @@ TOUR DATA:
 - Itineraries: {itineraries_for_prompt}
 - Inclusions: {tour.get('inclusions')}
 - Exclusions: {tour.get('exclusions')}
-{_source_facts_block}
+{_source_facts_block}{_facts_block}
 PER-DAY SOURCE LENGTH (word count of the source above, one per day — use as the basis for each
 day's target length per rule 5; aim roughly 0.7x-1.3x of that day's number, not a fixed length
 applied to every day):

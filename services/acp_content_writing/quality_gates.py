@@ -1940,9 +1940,10 @@ def paa_for_scope(questions, own_seed: str, facts_text: Optional[str] = None,
 # is only a preference in the prompt, the droppers decide what stays.
 _UNUSED_WORD_COVER = 0.75
 _UNUSED_TRIGRAM_COVER = 0.25
+# AA-814 follow-up: a Facts entry's 'Source: <provenance>; agency fact' line is a label, never a fact to tell.
 _SEED_META_LINE_RE = re.compile(
     r"^(?:Location|Naming|Days? \d|Thin moment|Place background|SCOPE|TRIP|AUDIENCE|BRAND|FACTS:"
-    r"|\[Moment\b|\[Fact\b|Other trips|" + STATUS_PREFIX + ")", re.I)
+    r"|\[Moment\b|\[Fact\b|Source:|Other trips|" + STATUS_PREFIX + ")", re.I)
 _SEED_LINE_PREFIX_RE = re.compile(r"^(?:[-*•]\s*)?(?:(?:Source itinerary|Why it matters):\s*)?")
 
 

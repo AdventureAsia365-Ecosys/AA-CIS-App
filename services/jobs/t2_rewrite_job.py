@@ -426,6 +426,11 @@ async def run(ctx: JobContext) -> dict:
     brand_loaded = bool(brand_rules.pop("_brand_loaded", False))
     if not brand_loaded:
         logger.warning("t2_rewrite_without_brand", tenant_id=tenant_id, version_id=version_id)
+    # AA-814 follow-up: with T2_FACTS on, the platform + this tenant's Facts Entries for the tour's country ride on the
+    # source dict (tour_dict["facts"]): the writer's FACTS block, the T3 grounding baseline and the T3 repair rounds
+    # all read it there. Off (default) or no facts: tour_dict is unchanged. job.result records `facts`.
+    from services.content_generation.t2_facts import with_facts
+    tour_dict, facts_diag = await with_facts(pool, tour_dict, tenant_id)
 
     # AA-637 — live progress (steps + streamed tour fields), read by GET /v1/progress/tour/{id}.
     progress = WritingProgress(
@@ -453,4 +458,4 @@ async def run(ctx: JobContext) -> dict:
             "gold_aa_internal.tenant_tour_versions WHERE id = $1::uuid", version_id)
     await ctx.progress(phase="done")
     return {"version_id": version_id, "version_status": final["status"], "score": final["score"],
-            "qa_status": final["qa_status"], "brand_loaded": brand_loaded, **(diag or {})}
+            "qa_status": final["qa_status"], "brand_loaded": brand_loaded, "facts": facts_diag, **(diag or {})}
