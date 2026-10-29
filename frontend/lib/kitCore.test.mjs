@@ -1,7 +1,8 @@
 // frontend/lib/kitCore.test.mjs
 // AA-994 S1a (root ADR 0016 decisions 1, 3, 4, 5): the UI kit core in app/_kit/core is import-closed, carries the
 // header line, has a current MANIFEST.json, and its copy check (core/check-kit-copy.mjs) catches an edited, missing or
-// extra file in a consumer copy. Also pins the theme store factory and its restore script to the S252 behaviour.
+// extra file in a consumer copy. Also pins the theme store factory and its restore script to the S252 behaviour, and
+// (AA-994 S4a) the money / calendar-day / relative-time formatters upstreamed from AA-Booking (core/format.ts).
 // Run: npm run test:unit (CI: Frontend Build runs this file and `check-kit-copy.mjs --self`).
 
 import assert from "node:assert/strict";
@@ -17,6 +18,9 @@ import {
   readSuppressions, selfProblems, sha256, suppressionProblems, suppressionTotals,
 } from "../app/_kit/core/check-kit-copy.mjs";
 import { createThemeStore, themeRestoreScript } from "../app/_kit/core/theme.ts";
+import {
+  formatDay, formatMoney, isIsoDay, minorUnits, parseDayInput, relativeParts,
+} from "../app/_kit/core/format.ts";
 
 const FRONTEND = fileURLToPath(new URL("..", import.meta.url));
 const CORE = join(FRONTEND, "app", "_kit", "core");
@@ -419,4 +423,59 @@ test("eslint-kit.mjs is core, in the tokens profile, and the committed suppressi
   assert.ok(manifest.profiles.tokens.includes("eslint-kit.mjs"), "TripPlanner gets the rules with the tokens");
   const s = readSuppressions(readFileSync(join(FRONTEND, "eslint-suppressions.json"), "utf8"));
   assert.ok(Object.keys(s).every((f) => !f.startsWith("app/_kit/")), "the kit itself is never suppressed");
+});
+
+// ── AA-994 S4a: core/format.ts (upstreamed from AA-Booking Money.tsx / dates.ts / DateText.tsx) ─────────────────
+
+test("formatMoney: amount plus ISO code, the currency's minor units, UI-language digits, '—' when empty", () => {
+  assert.equal(formatMoney("1845", "USD"), "1,845.00 USD");
+  assert.equal(formatMoney(2390.5, "eur"), "2,390.50 EUR", "the code is upper-cased");
+  assert.equal(formatMoney("12500000", "VND"), "12,500,000 VND", "VND has no minor units");
+  assert.equal(formatMoney("1.2345", "KWD"), "1.235 KWD", "KWD has three");
+  assert.equal(formatMoney("10", null), "10.00", "no code: the number with 2 decimals");
+  for (const empty of [null, undefined, "", "abc", Number.NaN]) assert.equal(formatMoney(empty, "USD"), "—");
+  assert.equal(formatMoney("1845", "USD", "vi"), "1.845,00 USD");
+  assert.equal(minorUnits("usd"), 2, "a bad code falls back to 2");
+  assert.equal(minorUnits("JPY"), 0);
+});
+
+test("calendar days: real days only, formatted without a time-zone shift, typed day first", () => {
+  assert.ok(isIsoDay("2026-10-09"));
+  for (const v of ["2026-02-30", "2026-13-01", "9 Oct 2026", "", null, undefined]) assert.ok(!isIsoDay(v), String(v));
+  assert.equal(formatDay("2026-10-09"), "9 Oct 2026");
+  assert.equal(formatDay("2026-01-01"), "1 Jan 2026", "UTC midnight never becomes the day before");
+  assert.match(formatDay("2026-10-09", "vi"), /^9 .*10.* 2026$/);
+  assert.equal(formatDay("2026-02-30"), "—", "shaped like a day but not one");
+  assert.equal(formatDay(""), "—");
+  assert.equal(formatDay("not a date"), "—");
+  assert.equal(parseDayInput("28/10/2026"), "2026-10-28");
+  assert.equal(parseDayInput("10/11/2026"), "2026-11-10", "never month first");
+  assert.equal(parseDayInput("28.10.26"), "2026-10-28");
+  assert.equal(parseDayInput("28 Oct 2026"), "2026-10-28");
+  assert.equal(parseDayInput("Oct 28, 2026"), "2026-10-28");
+  assert.equal(parseDayInput("2026-10-28"), "2026-10-28");
+  assert.equal(parseDayInput("  "), "", "empty field");
+  assert.equal(parseDayInput("31/11/2026"), null, "a day that does not exist");
+  assert.equal(parseDayInput("tomorrow"), null);
+});
+
+test("relativeParts: now / minutes / hours / days, null after 7 days or when unreadable", () => {
+  const now = Date.UTC(2026, 9, 9, 7, 5);
+  const ago = (ms) => new Date(now - ms).toISOString();
+  assert.deepEqual(relativeParts(ago(20_000), now), { unit: "now" });
+  assert.deepEqual(relativeParts(ago(-60_000), now), { unit: "now" }, "the future reads as now");
+  assert.deepEqual(relativeParts(ago(25 * 60_000), now), { unit: "min", n: 25 });
+  assert.deepEqual(relativeParts(ago(3 * 3_600_000 + 1), now), { unit: "h", n: 3 });
+  assert.deepEqual(relativeParts(new Date(now - 2 * 86_400_000), now), { unit: "d", n: 2 });
+  assert.equal(relativeParts(ago(8 * 86_400_000), now), null);
+  assert.equal(relativeParts("nonsense", now), null);
+});
+
+test("S4a components are core files, outside the tokens profile", () => {
+  const manifest = buildManifest(CORE);
+  for (const f of ["Section.tsx", "KpiTile.tsx", "FilterBar.tsx", "DateField.tsx", "RowMenu.tsx", "Money.tsx",
+    "DateText.tsx", "format.ts", "KitGallery.tsx", "kitGallery.messages.ts"]) {
+    assert.ok(f in manifest.files, f);
+    assert.ok(!manifest.profiles.tokens.includes(f), `${f} is not a token file`);
+  }
 });

@@ -21,23 +21,47 @@
     "DataTable.tsx": {
       "sha256": "f91e8ea62e3f0e211378813d6708e8fab682870d2120038721b09c6d30be81c7"
     },
+    "DateField.tsx": {
+      "sha256": "89fb1df19fd09b1fe1f1348d506b714aee238c17fb7e05590a254ac82a9369e3"
+    },
+    "DateText.tsx": {
+      "sha256": "7476fe96a614b7630922828b717c63009633775d8b5c85fbaed821a49fb87a40"
+    },
     "Drawer.tsx": {
       "sha256": "ad34ed672b053b423004c1fdb04387d60d417fc4f6abb2e19e92696e5778c2d6"
     },
+    "FilterBar.tsx": {
+      "sha256": "4987987bf08f9cef6b67dcf6027afb0ad10cf2eb4431d2da723196e05bb1a235"
+    },
     "GuidePanel.tsx": {
       "sha256": "8dd928920b5dc760b7b80433011f8b482ae6592c91456557542cb45df59142a5"
+    },
+    "KitGallery.tsx": {
+      "sha256": "f670d1989f05304a468dd95960f75c965e6b70ff99223a4d13f6f8b0b0694fd8"
+    },
+    "KpiTile.tsx": {
+      "sha256": "f421219ad2f1fb24806aad077199fe950aaadbc0c192989e424e96fe338f827f"
     },
     "LangSwitch.tsx": {
       "sha256": "0d7eaafd876984ba42766e124bf26145688b3f13031e753e771f183067687bba"
     },
     "Modal.tsx": {
-      "sha256": "fbae4c09d64076e15fb415957393ddc6b9565bdc90d500c17cd58246f5f8cbd4"
+      "sha256": "e3f1e89e373a6f396a488a204d826236fa0064a4c660ca97776f117d456cde1a"
+    },
+    "Money.tsx": {
+      "sha256": "831a7f2266ef50869646043e9aea3b403316c91afd84dd8513ad9d17adeeedb6"
     },
     "PageFrame.tsx": {
-      "sha256": "ef558753dd05254cefa43c03b0e42260529e5cb3ea91c3bfed4efc701465be48"
+      "sha256": "690f4643fea7cddff32bc10f5d91d9e5dde872909d18ef04488198831f42efce"
     },
     "Providers.tsx": {
       "sha256": "bbcd0aea4a7b76cad7098c1f6329fd8f137a25281767e75fc8c3d3c39887cfb2"
+    },
+    "RowMenu.tsx": {
+      "sha256": "9885a2d246acec1cb16684d778e9f3de7e29f4398e7772e54f54ce773bea4e99"
+    },
+    "Section.tsx": {
+      "sha256": "cd5866f1f9879af76870d189042219eef6a3f9b0a2c67cad0a1247ddfe155388"
     },
     "Toast.tsx": {
       "sha256": "0a8813902842ac63feba66873ad7d47e3a9162f27f5a43da33ba2b149eaaf4c5"
@@ -54,6 +78,9 @@
     "eslint-kit.mjs": {
       "sha256": "7b902f9793ce11123b2b6b8ad59863cd8336d2856b1b31995e1cae0bd0c5be8a"
     },
+    "format.ts": {
+      "sha256": "8e6b8c5655c6f32f619b6ad7521edf167276201320015673877e4badb734873d"
+    },
     "guide.ts": {
       "sha256": "2f98d7ba5a97579d96ab4b77f7e502167714177171ce8392c488c311cfdd2660"
     },
@@ -61,7 +88,10 @@
       "sha256": "44abb6d5201474cbbd8a7eb449d535829bc3c77af044362385156ea88310d583"
     },
     "kit.messages.ts": {
-      "sha256": "81d1fdd7d4abce4e764b3f9d1db76d1143fdeed243017298e464788393a0d6e6"
+      "sha256": "8eaca91495accf1ca47d1b8a6d9ff6593a0832fa3e291ee230e05c35c720e164"
+    },
+    "kitGallery.messages.ts": {
+      "sha256": "74f3ee0c3e6e552494f802e361385d45443fcc358be5d4c2b177cb6a4f668ffa"
     },
     "primitives.tsx": {
       "sha256": "0dc2c0d34b2286df42d638abcff0d9530842800eff01fa11022528889e423ea7"
@@ -79,7 +109,7 @@
       "sha256": "17f8bc6cf10dd0e6586510fc5b4c75476d76e047c9b0d1fc7bc08dc9bcf52899"
     },
     "tokens.ts": {
-      "sha256": "ae4f35f49a4fcba5a21aec3f61bac70fe7a472e328984a57e653510749f32fd9"
+      "sha256": "611ff7c7c9dc3bb18f49857f42ec868c672637a56f0608239ed7e2edabc23dc5"
     },
     "useHydrated.ts": {
       "sha256": "ff03882575b53db53178d782e184fc9844ab02f03e5c89d09ff981f2422180a4"

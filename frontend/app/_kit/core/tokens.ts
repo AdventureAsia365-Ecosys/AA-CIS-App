@@ -58,6 +58,9 @@ export const K = {
   card: "var(--aa-card)",
   line: "var(--aa-line)",
   line2: "var(--aa-line2)",
+  // Panel band (a dialog footer, a toolbar strip): one step off the card colour in both themes (AA-994 S4a, from the
+  // Booking ConfirmDialog footer).
+  panel: "var(--aa-panel-bg0)",
 } as const;
 
 // AA-601 part B — alpha(color, pct): a translucent version of a colour that works with CSS
