@@ -34,12 +34,13 @@ def test_fixture_is_the_bakeoff_sample_and_holds_no_key():
 
 
 def _evaluate(top_n):
-    """(correct accepted among the 38 rows whose top result is right, wrong accepted, rescued, accepted)."""
+    """(correct accepted among the 38 rows whose top result is right, wrong accepted, rescued, accepted) — the
+    bake-off rule as measured (AA-997 v2's stricter checks off; test_aa997_v2 measures them on this fixture)."""
     correct = wrong = rescued = accepted = 0
     for r in ROWS:
         if r["generic"] or not r["results"]:
             continue
-        v = gm.accept(r["name"], _cands(r), *r["ref"], guards.iso2(r["country"]), top_n=top_n)
+        v = gm.accept(r["name"], _cands(r), *r["ref"], guards.iso2(r["country"]), top_n=top_n, strict=False)
         if v.accepted is None:
             continue
         accepted += 1
@@ -70,7 +71,7 @@ def test_the_three_correct_rows_it_rejects_have_a_bad_legacy_reference():
     for r in ROWS:
         if r["generic"] or not r["results"] or r["labels"]["0"] not in "NR":
             continue
-        v = gm.accept(r["name"], _cands(r), *r["ref"], guards.iso2(r["country"]))
+        v = gm.accept(r["name"], _cands(r), *r["ref"], guards.iso2(r["country"]), strict=False)
         if v.accepted is None:
             missed.append((r["name"], r["ref_by"]))
     # Khone Phapheng / Laos Buffalo Dairy / Ritigala: the stored point is 100–670 km off (ref_by null);

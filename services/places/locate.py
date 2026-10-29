@@ -54,8 +54,8 @@ import structlog
 from services.places import geomatch, guards
 from shared.cost_guard import BudgetExceeded
 from services.places.names import name_norm
-from services.places.geocoder import (CONFIRMED_BY, Confirmed, CreditLimitReached, GeocoderUnavailable,
-                                      Unconfirmed)
+from services.places.geocoder import (CONFIRMED_BY, STRATEGY_V1, Confirmed, CreditLimitReached,
+                                      GeocoderUnavailable, Unconfirmed, default_strategy)
 
 logger = structlog.get_logger()
 
@@ -368,8 +368,12 @@ async def _resolve(item: Item, answer, geocoder, external: bool) -> Outcome:
         res = await geocoder.confirm(item.name, None, None, country, routes=item.routes)
         hit = _confirmed(item, res, country)
         return Outcome(hit) if hit else Outcome(None, reason=REASON_NULL if prop is None else why)
+    # AA-997 v2: GEOCODER_STRATEGY=v2 adds query variants + hint bias for new names (kwarg sent only then, so a
+    # geocoder written before v2 keeps working); the town fallback below stays a plain settlement search
+    strategy = default_strategy()
+    kw = {"strategy": strategy} if strategy != STRATEGY_V1 else {}
     res = await geocoder.confirm(item.name, prop.lat, prop.lng, prop.country, native_name=prop.native_name,
-                                 routes=item.routes)
+                                 routes=item.routes, **kw)
     hit = _confirmed(item, res, prop.country)
     if hit:
         return Outcome(hit)
