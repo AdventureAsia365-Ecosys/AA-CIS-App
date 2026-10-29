@@ -2100,3 +2100,36 @@ the S251 stored writer inputs. No paid call in this lane. $0 analysis: root `.tm
 - Ship path if the panel passes: set `T9_BRIEF_GROUNDING_MODE=r9` and `T9_READER_CHECKLIST_MODE=r10` on the worker
   and the api. Not in this PR: the paid A/B and the panel (orchestrator; harness and commands in root
   `.tmp-session/S257/aa790/`).
+
+## Fixed sample (S258, 29/10/2026): pick it before any new round, $0
+
+Rounds 8-10 ran on 8 pieces, and two identical control runs differed as much as the effects. On the S257 panel scores
+the noise of one piece pair (control written twice, one judge vote per lens) has an SD of ~1.1 on ai_tells,
+brand_voice and source_fidelity and ~0.5 on reader_value, so a mean of 8 pairs moves by ~0.4 on noise alone against a
+0.15 bar; even 24 blogs only detect ~0.7-0.9 on the first three lenses. The plan (root audit
+`docs/audits/2026-10-29-S258-aa790-fixed-sample/`): a fixed sample of >= 20 blogs, a panel test-retest and anchor
+check ($0, Claude Code agents), then bars set from the measured noise.
+
+### Decisions
+
+- `scripts/aa790/fixed_sample.py` (read-only, $0, exec'd alone through `tools/ecs/ecsx.sh`; imports nothing from
+  `scripts/`): eligible = blog pieces approved / held with a stored `writer_input` holding a seed and a brand pack and
+  an angle request (exactly what `t9_writer_repanel.py` loads); one piece per distinct seed (attempts and reruns of a
+  request share it); equal share per tenant; up to half of a tenant's share are labelled anchors (golden t9_blog label,
+  else the `content_piece_label` majority; a post-edit golden item is not an anchor: its frozen text is not the
+  piece's); the rest round-robin over destination with held pieces first; `FORCE_IDS` first; sha256 order.
+- Output is a manifest (ids + hashes of writer_input, seed and text, no text), stored as a version in the root audit
+  folder; it reports `pool.distinct_inputs` and `short_by` instead of padding the sample with duplicates.
+
+### Tradeoffs
+
+- One piece per seed can leave fewer than 24 distinct inputs (the schema dump estimates ~21 angle requests). A
+  smaller honest sample beats one input counted twice; growing it needs new T8 requests (paid, later).
+- Anchors bias the sample toward pieces someone labelled (often held ones); capped at half a tenant's share.
+
+### Should know
+
+- Not run on Dev in this lane. The orchestrator runs it with `tools/ecs/ecsx.sh` (root
+  `.tmp-session/S258/eval-prep/aa790/RUNBOOK.md`) and commits the manifest as `fixed-sample-v1.json` in the root audit
+  folder.
+- `tests/unit/test_aa790_fixed_sample.py` covers the pure parts (distinct inputs, shares, select, row parsing).

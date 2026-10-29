@@ -1014,3 +1014,179 @@ def test_evalpatch_stage_is_parameterised_and_validated():
     assert "stage = 'adhoc_aa925'" in evalpatch.spend_sql("adhoc_aa925")
     with pytest.raises(ValueError):
         evalpatch.spend_sql("s1_generate'; --")
+
+
+# ── S258 (AA-919): addendum freeze helpers and the merge into the next version ─────────────────────────────────────
+
+
+def test_t9_stratum_keeps_linkedin_and_puts_other_social_channels_in_t9_social():
+    assert select_samples.t9_stratum("blog") == ("t9b", "t9_blog")
+    assert select_samples.t9_stratum("linkedin") == ("t9l", "t9_linkedin")
+    assert select_samples.t9_stratum("facebook") == ("t9f", "t9_social")
+    assert select_samples.t9_stratum("instagram") == ("t9s", "t9_social")
+    assert set(select_samples.T9_CHANNELS) >= {"blog", "linkedin", "facebook"}
+
+
+def test_addendum_label_keeps_importable_labels_and_sends_the_rest_to_the_panel():
+    edit = common.make_label("fail", "tenant_edit", reason="tenant saved an edited copy")
+    assert select_samples.addendum_label(edit) is edit
+    review = common.make_label("pass", "tenant_review", reason="tenant approved")
+    lab = select_samples.addendum_label(review)
+    assert lab["source"] == "needs_panel" and lab["verdict"] is None
+    assert lab["evidence"][-1]["prior"]["source"] == "tenant_review"
+    assert select_samples.addendum_label(common.needs_panel_label())["evidence"] == []
+
+
+def test_parse_ids_reads_a_candidate_report_a_list_or_a_string():
+    a, b = "d67e3178-26e7-4a4d-882c-d6de65ce2593", "1bec2b23-69b3-45d8-ad8d-259efcbb2d82"
+    report = {"writers": {"t9_social": {"picks": [{"id": a, "fills": "channel:facebook:pass"}, {"id": b}]},
+                          "t2": {"picks": []}}}
+    assert select_samples.parse_ids(report) == {a: "addendum:channel:facebook:pass", b: "addendum"}
+    assert select_samples.parse_ids([a.upper(), a, {"id": b}]) == {a: "addendum", b: "addendum"}
+    assert list(select_samples.parse_ids(f"{b}, {a}")) == [b, a]
+    with pytest.raises(ValueError):
+        select_samples.parse_ids("not-a-uuid")
+    with pytest.raises(ValueError):
+        select_samples.parse_ids({"samples": []})
+
+
+def _addendum(base_version="1.0.0"):
+    from tests.unit.aa919_fake_golden import SLUG_A, fake_fixture
+
+    base = fake_fixture(base_version)
+    by = {s["sample_id"]: s for s in base["samples"]}
+    fb = json.loads(json.dumps(by["t9l-001"]))
+    fb.update(sample_id="t9f-001", stratum="t9_social", channel="facebook", pick_reason="addendum:channel:facebook")
+    fb["refs"]["piece_id"] = "0a919f00-0000-4000-8000-000000000001"
+    fb["input"]["context"]["channel"] = "facebook"
+    fb["label"] = common.make_label("pass", "agent_panel", grade="light", reason="Invented panel reason.")
+    fb["label_source"] = "agent_panel"
+    li = json.loads(json.dumps(by["t9l-002"]))
+    li.update(sample_id="t9l-001")
+    li["refs"]["piece_id"] = "0a919f00-0000-4000-8000-000000000002"
+    li["label_source"] = "agent_panel"
+    s1 = json.loads(json.dumps(by["s1-003"]))
+    s1.update(sample_id="s1-001")
+    s1["refs"]["tour_id"] = "0a919f00-0000-4000-8000-000000000003"
+    t2 = json.loads(json.dumps(by["t2-001"]))
+    t2.update(sample_id="t2-001")
+    t2["refs"]["version_id"] = "0a919f00-0000-4000-8000-000000000004"
+    unl = json.loads(json.dumps(fb))
+    unl.update(sample_id="t9f-002", label=common.needs_panel_label(), label_source="needs_panel")
+    unl["refs"]["piece_id"] = "0a919f00-0000-4000-8000-000000000005"
+    packs = {"s1:default": {"system_prompt": "A CHANGED invented platform voice."},
+             f"t2:{SLUG_A}": {"style_guide": "A CHANGED invented tenant style."},
+             "t2:zz-new-agency": {"style_guide": "A new invented pack."}}
+    # dict(...) keywords: a JSON-style literal of the fixture keys would trip the golden-set text guard's marker scan
+    add = dict(schema=base["schema"], fixture_version=base_version, addendum_of=base_version,
+               created_at="2026-10-29T00:00:00+00:00", seed=729, selection=dict(ids_requested=5, notes=[]),
+               shared_inputs=dict(brand_rules=packs), samples=[fb, li, s1, t2, unl],
+               label_history=[dict(source="agent_panel", applied=2)])
+    return base, add
+
+
+def test_merge_renumbers_keeps_base_packs_and_imports_as_the_next_version():
+    from services.golden_set import derive
+
+    base, add = _addendum()
+    new, info = labels.merge(base, add, approved_by="owner", drop_unlabelled=True)
+    assert new["fixture_version"] == "1.1.0" and info["dropped_unlabelled"] == ["t9f-002"]
+    assert info["added"] == ["t9f-001", "t9l-005", "s1-009", "t2-005"]
+    by = {s["sample_id"]: s for s in new["samples"]}
+    packs = new["shared_inputs"]["brand_rules"]
+    # base items keep the packs they were frozen with; the changed S1 pack gets its own key
+    assert packs["s1:default"] == base["shared_inputs"]["brand_rules"]["s1:default"]
+    s1_ref = by["s1-009"]["input"]["brand_rules_ref"]
+    assert s1_ref.startswith("s1:default@") and packs[s1_ref] == add["shared_inputs"]["brand_rules"]["s1:default"]
+    # a changed tenant pack is inlined on the new item only
+    assert "brand_rules_ref" not in by["t2-005"]["input"]
+    assert by["t2-005"]["input"]["brand_rules"]["style_guide"] == "A CHANGED invented tenant style."
+    assert by["t2-001"]["input"]["brand_rules_ref"].startswith("t2:")
+    assert packs["t2:zz-new-agency"] == {"style_guide": "A new invented pack."}
+    hist = new["label_history"][-1]
+    assert hist["source"] == "addendum" and hist["from_version"] == "1.0.0" and hist["added"] == info["added"]
+    assert hist["packs_inlined_on"] == ["t2-005"] and list(hist["packs_renamed"]) == ["s1:default"]
+    assert base["fixture_version"] == "1.0.0" and len(base["samples"]) == 24   # the base is not touched
+    gs = derive.build(new, name="zz919", source_uri="file:fake.json", source_sha256="c" * 64, imported_by="pytest")
+    items = {i["sample_id"]: i for i in gs.items}
+    assert (items["t9f-001"]["writer"], items["t9f-001"]["channel"]) == ("t9_social", "facebook")
+    assert items["t2-005"]["input"]["brand_rules"]["style_guide"] == "A CHANGED invented tenant style."
+    assert s1_ref in gs.set_row["shared_inputs"]["brand_rules"]
+
+
+@pytest.mark.parametrize("change, msg", [
+    (lambda b, a: a.update(addendum_of="0.9.0"), "extends"),
+    (lambda b, a: a["samples"][0]["refs"].update(piece_id=b["samples"][16]["refs"]["piece_id"]), "already holds"),
+    (lambda b, a: a["samples"][2]["refs"].update(tour_id=b["samples"][0]["refs"]["tour_id"]), "already holds"),
+    (lambda b, a: a["samples"][0].update(stratum="injection"), "real outputs only"),
+    (lambda b, a: None, "is not importable"),
+])
+def test_merge_refuses_a_wrong_base_a_duplicate_output_or_an_unlabelled_sample(change, msg):
+    base, add = _addendum()
+    change(base, add)
+    with pytest.raises(ValueError, match=msg):
+        labels.merge(base, add, approved_by="owner", drop_unlabelled=msg != "is not importable")
+    with pytest.raises(ValueError, match="approved_by"):
+        labels.merge(*_addendum(), approved_by=" ")
+
+
+def test_build_addendum_freezes_only_the_ids_and_leaves_post_edit_out(monkeypatch):
+    import asyncio
+    import contextlib
+
+    class _Conn:
+        async def fetch(self, sql, *a):
+            return []
+
+    class _Pool:
+        @contextlib.asynccontextmanager
+        async def acquire(self):
+            yield _Conn()
+
+        async def close(self):
+            pass
+
+    async def _pool(read_only=True):
+        return _Pool()
+
+    ids = [f"0a919e00-0000-4000-8000-00000000000{i}" for i in range(1, 6)]
+    seen = {}
+
+    async def _lessons(conn):
+        return ""
+
+    def _cand(i, post_edit=False, label=None):
+        return Candidate(id=ids[i], group="zz-agency", tags={"held"}, data={
+            "post_edit": post_edit, "label": label or common.needs_panel_label()})
+
+    async def _s1(conn, audit):
+        return [], {}
+
+    async def _t2(conn, audit, actions):
+        return [_cand(3, label=common.make_label("pass", "tenant_review"))], {}
+
+    async def _t9(conn, audit, actions, channels):
+        seen["channels"] = channels
+        return {"facebook": [_cand(0)], "linkedin": [_cand(1, post_edit=True)], "blog": []}, {}
+
+    async def _freeze_t9(pool, c, shared):
+        return {"kind": "t9", "channel": "facebook", "country": "Zzland", "refs": {"piece_id": c.id},
+                "label": c.data["label"]}
+
+    async def _freeze_t2(pool, c, shared):
+        return {"kind": "t2", "country": "Zzland", "refs": {"version_id": c.id}, "label": c.data["label"]}
+
+    for name, fn in (("_pool", _pool), ("load_s1_lessons_block", _lessons), ("s1_candidates", _s1),
+                     ("t2_candidates", _t2), ("t9_candidates", _t9), ("freeze_t9", _freeze_t9),
+                     ("freeze_t2", _freeze_t2)):
+        monkeypatch.setattr(select_samples, name, fn)
+    want = select_samples.parse_ids([{"id": ids[0], "fills": "channel:facebook:pass"}, ids[1], ids[3], ids[4]])
+    fx = asyncio.run(select_samples.build_addendum(want, base_version="1.2.0", seed=919))
+    assert seen["channels"] == select_samples.T9_CHANNELS
+    assert fx["addendum_of"] == "1.2.0" and [s["sample_id"] for s in fx["samples"]] == ["t9f-001", "t2-001"]
+    fb, t2 = fx["samples"]
+    assert fb["stratum"] == "t9_social" and fb["pick_reason"] == "addendum:channel:facebook:pass"
+    assert fb["label_source"] == "needs_panel" and "held" in fb["tags"]
+    assert t2["label_source"] == "needs_panel" and t2["label"]["evidence"][-1]["prior"]["source"] == "tenant_review"
+    notes = " | ".join(fx["selection"]["notes"])
+    assert f"{ids[1]}: left out (post-edit" in notes and f"{ids[4]}: no candidate" in notes

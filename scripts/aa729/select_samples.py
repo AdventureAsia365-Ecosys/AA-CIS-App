@@ -21,6 +21,10 @@ No LLM, no DataForSEO. Runs in the api container as `cis_app`:
   cd /app && PYTHONPATH=/tmp/aa729 python3 -m scripts.aa729.select_samples [--seed 729]
       [--version 1.0.0] [--audit-labels s3:scripts/in/aa729/audit-labels.json] [--no-upload]
 
+Addendum mode (AA-919 S258): `--ids <candidate report | id list> --base-version 1.2.0` freezes only those ids (any
+T9 channel, Facebook included) as `scripts/out/aa729/addendum-<base>-<hash>.json`, for a labelling round
+(`labels export-pack`, `labels apply`) and `labels merge` into the next fixture version.
+
 Output: s3://<bronze>/scripts/out/aa729/fixture-<version>.json (+ /tmp/aa729-out/ copy) and a summary on
 stdout. `--audit-labels` is an optional JSON {"<tour_id|version_id|piece_id>": {"verdict": "pass|fail",
 "grade": "...", "source": "S234 r4 panel", "reason": "..."}} built from earlier audit rounds.
@@ -47,7 +51,7 @@ from scripts.aa729.common import (  # noqa: E402
     FIXTURE_VERSION, LONG_TOUR_DAYS, MASTER_TENANT_ID, MIX, PIECE_LABEL_VERDICT, POOR_RAW_PERCENTILE,
     QUOTAS, REVIEW_VERDICT, S3_PREFIX, SCHEMA, TOUR_TYPE_FLOORS, Candidate, DEFAULT_SEED, duration_days, find_pii,
     first_label,
-    make_label, percentile, pick_stratified, save_output, scrub, tour_type,
+    make_label, needs_panel_label, percentile, pick_stratified, save_output, scrub, tour_type,
 )
 from services.content_generation.pipeline_lessons import load_s1_lessons_block  # noqa: E402
 
@@ -452,15 +456,16 @@ def t9_label(r: dict, labels: list[dict], actions: dict, audit: dict) -> tuple[d
     return label, edited
 
 
-async def t9_candidates(conn, audit: dict, actions: dict) -> tuple[dict[str, list[Candidate]], dict]:
-    rows = [dict(r) for r in await conn.fetch(_T9_SQL, ["blog", "linkedin"])]
+async def t9_candidates(conn, audit: dict, actions: dict, channels: tuple[str, ...] = ("blog", "linkedin")
+                        ) -> tuple[dict[str, list[Candidate]], dict]:
+    rows = [dict(r) for r in await conn.fetch(_T9_SQL, list(channels))]
     labels: dict[str, list[dict]] = {}
     try:
         for x in await conn.fetch(_PIECE_LABEL_SQL):
             labels.setdefault(x["piece_id"], []).append(dict(x))
     except Exception as e:  # noqa: BLE001 — table missing on an old DB: no human labels
         print(f"content_piece_label unreadable: {e}", flush=True)
-    out: dict[str, list[Candidate]] = {"blog": [], "linkedin": []}
+    out: dict[str, list[Candidate]] = {ch: [] for ch in channels}
     for r in rows:
         wi = _j(r["writer_input"], {}) or {}
         if not isinstance(wi, dict) or not wi.get("seed"):
@@ -670,6 +675,120 @@ async def build(seed: int, version: str, audit: dict) -> dict:
     return scrub(fixture)
 
 
+# ── addendum (AA-919 S258): freeze chosen ids for a labelling round ─────────────────────────────────────────────────
+
+# T9 channel -> (sample_id prefix, stratum). LinkedIn keeps the 1.0.0 stratum; any other social channel (Facebook
+# first: the golden set has none, S257 candidate picker) is the t9_social stratum (golden_set.derive STRATUM_WRITER).
+T9_PREFIX = {"blog": ("t9b", "t9_blog"), "linkedin": ("t9l", "t9_linkedin"), "facebook": ("t9f", "t9_social")}
+T9_OTHER_SOCIAL = ("t9s", "t9_social")
+# Every channel a tenant can turn on (acp_shared.tenant_config CHECK channels_valid); the addendum reads them all.
+T9_CHANNELS = ("blog", "linkedin", "facebook", "instagram", "tiktok", "email", "landing_page", "ads")
+# Label sources the WM-17 importer accepts (services/golden_set/derive.LABEL_SOURCES, minus the round's own
+# agent_panel / synthetic). Any other existing label (a review, an audit verdict) is evidence for the panel's
+# reviewer, not an importable label: the sample goes to the panel with that label kept under `prior`.
+ADDENDUM_KEEP_SOURCES = frozenset({"admin_edit", "tenant_edit", "human_label"})
+
+
+def t9_stratum(channel: str) -> tuple[str, str]:
+    return T9_PREFIX.get(channel, T9_OTHER_SOCIAL)
+
+
+def addendum_label(label: dict) -> dict:
+    """The label an addendum sample starts with: an importable existing label as is, else needs_panel with the
+    existing label (if any) kept as evidence. Pure."""
+    if label.get("verdict") in ("pass", "fail") and label.get("source") in ADDENDUM_KEEP_SOURCES:
+        return label
+    evidence = list(label.get("evidence") or [])
+    if label.get("verdict") in ("pass", "fail"):
+        evidence.append({"prior": {k: label.get(k) for k in ("verdict", "source", "grade", "reason")}})
+    return needs_panel_label(evidence)
+
+
+def parse_ids(doc: Any) -> dict[str, str]:
+    """{id: why} from a calibration_candidates report (every writer's picks: id -> its `fills`), a JSON list (ids or
+    {"id": ..., "fills": ...}) or a comma-separated string. Order kept, duplicates dropped. Pure."""
+    out: dict[str, str] = {}
+    if isinstance(doc, str):
+        doc = [x.strip() for x in doc.split(",") if x.strip()]
+    if isinstance(doc, dict) and isinstance(doc.get("writers"), dict):
+        doc = [p for w in doc["writers"].values() for p in (w.get("picks") or [])]
+    if not isinstance(doc, list):
+        raise ValueError("ids: expected a candidate report, a list or a comma-separated string")
+    for x in doc:
+        ident, why = (x.get("id"), x.get("fills")) if isinstance(x, dict) else (x, None)
+        ident = str(ident or "").strip().lower()
+        if not ident:
+            continue
+        UUID(ident)  # every candidate id (tour, tenant tour version, piece) is a uuid
+        out.setdefault(ident, f"addendum:{why}" if why else "addendum")
+    return out
+
+
+async def build_addendum(ids: dict[str, str], *, base_version: str, seed: int, keep_post_edit: bool = False
+                         ) -> dict:
+    """The chosen ids frozen with the same freezers as `build` (same input / output / pipeline verdict shapes), as an
+    addendum to fixture `base_version`: sample ids `<prefix>-NNN` local to the addendum (`labels merge` renumbers
+    them after the base's), labels per `addendum_label`. A post-edit output never calibrates (the R2 gate skips it), so
+    it is left out unless `keep_post_edit`. Read-only; ids that match no candidate are listed in the notes."""
+    pool = await _pool(read_only=True)
+    notes: list[str] = []
+    shared: dict = {}
+    samples: list[dict] = []
+    counters: Counter = Counter()
+    try:
+        async with pool.acquire() as conn:
+            lessons_text = await load_s1_lessons_block(conn)
+            actions: dict[str, dict[str, int]] = {}
+            for x in await conn.fetch(_AUDIT_SQL):
+                actions.setdefault(x["resource_id"], {})[x["action"]] = int(x["n"])
+            s1_c, _ = await s1_candidates(conn, {})
+            t2_c, _ = await t2_candidates(conn, {}, actions)
+            t9_c, _ = await t9_candidates(conn, {}, actions, T9_CHANNELS)
+        found: dict[str, tuple[str, Candidate]] = {}
+        for kind, cands in (("s1", s1_c), ("t2", t2_c), *(("t9", v) for v in t9_c.values())):
+            for c in cands:
+                if c.id in ids:
+                    found[c.id] = (kind, c)
+        for ident in ids:
+            if ident not in found:
+                notes.append(f"{ident}: no candidate (not active / no writer_input / not approved or held)")
+        for ident, why in ids.items():
+            if ident not in found:
+                continue
+            kind, c = found[ident]
+            if c.data["post_edit"] and not keep_post_edit:
+                notes.append(f"{ident}: left out (post-edit output: never a calibration pair)")
+                continue
+            try:
+                if kind == "s1":
+                    async with pool.acquire() as conn:
+                        s = await freeze_s1(conn, c, shared, lessons_text)
+                    prefix, stratum = "s1", "s1"
+                elif kind == "t2":
+                    s = await freeze_t2(pool, c, shared)
+                    prefix, stratum = "t2", "t2"
+                else:
+                    s = await freeze_t9(pool, c, shared)
+                    prefix, stratum = t9_stratum(s["channel"])
+            except Exception as e:  # noqa: BLE001
+                notes.append(f"{ident}: not frozen ({type(e).__name__}: {str(e)[:160]})")
+                continue
+            counters[prefix] += 1
+            s["label"] = addendum_label(s["label"])
+            s.update({"sample_id": f"{prefix}-{counters[prefix]:03d}", "stratum": stratum, "group": c.group,
+                      "tags": sorted(c.tags), "pick_reason": why[:80], "label_source": s["label"]["source"]})
+            samples.append(s)
+    finally:
+        await pool.close()
+    fixture = {
+        "schema": SCHEMA, "fixture_version": base_version, "addendum_of": base_version,
+        "created_at": datetime.now(timezone.utc).isoformat(), "seed": seed,
+        "selection": {"ids_requested": len(ids), "frozen": len(samples), "notes": notes},
+        "shared_inputs": {"brand_rules": shared}, "samples": samples,
+    }
+    return scrub(fixture)
+
+
 def summary(fixture: dict) -> dict:
     samples = fixture["samples"]
     by = Counter(s["stratum"] for s in samples)
@@ -691,9 +810,29 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--version", default=FIXTURE_VERSION)
     ap.add_argument("--audit-labels", help="local path or s3:<key> of an audit-verdict JSON")
     ap.add_argument("--no-upload", action="store_true")
+    ap.add_argument("--ids", help="addendum mode: a calibration_candidates report, a JSON id list (local path or "
+                                  "s3:<key>) or a comma-separated id list; freezes only these ids")
+    ap.add_argument("--base-version", help="addendum mode: the fixture version the addendum extends (e.g. 1.2.0)")
+    ap.add_argument("--keep-post-edit", action="store_true", help="addendum mode: keep post-edit outputs")
     a = ap.parse_args(argv)
     from scripts.aa729.common import load_json
 
+    if a.ids:
+        if not a.base_version:
+            ap.error("--ids needs --base-version")
+        src = a.ids
+        ids = parse_ids(load_json(src) if (src.startswith("s3:") or os.path.isfile(src)) else src)
+        fixture = asyncio.run(build_addendum(ids, base_version=a.base_version, seed=a.seed,
+                                             keep_post_edit=a.keep_post_edit))
+        leaks = find_pii(fixture)
+        if leaks:
+            print(f"PII check failed: {leaks[:10]}", flush=True)
+            return 2
+        tag = hashlib.sha256(",".join(sorted(ids)).encode()).hexdigest()[:8]
+        save_output(fixture, f"{S3_PREFIX}/addendum-{a.base_version}-{tag}.json", upload=not a.no_upload)
+        print(json.dumps({**summary(fixture), "selection": fixture["selection"]}, indent=1, ensure_ascii=False,
+                         default=str), flush=True)
+        return 0
     audit = load_json(a.audit_labels) if a.audit_labels else {}
     fixture = asyncio.run(build(a.seed, a.version, audit))
     leaks = find_pii(fixture)

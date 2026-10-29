@@ -2,9 +2,9 @@
 (CIS 284) and the baseline results of shared.eval_item_result. Pure functions: no DB, no network, no model call.
 
 Rules (AA-919 plan §4 with the critic's fixes):
-- writer: stratum s1 -> a1, t2 -> t2, t9_blog -> t9_blog, t9_linkedin -> t9_social; an injection sample follows its
-  host stratum (injection_s1 -> a1, injection_t9 -> t9_blog / t9_social by its channel). The T9 channel comes from
-  the sample and must equal input.context.channel.
+- writer: stratum s1 -> a1, t2 -> t2, t9_blog -> t9_blog, t9_linkedin / t9_social -> t9_social; an injection sample
+  follows its host stratum (injection_s1 -> a1, injection_t9 -> t9_blog / t9_social by its channel). The T9 channel
+  comes from the sample and must equal input.context.channel.
 - kind (critic 11): s1 / t2 / t9 -> real, injection_s1 / injection_t9 -> synthetic. Anything else is refused.
 - scope: a1 is platform (no tenant); T2 / T9 are tenant. The tenant is refs.tenant_id (equal to input.tenant_id and
   input.context.tenant_id when present); an inj-t9 sample takes it from its host sample's refs (critic 11).
@@ -36,7 +36,8 @@ WRITERS = ("a1", "t2", "t9_blog", "t9_social")
 TIERS = ("cycle_bike", "trek_hike", "water", "wildlife", "culinary", "long_9d", "long_18d", "poor_raw",
          "known_failure", "held", "fact_dense", "prompt_injection", "post_edit")
 KIND_MAP = {"s1": "real", "t2": "real", "t9": "real", "injection_s1": "synthetic", "injection_t9": "synthetic"}
-STRATUM_WRITER = {"s1": "a1", "t2": "t2", "t9_blog": "t9_blog", "t9_linkedin": "t9_social"}
+# t9_social (S258): a social channel other than LinkedIn (Facebook first), added by a labelled addendum.
+STRATUM_WRITER = {"s1": "a1", "t2": "t2", "t9_blog": "t9_blog", "t9_linkedin": "t9_social", "t9_social": "t9_social"}
 LABEL_SOURCES = ("agent_panel", "synthetic", "admin_edit", "tenant_edit", "human_label")
 FACT_DENSE_WRITERS = ("a1", "t2")
 LONG_DAYS = 9
