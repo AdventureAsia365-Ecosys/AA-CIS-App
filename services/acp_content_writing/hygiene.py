@@ -1151,7 +1151,8 @@ def copies(a: str, b: str, ignore: frozenset = frozenset()) -> bool:
 # start of a sentence, or the owner tag anywhere.
 LEAK_RE = re.compile(
     r"\b(?:content seed|the seed|this seed|source itinerary|place background|the itinerary calls it"
-    r"|other trips that include|for context only|source notes|agency fact(?!\s*-?\s*sheets?\b)|platform fact(?!\s*-?\s*sheets?\b))\b|\[moment\b|\bscope:"
+    r"|other trips that include|for context only|source notes"
+    r"|agency fact(?!\s*-?\s*sheets?\b)|platform fact(?!\s*-?\s*sheets?\b))\b|\[moment\b|\bscope:"
     r"|^\W*source:", re.I)
 # The whole sentence is a copied Facts 'Source:' line: it says nothing to a reader, so the fix deletes it.
 _SOURCE_LINE_RE = re.compile(r"^\W*source:", re.I)
