@@ -36,6 +36,7 @@ from api.routers.v1_content_writing import router as v1_content_writing_router
 from api.routers.v1_pipeline import router as v1_pipeline_router
 from api.routers.v1_publish import router as v1_publish_router
 from api.routers.v1_integrations import router as v1_integrations_router
+from api.routers.v1_facts import router as v1_facts_router  # AA-814
 from api.routers.v1_account import router as v1_account_router
 from api.routers.v1_account_members import router as v1_account_members_router  # AA-978
 from api.routers.v1_trip_page import router as v1_trip_page_router  # AA-482
@@ -72,6 +73,7 @@ from api.routers.admin_crm_console import router as admin_crm_console_router  # 
 from api.routers.admin_alert_recipients import router as admin_alert_recipients_router  # AA-913
 from api.routers.admin_aa_content import router as admin_aa_content_router  # AA-977
 from api.routers.admin_writing_memory import router as admin_writing_memory_router  # AA-917
+from api.routers.admin_facts import router as admin_facts_router  # AA-814
 from api.routers.v1_progress import router as v1_progress_router  # AA-637
 from api.routers.catalog_http import (  # AA-976 — catalog.http.v1 for the partner CRM (M2M)
     CatalogProblem, catalog_problem_handler, router as catalog_http_router,
@@ -302,6 +304,7 @@ app.include_router(v1_pipeline_router)
 app.include_router(v1_publish_router)  # AA-455 bước 1 — tenant self-unpublish (publish_log)
 app.include_router(v1_notifications_router)  # AA-986 L3 — tenant bell: GET /v1/notifications, mark read
 app.include_router(v1_integrations_router)  # AA-457 [T11 PR1] — tenant WordPress credentials
+app.include_router(v1_facts_router)  # AA-814 — tenant Facts Entries: /v1/facts (tenant pool)
 app.include_router(v1_account_router)  # AA-761 — tenant Account pages: activity trail + CSV, API key facts
 app.include_router(v1_account_members_router)  # AA-978 — tenant Account › Members (CIS 276 directory)
 app.include_router(v1_trip_page_router)  # AA-482 — GET /v1/trip/{tour_id}, public page data
@@ -327,6 +330,7 @@ app.include_router(admin_crm_console_router)  # AA-941 — /admin/platform/crm/*
 app.include_router(admin_alert_recipients_router)  # AA-913 — /admin/platform/alert-recipients (no include prefix)
 app.include_router(admin_aa_content_router)  # AA-977 — /admin/aa-content (AA content editor, no include prefix)
 app.include_router(admin_writing_memory_router)  # AA-917 — /admin/writing-memory (no include prefix)
+app.include_router(admin_facts_router)  # AA-814 — /admin/facts (platform Facts Entries, no include prefix)
 app.include_router(admin_photos_router)  # AA-708 — /admin/photos (Drive photo sync, matching)
 app.include_router(admin_places_router)  # AA-712 — /admin/places/backfill (place pipeline)
 app.include_router(admin_supply_content_router)  # AA-835 — /admin/supply-content (Booking supply content review)

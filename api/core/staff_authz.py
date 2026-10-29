@@ -293,6 +293,10 @@ POLICY: dict[tuple[str, str], str] = {
     ("PATCH", "/admin/content-quality/place-cards/{card_id}"): QUALITY_WRITE,
     ("PATCH", "/admin/content-quality/place-cards/{card_id}/facts"): QUALITY_WRITE,
     ("POST", "/admin/content-quality/place-cards/{keep_id}/merge"): QUALITY_WRITE,
+    # AA-814 — platform Facts Entries (every tenant's T9 seed reads them); reads open to every staff role
+    ("POST", "/admin/facts"): QUALITY_WRITE,
+    ("PATCH", "/admin/facts/{fact_id}"): QUALITY_WRITE,
+    ("DELETE", "/admin/facts/{fact_id}"): QUALITY_WRITE,
     # ── admin_photos — Drive sync + assignment (Photos page, admin-only)
     ("POST", "/admin/photos/sync"): PHOTOS_WRITE,
     ("POST", "/admin/photos/sync/schedule"): PHOTOS_WRITE,   # AA-844, daily (MACHINE_ROUTES)

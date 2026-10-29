@@ -92,8 +92,9 @@ TENANT_TABLES = {
 COLUMN_WRITE_TABLES = {"shared.tenant_integrations", "shared.tenant_brand_rules", "shared.tenant_seo_config",
                        "acp_shared.subject", "acp_shared.quarter_plan", "acp_shared.year_plan",
                        "acp_deliver.tenant_tour_pages", "shared.notifications"}
-# tables the tenant role may DELETE from (237: the disconnect route); the others have no DELETE grant
-DELETE_TABLES = {"shared.tenant_integrations"}
+# tables the tenant role may DELETE from (237: the disconnect route; 302, AA-814: DELETE /v1/facts/{id} of an own
+# tenant fact); the others have no DELETE grant
+DELETE_TABLES = {"shared.tenant_integrations", "acp_shared.facts"}
 # tables the tenant role may only read and INSERT into (277: the T9 edit signal); no UPDATE grant, so the generic
 # `SET tenant_id = tenant_id` write test does not apply; the insert tests (_INSERT_FOR) and the platform-row test do
 INSERT_ONLY_TABLES = {"shared.writing_signal"}
@@ -364,6 +365,9 @@ def test_tenant_role_cannot_write_platform_facts(cur, two_tenants):
     with _as_tenant(cur, a) as c:              # an own fact cannot be turned into a platform fact
         _rls_violation(c, "UPDATE acp_shared.facts SET scope = 'platform', tenant_id = NULL "
                           "WHERE tenant_id IS NOT NULL")
+    with _as_tenant(cur, a) as c:              # 302 grants DELETE: still never a platform fact
+        c.execute("DELETE FROM acp_shared.facts WHERE scope = 'platform'")
+        assert c.rowcount == 0, "tenant role deleted platform facts"
 
 
 # shared.tenant_integrations (237 + 241): the tenant pool may read, DELETE (DELETE /v1/integrations/{type},

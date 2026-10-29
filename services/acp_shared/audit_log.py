@@ -51,6 +51,10 @@ class TenantAuditAction:
     TOUR_VERSION_EXPORTED = "tenant_tour_version.exported"
     CONTENT_UNPUBLISHED = "content_piece.unpublished"  # AA-815 — tenant removed a published post
     INTEGRATION_DISCONNECTED = "integration.disconnected"  # AA-815 — tenant removed a channel connection
+    # AA-814 — a tenant wrote one of its own Facts Entries (Content studio /v1/facts); details: before/after per field
+    FACT_CREATED = "fact.created"
+    FACT_UPDATED = "fact.updated"
+    FACT_DELETED = "fact.deleted"
 
 
 class PlatformAuditAction:
@@ -59,6 +63,11 @@ class PlatformAuditAction:
     PLACE_CARD_MERGE = "place_card.merge"  # AA-772 (S234) — admin merged duplicate cards
     # AA-774 (S235) — admin re-kinded / re-worded / dropped card facts; details hold before/after per fact
     PLACE_CARD_FACTS_EDITED = "place_card.facts_edited"
+    # AA-814 — staff wrote a platform Facts Entry (/admin/facts). Same strings as the tenant rows (TenantAuditAction):
+    # tenant_id NULL here, the tenant's id there; resource_type "fact", resource_id the fact_id.
+    FACT_CREATED = "fact.created"
+    FACT_UPDATED = "fact.updated"
+    FACT_DELETED = "fact.deleted"
 
 
 class AdminAuditAction:

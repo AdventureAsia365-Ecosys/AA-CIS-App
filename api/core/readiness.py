@@ -41,8 +41,9 @@ logger = structlog.get_logger()
 # /admin/writing-memory read and write shared.writing_rule; 277, AA-916: the admin A1 field edit and both sentence
 # applies write shared.writing_signal inside their own transaction; without the table they fail).
 # 301 (AA-995 — the photo route reads and the photo sync writes shared.place_photo.s3_key_medium; without it every
-# GET /content/photos/{id} fails).
-REQUIRED_CIS_SCHEMA = 301
+# GET /content/photos/{id} fails). 302 (AA-814 — /admin/facts, /v1/facts and the T9 facts read name
+# acp_shared.facts.kind / valid_until / updated_by, and the tenant DELETE needs aa_app_user's DELETE grant).
+REQUIRED_CIS_SCHEMA = 302
 # Versions this code needs that were registered after a higher one (reserved numbers): 297 (AA-920 WM-25) was reserved
 # in S255 and applied after 299. max() is already 299 without it, so the version reported is capped below the lowest
 # listed version that is not registered (297 missing -> 296 -> "schema_behind").

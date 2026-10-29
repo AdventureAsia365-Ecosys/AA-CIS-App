@@ -11,6 +11,10 @@
     "capability": "spend.write",
     "module": "api.routers.admin_decisions"
   },
+  "DELETE /admin/facts/{fact_id}": {
+    "capability": "quality.write",
+    "module": "api.routers.admin_facts"
+  },
   "DELETE /admin/places/{destination_id}/shape": {
     "capability": "ops.write",
     "module": "api.routers.admin_places"
@@ -234,6 +238,18 @@
   "GET /admin/export-audit": {
     "capability": null,
     "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/facts": {
+    "capability": null,
+    "module": "api.routers.admin_facts"
+  },
+  "GET /admin/facts/{fact_id}": {
+    "capability": null,
+    "module": "api.routers.admin_facts"
+  },
+  "GET /admin/facts/{fact_id}/history": {
+    "capability": null,
+    "module": "api.routers.admin_facts"
   },
   "GET /admin/infra/status": {
     "capability": "ops.read",
@@ -691,6 +707,10 @@
     "capability": "quality.write",
     "module": "api.routers.admin_content_quality"
   },
+  "PATCH /admin/facts/{fact_id}": {
+    "capability": "quality.write",
+    "module": "api.routers.admin_facts"
+  },
   "PATCH /admin/llm-catalog/{model_key}": {
     "capability": "ai.admin",
     "module": "api.routers.admin_llm_ops"
@@ -874,6 +894,10 @@
   "POST /admin/dfs-balance/check": {
     "capability": "ops.write",
     "module": "api.routers.admin_llm_ops"
+  },
+  "POST /admin/facts": {
+    "capability": "quality.write",
+    "module": "api.routers.admin_facts"
   },
   "POST /admin/ingest-s3": {
     "capability": "content.write",

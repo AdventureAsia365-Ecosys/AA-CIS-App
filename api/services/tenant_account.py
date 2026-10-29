@@ -50,6 +50,9 @@ TENANT_VISIBLE_ACTIONS: dict[str, tuple[str, str]] = {
     "tour.rewrite_triggered": ("tours", "Requested a tour rewrite"),
     "tenant_tour_version.exported": ("tours", "Downloaded a tour"),
     "integration.disconnected": ("account", "Disconnected a channel"),
+    "fact.created": ("content", "Added a fact"),  # AA-814 — Content studio › Facts (the tenant's own facts)
+    "fact.updated": ("content", "Edited a fact"),
+    "fact.deleted": ("content", "Deleted a fact"),
     # what Adventure Asia changed on the account (AdminTenantAuditAction), facts the tenant is told anyway
     "agency.onboard": ("account", "Account opened"),
     "tenant.restored": ("account", "Account restored"),
@@ -179,6 +182,10 @@ def detail_text(action: str, raw_details: Any) -> str:
         return " · ".join(p for p in (channel, fmt) if p)
     if action == "integration.disconnected":
         return channel
+    if action in ("fact.created", "fact.updated", "fact.deleted"):
+        # the tenant's own fact title (its own text, written by the tenant; v1_facts puts it at the top level)
+        title = " ".join(str(d.get("title") or "").split())
+        return title if len(title) <= 80 else title[:79] + "…"
     if action == "tenant_tour_version.exported":
         parts = [str(d.get("format") or "").upper()]
         if isinstance(d.get("version_number"), int):

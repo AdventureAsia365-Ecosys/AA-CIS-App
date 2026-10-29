@@ -33,6 +33,7 @@ since AA-817 PR-A, S239; each logs `used_tenant_pool` per request):
     (TRIP_REALLOCATION_FLAG), GET /v1/marketplace (MARKETPLACE_FLAG), GET /v1/content-writing/reviews and
     .../requests/{id}/review (REVIEWS_FLAG). Each group has its own flag and needs 265 and / or 266 (see the
     constants): `SET <key> false` on Dev before the deploy, flip after the apply.
+  - AA-814 (S257): GET / POST / PATCH / DELETE /v1/facts (v1_facts.py, FACTS_FLAG, needs 302).
   - AA-976 (S249), outside the flag ritual above: GET /catalog/v1/tours, /catalog/v1/tours/{source_system}/{source_id}
     and /catalog/v1/destinations/{id} (api/routers/catalog_http.py, M2M caller: the partner CRM). It does NOT use
     acquire_scoped_conn: services/catalog_http/reader.catalog_connection takes app.state.tenant_pool directly, in a
@@ -127,6 +128,9 @@ REVIEWS_FLAG = "aa859:reviews_pool"                          # GET content-writi
 # AA-986 L3 (S248): the tenant's own tour notifications (GET /v1/notifications, mark read). Needs CIS 274 (RLS on
 # shared.notifications + aa_app_user SELECT / UPDATE (is_read)); a 274 rollback turns it off first.
 TENANT_NOTIFICATIONS_FLAG = "aa986:tenant_notifications_pool"  # GET /v1/notifications, POST .../read; needs 274
+# AA-814: the tenant's own Facts Entries (GET / POST / PATCH / DELETE /v1/facts). Reads and writes need CIS 229's
+# facts policies (applied), DELETE needs CIS 302 (GRANT DELETE to aa_app_user); a 302 rollback turns it off first.
+FACTS_FLAG = "aa814:facts_pool"                                # /v1/facts (list, create, edit, delete); needs 302
 
 # Every flag above. A new *_FLAG constant must be added here too (a unit test checks it), and to the
 # ALLOWED set of the flag tooling (root docs/audits/2026-10-16-S240-aa859/aa859_flag.py, and its wave-3 / wave-4
@@ -136,7 +140,7 @@ ALL_TENANT_POOL_FLAGS = frozenset({
     CONTENT_PIECE_READS_FLAG, PIECE_EDIT_FLAG, T2_VERSION_WRITE_FLAG, ANGLE_GATE_DECIDE_FLAG, UNPUBLISH_FLAG,
     T2_VERSION_READS_FLAG, INTEGRATION_CONNECT_FLAG, T2_VERSION_DETAIL_READS_FLAG, BRAND_IDENTITY_FLAG, PUBLISH_FLAG,
     ANGLE_GATE_READ_FLAG, SLATE_READS_FLAG, SUBJECT_DECIDE_FLAG, TRIP_REALLOCATION_FLAG, MARKETPLACE_FLAG, REVIEWS_FLAG,
-    TENANT_NOTIFICATIONS_FLAG,
+    TENANT_NOTIFICATIONS_FLAG, FACTS_FLAG,
 })
 
 # S241 D-12: the explicit values that turn a route's flag OFF (admin pool), compared after strip +
