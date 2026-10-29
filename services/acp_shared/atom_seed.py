@@ -189,11 +189,14 @@ def _location_lines(place: Optional[str], country: Optional[str], card: Optional
 # spellings as other names of the place), sorted into the ones a clause of the note tells the writer to avoid and
 # the ones it lists as other spellings. A name is a quoted one, or a capitalised run after a naming word ('spelled',
 # 'known as'); a place the note only mentions ('near Luang Prabang', 'in Bulgan Province') is not a name of this one.
-# A clause that explains a meaning ("'Taktsang' means 'Tiger's Lair'") adds no name.
+# A clause that explains a meaning ("'Taktsang' means 'Tiger's Lair'") adds no name, and neither does a pronunciation
+# ("pronounced 'poo-NAH-kah'"): the comma-separated part that gives one is dropped, the rest of its clause is kept.
 _NAMING_CLAUSE_RE = re.compile(r"[;.](?:\s+|$)")
 _NAMING_QUOTED_RE = re.compile(r"(?<![\w’'])['‘](.+?)['’](?![\w’'])")
-_NAMING_CUE_RE = re.compile(r"\b(?:spelled|spelt|spelling|written|known as|romani[sz]ed(?: as)?|transliterated(?: as)?"
-                            r"|called|referred to as|seen as|rendered as|nickname|name is)\b", re.I)
+_NAMING_CUE_RE = re.compile(r"(?:\b|(?<=mis))(?:spelled|spelt|spelling|written|known as|romani[sz]ed(?: as)?"
+                            r"|transliterated(?: as)?|call(?:s|ed)?|referred to as|seen as|rendered as|nickname"
+                            r"|name is)\b", re.I)
+_NAMING_PRONOUNCE_RE = re.compile(r"\bprono?unc", re.I)
 _NAMING_AVOID_RE = re.compile(r"\b(?:approximation|avoid|connotation|misspel|incorrect|wrong|unfortunate|offensive"
                               r"|outdated|old-fashioned|best not)", re.I)
 _NAMING_MEANING_RE = re.compile(r"\b(?:means?|meaning|translat(?:es|ed|ion)|translates? as)\b", re.I)
@@ -237,6 +240,8 @@ def naming_line(note: Optional[str], display_name: Optional[str]) -> Optional[st
     avoid: list[str] = []
     also: list[str] = []
     for clause in _NAMING_CLAUSE_RE.split(note.strip()):
+        if _NAMING_PRONOUNCE_RE.search(clause):
+            clause = ", ".join(part for part in clause.split(",") if not _NAMING_PRONOUNCE_RE.search(part))
         if not clause.strip() or _NAMING_MEANING_RE.search(clause):
             continue
         bucket = avoid if _NAMING_AVOID_RE.search(clause) else also
@@ -352,8 +357,8 @@ def moment_fact_count(seed_block: str) -> int:
 
 def thin_note(fact_count: int) -> str:
     """AA-789 tier 0 (S258) — the note says what to do with a moment the source says little about, never as a count or
-    a shape the writer can copy: 'only 1 source fact — mention it in one sentence at most' came back as copy ('One
-    ruined site, one date, one fact.', '## A Single Sentence on What Time Has Taken', S234 r1 #10, r2 #19). The
+    a shape the writer can copy: 'only 1 source fact — mention it in one sentence at most' came back as copy that
+    counted its own facts aloud and as '## A Single Sentence on What Time Has Taken' (S234 r1 #10, r2 #19). The
     'Thin moment:' prefix is a parsing contract (trip_facts, claim_rules). `fact_count` stays in the signature for
     the callers; the number is no longer shown."""
     return ("Thin moment: the source says little about this stop — name it in passing inside a neighbouring "

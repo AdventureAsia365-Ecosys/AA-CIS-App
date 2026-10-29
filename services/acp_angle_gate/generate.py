@@ -231,7 +231,7 @@ def angle_contract_violations(angles: list[dict], brand_pack: BrandAudience,
     thin = [thin_anchor(a, moments) for a in angles] if moments else []
     if thin and all(thin):
         out.append("every angle leads with a thin moment (" + "; ".join(dict.fromkeys(thin)) + ") — lead with one "
-                   "of the ANCHOR CANDIDATES; a thin moment gets one sentence at most")
+                   "of the ANCHOR CANDIDATES; a thin moment is only named in passing")
     brand_name = brand_pack.get("brand_name")
     for i, a in enumerate(angles):
         text = " ".join(str(a.get(f) or "") for f in _ANGLE_TEXT_FIELDS)

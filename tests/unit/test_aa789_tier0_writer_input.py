@@ -1,8 +1,8 @@
 """AA-789 tier 0 (S258) — prevention: the writer never sees the text the two leak classes copied.
 
-- Naming-note leak (S234 r3 #14 'one phonetic approximation in English that is best avoided'): the seed's Naming line
+- Naming-note leak (S234 r3 #14, the copy restated the note's reason for avoiding a spelling): the seed's Naming line
   is a use-this-name line built from the names in the card's note (`atom_seed.naming_line`), never the note's prose.
-- Brief recipe leak (S234 r2 #19 'One ruined site, one date, one fact.', r1 #10 '## A Single Sentence on …'): the
+- Brief recipe leak (S234 r2 #19, the copy counted its own facts aloud; r1 #10 '## A Single Sentence on …'): the
   thin-moment note, the route digest and the writer / angle rules carry no count and no 'one sentence' shape.
 
 The notes below are synthetic, in the shape of real place-card naming notes. No DB, no model call.
@@ -64,6 +64,21 @@ def test_a_place_the_note_only_mentions_is_not_a_name():
 def test_accents_are_not_folded_when_names_are_compared():
     # 'Moron' folds to the same letters as 'Mörön'; it must still be listed, as the name to avoid
     assert "not 'Moron'" in naming_line("'Moron' is a common approximation.", "Mörön")
+
+
+@pytest.mark.parametrize("note, display, expected", [
+    # a pronunciation is not a spelling: shown as 'also written', trip_facts / hygiene would read it as a name
+    ("Pronounced 'poo-NAH-kah'.", "Punakha Dzong", "Naming: use the name 'Punakha Dzong'."),
+    ("The pronunciation is roughly 'MUR-urn'; also written Murun.", "Mörön",
+     "Naming: use the name 'Mörön'; also written 'Murun'."),
+    ("Also written Punakha, pronounced 'poo-NAH-kah'.", "Punakha Dzong", "Naming: use the name 'Punakha Dzong'."),
+    # 'misspelled' carries the naming word inside it; the clause is one to avoid
+    ("Often misspelled as Pukhet.", "Phuket", "Naming: use the name 'Phuket', not 'Pukhet'."),
+    ("Locals call it the Big Buddha.", "Wat Phra Yai",
+     "Naming: use the name 'Wat Phra Yai'; also written 'Big Buddha'."),
+])
+def test_pronunciations_misspellings_and_call(note, display, expected):
+    assert naming_line(note, display) == expected
 
 
 @pytest.mark.parametrize("note", [None, "", "   "])

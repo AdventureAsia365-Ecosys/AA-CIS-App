@@ -2923,7 +2923,9 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   `Day N`, same-country sibling evidence labelled "other trips", and a SCOPE line (which days and
   places the piece covers). S234: sibling lines only when the card has <3 facts (≤2, none naming
   another place); a Route's moments are in day order, skip Segments ranking excluded, carry no
-  siblings, merge same-place moments into one block, and a moment with <3 facts is tagged thin. Facts Entries are filtered by `facts.country`; S233 removed the
+  siblings, merge same-place moments into one block, and a moment with <3 facts is tagged thin (AA-789 tier 0: the
+  thin note says "name it in passing" with no count or sentence shape, and the card's naming note reaches the writer
+  only as a `Naming:` line of names, `atom_seed.naming_line`, never the note's prose). Facts Entries are filtered by `facts.country`; S233 removed the
   per-fact Jev call (no Jev on the T axis). S234 round 2 (`acp_shared.seed_canon`): a Route seed
   keeps one value per fact across its cards (same measure, different number → a verified card wins,
   then the place's own card, then the place with more moments, then the first; numberless
