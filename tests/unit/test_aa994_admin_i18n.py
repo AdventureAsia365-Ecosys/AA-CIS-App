@@ -24,9 +24,10 @@ FRONTEND_ROOTS = ("frontend/app", "frontend/lib", "frontend/components")
 SKIPPED_DIRS = {"node_modules", ".next"}
 # ă â đ ê ô ơ ư ĩ ũ (both cases) and U+1EA0–U+1EF9 (ạ ả ấ … ỹ).
 VIETNAMESE = re.compile(r"[ăĂâÂđĐêÊôÔơƠưƯĩĨũŨ\u1EA0-\u1EF9]")
-# The ceiling of the list as of the guard's first commit; it may only go down (edit it down with the list).
-BASELINE_FILES = 4
-BASELINE_LINES = 5
+# The ceiling of the list (4 files / 5 lines at the guard's first commit, lowered when step B landed); it may only go
+# down (edit it down with the list).
+BASELINE_FILES = 1
+BASELINE_LINES = 2
 
 
 def is_dictionary(path: Path) -> bool:
