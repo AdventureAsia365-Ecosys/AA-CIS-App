@@ -173,6 +173,7 @@ def _location_lines(place: Optional[str], country: Optional[str], card: Optional
         if place and place.strip() and place.strip().lower() != card["display_name"].lower():
             where += f" (the itinerary calls it {place.strip()})"
         lines.append(f"Location: {where} (do not place it in any other town, region or country)")
+        # the card's naming note as a use-this-name line (names only, never the note's prose)
         naming = naming_line(card.get("naming_note"), card["display_name"])
         if naming:
             lines.append(naming)
@@ -183,14 +184,14 @@ def _location_lines(place: Optional[str], country: Optional[str], card: Optional
 
 
 # AA-789 tier 0 (S258) — the writer gets the card's naming note as a use-this-name line, never the note's prose. The
-# prose ('a common English phonetic approximation', 'for an international audience', 'to avoid unintended
-# connotations', 'no significant spelling variants') was copied into the copy as sentences (S234 r3 #14). Only the
-# names survive: each one in single quotes (trip_facts._moment_tokens and hygiene.build_scope_lexicon read quoted
-# spellings as other names of the place), sorted into the ones a clause of the note tells the writer to avoid and
+# prose (why one spelling is preferred, which readers it suits, what reading it avoids, whether variants exist) was
+# copied into the copy as sentences (S234 r3 #14). Only the names survive: each one in single quotes
+# (trip_facts._moment_tokens and hygiene.build_scope_lexicon read quoted spellings as other names of the place),
+# sorted into the ones a clause of the note tells the writer to avoid and
 # the ones it lists as other spellings. A name is a quoted one, or a capitalised run after a naming word ('spelled',
-# 'known as'); a place the note only mentions ('near Luang Prabang', 'in Bulgan Province') is not a name of this one.
-# A clause that explains a meaning ("'Taktsang' means 'Tiger's Lair'") adds no name, and neither does a pronunciation
-# ("pronounced 'poo-NAH-kah'"): the comma-separated part that gives one is dropped, the rest of its clause is kept.
+# 'known as'); a place the note only mentions ('near Port Ansel', 'in Dolmar Province') is not a name of this one.
+# A clause that explains a meaning ("'Vellin' means 'Heron's Perch'") adds no name, and neither does a pronunciation
+# ("pronounced 'KAL-der'"): the comma-separated part that gives one is dropped, the rest of its clause is kept.
 _NAMING_CLAUSE_RE = re.compile(r"[;.](?:\s+|$)")
 _NAMING_QUOTED_RE = re.compile(r"(?<![\w’'])['‘](.+?)['’](?![\w’'])")
 _NAMING_CUE_RE = re.compile(r"(?:\b|(?<=mis))(?:spelled|spelt|spelling|written|known as|romani[sz]ed(?: as)?"
@@ -231,9 +232,9 @@ def _naming_names(clause: str) -> list[str]:
 
 
 def naming_line(note: Optional[str], display_name: Optional[str]) -> Optional[str]:
-    """'Naming: use the name 'Mörön', not 'Moron'; also written 'Murun', 'Muren'.' from a card's naming note, or None
-    when there is no note or no display name. The names come from the note; its explanation never does. Names are
-    compared case-folded but not accent-folded: 'Moron' is not 'Mörön'."""
+    """'Naming: use the name 'Vélkar', not 'Velkar'; also written 'Velcar', 'Welkar'.' from a card's naming note, or
+    None when there is no note or no display name. The names come from the note; its explanation never does. Names
+    are compared case-folded but not accent-folded: 'Velkar' is not 'Vélkar'."""
     if not (note or "").strip() or not (display_name or "").strip():
         return None
     display = display_name.strip()
@@ -357,10 +358,10 @@ def moment_fact_count(seed_block: str) -> int:
 
 def thin_note(fact_count: int) -> str:
     """AA-789 tier 0 (S258) — the note says what to do with a moment the source says little about, never as a count or
-    a shape the writer can copy: 'only 1 source fact — mention it in one sentence at most' came back as copy that
-    counted its own facts aloud and as '## A Single Sentence on What Time Has Taken' (S234 r1 #10, r2 #19). The
-    'Thin moment:' prefix is a parsing contract (trip_facts, claim_rules). `fact_count` stays in the signature for
-    the callers; the number is no longer shown."""
+    a shape the writer can copy: the old note printed the fact count and a one-sentence limit, and both came back as
+    copy (facts counted aloud, a heading built on the sentence limit; S234 r1 #10, r2 #19). The 'Thin moment:'
+    prefix is a parsing contract (trip_facts, claim_rules). `fact_count` stays in the signature for the callers; the
+    number is no longer shown."""
     return ("Thin moment: the source says little about this stop — name it in passing inside a neighbouring "
             "section, with only what its source line states; never make it the hook, the title or the climax.")
 

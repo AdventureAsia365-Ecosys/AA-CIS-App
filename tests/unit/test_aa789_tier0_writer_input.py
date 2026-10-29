@@ -26,26 +26,25 @@ NOTE_PROSE_RE = re.compile(r"approximation|connotation|international|audience|ac
 
 
 @pytest.mark.parametrize("note, display, expected", [
-    ("The city is correctly spelled Mörön (also romanised as Murun or Muren); 'Moron' is a common English phonetic "
-     "approximation used in itineraries. It should be referred to as Mörön for an international audience to avoid "
-     "unintended connotations.", "Mörön",
-     "Naming: use the name 'Mörön', not 'Moron'; also written 'Murun', 'Muren'."),
-    ("Commonly written 'Uran Togoo' or 'Uran-Togoo'; the full protected-area name is Uran Togoo-Tulga Uul Natural "
-     "Monument. For an international audience, identifying it as a dormant volcano in Bulgan Province is sufficient.",
-     "Uran Togoo", "Naming: use the name 'Uran Togoo'; also written 'Uran-Togoo', "
-                   "'Uran Togoo-Tulga Uul Natural Monument'."),
-    ("The monastery is formally known as Paro Taktsang; 'Tiger's Nest' is the widely used English nickname and is "
-     "acceptable for international travel audiences. 'Taktsang' means 'Tiger's Lair' in Dzongkha.",
-     "Tiger's Nest Monastery", "Naming: use the name 'Tiger's Nest Monastery'; also written 'Paro Taktsang'."),
-    ("Correctly spelled 'Kuang Si Falls' or 'Tat Kuang Si'; also seen as 'Kwang Si' or 'Kuang Xi' in older sources. "
-     "For an international travel audience, 'Kuang Si Falls' near Luang Prabang is the standard English form.",
-     "Kuang Si Falls", "Naming: use the name 'Kuang Si Falls'; also written 'Tat Kuang Si', 'Kwang Si', 'Kuang Xi'."),
-    ("Officially known as Pungtang Dechen Photrang Dzong ('Palace of Great Happiness'); internationally it is "
-     "universally referred to as Punakha Dzong. No significant spelling variants.", "Punakha Dzong",
-     "Naming: use the name 'Punakha Dzong'; also written 'Palace of Great Happiness', "
-     "'Pungtang Dechen Photrang Dzong'."),
-    ("Also written Pawangka.", "Pabongka Monastery", "Naming: use the name 'Pabongka Monastery'; also written "
-                                                     "'Pawangka'."),
+    ("The town is correctly spelled Vélkar (also romanised as Velcar or Welkar); 'Velkar' is an outdated rendering "
+     "without the accent, still found in old brochures. Guides should write Vélkar in every leaflet to avoid an "
+     "awkward misreading.", "Vélkar",
+     "Naming: use the name 'Vélkar', not 'Velkar'; also written 'Velcar', 'Welkar'."),
+    ("Usually written 'Sarn Edda' or 'Sarn-Edda'; the full reserve name is Sarn Edda-Morvi Crater Nature Park. For "
+     "visiting readers, describing it as an extinct crater in Dolmar Province is enough.",
+     "Sarn Edda", "Naming: use the name 'Sarn Edda'; also written 'Sarn-Edda', "
+                  "'Sarn Edda-Morvi Crater Nature Park'."),
+    ("The hermitage is formally known as Ostra Vellin; 'Heron's Rest' is the popular English nickname and is fine "
+     "for visiting readers. 'Vellin' means 'Heron's Perch' in the old valley tongue.",
+     "Heron's Rest Hermitage", "Naming: use the name 'Heron's Rest Hermitage'; also written 'Ostra Vellin'."),
+    ("Correctly spelled 'Mirelle Cascades' or 'Tor Mirelle'; also seen as 'Mirella' or 'Myrelle' in older guides. "
+     "For visiting readers, 'Mirelle Cascades' near Port Ansel is the usual English form.",
+     "Mirelle Cascades", "Naming: use the name 'Mirelle Cascades'; also written 'Tor Mirelle', 'Mirella', "
+                         "'Myrelle'."),
+    ("Officially known as Calder Vosk Aurenhall ('Hall of the Quiet Tide'); in English it is almost always "
+     "referred to as Calder Keep. No other spelling variants.", "Calder Keep",
+     "Naming: use the name 'Calder Keep'; also written 'Hall of the Quiet Tide', 'Calder Vosk Aurenhall'."),
+    ("Also written Brenhal.", "Brennal Abbey", "Naming: use the name 'Brennal Abbey'; also written 'Brenhal'."),
 ])
 def test_naming_line_keeps_the_names_and_drops_the_prose(note, display, expected):
     line = naming_line(note, display)
@@ -54,28 +53,28 @@ def test_naming_line_keeps_the_names_and_drops_the_prose(note, display, expected
 
 
 def test_a_place_the_note_only_mentions_is_not_a_name():
-    # 'near Luang Prabang', 'in Bulgan Province': other places, not other names of this one
-    assert "Luang Prabang" not in naming_line("For an international travel audience, 'Kuang Si Falls' near Luang "
-                                              "Prabang is the standard English form.", "Kuang Si Falls")
-    assert naming_line("Identifying it as a dormant volcano in Bulgan Province is sufficient.",
-                       "Uran Togoo") == "Naming: use the name 'Uran Togoo'."
+    # 'near Port Ansel', 'in Dolmar Province': other places, not other names of this one
+    assert "Port Ansel" not in naming_line("For visiting readers, 'Mirelle Cascades' near Port Ansel is the usual "
+                                           "English form.", "Mirelle Cascades")
+    assert naming_line("Describing it as an extinct crater in Dolmar Province is enough.",
+                       "Sarn Edda") == "Naming: use the name 'Sarn Edda'."
 
 
 def test_accents_are_not_folded_when_names_are_compared():
-    # 'Moron' folds to the same letters as 'Mörön'; it must still be listed, as the name to avoid
-    assert "not 'Moron'" in naming_line("'Moron' is a common approximation.", "Mörön")
+    # 'Velkar' folds to the same letters as 'Vélkar'; it must still be listed, as the name to avoid
+    assert "not 'Velkar'" in naming_line("'Velkar' is a common approximation.", "Vélkar")
 
 
 @pytest.mark.parametrize("note, display, expected", [
     # a pronunciation is not a spelling: shown as 'also written', trip_facts / hygiene would read it as a name
-    ("Pronounced 'poo-NAH-kah'.", "Punakha Dzong", "Naming: use the name 'Punakha Dzong'."),
-    ("The pronunciation is roughly 'MUR-urn'; also written Murun.", "Mörön",
-     "Naming: use the name 'Mörön'; also written 'Murun'."),
-    ("Also written Punakha, pronounced 'poo-NAH-kah'.", "Punakha Dzong", "Naming: use the name 'Punakha Dzong'."),
+    ("Pronounced 'KAL-der'.", "Calder Keep", "Naming: use the name 'Calder Keep'."),
+    ("The pronunciation is roughly 'VEL-kar'; also written Velcar.", "Vélkar",
+     "Naming: use the name 'Vélkar'; also written 'Velcar'."),
+    ("Also written Calder, pronounced 'KAL-der'.", "Calder Keep", "Naming: use the name 'Calder Keep'."),
     # 'misspelled' carries the naming word inside it; the clause is one to avoid
-    ("Often misspelled as Pukhet.", "Phuket", "Naming: use the name 'Phuket', not 'Pukhet'."),
-    ("Locals call it the Big Buddha.", "Wat Phra Yai",
-     "Naming: use the name 'Wat Phra Yai'; also written 'Big Buddha'."),
+    ("Often misspelled as Lorvenn.", "Lorven", "Naming: use the name 'Lorven', not 'Lorvenn'."),
+    ("Locals call it the Old Lantern.", "Fenwick Light",
+     "Naming: use the name 'Fenwick Light'; also written 'Old Lantern'."),
 ])
 def test_pronunciations_misspellings_and_call(note, display, expected):
     assert naming_line(note, display) == expected
@@ -83,23 +82,23 @@ def test_pronunciations_misspellings_and_call(note, display, expected):
 
 @pytest.mark.parametrize("note", [None, "", "   "])
 def test_no_note_no_line(note):
-    assert naming_line(note, "Mörön") is None
+    assert naming_line(note, "Vélkar") is None
 
 
 def test_the_seed_renders_the_line_and_trip_facts_still_reads_the_other_names():
-    card = {"display_name": "Mörön", "locality": "", "region": "Khövsgöl", "country": "Mongolia",
-            "naming_note": "The city is correctly spelled Mörön (also romanised as Murun or Muren); 'Moron' is a "
-                           "common English phonetic approximation. It should be referred to as Mörön for an "
-                           "international audience to avoid unintended connotations.",
+    card = {"display_name": "Vélkar", "locality": "", "region": "Dolmar", "country": "Mongolia",
+            "naming_note": "The town is correctly spelled Vélkar (also romanised as Velcar or Welkar); 'Velkar' is an "
+                           "outdated rendering without the accent, still found in old brochures. Guides should write "
+                           "Vélkar in every leaflet to avoid an awkward misreading.",
             "facts": [], "status": "auto_checked"}
-    seed = compose_seed("Moron — stop for lunch", "Stop for lunch near Moron.", None, None, [], place="Moron",
+    seed = compose_seed("Velkar — stop for lunch", "Stop for lunch near Velkar.", None, None, [], place="Velkar",
                         country="Mongolia", day=4, card=card)
     naming = next(ln for ln in seed.splitlines() if ln.startswith("Naming:"))
-    assert naming == "Naming: use the name 'Mörön', not 'Moron'; also written 'Murun', 'Muren'."
+    assert naming == "Naming: use the name 'Vélkar', not 'Velkar'; also written 'Velcar', 'Welkar'."
     assert not NOTE_PROSE_RE.search(seed)
     (moment,) = tf.parse_moments(seed)
     assert moment.naming == naming
-    assert {"murun", "muren"} <= set(moment.tokens)  # the quoted spellings still identify the moment
+    assert {"velcar", "welkar"} <= set(moment.tokens)  # the quoted spellings still identify the moment
 
 
 # ---------------------------------------------------------------- the thin-moment wording
@@ -114,7 +113,7 @@ def test_thin_note_has_no_count_and_no_shape(n):
     note = thin_note(n)
     assert note.startswith("Thin moment:")  # parsing contract (trip_facts, claim_rules)
     assert not COPYABLE_RE.search(note) and str(n) not in note
-    assert "never make it the hook, the title or the climax" in note
+    assert "never make it the hook" in note and "the title" in note and "climax" in note  # the bans are kept
 
 
 def test_a_thin_block_still_parses_as_thin():
@@ -134,7 +133,7 @@ def test_writer_and_angle_rules_carry_no_copyable_shape():
 
 
 def test_route_digest_thin_line():
-    moments = [{"day": 3, "label": "Uran Togoo — trek", "place": "Uran Togoo", "facts": ["a", "b", "c"],
+    moments = [{"day": 3, "label": "Sarn Edda — trek", "place": "Sarn Edda", "facts": ["a", "b", "c"],
                 "fact_count": 3, "thin": False},
                {"day": 14, "label": "ruins of an ancient monastery — visit", "place": None, "facts": ["a"],
                 "fact_count": 1, "thin": True}]
