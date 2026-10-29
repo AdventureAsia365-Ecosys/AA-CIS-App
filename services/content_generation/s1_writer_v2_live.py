@@ -59,8 +59,12 @@ def is_v2(state: dict) -> bool:
     return state.get("writer_version") == WRITER_VERSION and not state.get("is_tenant_rewrite")
 
 
-def _call(client: LLMClient, state: dict, *, call: str, system: str, user: str, max_tokens: int) -> dict:
-    """One gateway call on the A1 write stage. Returns {ok, parsed, cost_usd, model_used, ...}; never raises.
+def _call(client: LLMClient, state: dict, *, call: str, system: str, user: str, max_tokens: int,
+          raise_access_denied: bool = True) -> dict:
+    """One gateway call on the A1 write stage. Returns {ok, parsed, cost_usd, model_used, ...}.
+    Never raises, with one exception (AA-900): a call refused at account level before anything was billed
+    (``LLMAccessDenied``) is re-raised when ``raise_access_denied``, so the writer call fails the job at once. The meta
+    calls pass False: they run after a paid draft, which is kept; the refusal is then ``access_denied`` in the result.
     The row: written right after generate() returns; a reply billed then lost to a post-call error gets a
     billed_unusable row; a call that raised inside the gateway was logged by the gateway (AA-927)."""
     stage = state.get("generate_stage") or A1_WRITE_STAGE
@@ -89,7 +93,9 @@ def _call(client: LLMClient, state: dict, *, call: str, system: str, user: str, 
             out["error"] = f"{call}: reply is not a JSON object"
     except Exception as e:  # noqa: BLE001 — a failed call ends the draft, never the graph
         if resp is None and is_llm_access_denied(e):
-            raise  # AA-900: refused at account level; the job fails at once (worker.failure_outcome)
+            if raise_access_denied:
+                raise  # AA-900: refused at account level; the job fails at once (worker.failure_outcome)
+            out["access_denied"] = True
         if resp is not None and not logged:
             record_unusable_sync(resp, stage=stage, role="writer", error=e, tenant_id=state.get("tenant_id"))
             out["cost_usd"] = resp.cost_usd or 0.0
@@ -144,14 +150,17 @@ def write(state: dict, client: Optional[LLMClient] = None) -> dict:
 
     keywords = v2.relevant_keywords(state.get("seo"), tour)
     msys, muser = v2.meta_system_prompt(forbidden), v2.meta_user_prompt(page, tour, facts, keywords)
-    m1 = _call(client, state, call="meta", system=msys, user=muser, max_tokens=v2.META_MAX_TOKENS)
+    m1 = _call(client, state, call="meta", system=msys, user=muser, max_tokens=v2.META_MAX_TOKENS,
+               raise_access_denied=False)
     _add(m1)
     meta_json = m1.get("parsed")
     problems = (v2.meta_problems(meta_json, tour, facts, forbidden) if m1["ok"]
                 else ["the answer is not the JSON object asked for"])
-    if problems:   # one retry, also after an unusable first answer (still <= 3 calls)
+    # One retry, also after an unusable first answer (still <= 3 calls); none after an account-level refusal (AA-900).
+    if problems and not m1.get("access_denied"):
         m2 = _call(client, state, call="meta_retry", system=msys,
-                   user=muser + v2.meta_retry_prompt(meta_json, problems), max_tokens=v2.META_MAX_TOKENS)
+                   user=muser + v2.meta_retry_prompt(meta_json, problems), max_tokens=v2.META_MAX_TOKENS,
+                   raise_access_denied=False)
         _add(m2)
         if m2["ok"]:
             meta_json = m2["parsed"]

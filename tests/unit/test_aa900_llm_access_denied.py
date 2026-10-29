@@ -312,3 +312,62 @@ def test_an_error_raised_while_handling_a_refusal_is_not_a_refusal():
             raise RuntimeError("wrapped") from inner
     except RuntimeError as e:
         assert is_llm_access_denied(e)
+
+
+@pytest.mark.asyncio
+async def test_sonnet_upgrade_returns_none_only_on_a_denial():
+    """S258 review: a refused upgrade keeps the paid primary result; any other error still leaves."""
+    from api.routers import admin_pipeline as ap
+
+    with patch.object(ap, "_rewrite_tour", AsyncMock(side_effect=E.LLMAccessDenied("sonnet refused"))):
+        assert await ap._sonnet_upgrade({"name": "T"}, tour_id="t1") is None
+    with patch.object(ap, "_rewrite_tour", AsyncMock(side_effect=ValueError("bug"))):
+        with pytest.raises(ValueError):
+            await ap._sonnet_upgrade({"name": "T"}, tour_id="t1")
+
+
+# ── S1 writer v2: a refused meta call keeps the paid draft ────────────────────────────────────────────────────────
+
+def test_writer_v2_meta_refusal_keeps_the_draft_and_skips_the_retry():
+    from services.content_generation import s1_writer_v2_live as live
+
+    calls = []
+
+    def _fake_call(client, state, *, call, raise_access_denied=True, **_k):
+        calls.append((call, raise_access_denied))
+        if call == "write":
+            return {"call": call, "ok": True, "parsed": {"w": 1}, "cost_usd": 0.01, "model_used": "m"}
+        return {"call": call, "ok": False, "parsed": None, "cost_usd": 0.0, "access_denied": True,
+                "error": f"{call}: LLMAccessDenied: refused"}
+
+    v2 = live.v2
+    with patch.object(live, "_call", side_effect=_fake_call), \
+            patch.object(v2, "with_agency_fields", side_effect=lambda t, _a: t), \
+            patch.object(v2, "day_plan", return_value={"mode": "m", "days": []}), \
+            patch.object(v2, "w_system_prompt", return_value="sys"), \
+            patch.object(v2, "w_user_prompt", return_value="usr"), \
+            patch.object(v2, "page_from_writer", return_value={"name": "Draft"}), \
+            patch.object(v2, "relevant_keywords", return_value=[]), \
+            patch.object(v2, "meta_system_prompt", return_value="msys"), \
+            patch.object(v2, "meta_user_prompt", return_value="muser"), \
+            patch.object(v2, "finalize_meta", side_effect=lambda page, _m: dict(page)), \
+            patch("services.quality.s1_facts.build_fact_table", return_value={}), \
+            patch("services.content_generation.forbidden_words.all_forbidden", return_value=[]):
+        out = live.write({"tour": {"name": "T"}}, client=object())
+    assert calls == [("write", True), ("meta", False)]          # no meta retry after an account-level refusal
+    assert out["generated"]["name"] == "Draft" and out["error"] == ""
+    assert out["cost_usd"] == pytest.approx(0.01)
+
+
+def test_writer_v2_call_reraises_a_denial_only_when_asked():
+    from services.content_generation import s1_writer_v2_live as live
+
+    class _Client:
+        def generate(self, _req):
+            raise E.LLMAccessDenied("every model refused")
+
+    state = {"tour_id": "t1"}
+    with pytest.raises(E.LLMAccessDenied):
+        live._call(_Client(), state, call="write", system="s", user="u", max_tokens=10)
+    out = live._call(_Client(), state, call="meta", system="s", user="u", max_tokens=10, raise_access_denied=False)
+    assert out["ok"] is False and out["access_denied"] is True and out["cost_usd"] == 0.0

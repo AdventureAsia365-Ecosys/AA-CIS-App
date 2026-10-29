@@ -778,11 +778,10 @@ async def _execute_run_tour(
                 logger.info("sonnet_upgrade_triggered", tour_id=req.tour_id,
                             reason="hard_codes" if _trigger_hard else "low_score_optin",
                             surviving_hard=sorted(_surviving_rewrite), score=_score)
-                _upgraded = await _rewrite_tour(
-                    tour, idx=0, total=1,
+                _upgraded = await _sonnet_upgrade(
+                    tour, tour_id=req.tour_id,
                     brand_rules=brand_rules,
                     seo=seo_data,
-                    model_tier="sonnet",
                     subtitle_focus=req.subtitle_focus,
                     seo_mode=effective_seo_mode,
                     on_stage=on_stage,
@@ -792,7 +791,9 @@ async def _execute_run_tour(
                 # Keep sonnet when it is strictly better: for a hard-code trigger that means fewer
                 # surviving hard codes (clearing the blocker is the goal, not a higher score); for the
                 # AA-237 opt-in trigger it keeps the original "higher score wins" rule.
-                if _trigger_hard:
+                if _upgraded is None:
+                    _keep = False
+                elif _trigger_hard:
                     _keep = len(_surviving_hard_codes(_upgraded)) < len(_surviving_hard_codes(result))
                 else:
                     _keep = _upgraded.get("quality_score", 0.0) > _score
@@ -800,8 +801,8 @@ async def _execute_run_tour(
                     result = _upgraded
                     _auto_upgraded = True
                 # AA-736: mark that a sonnet retry happened so the review-queue summary can say so,
-                # whichever run we kept. Only meaningful for the hard-code trigger.
-                if _trigger_hard:
+                # whichever run we kept. Only meaningful for the hard-code trigger (a refused upgrade never ran).
+                if _trigger_hard and _upgraded is not None:
                     result["_sonnet_retried"] = True
                 logger.info("sonnet_upgrade_result", tour_id=req.tour_id, kept=_keep,
                             surviving_hard_after=sorted(_surviving_hard_codes(result)))
@@ -1069,6 +1070,20 @@ async def _execute_run_tour(
         }
     finally:
         await conn.close()
+
+
+async def _sonnet_upgrade(tour: dict, *, tour_id: str, **kwargs) -> Optional[dict]:
+    """The AA-237 / AA-736 one-shot sonnet re-run of a tour, or None when it was refused at account level (AA-900).
+
+    The primary result is already paid for, so a refused upgrade (the account blocked mid-run, or the sonnet model not
+    enabled) keeps it; the next LLM call meets the same refusal typed."""
+    try:
+        return await _rewrite_tour(tour, idx=0, total=1, model_tier="sonnet", **kwargs)
+    except Exception as exc:
+        if not is_llm_access_denied(exc):
+            raise
+        logger.warning("sonnet_upgrade_llm_access_denied", tour_id=tour_id, error=str(exc)[:300])
+        return None
 
 
 async def _run_tour_safe(tour_req: TourRunRequest, job_id: str | None = None,
