@@ -431,7 +431,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `place_geocode`, `tour_graph_build` — AA-712, `place_shape`, `place_dedupe` — AA-847, `place_relocate` — AA-997, the five `retention_*` kinds — AA-825,
     `ops_alert_email` — AA-828, `data_erasure` — AA-839, the writing-memory kinds `writing_signal_backfill`,
     `writing_signal_fact_filter`, `writing_memory_mine` — AA-917, `writing_memory_r0` — AA-918, `writing_memory_r2`,
-    `writing_memory_shadow` — AA-919, `writing_memory_post_activation` — AA-920). Every claim merges `progress.attempt_started_at` (AA-751, F18):
+    `writing_memory_shadow` — AA-919, `writing_memory_post_activation` — AA-920, `kpi_snapshot_daily`, `report_generate` — AA-1003). Every claim merges `progress.attempt_started_at` (AA-751, F18):
     `started_at` keeps the first attempt's start, so per-attempt age reads the progress key.
   - **Background kinds (AA-712)**: `@job_kind(..., background=True)` kinds never take the worker's
     last `BACKGROUND_RESERVE` (2) free slots (`Worker.claim_caps`), so a place-pipeline backlog cannot
@@ -498,6 +498,22 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     (`on_terminal`); `verify: true` on a traveller DRY RUN (after an apply) strips its own hash; Sentry events of
     this kind carry no frame locals (since AA-941 no Sentry event does, `shared/sentry_init.py`). Inventory and settings:
     `GET /admin/job-runner/erasure`.
+  - **Report core (AA-1003 R1, root AA-1001 report catalog)**: the registry of every recurring report and KPI is
+    root `docs/reports/catalog.yaml` + `kpis.yaml` (linted there by `tools/docs/report_registry.py`); this repo reads a
+    byte copy in `services/reports/registry/` (`registry.py`, loaded once; change root first, then copy). Two expand
+    tables (CIS 305): `shared.kpi_daily` (one value per KPI ID, ICT day and scope `all` / `app:<app>` /
+    `provider:<provider>`) and `shared.report_run` (one row per generation: period, status queued → running →
+    succeeded / failed, summary, output JSON, output_markdown; one scheduled run per report and period). Background
+    kinds in `services/jobs/report_jobs.py`: `kpi_snapshot_daily` computes the R1 KPIs from CIS tables only
+    (`services/reports/kpis.py`: K-JOB-FAIL, K-JOB-QUEUEAGE from `shared.job`; K-LLM-COST-DAY by app and provider and
+    K-LLM-FALLBACK-24H from `shared.llm_call_log`; K-CAT-LIVE from `gold_aa_internal.v_tour_liveness`, latest day
+    only; K-RPT-FAILED from `shared.report_run`), writes what it could and raises when a part failed (retry), and a
+    scheduled run chains `report_generate` for the CIS-generated daily/live reports (EX-04 scorecard, EX-06
+    register; `services/reports/generate.py`, Markdown + JSON into the run row, no S3 yet). The api's ops metrics
+    sampler queues the snapshot once a day for the day `periods.snapshot_day` names (day D from 00:30 UTC of D + 1;
+    days are ICT, UTC+7). Manual runs and the register: `/admin/reports` (Platform › Overview › Reports, admin;
+    `GET /admin/reports`, `GET /admin/reports/{id}/runs`, `GET /admin/reports/runs/{run_id}`,
+    `POST /admin/reports/{id}/run`, 409 for a report not generated here). $0: DB reads only.
   - **Ops metrics sampler (AA-832, AA-751)**: `api/core/ops_metrics_sampler.py`, a background task of
     the **api** (not the worker) started in `api/main.py`'s lifespan after the main pool, cancelled
     before it closes, off when `ENVIRONMENT=test`, never raises. Every 300 s (first tick 30 s after

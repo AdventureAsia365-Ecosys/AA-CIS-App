@@ -330,6 +330,11 @@ POLICY: dict[tuple[str, str], str] = {
     ("GET", "/admin/overview"): OPS_READ,
     ("GET", "/admin/overview/ops"): OPS_READ,   # AA-858 business view incl. cost per app (admin-only page)
     ("GET", "/admin/data-coverage"): OPS_READ,  # AA-992 data coverage counts, incl. CRM over crm.ops.v1 (admin-only)
+    # ── admin_reports (AA-1003) — report register, runs, generate now (admin-only page)
+    ("GET", "/admin/reports"): OPS_READ,
+    ("GET", "/admin/reports/runs/{run_id}"): OPS_READ,
+    ("GET", "/admin/reports/{report_id}/runs"): OPS_READ,
+    ("POST", "/admin/reports/{report_id}/run"): OPS_WRITE,
     # ── v1_trip_page admin_router — public trip pages of AA content
     ("POST", "/admin/trip-pages/{tour_id}/publish"): MASTER_ADMIN,
     ("POST", "/admin/trip-pages/recheck"): OPS_WRITE,

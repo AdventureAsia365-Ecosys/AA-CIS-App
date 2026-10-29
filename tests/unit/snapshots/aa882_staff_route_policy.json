@@ -479,6 +479,18 @@
     "capability": null,
     "module": "api.routers.admin_pipeline"
   },
+  "GET /admin/reports": {
+    "capability": "ops.read",
+    "module": "api.routers.admin_reports"
+  },
+  "GET /admin/reports/runs/{run_id}": {
+    "capability": "ops.read",
+    "module": "api.routers.admin_reports"
+  },
+  "GET /admin/reports/{report_id}/runs": {
+    "capability": "ops.read",
+    "module": "api.routers.admin_reports"
+  },
   "GET /admin/review-queue": {
     "capability": null,
     "module": "api.routers.admin_pipeline"
@@ -1070,6 +1082,10 @@
   "POST /admin/raw-tours/{tour_id}/set-active": {
     "capability": "content.write",
     "module": "api.routers.admin_pipeline"
+  },
+  "POST /admin/reports/{report_id}/run": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_reports"
   },
   "POST /admin/review-queue/{review_id}/approve": {
     "capability": "review.act",

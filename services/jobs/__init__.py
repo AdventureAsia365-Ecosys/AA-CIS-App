@@ -29,4 +29,5 @@ from . import tripplanner_purge_job  # noqa: F401  AA-987 (TripPlanner cache pur
 from . import supply_content_draft_job  # noqa: F401  AA-835 (LLM draft of Booking supply content)
 from . import supply_media_purge_job  # noqa: F401  AA-835 (CIS copies of a withdrawn Booking photo)
 from . import writing_memory_job  # noqa: F401  AA-917 (writing-memory backfill, fact filter, mining)
+from . import report_jobs  # noqa: F401  AA-1003 (kpi_snapshot_daily, report_generate)
 from . import noop_sleep_job  # noqa: F401  AA-993 G1 (test-only kind, registered only when JOB_TEST_KINDS=1)

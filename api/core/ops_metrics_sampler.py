@@ -52,6 +52,11 @@ samples fire the `*-sampling-stopped` alarms, so a dead api (or a dead loop) is 
   when ALERTS_TOPIC_ARN / ALERT_BOOTSTRAP_EMAIL are unset). An address removed on the admin page while its
   confirmation was pending, and confirmed afterwards, is unsubscribed again within one tick, not only when an admin
   opens the page. Its fields: `alert_recipients` (counts) or `alert_recipients_error`.
+- AA-1003: each tick also queues the daily KPI snapshot (`kpi_snapshot_daily`, $0, DB reads only) for the ICT day the
+  daily chain covers (services/reports/periods.snapshot_day: day D from 00:30 UTC of D + 1); idempotency key per day,
+  so only the first tick of the day creates a row. The snapshot job then queues `report_generate` for the daily
+  reports (EX-04, EX-06). Only while the kind is registered. Field `kpi_snapshot` (the job id, when created) or
+  `reports_error`.
 - AA-845: every JEV_CREDIT_CHECK_EVERY_S (shared/jev_credit.py, 30 min) the loop also runs the Jev low-credit
   check (estimated TypeSafe credit below the threshold -> throttled bell + operator e-mail). It runs after the
   tick, outside sample_once, under its own PART_TIMEOUT_S, and logs its own line (`jev_credit_low_checked` /
@@ -266,6 +271,18 @@ async def _writing_memory_post_activation_part(pool, kinds: dict, ts: datetime, 
         out["writing_memory_post_activation"] = job_id
 
 
+async def _reports_part(pool, kinds: dict, ts: datetime, out: dict) -> None:
+    """AA-1003: the daily KPI snapshot (then the daily reports, chained by the job). Only while the kind is
+    registered; one idempotent INSERT a tick (the first tick of the day creates the row)."""
+    from services.jobs.report_jobs import SNAPSHOT_KIND, enqueue_scheduled_snapshot
+
+    if SNAPSHOT_KIND not in kinds:
+        return
+    job_id, created, day = await enqueue_scheduled_snapshot(pool, now=ts)
+    if created:
+        out["kpi_snapshot"] = {"job_id": job_id, "day": day.isoformat()}
+
+
 async def _alert_recipients_part(pool, redis, out: dict) -> None:
     from shared import alert_recipients
 
@@ -335,6 +352,12 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
     except Exception as e:
         out["writing_memory_post_activation_error"] = _err(e)
 
+    # AA-1003: one idempotent INSERT a tick, inside the same short budget as the AA-920 check above
+    try:
+        await asyncio.wait_for(_reports_part(pool, kinds, ts, out), timeout=5.0)
+    except Exception as e:
+        out["reports_error"] = _err(e)
+
     try:
         await asyncio.wait_for(_jobs_part(pool, client, kinds, ts, out), timeout=part_timeout_s)
     except Exception as e:
@@ -357,7 +380,8 @@ async def jev_credit_tick(pool, part_timeout_s: float = PART_TIMEOUT_S) -> Optio
 
 def _log(out: dict) -> None:
     if any(k in out for k in ("rds_error", "retired_error", "jobs_error", "alert_recipients_error",
-                              "tripplanner_purge_error", "supply_pull_error", "writing_memory_error")):
+                              "tripplanner_purge_error", "supply_pull_error", "writing_memory_error",
+                              "reports_error")):
         logger.warning("ops_metrics_sampled", **out)
     else:
         logger.info("ops_metrics_sampled", **out)

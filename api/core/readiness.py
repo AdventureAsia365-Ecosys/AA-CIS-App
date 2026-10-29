@@ -44,8 +44,9 @@ logger = structlog.get_logger()
 # GET /content/photos/{id} fails). 302 (AA-814 — /admin/facts, /v1/facts and the T9 facts read name
 # acp_shared.facts.kind / valid_until / updated_by, and the tenant DELETE needs aa_app_user's DELETE grant). 303 (AA-671
 # S257 — the photo sync upsert, the assign route and the photo_destination_match job write
-# shared.place_photo.destination_match_source; without it the sync fails).
-REQUIRED_CIS_SCHEMA = 303
+# shared.place_photo.destination_match_source; without it the sync fails). 305 (AA-1003 — kpi_snapshot_daily,
+# report_generate and /admin/reports read and write shared.kpi_daily and shared.report_run; strict prefix: 304 too).
+REQUIRED_CIS_SCHEMA = 305
 # Versions this code needs that were registered after a higher one (reserved numbers): 297 (AA-920 WM-25) was reserved
 # in S255 and applied after 299. max() is already 299 without it, so the version reported is capped below the lowest
 # listed version that is not registered (297 missing -> 296 -> "schema_behind").

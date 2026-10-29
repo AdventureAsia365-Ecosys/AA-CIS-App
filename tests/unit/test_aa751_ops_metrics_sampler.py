@@ -350,6 +350,7 @@ def _pool(rows=None, error=None, execute="UPDATE 0"):
     pool.fetch = AsyncMock(return_value=_role_rows() if rows is None else rows, side_effect=error)
     pool.execute = AsyncMock(return_value=execute)   # the retired-kind sweep
     pool.fetchval = AsyncMock(return_value=0)        # AA-987: the TripPlanner purge sweep (jobs created)
+    pool.fetchrow = AsyncMock(return_value=None)     # AA-1003: the daily KPI snapshot enqueue (already queued)
     pool.feed_conn = _feed_conn()
     pool.acquire = MagicMock(side_effect=lambda *a, **kw: _CM(pool.feed_conn))   # AA-835: the supply feed pull
     return pool
