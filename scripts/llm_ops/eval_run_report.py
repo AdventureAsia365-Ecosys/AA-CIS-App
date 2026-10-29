@@ -5,8 +5,9 @@ Runs inside the api / worker container through the S3-mediated ECS exec pattern 
 depends on the standard library and asyncpg only). Connects with the container's DATABASE_URL (cis_app, SSL), reads
 two tables, writes nothing and calls no model:
 
-    python3 eval_run_report.py <run-id>            # one run
-    python3 eval_run_report.py --latest t9_blog    # the newest R2 run of a writer
+    python3 eval_run_report.py <run-id>                    # one run (preferred: the id from the job result)
+    python3 eval_run_report.py --latest t9_blog            # the newest FINISHED adhoc_aa900 run of a writer
+    python3 eval_run_report.py --latest a1 --stage writing_memory_eval
 
 Prints one JSON object between the markers `--- AA900 EVAL RUN ---` / `--- END ---`: the run row (verdict, stop reason,
 cost and cap, kappa, golden set, log stage) and the llm_call_log spend of the run, grouped by stage, so the PR can quote
@@ -29,17 +30,22 @@ RUN_SQL = """
       FROM shared.prompt_eval_runs
      WHERE id = $1::uuid AND pipeline = 'writing_memory'
 """
+# --latest: only a finished run of the asked label (a run still in progress, or a Releases tab run while a change eval
+# is being reported, must not be picked).
 LATEST_SQL = """
     SELECT id::text FROM shared.prompt_eval_runs
      WHERE pipeline = 'writing_memory' AND run_kind IN ('r2', 'reverify') AND writer = $1
+       AND coalesce(details->>'log_stage', 'writing_memory_eval') = $2 AND finished_at IS NOT NULL
      ORDER BY created_at DESC LIMIT 1
 """
-# The run id filter is exact; the created_at bound only lets the (stage, created_at) index narrow the scan.
+# The run id filter is exact; the created_at bound only lets the (stage, created_at) index narrow the scan. The
+# ::timestamptz cast is required: without it Postgres types $3 from `$3 - interval` as an interval and the query fails
+# (UndefinedFunctionError, timestamptz >= interval).
 SPEND_SQL = """
     SELECT stage, quality_signal->>'real_stage' AS real_stage, role, count(*)::int AS calls,
            coalesce(sum(cost_usd), 0)::float AS cost_usd
       FROM shared.llm_call_log
-     WHERE stage = ANY($2::text[]) AND created_at >= $3 - interval '10 minutes'
+     WHERE stage = ANY($2::text[]) AND created_at >= $3::timestamptz - interval '10 minutes'
        AND quality_signal->>'eval_run' = $1
      GROUP BY 1, 2, 3 ORDER BY 1, 2, 3
 """
@@ -51,7 +57,9 @@ def _parse(argv=None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="AA-900 read-only eval run report")
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("run_id", nargs="?")
-    g.add_argument("--latest", choices=WRITERS, help="the newest r2 / reverify run of this writer")
+    g.add_argument("--latest", choices=WRITERS, help="the newest finished r2 / reverify run of this writer")
+    ap.add_argument("--stage", default="adhoc_aa900", choices=EVAL_STAGES,
+                    help="with --latest: the run's log_stage (default adhoc_aa900, a change eval)")
     a = ap.parse_args(argv)
     if a.run_id:
         uuid.UUID(a.run_id)             # refuse anything but a UUID before connecting
@@ -89,9 +97,9 @@ async def main(argv=None) -> int:
     conn = await asyncpg.connect(dsn, ssl="require")
     try:
         await conn.execute("SET default_transaction_read_only = on")
-        run_id = a.run_id or await conn.fetchval(LATEST_SQL, a.latest)
+        run_id = a.run_id or await conn.fetchval(LATEST_SQL, a.latest, a.stage)
         if not run_id:
-            out = {"error": f"no r2 run for writer {a.latest}"}
+            out = {"error": f"no finished {a.stage} r2 run for writer {a.latest}"}
         else:
             out = await report(conn, run_id)
     finally:

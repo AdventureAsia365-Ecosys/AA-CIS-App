@@ -102,13 +102,15 @@ A `--limit` run is cheaper but ends `informative` (it cannot pass). Use it only 
 6. Wait for the job to finish (up to 90 minutes, usually far less with a 2 USD cap) on the admin Jobs page, then read
    the result with the read-only report script through the S3-mediated ECS exec pattern (root
    `docs/ops/runbooks/ecs-exec-s3-mediated.md`). Upload `scripts/llm_ops/eval_run_report.py` from this repo, then
-   run it. `<bronze-bucket>` is the CIS bronze bucket; its name is in that runbook (this repo is public and names no
-   account).
+   run it with the `run_id` from the job's result (admin Jobs page). `<bronze-bucket>` is the CIS bronze bucket; its
+   name is in that runbook (this repo is public and names no account). `--latest t9_blog` instead of the run id picks
+   the newest FINISHED run of that writer under `adhoc_aa900` (`--stage writing_memory_eval` for a Releases tab run);
+   use it only when you know no other change eval of that writer finished after yours.
 
    ```bash
    aws s3 cp scripts/llm_ops/eval_run_report.py s3://<bronze-bucket>/scripts/eval_run_report.py --profile aa365-admin --region us-west-1  # WRITE
    URL=$(aws s3 presign s3://<bronze-bucket>/scripts/eval_run_report.py --profile aa365-admin --region us-west-1 --expires-in 300)
-   aws ecs execute-command --cluster aa-cis-dev-cluster --task $TASK_ARN --container worker --interactive --command "sh -c 'curl -s \"$URL\" -o /tmp/r.py && python3 /tmp/r.py --latest t9_blog'" --profile aa365-admin --region us-west-1
+   aws ecs execute-command --cluster aa-cis-dev-cluster --task $TASK_ARN --container worker --interactive --command "sh -c 'curl -s \"$URL\" -o /tmp/r.py && python3 /tmp/r.py <run-id>'" --profile aa365-admin --region us-west-1
    ```
 
    Expected: the block between `--- AA900 EVAL RUN ---` and `--- END ---` with `run.run_id`, `run.verdict`,

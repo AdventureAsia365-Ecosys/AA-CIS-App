@@ -31,6 +31,10 @@ class FakeConn:
 def test_parse_refuses_a_non_uuid_and_needs_one_target():
     assert rep._parse([RUN]).run_id == RUN
     assert rep._parse(["--latest", "t9_blog"]).latest == "t9_blog"
+    assert rep._parse(["--latest", "t9_blog"]).stage == "adhoc_aa900"
+    assert rep._parse(["--latest", "a1", "--stage", "writing_memory_eval"]).stage == "writing_memory_eval"
+    with pytest.raises(SystemExit):
+        rep._parse(["--latest", "a1", "--stage", "s1_rewrite"])
     with pytest.raises(ValueError):
         rep._parse(["1; DROP"])
     with pytest.raises(SystemExit):
@@ -51,3 +55,15 @@ def test_report_sums_the_logged_spend_of_both_eval_labels():
 def test_unknown_run_is_reported_not_raised():
     out = asyncio.run(rep.report(FakeConn(None), RUN))
     assert out["error"].startswith("no writing_memory eval run")
+
+
+def test_spend_sql_casts_the_since_bound():
+    """Guard: `$3 - interval` alone makes Postgres type $3 as an interval (UndefinedFunctionError on every real run);
+    the DB-backed check is tests/integration/test_aa900_eval_run_report_sql.py."""
+    assert "$3::timestamptz - interval" in rep.SPEND_SQL
+
+
+def test_latest_filters_on_the_label_and_skips_unfinished_runs():
+    sql = " ".join(rep.LATEST_SQL.split())
+    assert "coalesce(details->>'log_stage', 'writing_memory_eval') = $2" in sql
+    assert "finished_at IS NOT NULL" in sql

@@ -142,6 +142,9 @@ class R2Config:
             raise R2Refused("limit must be >= 1")
         if self.log_stage not in cfg.EVAL_LOG_STAGES:
             raise R2Refused(f"log_stage must be one of {cfg.EVAL_LOG_STAGES}")
+        if self.release_id and self.log_stage != cfg.EVAL_STAGE:
+            raise R2Refused(f"a release run logs under {cfg.EVAL_STAGE} (a {self.log_stage} change eval must never "
+                            "become a release's evidence)")
         if self.tiers is not None:
             bad = set(self.tiers) - set(_TIERS)
             if bad:

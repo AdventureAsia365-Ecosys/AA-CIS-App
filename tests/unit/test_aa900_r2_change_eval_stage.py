@@ -6,6 +6,8 @@ Reuses the in-memory store, fake writer and fake judge of the AA-919 runner test
 """
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from services.writing_memory import config as cfg
@@ -47,3 +49,31 @@ def test_month_cap_and_run_spend_read_the_change_label():
     assert cfg.CHANGE_EVAL_STAGE in cfg.MEMORY_STAGES
     assert set(cfg.EVAL_LOG_STAGES) == {"writing_memory_eval", "adhoc_aa900"}
     assert r2.PgStore(None, stages=("adhoc_aa900",)).stages == ("adhoc_aa900",)
+
+
+@pytest.mark.parametrize("stage", ["writing_memory_eval", "adhoc_aa900"])
+def test_run_with_pool_hands_run_r2_a_store_reading_the_run_label(monkeypatch, stage):
+    """The paid path (the writing_memory_r2 job): the per-run cap must read the run's own label. A store built as
+    PgStore(pool) would read writing_memory_eval only and see $0 for an adhoc_aa900 run (cap never trips)."""
+    seen = {}
+
+    async def fake_run_r2(store, conf, **kw):
+        seen["store"], seen["conf"], seen["kw"] = store, conf, kw
+        return "outcome"
+
+    monkeypatch.setattr(r2, "run_r2", fake_run_r2)
+    pool = object()
+    conf = r2.R2Config(writer="t9_blog", log_stage=stage)
+    assert asyncio.run(r2.run_with_pool(pool, conf)) == "outcome"
+    assert isinstance(seen["store"], r2.PgStore)
+    assert seen["store"].stages == (stage,) and seen["store"].pool is pool
+    assert seen["conf"] is conf and seen["kw"]["pool"] is pool
+
+
+def test_a_release_run_refuses_the_change_label():
+    with pytest.raises(r2.R2Refused, match="release"):
+        r2.R2Config(writer="a1", release_id="rel-1", log_stage="adhoc_aa900").validate()
+    r2.R2Config(writer="a1", release_id="rel-1").validate()      # the Releases tab default still passes
+    conf, _ = r2._parse(["--writer", "a1", "--release", "rel-1", "--stage", "adhoc_aa900"])
+    with pytest.raises(r2.R2Refused, match="evidence"):
+        conf.validate()
