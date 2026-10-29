@@ -725,7 +725,7 @@ _SEED_BOILERPLATE = ("(do not place it in any other town, region or country)",
 # AA-814 follow-up: 'Source:' and its owner tag ('; agency fact' / '; platform fact') are the label of each Facts entry
 # (facts._fact_entry), not seed words.
 _SEED_LABEL_RE = re.compile(r"^(?:Source itinerary|Why it matters|Location|Naming|Season|Status|Source):"
-                            r"|\[Fact id=[^\]\n]*\]|\b(?:agency|platform) fact\b"
+                            r"|\[Fact id=[^\]\n]*\]|\b(?:agency|platform) fact\b(?!\s*-?\s*sheets?\b)"
                             r"|\bof the trip\b", re.M)
 # A settlement noun is a topic, like a name: kept when the text still names it ('present the village as a stage').
 _FACT_TOPIC_WORDS = frozenset("village town city hamlet settlement".split())
@@ -1151,7 +1151,7 @@ def copies(a: str, b: str, ignore: frozenset = frozenset()) -> bool:
 # start of a sentence, or the owner tag anywhere.
 LEAK_RE = re.compile(
     r"\b(?:content seed|the seed|this seed|source itinerary|place background|the itinerary calls it"
-    r"|other trips that include|for context only|source notes|agency fact|platform fact)\b|\[moment\b|\bscope:"
+    r"|other trips that include|for context only|source notes|agency fact(?!\s*-?\s*sheets?\b)|platform fact(?!\s*-?\s*sheets?\b))\b|\[moment\b|\bscope:"
     r"|^\W*source:", re.I)
 # The whole sentence is a copied Facts 'Source:' line: it says nothing to a reader, so the fix deletes it.
 _SOURCE_LINE_RE = re.compile(r"^\W*source:", re.I)

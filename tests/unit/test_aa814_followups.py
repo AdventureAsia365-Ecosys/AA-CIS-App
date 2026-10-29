@@ -165,6 +165,8 @@ def test_leak_check_catches_the_facts_source_label(sentence):
     "The river is the source of the valley's rice.",
     "Their main source: the river, fed by glaciers.",
     "Ask the agency for the latest fact sheet.",
+    "Ask for the agency fact sheet before you book.",
+    "The platform fact-sheet lists every visa rule.",
 ])
 def test_leak_check_leaves_ordinary_prose(sentence):
     assert not h.LEAK_RE.search(sentence)
