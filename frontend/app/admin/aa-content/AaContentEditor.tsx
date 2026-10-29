@@ -30,19 +30,18 @@ import {
   RADIUS,
   SkeletonBar,
   apiGet,
-  formatDateTime,
   mono,
   sans,
   useAdminIdentity,
+  useFormat,
+  useT,
   useToast,
 } from "../../_kit";
 import { can } from "@/lib/rbac";
 import {
   AA_CONTENT_API,
   BODY_MAX,
-  KIND_LABEL,
   LOCALES,
-  LOCALE_LABEL,
   aaCall,
   appliesFromForm,
   baselineVersion,
@@ -62,6 +61,8 @@ import {
   type AaResult,
   type AaVersion,
 } from "@/lib/aaContent";
+import { AC } from "./messages";
+import { useAaText } from "./useAaText";
 
 // ── small building blocks (shared with AaContentConsole.tsx) ───────────────────────────────────────────────────────
 
@@ -105,6 +106,8 @@ export const groupKeyOf = (groupKey: string) => ["aa-content-group", groupKey] a
 export default function AaContentEditor({ groupKey, onClose, onChanged }: {
   groupKey: string; onClose: () => void; onChanged: () => void;
 }) {
+  const t = useT(AC);
+  const tx = useAaText();
   const qc = useQueryClient();
   const role = useAdminIdentity().role;
   const canWrite = can(role, "content.write");
@@ -134,7 +137,7 @@ export default function AaContentEditor({ groupKey, onClose, onChanged }: {
     onChanged();
   };
   const close = () => {
-    if (dirty.current.size && !window.confirm("You have unsaved changes. Close the editor and lose them?")) return;
+    if (dirty.current.size && !window.confirm(t("unsavedClose"))) return;
     onClose();
   };
 
@@ -146,17 +149,17 @@ export default function AaContentEditor({ groupKey, onClose, onChanged }: {
       title={
         <span style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <span>{groupKey}</span>
-          {first && <Badge tone="purple" dot={false}>{KIND_LABEL[first.kind] ?? first.kind}</Badge>}
+          {first && <Badge tone="purple" dot={false}>{tx.kind[first.kind] ?? first.kind}</Badge>}
         </span>
       }>
       <div data-testid="aa-content-editor" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         {!canWrite && (
-          <div style={noteStyle}>Read only: your role can read AA content but not change it.</div>
+          <div style={noteStyle}>{t("readOnly")}</div>
         )}
         {group.isLoading ? (
           <SkeletonBar w="100%" h={240} />
         ) : group.error ? (
-          <ErrorState message={(group.error as Error).message || "Could not load this group."} onRetry={reload} />
+          <ErrorState message={(group.error as Error).message || t("groupError")} onRetry={reload} />
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", gap: 14 }}>
             {LOCALES.map((loc) => {
@@ -188,6 +191,9 @@ function LocalePanel({ item, canWrite, canAdmin, onChanged, onReload, onDirty }:
   item: AaItem; canWrite: boolean; canAdmin: boolean; onChanged: (item: AaItem) => void; onReload: () => void;
   onDirty: (dirty: boolean) => void;
 }) {
+  const t = useT(AC);
+  const tx = useAaText();
+  const { formatDateTime } = useFormat();
   const toast = useToast();
   const baseVersion = baselineVersion(item);
   const [base] = useState<AaForm>(() => formFromVersion(baseVersion));
@@ -201,7 +207,7 @@ function LocalePanel({ item, canWrite, canAdmin, onChanged, onReload, onDirty }:
   const editable = canWrite && !retired;
   const draft = item.versions.find((v) => v.status === "draft") ?? null;
   const dirty = isDirty(form, base);
-  const problems = formProblems(form);
+  const problems = formProblems(form, tx.words);
   const visaGaps = item.kind === "prep_pack" ? visaSectionsWithoutLink(form.body_markdown) : [];
   const nextVersion = draft ? draft.version : (item.versions[0]?.version ?? 0) + 1;
   const id = item.content_id;
@@ -231,21 +237,21 @@ function LocalePanel({ item, canWrite, canAdmin, onChanged, onReload, onDirty }:
   const save = () => run<AaItem>("save",
     () => aaCall("PUT", `/${id}/draft`, {
       title: form.title.trim(), body_markdown: form.body_markdown, applies_to: appliesFromForm(form), ...expected,
-    }),
-    (next) => { toast.success(`${locale}: draft v${next.draft_version ?? nextVersion} saved.`); onChanged(next); });
+    }, tx.words),
+    (next) => { toast.success(t("savedDraft", locale, next.draft_version ?? nextVersion)); onChanged(next); });
   const discard = () => run<AaItem>("discard",
-    () => aaCall("DELETE", `/${id}/draft?expected_updated_at=${encodeURIComponent(item.updated_at)}`),
-    (next) => { toast.success(`${locale}: draft discarded.`); onChanged(next); });
-  const publish = () => run<AaPublishResult>("publish", () => aaCall("POST", `/${id}/publish`, expected),
-    (res) => { toast.success(`${locale}: version ${res.item.published_version} published.`); onChanged(res.item); });
-  const retire = () => run<AaItem>("retire", () => aaCall("POST", `/${id}/retire`, expected),
-    (next) => { toast.success(`${locale}: retired.`); onChanged(next); });
-  const restore = () => run<AaItem>("restore", () => aaCall("POST", `/${id}/restore`, expected),
-    (next) => { toast.success(`${locale}: restored.`); onChanged(next); });
+    () => aaCall("DELETE", `/${id}/draft?expected_updated_at=${encodeURIComponent(item.updated_at)}`, undefined, tx.words),
+    (next) => { toast.success(t("discarded", locale)); onChanged(next); });
+  const publish = () => run<AaPublishResult>("publish", () => aaCall("POST", `/${id}/publish`, expected, tx.words),
+    (res) => { toast.success(t("publishedToast", locale, String(res.item.published_version))); onChanged(res.item); });
+  const retire = () => run<AaItem>("retire", () => aaCall("POST", `/${id}/retire`, expected, tx.words),
+    (next) => { toast.success(t("retiredToast", locale)); onChanged(next); });
+  const restore = () => run<AaItem>("restore", () => aaCall("POST", `/${id}/restore`, expected, tx.words),
+    (next) => { toast.success(t("restoredToast", locale)); onChanged(next); });
 
   const fieldError = (field: string) => (refusal?.field === field ? refusal.message : null);
-  const badge = stateBadge(item);
-  const pendingLabel = pendingDraftLabel(item);
+  const badge = stateBadge(item, tx.words);
+  const pendingLabel = pendingDraftLabel(item, tx.words);
   const canSave = editable && dirty && !Object.keys(problems).length && !pending;
   const canPublish = canAdmin && !retired && !!draft && !dirty && !pending;
   const fid = (name: string) => `aa-${id}-${name}`;
@@ -257,7 +263,7 @@ function LocalePanel({ item, canWrite, canAdmin, onChanged, onReload, onDirty }:
     }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
         <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: K.ink, fontFamily: sans }}>
-          {LOCALE_LABEL[item.locale as AaLocale] ?? item.locale}
+          {tx.locale[item.locale as AaLocale] ?? item.locale}
         </h3>
         <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap" }}>
           <Badge tone={badge.tone}>{badge.label}</Badge>
@@ -267,35 +273,33 @@ function LocalePanel({ item, canWrite, canAdmin, onChanged, onReload, onDirty }:
 
       {retired && (
         <div style={noteStyle}>
-          Retired {formatDateTime(item.retired_at)}: hidden from the CRM list. Agencies that use a published version
-          can still fetch it. {canAdmin ? "Restore the item to edit it again." : ""}
+          {t("retiredNote", formatDateTime(item.retired_at))}{canAdmin ? t("restoreToEdit") : ""}
         </div>
       )}
       {editable && !draft && item.versions.length > 0 && (
         <div style={noteStyle}>
-          Version {item.versions[0].version} is published. Saving starts draft v{nextVersion}; agencies keep
-          v{item.versions[0].version} until an admin publishes the new one.
+          {t("publishedNote", item.versions[0].version, nextVersion)}
         </div>
       )}
 
-      <Field label="Title" htmlFor={fid("title")} error={(dirty && problems.title) || fieldError("title")}>
+      <Field label={t("fieldTitle")} htmlFor={fid("title")} error={(dirty && problems.title) || fieldError("title")}>
         <input id={fid("title")} type="text" autoComplete="off" value={form.title} readOnly={!editable}
           onChange={(e) => edit({ title: e.target.value })} style={fieldStyle} maxLength={400} />
       </Field>
 
-      <Field label="Text" htmlFor={fid("body")}
+      <Field label={t("text")} htmlFor={fid("body")}
         error={problems.body_markdown ?? fieldError("body_markdown")}
-        hint={`${form.body_markdown.length.toLocaleString("en")} / ${BODY_MAX.toLocaleString("en")} characters. Markdown; the preview shows the plain text.`}>
-        <div style={{ display: "flex", gap: 6 }} role="tablist" aria-label="Text view">
-          <Button size="sm" variant={preview ? "ghost" : "secondary"} onClick={() => setPreview(false)}>Write</Button>
-          <Button size="sm" variant={preview ? "secondary" : "ghost"} onClick={() => setPreview(true)}>Preview</Button>
+        hint={t("textHint", form.body_markdown.length.toLocaleString("en"), BODY_MAX.toLocaleString("en"))}>
+        <div style={{ display: "flex", gap: 6 }} role="tablist" aria-label={t("textView")}>
+          <Button size="sm" variant={preview ? "ghost" : "secondary"} onClick={() => setPreview(false)}>{t("write")}</Button>
+          <Button size="sm" variant={preview ? "secondary" : "ghost"} onClick={() => setPreview(true)}>{t("preview")}</Button>
         </div>
         {preview ? (
           <div data-testid="aa-content-preview" style={{
             ...fieldStyle, whiteSpace: "pre-wrap", overflowWrap: "anywhere", minHeight: 260, maxHeight: 480,
             overflowY: "auto", lineHeight: 1.55, background: K.bg,
           }}>
-            {form.body_markdown || <span style={{ color: K.muted }}>(empty)</span>}
+            {form.body_markdown || <span style={{ color: K.muted }}>{t("empty")}</span>}
           </div>
         ) : (
           <textarea id={fid("body")} value={form.body_markdown} readOnly={!editable} rows={14}
@@ -312,19 +316,18 @@ function LocalePanel({ item, canWrite, canAdmin, onChanged, onReload, onDirty }:
           }}>
             <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 2, color: K.amber }} />
             <span style={{ overflowWrap: "anywhere" }}>
-              Visa information must link to the official source (an https link in the same section), or publishing is
-              refused. Missing in: &ldquo;{visaGaps[0]}&rdquo;{visaGaps.length > 1 ? ` and ${visaGaps.length - 1} more` : ""}.
+              {t("visaMissing", visaGaps[0], visaGaps.length > 1 ? t("andMore", visaGaps.length - 1) : "")}
             </span>
           </div>
         ) : (
-          <div style={noteStyle}>Visa rule: every section that mentions a visa needs the official https link (e-visa or immigration site).</div>
+          <div style={noteStyle}>{t("visaRule")}</div>
         )
       )}
 
-      <Field label="Countries" htmlFor={fid("countries")} error={fieldError("applies_to.country_codes")}
-        hint={form.country_codes.length ? null : "None picked: the item applies to every country."}>
-        <div id={fid("countries")} role="group" aria-label="Countries" style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {countryOptions(form.country_codes).map((c) => {
+      <Field label={t("countries")} htmlFor={fid("countries")} error={fieldError("applies_to.country_codes")}
+        hint={form.country_codes.length ? null : t("noCountries")}>
+        <div id={fid("countries")} role="group" aria-label={t("countries")} style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {countryOptions(form.country_codes, tx.lang).map((c) => {
             const on = form.country_codes.includes(c.code);
             return (
               <button key={c.code} type="button" aria-pressed={on} disabled={!editable}
@@ -343,9 +346,9 @@ function LocalePanel({ item, canWrite, canAdmin, onChanged, onReload, onDirty }:
         </div>
       </Field>
 
-      <Field label="Tours (optional)" htmlFor={fid("tours")}
+      <Field label={t("tours")} htmlFor={fid("tours")}
         error={problems["applies_to.tours"] ?? fieldError("applies_to.tours")}
-        hint="One CIS tour id per line, for content that belongs to specific tours.">
+        hint={t("toursHint")}>
         <textarea id={fid("tours")} value={form.tours_text} readOnly={!editable} rows={2}
           onChange={(e) => edit({ tours_text: e.target.value })}
           style={{ ...fieldStyle, fontFamily: mono, fontSize: 12.5, resize: "vertical" }} />
@@ -354,7 +357,7 @@ function LocalePanel({ item, canWrite, canAdmin, onChanged, onReload, onDirty }:
       {refusal && !refusal.field && (
         <InlineError message={refusal.message}
           action={refusal.code === "stale" ? (
-            <Button size="sm" variant="secondary" onClick={onReload}><RefreshCw size={12} /> Reload</Button>
+            <Button size="sm" variant="secondary" onClick={onReload}><RefreshCw size={12} /> {t("reload")}</Button>
           ) : undefined} />
       )}
       {refusal?.field && refusal.field !== "title" && refusal.field !== "body_markdown"
@@ -364,53 +367,53 @@ function LocalePanel({ item, canWrite, canAdmin, onChanged, onReload, onDirty }:
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           {editable && (
             <Button variant="primary" size="sm" onClick={() => void save()} disabled={!canSave}>
-              {pending === "save" ? "Saving…" : draft ? `Save draft v${draft.version}` : `Save as draft v${nextVersion}`}
+              {pending === "save" ? t("saving") : draft ? t("saveDraftV", draft.version) : t("saveAsDraftV", nextVersion)}
             </Button>
           )}
           {editable && dirty && (
             <Button variant="ghost" size="sm" onClick={() => { setForm(base); onDirty(false); setRefusal(null); }}
               disabled={!!pending}>
-              Undo changes
+              {t("undo")}
             </Button>
           )}
           {editable && draft && item.published_version != null && (
             <Button variant="ghost" size="sm" onClick={() => setConfirm("discard")} disabled={!!pending}>
-              Discard draft
+              {t("discardDraft")}
             </Button>
           )}
           {canAdmin && !retired && draft && (
             <Button variant="secondary" size="sm" onClick={() => setConfirm("publish")} disabled={!canPublish}
-              title={dirty ? "Save the draft first" : undefined}>
-              Publish v{draft.version}
+              title={dirty ? t("saveFirst") : undefined}>
+              {t("publishV", draft.version)}
             </Button>
           )}
           {canAdmin && !retired && (
-            <Button variant="danger" size="sm" onClick={() => setConfirm("retire")} disabled={!!pending}>Retire</Button>
+            <Button variant="danger" size="sm" onClick={() => setConfirm("retire")} disabled={!!pending}>{t("retire")}</Button>
           )}
           {canAdmin && retired && (
-            <Button variant="secondary" size="sm" onClick={() => setConfirm("restore")} disabled={!!pending}>Restore</Button>
+            <Button variant="secondary" size="sm" onClick={() => setConfirm("restore")} disabled={!!pending}>{t("restore")}</Button>
           )}
-          {canAdmin && !retired && draft && dirty && <span style={noteStyle}>Save the draft before publishing.</span>}
+          {canAdmin && !retired && draft && dirty && <span style={noteStyle}>{t("saveBeforePublish")}</span>}
         </div>
       )}
 
       <History versions={item.versions} />
 
       <ConfirmModal open={confirm === "discard"} onClose={() => setConfirm(null)} onConfirm={() => void discard()}
-        busy={pending === "discard"} destructive title={`Discard draft v${draft?.version ?? ""}?`}
-        confirmLabel="Discard draft"
-        body={`The ${locale} draft is deleted. Published version ${item.published_version ?? ""} stays as it is.`} />
+        busy={pending === "discard"} destructive title={t("discardTitle", String(draft?.version ?? ""))}
+        confirmLabel={t("discardDraft")}
+        body={t("discardBody", locale, String(item.published_version ?? ""))} />
       <ConfirmModal open={confirm === "publish"} onClose={() => setConfirm(null)} onConfirm={() => void publish()}
-        busy={pending === "publish"} title={`Publish ${locale} v${draft?.version ?? ""}?`} confirmLabel="Publish"
+        busy={pending === "publish"} title={t("publishTitle", locale, String(draft?.version ?? ""))} confirmLabel={t("publish")}
         body={item.published_version != null
-          ? `Agencies' CRMs start receiving v${draft?.version ?? ""}. Version ${item.published_version} stays fetchable for the agencies that still use it. A published version can never be edited; changes need a new draft.`
-          : "Agencies' CRMs start receiving this item. A published version can never be edited; changes need a new draft."} />
+          ? t("publishBodyNext", String(draft?.version ?? ""), item.published_version)
+          : t("publishBodyFirst")} />
       <ConfirmModal open={confirm === "retire"} onClose={() => setConfirm(null)} onConfirm={() => void retire()}
-        busy={pending === "retire"} destructive title={`Retire the ${locale} item?`} confirmLabel="Retire"
-        body="The item disappears from the CRM list. Agencies that already use a published version can still fetch it. You can restore it later." />
+        busy={pending === "retire"} destructive title={t("retireTitle", locale)} confirmLabel={t("retire")}
+        body={t("retireBody")} />
       <ConfirmModal open={confirm === "restore"} onClose={() => setConfirm(null)} onConfirm={() => void restore()}
-        busy={pending === "restore"} title={`Restore the ${locale} item?`} confirmLabel="Restore"
-        body="The item shows in the CRM list again with its newest published version." />
+        busy={pending === "restore"} title={t("restoreTitle", locale)} confirmLabel={t("restore")}
+        body={t("restoreBody")} />
     </section>
   );
 }
@@ -418,12 +421,15 @@ function LocalePanel({ item, canWrite, canAdmin, onChanged, onReload, onDirty }:
 // ── version history ─────────────────────────────────────────────────────────────────────────────────────────────
 
 function History({ versions }: { versions: AaVersion[] }) {
+  const t = useT(AC);
+  const tx = useAaText();
+  const { formatDateTime } = useFormat();
   const [open, setOpen] = useState<number | null>(null);
   const published = versions.filter((v) => v.status === "published");
-  if (!published.length) return <div style={noteStyle}>Never published: agencies see nothing yet.</div>;
+  if (!published.length) return <div style={noteStyle}>{t("neverPublished")}</div>;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <div style={{ fontSize: 12.5, fontWeight: 600, color: K.ink3 }}>Published versions</div>
+      <div style={{ fontSize: 12.5, fontWeight: 600, color: K.ink3 }}>{t("publishedVersions")}</div>
       {published.map((v) => {
         const isOpen = open === v.version;
         return (
@@ -447,7 +453,7 @@ function History({ versions }: { versions: AaVersion[] }) {
                   {v.body_markdown}
                 </div>
                 <div style={{ ...noteStyle, fontFamily: mono, overflowWrap: "anywhere" }}>
-                  {(v.applies_to.country_codes ?? []).map(countryLabel).join(", ") || "All countries"}
+                  {(v.applies_to.country_codes ?? []).map((code) => countryLabel(code, tx.lang)).join(", ") || t("allCountries")}
                   {" · "}{v.content_hash}
                 </div>
               </div>
@@ -464,11 +470,13 @@ function History({ versions }: { versions: AaVersion[] }) {
 function MissingLocale({ locale, sibling, canWrite, onCreated }: {
   locale: AaLocale; sibling: AaItem; canWrite: boolean; onCreated: (item: AaItem) => void;
 }) {
+  const t = useT(AC);
+  const tx = useAaText();
   const toast = useToast();
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const label = LOCALE_LABEL[locale];
+  const label = tx.locale[locale];
 
   const create = async () => {
     if (!title.trim() || busy) return;
@@ -478,13 +486,13 @@ function MissingLocale({ locale, sibling, canWrite, onCreated }: {
     const r = await aaCall<AaItem>("POST", "", {
       kind: sibling.kind, locale, group_key: sibling.group_key, title: title.trim(), body_markdown: "",
       applies_to: baselineVersion(sibling)?.applies_to ?? {},
-    });
+    }, tx.words);
     setBusy(false);
     if (!r.ok) {
       setError(r.message);
       return;
     }
-    toast.success(`${locale.toUpperCase()}: draft v1 created.`);
+    toast.success(t("draftCreated", locale.toUpperCase()));
     onCreated(r.body);
   };
 
@@ -494,17 +502,17 @@ function MissingLocale({ locale, sibling, canWrite, onCreated }: {
       flexDirection: "column", gap: 10, minWidth: 0,
     }}>
       <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: K.ink, fontFamily: sans }}>{label}</h3>
-      <div style={noteStyle}>No {label} copy yet. Agencies that work in {label} do not get this item.</div>
+      <div style={noteStyle}>{t("noCopy", label)}</div>
       {canWrite && (
         <form onSubmit={(e) => { e.preventDefault(); void create(); }}
           style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <Field label={`${label} title`} htmlFor={`aa-missing-${locale}`}>
+          <Field label={t("localeTitle", label)} htmlFor={`aa-missing-${locale}`}>
             <input id={`aa-missing-${locale}`} type="text" autoComplete="off" maxLength={300} value={title}
               onChange={(e) => setTitle(e.target.value)} style={fieldStyle} />
           </Field>
           <div>
             <Button type="submit" variant="secondary" size="sm" disabled={!title.trim() || busy}>
-              {busy ? "Creating…" : `Create the ${label} draft`}
+              {busy ? t("creating") : t("createLocaleDraft", label)}
             </Button>
           </div>
           {error && <InlineError message={error} />}

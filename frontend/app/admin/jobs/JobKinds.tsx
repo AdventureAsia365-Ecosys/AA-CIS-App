@@ -5,7 +5,8 @@
 // so the registry is visible in full. Clicking a count filters the main list by (kind, status).
 
 import { A, mono, Card, SLabel } from "../_components/adminUi";
-import { StatusBadge } from "../../_kit";
+import { StatusBadge, useT } from "../../_kit";
+import { JOBS } from "./messages";
 import { STATUSES, fmtSeconds, type Count, type Kind } from "./jobsShared";
 
 export default function JobKinds({
@@ -15,6 +16,7 @@ export default function JobKinds({
   counts: Count[];
   onPick: (kind: string, status: string) => void;
 }) {
+  const t = useT(JOBS);
   if (kinds.length === 0) return null;
 
   // counts[(kind, status)] -> n, built once for O(1) lookup per cell.
@@ -27,22 +29,21 @@ export default function JobKinds({
 
   return (
     <div style={{ marginTop: 16 }}>
-      <SLabel>Job kinds</SLabel>
+      <SLabel>{t("tabKinds")}</SLabel>
       <div style={{ fontSize: 12, color: A.muted, marginBottom: 8 }}>
-        Every registered kind ({kinds.length}) with its concurrency cap, retry limit and the time
-        after which a run is flagged slow. Counts are jobs in the last 30 days — click one to filter.
+        {t("kindsIntro", kinds.length)}
       </div>
       <Card style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
             <thead>
               <tr>
-                <th style={head}>Kind</th>
-                <th style={{ ...head, textAlign: "right" }}>Max at a time</th>
-                <th style={{ ...head, textAlign: "right" }}>Attempts</th>
-                <th style={{ ...head, textAlign: "right" }}>Slow after</th>
+                <th style={head}>{t("colKind")}</th>
+                <th style={{ ...head, textAlign: "right" }}>{t("maxAtATime")}</th>
+                <th style={{ ...head, textAlign: "right" }}>{t("attempts")}</th>
+                <th style={{ ...head, textAlign: "right" }}>{t("slowAfter")}</th>
                 {STATUSES.map(s => <th key={s} style={{ ...head, textAlign: "right" }}>{s}</th>)}
-                <th style={{ ...head, textAlign: "right" }}>Total</th>
+                <th style={{ ...head, textAlign: "right" }}>{t("totalCol")}</th>
               </tr>
             </thead>
             <tbody>
@@ -61,7 +62,7 @@ export default function JobKinds({
                         {n > 0 ? (
                           <button
                             onClick={() => onPick(k.kind, s)}
-                            title={`Filter: ${k.kind} · ${s}`}
+                            title={t("filterTitle", k.kind, s)}
                             style={{ border: "none", background: "transparent", cursor: "pointer", fontFamily: mono, fontSize: 12, color: A.accentDeep, padding: 0 }}
                           >
                             {n}

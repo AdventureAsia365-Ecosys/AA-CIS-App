@@ -3,8 +3,19 @@
 
 import { AlertTriangle, Copy } from "lucide-react";
 import { useState } from "react";
-import { Badge, Button, K, RADIUS, mono, sans } from "../../_kit";
-import { ACTION_HELP, actionTone, orderedTotals } from "@/lib/dataErasure";
+import { Badge, Button, K, RADIUS, mono, sans, useLang, useT } from "../../_kit";
+import { ERASURE_WORDS_MESSAGES, ACTION_HELP_MESSAGES } from "@/lib/dataErasure.messages";
+import { actionTone, orderedTotals, type ErasureWords } from "@/lib/dataErasure";
+import { ER } from "./messages";
+
+/** The lib/dataErasure.ts helper words in the UI language (AA-994). */
+export function useErasureWords(): ErasureWords {
+  return ERASURE_WORDS_MESSAGES[useLang()];
+}
+
+function useActionHelp(): Record<string, string> {
+  return ACTION_HELP_MESSAGES[useLang()];
+}
 
 export function Section({ title, children, right, testId }: {
   title: React.ReactNode;
@@ -68,9 +79,10 @@ export function Facts({ items }: { items: { label: string; value: React.ReactNod
 }
 
 export function ActionBadge({ action }: { action: string }) {
+  const help = useActionHelp();
   const base = action.split(":", 1)[0];
   return (
-    <span title={ACTION_HELP[base] ?? action}>
+    <span title={help[base] ?? action}>
       <Badge tone={actionTone(action)} dot={false}>{action}</Badge>
     </span>
   );
@@ -78,12 +90,14 @@ export function ActionBadge({ action }: { action: string }) {
 
 /** Totals per action as badges with counts. */
 export function TotalsRow({ totals, testId }: { totals: Record<string, number> | undefined; testId?: string }) {
+  const t = useT(ER);
+  const help = useActionHelp();
   const entries = orderedTotals(totals);
-  if (!entries.length) return <span style={{ fontSize: 13, color: K.muted }}>No rows.</span>;
+  if (!entries.length) return <span style={{ fontSize: 13, color: K.muted }}>{t("noRows")}</span>;
   return (
     <div data-testid={testId} style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
       {entries.map(([k, n]) => (
-        <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 6 }} title={ACTION_HELP[k] ?? k}>
+        <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 6 }} title={help[k] ?? k}>
           <Badge tone={actionTone(k)} dot={false}>{k}</Badge>
           <span style={{ fontFamily: mono, fontSize: 13, color: K.ink }}>{n.toLocaleString("en-US")}</span>
         </span>
@@ -93,6 +107,7 @@ export function TotalsRow({ totals, testId }: { totals: Record<string, number> |
 }
 
 export function Fingerprint({ value }: { value: string }) {
+  const t = useT(ER);
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try {
@@ -111,8 +126,8 @@ export function Fingerprint({ value }: { value: string }) {
       >
         <strong>{value.slice(0, 8)}</strong>{value.slice(8)}
       </code>
-      <Button size="sm" variant="ghost" onClick={copy} ariaLabel="Copy the fingerprint">
-        <Copy size={12} /> {copied ? "Copied" : "Copy"}
+      <Button size="sm" variant="ghost" onClick={copy} ariaLabel={t("copyFingerprint")}>
+        <Copy size={12} /> {copied ? t("copied") : t("copy")}
       </Button>
     </div>
   );

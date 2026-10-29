@@ -24,20 +24,21 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, RefreshCw, RotateCcw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
-  Badge, Button, DataTable, ErrorState, K, PageHeader, StatusBadge, TableSkeleton, apiGet, formatDateTime, mono,
+  Badge, Button, DataTable, ErrorState, K, PageHeader, StatusBadge, TableSkeleton, apiGet, mono, useFormat, useT,
   type ColumnDef,
 } from "../../_kit";
 import {
   ERASURE_API, ERASURE_KIND, JOBS_API, detailMessage, isTerminal, isVerifyRun, jobHash, jobMode, jobSubject,
   jobTenant, subjectLabel, totalsSentence,
-  type ErasureJob, type ErasureSettings, type JobsPage, type TenantOption,
+  type ErasureJob, type ErasureSettings, type ErasureWords, type JobsPage, type TenantOption,
 } from "@/lib/dataErasure";
 import { TENANTS_API, TENANTS_QUERY_KEY } from "@/lib/tenants";
 import { TenantName } from "../_components/TenantSelect";
 import ApplyPanel, { type SendResult } from "./ApplyPanel";
 import ErasurePlan from "./ErasurePlan";
 import SubjectForm from "./SubjectForm";
-import { Facts, Notice, Section } from "./erasureUi";
+import { Facts, Notice, Section, useErasureWords } from "./erasureUi";
+import { ER } from "./messages";
 
 const JOB_POLL_MS = 3_000;
 const HISTORY_POLL_MS = 10_000;
@@ -65,7 +66,7 @@ function writeView(v: View) {
 }
 
 /** POST /erasure/run through the BFF. Never throws; a refusal carries the API's own reason. */
-async function runErasure(body: Record<string, unknown>): Promise<SendResult> {
+async function runErasure(body: Record<string, unknown>, w: ErasureWords, noAnswer: string): Promise<SendResult> {
   let res: Response;
   try {
     res = await fetch(`${ERASURE_API}/run`, {
@@ -78,7 +79,7 @@ async function runErasure(body: Record<string, unknown>): Promise<SendResult> {
     return {
       ok: false,
       status: 0,
-      message: "No answer from the server; the request may have been received. Check Recent erasure jobs before trying again.",
+      message: noAnswer,
     };
   }
   let data: Record<string, unknown> = {};
@@ -88,7 +89,7 @@ async function runErasure(body: Record<string, unknown>): Promise<SendResult> {
     /* non-JSON body */
   }
   if (res.ok) return { ok: true, data };
-  return { ok: false, status: res.status, message: detailMessage(res.status, data.detail) };
+  return { ok: false, status: res.status, message: detailMessage(res.status, data.detail, w) };
 }
 
 function useJob(id: string | null) {
@@ -102,6 +103,9 @@ function useJob(id: string | null) {
 }
 
 export default function DataErasure() {
+  const t = useT(ER);
+  const w = useErasureWords();
+  const { formatDateTime } = useFormat();
   const qc = useQueryClient();
   const [view, setView] = useState<View>(() => readView());
   const update = (patch: Partial<View>) => setView((prev) => {
@@ -152,7 +156,7 @@ export default function DataErasure() {
 
   /** runErasure, plus a history refresh when no answer came back (the request may have been enqueued). */
   const send = async (body: Record<string, unknown>): Promise<SendResult> => {
-    const out = await runErasure(body);
+    const out = await runErasure(body, w, t("noAnswer"));
     if (!out.ok && out.status === 0) void refreshHistory();
     return out;
   };
@@ -182,7 +186,7 @@ export default function DataErasure() {
     } else {
       const hash = travellerHash ?? (dryJob ? jobHash(dryJob) : null);
       if (!hash) {
-        setVerifyError("The hash left CIS with the apply. Enter the address again in the form above and run a DRY RUN: every count must be 0.");
+        setVerifyError(t("hashLeft"));
         return;
       }
       body = { subject: "traveller", email_sha256: hash, verify: true };
@@ -211,44 +215,44 @@ export default function DataErasure() {
   const columns = useMemo<ColumnDef<ErasureJob, unknown>[]>(() => [
     {
       accessorKey: "created_at",
-      header: "Started",
+      header: t("colStarted"),
       cell: (c) => <span style={{ fontSize: 12.5, whiteSpace: "nowrap" }}>{formatDateTime(c.row.original.created_at)}</span>,
     },
     {
       id: "subject",
       accessorFn: (j) => jobSubject(j) ?? "",
-      header: "Subject",
+      header: t("colSubject"),
       cell: (c) => {
         const j = c.row.original;
         return jobSubject(j) === "tenant"
           ? <TenantName id={jobTenant(j)} style={{ fontSize: 12.5 }} />
-          : <span style={{ fontSize: 12.5 }}>Traveller</span>;
+          : <span style={{ fontSize: 12.5 }}>{t("traveller")}</span>;
       },
     },
     {
       id: "mode",
       accessorFn: (j) => (jobMode(j) === "apply" ? "apply" : isVerifyRun(j) ? "verify" : "dry_run"),
-      header: "Mode",
+      header: t("colMode"),
       cell: (c) => {
         const j = c.row.original;
-        return jobMode(j) === "apply" ? <Badge tone="danger" dot={false}>Apply</Badge>
-          : isVerifyRun(j) ? <Badge tone="info" dot={false}>Verify</Badge>
+        return jobMode(j) === "apply" ? <Badge tone="danger" dot={false}>{t("modeApply")}</Badge>
+          : isVerifyRun(j) ? <Badge tone="info" dot={false}>{t("modeVerify")}</Badge>
             : <Badge tone="neutral" dot={false}>DRY RUN</Badge>;
       },
     },
-    { accessorKey: "status", header: "Status", cell: (c) => <StatusBadge status={c.row.original.status} /> },
+    { accessorKey: "status", header: t("colStatus"), cell: (c) => <StatusBadge status={c.row.original.status} /> },
     {
       id: "totals",
-      accessorFn: (j) => totalsSentence(j.result?.totals),
-      header: "Rows",
+      accessorFn: (j) => totalsSentence(j.result?.totals, w),
+      header: t("colRows"),
       cell: (c) => {
         const r = c.row.original.result;
         return (
           <span style={{ fontSize: 12.5, color: K.body }}>
-            {r ? totalsSentence(r.totals) : "—"}
-            {r?.blocked ? <> · <Badge tone="danger" dot={false}>blocked</Badge></> : null}
+            {r ? totalsSentence(r.totals, w) : "—"}
+            {r?.blocked ? <> · <Badge tone="danger" dot={false}>{t("blockedWord")}</Badge></> : null}
             {jobMode(c.row.original) === "apply" && r?.verified !== undefined
-              ? <> · <Badge tone={r.verified ? "success" : "danger"} dot={false}>{r.verified ? "verified" : "not verified"}</Badge></>
+              ? <> · <Badge tone={r.verified ? "success" : "danger"} dot={false}>{r.verified ? t("verifiedWord") : t("notVerifiedWord")}</Badge></>
               : null}
           </span>
         );
@@ -257,12 +261,12 @@ export default function DataErasure() {
     {
       id: "fingerprint",
       accessorFn: (j) => j.result?.fingerprint ?? "",
-      header: "Fingerprint",
+      header: t("colFingerprint"),
       cell: (c) => <span style={{ fontFamily: mono, fontSize: 12 }}>{c.row.original.result?.fingerprint?.slice(0, 8) ?? "—"}</span>,
     },
     {
       accessorKey: "created_by",
-      header: "By",
+      header: t("colBy"),
       cell: (c) => <span style={{ fontSize: 12, color: K.muted, overflowWrap: "anywhere" }}>{c.row.original.created_by ?? "—"}</span>,
     },
     {
@@ -271,24 +275,24 @@ export default function DataErasure() {
       enableSorting: false,
       cell: (c) => (
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }} onClick={(e) => e.stopPropagation()}>
-          <Button size="sm" variant="secondary" onClick={() => openFromHistory(c.row.original)}>Open</Button>
+          <Button size="sm" variant="secondary" onClick={() => openFromHistory(c.row.original)}>{t("open")}</Button>
           <a
             href={`/admin/jobs?job=${encodeURIComponent(c.row.original.id)}`}
             style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, color: K.accentDeep }}
           >
-            Job <ExternalLink size={11} />
+            {t("job")} <ExternalLink size={11} />
           </a>
         </div>
       ),
     },
     // openFromHistory only calls update (stable setState); TenantName follows the shared tenants query itself
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], []);
+  ], [t, w, formatDateTime]);
 
   if (settings.isLoading) {
     return (
       <div>
-        <PageHeader title="Data erasure" description="Traveller DSARs and offboarded tenants: DRY RUN, approve, apply, verify." />
+        <PageHeader title={t("title")} description={t("descShort")} />
         <TableSkeleton rows={4} cols={4} />
       </div>
     );
@@ -296,7 +300,7 @@ export default function DataErasure() {
   if (settings.error) {
     return (
       <div>
-        <PageHeader title="Data erasure" />
+        <PageHeader title={t("title")} />
         <ErrorState message={(settings.error as Error).message} onRetry={() => void settings.refetch()} />
       </div>
     );
@@ -311,37 +315,37 @@ export default function DataErasure() {
   return (
     <div data-testid="data-erasure-ready" style={{ minWidth: 0 }}>
       <PageHeader
-        title="Data erasure"
+        title={t("title")}
         description={
           <>
-            Traveller DSARs and offboarded tenants in CIS: DRY RUN, approval of the fingerprint, snapshot, apply, verify. Runbook:
+            {t("descLead")}{" "}
             AA-Ecosys <span style={{ fontFamily: mono }}>docs/legal/dsar-erasure-runbook.md</span>.
           </>
         }
         actions={
           <Button variant="ghost" size="sm" onClick={() => { void settings.refetch(); void refreshHistory(); }}>
-            <RefreshCw size={13} /> Refresh
+            <RefreshCw size={13} /> {t("refresh")}
           </Button>
         }
       />
 
-      <Section title="Settings on this environment" testId="erasure-settings">
+      <Section title={t("settingsTitle")} testId="erasure-settings">
         <Facts items={[
           {
-            label: "Apply",
+            label: t("factApply"),
             value: s?.apply_enabled
-              ? <Badge tone="danger">Enabled</Badge>
-              : <Badge tone="neutral">Off (DRY RUN only)</Badge>,
+              ? <Badge tone="danger">{t("applyEnabled")}</Badge>
+              : <Badge tone="neutral">{t("applyOff")}</Badge>,
           },
-          { label: "Tenant retention", value: `${s?.tenant_retention_days ?? "—"} day(s) after offboarding` },
-          { label: "DRY RUN valid for", value: `${s?.dry_run_max_age_hours ?? "—"} h` },
-          { label: "Registered tenant tables", value: s?.tenant_tables.length ?? "—" },
-          { label: "Traveller scans", value: s?.traveller_scans.length ?? "—" },
+          { label: t("factRetention"), value: t("retentionValue", String(s?.tenant_retention_days ?? "—")) },
+          { label: t("factValidFor"), value: t("hours", String(s?.dry_run_max_age_hours ?? "—")) },
+          { label: t("factTenantTables"), value: s?.tenant_tables.length ?? "—" },
+          { label: t("factTravellerScans"), value: s?.traveller_scans.length ?? "—" },
         ]} />
         {s?.apply_enabled && (
           <div style={{ marginTop: 12 }}>
             <Notice tone="warning">
-              Apply is ON here. Turn it back off (Terraform) as soon as the approved erasure is done.
+              {t("applyOnWarning")}
             </Notice>
           </div>
         )}
@@ -364,8 +368,7 @@ export default function DataErasure() {
         ) : dryJob && !isErasureJob ? (
           <Section title="DRY RUN" testId="erasure-not-erasure">
             <Notice tone="warning">
-              This job is not a data erasure (kind <span style={{ fontFamily: mono }}>{dryJob.kind}</span>). Open it from
-              Platform › Jobs instead.
+              {t("notErasureLead")} <span style={{ fontFamily: mono }}>{dryJob.kind}</span>{t("notErasureTail")}
             </Notice>
           </Section>
         ) : dryJob ? (
@@ -382,7 +385,7 @@ export default function DataErasure() {
           settings={s}
           now={now}
           history={history.data?.jobs ?? []}
-          subjectName={subjectLabel(dryJob, tenantById.get(jobTenant(dryJob) ?? ""))}
+          subjectName={subjectLabel(dryJob, tenantById.get(jobTenant(dryJob) ?? ""), w)}
           send={send}
           onStarted={startApply}
         />
@@ -390,22 +393,22 @@ export default function DataErasure() {
 
       {view.apply && (
         applied.error ? (
-          <Section title="Apply">
+          <Section title={t("sectionApply")}>
             <ErrorState message={(applied.error as Error).message} onRetry={() => void applied.refetch()} />
           </Section>
         ) : applyJob ? (
           <>
             <ErasurePlan job={applyJob} tenantName={tenantName(jobTenant(applyJob))} />
             {isTerminal(applyJob.status) && (
-              <Section title="Next" testId="erasure-next">
+              <Section title={t("sectionNext")} testId="erasure-next">
                 <p style={{ margin: "0 0 10px", fontSize: 13, color: K.body, lineHeight: 1.5 }}>
                   {applyJob.status === "succeeded"
-                    ? "Verify with a new DRY RUN (every delete, cascade, detach and merge row must be 0), then do the steps outside the database from the checklist, delete the snapshot and turn apply off."
-                    : "The apply failed and committed nothing. Its DRY RUN is used up: run a new DRY RUN and approve its fingerprint."}
+                    ? t("nextSucceeded")
+                    : t("nextFailed")}
                 </p>
                 {applyJob.status === "succeeded" && (
                   <Button variant="secondary" onClick={runVerification}>
-                    <RotateCcw size={13} /> Run verification DRY RUN
+                    <RotateCcw size={13} /> {t("runVerification")}
                   </Button>
                 )}
                 {verifyError && <div style={{ marginTop: 10 }}><Notice tone="warning">{verifyError}</Notice></div>}
@@ -413,11 +416,11 @@ export default function DataErasure() {
             )}
           </>
         ) : (
-          <Section title="Apply"><TableSkeleton rows={3} cols={3} /></Section>
+          <Section title={t("sectionApply")}><TableSkeleton rows={3} cols={3} /></Section>
         )
       )}
 
-      <Section title="Recent erasure jobs" testId="erasure-history">
+      <Section title={t("historyTitle")} testId="erasure-history">
         <DataTable
           tableId="data-erasure-history"
           data={history.data?.jobs ?? []}
@@ -428,8 +431,8 @@ export default function DataErasure() {
           onRetry={() => void history.refetch()}
           paginate={false}
           tableMinWidth={860}
-          emptyTitle="No erasure jobs yet"
-          emptyDescription="A DRY RUN started above shows up here."
+          emptyTitle={t("historyEmpty")}
+          emptyDescription={t("historyEmptyDesc")}
         />
       </Section>
     </div>

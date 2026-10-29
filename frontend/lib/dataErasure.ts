@@ -6,6 +6,9 @@
 //
 // Privacy rule: a traveller is only ever sent as the sha256 hex of the trimmed, lowercased address (runbook
 // docs/legal/dsar-erasure-runbook.md section 2 step 2). The address never leaves the browser and is never stored.
+//
+// AA-994: the sentences these helpers return are English by default; the page passes the UI language's words
+// (lib/dataErasure.messages.ts ERASURE_WORDS_MESSAGES[lang]) as the optional last argument.
 
 export const ERASURE_KIND = "data_erasure";
 export const ERASURE_API = "/api/admin/job-runner/erasure";
@@ -140,6 +143,45 @@ export interface TenantOption {
   cancelled_at: string | null;
 }
 
+/** The words the helpers below return (English); the Vietnamese twin is lib/dataErasure.messages.ts. */
+export const ERASURE_WORDS = {
+  pickTenant: "Pick a tenant or paste its id.",
+  tenantUuid: "A tenant id is a uuid (8-4-4-4-12 hex characters).",
+  tenantPlatform: "The AA internal tenant can never be erased.",
+  noRows: "no rows",
+  snapshotEmpty: "Type the id of the manual RDS snapshot you took for this erasure.",
+  snapshotShape: "An RDS snapshot id starts with a letter and has only letters, digits and single hyphens.",
+  runDryFirst: "Run a DRY RUN first.",
+  notErasure: "This job is not a data erasure.",
+  isApply: "This job is an apply, not a DRY RUN.",
+  notSucceeded: "The DRY RUN has not succeeded.",
+  noSubject: "The job names no subject (tenant or traveller).",
+  verifyRun: "This is a verification DRY RUN after an apply; it cannot be applied.",
+  redacted: "Your role sees only the counts of this job.",
+  noFingerprint: "The DRY RUN has no fingerprint.",
+  blocked: "The DRY RUN has blockers: resolve them and run a new DRY RUN.",
+  usedBy: (id: string) => `This DRY RUN was already used by apply job ${id}; run a new one.`,
+  queuedApply: (id: string) => `Apply job ${id} already uses this DRY RUN.`,
+  hashGone: "The job no longer holds the traveller hash; run a new DRY RUN.",
+  tooOld: (hours: number) => `The DRY RUN is older than ${hours} h; run a new one and approve it.`,
+  applyOff: "Apply is off on this environment (ERASURE_APPLY_ENABLED is not true on the API and worker).",
+  tenantNotOffboarded: (state: string | null) => `The tenant is ${state ?? "missing"}, not offboarded.`,
+  retention: (days: number, window: number) =>
+    `Offboarded ${days} day(s) ago; the retention window is ${window} days, so the job will refuse.`,
+  unknownId: "unknown id",
+  tenantNamed: (name: string, slug: string, id: string) => `tenant ${name} (${slug}) · ${id}`,
+  tenantId: (id: string) => `tenant ${id}`,
+  travellerHash: (prefix: string) => `traveller hash ${prefix}…`,
+  travellerNoHash: "traveller (hash no longer held)",
+  typeFingerprint: (n: number) => `Type the first ${n} characters of the fingerprint.`,
+  approverEmpty: "Type who approved this fingerprint.",
+  approverLong: "The approver name is at most 120 characters.",
+  tickConfirm: "Tick the confirmation.",
+  serverRefused: (msg: string) => `The server refused the form: ${msg}`,
+  requestFailed: (status: number) => `Request failed (${status})`,
+};
+export type ErasureWords = typeof ERASURE_WORDS;
+
 const HEX64 = /^[0-9a-f]{64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PLATFORM_TENANT_ID = "00000000-0000-0000-0000-000000000001";
@@ -151,11 +193,11 @@ export function isHex64(v: unknown): v is string {
 }
 
 /** A tenant id the API accepts (uuid, never the AA internal tenant). */
-export function tenantIdProblem(raw: string): string | null {
+export function tenantIdProblem(raw: string, w: ErasureWords = ERASURE_WORDS): string | null {
   const v = raw.trim().toLowerCase();
-  if (!v) return "Pick a tenant or paste its id.";
-  if (!UUID.test(v)) return "A tenant id is a uuid (8-4-4-4-12 hex characters).";
-  if (v === PLATFORM_TENANT_ID) return "The AA internal tenant can never be erased.";
+  if (!v) return w.pickTenant;
+  if (!UUID.test(v)) return w.tenantUuid;
+  if (v === PLATFORM_TENANT_ID) return w.tenantPlatform;
   return null;
 }
 
@@ -216,7 +258,8 @@ export function orderedTotals(totals: Record<string, number> | undefined): [stri
   });
 }
 
-export const ACTION_HELP: Record<string, string> = {
+/** What each plan action means (English; the Vietnamese twin is ACTION_HELP_MESSAGES in dataErasure.messages.ts). */
+export const ACTION_HELP_EN = {
   delete: "rows deleted",
   cascade: "child rows deleted with their parent (found through foreign keys)",
   null_first: "a foreign key nulled first to break a cycle",
@@ -226,6 +269,7 @@ export const ACTION_HELP: Record<string, string> = {
   keep: "kept (append-only audit trail)",
   manual: "a person handles it (not changed by the job)",
 };
+export const ACTION_HELP: Record<string, string> = ACTION_HELP_EN;
 
 export type ActionTone = "danger" | "warning" | "info" | "purple" | "neutral" | "accent";
 
@@ -250,9 +294,9 @@ export function actionTone(action: string): ActionTone {
 }
 
 /** "delete 12 · cascade 40 · detach 3" — the sentence the operator ticks to confirm. */
-export function totalsSentence(totals: Record<string, number> | undefined): string {
+export function totalsSentence(totals: Record<string, number> | undefined, w: ErasureWords = ERASURE_WORDS): string {
   const parts = orderedTotals(totals).filter(([, n]) => n > 0).map(([k, n]) => `${k} ${n.toLocaleString("en-US")}`);
-  return parts.length ? parts.join(" · ") : "no rows";
+  return parts.length ? parts.join(" · ") : w.noRows;
 }
 
 export function rowsTouched(totals: Record<string, number> | undefined): number {
@@ -265,11 +309,11 @@ export function hoursSince(iso: string | null | undefined, now: number): number 
   return Number.isNaN(t) ? null : (now - t) / 3_600_000;
 }
 
-export function snapshotIdProblem(raw: string): string | null {
+export function snapshotIdProblem(raw: string, w: ErasureWords = ERASURE_WORDS): string | null {
   const v = raw.trim();
-  if (!v) return "Type the id of the manual RDS snapshot you took for this erasure.";
+  if (!v) return w.snapshotEmpty;
   if (v.length > 255 || !SNAPSHOT_ID.test(v)) {
-    return "An RDS snapshot id starts with a letter and has only letters, digits and single hyphens.";
+    return w.snapshotShape;
   }
   return null;
 }
@@ -289,42 +333,41 @@ export function applyGate(
   settings: Pick<ErasureSettings, "apply_enabled" | "dry_run_max_age_hours" | "tenant_retention_days"> | null | undefined,
   now: number,
   history: readonly ErasureJob[] = [],
+  w: ErasureWords = ERASURE_WORDS,
 ): ApplyGate {
   const reasons: string[] = [];
   const warnings: string[] = [];
-  if (!job) return { open: false, reasons: ["Run a DRY RUN first."], warnings };
+  if (!job) return { open: false, reasons: [w.runDryFirst], warnings };
   const res = job.result;
   // Fail closed: every check below must hold, including when the job has no result or is of another kind.
-  if (job.kind !== ERASURE_KIND) reasons.push("This job is not a data erasure.");
-  if (jobMode(job) !== "dry_run") reasons.push("This job is an apply, not a DRY RUN.");
-  if (job.status !== "succeeded") reasons.push("The DRY RUN has not succeeded.");
-  if (jobSubject(job) === null) reasons.push("The job names no subject (tenant or traveller).");
-  if (isVerifyRun(job)) reasons.push("This is a verification DRY RUN after an apply; it cannot be applied.");
-  if (res?.redacted) reasons.push("Your role sees only the counts of this job.");
-  if (!isHex64(res?.fingerprint)) reasons.push("The DRY RUN has no fingerprint.");
-  if (res?.blocked) reasons.push("The DRY RUN has blockers: resolve them and run a new DRY RUN.");
-  if (res?.used_by_apply) reasons.push(`This DRY RUN was already used by apply job ${res.used_by_apply}; run a new one.`);
+  if (job.kind !== ERASURE_KIND) reasons.push(w.notErasure);
+  if (jobMode(job) !== "dry_run") reasons.push(w.isApply);
+  if (job.status !== "succeeded") reasons.push(w.notSucceeded);
+  if (jobSubject(job) === null) reasons.push(w.noSubject);
+  if (isVerifyRun(job)) reasons.push(w.verifyRun);
+  if (res?.redacted) reasons.push(w.redacted);
+  if (!isHex64(res?.fingerprint)) reasons.push(w.noFingerprint);
+  if (res?.blocked) reasons.push(w.blocked);
+  if (res?.used_by_apply) reasons.push(w.usedBy(res.used_by_apply));
   // used_by_apply is written only when the apply job starts: a queued apply is seen through the history.
   const user = applyUsing(job.id, history);
-  if (user && user.id !== res?.used_by_apply) reasons.push(`Apply job ${user.id} already uses this DRY RUN.`);
+  if (user && user.id !== res?.used_by_apply) reasons.push(w.queuedApply(user.id));
   if (jobSubject(job) === "traveller" && !jobHash(job)) {
-    reasons.push("The job no longer holds the traveller hash; run a new DRY RUN.");
+    reasons.push(w.hashGone);
   }
   const age = hoursSince(job.finished_at, now);
   const maxAge = settings?.dry_run_max_age_hours ?? 24;
-  if (age !== null && age > maxAge) reasons.push(`The DRY RUN is older than ${maxAge} h; run a new one and approve it.`);
+  if (age !== null && age > maxAge) reasons.push(w.tooOld(maxAge));
   if (!settings?.apply_enabled) {
-    reasons.push("Apply is off on this environment (ERASURE_APPLY_ENABLED is not true on the API and worker).");
+    reasons.push(w.applyOff);
   }
   if (jobSubject(job) === "tenant" && res) {
     if (res.tenant_state !== "offboarded") {
-      reasons.push(`The tenant is ${res.tenant_state ?? "missing"}, not offboarded.`);
+      reasons.push(w.tenantNotOffboarded(res.tenant_state ?? null));
     } else if (settings) {
       const days = hoursSince(res.offboarded_at, now);
       if (days !== null && days / 24 < settings.tenant_retention_days) {
-        warnings.push(
-          `Offboarded ${Math.floor(days / 24)} day(s) ago; the retention window is ${settings.tenant_retention_days} days, so the job will refuse.`,
-        );
+        warnings.push(w.retention(Math.floor(days / 24), settings.tenant_retention_days));
       }
     }
   }
@@ -342,13 +385,15 @@ export function applyUsing(dryRunJobId: string, history: readonly ErasureJob[]):
 }
 
 /** How the apply panel names the subject: "tenant Acme (acme) · <uuid>" or "traveller hash abcd1234…". */
-export function subjectLabel(job: ErasureJob, tenant?: Pick<TenantOption, "name" | "slug"> | null): string {
+export function subjectLabel(
+  job: ErasureJob, tenant?: Pick<TenantOption, "name" | "slug"> | null, w: ErasureWords = ERASURE_WORDS,
+): string {
   if (jobSubject(job) === "tenant") {
-    const id = jobTenant(job) ?? "unknown id";
-    return tenant ? `tenant ${tenant.name} (${tenant.slug}) · ${id}` : `tenant ${id}`;
+    const id = jobTenant(job) ?? w.unknownId;
+    return tenant ? w.tenantNamed(tenant.name, tenant.slug, id) : w.tenantId(id);
   }
   const h = jobHash(job);
-  return h ? `traveller hash ${h.slice(0, 8)}…` : "traveller (hash no longer held)";
+  return h ? w.travellerHash(h.slice(0, 8)) : w.travellerNoHash;
 }
 
 export interface ApplyForm {
@@ -359,17 +404,17 @@ export interface ApplyForm {
 }
 
 /** What still stops the "Apply erasure" button, for a DRY RUN whose gate is open. */
-export function applyFormProblems(fingerprint: string, form: ApplyForm): string[] {
+export function applyFormProblems(fingerprint: string, form: ApplyForm, w: ErasureWords = ERASURE_WORDS): string[] {
   const out: string[] = [];
   const want = fingerprint.slice(0, FINGERPRINT_CONFIRM_CHARS).toLowerCase();
   if (form.fingerprintPrefix.trim().toLowerCase() !== want) {
-    out.push(`Type the first ${FINGERPRINT_CONFIRM_CHARS} characters of the fingerprint.`);
+    out.push(w.typeFingerprint(FINGERPRINT_CONFIRM_CHARS));
   }
-  const snap = snapshotIdProblem(form.snapshotId);
+  const snap = snapshotIdProblem(form.snapshotId, w);
   if (snap) out.push(snap);
-  if (!form.approvedBy.trim()) out.push("Type who approved this fingerprint.");
-  else if (form.approvedBy.trim().length > 120) out.push("The approver name is at most 120 characters.");
-  if (!form.confirmed) out.push("Tick the confirmation.");
+  if (!form.approvedBy.trim()) out.push(w.approverEmpty);
+  else if (form.approvedBy.trim().length > 120) out.push(w.approverLong);
+  if (!form.confirmed) out.push(w.tickConfirm);
   return out;
 }
 
@@ -396,11 +441,11 @@ export function suggestedSnapshotId(subject: Subject, now: number): string {
 }
 
 /** A readable message from a failed BFF / API call (FastAPI `detail` string or validation list). */
-export function detailMessage(status: number, detail: unknown): string {
+export function detailMessage(status: number, detail: unknown, w: ErasureWords = ERASURE_WORDS): string {
   if (typeof detail === "string" && detail) return detail;
   if (Array.isArray(detail)) {
     const first = detail[0] as { msg?: string; loc?: unknown[] } | undefined;
-    if (first?.msg) return `The server refused the form: ${first.msg}`;
+    if (first?.msg) return w.serverRefused(first.msg);
   }
-  return `Request failed (${status})`;
+  return w.requestFailed(status);
 }

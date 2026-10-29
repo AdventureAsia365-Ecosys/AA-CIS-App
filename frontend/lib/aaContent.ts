@@ -11,6 +11,9 @@
 //
 // Type-level TS only (no enums, no parameter properties), so lib/aaContent.test.mjs runs it with node --test
 // --experimental-strip-types.
+//
+// AA-994: labels and sentences here are English; the Vietnamese twins are in lib/aaContent.messages.ts and the page
+// passes them (`AA_WORDS_MESSAGES[lang]`, the UI language for country names) as the optional last argument.
 
 export const AA_CONTENT_API = "/api/admin/aa-content";
 
@@ -48,25 +51,46 @@ export const AA_COUNTRIES: Record<string, string> = {
   KR: "South Korea", LK: "Sri Lanka", TW: "Taiwan", TH: "Thailand", UZ: "Uzbekistan", VN: "Vietnam",
 };
 
-/** A country code's display name: the quick-pick name, else the browser's English region name, else the code. */
-export function countryLabel(code: string): string {
-  if (AA_COUNTRIES[code]) return AA_COUNTRIES[code];
+/** A country code's display name: the quick-pick name, else the browser's English region name, else the code.
+ *  Another UI language ("vi") names every code with the browser's region names in that language. */
+export function countryLabel(code: string, lang: string = "en"): string {
+  if (lang === "en" && AA_COUNTRIES[code]) return AA_COUNTRIES[code];
   try {
-    return new Intl.DisplayNames(["en"], { type: "region" }).of(code) ?? code;
+    return new Intl.DisplayNames([lang], { type: "region" }).of(code) ?? AA_COUNTRIES[code] ?? code;
   } catch {
-    return code;
+    return AA_COUNTRIES[code] ?? code;
   }
 }
 
 /** Country codes sorted by country name, for the pickers: the quick picks plus any other ISO code the item already
  *  holds (the API accepts every ISO 3166-1 code, AA-990), so staff can see and remove it. */
-export function countryOptions(selected: readonly string[] = []): { code: string; name: string }[] {
+export function countryOptions(selected: readonly string[] = [], lang: string = "en"): { code: string; name: string }[] {
   const extra = selected.filter((code, i) => !AA_COUNTRIES[code] && selected.indexOf(code) === i);
   return [
-    ...Object.entries(AA_COUNTRIES).map(([code, name]) => ({ code, name })),
-    ...extra.map((code) => ({ code, name: countryLabel(code) })),
-  ].sort((a, b) => a.name.localeCompare(b.name));
+    ...Object.keys(AA_COUNTRIES).map((code) => ({ code, name: countryLabel(code, lang) })),
+    ...extra.map((code) => ({ code, name: countryLabel(code, lang) })),
+  ].sort((a, b) => a.name.localeCompare(b.name, lang === "en" ? undefined : lang));
 }
+
+/** The words the helpers below return (English); the Vietnamese twin is lib/aaContent.messages.ts. */
+export const AA_WORDS = {
+  retired: "Retired",
+  publishedV: (v: string) => `Published v${v}`,
+  draft: "Draft",
+  draftWaiting: (v: number) => `Draft v${v} waiting`,
+  titleRequired: "A title is required.",
+  titleLong: (max: number) => `The title has more than ${max} characters.`,
+  textLong: (max: number) => `The text has more than ${max} characters.`,
+  tourIdLong: (max: number) => `A tour id has more than ${max} characters.`,
+  network: "Network error: nothing was sent. Try again.",
+  stale: "Someone else saved this item since you opened it. Reload to see their changes, then edit again.",
+  roleAdminOnly: "Your role cannot make this change (publish, retire and restore are admin only).",
+  roleCannot: "Your role cannot make this change.",
+  unavailable: "AA content storage is not available yet. Try again in a moment.",
+  refusedShape: "The request was refused: a field is missing or has the wrong shape.",
+  requestFailed: (status: number) => `Request failed (${status}).`,
+};
+export type AaWords = typeof AA_WORDS;
 
 export const TITLE_MAX = 300;
 export const BODY_MAX = 20000;
@@ -175,16 +199,20 @@ export function listUrl(filters: AaListFilters, pageIndex: number, pageSize: num
 export type BadgeTone = "neutral" | "accent" | "success" | "warning" | "danger" | "info" | "purple";
 
 /** The status badge of a row or an item: Draft / Published vN / Retired. */
-export function stateBadge(row: Pick<AaListRow, "state" | "published_version">): { label: string; tone: BadgeTone } {
-  if (row.state === "retired") return { label: "Retired", tone: "neutral" };
-  if (row.state === "published") return { label: `Published v${row.published_version ?? "?"}`, tone: "success" };
-  return { label: "Draft", tone: "warning" };
+export function stateBadge(
+  row: Pick<AaListRow, "state" | "published_version">, w: AaWords = AA_WORDS,
+): { label: string; tone: BadgeTone } {
+  if (row.state === "retired") return { label: w.retired, tone: "neutral" };
+  if (row.state === "published") return { label: w.publishedV(String(row.published_version ?? "?")), tone: "success" };
+  return { label: w.draft, tone: "warning" };
 }
 
 /** "Draft v3 waiting" next to a published item that has a newer draft; null otherwise. */
-export function pendingDraftLabel(row: Pick<AaListRow, "state" | "draft_version" | "published_version">): string | null {
+export function pendingDraftLabel(
+  row: Pick<AaListRow, "state" | "draft_version" | "published_version">, w: AaWords = AA_WORDS,
+): string | null {
   if (row.draft_version == null || row.published_version == null) return null;
-  return `Draft v${row.draft_version} waiting`;
+  return w.draftWaiting(row.draft_version);
 }
 
 // ── editor baseline ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -249,14 +277,16 @@ export function isDirty(form: AaForm, base: AaForm): boolean {
 }
 
 /** Field problems the editor can show before a save (validate.py title / body / tours). Empty = nothing to say. */
-export function formProblems(form: AaForm): Partial<Record<"title" | "body_markdown" | "applies_to.tours", string>> {
+export function formProblems(
+  form: AaForm, w: AaWords = AA_WORDS,
+): Partial<Record<"title" | "body_markdown" | "applies_to.tours", string>> {
   const out: Partial<Record<"title" | "body_markdown" | "applies_to.tours", string>> = {};
   const title = form.title.trim();
-  if (!title) out.title = "A title is required.";
-  else if (title.length > TITLE_MAX) out.title = `The title has more than ${TITLE_MAX} characters.`;
-  if (form.body_markdown.length > BODY_MAX) out.body_markdown = `The text has more than ${BODY_MAX} characters.`;
+  if (!title) out.title = w.titleRequired;
+  else if (title.length > TITLE_MAX) out.title = w.titleLong(TITLE_MAX);
+  if (form.body_markdown.length > BODY_MAX) out.body_markdown = w.textLong(BODY_MAX);
   const long = parseTours(form.tours_text).find((t) => t.source_id.length > SOURCE_ID_MAX);
-  if (long) out["applies_to.tours"] = `A tour id has more than ${SOURCE_ID_MAX} characters.`;
+  if (long) out["applies_to.tours"] = w.tourIdLong(SOURCE_ID_MAX);
   return out;
 }
 
@@ -326,21 +356,23 @@ export type AaResult<T> =
   | { ok: false; status: number; message: string; code: string | null; field: string | null };
 
 /** A readable message for a refused call. The backend's body is {detail, code[, field]} (admin_aa_content.py). */
-export function aaErrorText(status: number, detail: unknown, code: unknown): string {
-  if (status === 0) return "Network error: nothing was sent. Try again.";
-  if (code === "stale") return "Someone else saved this item since you opened it. Reload to see their changes, then edit again.";
+export function aaErrorText(status: number, detail: unknown, code: unknown, w: AaWords = AA_WORDS): string {
+  if (status === 0) return w.network;
+  if (code === "stale") return w.stale;
   if (status === 403) {
-    if (typeof detail === "string" && detail.startsWith("Role '")) return "Your role cannot make this change (publish, retire and restore are admin only).";
-    return typeof detail === "string" && detail ? detail : "Your role cannot make this change.";
+    if (typeof detail === "string" && detail.startsWith("Role '")) return w.roleAdminOnly;
+    return typeof detail === "string" && detail ? detail : w.roleCannot;
   }
-  if (status === 503) return "AA content storage is not available yet. Try again in a moment.";
+  if (status === 503) return w.unavailable;
   if (typeof detail === "string" && detail) return detail;
-  if (Array.isArray(detail)) return "The request was refused: a field is missing or has the wrong shape.";
-  return `Request failed (${status}).`;
+  if (Array.isArray(detail)) return w.refusedShape;
+  return w.requestFailed(status);
 }
 
 /** Call the admin API through the BFF and never throw: the editor shows the refusal next to the right field. */
-export async function aaCall<T>(method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: unknown): Promise<AaResult<T>> {
+export async function aaCall<T>(
+  method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: unknown, w: AaWords = AA_WORDS,
+): Promise<AaResult<T>> {
   let res: Response;
   try {
     res = await fetch(`${AA_CONTENT_API}${path}`, {
@@ -349,7 +381,7 @@ export async function aaCall<T>(method: "GET" | "POST" | "PUT" | "DELETE", path:
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch {
-    return { ok: false, status: 0, message: aaErrorText(0, null, null), code: null, field: null };
+    return { ok: false, status: 0, message: aaErrorText(0, null, null, w), code: null, field: null };
   }
   let data: Record<string, unknown> = {};
   try {
@@ -361,7 +393,7 @@ export async function aaCall<T>(method: "GET" | "POST" | "PUT" | "DELETE", path:
   return {
     ok: false,
     status: res.status,
-    message: aaErrorText(res.status, data.detail, data.code),
+    message: aaErrorText(res.status, data.detail, data.code, w),
     code: typeof data.code === "string" ? data.code : null,
     field: typeof data.field === "string" ? data.field : null,
   };

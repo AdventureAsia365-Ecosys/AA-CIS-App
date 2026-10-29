@@ -7,18 +7,18 @@
 // /admin/tenants?include_inactive=true), or a pasted tenant id ("Another tenant id…").
 
 import { Play } from "lucide-react";
-import { useCallback, useState } from "react";
-import { Button, K, Tabs, formatDateTime, mono } from "../../_kit";
+import { useCallback, useMemo, useState } from "react";
+import { Button, K, Tabs, mono, useFormat, useT } from "../../_kit";
 import {
   emailLooksValid, emailSha256, hoursSince, tenantIdProblem, type Subject, type TenantOption,
 } from "@/lib/dataErasure";
 import { tenantOptionText, type TenantRef } from "@/lib/tenants";
 import { TenantSelect } from "../_components/TenantSelect";
 import type { SendResult } from "./ApplyPanel";
-import { Notice, Section, hintStyle, inputStyle, labelStyle } from "./erasureUi";
+import { Notice, Section, hintStyle, inputStyle, labelStyle, useErasureWords } from "./erasureUi";
+import { ER } from "./messages";
 
 const OTHER = "__other__";
-const OTHER_OPTION = [{ value: OTHER, label: "Another tenant id…" }] as const;
 const isOffboarded = (t: TenantRef) => t.status === "offboarded";
 
 export default function SubjectForm({ tenants, tenantsError, retentionDays, now, send, onStarted }: {
@@ -30,6 +30,10 @@ export default function SubjectForm({ tenants, tenantsError, retentionDays, now,
   /** jobId of the new DRY RUN; hash only for a traveller (kept in memory by the page for the verification run). */
   onStarted: (jobId: string, travellerHash: string | null) => void;
 }) {
+  const t = useT(ER);
+  const w = useErasureWords();
+  const { formatDateTime } = useFormat();
+  const otherOption = useMemo(() => [{ value: OTHER, label: t("anotherTenant") }] as const, [t]);
   const [subject, setSubject] = useState<Subject>("tenant");
   const [picked, setPicked] = useState<string>("");
   const [pasted, setPasted] = useState("");
@@ -40,11 +44,11 @@ export default function SubjectForm({ tenants, tenantsError, retentionDays, now,
 
   const offboarded = (tenants ?? []).filter((t) => t.status === "offboarded");
   const tenantId = picked === OTHER || offboarded.length === 0 ? pasted.trim().toLowerCase() : picked;
-  const tenantProblem = subject === "tenant" ? tenantIdProblem(tenantId) : null;
+  const tenantProblem = subject === "tenant" ? tenantIdProblem(tenantId, w) : null;
   const pickedRow = offboarded.find((t) => t.tenant_id === tenantId);
   const days = pickedRow ? hoursSince(pickedRow.cancelled_at, now) : null;
   const optionText = useCallback(
-    (t: TenantRef) => `${tenantOptionText(t)}${t.cancelled_at ? ` ${formatDateTime(t.cancelled_at)}` : ""}`, [],
+    (r: TenantRef) => `${tenantOptionText(r)}${r.cancelled_at ? ` ${formatDateTime(r.cancelled_at)}` : ""}`, [formatDateTime],
   );
   const emailOk = emailLooksValid(email);
   const canRun = !busy && (subject === "tenant" ? !tenantProblem : emailOk);
@@ -62,7 +66,7 @@ export default function SubjectForm({ tenants, tenantsError, retentionDays, now,
         hash = await emailSha256(email);
       } catch {
         setBusy(false);
-        setError("This browser cannot compute sha256 here (Web Crypto needs https).");
+        setError(t("noWebCrypto"));
         return;
       }
       setEmail(""); // the address leaves the page state as soon as it is hashed
@@ -79,10 +83,10 @@ export default function SubjectForm({ tenants, tenantsError, retentionDays, now,
   };
 
   return (
-    <Section title="Subject and DRY RUN" testId="erasure-subject">
+    <Section title={t("subjectTitle")} testId="erasure-subject">
       <div style={{ marginBottom: 12 }}>
         <Tabs
-          tabs={[{ key: "tenant", label: "Tenant (offboarded)" }, { key: "traveller", label: "Traveller (DSAR)" }]}
+          tabs={[{ key: "tenant", label: t("tabTenant") }, { key: "traveller", label: t("tabTraveller") }]}
           active={subject}
           onChange={(k) => { setSubject(k as Subject); setError(null); }}
         />
@@ -90,12 +94,12 @@ export default function SubjectForm({ tenants, tenantsError, retentionDays, now,
       {subject === "tenant" ? (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
           {offboarded.length > 0 && (
-            <TenantSelect label="Offboarded tenant" includeInactive offer={isOffboarded} optionText={optionText}
-              extraOptions={OTHER_OPTION} value={picked} onChange={setPicked} testId="erasure-tenant-select" />
+            <TenantSelect label={t("offboardedTenant")} includeInactive offer={isOffboarded} optionText={optionText}
+              extraOptions={otherOption} value={picked} onChange={setPicked} testId="erasure-tenant-select" />
           )}
           {(picked === OTHER || offboarded.length === 0) && (
             <label style={labelStyle}>
-              Tenant id
+              {t("tenantId")}
               <input
                 data-testid="erasure-tenant-id"
                 value={pasted}
@@ -106,22 +110,22 @@ export default function SubjectForm({ tenants, tenantsError, retentionDays, now,
                 style={{ ...inputStyle, fontFamily: mono }}
               />
               <span style={hintStyle}>
-                {offboarded.length === 0 && !tenantsError ? "No tenant is offboarded right now. " : ""}
-                A DRY RUN of a tenant that is not offboarded still runs; its apply is refused.
+                {offboarded.length === 0 && !tenantsError ? t("noneOffboarded") : ""}
+                {t("notOffboardedHint")}
               </span>
             </label>
           )}
           {pickedRow && days !== null && retentionDays !== undefined && (
             <div style={{ fontSize: 12.5, color: K.body, alignSelf: "end" }}>
-              Offboarded {Math.floor(days / 24)} day(s) ago; retention window {retentionDays} day(s)
-              {days / 24 < retentionDays ? " — the apply waits until it has passed." : " — passed."}
+              {t("offboardedAgo", Math.floor(days / 24), retentionDays)}
+              {days / 24 < retentionDays ? t("retentionWaits") : t("retentionPassed")}
             </div>
           )}
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <label style={{ ...labelStyle, maxWidth: 420 }}>
-            Traveller e-mail address
+            {t("travellerEmail")}
             <input
               data-testid="erasure-email"
               type="email"
@@ -134,26 +138,25 @@ export default function SubjectForm({ tenants, tenantsError, retentionDays, now,
               style={inputStyle}
             />
             <span style={hintStyle}>
-              Hashed in this browser (sha256 of the trimmed, lowercased address) and cleared; only the hash is sent and
-              kept with the job. The address is never stored.
+              {t("emailHint")}
             </span>
           </label>
           {lastHash && (
             <div style={{ fontSize: 12.5, color: K.muted }}>
-              Last hash sent: <span style={{ fontFamily: mono }}>{lastHash.slice(0, 12)}…</span>
+              {t("lastHash")} <span style={{ fontFamily: mono }}>{lastHash.slice(0, 12)}…</span>
             </div>
           )}
         </div>
       )}
       {tenantsError && subject === "tenant" && (
-        <div style={{ marginTop: 10 }}><Notice tone="warning">The tenant list did not load ({tenantsError}); paste the tenant id.</Notice></div>
+        <div style={{ marginTop: 10 }}><Notice tone="warning">{t("tenantsNotLoaded", tenantsError)}</Notice></div>
       )}
       {error && <div style={{ marginTop: 12 }}><Notice tone="danger" testId="erasure-run-error">{error}</Notice></div>}
       <div style={{ marginTop: 14, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <Button variant="primary" onClick={run} disabled={!canRun}>
-          <Play size={13} /> {busy ? "Starting…" : "Run DRY RUN"}
+          <Play size={13} /> {busy ? t("starting") : t("runDry")}
         </Button>
-        <span style={{ fontSize: 12.5, color: K.muted }}>Read only: counts rows, changes nothing.</span>
+        <span style={{ fontSize: 12.5, color: K.muted }}>{t("readOnly")}</span>
       </div>
     </Section>
   );

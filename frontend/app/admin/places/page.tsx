@@ -14,11 +14,12 @@
 //     (MergesTab.tsx).
 // Geocoded points come from Geoapify over OpenStreetMap data: the attribution footer is required (ADR 0007).
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { RefreshCw, MapPin, AlertTriangle, CheckCircle2, Route } from "lucide-react";
 import { A, mono, Card, SLabel, Badge, Btn, LoadingScreen, StatCard, TabBar } from "../_components/adminUi";
-import { AdminMain, DataTable, PageHeader, formatDateTime } from "../../_kit";
+import { AdminMain, DataTable, PageHeader, useFormat, useT } from "../../_kit";
+import { PL } from "./messages";
 import LinesTab from "./LinesTab";
 import MergesTab from "./MergesTab";
 
@@ -50,11 +51,12 @@ type FixResult = {
 
 const PAGE_SIZE = 50;
 const linkBtn = { border: 0, background: "none", color: A.accentDeep, cursor: "pointer", padding: 0, fontSize: 12 };
-const TABS = [{ key: "coverage", label: "Coverage" }, { key: "validity", label: "Content validity" },
-              { key: "lines", label: "Lines" },
-              { key: "merges", label: "Merges" }];
-const CHECK_LABEL: Record<string, string> = {
-  duration: "Duration mismatch", same_place: "Same place twice", not_a_pin: "Not a pin", day_text: "Day text",
+// Tab labels and check names are message keys (messages.ts).
+const TABS = [{ key: "coverage", label: "tabCoverage" }, { key: "validity", label: "tabValidity" },
+              { key: "lines", label: "tabLines" },
+              { key: "merges", label: "tabMerges" }] as const;
+const CHECK_LABEL: Record<string, "checkDuration" | "checkSamePlace" | "checkNotAPin" | "checkDayText"> = {
+  duration: "checkDuration", same_place: "checkSamePlace", not_a_pin: "checkNotAPin", day_text: "checkDayText",
 };
 // the fix each reason can take (POST /admin/places/validity/fix `check`)
 const FIX_OF: Record<string, string> = {
@@ -90,6 +92,12 @@ function AttributionFooter({ a }: { a: Attribution }) {
 }
 
 export default function PlacesPage() {
+  const t = useT(PL);
+  const { formatDateTime } = useFormat();
+  const checkLabel = (c: string) => (CHECK_LABEL[c] ? t(CHECK_LABEL[c]) : c);
+  // The loaders read the translator through a ref, so a language switch does not refetch.
+  const tRef = useRef(t);
+  useEffect(() => { tRef.current = t; }, [t]);
   const [tab, setTab] = useState("coverage");
   const [error, setError] = useState<string | null>(null);
   const [coverage, setCoverage] = useState<{ countries: CoverageRow[]; totals: CoverageTotals } | null>(null);
@@ -104,7 +112,7 @@ export default function PlacesPage() {
 
   const loadCoverage = useCallback(async () => {
     const r = await fetch("/api/admin/places/coverage");
-    if (!r.ok) { setError(`Coverage failed (${r.status})`); return; }
+    if (!r.ok) { setError(tRef.current("coverageFailed", r.status)); return; }
     setCoverage(await r.json());
   }, []);
 
@@ -114,14 +122,13 @@ export default function PlacesPage() {
     if (check) qs.set("check", check);
     if (reason) qs.set("reason", reason);
     const r = await fetch(`/api/admin/places/validity?${qs}`);
-    if (!r.ok) { setError(`Validity report failed (${r.status})`); return; }
+    if (!r.ok) { setError(tRef.current("validityFailed", r.status)); return; }
     setValidity(await r.json());
   }, [country, check, reason, page, pageSize]);
 
-  /* eslint-disable react-hooks/set-state-in-effect -- fetch on mount / tab / filter change, same pattern as every admin page */
+  // Fetch on mount / tab / filter change (the loaders set state only after their fetch resolves).
   useEffect(() => { loadCoverage(); }, [loadCoverage]);
   useEffect(() => { if (tab === "validity") loadValidity(); }, [tab, loadValidity]);
-  /* eslint-enable react-hooks/set-state-in-effect */
 
   async function runFix(body: Record<string, unknown>) {
     setBusy(JSON.stringify(body));
@@ -130,50 +137,50 @@ export default function PlacesPage() {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
       });
       const out = await r.json().catch(() => ({}));
-      if (!r.ok) { setError(`Fix failed: ${JSON.stringify(out.detail ?? r.status)}`); return; }
+      if (!r.ok) { setError(t("fixFailed", JSON.stringify(out.detail ?? r.status))); return; }
       setFix({ body, result: out });
       if (body.dry_run === false) await Promise.all([loadValidity(), loadCoverage()]);
     } finally { setBusy(null); }
   }
 
   const coverageColumns = useMemo<ColumnDef<CoverageRow, unknown>[]>(() => [
-    { accessorKey: "country", header: "Country" },
-    { accessorKey: "live", header: "Live", meta: { align: "right" } },
-    { accessorKey: "built", header: "Built", cell: ({ row }) => <Bar value={row.original.built} total={row.original.live} color={A.green} /> },
-    { accessorKey: "in_graph", header: "In graph", cell: ({ row }) => <Bar value={row.original.in_graph} total={row.original.live} /> },
-    { accessorKey: "stop_every_day", header: "Stop every day",
+    { accessorKey: "country", header: t("country") },
+    { accessorKey: "live", header: t("live"), meta: { align: "right" } },
+    { accessorKey: "built", header: t("built"), cell: ({ row }) => <Bar value={row.original.built} total={row.original.live} color={A.green} /> },
+    { accessorKey: "in_graph", header: t("inGraph"), cell: ({ row }) => <Bar value={row.original.in_graph} total={row.original.live} /> },
+    { accessorKey: "stop_every_day", header: t("stopEveryDay"),
       cell: ({ row }) => <Bar value={row.original.stop_every_day} total={row.original.live} color={A.gold} /> },
-    { accessorKey: "build_cost_usd", header: "Cost", meta: { align: "right" },
+    { accessorKey: "build_cost_usd", header: t("cost"), meta: { align: "right" },
       cell: ({ row }) => <span style={{ fontFamily: mono }}>${row.original.build_cost_usd.toFixed(2)}</span> },
-  ], []);
+  ], [t]);
 
   const itemColumns = useMemo<ColumnDef<Item, unknown>[]>(() => [
-    { id: "tour", header: "Tour", accessorFn: it => it.title ?? it.tour_id,
+    { id: "tour", header: t("tour"), accessorFn: it => it.title ?? it.tour_id,
       cell: ({ row }) => <>{row.original.title ?? row.original.tour_id}
         <div style={{ fontSize: 11, color: A.muted, fontFamily: mono }}>{row.original.source_id.slice(0, 8)}</div></> },
-    { accessorKey: "country", header: "Country", cell: ({ row }) => row.original.country ?? "—" },
-    { accessorKey: "check", header: "Check", cell: ({ row }) => CHECK_LABEL[row.original.check] ?? row.original.check },
-    { accessorKey: "reason", header: "Reason",
+    { accessorKey: "country", header: t("country"), cell: ({ row }) => row.original.country ?? "—" },
+    { accessorKey: "check", header: t("check"), cell: ({ row }) => checkLabel(row.original.check) },
+    { accessorKey: "reason", header: t("reason"),
       cell: ({ row }) => <Badge color={FIX_OF[row.original.reason] ? "amber" : "gray"}>{row.original.reason}</Badge> },
-    { accessorKey: "day", header: "Day", meta: { align: "right" }, cell: ({ row }) => row.original.day ?? "—" },
-    { id: "places", header: "Places", accessorFn: it => it.names.join(" · "),
+    { accessorKey: "day", header: t("day"), meta: { align: "right" }, cell: ({ row }) => row.original.day ?? "—" },
+    { id: "places", header: t("places"), accessorFn: it => it.names.join(" · "),
       cell: ({ row }) => <>{row.original.names.join(" · ") || "—"}
         {row.original.km != null && <span style={{ color: A.muted }}> ({row.original.km} km)</span>}</> },
-    { id: "detail", header: "Detail", accessorFn: it => it.detail ?? "",
+    { id: "detail", header: t("detail"), accessorFn: it => it.detail ?? "",
       cell: ({ row }) => {
         const it = row.original;
         return <span style={{ fontSize: 12, color: A.body }}>{it.detail ?? ""}
           {FIX_OF[it.reason] && (
             <div><button disabled={!!busy} style={linkBtn}
                          onClick={() => runFix({ check: FIX_OF[it.reason], source_id: it.source_id, country: it.country, dry_run: true })}>
-              preview fix for this tour</button></div>
+              {t("previewFixTour")}</button></div>
           )}</span>;
       } },
   // eslint-disable-next-line react-hooks/exhaustive-deps -- runFix only reads state setters and the loaders
-  ], [busy]);
+  ], [busy, t]);
 
-  if (!coverage) return <AdminMain><LoadingScreen msg="Loading places..." /></AdminMain>;
-  const t = coverage.totals;
+  if (!coverage) return <AdminMain><LoadingScreen msg={t("loadingPlaces")} /></AdminMain>;
+  const tot = coverage.totals;
   const countries = coverage.countries.map(c => c.country);
   const cat = validity?.summary.catalog;
   const reasons = check && validity ? validity.reasons[check] ?? [] : Object.values(validity?.reasons ?? {}).flat();
@@ -181,88 +188,88 @@ export default function PlacesPage() {
   return (
     <AdminMain>
       <PageHeader
-        title="Places"
-        description="Where the live tours go on the map — the place pipeline's coverage per country and the content-validity report the TripPlanner map switch waits on (no model call)."
+        title={t("title")}
+        description={t("description")}
         actions={<Btn onClick={() => { loadCoverage(); if (tab === "validity") loadValidity(); }} size="sm">
-          <RefreshCw size={13} /> Refresh</Btn>}
+          <RefreshCw size={13} /> {t("refresh")}</Btn>}
       />
 
       {error && (
         <Card style={{ marginBottom: 16, borderColor: A.redBorder, background: A.redTint }}>
           <span style={{ color: A.red, fontSize: 13 }}>{error}</span>{" "}
-          <button onClick={() => setError(null)} style={{ border: 0, background: "none", cursor: "pointer", color: A.muted }}>dismiss</button>
+          <button onClick={() => setError(null)} style={{ border: 0, background: "none", cursor: "pointer", color: A.muted }}>{t("dismiss")}</button>
         </Card>
       )}
 
-      <div style={{ marginBottom: 18 }}><TabBar tabs={TABS} active={tab} onChange={setTab} /></div>
+      <div style={{ marginBottom: 18 }}><TabBar tabs={TABS.map((x) => ({ key: x.key, label: t(x.label) }))} active={tab} onChange={setTab} /></div>
 
       {tab === "coverage" && (
         <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14, marginBottom: 18 }}>
-            <StatCard label="Live tours" value={String(t.live)} icon={<MapPin size={16} />} sub={`${countries.length} countries`} />
-            <StatCard label="Built" value={`${pct(t.built, t.live)}%`} icon={<CheckCircle2 size={16} />} accent={A.green}
-                      sub={`${t.built} tours · ${t.partial} partial`} />
-            <StatCard label="In the graph" value={`${pct(t.in_graph, t.live)}%`} icon={<Route size={16} />}
-                      sub={`${t.in_graph} tours have stops`} />
-            <StatCard label="Stop every day" value={`${pct(t.stop_every_day, t.live)}%`} icon={<AlertTriangle size={16} />}
-                      accent={t.stop_every_day < t.live ? A.gold : A.green} sub="the fallback-removal gate" />
-            <StatCard label="Build cost" value={`$${t.build_cost_usd.toFixed(2)}`} icon={<MapPin size={16} />} sub="geo.tour_build" />
+            <StatCard label={t("liveTours")} value={String(tot.live)} icon={<MapPin size={16} />} sub={t("countriesCount", countries.length)} />
+            <StatCard label={t("built")} value={`${pct(tot.built, tot.live)}%`} icon={<CheckCircle2 size={16} />} accent={A.green}
+                      sub={t("builtSub", tot.built, tot.partial)} />
+            <StatCard label={t("inTheGraph")} value={`${pct(tot.in_graph, tot.live)}%`} icon={<Route size={16} />}
+                      sub={t("inGraphSub", tot.in_graph)} />
+            <StatCard label={t("stopEveryDay")} value={`${pct(tot.stop_every_day, tot.live)}%`} icon={<AlertTriangle size={16} />}
+                      accent={tot.stop_every_day < tot.live ? A.gold : A.green} sub={t("gateSub")} />
+            <StatCard label={t("buildCost")} value={`$${tot.build_cost_usd.toFixed(2)}`} icon={<MapPin size={16} />} sub="geo.tour_build" />
           </div>
           <DataTable<CoverageRow> tableId="admin-places-coverage" data={coverage.countries} columns={coverageColumns}
-                                  getRowId={r => r.country} searchable searchPlaceholder="Country" enableCsv
-                                  csvFilename="places-coverage.csv" emptyTitle="No live tours" />
+                                  getRowId={r => r.country} searchable searchPlaceholder={t("country")} enableCsv
+                                  csvFilename="places-coverage.csv" emptyTitle={t("noLiveTours")} />
         </>
       )}
 
-      {tab === "validity" && !validity && <LoadingScreen msg="Running the validity report..." />}
+      {tab === "validity" && !validity && <LoadingScreen msg={t("runningValidity")} />}
       {tab === "validity" && validity && cat && (
         <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 14, marginBottom: 18 }}>
-            <StatCard label="Tours flagged" value={`${cat.tours_flagged}/${cat.tours}`} icon={<AlertTriangle size={16} />}
-                      accent={cat.tours_flagged ? A.gold : A.green} sub={country || "whole catalog"} />
+            <StatCard label={t("toursFlagged")} value={`${cat.tours_flagged}/${cat.tours}`} icon={<AlertTriangle size={16} />}
+                      accent={cat.tours_flagged ? A.gold : A.green} sub={country || t("wholeCatalog")} />
             {cat.gate && (
-              <StatCard label="Flip gate" value={cat.gate.pass ? "Pass" : `${cat.gate.items} blocking`}
+              <StatCard label={t("flipGate")} value={cat.gate.pass ? t("pass") : t("blocking", cat.gate.items)}
                         icon={cat.gate.pass ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
                         accent={cat.gate.pass ? A.green : A.gold}
-                        sub={`${cat.gate.tours} tours · ${cat.gate.reasons.join(", ")}`} />
+                        sub={t("gateTours", cat.gate.tours, cat.gate.reasons.join(", "))} />
             )}
             {validity.checks.map(ch => (
-              <StatCard key={ch} label={CHECK_LABEL[ch] ?? ch} value={String(cat.checks[ch]?.items ?? 0)}
-                        sub={`${cat.checks[ch]?.tours ?? 0} tours`} />
+              <StatCard key={ch} label={checkLabel(ch)} value={String(cat.checks[ch]?.items ?? 0)}
+                        sub={t("toursN", cat.checks[ch]?.tours ?? 0)} />
             ))}
           </div>
 
           <Card style={{ marginBottom: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-            <select aria-label="Country" value={country} onChange={e => { setCountry(e.target.value); setPage(1); }} style={selectStyle}>
-              <option value="">All countries</option>
+            <select aria-label={t("country")} value={country} onChange={e => { setCountry(e.target.value); setPage(1); }} style={selectStyle}>
+              <option value="">{t("allCountries")}</option>
               {countries.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
-            <select aria-label="Check" value={check} onChange={e => { setCheck(e.target.value); setReason(""); setPage(1); }} style={selectStyle}>
-              <option value="">All checks</option>
-              {validity.checks.map(c => <option key={c} value={c}>{CHECK_LABEL[c] ?? c}</option>)}
+            <select aria-label={t("check")} value={check} onChange={e => { setCheck(e.target.value); setReason(""); setPage(1); }} style={selectStyle}>
+              <option value="">{t("allChecks")}</option>
+              {validity.checks.map(c => <option key={c} value={c}>{checkLabel(c)}</option>)}
             </select>
-            <select aria-label="Reason" value={reason} onChange={e => { setReason(e.target.value); setPage(1); }} style={selectStyle}>
-              <option value="">All reasons</option>
+            <select aria-label={t("reason")} value={reason} onChange={e => { setReason(e.target.value); setPage(1); }} style={selectStyle}>
+              <option value="">{t("allReasons")}</option>
               {reasons.map(r => <option key={r} value={r}>{r}</option>)}
             </select>
-            <span style={{ fontSize: 12.5, color: A.muted }}>{validity.total} findings</span>
+            <span style={{ fontSize: 12.5, color: A.muted }}>{t("findings", validity.total)}</span>
             {reason && FIX_OF[reason] && (
               <Btn size="sm" disabled={!!busy}
                    onClick={() => runFix({ check: FIX_OF[reason], country: country || null, dry_run: true })}>
-                Preview fix ({reason}{country ? `, ${country}` : ""})
+                {t("previewFix", `${reason}${country ? `, ${country}` : ""}`)}
               </Btn>
             )}
           </Card>
 
           {fix && (
             <Card style={{ marginBottom: 16 }}>
-              <SLabel>{fix.result.dry_run ? "Dry run" : "Applied"} — {fix.result.check ?? "undo"}</SLabel>
+              <SLabel>{fix.result.dry_run ? t("dryRun") : t("applied")} — {fix.result.check ?? t("undo")}</SLabel>
               <div style={{ fontSize: 13, color: A.body, marginBottom: 8 }}>
                 {fix.result.restored !== undefined
-                  ? `${fix.result.restored} rows ${fix.result.dry_run ? "would be restored" : "restored"}`
-                  : `${fix.result.changes?.length ?? 0} places ${fix.result.dry_run ? "would change" : "changed"}`}
-                {fix.result.audit_id && <> · audit <span style={{ fontFamily: mono }}>{fix.result.audit_id.slice(0, 8)}</span></>}
-                {!!fix.result.skipped?.length && ` · ${fix.result.skipped.length} skipped (admin-fixed)`}
+                  ? t("rowsRestored", fix.result.restored, fix.result.dry_run)
+                  : t("placesChanged", fix.result.changes?.length ?? 0, fix.result.dry_run)}
+                {fix.result.audit_id && <> · {t("audit")} <span style={{ fontFamily: mono }}>{fix.result.audit_id.slice(0, 8)}</span></>}
+                {!!fix.result.skipped?.length && t("skipped", fix.result.skipped.length)}
               </div>
               {(fix.result.changes ?? []).slice(0, 20).map(c => (
                 <div key={c.destination_id} style={{ fontSize: 12.5, fontFamily: mono, color: A.body }}>
@@ -271,21 +278,21 @@ export default function PlacesPage() {
               ))}
               {fix.result.cross_app_references && Object.keys(fix.result.cross_app_references).length > 0 && (
                 <div style={{ fontSize: 12, color: A.muted, marginTop: 8 }}>
-                  Other apps still pointing at the merged places (reported, never written):{" "}
+                  {t("otherApps")}{" "}
                   {Object.entries(fix.result.cross_app_references).map(([k, v]) => `${k}: ${v}`).join(" · ")}
                 </div>
               )}
               <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                 {fix.result.dry_run && ((fix.result.changes?.length ?? 0) > 0 || (fix.result.restored ?? 0) > 0) && (
                   <Btn variant="primary" size="sm" disabled={!!busy}
-                       onClick={() => { if (window.confirm("Apply this fix? It is audited and can be undone.")) runFix({ ...fix.body, dry_run: false, fingerprint: fix.result.fingerprint }); }}>
-                    Apply
+                       onClick={() => { if (window.confirm(t("confirmFix"))) runFix({ ...fix.body, dry_run: false, fingerprint: fix.result.fingerprint }); }}>
+                    {t("apply")}
                   </Btn>
                 )}
                 {!fix.result.dry_run && fix.result.audit_id && fix.result.restored === undefined && (
-                  <Btn size="sm" disabled={!!busy} onClick={() => runFix({ undo: fix.result.audit_id, dry_run: true })}>Undo…</Btn>
+                  <Btn size="sm" disabled={!!busy} onClick={() => runFix({ undo: fix.result.audit_id, dry_run: true })}>{t("undoEllipsis")}</Btn>
                 )}
-                <Btn size="sm" onClick={() => setFix(null)}>Close</Btn>
+                <Btn size="sm" onClick={() => setFix(null)}>{t("close")}</Btn>
               </div>
             </Card>
           )}
@@ -295,15 +302,15 @@ export default function PlacesPage() {
                            serverPagination={{ pageIndex: validity.page - 1, pageSize: validity.page_size, total: validity.total,
                                                onChange: (pi, ps) => { setPage(ps !== pageSize ? 1 : pi + 1); setPageSize(ps); } }}
                            enableCsv csvFilename="places-validity.csv"
-                           emptyTitle="No findings" emptyDescription="Nothing to fix for these filters." />
+                           emptyTitle={t("noFindings")} emptyDescription={t("noFindingsDesc")} />
 
           {validity.trend.length > 0 && (
             <Card style={{ marginTop: 16 }}>
-              <SLabel>Last graph builds</SLabel>
+              <SLabel>{t("lastBuilds")}</SLabel>
               {validity.trend.map(b => (
                 <div key={b.build_id} style={{ fontSize: 12.5, color: A.body, fontFamily: mono }}>
-                  {formatDateTime(b.built_at)} {b.is_current ? "(current)" : ""} ·{" "}
-                  {b.validity ? `${b.validity.tours_flagged ?? "?"} of ${b.validity.tours ?? "?"} tours flagged` : "no validity counts"}
+                  {formatDateTime(b.built_at)} {b.is_current ? t("current") : ""} ·{" "}
+                  {b.validity ? t("flaggedOf", String(b.validity.tours_flagged ?? "?"), String(b.validity.tours ?? "?")) : t("noValidity")}
                 </div>
               ))}
             </Card>

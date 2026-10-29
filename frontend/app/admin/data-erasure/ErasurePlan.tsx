@@ -4,25 +4,28 @@
 
 import { useMemo, useState } from "react";
 import {
-  Badge, Button, DataTable, K, StatusBadge, formatDateTime, mono, type ColumnDef,
+  Badge, Button, DataTable, K, StatusBadge, mono, useFormat, useT, type ColumnDef, type Translator,
 } from "../../_kit";
 import {
   jobMode, jobSubject, isVerifyRun,
   type Blocker, type ChecklistItem, type ErasureJob, type PlanRow,
 } from "@/lib/dataErasure";
 import { ActionBadge, Facts, Fingerprint, Notice, Section, TotalsRow } from "./erasureUi";
+import { ER } from "./messages";
 
-function rowColumns(withVia: boolean): ColumnDef<PlanRow, unknown>[] {
+type T = Translator<typeof ER.en>;
+
+function rowColumns(withVia: boolean, t: T): ColumnDef<PlanRow, unknown>[] {
   const cols: ColumnDef<PlanRow, unknown>[] = [
     {
       accessorKey: "table",
-      header: "Table",
+      header: t("colTable"),
       cell: (c) => <span style={{ fontFamily: mono, fontSize: 12.5, color: K.ink, overflowWrap: "anywhere" }}>{c.row.original.table}</span>,
     },
-    { accessorKey: "action", header: "Action", cell: (c) => <ActionBadge action={c.row.original.action} /> },
+    { accessorKey: "action", header: t("colAction"), cell: (c) => <ActionBadge action={c.row.original.action} /> },
     {
       accessorKey: "rows",
-      header: "Rows",
+      header: t("colRows"),
       cell: (c) => (
         <span style={{ fontFamily: mono, fontSize: 13, color: c.row.original.rows ? K.ink : K.muted }}>
           {c.row.original.rows.toLocaleString("en-US")}
@@ -32,13 +35,13 @@ function rowColumns(withVia: boolean): ColumnDef<PlanRow, unknown>[] {
     {
       id: "reason",
       accessorFn: (r) => r.reason ?? "",
-      header: "Why",
+      header: t("colWhy"),
       cell: (c) => (
         <div style={{ fontSize: 12.5, color: K.body, maxWidth: 420 }}>
           {c.row.original.reason}
           {withVia && c.row.original.via?.length ? (
             <div style={{ color: K.muted, fontFamily: mono, fontSize: 11.5, marginTop: 2, overflowWrap: "anywhere" }}>
-              via {c.row.original.via.join(", ")}
+              {t("via", c.row.original.via.join(", "))}
             </div>
           ) : null}
         </div>
@@ -97,6 +100,7 @@ function Sub({ title, children }: { title: string; children: React.ReactNode }) 
 }
 
 function OutsideDb({ job }: { job: ErasureJob }) {
+  const t = useT(ER);
   const r = job.result ?? {};
   const s3 = r.s3 ?? [];
   const secrets = r.secrets ?? [];
@@ -104,46 +108,46 @@ function OutsideDb({ job }: { job: ErasureJob }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10, fontSize: 13, color: K.body }}>
       <div>
-        <strong style={{ color: K.ink }}>S3 prefixes</strong>
-        {s3.length === 0 ? <div style={{ color: K.muted }}>None listed.</div> : (
+        <strong style={{ color: K.ink }}>{t("s3Prefixes")}</strong>
+        {s3.length === 0 ? <div style={{ color: K.muted }}>{t("noneListed")}</div> : (
           <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
             {s3.map((p) => (
               <li key={p.prefix} style={{ overflowWrap: "anywhere" }}>
                 <span style={{ fontFamily: mono, fontSize: 12.5 }}>{p.prefix}</span> —{" "}
-                {p.error ? <span style={{ color: K.danger }}>not checked ({p.error}): check by hand</span>
-                  : `${p.objects ?? 0} object(s)`}
+                {p.error ? <span style={{ color: K.danger }}>{t("notChecked", p.error)}</span>
+                  : t("objects", p.objects ?? 0)}
               </li>
             ))}
           </ul>
         )}
       </div>
       <div>
-        <strong style={{ color: K.ink }}>Secrets</strong>
-        {secrets.length === 0 ? <div style={{ color: K.muted }}>None listed.</div> : (
+        <strong style={{ color: K.ink }}>{t("secrets")}</strong>
+        {secrets.length === 0 ? <div style={{ color: K.muted }}>{t("noneListed")}</div> : (
           <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
             {secrets.map((s) => (
               <li key={s.name} style={{ overflowWrap: "anywhere" }}>
                 <span style={{ fontFamily: mono, fontSize: 12.5 }}>{s.name}</span> —{" "}
-                {s.error ? <span style={{ color: K.danger }}>not checked ({s.error}): check by hand</span>
-                  : s.exists ? "exists" : "absent"}
+                {s.error ? <span style={{ color: K.danger }}>{t("notChecked", s.error)}</span>
+                  : s.exists ? t("exists") : t("absent")}
               </li>
             ))}
           </ul>
         )}
       </div>
       <div>
-        <strong style={{ color: K.ink }}>S3 keys held in rows the apply deletes</strong>
-        {refs.length === 0 ? <div style={{ color: K.muted }}>No S3 key columns in this plan.</div> : (
+        <strong style={{ color: K.ink }}>{t("s3Keys")}</strong>
+        {refs.length === 0 ? <div style={{ color: K.muted }}>{t("noS3Columns")}</div> : (
           <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
             {refs.map((ref) => (
               <li key={ref.column} style={{ overflowWrap: "anywhere" }}>
                 <span style={{ fontFamily: mono, fontSize: 12.5 }}>{ref.column}</span> —{" "}
-                {ref.error ? <span style={{ color: K.danger }}>not readable ({ref.error})</span> : (
+                {ref.error ? <span style={{ color: K.danger }}>{t("notReadable", ref.error)}</span> : (
                   <>
-                    {ref.rows ?? 0} row(s), {ref.outside_prefixes ?? 0} outside the tenant prefixes
+                    {t("rowsOutside", ref.rows ?? 0, ref.outside_prefixes ?? 0)}
                     {ref.outside_keys?.length ? (
                       <div style={{ fontFamily: mono, fontSize: 11.5, color: K.muted }}>
-                        Copy into the work item before the apply: {ref.outside_keys.join(", ")}
+                        {t("copyBefore", ref.outside_keys.join(", "))}
                       </div>
                     ) : null}
                   </>
@@ -159,6 +163,8 @@ function OutsideDb({ job }: { job: ErasureJob }) {
 
 /** The plan (DRY RUN) or the outcome (apply) of one data_erasure job. */
 export default function ErasurePlan({ job, tenantName }: { job: ErasureJob; tenantName?: string | null }) {
+  const t = useT(ER);
+  const { formatDateTime } = useFormat();
   const [showOrder, setShowOrder] = useState(false);
   const r = job.result;
   const subject = jobSubject(job);
@@ -167,28 +173,28 @@ export default function ErasurePlan({ job, tenantName }: { job: ErasureJob; tena
 
   const header = (
     <Facts items={[
-      { label: "Job", value: <span style={{ fontFamily: mono, fontSize: 12.5 }}>{job.id}</span> },
+      { label: t("factJob"), value: <span style={{ fontFamily: mono, fontSize: 12.5 }}>{job.id}</span> },
       {
-        label: "Status",
-        value: <StatusBadge status={job.status} label={job.status === "running" && progress?.phase ? `Running · ${progress.phase}` : undefined} />,
+        label: t("factStatus"),
+        value: <StatusBadge status={job.status} label={job.status === "running" && progress?.phase ? t("runningPhase", progress.phase) : undefined} />,
       },
-      { label: "Mode", value: mode === "apply" ? "Apply" : isVerifyRun(job) ? "DRY RUN (verification)" : "DRY RUN" },
+      { label: t("factMode"), value: mode === "apply" ? t("modeApply") : isVerifyRun(job) ? t("modeDryVerify") : "DRY RUN" },
       {
-        label: "Subject",
-        value: subject === "tenant" ? (tenantName ?? r?.tenant ?? "tenant") : "Traveller (hash only)",
+        label: t("factSubject"),
+        value: subject === "tenant" ? (tenantName ?? r?.tenant ?? t("tenantWord")) : t("travellerHashOnly"),
       },
-      { label: "Finished", value: job.finished_at ? formatDateTime(job.finished_at) : "—" },
+      { label: t("factFinished"), value: job.finished_at ? formatDateTime(job.finished_at) : "—" },
     ]} />
   );
 
   if (!r || job.status === "queued" || job.status === "running") {
     return (
-      <Section title={mode === "apply" ? "Apply" : "DRY RUN"} testId="erasure-plan">
+      <Section title={mode === "apply" ? t("modeApply") : "DRY RUN"} testId="erasure-plan">
         {header}
         <p style={{ fontSize: 13, color: K.muted, marginBottom: 0 }}>
-          {job.status === "queued" ? "Waiting for the worker to pick the job up…"
-            : job.status === "running" ? (mode === "apply" ? "Applying…" : "Counting…")
-              : job.error ? "The job ended with an error:" : "The job ended without a result."}
+          {job.status === "queued" ? t("waitingWorker")
+            : job.status === "running" ? (mode === "apply" ? t("applying") : t("counting"))
+              : job.error ? t("endedError") : t("endedNoResult")}
         </p>
         {job.error && <Notice tone="danger">{job.error}</Notice>}
       </Section>
@@ -198,117 +204,117 @@ export default function ErasurePlan({ job, tenantName }: { job: ErasureJob; tena
   const rows = (mode === "apply" ? r.applied : r.rows) ?? [];
   return (
     <Section
-      title={mode === "apply" ? "Apply result" : "DRY RUN plan"}
+      title={mode === "apply" ? t("applyResult") : t("dryPlan")}
       testId="erasure-plan"
-      right={r.blocked ? <Badge tone="danger">Blocked</Badge> : mode === "apply"
-        ? <Badge tone={r.verified ? "success" : "danger"}>{r.verified ? "Verified" : "Not verified"}</Badge>
-        : <Badge tone="success">No blockers</Badge>}
+      right={r.blocked ? <Badge tone="danger">{t("blocked")}</Badge> : mode === "apply"
+        ? <Badge tone={r.verified ? "success" : "danger"}>{r.verified ? t("verified") : t("notVerified")}</Badge>
+        : <Badge tone="success">{t("noBlockers")}</Badge>}
     >
       {header}
       {job.error && <div style={{ marginTop: 12 }}><Notice tone="danger">{job.error}</Notice></div>}
-      {r.redacted && <div style={{ marginTop: 12 }}><Notice tone="info">Your role sees only the counts of this job.</Notice></div>}
+      {r.redacted && <div style={{ marginTop: 12 }}><Notice tone="info">{t("redacted")}</Notice></div>}
 
       {subject === "tenant" && mode === "dry_run" && (
         <div style={{ marginTop: 12 }}>
           <Facts items={[
             {
-              label: "Tenant state",
-              value: <Badge tone={r.tenant_state === "offboarded" ? "warning" : r.tenant_state ? "danger" : "neutral"}>{r.tenant_state ?? "gone"}</Badge>,
+              label: t("factTenantState"),
+              value: <Badge tone={r.tenant_state === "offboarded" ? "warning" : r.tenant_state ? "danger" : "neutral"}>{r.tenant_state ?? t("stateGone")}</Badge>,
             },
-            { label: "Offboarded", value: r.offboarded_at ? formatDateTime(r.offboarded_at) : "—" },
-            { label: "Checks passed", value: (r.checks_passed ?? []).length },
-            { label: "Unregistered tables", value: (r.unregistered ?? []).length },
+            { label: t("factOffboarded"), value: r.offboarded_at ? formatDateTime(r.offboarded_at) : "—" },
+            { label: t("factChecksPassed"), value: (r.checks_passed ?? []).length },
+            { label: t("factUnregistered"), value: (r.unregistered ?? []).length },
           ]} />
         </div>
       )}
 
-      <Sub title={mode === "apply" ? "Rows changed" : "Rows per action"}>
+      <Sub title={mode === "apply" ? t("rowsChanged") : t("rowsPerAction")}>
         <TotalsRow totals={r.totals} testId="erasure-totals" />
       </Sub>
 
       {r.fingerprint && (
-        <Sub title="Fingerprint (what is approved)">
+        <Sub title={t("fingerprintApproved")}>
           <Fingerprint value={r.fingerprint} />
         </Sub>
       )}
 
       {mode === "apply" && (
-        <Sub title="Verification (new connection)">
+        <Sub title={t("verification")}>
           {r.verified ? (
             <Notice tone="success">
-              A recount from a new database connection found 0 rows left. One audit row was written
-              ({subject === "tenant" ? <code>tenant.erased</code> : <code>dsar.cis_erased</code>}, counts only) — see{" "}
-              <a href="/admin/platform/audit" style={{ color: K.accentDeep }}>Platform › Audit log</a>.
+              {t("verifiedLead")}
+              {subject === "tenant" ? <code>tenant.erased</code> : <code>dsar.cis_erased</code>}{t("verifiedMid")}{" "}
+              <a href="/admin/platform/audit" style={{ color: K.accentDeep }}>{t("auditLink")}</a>.
             </Notice>
           ) : (
             <Notice tone="danger">
-              Rows left after the apply: {Object.entries(r.verified_left ?? {}).map(([t, n]) => `${t} ${n}`).join(", ") || "unknown"}.
+              {t("rowsLeft", Object.entries(r.verified_left ?? {}).map(([tb, n]) => `${tb} ${n}`).join(", ") || t("unknown"))}
             </Notice>
           )}
         </Sub>
       )}
 
       {(r.blockers ?? []).length > 0 && (
-        <Sub title={`Blockers (${r.blockers!.length})`}>
+        <Sub title={t("blockers", r.blockers!.length)}>
           <BlockerList items={r.blockers!} tone="danger" />
         </Sub>
       )}
       {(r.unregistered ?? []).length > 0 && (
-        <Sub title="Unregistered tables (block the apply)">
+        <Sub title={t("unregisteredBlock")}>
           <div style={{ fontFamily: mono, fontSize: 12.5, color: K.danger, overflowWrap: "anywhere" }}>{r.unregistered!.join(", ")}</div>
         </Sub>
       )}
       {(r.missing_tables ?? []).length > 0 && (
-        <Sub title="Inventory tables missing here">
+        <Sub title={t("inventoryMissing")}>
           <div style={{ fontFamily: mono, fontSize: 12.5, color: K.muted, overflowWrap: "anywhere" }}>{r.missing_tables!.join(", ")}</div>
         </Sub>
       )}
 
       {rows.length > 0 && (
-        <Sub title={`Per table (${rows.length})`}>
+        <Sub title={t("perTable", rows.length)}>
           <DataTable
             tableId={`erasure-rows-${mode}`}
             data={rows}
-            columns={rowColumns(mode === "dry_run")}
+            columns={rowColumns(mode === "dry_run", t)}
             getRowId={(row) => `${row.table}|${row.action}`}
             searchable
-            searchPlaceholder="Filter tables…"
+            searchPlaceholder={t("filterTables")}
             pageSize={25}
             enableCsv={!r.redacted}
             csvFilename={`erasure-${mode}-${job.id.slice(0, 8)}.csv`}
             tableMinWidth={560}
-            emptyTitle="No rows"
+            emptyTitle={t("noRows")}
           />
         </Sub>
       )}
 
       {subject === "traveller" && (r.manual ?? []).length > 0 && (
-        <Sub title="For a person to handle (not changed by the job)">
+        <Sub title={t("manualTitle")}>
           <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: K.body }}>
-            {r.manual!.map((m) => <li key={m.table}><span style={{ fontFamily: mono }}>{m.table}</span> — {m.rows} row(s). {m.reason}</li>)}
+            {r.manual!.map((m) => <li key={m.table}><span style={{ fontFamily: mono }}>{m.table}</span> — {t("manualRows", m.rows)} {m.reason}</li>)}
           </ul>
         </Sub>
       )}
       {subject === "traveller" && (r.skipped_tables ?? []).length > 0 && (
-        <Sub title="Tables not present here (skipped)">
+        <Sub title={t("skippedTitle")}>
           <div style={{ fontFamily: mono, fontSize: 12.5, color: K.muted, overflowWrap: "anywhere" }}>{r.skipped_tables!.join(", ")}</div>
         </Sub>
       )}
 
       {subject === "tenant" && mode === "dry_run" && !r.redacted && (
-        <Sub title="Outside the database">
+        <Sub title={t("outsideDb")}>
           <OutsideDb job={job} />
         </Sub>
       )}
 
       {subject === "tenant" && (r.delete_order ?? []).length > 0 && (
-        <Sub title="Delete order">
+        <Sub title={t("deleteOrder")}>
           <Button size="sm" variant="ghost" onClick={() => setShowOrder((v) => !v)}>
-            {showOrder ? "Hide" : `Show ${r.delete_order!.length} tables, children first`}
+            {showOrder ? t("hide") : t("showOrder", r.delete_order!.length)}
           </Button>
           {showOrder && (
             <ol style={{ margin: "8px 0 0", paddingLeft: 22, fontFamily: mono, fontSize: 12, color: K.body }}>
-              {(r.null_first ?? []).map((c) => <li key={`nf-${c}`}>null first: {c}</li>)}
+              {(r.null_first ?? []).map((c) => <li key={`nf-${c}`}>{t("nullFirst", c)}</li>)}
               {r.delete_order!.map((t) => <li key={t}>{t}</li>)}
             </ol>
           )}
@@ -316,13 +322,13 @@ export default function ErasurePlan({ job, tenantName }: { job: ErasureJob; tena
       )}
 
       {(r.checks_passed ?? []).length > 0 && (
-        <Sub title={`Checks passed (${r.checks_passed!.length})`}>
+        <Sub title={t("checksPassed", r.checks_passed!.length)}>
           <BlockerList items={r.checks_passed!} tone="info" />
         </Sub>
       )}
 
       {(r.checklist ?? []).length > 0 && (
-        <Sub title="Per-app checklist (outside CIS, by hand)">
+        <Sub title={t("checklist")}>
           <Checklist items={r.checklist!} />
         </Sub>
       )}

@@ -72,9 +72,12 @@ export function fmtSeconds(s: number): string {
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 }
 
-export function ago(iso: string | null | undefined, now = Date.now()): string {
+/** "5m 3s ago"; `agoWord` is the UI language's wording (jobs/messages.ts `ago`), English by default. */
+export function ago(
+  iso: string | null | undefined, now = Date.now(), agoWord: (d: string) => string = (d) => `${d} ago`,
+): string {
   if (!iso) return "—";
-  return `${fmtSeconds((now - new Date(iso).getTime()) / 1000)} ago`;
+  return agoWord(fmtSeconds((now - new Date(iso).getTime()) / 1000));
 }
 
 export function runSeconds(job: Job, now = Date.now()): number | null {
