@@ -179,11 +179,11 @@ def test_base_url_check_runs_in_the_adapter_too(monkeypatch, fake):
 
 def test_timeout_and_retries_come_from_the_connection_never_the_sdk_default(fake):
     _send(anthropic_connection(timeout_s=45, max_retries=0))
-    client = next(iter(am._clients.values()))
+    client = next(iter(am._clients.values()))[1]   # (key, client)
     assert client.timeout.read == 45.0 and client.timeout.connect == 10.0 and client.max_retries == 0
     am._clients.clear()
     _send(anthropic_connection(timeout_s=None, max_retries=None))
-    client = next(iter(am._clients.values()))
+    client = next(iter(am._clients.values()))[1]   # (key, client)
     assert client.timeout.read == am.DEFAULT_TIMEOUT_S == 300 and client.max_retries == am.DEFAULT_MAX_RETRIES == 1
 
 
