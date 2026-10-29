@@ -33,7 +33,7 @@ What the adapter guarantees, whatever the row says:
 from __future__ import annotations
 
 import copy
-import hashlib
+import hmac
 import re
 import threading
 from dataclasses import dataclass, field
@@ -252,12 +252,13 @@ def _client_for(conn: connections.ProviderConnection, api_key: str, base_url: st
     import anthropic
 
     timeout_s, retries = _settings(conn)
-    fingerprint = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16]   # the cache key never holds the key
-    cache_key = (conn.connection_key, base_url, timeout_s, retries, fingerprint)
+    # One client per connection settings; the key it was built with is kept beside it and compared directly, so a
+    # rotated key builds a new client (no hash of the key: CodeQL py/weak-sensitive-data-hashing, S258).
+    cache_key = (conn.connection_key, base_url, timeout_s, retries)
     with _clients_lock:
         hit = _clients.get(cache_key)
-    if hit is not None:
-        return hit
+    if hit is not None and hmac.compare_digest(hit[0], api_key):
+        return hit[1]
     kwargs: dict = {
         "api_key": api_key,
         "base_url": base_url,
@@ -270,7 +271,7 @@ def _client_for(conn: connections.ProviderConnection, api_key: str, base_url: st
     with _clients_lock:
         for stale in [k for k in _clients if k[0] == conn.connection_key]:
             _clients.pop(stale, None)
-        _clients[cache_key] = client
+        _clients[cache_key] = (api_key, client)
     return client
 
 
