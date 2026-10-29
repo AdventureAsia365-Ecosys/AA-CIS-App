@@ -778,7 +778,8 @@ def test_default_accept_rule_reads_the_env_and_falls_back_to_v1(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("env, sent", [(None, {}), ("aa997.2", {"strict": True})])
+@pytest.mark.parametrize("env, sent", [(None, {}), ("aa997.2", {"strict": "aa997.2"}),
+                                       ("aa997.3", {"strict": "aa997.3"})])
 async def test_locate_sends_strict_only_when_switched_on_town_fallback_too(monkeypatch, env, sent):
     if env is None:
         monkeypatch.delenv("GEOCODER_ACCEPT_RULE", raising=False)

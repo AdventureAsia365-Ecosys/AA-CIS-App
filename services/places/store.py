@@ -683,18 +683,26 @@ _ROUTE_ANCHORS_SQL = """
 
 async def route_anchors(conn, keys: Iterable[tuple], exclude: Iterable[str] = ()) -> dict[tuple, tuple]:
     """{name key: routes} — one route (tuple of (lat, lng) in day order) per (tour source, day) using the name; keys
-    with no located anchor are absent. guards.route_km measures a point against them."""
+    with no located anchor are absent. guards.route_km measures a point against them. Each route is a
+    guards.TourRoute: `tour` and `anchored` (the use day's own stop is among the stops — the strict rule aa997.3 uses
+    only those as evidence, geomatch.evidence_routes)."""
+    from services.places import guards
     a, b, c = _keys_arrays(keys)
     if not a:
         return {}
     rows = await conn.fetch(_ROUTE_ANCHORS_SQL, a, b, c, sorted({str(x) for x in exclude if x}))
     by: dict[tuple, dict[tuple, list]] = {}
+    anchored: set = set()
     for r in rows:
-        pts = by.setdefault((r["n"], r["c"], r["l"]), {}).setdefault((r["source_id"], r["day_index"]), [])
+        use = (r["source_id"], r["day_index"])
+        pts = by.setdefault((r["n"], r["c"], r["l"]), {}).setdefault(use, [])
         p = (float(r["lat"]), float(r["lng"]))
         if not pts or pts[-1] != p:
             pts.append(p)
-    return {k: tuple(tuple(v) for v in routes.values()) for k, routes in by.items()}
+        if r["anchor_day"] == r["day_index"]:       # the use day's own stop is located (and is not the row itself)
+            anchored.add((r["n"], r["c"], r["l"], *use))
+    return {k: tuple(guards.TourRoute(v, tour=use[0], anchored=(*k, *use) in anchored) for use, v in routes.items())
+            for k, routes in by.items()}
 
 
 async def mark_name(conn, key: tuple, *, destination_id: Optional[str] = None, error: Optional[str] = None,
